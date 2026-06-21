@@ -87,5 +87,53 @@ const valid: Action = { type: 'tap', ref: asRef('e1') }
 // @ts-expect-error Action members carry no `platform` key.
 const invalid: Action = { type: 'tap', platform: 'web', ref: asRef('e1') }
 
+const taggedTap = { type: 'tap' as const, platform: 'web' as const, ref: asRef('e2') }
+
+// @ts-expect-error non-fresh values carrying forbidden platform metadata must not satisfy Action.
+const invalidFromVariable: Action = taggedTap
+
+// @ts-expect-error non-fresh values carrying forbidden platform metadata must not execute on mobile.
+mobileExec(taggedTap)
+
+const tabByIndex: Action = { type: 'switchTab', index: 0 }
+
+// @ts-expect-error empty tab selectors are guaranteed to fail.
+const emptyTab: Action = { type: 'switchTab' }
+
+const twoFingerTap: Action = { type: 'multiTap', fingers: 2, ref: asRef('e3') }
+const threeFingerTap: Action = { type: 'multiTap', fingers: 3, point: { x: 10, y: 20 } }
+
+// @ts-expect-error unsupported finger counts are rejected.
+const zeroFingerTap: Action = { type: 'multiTap', fingers: 0, ref: asRef('e3') }
+
+// @ts-expect-error unsupported finger counts are rejected.
+const oneFingerTap: Action = { type: 'multiTap', fingers: 1, ref: asRef('e3') }
+
+// @ts-expect-error unsupported finger counts are rejected.
+const manyFingerTap: Action = { type: 'multiTap', fingers: 99, ref: asRef('e3') }
+
+const swipeStart = { x: 0, y: 0 }
+const swipeEnd = { x: 10, y: 20 }
+const directionSwipe: Action = { type: 'swipe', direction: 'up' }
+const pathSwipe: Action = { type: 'swipe', direction: 'up', start: swipeStart, end: swipeEnd }
+
+// @ts-expect-error half-specified swipe paths are rejected.
+const swipeMissingEnd: Action = { type: 'swipe', direction: 'up', start: swipeStart }
+
+// @ts-expect-error half-specified swipe paths are rejected.
+const swipeMissingStart: Action = { type: 'swipe', direction: 'up', end: swipeEnd }
+
 void valid
 void invalid
+void invalidFromVariable
+void tabByIndex
+void emptyTab
+void twoFingerTap
+void threeFingerTap
+void zeroFingerTap
+void oneFingerTap
+void manyFingerTap
+void directionSwipe
+void pathSwipe
+void swipeMissingEnd
+void swipeMissingStart
