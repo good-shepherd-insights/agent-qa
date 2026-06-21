@@ -15,7 +15,7 @@ export const AGENT_QA_SCHEMA_FORBIDDEN_RESPONSIBILITIES = [
   'runner execution side effects',
   'local runtime persistence',
 ] as const
-export const AGENT_QA_SCHEMA_DEPENDENCIES = ['@vostride/agent-qa-ids'] as const
+export const AGENT_QA_SCHEMA_DEPENDENCIES = ['@vostride/agent-qa-ids', 'zod'] as const
 
 export type AgentQaSchemaPackageClass = typeof AGENT_QA_SCHEMA_PACKAGE_CLASSES[number]
 export type AgentQaSchemaDependency = typeof AGENT_QA_SCHEMA_DEPENDENCIES[number]
