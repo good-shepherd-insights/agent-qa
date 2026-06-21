@@ -12,3 +12,14 @@ export {
 } from './ownership-contract'
 
 export { asRef, type Ref, type Point, type BoundingBox } from './primitives/index'
+
+export type {
+  Action,
+  CrossPlatformAction,
+  MobileAction,
+  Platform,
+  RefTargeted,
+  TabSelector,
+  WebAction,
+} from './action/index'
+export type { ActionExecutor, ActionsFor } from './action/adapter'
