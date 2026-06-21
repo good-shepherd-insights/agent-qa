@@ -11,7 +11,7 @@ export {
   type AgentQaSchemaPackageClass,
 } from './ownership-contract'
 
-export { asRef, type Ref, type Point, type BoundingBox } from './primitives/index'
+export { asRef, type Ref, type Point, type BoundingBox, type Viewport } from './primitives/index'
 
 export type {
   Action,
@@ -23,3 +23,4 @@ export type {
   WebAction,
 } from './action/index'
 export type { ActionExecutor, ActionsFor } from './action/adapter'
+export type { ActionAnnotation, ActionResult } from './result/index'
