@@ -1,10 +1,10 @@
 import type { Point } from '../primitives/point'
 import type { Ref } from '../primitives/ref'
-import type { RefTargeted, TabSelector } from './shared'
+import type { NoPlatform, RefTargeted, TabSelector } from './shared'
 
 type WebRefTargeted = RefTargeted & { ref: Ref }
 
-export type WebAction =
+export type WebAction = NoPlatform & (
   | { type: 'navigate'; url: string }
   | { type: 'refresh' }
   | { type: 'navigateHistory'; direction: 'back' | 'forward' }
@@ -42,3 +42,4 @@ export type WebAction =
     }
   | { type: 'readLocalStorage'; key?: string }
   | { type: 'setLocalStorage'; entries: Array<{ key: string; value: string }> }
+)

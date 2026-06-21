@@ -4,6 +4,10 @@ export interface RefTargeted {
   ref: Ref
 }
 
+export interface NoPlatform {
+  readonly platform?: never
+}
+
 export interface TabSelector {
   index?: number
   title?: string

@@ -1,10 +1,10 @@
 import type { Point } from '../primitives/point'
 import type { Ref } from '../primitives/ref'
-import type { RefTargeted } from './shared'
+import type { NoPlatform, RefTargeted } from './shared'
 
 type MobileRefTargeted = RefTargeted & { ref: Ref }
 
-export type MobileAction =
+export type MobileAction = NoPlatform & (
   | ({ type: 'tap' } & MobileRefTargeted)
   | ({ type: 'doubleTap' } & MobileRefTargeted)
   | { type: 'multiTap'; fingers: number; ref?: Ref; point?: Point }
@@ -24,3 +24,4 @@ export type MobileAction =
   | { type: 'setOrientation'; orientation: 'portrait' | 'landscape' }
   | { type: 'launchApp'; bundleId: string }
   | { type: 'stopApp'; bundleId: string }
+)

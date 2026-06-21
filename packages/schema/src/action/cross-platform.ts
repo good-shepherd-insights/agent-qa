@@ -1,7 +1,7 @@
 import type { Ref } from '../primitives/ref'
-import type { RefTargeted } from './shared'
+import type { NoPlatform, RefTargeted } from './shared'
 
-export type CrossPlatformAction =
+export type CrossPlatformAction = NoPlatform & (
   | { type: 'assert'; condition: string; expected?: string; visual?: boolean }
   | { type: 'waitFor'; condition: string; timeout?: number }
   | { type: 'delay'; ms: number }
@@ -17,3 +17,4 @@ export type CrossPlatformAction =
     }
   | { type: 'executeScript'; command: string; args?: unknown }
   | { type: 'setVariable'; name: string; value: string }
+)
