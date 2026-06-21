@@ -10,3 +10,5 @@ export {
   type AgentQaSchemaOwnershipContract,
   type AgentQaSchemaPackageClass,
 } from './ownership-contract'
+
+export { asRef, type Ref, type Point, type BoundingBox } from './primitives/index'
