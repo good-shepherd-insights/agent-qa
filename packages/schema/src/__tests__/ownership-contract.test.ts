@@ -18,7 +18,7 @@ describe('schema ownership contract', () => {
       'providerNeutral',
       'storageNeutral',
     ])
-    expect([...AGENT_QA_SCHEMA_DEPENDENCIES]).toEqual(['@vostride/agent-qa-ids', 'zod'])
+    expect([...AGENT_QA_SCHEMA_DEPENDENCIES]).toEqual(['zod'])
   })
 
   it('keeps ownership responsibilities explicit', () => {

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const ALLOWED_DEPS = new Set(['zod', '@vostride/agent-qa-ids'])
+const ALLOWED_DEPS = new Set(['zod'])
 const NODE_BUILTINS = new Set(builtinModules.flatMap(moduleName => [moduleName, `node:${moduleName}`]))
 const FORBIDDEN_SUBSTRINGS = [
   'playwright',
@@ -49,7 +49,7 @@ describe('package-class boundary', () => {
           violations.push(`${file}: forbidden package ${specifier}`)
         }
 
-        if (specifier.startsWith('@vostride/agent-qa-') && !ALLOWED_DEPS.has(specifier)) {
+        if (specifier.startsWith('@vostride/agent-qa-')) {
           violations.push(`${file}: disallowed first-party package ${specifier}`)
         }
       }
