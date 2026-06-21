@@ -4,19 +4,23 @@ import type { NoPlatform, RefTargeted } from './shared'
 
 type MobileRefTargeted = RefTargeted & { ref: Ref }
 
+type SwipeBase = {
+  type: 'swipe'
+  direction: 'up' | 'down' | 'left' | 'right'
+  ref?: Ref
+  duration?: number
+}
+
+type SwipeByDirection = SwipeBase & { start?: never; end?: never }
+type SwipeByPath = SwipeBase & { start: Point; end: Point }
+
 export type MobileAction = NoPlatform & (
   | ({ type: 'tap' } & MobileRefTargeted)
   | ({ type: 'doubleTap' } & MobileRefTargeted)
-  | { type: 'multiTap'; fingers: number; ref?: Ref; point?: Point }
+  | { type: 'multiTap'; fingers: 2 | 3; ref?: Ref; point?: Point }
   | { type: 'tapCoordinate'; point: Point }
-  | {
-      type: 'swipe'
-      direction: 'up' | 'down' | 'left' | 'right'
-      ref?: Ref
-      start?: Point
-      end?: Point
-      duration?: number
-    }
+  | SwipeByDirection
+  | SwipeByPath
   | ({ type: 'longpress'; duration?: number } & MobileRefTargeted)
   | { type: 'pinch'; scale: number; ref?: Ref; point?: Point }
   | { type: 'drag'; fromRef: Ref; toRef: Ref }
