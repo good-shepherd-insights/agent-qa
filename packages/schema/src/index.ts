@@ -39,6 +39,11 @@ export type {
   PlatformConfig,
   RemoteDeviceConfig,
   TimeoutConfig,
+  Use,
+  UseAndroid,
+  UseIos,
+  UseWeb,
+  UseWebAuthState,
   WebAuthStateConfig,
   WebPlatformConfig,
 } from './config/index'
@@ -50,5 +55,6 @@ export {
   platformConfigSchema,
   remoteDeviceSchema,
   timeoutConfigSchema,
+  useSchema,
   viewportSchema,
 } from './config/index'

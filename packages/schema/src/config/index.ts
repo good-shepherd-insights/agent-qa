@@ -14,3 +14,5 @@ export type {
   WebPlatformConfig,
 } from './platform-config'
 export { platformConfigSchema } from './platform-config'
+export type { Use, UseAndroid, UseIos, UseWeb, UseWebAuthState } from './use'
+export { useSchema } from './use'
