@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import type { z } from 'zod'
+import type { PlatformConfig } from '../config/platform-config'
 import { platformConfigSchema } from '../config/platform-config'
 
 describe('platformConfigSchema', () => {
+  const config: PlatformConfig = {} as z.infer<typeof platformConfigSchema>
+  void config
+
   it('accepts valid web config', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'web',
