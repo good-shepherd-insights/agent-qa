@@ -30,3 +30,25 @@ export type { ElementInfo, ElementState, ElementLabels, ElementHierarchy } from 
 export type { ScreenState } from './screen/index'
 export type { ScreenStateMetadata, ScreenStateMetadataBase } from './screen/index'
 export type { ModelCapabilities } from './capability/index'
+export type {
+  AndroidPlatformConfig,
+  BrowserConfig,
+  DeviceConfig,
+  IosPlatformConfig,
+  PlatformBase,
+  PlatformConfig,
+  RemoteDeviceConfig,
+  TimeoutConfig,
+  WebAuthStateConfig,
+  WebPlatformConfig,
+} from './config/index'
+export {
+  appStateSchema,
+  browserConfigSchema,
+  deviceConfigSchema,
+  platformBase,
+  platformConfigSchema,
+  remoteDeviceSchema,
+  timeoutConfigSchema,
+  viewportSchema,
+} from './config/index'
