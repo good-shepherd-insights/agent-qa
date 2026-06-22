@@ -25,3 +25,8 @@ export type {
 export type { ActionExecutor, ActionsFor } from './action/adapter'
 export type { ActionAnnotation, ActionResult } from './result/index'
 export { normalizeAccessibleName } from './screen/index'
+export type { ElementBounds, ScrollContext } from './screen/index'
+export type { ElementInfo, ElementState, ElementLabels, ElementHierarchy } from './screen/index'
+export type { ScreenState } from './screen/index'
+export type { ScreenStateMetadata, ScreenStateMetadataBase } from './screen/index'
+export type { ModelCapabilities } from './capability/index'

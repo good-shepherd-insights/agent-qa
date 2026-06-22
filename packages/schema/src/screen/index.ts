@@ -1,1 +1,5 @@
 export { normalizeAccessibleName } from './normalize-name'
+export type { ElementBounds, ScrollContext } from './element-bounds'
+export type { ElementInfo, ElementState, ElementLabels, ElementHierarchy } from './element-info'
+export type { ScreenState } from './screen-state'
+export type { ScreenStateMetadata, ScreenStateMetadataBase } from './metadata'
