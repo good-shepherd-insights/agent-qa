@@ -24,3 +24,4 @@ export type {
 } from './action/index'
 export type { ActionExecutor, ActionsFor } from './action/adapter'
 export type { ActionAnnotation, ActionResult } from './result/index'
+export { normalizeAccessibleName } from './screen/index'

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeAccessibleName } from '../screen/normalize-name'
+import { normalizeAccessibleName } from '../index'
 
 describe('normalizeAccessibleName', () => {
   it('SC3: dynamic count drift collapses to one identity', () => {
