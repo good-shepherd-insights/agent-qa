@@ -1,1 +1,6 @@
 export { sha256hex, sha256hex16 } from './sha256'
+export { screenIdentityHash, screenStateHash } from './screen-hash'
+export { relevantEnvDigest } from './env-digest'
+export { computeCacheKey } from './cache-key'
+export type { RedactedEnvVar } from './env-digest'
+export type { CacheKey, CacheableStepInput, NonCacheableStepInput } from './cache-key'

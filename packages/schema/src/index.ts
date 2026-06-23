@@ -59,3 +59,16 @@ export {
   viewportSchema,
 } from './config/index'
 export { sha256hex, sha256hex16 } from './determinism/index'
+export type { ScopeKey, ScopeTier, Anchor } from './identity/index'
+export {
+  screenIdentityHash,
+  screenStateHash,
+  relevantEnvDigest,
+  computeCacheKey,
+} from './determinism/index'
+export type {
+  CacheKey,
+  CacheableStepInput,
+  NonCacheableStepInput,
+  RedactedEnvVar,
+} from './determinism/index'
