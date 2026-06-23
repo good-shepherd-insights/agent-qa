@@ -1,2 +1,2 @@
 export type { ActionAnnotation, ActionAnnotationBase } from './annotation'
-export type { ActionResult } from './action-result'
+export type { ActionResult, RecordedActionResult } from './action-result'

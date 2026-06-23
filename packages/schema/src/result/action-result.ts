@@ -8,3 +8,5 @@ export interface ActionResult {
   metadata?: Record<string, unknown>
   annotation?: ActionAnnotation
 }
+
+export type RecordedActionResult = Omit<ActionResult, 'screenshot'>
