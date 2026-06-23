@@ -72,3 +72,20 @@ export type {
   NonCacheableStepInput,
   RedactedEnvVar,
 } from './determinism/index'
+
+// 314 async-seam
+export { asRunId } from './run/index'
+export { asRecordId, asIssueId, asEvidenceToken } from './ids/index'
+export { computeBriefDigest } from './brief/index'
+export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
+export type { RunStatus, ExecutionContext, RunId } from './run/index'
+export type { RecordId, IssueId, EvidenceToken, ArtifactRef } from './ids/index'
+export type { Verdict, VerdictEvidence } from './verdict/index'
+export type { DeltaEnvelope, CompareAndSet, BundleDraft, Delta, IssueDelta } from './delta/index'
+export type { ServedBrief, BriefLine, ReadTrace, CautionLine } from './brief/index'
+export type {
+  CompletedRunHandoff,
+  PerTestOutcome,
+  StepEvidence,
+  SubActionEvidence,
+} from './handoff/index'
