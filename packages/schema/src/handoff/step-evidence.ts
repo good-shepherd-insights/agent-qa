@@ -1,6 +1,6 @@
 import type { Action } from '../action/index'
 import type { ServedBrief } from '../brief/served-brief'
-import type { ActionResult } from '../result/index'
+import type { RecordedActionResult } from '../result/index'
 import type { SubActionEvidence } from './sub-action-evidence'
 
 export interface VerifierVerdict {
@@ -11,7 +11,7 @@ export interface VerifierVerdict {
 export interface Decision {
   plan: string
   plannedAction: Action
-  result: ActionResult
+  result: RecordedActionResult
 }
 
 export interface StepEvidence {
