@@ -89,3 +89,26 @@ export type {
   StepEvidence,
   SubActionEvidence,
 } from './handoff/index'
+
+// 315 run+agent DTOs
+export type { RunSession } from './run/index'
+export type { Job, JobKind, JobStatus, JobConclusionKind, JobId } from './job/index'
+export { asJobId, jobSchema } from './job/index'
+export type {
+  Approval,
+  ActionProposal,
+  QaProposalKind,
+  ProposalStatus,
+  ApprovalPolicy,
+  ApprovalDecision,
+  ApprovalId,
+  ProposalId,
+} from './approval/index'
+export {
+  asApprovalId,
+  asProposalId,
+  approvalSchema,
+  actionProposalSchema,
+} from './approval/index'
+export type { Patch, FileChange, Hunk, PatchStatus, PatchId } from './patch/index'
+export { asPatchId, patchSchema } from './patch/index'
