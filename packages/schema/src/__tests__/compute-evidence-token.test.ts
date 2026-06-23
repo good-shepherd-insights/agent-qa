@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { computeEvidenceToken } from '../ids/compute-evidence-token'
 import type { EvidenceTokenInput } from '../ids/compute-evidence-token'
 
-const GOLDEN_EVIDENCE_TOKEN = '0000000000000000'
+const GOLDEN_EVIDENCE_TOKEN = '7e88f85195fc3604'
 
 function makeInput(overrides: Partial<EvidenceTokenInput> = {}): EvidenceTokenInput {
   return {
