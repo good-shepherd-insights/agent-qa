@@ -7,7 +7,7 @@ import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence, VerifierVerdict } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
-import type { ActionResult } from '../result/index'
+import type { RecordedActionResult } from '../result/index'
 import type { RunStatus } from '../run/run-status'
 import type { ScreenState } from '../screen/screen-state'
 
@@ -21,6 +21,7 @@ const invalidAggregateVerdict: CompletedRunHandoff['aggregateVerdict'] = verdict
 expectTypeOf<SubActionEvidence['stateBefore']>().toEqualTypeOf<ScreenState>()
 expectTypeOf<SubActionEvidence['stateAfter']>().toEqualTypeOf<ScreenState | undefined>()
 expectTypeOf<SubActionEvidence['artifactRefs']>().toEqualTypeOf<ArtifactRef[] | undefined>()
+expectTypeOf<SubActionEvidence['decisionScreenshotRef']>().toEqualTypeOf<ArtifactRef | undefined>()
 
 expectTypeOf<CompletedRunHandoff['tests']>().toEqualTypeOf<PerTestOutcome[]>()
 expectTypeOf<PerTestOutcome['steps']>().toEqualTypeOf<StepEvidence[]>()
@@ -40,7 +41,7 @@ const verifierVerdictShaped = { class: 'app_bug' as const }
 const invalidVerifierVerdict: StepEvidence['verifierVerdict'] = verifierVerdictShaped
 
 expectTypeOf<SubActionEvidence['plannedAction']>().toEqualTypeOf<Action>()
-expectTypeOf<SubActionEvidence['result']>().toEqualTypeOf<ActionResult>()
+expectTypeOf<SubActionEvidence['result']>().toEqualTypeOf<RecordedActionResult>()
 expectTypeOf<PerTestOutcome['outcome']>().toEqualTypeOf<RunStatus>()
 
 void invalidAggregateVerdict
