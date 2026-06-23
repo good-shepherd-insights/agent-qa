@@ -112,3 +112,9 @@ export {
 } from './approval/index'
 export type { Patch, FileChange, Hunk, PatchStatus, PatchId } from './patch/index'
 export { asPatchId, patchSchema } from './patch/index'
+
+// 316 seam helpers
+export type { RecordedActionResult } from './result/index'
+export type { VerifierVerdict, Decision } from './handoff/index'
+export type { BundleKind, OriginStage } from './delta/index'
+export { computeEvidenceToken } from './ids/index'
