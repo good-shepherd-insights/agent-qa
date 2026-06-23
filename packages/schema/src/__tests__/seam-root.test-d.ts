@@ -6,28 +6,35 @@ import {
   asRecordId,
   asRunId,
   computeBriefDigest,
+  computeEvidenceToken,
 } from '../index'
 import type {
+  ActionResult,
   ArtifactRef,
   BriefLine,
+  BundleKind,
   BundleDraft,
   CautionLine,
   CompareAndSet,
   CompletedRunHandoff,
   Delta,
   DeltaEnvelope,
+  Decision,
   EvidenceToken,
   ExecutionContext,
   IssueDelta,
   IssueId,
+  OriginStage,
   PerTestOutcome,
   ReadTrace,
   RecordId,
+  RecordedActionResult,
   RunId,
   RunStatus,
   ServedBrief,
   StepEvidence,
   SubActionEvidence,
+  VerifierVerdict,
   Verdict,
   VerdictEvidence,
 } from '../index'
@@ -39,6 +46,7 @@ expectTypeOf(asRunId).returns.toEqualTypeOf<RunId>()
 expectTypeOf(asRecordId).returns.toEqualTypeOf<RecordId>()
 expectTypeOf(asIssueId).returns.toEqualTypeOf<IssueId>()
 expectTypeOf(asEvidenceToken).returns.toEqualTypeOf<EvidenceToken>()
+expectTypeOf(computeEvidenceToken).returns.toEqualTypeOf<EvidenceToken>()
 
 expectTypeOf<CompletedRunHandoff['runId']>().toEqualTypeOf<RunId>()
 expectTypeOf<CompletedRunHandoff['executionContext']>().toEqualTypeOf<ExecutionContext>()
@@ -48,7 +56,14 @@ expectTypeOf<PerTestOutcome['outcome']>().toEqualTypeOf<RunStatus>()
 expectTypeOf<PerTestOutcome['steps']>().toEqualTypeOf<StepEvidence[]>()
 expectTypeOf<StepEvidence['servedBrief']>().toEqualTypeOf<ServedBrief>()
 expectTypeOf<StepEvidence['subActions']>().toEqualTypeOf<SubActionEvidence[]>()
+expectTypeOf<StepEvidence['verifierVerdict']>().toEqualTypeOf<VerifierVerdict>()
+expectTypeOf<VerifierVerdict>().toEqualTypeOf<{ pass: boolean; reasoning: string }>()
+expectTypeOf<NonNullable<StepEvidence['selfHeal']>['failedDecision']>().toEqualTypeOf<
+  Decision
+>()
 expectTypeOf<SubActionEvidence['artifactRefs']>().toEqualTypeOf<ArtifactRef[] | undefined>()
+expectTypeOf<SubActionEvidence['result']>().toEqualTypeOf<RecordedActionResult>()
+expectTypeOf<RecordedActionResult>().toEqualTypeOf<Omit<ActionResult, 'screenshot'>>()
 
 expectTypeOf<Verdict['class']>().toEqualTypeOf<
   'app_bug' | 'test_bug' | 'environment' | 'flake' | 'config_error' | 'llm_error'
@@ -59,6 +74,8 @@ expectTypeOf<VerdictEvidence['citedArtifacts']>().toEqualTypeOf<ArtifactRef[]>()
 expectTypeOf<DeltaEnvelope['citedIds']>().toEqualTypeOf<RecordId[]>()
 expectTypeOf<NonNullable<DeltaEnvelope['precondition']>[number]>().toEqualTypeOf<CompareAndSet>()
 expectTypeOf<BundleDraft['distilledEvidenceRef']>().toEqualTypeOf<ArtifactRef>()
+expectTypeOf<BundleDraft['kind']>().toEqualTypeOf<BundleKind>()
+expectTypeOf<BundleDraft['originStage']>().toEqualTypeOf<OriginStage>()
 expectTypeOf<Extract<Delta, { kind: 'Confirm' }>['evidenceToken']>().toEqualTypeOf<
   EvidenceToken
 >()
