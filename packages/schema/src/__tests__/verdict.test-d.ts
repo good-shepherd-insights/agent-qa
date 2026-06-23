@@ -58,8 +58,8 @@ const flake: FlakeVerdict = {
 // @ts-expect-error non-test_bug verdict arms carry no subtype.
 flake.subtype
 
-// @ts-expect-error Verdict is a closed union with no `other` arm or free-form class string.
 const invalidOther: Verdict = {
+  // @ts-expect-error Verdict is a closed union with no `other` arm or free-form class string.
   class: 'other',
   confidence: 1,
   evidence,
@@ -75,10 +75,10 @@ const missingMisdirectionGuard: Verdict = {
   perTest: 0,
 }
 
-// @ts-expect-error evidence must be structured VerdictEvidence, never a bare rationale string.
 const bareStringEvidence: Verdict = {
   class: 'llm_error',
   confidence: 0.2,
+  // @ts-expect-error evidence must be structured VerdictEvidence, never a bare rationale string.
   evidence: 'the model guessed',
   memoryMisdirectionRuledOut: true,
   perTest: 0,
