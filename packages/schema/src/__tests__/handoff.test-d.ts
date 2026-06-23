@@ -6,6 +6,7 @@ import type { CompletedRunHandoff } from '../handoff/completed-run-handoff'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence, VerifierVerdict } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
+import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ActionResult } from '../result/index'
 import type { RunStatus } from '../run/run-status'
 import type { ScreenState } from '../screen/screen-state'
@@ -19,6 +20,7 @@ const invalidAggregateVerdict: CompletedRunHandoff['aggregateVerdict'] = verdict
 
 expectTypeOf<SubActionEvidence['stateBefore']>().toEqualTypeOf<ScreenState>()
 expectTypeOf<SubActionEvidence['stateAfter']>().toEqualTypeOf<ScreenState | undefined>()
+expectTypeOf<SubActionEvidence['artifactRefs']>().toEqualTypeOf<ArtifactRef[] | undefined>()
 
 expectTypeOf<CompletedRunHandoff['tests']>().toEqualTypeOf<PerTestOutcome[]>()
 expectTypeOf<PerTestOutcome['steps']>().toEqualTypeOf<StepEvidence[]>()
