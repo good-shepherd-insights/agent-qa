@@ -6,6 +6,14 @@
     },
     "packages/cli": {
       "entry": ["src/commands/*.ts"]
+    },
+    "packages/schema": {
+      "entry": [
+        "src/index.ts",
+        "src/**/__tests__/*.test-d.ts",
+        "src/**/__tests__/*.test.ts"
+      ],
+      "project": ["src/**/*.ts"]
     }
   },
   "ignoreDependencies": [
