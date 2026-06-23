@@ -13,7 +13,8 @@
         "src/**/__tests__/*.test-d.ts",
         "src/**/__tests__/*.test.ts"
       ],
-      "project": ["src/**/*.ts"]
+      "project": ["src/**/*.ts"],
+      "ignoreExportsUsedInFile": true
     }
   },
   "ignoreDependencies": [
