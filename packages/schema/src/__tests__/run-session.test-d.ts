@@ -5,6 +5,7 @@ import type { RunSession } from '../run/run-session'
 expectTypeOf<RunSession['id']>().toEqualTypeOf<RunId>()
 expectTypeOf<RunSession['status']>().toEqualTypeOf<RunStatus>()
 expectTypeOf<RunSession['executionContext']>().toEqualTypeOf<ExecutionContext>()
+expectTypeOf<keyof RunSession>().toEqualTypeOf<'id' | 'status' | 'executionContext'>()
 
 const ok: RunSession = {
   id: '' as RunId,
