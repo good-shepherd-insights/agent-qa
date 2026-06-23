@@ -58,3 +58,4 @@ export {
   useSchema,
   viewportSchema,
 } from './config/index'
+export { sha256hex, sha256hex16 } from './determinism/index'
