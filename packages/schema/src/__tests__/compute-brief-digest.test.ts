@@ -95,7 +95,9 @@ const reorderedFixtureBrief: ServedBrief = {
 
 describe('computeBriefDigest', () => {
   it('matches the served brief known vector', () => {
-    expect(computeBriefDigest(fixtureBrief)).toBe('PIN_AFTER_GREEN')
+    expect(computeBriefDigest(fixtureBrief)).toBe(
+      'd71b935ac67bda8109f6501c8e01e6d58090f093a8aebc0bfd21dfef791b2e12',
+    )
   })
 
   it('is deterministic for repeated inputs', () => {
