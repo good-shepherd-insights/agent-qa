@@ -30,6 +30,10 @@ describe('module discipline', () => {
       /\bfetch\(/,
       /child_process/,
       /globalThis\./,
+      /\bTextEncoder\b/,
+      /\bcrypto\b/,
+      /\bnew Date\b|\bDate\.(now|UTC|parse)\b/,
+      /\bMath\.random\b/,
     ]
     const offenders: string[] = []
 
