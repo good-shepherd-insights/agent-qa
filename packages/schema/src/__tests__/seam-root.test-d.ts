@@ -7,6 +7,7 @@ import {
   asRunId,
   computeBriefDigest,
   computeEvidenceToken,
+  toRecordedActionResult,
 } from '../index'
 import type {
   ActionResult,
@@ -63,7 +64,11 @@ expectTypeOf<NonNullable<StepEvidence['selfHeal']>['failedDecision']>().toEqualT
 >()
 expectTypeOf<SubActionEvidence['artifactRefs']>().toEqualTypeOf<ArtifactRef[] | undefined>()
 expectTypeOf<SubActionEvidence['result']>().toEqualTypeOf<RecordedActionResult>()
-expectTypeOf<RecordedActionResult>().toEqualTypeOf<Omit<ActionResult, 'screenshot'>>()
+expectTypeOf<Omit<RecordedActionResult, 'screenshot'>>().toEqualTypeOf<
+  Omit<ActionResult, 'screenshot'>
+>()
+expectTypeOf(toRecordedActionResult).parameter(0).toEqualTypeOf<ActionResult>()
+expectTypeOf(toRecordedActionResult).returns.toEqualTypeOf<RecordedActionResult>()
 
 expectTypeOf<Verdict['class']>().toEqualTypeOf<
   'app_bug' | 'test_bug' | 'environment' | 'flake' | 'config_error' | 'llm_error'

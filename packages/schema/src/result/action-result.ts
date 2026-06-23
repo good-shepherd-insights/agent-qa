@@ -9,4 +9,13 @@ export interface ActionResult {
   annotation?: ActionAnnotation
 }
 
-export type RecordedActionResult = Omit<ActionResult, 'screenshot'>
+export type RecordedActionResult = Omit<ActionResult, 'screenshot'> & {
+  readonly screenshot?: never
+}
+
+export function toRecordedActionResult(result: ActionResult): RecordedActionResult {
+  const { screenshot: _screenshot, ...recorded } = result
+  void _screenshot
+
+  return recorded as RecordedActionResult
+}
