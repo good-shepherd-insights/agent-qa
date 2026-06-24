@@ -1,5 +1,6 @@
 import type { Point } from '../primitives/point'
 import type { Ref } from '../primitives/ref'
+import type { Fill } from './params'
 import type { NoPlatform, RefTargeted, TabSelector } from './shared'
 
 type WebRefTargeted = RefTargeted & { ref: Ref }
@@ -12,11 +13,9 @@ export type WebAction = NoPlatform & (
   | ({ type: 'click'; clickDelay?: number } & WebRefTargeted)
   | ({ type: 'doubleClick'; relativePosition?: Point; clickDelay?: number } & WebRefTargeted)
   | ({ type: 'rightClick'; relativePosition?: Point; clickDelay?: number } & WebRefTargeted)
-  | ({ type: 'fill'; value: string } & WebRefTargeted)
+  | ({ type: 'fill' } & Fill)
   | ({ type: 'select'; value: string } & WebRefTargeted)
-  | ({ type: 'nativeSelect'; value: string } & WebRefTargeted)
   | ({ type: 'hover' } & WebRefTargeted)
-  | { type: 'keypress'; keys: string[]; convertPlatformKeys?: boolean }
   | { type: 'keyDown'; key: string }
   | { type: 'keyUp'; key: string }
   | ({ type: 'paste'; value: string } & WebRefTargeted)

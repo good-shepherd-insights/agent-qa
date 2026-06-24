@@ -1,11 +1,11 @@
-import type { Ref } from '../primitives/ref'
+import type { Scroll, WaitFor } from './params'
 import type { NoPlatform, RefTargeted } from './shared'
 
-export type CrossPlatformAction = NoPlatform & (
+export type CommonAction = NoPlatform & (
   | { type: 'assert'; condition: string; expected?: string; visual?: boolean }
-  | { type: 'waitFor'; condition: string; timeout?: number }
+  | ({ type: 'waitFor' } & WaitFor)
   | { type: 'delay'; ms: number }
-  | { type: 'scroll'; scrollType: 'vertical' | 'horizontal'; value: number; ref?: Ref; duration?: number }
+  | ({ type: 'scroll' } & Scroll)
   | ({ type: 'clearText' } & RefTargeted)
   | {
       type: 'openLink'
@@ -17,4 +17,5 @@ export type CrossPlatformAction = NoPlatform & (
     }
   | { type: 'executeScript'; command: string; args?: unknown }
   | { type: 'setVariable'; name: string; value: string }
+  | { type: 'keypress'; keys: string[]; convertPlatformKeys?: boolean }
 )
