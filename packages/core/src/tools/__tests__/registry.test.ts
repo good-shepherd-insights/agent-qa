@@ -353,11 +353,11 @@ describe('toolCallToActionPlan', () => {
 })
 
 describe('surface + id integrity', () => {
-  it('registers exactly 46 action tools', () => {
+  it('registers exactly 43 action tools', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const all = registry.getAll()
-    expect(all).toHaveLength(46)
+    expect(all).toHaveLength(43)
   })
 
   it('every action has category "action"', () => {
