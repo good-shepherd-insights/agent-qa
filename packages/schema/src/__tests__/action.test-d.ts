@@ -4,69 +4,68 @@ import type {
   Action,
   ActionExecutor,
   ActionsFor,
-  CrossPlatformAction,
+  AndroidAction,
+  CommonAction,
+  IosAction,
   MobileAction,
   Platform,
+  Surface,
   WebAction,
 } from '../index'
 
-type AllVerbs =
-  | 'navigate'
-  | 'refresh'
-  | 'navigateHistory'
-  | 'waitForUrl'
-  | 'click'
-  | 'doubleClick'
-  | 'rightClick'
-  | 'fill'
-  | 'select'
-  | 'nativeSelect'
-  | 'hover'
-  | 'keypress'
-  | 'keyDown'
-  | 'keyUp'
-  | 'paste'
-  | 'copy'
-  | 'fileUpload'
-  | 'newTab'
-  | 'switchTab'
-  | 'readConsoleLogs'
-  | 'readNetworkLogs'
-  | 'readCookies'
-  | 'setCookies'
-  | 'readLocalStorage'
-  | 'setLocalStorage'
-  | 'tap'
-  | 'doubleTap'
-  | 'multiTap'
-  | 'tapCoordinate'
-  | 'swipe'
-  | 'longpress'
-  | 'pinch'
-  | 'drag'
-  | 'hideKeyboard'
-  | 'setOrientation'
-  | 'launchApp'
-  | 'stopApp'
-  | 'assert'
-  | 'waitFor'
-  | 'delay'
-  | 'scroll'
-  | 'clearText'
-  | 'openLink'
-  | 'executeScript'
-  | 'setVariable'
-
-expectTypeOf<Action['type']>().toEqualTypeOf<AllVerbs>()
-
-expectTypeOf<Extract<WebAction['type'], MobileAction['type']>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<WebAction['type'], CrossPlatformAction['type']>>().toEqualTypeOf<never>()
-expectTypeOf<Extract<MobileAction['type'], CrossPlatformAction['type']>>().toEqualTypeOf<never>()
-
+expectTypeOf<Surface>().toEqualTypeOf<'web' | 'mobile' | 'android' | 'ios' | 'common'>()
 expectTypeOf<Platform>().toEqualTypeOf<'web' | 'android' | 'ios'>()
-expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<WebAction | CrossPlatformAction>()
-expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<MobileAction | CrossPlatformAction>()
-expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<MobileAction | CrossPlatformAction>()
+
+expectTypeOf<AndroidAction>().toEqualTypeOf<never>()
+expectTypeOf<IosAction>().toEqualTypeOf<never>()
+
+// `fill` intentionally appears in both web and mobile with the exact shared Fill shape.
+type SharedWebMobileVerb = 'fill'
+expectTypeOf<Extract<WebAction['type'], MobileAction['type']>>().toEqualTypeOf<SharedWebMobileVerb>()
+expectTypeOf<
+  Exclude<Extract<WebAction['type'], MobileAction['type']>, SharedWebMobileVerb>
+>().toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction['type'], CommonAction['type']>>().toEqualTypeOf<never>()
+expectTypeOf<Extract<MobileAction['type'], CommonAction['type']>>().toEqualTypeOf<never>()
+
+// Closure is currently over web, mobile, and common; Android/iOS join in Phase 323.
+type LegUnion =
+  | WebAction['type']
+  | MobileAction['type']
+  | AndroidAction['type']
+  | IosAction['type']
+  | CommonAction['type']
+
+expectTypeOf<Exclude<Action['type'], LegUnion>>().toEqualTypeOf<never>()
+expectTypeOf<Exclude<LegUnion, Action['type']>>().toEqualTypeOf<never>()
+
+expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<WebAction | CommonAction>()
+expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<MobileAction | CommonAction>()
+expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<MobileAction | CommonAction>()
+
+expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<MobileAction, { type: 'nativeSelect' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'keypress' }>>().toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'nativeSelect' }>>().toEqualTypeOf<never>()
+
+expectTypeOf<Extract<WebAction, { type: 'fill' }>>().toEqualTypeOf<
+  Extract<MobileAction, { type: 'fill' }>
+>()
+expectTypeOf<Extract<WebAction, { type: 'keyDown' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'keyUp' }>>().not.toEqualTypeOf<never>()
+
+type CommonAssert = Extract<CommonAction, { type: 'assert' }>
+expectTypeOf<CommonAssert>().toMatchTypeOf<{
+  type: 'assert'
+  condition: string
+  expected?: string
+  visual?: boolean
+}>()
+expectTypeOf<Extract<keyof CommonAssert, 'claim' | 'kind' | 'evidence'>>().toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'openLink' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'executeScript' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<MobileAction, { type: 'launchApp' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<MobileAction, { type: 'stopApp' }>>().not.toEqualTypeOf<never>()
 
 const webExec = (((_: never) => {}) as unknown) as ActionExecutor<'web'>
 webExec({ type: 'click', ref: asRef('e1') })
