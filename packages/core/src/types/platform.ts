@@ -1,19 +1,38 @@
 // Platform-agnostic types for the PlatformAdapter contract.
 // CRITICAL: No imports from playwright-core, webdriverio, or any platform package.
 
+import type {
+  AndroidAction,
+  CommonAction,
+  IosAction,
+  MobileAction,
+  Platform,
+  WebAction,
+} from '@vostride/agent-qa-schema'
 import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
 
 export interface ObserveOptions {
   extractDom?: boolean
 }
 
-export interface PlatformAdapter {
-  readonly platform: 'web' | 'android' | 'ios'
+type WebVerbs = (WebAction | CommonAction)['type']
+type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type']
+type IosVerbs = (MobileAction | IosAction | CommonAction)['type']
+
+export type ActionsFor<P extends Platform = Platform> =
+  P extends 'web'
+    ? Extract<Action, { type: WebVerbs }>
+    : P extends 'android'
+      ? Extract<Action, { type: MobileVerbs }>
+      : Extract<Action, { type: IosVerbs }>
+
+export interface PlatformAdapter<P extends Platform = Platform> {
+  readonly platform: P
 
   setup(config: PlatformConfig): Promise<void>
   cleanup(): Promise<void>
   observe(options?: ObserveOptions): Promise<ScreenState>
-  execute(action: Action): Promise<ActionResult>
+  execute(action: ActionsFor<P>): Promise<ActionResult>
   screenshot?(): Promise<Buffer | undefined>
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
@@ -94,6 +113,11 @@ export type Action =
   | { type: 'tapCoordinate'; x: number; y: number }
   | { type: 'executeScript'; command: string; args?: unknown }
   | { type: 'setVariable'; name: string; value: string }
+
+export function assertNever(value: never): never {
+  const type = (value as { type?: string }).type
+  throw new Error(`Unhandled action type: ${type ?? String(value)}`)
+}
 
 export interface ActionResult {
   success: boolean
