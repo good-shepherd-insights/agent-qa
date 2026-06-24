@@ -16,7 +16,7 @@ export { asRef, type Ref, type Point, type BoundingBox, type Viewport } from './
 export type {
   Action,
   AndroidAction,
-  CrossPlatformAction,
+  CommonAction,
   IosAction,
   MobileAction,
   Platform,
