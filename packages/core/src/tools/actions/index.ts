@@ -1,16 +1,35 @@
 import { z } from 'zod'
+import type { Surface } from '@vostride/agent-qa-schema'
 import type { ToolRegistry } from '../registry.js'
 import type { ToolDefinition } from '../types.js'
-import { getPlatformFilter } from './platform-filters.js'
+import { NON_EXPOSED, VERB_SURFACE } from './surface-map.js'
 
-function action(name: string, description: string, schema: z.ZodObject<any>): ToolDefinition {
+function actionWithSurface(verb: string, surface: Surface, description: string, schema: z.ZodObject<any>): ToolDefinition {
   return {
-    name,
+    id: `${surface}_${verb}`,
+    type: verb,
+    surface,
+    exposed: !NON_EXPOSED.has(verb),
     description,
     category: 'action',
-    platform: getPlatformFilter(name),
     schema,
   }
+}
+
+function action(verb: string, description: string, schema: z.ZodObject<any>): ToolDefinition {
+  const surface = VERB_SURFACE[verb]
+  if (!surface) throw new Error(`No surface mapping for verb "${verb}"`)
+  return actionWithSurface(verb, surface, description, schema)
+}
+
+const fillSchema = z.object({
+  ref: z.string().describe('Element reference for the input field'),
+  value: z.string().describe('Text value to fill into the input'),
+})
+
+const mobileFillDefinition = actionWithSurface('fill', 'mobile', 'Fill text into an input field', fillSchema)
+if (mobileFillDefinition.id !== 'mobile_fill') {
+  throw new Error(`Unexpected mobile fill id "${mobileFillDefinition.id}"`)
 }
 
 const ACTION_DEFINITIONS: ToolDefinition[] = [
@@ -19,10 +38,9 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
   })),
 
-  action('fill', 'Fill text into an input field', z.object({
-    ref: z.string().describe('Element reference for the input field'),
-    value: z.string().describe('Text value to fill into the input'),
-  })),
+  action('fill', 'Fill text into an input field', fillSchema),
+
+  mobileFillDefinition,
 
   action('select', 'Select an option from a dropdown', z.object({
     ref: z.string().describe('Element reference for the select/dropdown'),
