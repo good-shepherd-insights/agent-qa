@@ -416,30 +416,6 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     expect(result.error).toContain('Element detached')
   })
 
-  it('execute mobile actions returns rejection', async () => {
-    await adapter.setup({ platform: 'web' })
-
-    const tapResult = await adapter.execute({ type: 'tap', ref: 'e1' })
-    expect(tapResult.success).toBe(false)
-    expect(tapResult.error).toContain('mobile-only gesture')
-
-    const swipeResult = await adapter.execute({ type: 'swipe', direction: 'up' })
-    expect(swipeResult.success).toBe(false)
-    expect(swipeResult.error).toContain('mobile-only gesture')
-
-    const longpressResult = await adapter.execute({ type: 'longpress', ref: 'e1' })
-    expect(longpressResult.success).toBe(false)
-    expect(longpressResult.error).toContain('mobile-only gesture')
-
-    const pinchResult = await adapter.execute({ type: 'pinch', scale: 0.5 })
-    expect(pinchResult.success).toBe(false)
-    expect(pinchResult.error).toContain('mobile-only gesture')
-
-    const multiTapResult = await adapter.execute({ type: 'multiTap', fingers: 2 })
-    expect(multiTapResult.success).toBe(false)
-    expect(multiTapResult.error).toContain('mobile-only gesture')
-  })
-
   it('action validation: fill on button returns validation error', async () => {
     await adapter.setup({ platform: 'web' })
     await adapter.observe()

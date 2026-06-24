@@ -1,6 +1,6 @@
 import type { Browser, BrowserContext, Page } from 'playwright-core'
-import type { PlatformAdapter, PlatformConfig, ScreenState, Action, ActionResult, ObserveOptions, ConsoleLogEntry, NetworkLogEntry } from '@vostride/agent-qa-core'
-import { convertKeysForPlatform, isMacPlatform, warnIfOutOfBounds } from '@vostride/agent-qa-core'
+import type { PlatformAdapter, PlatformConfig, ScreenState, ActionResult, ObserveOptions, ConsoleLogEntry, NetworkLogEntry, ActionsFor } from '@vostride/agent-qa-core'
+import { assertNever, convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
 import { observePage } from './observer.js'
 import { ElementResolver } from './element-resolver.js'
 import { validateAction } from './action-validator.js'
@@ -21,7 +21,7 @@ function clickDelayOption(clickDelay?: number): { delay?: number } {
   return clickDelay !== undefined && clickDelay > 0 ? { delay: clickDelay } : {}
 }
 
-export class WebPlatformAdapter implements PlatformAdapter {
+export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   readonly platform = 'web' as const
 
   private browser: Browser | null = null
@@ -120,7 +120,7 @@ export class WebPlatformAdapter implements PlatformAdapter {
     return state
   }
 
-  async execute(action: Action): Promise<ActionResult> {
+  async execute(action: ActionsFor<'web'>): Promise<ActionResult> {
     if (!this.page) {
       throw new Error('WebPlatformAdapter not initialized — call setup() first')
     }
@@ -291,7 +291,7 @@ export class WebPlatformAdapter implements PlatformAdapter {
     return undefined
   }
 
-  private async executeAction(action: Action): Promise<ActionResult> {
+  private async executeAction(action: ActionsFor<'web'>): Promise<ActionResult> {
     const page = this.page!
     const resolver = new ElementResolver(page, this.lastRefs)
 
@@ -594,20 +594,6 @@ export class WebPlatformAdapter implements PlatformAdapter {
         return { success: true, boundingBox: clearBox ?? undefined }
       }
 
-      case 'drag': {
-        const fromLoc = resolver.resolve(action.fromRef)
-        const toLoc = resolver.resolve(action.toRef)
-        await fromLoc.dragTo(toLoc)
-        return { success: true }
-      }
-
-      case 'doubleTap': {
-        const dblLoc = resolver.resolve(action.ref)
-        const dblBox = await resolver.getBoundingBox(action.ref)
-        await dblLoc.dblclick()
-        return { success: true, boundingBox: dblBox ?? undefined }
-      }
-
       case 'doubleClick': {
         const locator = resolver.resolve(action.ref)
         const box = await resolver.getBoundingBox(action.ref)
@@ -683,38 +669,16 @@ export class WebPlatformAdapter implements PlatformAdapter {
         return { success: true }
       }
 
-      // Mobile-only actions — graceful unsupported messages
-      case 'tap':
-      case 'swipe':
-      case 'longpress':
-      case 'pinch':
-      case 'multiTap': {
-        return { success: false, error: `${action.type} is a mobile-only gesture` }
-      }
-
-      case 'tapCoordinate': {
-        const vp = page.viewportSize()
-        if (vp) {
-          warnIfOutOfBounds({ x: action.x, y: action.y }, { width: vp.width, height: vp.height }, 'tapCoordinate')
-        }
-        await page.mouse.click(action.x, action.y)
-        return { success: true, coordinates: { x: action.x, y: action.y } }
-      }
-
       case 'executeScript': {
         return { success: false, error: 'executeScript is a mobile-only action' }
       }
 
-      case 'hideKeyboard':
-      case 'launchApp':
-      case 'stopApp':
-      case 'setOrientation': {
+      case 'setVariable': {
         return { success: true }
       }
 
-      default: {
-        return { success: false, error: `Unknown action type: ${(action as any).type}` }
-      }
+      default:
+        return assertNever(action)
     }
   }
 }
