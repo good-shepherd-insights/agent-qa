@@ -1,107 +1,150 @@
 import { describe, it, expect } from 'vitest'
-import { defaultRegistry, MOBILE_ONLY_ACTIONS, WEB_ONLY_ACTIONS } from '../../tools/index.js'
+import type { Platform } from '@vostride/agent-qa-schema'
+import { defaultRegistry } from '../../tools/index.js'
+import { EXPOSURE } from '../../tools/registry.js'
 
-const ACTION_NAMES = [
-  'click', 'fill', 'select', 'nativeSelect', 'navigate', 'scroll', 'waitFor', 'delay', 'assert',
-  'keypress', 'hover', 'paste', 'keyDown', 'keyUp', 'refresh', 'navigateHistory',
-  'readConsoleLogs', 'readNetworkLogs', 'readCookies', 'setCookies', 'readLocalStorage', 'setLocalStorage',
-  'tap', 'swipe', 'longpress',
-  'hideKeyboard', 'clearText', 'openLink', 'drag', 'doubleTap',
-  'launchApp', 'stopApp', 'setOrientation', 'pinch', 'multiTap',
-  'tapCoordinate', 'executeScript', 'setVariable',
-  'newTab', 'switchTab',
-  'doubleClick', 'rightClick',
-  'waitForUrl', 'fileUpload', 'copy',
-]
+function actionLines(docs: string): string[] {
+  return docs.split('\n').filter((line: string) => line.startsWith('- '))
+}
+
+function expectedLineCount(platform: Platform): number {
+  const surfaces = EXPOSURE[platform]
+  return defaultRegistry.getAll().filter(def => def.exposed !== false && surfaces.has(def.surface)).length
+}
 
 describe('defaultRegistry.generateDocs', () => {
   describe('no platform filter (all actions)', () => {
-    it('returns a string containing all 45 action types', () => {
+    it('returns a string containing all registered action ids', () => {
       const result = defaultRegistry.generateDocs()
-      for (const type of ACTION_NAMES) {
-        expect(result).toContain(type)
+
+      for (const { id } of defaultRegistry.getAll()) {
+        expect(result).toMatch(new RegExp(`^- ${id}:`, 'm'))
       }
     })
 
-    it('contains exactly 45 action lines', () => {
+    it('contains exactly 46 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      const lines = result.split('\n').filter((l: string) => l.startsWith('- '))
-      expect(lines).toHaveLength(45)
+      expect(actionLines(result)).toHaveLength(46)
     })
   })
 
-  describe('web platform (excludes mobile-only)', () => {
-    it('excludes all 11 mobile-only actions', () => {
+  describe('web platform', () => {
+    it('includes click and excludes tap', () => {
       const result = defaultRegistry.generateDocs('web')
-      for (const action of MOBILE_ONLY_ACTIONS) {
-        expect(result).not.toMatch(new RegExp(`^- ${action}:`, 'm'))
+
+      expect(result).toMatch(/^- web_click:/m)
+      expect(result).not.toMatch(/^- mobile_tap:/m)
+    })
+
+    it('excludes mobile interaction ids from the web docs', () => {
+      const result = defaultRegistry.generateDocs('web')
+
+      for (const id of [
+        'mobile_tap',
+        'mobile_doubleTap',
+        'mobile_multiTap',
+        'mobile_tapCoordinate',
+        'mobile_swipe',
+        'mobile_longpress',
+        'mobile_pinch',
+        'mobile_drag',
+        'mobile_nativeSelect',
+        'mobile_fill',
+        'mobile_hideKeyboard',
+        'mobile_setOrientation',
+      ]) {
+        expect(result).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
       }
     })
 
-    it('includes hover (web-only action)', () => {
+    it('contains the expected exposed web slice line count', () => {
       const result = defaultRegistry.generateDocs('web')
-      expect(result).toMatch(/^- hover:/m)
-    })
 
-    it('contains exactly 34 action lines (45 minus 11 mobile-only)', () => {
-      const result = defaultRegistry.generateDocs('web')
-      const lines = result.split('\n').filter((l: string) => l.startsWith('- '))
-      expect(lines).toHaveLength(34)
+      expect(expectedLineCount('web')).toBe(30)
+      expect(actionLines(result)).toHaveLength(expectedLineCount('web'))
     })
   })
 
-  describe('android platform (excludes web-only)', () => {
-    it('excludes hover (web-only action)', () => {
+  describe('android platform', () => {
+    it('includes tap and excludes click', () => {
       const result = defaultRegistry.generateDocs('android')
-      expect(result).not.toMatch(/^- hover:/m)
+
+      expect(result).toMatch(/^- mobile_tap:/m)
+      expect(result).not.toMatch(/^- web_click:/m)
     })
 
-    it('includes mobile-only actions', () => {
+    it('includes mobile and common ids without browser-only ids', () => {
       const result = defaultRegistry.generateDocs('android')
-      for (const action of MOBILE_ONLY_ACTIONS) {
-        expect(result).toMatch(new RegExp(`^- ${action}:`, 'm'))
-      }
+
+      expect(result).toMatch(/^- mobile_nativeSelect:/m)
+      expect(result).toMatch(/^- mobile_fill:/m)
+      expect(result).toMatch(/^- common_keypress:/m)
+      expect(result).not.toMatch(/^- web_doubleClick:/m)
+      expect(result).not.toMatch(/^- web_readConsoleLogs:/m)
+      expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('contains exactly 27 action lines (45 minus 18 web-only)', () => {
+    it('contains the expected exposed android slice line count', () => {
       const result = defaultRegistry.generateDocs('android')
-      const lines = result.split('\n').filter((l: string) => l.startsWith('- '))
-      expect(lines).toHaveLength(27)
+
+      expect(expectedLineCount('android')).toBe(19)
+      expect(actionLines(result)).toHaveLength(expectedLineCount('android'))
     })
   })
 
-  describe('ios platform (excludes web-only)', () => {
-    it('excludes hover (web-only action)', () => {
+  describe('ios platform', () => {
+    it('includes tap and excludes click', () => {
       const result = defaultRegistry.generateDocs('ios')
-      expect(result).not.toMatch(/^- hover:/m)
+
+      expect(result).toMatch(/^- mobile_tap:/m)
+      expect(result).not.toMatch(/^- web_click:/m)
     })
 
-    it('contains exactly 27 action lines (45 minus 18 web-only)', () => {
+    it('includes mobile and common ids without browser-only ids', () => {
       const result = defaultRegistry.generateDocs('ios')
-      const lines = result.split('\n').filter((l: string) => l.startsWith('- '))
-      expect(lines).toHaveLength(27)
+
+      expect(result).toMatch(/^- mobile_nativeSelect:/m)
+      expect(result).toMatch(/^- mobile_fill:/m)
+      expect(result).toMatch(/^- common_keypress:/m)
+      expect(result).not.toMatch(/^- web_doubleClick:/m)
+      expect(result).not.toMatch(/^- web_readConsoleLogs:/m)
+      expect(result).not.toMatch(/^- common_executeScript:/m)
+    })
+
+    it('contains the expected exposed ios slice line count', () => {
+      const result = defaultRegistry.generateDocs('ios')
+
+      expect(expectedLineCount('ios')).toBe(19)
+      expect(actionLines(result)).toHaveLength(expectedLineCount('ios'))
     })
   })
 
   describe('action line format', () => {
-    it('each line contains type name, description, and params', () => {
+    it('each line contains id, description, and params', () => {
       const result = defaultRegistry.generateDocs()
-      expect(result).toMatch(/^- fill: .+\. Params: .+/m)
+      expect(result).toMatch(/^- web_fill: .+\. Params: .+/m)
+      expect(result).toMatch(/^- mobile_fill: .+\. Params: .+/m)
     })
 
     it('click action includes ref parameter', () => {
       const result = defaultRegistry.generateDocs()
-      expect(result).toMatch(/^- click: Click an element\. Params: ref/m)
+      expect(result).toMatch(/^- web_click: Click an element\. Params: ref/m)
     })
 
-    it('fill action includes ref and value parameters', () => {
+    it('fill actions include ref and value parameters', () => {
       const result = defaultRegistry.generateDocs()
-      expect(result).toMatch(/^- fill: .+\. Params: .*ref.*value/m)
+      expect(result).toMatch(/^- web_fill: .+\. Params: .*ref.*value/m)
+      expect(result).toMatch(/^- mobile_fill: .+\. Params: .*ref.*value/m)
+    })
+
+    it('nativeSelect action uses its mobile-prefixed line', () => {
+      const result = defaultRegistry.generateDocs('android')
+      expect(result).toMatch(/^- mobile_nativeSelect: .+\. Params: .*ref.*value/m)
     })
 
     it('navigateHistory action shows direction param', () => {
       const result = defaultRegistry.generateDocs()
-      const line = result.split('\n').find((l: string) => l.startsWith('- navigateHistory:'))
+      const line = result.split('\n').find((l: string) => l.startsWith('- web_navigateHistory:'))
       expect(line).toBeDefined()
       expect(line).toContain('Params:')
       expect(line).toContain('direction')
@@ -109,36 +152,16 @@ describe('defaultRegistry.generateDocs', () => {
 
     it('scroll action shows scrollType and ref params', () => {
       const result = defaultRegistry.generateDocs()
-      expect(result).toMatch(/^- scroll: .+\. Params: .*scrollType.*ref/m)
+      expect(result).toMatch(/^- common_scroll: .+\. Params: .*scrollType.*ref/m)
     })
 
     it('doubleClick docs discourage default top-left offsets and no-op delay', () => {
       const result = defaultRegistry.generateDocs('web')
-      const line = result.split('\n').find((l: string) => l.startsWith('- doubleClick:'))
+      const line = result.split('\n').find((l: string) => l.startsWith('- web_doubleClick:'))
 
       expect(line).toBeDefined()
       expect(line).toContain('Do not use { x: 0, y: 0 }')
       expect(line).toContain('Omit when there is no requested delay')
-    })
-  })
-
-  describe('exported constants', () => {
-    it('MOBILE_ONLY_ACTIONS contains expected actions', () => {
-      expect(MOBILE_ONLY_ACTIONS).toEqual(
-        new Set(['tap', 'swipe', 'longpress', 'launchApp', 'stopApp', 'setOrientation', 'hideKeyboard', 'pinch', 'multiTap', 'executeScript', 'nativeSelect'])
-      )
-    })
-
-    it('WEB_ONLY_ACTIONS contains all web-only actions', () => {
-      expect(WEB_ONLY_ACTIONS).toEqual(
-        new Set([
-          'hover', 'paste', 'keyDown', 'keyUp', 'refresh', 'navigateHistory',
-          'readNetworkLogs', 'readCookies', 'setCookies', 'readLocalStorage', 'setLocalStorage',
-          'newTab', 'switchTab',
-          'doubleClick', 'rightClick',
-          'waitForUrl', 'fileUpload', 'copy',
-        ])
-      )
     })
   })
 })
