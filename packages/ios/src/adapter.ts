@@ -1,5 +1,24 @@
-import type { PlatformAdapter, PlatformConfig, ScreenState, Action, ActionResult, ObserveOptions, ConsoleLogEntry } from '@vostride/agent-qa-core'
-import { MobileSetupError, parseMobileSource, MobileElementResolver, KEY_MAP, computeSwipe, computePinch, computeFingerPositions, alignToWindow, warnIfOutOfBounds } from '@vostride/agent-qa-core'
+import type {
+  ActionsFor,
+  ActionResult,
+  ConsoleLogEntry,
+  ObserveOptions,
+  PlatformAdapter,
+  PlatformConfig,
+  ScreenState,
+} from '@vostride/agent-qa-core'
+import {
+  KEY_MAP,
+  MobileElementResolver,
+  MobileSetupError,
+  alignToWindow,
+  assertNever,
+  computeFingerPositions,
+  computePinch,
+  computeSwipe,
+  parseMobileSource,
+  warnIfOutOfBounds,
+} from '@vostride/agent-qa-core'
 import type { MobileRefMap } from '@vostride/agent-qa-core'
 import { createIOSSession } from './session.js'
 import type { IOSAdapterConfig } from './types.js'
@@ -142,7 +161,7 @@ function parseIOSSyslogLine(message: string, timestamp: number, bundleId: string
   return null
 }
 
-export class IOSPlatformAdapter implements PlatformAdapter {
+export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   readonly platform = 'ios' as const
 
   private driver: WebdriverIO.Browser | null = null
@@ -238,7 +257,7 @@ export class IOSPlatformAdapter implements PlatformAdapter {
     }
   }
 
-  async execute(action: Action): Promise<ActionResult> {
+  async execute(action: ActionsFor<'ios'>): Promise<ActionResult> {
     if (!this.driver) {
       throw new Error('IOSPlatformAdapter not initialized — call setup() first')
     }
@@ -373,7 +392,7 @@ export class IOSPlatformAdapter implements PlatformAdapter {
   // Actions
   // ---------------------------------------------------------------------------
 
-  private async executeAction(action: Action): Promise<ActionResult> {
+  private async executeAction(action: ActionsFor<'ios'>): Promise<ActionResult> {
     const driver = this.driver!
     const resolver = new MobileElementResolver(this.lastRefs)
 
@@ -381,8 +400,7 @@ export class IOSPlatformAdapter implements PlatformAdapter {
     await this.ensureContext('NATIVE_APP')
 
     switch (action.type) {
-      case 'tap':
-      case 'click': {
+      case 'tap': {
         const { center, bounds } = resolver.resolve(action.ref)
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: Math.round(center.x), y: Math.round(center.y) })
@@ -431,16 +449,6 @@ export class IOSPlatformAdapter implements PlatformAdapter {
         // Last resort — type via keyboard (pass whole string, not split chars)
         await driver.keys([action.value])
         return { success: true, coordinates: center, boundingBox: bounds }
-      }
-
-      case 'select': {
-        const { center, bounds } = resolver.resolve(action.ref)
-        return {
-          success: false,
-          error: 'select is for HTML dropdowns. Use nativeSelect for iOS native picker wheels, or tap/swipe/tapCoordinate for custom controls.',
-          coordinates: center,
-          boundingBox: bounds,
-        }
       }
 
       case 'nativeSelect': {
@@ -667,20 +675,6 @@ export class IOSPlatformAdapter implements PlatformAdapter {
         return { success: true }
       }
 
-      case 'navigate': {
-        try {
-          await driver.url(action.url)
-          this.invalidateWebContext()
-          return { success: true }
-        } catch {
-          return { success: false, error: 'navigate is not supported for this app. Use tap/fill on UI elements to navigate.' }
-        }
-      }
-
-      case 'hover': {
-        return { success: false, error: 'hover is a web-only action. Use tap or longpress instead.' }
-      }
-
       case 'assert': {
         return { success: true }
       }
@@ -816,16 +810,11 @@ export class IOSPlatformAdapter implements PlatformAdapter {
         return { success: true, coordinates: { x, y } }
       }
 
-      case 'readConsoleLogs': {
-        await this.pollDeviceLogs()
-        const all = [...this.consoleLogs]
-        const entries = action.level ? all.filter(e => e.level === action.level) : all
-        return { success: true, data: entries }
-      }
+      case 'setVariable':
+        return { success: true }
 
-      default: {
-        return { success: false, error: `Unknown action type: ${(action as any).type}` }
-      }
+      default:
+        return assertNever(action)
     }
   }
 }
