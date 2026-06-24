@@ -11,6 +11,23 @@ const PLAN_FIELDS = {
   stepFailed: z.boolean().optional().describe('Set true when the step goal cannot be achieved'),
 }
 
+function withPlanFields(schema: z.ZodType): z.ZodType {
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    const options = schema.options.map(option => (option as z.ZodObject<any>).extend(PLAN_FIELDS))
+    return z.discriminatedUnion(
+      schema.def.discriminator,
+      options as [z.ZodObject<any>, ...z.ZodObject<any>[]],
+    )
+  }
+
+  if (schema instanceof z.ZodUnion) {
+    const options = schema.options.map(option => (option as z.ZodObject<any>).extend(PLAN_FIELDS))
+    return z.union(options as [z.ZodObject<any>, z.ZodObject<any>, ...z.ZodObject<any>[]])
+  }
+
+  return (schema as z.ZodObject<any>).extend(PLAN_FIELDS)
+}
+
 export class ToolValidationError extends Error {
   toolName: string
   zodError: z.ZodError
@@ -34,10 +51,9 @@ export function buildTools(
     : definitions
 
   for (const def of filtered) {
-    const actionShape = (def.schema as z.ZodObject<any>).shape as Record<string, z.ZodType>
     tools[def.id] = tool({
       description: def.description,
-      inputSchema: z.object({ ...PLAN_FIELDS, ...actionShape }),
+      inputSchema: withPlanFields(def.schema),
     })
   }
 
