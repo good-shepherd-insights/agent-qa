@@ -1,6 +1,41 @@
-import type { z } from 'zod'
+import { z } from 'zod'
 import type { Platform, Surface } from '@vostride/agent-qa-schema'
 import type { ToolDefinition } from './types.js'
+
+function mergeVariantShapes(options: readonly unknown[]): Record<string, z.ZodType> | undefined {
+  const merged: Record<string, z.ZodType> = {}
+
+  for (const option of options) {
+    const shape = option && typeof option === 'object' && 'shape' in option
+      ? option.shape as Record<string, z.ZodType>
+      : undefined
+    if (!shape) continue
+
+    for (const [fieldName, field] of Object.entries(shape)) {
+      if (!(fieldName in merged)) {
+        merged[fieldName] = field
+      }
+    }
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+function getParamShape(schema: z.ZodType): Record<string, z.ZodType> | undefined {
+  if ('shape' in schema) {
+    return schema.shape as Record<string, z.ZodType>
+  }
+
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    return mergeVariantShapes(schema.options)
+  }
+
+  if (schema instanceof z.ZodUnion) {
+    return mergeVariantShapes(schema.options)
+  }
+
+  return undefined
+}
 
 export const EXPOSURE: Record<Platform, ReadonlySet<Surface>> = {
   web: new Set<Surface>(['web', 'common']),
@@ -40,7 +75,7 @@ export class ToolRegistry {
     const filtered = platform ? this.getForPlatform(platform) : this.getAll()
 
     for (const def of filtered) {
-      const shape = ('shape' in def.schema ? def.schema.shape : undefined) as Record<string, z.ZodType> | undefined
+      const shape = getParamShape(def.schema)
       const params: string[] = []
 
       if (shape) {
