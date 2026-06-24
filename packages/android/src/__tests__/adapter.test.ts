@@ -488,18 +488,6 @@ describe('AndroidPlatformAdapter', () => {
       expect(result.error).toContain('tap, swipe, or tapCoordinate')
     })
 
-    it('keeps native select from reporting tap-only success', async () => {
-      mockDriver.getPageSource.mockResolvedValue(ANDROID_SPINNER_XML)
-      await adapter.setup({ platform: 'android' })
-      const state = await adapter.observe()
-      const spinnerEl = state.elements.find(e => e.name === 'Priority')
-
-      const result = await adapter.execute({ type: 'select', ref: spinnerEl!.ref, value: 'High' })
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('select is for HTML dropdowns')
-      expect(result.error).toContain('nativeSelect')
-    })
   })
 
   describe('execute — scroll', () => {
@@ -542,25 +530,6 @@ describe('AndroidPlatformAdapter', () => {
 
       await adapter.execute({ type: 'longpress', ref: checkboxEl!.ref })
       expect(mockDriver._pointerAction.pause).toHaveBeenCalledWith(1000)
-    })
-  })
-
-  describe('execute — unsupported actions', () => {
-    it('navigate returns error', async () => {
-      await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'navigate', url: 'https://example.com' })
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('not supported')
-    })
-
-    it('hover returns error', async () => {
-      await adapter.setup({ platform: 'android' })
-      await adapter.observe()
-      const state = await adapter.observe()
-      const el = state.elements[0]
-      const result = await adapter.execute({ type: 'hover', ref: el.ref })
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('web-only')
     })
   })
 
@@ -722,18 +691,6 @@ describe('AndroidPlatformAdapter', () => {
       expect(result.success).toBe(true)
 
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
-    })
-  })
-
-  describe('execute — click (alias for tap)', () => {
-    it('performs tap for click action', async () => {
-      await adapter.setup({ platform: 'android' })
-      const state = await adapter.observe()
-      const el = state.elements.find(e => e.name === 'Sign In')
-
-      const result = await adapter.execute({ type: 'click', ref: el!.ref })
-      expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
     })
   })

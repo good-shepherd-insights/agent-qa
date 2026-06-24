@@ -1,5 +1,24 @@
-import type { PlatformAdapter, PlatformConfig, ScreenState, Action, ActionResult, ElementInfo, ObserveOptions, ConsoleLogEntry } from '@vostride/agent-qa-core'
-import { MobileSetupError, parseMobileSource, MobileElementResolver, KEY_MAP, computeSwipe, computePinch, computeFingerPositions, warnIfOutOfBounds } from '@vostride/agent-qa-core'
+import type {
+  ActionsFor,
+  ActionResult,
+  ConsoleLogEntry,
+  ElementInfo,
+  ObserveOptions,
+  PlatformAdapter,
+  PlatformConfig,
+  ScreenState,
+} from '@vostride/agent-qa-core'
+import {
+  KEY_MAP,
+  MobileElementResolver,
+  MobileSetupError,
+  assertNever,
+  computeFingerPositions,
+  computePinch,
+  computeSwipe,
+  parseMobileSource,
+  warnIfOutOfBounds,
+} from '@vostride/agent-qa-core'
 import type { MobileRefMap } from '@vostride/agent-qa-core'
 import { createAndroidSession } from './session.js'
 import type { AndroidAdapterConfig } from './types.js'
@@ -204,7 +223,7 @@ return (function() {
 })();
 `
 
-export class AndroidPlatformAdapter implements PlatformAdapter {
+export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   readonly platform = 'android' as const
 
   private driver: WebdriverIO.Browser | null = null
@@ -358,7 +377,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter {
     }
   }
 
-  async execute(action: Action): Promise<ActionResult> {
+  async execute(action: ActionsFor<'android'>): Promise<ActionResult> {
     if (!this.driver) {
       throw new Error('AndroidPlatformAdapter not initialized — call setup() first')
     }
@@ -579,14 +598,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter {
   // Actions
   // ---------------------------------------------------------------------------
 
-  private async executeAction(action: Action): Promise<ActionResult> {
+  private async executeAction(action: ActionsFor<'android'>): Promise<ActionResult> {
     const driver = this.driver!
     const resolver = new MobileElementResolver(this.lastRefs)
     const inWeb = !!this.activeWebContext
 
     switch (action.type) {
-      case 'tap':
-      case 'click': {
+      case 'tap': {
         const { center, bounds } = resolver.resolve(action.ref)
         if (inWeb) {
           await driver.execute(
@@ -645,26 +663,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter {
         // Last resort — type via keyboard (pass whole string, not split chars)
         await driver.keys([action.value])
         return { success: true, coordinates: center, boundingBox: bounds }
-      }
-
-      case 'select': {
-        const { center, bounds } = resolver.resolve(action.ref)
-        if (inWeb) {
-          await driver.execute(
-            'var el = document.elementFromPoint(arguments[0], arguments[1]);'
-            + 'if (el) { el.value = arguments[2];'
-            + 'el.dispatchEvent(new Event("change", {bubbles:true})); }',
-            center.x, center.y, action.value,
-          )
-          return { success: true, coordinates: center, boundingBox: bounds }
-        } else {
-          return {
-            success: false,
-            error: 'select is for HTML dropdowns. Use nativeSelect for Android native picker/dropdown/list controls, or tap/swipe/tapCoordinate for custom controls.',
-            coordinates: center,
-            boundingBox: bounds,
-          }
-        }
       }
 
       case 'nativeSelect': {
@@ -875,19 +873,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter {
         return { success: true }
       }
 
-      case 'navigate': {
-        try {
-          await driver.url(action.url)
-          return { success: true }
-        } catch {
-          return { success: false, error: 'navigate is not supported for this app. Use tap/fill on UI elements to navigate.' }
-        }
-      }
-
-      case 'hover': {
-        return { success: false, error: 'hover is a web-only action. Use tap or longpress instead.' }
-      }
-
       case 'assert': {
         return { success: true }
       }
@@ -1025,16 +1010,11 @@ export class AndroidPlatformAdapter implements PlatformAdapter {
         return { success: true, coordinates: { x, y } }
       }
 
-      case 'readConsoleLogs': {
-        await this.pollDeviceLogs()
-        const all = [...this.consoleLogs]
-        const entries = action.level ? all.filter(e => e.level === action.level) : all
-        return { success: true, data: entries }
-      }
+      case 'setVariable':
+        return { success: true }
 
-      default: {
-        return { success: false, error: `Unknown action type: ${(action as any).type}` }
-      }
+      default:
+        return assertNever(action)
     }
   }
 }
