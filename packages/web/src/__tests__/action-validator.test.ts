@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { validateAction, ActionValidationError } from '../action-validator.js'
-import type { Action } from '@vostride/agent-qa-core'
 
 describe('validateAction', () => {
   it('fill on textbox → valid', () => {
@@ -198,12 +197,12 @@ describe('validateAction', () => {
   })
 
   it('allows doubleClick on any role', () => {
-    const result = validateAction({ type: 'doubleClick', ref: 'e1' } as Action, 'button')
+    const result = validateAction({ type: 'doubleClick', ref: 'e1' }, 'button')
     expect(result.valid).toBe(true)
   })
 
   it('allows rightClick on any role', () => {
-    const result = validateAction({ type: 'rightClick', ref: 'e1' } as Action, 'button')
+    const result = validateAction({ type: 'rightClick', ref: 'e1' }, 'button')
     expect(result.valid).toBe(true)
   })
 })

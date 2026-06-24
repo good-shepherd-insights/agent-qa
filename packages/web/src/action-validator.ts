@@ -1,4 +1,4 @@
-import type { Action } from '@vostride/agent-qa-core'
+import type { ActionsFor } from '@vostride/agent-qa-core'
 
 export type ValidationResult =
   | { valid: true }
@@ -23,7 +23,7 @@ const NO_REF_ACTIONS = new Set(['scroll', 'navigate', 'waitFor', 'delay', 'waitF
 // Actions valid for any role
 const ANY_ROLE_ACTIONS = new Set(['click', 'hover', 'keypress', 'paste', 'doubleClick', 'rightClick'])
 
-export function validateAction(action: Action, elementRole: string | undefined): ValidationResult {
+export function validateAction(action: ActionsFor<'web'>, elementRole: string | undefined): ValidationResult {
   // Actions that don't require an element ref are always valid
   if (NO_REF_ACTIONS.has(action.type)) {
     return { valid: true }
