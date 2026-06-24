@@ -18,3 +18,6 @@ void farm.execute({ type: 'tap', ref: 'e1' })
 expectTypeOf<{ type: 'click'; ref: string }>().toMatchTypeOf<
   Parameters<WebPlatformAdapter['execute']>[0]
 >()
+expectTypeOf<{ type: 'click'; ref: string }>().toMatchTypeOf<
+  Parameters<FarmWebAdapter['execute']>[0]
+>()

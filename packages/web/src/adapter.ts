@@ -1,5 +1,14 @@
 import type { Browser, BrowserContext, Page } from 'playwright-core'
-import type { PlatformAdapter, PlatformConfig, ScreenState, ActionResult, ObserveOptions, ConsoleLogEntry, NetworkLogEntry, ActionsFor } from '@vostride/agent-qa-core'
+import type {
+  ActionsFor,
+  ActionResult,
+  ConsoleLogEntry,
+  NetworkLogEntry,
+  ObserveOptions,
+  PlatformAdapter,
+  PlatformConfig,
+  ScreenState,
+} from '@vostride/agent-qa-core'
 import { assertNever, convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
 import { observePage } from './observer.js'
 import { ElementResolver } from './element-resolver.js'
