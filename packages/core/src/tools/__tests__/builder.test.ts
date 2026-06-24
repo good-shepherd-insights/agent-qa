@@ -14,31 +14,31 @@ describe('buildTools', () => {
 
   it('returns Record of AI SDK tool objects for web platform', () => {
     const tools = buildTools(registry, { platform: 'web' })
-    expect(tools).toHaveProperty('click')
-    expect(tools).toHaveProperty('hover')
-    expect(tools).not.toHaveProperty('nativeSelect')
-    expect(tools).not.toHaveProperty('tap')
-    expect(tools).not.toHaveProperty('swipe')
-    expect(tools).not.toHaveProperty('pinch')
-    expect(tools).not.toHaveProperty('multiTap')
+    expect(tools).toHaveProperty('web_click')
+    expect(tools).toHaveProperty('web_hover')
+    expect(tools).not.toHaveProperty('mobile_nativeSelect')
+    expect(tools).not.toHaveProperty('mobile_tap')
+    expect(tools).not.toHaveProperty('mobile_swipe')
+    expect(tools).not.toHaveProperty('mobile_pinch')
+    expect(tools).not.toHaveProperty('mobile_multiTap')
   })
 
   it('excludes web-only actions for android platform', () => {
     const tools = buildTools(registry, { platform: 'android' })
-    expect(tools).not.toHaveProperty('hover')
-    expect(tools).toHaveProperty('tap')
-    expect(tools).toHaveProperty('click')
-    expect(tools).toHaveProperty('nativeSelect')
+    expect(tools).not.toHaveProperty('web_hover')
+    expect(tools).toHaveProperty('mobile_tap')
+    expect(tools).not.toHaveProperty('web_click')
+    expect(tools).toHaveProperty('mobile_nativeSelect')
   })
 
   it('includes nativeSelect for iOS platform', () => {
     const tools = buildTools(registry, { platform: 'ios' })
-    expect(tools).toHaveProperty('nativeSelect')
+    expect(tools).toHaveProperty('mobile_nativeSelect')
   })
 
   it('each built tool includes plan metadata fields merged with action fields', () => {
     const tools = buildTools(registry, { platform: 'web' })
-    const clickTool = tools['click'] as any
+    const clickTool = tools['web_click'] as any
     // AI SDK tool objects store the Zod schema under inputSchema or parameters
     const schema = (clickTool.inputSchema ?? clickTool.parameters) as z.ZodObject<any>
     const shape = schema.shape
@@ -53,7 +53,7 @@ describe('buildTools', () => {
 
   it('built tool has matching description', () => {
     const tools = buildTools(registry, { platform: 'web' })
-    const clickTool = tools['click'] as any
+    const clickTool = tools['web_click'] as any
     expect(clickTool.description).toBe('Click an element')
   })
 })
@@ -67,7 +67,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('extracts plan metadata and returns structured action plan', () => {
-    const result = toolCallToActionPlan('click', {
+    const result = toolCallToActionPlan('web_click', {
       reasoning: 'Click the submit button',
       confidence: 0.9,
       stepComplete: false,
@@ -84,7 +84,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('validates action fields against registry schema', () => {
-    const result = toolCallToActionPlan('fill', {
+    const result = toolCallToActionPlan('web_fill', {
       reasoning: 'Fill the email field',
       confidence: 0.8,
       stepComplete: false,
@@ -100,7 +100,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('throws ToolValidationError on invalid args', () => {
-    expect(() => toolCallToActionPlan('fill', {
+    expect(() => toolCallToActionPlan('web_fill', {
       reasoning: 'Fill something',
       confidence: 0.5,
       stepComplete: false,
@@ -111,7 +111,7 @@ describe('toolCallToActionPlan', () => {
 
   it('ToolValidationError has toolName and zodError', () => {
     try {
-      toolCallToActionPlan('fill', {
+      toolCallToActionPlan('web_fill', {
         reasoning: 'test',
         confidence: 0.5,
         stepComplete: false,
@@ -121,13 +121,13 @@ describe('toolCallToActionPlan', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(ToolValidationError)
       const err = e as ToolValidationError
-      expect(err.toolName).toBe('fill')
+      expect(err.toolName).toBe('web_fill')
       expect(err.zodError).toBeDefined()
     }
   })
 
   it('extracts stepFailed=true from args', () => {
-    const result = toolCallToActionPlan('click', {
+    const result = toolCallToActionPlan('web_click', {
       reasoning: 'Button is not on screen',
       confidence: 1.0,
       stepComplete: false,
@@ -139,7 +139,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('defaults stepFailed to false when undefined', () => {
-    const result = toolCallToActionPlan('click', {
+    const result = toolCallToActionPlan('web_click', {
       reasoning: 'Click the submit button',
       confidence: 0.9,
       stepComplete: false,
@@ -150,7 +150,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('handles scroll action with scrollType and value', () => {
-    const result = toolCallToActionPlan('scroll', {
+    const result = toolCallToActionPlan('common_scroll', {
       reasoning: 'Scroll down to find the button',
       confidence: 0.9,
       stepComplete: false,
@@ -166,7 +166,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('handles actions with no required fields (like refresh)', () => {
-    const result = toolCallToActionPlan('refresh', {
+    const result = toolCallToActionPlan('web_refresh', {
       reasoning: 'Refresh page',
       confidence: 1.0,
       stepComplete: true,
@@ -176,7 +176,7 @@ describe('toolCallToActionPlan', () => {
   })
 
   it('converts nativeSelect tool calls into action plans', () => {
-    const result = toolCallToActionPlan('nativeSelect', {
+    const result = toolCallToActionPlan('mobile_nativeSelect', {
       reasoning: 'Pick month',
       confidence: 0.9,
       stepComplete: true,
