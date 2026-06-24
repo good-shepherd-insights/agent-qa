@@ -9,7 +9,6 @@ export const VERB_SURFACE: Record<string, Surface> = {
   doubleClick: 'web',
   doubleTap: 'mobile',
   drag: 'mobile',
-  executeScript: 'common',
   fileUpload: 'web',
   fill: 'web',
   hideKeyboard: 'mobile',
@@ -17,7 +16,6 @@ export const VERB_SURFACE: Record<string, Surface> = {
   keyDown: 'web',
   keypress: 'common',
   keyUp: 'web',
-  launchApp: 'mobile',
   longpress: 'mobile',
   multiTap: 'mobile',
   nativeSelect: 'mobile',
@@ -39,7 +37,6 @@ export const VERB_SURFACE: Record<string, Surface> = {
   setLocalStorage: 'web',
   setOrientation: 'mobile',
   setVariable: 'common',
-  stopApp: 'mobile',
   swipe: 'mobile',
   switchTab: 'web',
   tap: 'mobile',
@@ -48,4 +45,4 @@ export const VERB_SURFACE: Record<string, Surface> = {
   waitForUrl: 'web',
 }
 
-export const NON_EXPOSED = new Set(['executeScript', 'launchApp', 'stopApp', 'openLink'])
+export const NON_EXPOSED = new Set(['openLink'])

@@ -94,8 +94,6 @@ const pointSchema = z.object({
 
 const swipeSchema = z.union([
   z.object({
-    type: z.literal('swipe').default('swipe')
-      .describe('Swipe action type. Omit when calling the mobile_swipe tool.'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: z.string().optional()
       .describe('Element to swipe within. Omit when swiping the whole screen.'),
@@ -103,8 +101,6 @@ const swipeSchema = z.union([
       .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
   }).strict(),
   z.object({
-    type: z.literal('swipe').default('swipe')
-      .describe('Swipe action type. Omit when calling the mobile_swipe tool.'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: z.string().optional()
       .describe('Element to swipe within. Omit when swiping the whole screen.'),
@@ -268,14 +264,6 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ref: z.string().describe('Element reference to double-tap'),
   })),
 
-  action('launchApp', 'Launch or bring an app to the foreground', z.object({
-    bundleId: z.string().describe('App bundle ID (iOS) or package name (Android)'),
-  })),
-
-  action('stopApp', 'Terminate a running app', z.object({
-    bundleId: z.string().describe('App bundle ID (iOS) or package name (Android)'),
-  })),
-
   action('setOrientation', 'Set the device orientation (mobile only)', z.object({
     orientation: z.enum(['portrait', 'landscape']).describe('Device orientation'),
   })),
@@ -297,12 +285,6 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('tapCoordinate', 'Tap at specific pixel coordinates — use when target element has no ref in accessibility tree', z.object({
     x: z.number().describe('X coordinate in pixels'),
     y: z.number().describe('Y coordinate in pixels'),
-  })),
-
-  action('executeScript', 'Execute an Appium script command (mobile only)', z.object({
-    command: z.string().describe('Appium command name (e.g., "mobile: enrollBiometric", "mobile: terminateApp")'),
-    args: z.any().optional()
-      .describe('Command arguments — object with key-value pairs, or array for some commands'),
   })),
 
   action('setVariable', 'Set a runtime environment variable for use in subsequent steps', z.object({
