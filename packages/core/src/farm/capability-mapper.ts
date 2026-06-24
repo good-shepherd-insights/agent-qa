@@ -9,7 +9,7 @@ const BROWSER_MAP: Record<string, string> = {
 
 export function detectPlaywrightVersion(): string {
   try {
-    const require = createRequire(import.meta.url)
+    const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
     const pkg = require('playwright-core/package.json') as { version: string }
     return pkg.version
   } catch {

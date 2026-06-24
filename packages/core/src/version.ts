@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 
-const require = createRequire(import.meta.url)
+const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
 
 function readPackageVersion(): string {
   try {

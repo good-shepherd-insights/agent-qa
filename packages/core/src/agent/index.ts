@@ -34,7 +34,7 @@ export type { ModelConfig, ProviderOptions } from './provider.js'
 
 export { buildSystemPrompt, buildStepPrompt, buildVerificationPrompt, buildAssertionPrompt, buildExtractionPrompt } from './prompts.js'
 
-export { defaultRegistry, buildTools, toolCallToActionPlan, MOBILE_ONLY_ACTIONS, WEB_ONLY_ACTIONS } from '../tools/index.js'
+export { defaultRegistry, buildTools, toolCallToActionPlan } from '../tools/index.js'
 export type { ToolRegistry, ToolDefinition, ToolCategory } from '../tools/index.js'
 
 export { createWrappedModel, toolSchemaMiddleware } from '../provider/index.js'

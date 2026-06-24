@@ -1,46 +1,43 @@
 import type { z } from 'zod'
-import type { ToolDefinition, ToolCategory } from './types.js'
+import type { Platform, Surface } from '@vostride/agent-qa-schema'
+import type { ToolDefinition } from './types.js'
+
+export const EXPOSURE: Record<Platform, ReadonlySet<Surface>> = {
+  web: new Set<Surface>(['web', 'common']),
+  android: new Set<Surface>(['mobile', 'android', 'common']),
+  ios: new Set<Surface>(['mobile', 'ios', 'common']),
+}
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>()
 
   register<T extends z.ZodType>(def: ToolDefinition<T>): this {
-    this.tools.set(def.name, def)
+    this.tools.set(def.id, def)
     return this
   }
 
-  get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name)
+  get(id: string): ToolDefinition | undefined {
+    return this.tools.get(id)
   }
 
   getAll(): ToolDefinition[] {
     return [...this.tools.values()]
   }
 
-  getFiltered(options: {
-    platform?: string
-    categories?: ToolCategory[]
-  }): ToolDefinition[] {
-    return this.getAll().filter(def => {
-      if (options.platform && def.platform && !def.platform.includes(options.platform as 'web' | 'android' | 'ios')) {
-        return false
-      }
-      if (options.categories && !options.categories.includes(def.category)) {
-        return false
-      }
-      return true
-    })
+  getForPlatform(platform: Platform): ToolDefinition[] {
+    const surfaces = EXPOSURE[platform]
+    return this.getAll().filter(def => def.exposed !== false && surfaces.has(def.surface))
   }
 
-  getSchema(name: string): z.ZodType {
-    const def = this.tools.get(name)
-    if (!def) throw new Error(`Unknown tool: ${name}`)
+  getSchema(id: string): z.ZodType {
+    const def = this.tools.get(id)
+    if (!def) throw new Error(`Unknown tool: ${id}`)
     return def.schema
   }
 
-  generateDocs(platform?: string): string {
+  generateDocs(platform?: Platform): string {
     const lines: string[] = []
-    const filtered = platform ? this.getFiltered({ platform }) : this.getAll()
+    const filtered = platform ? this.getForPlatform(platform) : this.getAll()
 
     for (const def of filtered) {
       const shape = ('shape' in def.schema ? def.schema.shape : undefined) as Record<string, z.ZodType> | undefined
@@ -53,7 +50,7 @@ export class ToolRegistry {
         }
       }
 
-      let line = `- ${def.name}: ${def.description}`
+      let line = `- ${def.id}: ${def.description}`
       if (params.length > 0) {
         line += `. Params: ${params.join(', ')}`
       }

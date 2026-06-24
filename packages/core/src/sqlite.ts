@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type BetterSqlite3 from 'better-sqlite3'
 
-const require = createRequire(import.meta.url)
+const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
 
 type BetterSqlite3Constructor = typeof BetterSqlite3
 

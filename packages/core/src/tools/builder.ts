@@ -1,5 +1,6 @@
 import { tool } from 'ai'
 import { z } from 'zod'
+import type { Platform } from '@vostride/agent-qa-schema'
 import type { ToolRegistry } from './registry.js'
 import type { ToolCategory } from './types.js'
 
@@ -24,13 +25,17 @@ export class ToolValidationError extends Error {
 
 export function buildTools(
   registry: ToolRegistry,
-  options: { platform: 'web' | 'android' | 'ios', categories?: ToolCategory[] },
+  options: { platform: Platform, categories?: ToolCategory[] },
 ) {
   const tools: Record<string, ReturnType<typeof tool<any, any>>> = {}
+  const definitions = registry.getForPlatform(options.platform)
+  const filtered = options.categories
+    ? definitions.filter(def => options.categories?.includes(def.category))
+    : definitions
 
-  for (const def of registry.getFiltered(options)) {
+  for (const def of filtered) {
     const actionShape = (def.schema as z.ZodObject<any>).shape as Record<string, z.ZodType>
-    tools[def.name] = tool({
+    tools[def.id] = tool({
       description: def.description,
       inputSchema: z.object({ ...PLAN_FIELDS, ...actionShape }),
     })
@@ -40,16 +45,21 @@ export function buildTools(
 }
 
 export function toolCallToActionPlan(
-  toolName: string,
+  toolId: string,
   args: Record<string, unknown>,
   registry: ToolRegistry,
 ) {
   const { reasoning, confidence, stepComplete, stepFailed, ...actionFields } = args
-  const schema = registry.getSchema(toolName)
-  const parsed = schema.safeParse(actionFields)
+  const def = registry.get(toolId)
+
+  if (!def) {
+    throw new Error(`Unknown tool: ${toolId}`)
+  }
+
+  const parsed = def.schema.safeParse(actionFields)
 
   if (!parsed.success) {
-    throw new ToolValidationError(toolName, parsed.error)
+    throw new ToolValidationError(toolId, parsed.error)
   }
 
   return {
@@ -57,6 +67,6 @@ export function toolCallToActionPlan(
     confidence: confidence as number,
     stepComplete: stepComplete as boolean,
     stepFailed: (stepFailed as boolean | undefined) ?? false,
-    action: { type: toolName, ...(parsed.data as Record<string, unknown>) },
+    action: { type: def.type, ...(parsed.data as Record<string, unknown>) },
   }
 }
