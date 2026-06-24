@@ -1,11 +1,14 @@
 import type { z } from 'zod'
+import type { Surface } from '@vostride/agent-qa-schema'
 
 export type ToolCategory = 'action' | 'file' | 'network'
 
 export interface ToolDefinition<T extends z.ZodType = z.ZodType> {
-  name: string
+  id: string
+  type: string
+  surface: Surface
+  exposed?: boolean
   description: string
   category: ToolCategory
-  platform?: ('web' | 'android' | 'ios')[]
   schema: T
 }
