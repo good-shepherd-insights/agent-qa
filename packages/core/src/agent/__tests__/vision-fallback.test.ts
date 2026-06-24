@@ -45,10 +45,10 @@ function makeStepContext(overrides?: Partial<StepContext>): StepContext {
   }
 }
 
-// Mock tool call result — LLM calls the 'click' tool
+// Mock tool call result — LLM calls the web click tool id
 const validToolCallResult = {
   toolCalls: [{
-    toolName: 'click',
+    toolName: 'web_click',
     args: {
       reasoning: 'Click the sign in button',
       ref: 'btn-1',
@@ -266,12 +266,12 @@ describe('LLMPlanner vision fallback', () => {
 
     const callArgs = mockGenerateText.mock.calls[0][0]
     const toolNames = Object.keys(callArgs.tools)
-    expect(toolNames).toContain('click')
-    expect(toolNames).toContain('scroll')
-    expect(toolNames).not.toContain('tap')
-    expect(toolNames).not.toContain('swipe')
-    expect(toolNames).not.toContain('pinch')
-    expect(toolNames).not.toContain('multiTap')
+    expect(toolNames).toContain('web_click')
+    expect(toolNames).toContain('common_scroll')
+    expect(toolNames).not.toContain('mobile_tap')
+    expect(toolNames).not.toContain('mobile_swipe')
+    expect(toolNames).not.toContain('mobile_pinch')
+    expect(toolNames).not.toContain('mobile_multiTap')
   })
 
   it('filters web-only tools for mobile platform', async () => {
@@ -282,9 +282,9 @@ describe('LLMPlanner vision fallback', () => {
 
     const callArgs = mockGenerateText.mock.calls[0][0]
     const toolNames = Object.keys(callArgs.tools)
-    expect(toolNames).toContain('tap')
-    expect(toolNames).toContain('pinch')
-    expect(toolNames).toContain('multiTap')
-    expect(toolNames).not.toContain('hover')
+    expect(toolNames).toContain('mobile_tap')
+    expect(toolNames).toContain('mobile_pinch')
+    expect(toolNames).toContain('mobile_multiTap')
+    expect(toolNames).not.toContain('web_hover')
   })
 })

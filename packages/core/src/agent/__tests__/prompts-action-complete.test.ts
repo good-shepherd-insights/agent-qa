@@ -14,10 +14,9 @@ describe('ACTION-COMPLETE-01 — action step completion', () => {
     expect(actionCompletionRule).toContain('ACTION STEP COMPLETION')
   })
 
-  it('lists pure action verbs: click, tap, press, select, fill', () => {
+  it('lists pure action verbs by surface: click, tap, select, fill', () => {
     expect(actionCompletionRule).toContain('click')
     expect(actionCompletionRule).toContain('tap')
-    expect(actionCompletionRule).toContain('press')
     expect(actionCompletionRule).toContain('select')
     expect(actionCompletionRule).toContain('fill')
   })

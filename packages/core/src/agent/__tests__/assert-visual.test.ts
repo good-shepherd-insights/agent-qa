@@ -8,7 +8,7 @@ import { defaultRegistry } from '../../tools/index.js'
 
 function getAssertSchema(): z.ZodObject<any> {
   const tools = (defaultRegistry as any).tools as Map<string, any>
-  const assertTool = tools.get('assert')
+  const assertTool = tools.get('common_assert')
   return assertTool.schema
 }
 
