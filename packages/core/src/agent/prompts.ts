@@ -5,14 +5,22 @@ import { truncateScreenState } from './observation.js'
 import { estimateTokens } from './token-budget.js'
 import { defaultRegistry } from '../tools/index.js'
 
+type PromptPlatform = 'web' | 'android' | 'ios'
+
 // ---------------------------------------------------------------------------
 // Rule group functions — each returns numbered rules for its concern.
 // Numbering is continuous across groups (the LLM sees Rules: 1-20).
 // To add a rule: append to the relevant group, increment subsequent numbers.
 // ---------------------------------------------------------------------------
 
-function actionSelectionRules(): string {
-  return `1. Pick the most specific action type for the task. Use "click" for buttons/links, "fill" for inputs. Use "select" for HTML/WebView dropdowns; use "nativeSelect" for native iOS picker wheels and Android native picker/dropdown/list controls.
+function primaryInteractionGuidance(platform?: PromptPlatform): string {
+  if (platform === 'web') return 'Use "click" for buttons/links'
+  if (platform === 'android' || platform === 'ios') return 'Use "tap" for tappable controls'
+  return 'Use the surface-correct interaction verb for buttons/links ("click" on web, "tap" on mobile)'
+}
+
+function actionSelectionRules(platform?: PromptPlatform): string {
+  return `1. Pick the most specific action type for the task. ${primaryInteractionGuidance(platform)}, "fill" for inputs. Use "select" for HTML/WebView dropdowns; use "nativeSelect" for native iOS picker wheels and Android native picker/dropdown/list controls.
 2. Always use element refs from the CURRENT screen state below. Never guess or fabricate element refs. After a newTab or switchTab action, all previous refs are invalid — the screen state now shows the new tab's content with fresh refs. Ignore refs from earlier sub-actions and only use refs you can see in the current screen state.`
 }
 
@@ -74,8 +82,18 @@ function assertionRules(): string {
    The system will verify your claim against the screenshot.`
 }
 
-function qaMindsetRules(): string {
-  return `13. QA MINDSET — ALWAYS MOVE FORWARD: Break the step instruction into sub-goals. Execute each sub-goal in order. After executing an action, MOVE to the next sub-goal — do not retry the same action, do not assert about what you just did, do not wait for visual confirmation of intermediate actions. An assert is NOT forward progress — if your reasoning identifies a next action, your output MUST be that action, not an assert about the current state. Review your previous actions in the sub-action history below — if you have already completed all parts of the step instruction, set stepComplete: true immediately instead of re-verifying or re-asserting. Example: step says "select Satellite and dismiss the panel" → sub-goal 1: tap Satellite, sub-goal 2: tap X to close. After tapping Satellite, immediately tap X — do not assert that Satellite is selected. After all sub-goals are done, set stepComplete: true.
+function qaMindsetExample(platform?: PromptPlatform): string {
+  if (platform === 'web') {
+    return 'Example: step says "select Satellite and dismiss the panel" -> sub-goal 1: click Satellite, sub-goal 2: click X to close. After clicking Satellite, immediately click X — do not assert that Satellite is selected.'
+  }
+  if (platform === 'android' || platform === 'ios') {
+    return 'Example: step says "select Satellite and dismiss the panel" -> sub-goal 1: tap Satellite, sub-goal 2: tap X to close. After tapping Satellite, immediately tap X — do not assert that Satellite is selected.'
+  }
+  return 'Example: step says "select Satellite and dismiss the panel" -> sub-goal 1: use the surface-correct interaction verb (click on web, tap on mobile) for Satellite, sub-goal 2: use the same surface-correct verb for X. After the first interaction, immediately perform the second — do not assert that Satellite is selected.'
+}
+
+function qaMindsetRules(platform?: PromptPlatform): string {
+  return `13. QA MINDSET — ALWAYS MOVE FORWARD: Break the step instruction into sub-goals. Execute each sub-goal in order. After executing an action, MOVE to the next sub-goal — do not retry the same action, do not assert about what you just did, do not wait for visual confirmation of intermediate actions. An assert is NOT forward progress — if your reasoning identifies a next action, your output MUST be that action, not an assert about the current state. Review your previous actions in the sub-action history below — if you have already completed all parts of the step instruction, set stepComplete: true immediately instead of re-verifying or re-asserting. ${qaMindsetExample(platform)} After all sub-goals are done, set stepComplete: true.
 14. TRUST THE ARIA TREE, VERIFY WITH SCREENSHOTS: The ARIA tree is your trusted source for finding elements and understanding page structure. Use it to navigate, plan actions, and locate targets. But for ASSERTIONS — any step that says "verify", "check", "confirm", or uses the assert action — you must confirm the claim is true by what is visible in the screenshot:
    - Before asserting, ensure the target content is visible in the current viewport. If the target is above or below the visible area, SCROLL to bring it into view first, then assert. This applies in both directions — scroll up for content at the top, scroll down for content at the bottom.
    - For quantity assertions ("verify there are 30 items"), you MUST scroll through the entire content to visually confirm. The ARIA tree shows the full page including off-screen elements — you cannot verify quantity from the ARIA tree alone.
@@ -97,9 +115,19 @@ function recoveryRules(): string {
 18. For web doubleClick/rightClick, do not use relativePosition { x: 0, y: 0 } unless the step explicitly asks for top-left or zero-offset, and omit no-op optional fields such as clickDelay: 0. If a doubleClick/rightClick fails because top-left is intercepted, retry the same semantic action at the center/interior of the same ref; do not switch to tapCoordinate or single click.`
 }
 
-function completionRules(): string {
-  return `19. ACTION STEP COMPLETION: When the step instruction is a pure action — a single verb like "click", "tap", "press", "select", "scroll to", or "fill" targeting a specific element — and you found the target element and executed the action successfully, set stepComplete: true immediately. Do NOT retry expecting a visible screen change. Many successful actions produce no visible change on the current page: file downloads save to disk silently, external links open in new tabs, buttons trigger background processes, PDF links open in the browser's PDF viewer. This rule applies to SINGLE-ACTION steps only. If the step has multiple sub-goals ("click X and then verify Y"), complete the action sub-goal and move to the next per Rule 13 — do not set stepComplete until ALL sub-goals are done.
-20. TRUST LOG READ RESULTS: When readConsoleLogs or readNetworkLogs returns data, that data is the complete set of logs captured since the last step. Do NOT re-trigger user actions (clicks, taps, navigation) to "regenerate" logs — the logs from prior steps are already captured. If readConsoleLogs returns an empty array, it means no matching console output was captured during this step's execution. If the step requires verifying log content and readConsoleLogs returns empty, either the expected log was not emitted or it was captured in a prior step — check the step instruction and set stepFailed if the expected log output is absent after one read attempt.
+function completionRules(platform?: PromptPlatform): string {
+  const actionExamples = platform === 'web'
+    ? '"click", "select", "scroll to", or "fill"'
+    : platform === 'android' || platform === 'ios'
+      ? '"tap", "press", "select", "scroll to", or "fill"'
+      : 'the surface-correct interaction verb ("click" on web, "tap" on mobile), "select", "scroll to", or "fill"'
+  const multiGoalExample = platform === 'web'
+    ? '"click X and then verify Y"'
+    : platform === 'android' || platform === 'ios'
+      ? '"tap X and then verify Y"'
+      : '"click X and then verify Y" on web, or "tap X and then verify Y" on mobile'
+  return `19. ACTION STEP COMPLETION: When the step instruction is a pure action — a single verb like ${actionExamples} targeting a specific element — and you found the target element and executed the action successfully, set stepComplete: true immediately. Do NOT retry expecting a visible screen change. Many successful actions produce no visible change on the current page: file downloads save to disk silently, external links open in new tabs, buttons trigger background processes, PDF links open in the browser's PDF viewer. This rule applies to SINGLE-ACTION steps only. If the step has multiple sub-goals (${multiGoalExample}), complete the action sub-goal and move to the next per Rule 13 — do not set stepComplete until ALL sub-goals are done.
+20. TRUST LOG READ RESULTS: When readConsoleLogs or readNetworkLogs returns data, that data is the complete set of logs captured since the last step. Do NOT re-trigger user interactions or navigation to "regenerate" logs — the logs from prior steps are already captured. If readConsoleLogs returns an empty array, it means no matching console output was captured during this step's execution. If the step requires verifying log content and readConsoleLogs returns empty, either the expected log was not emitted or it was captured in a prior step — check the step instruction and set stepFailed if the expected log output is absent after one read attempt.
 21. The setVariable action stores a runtime variable accessible via {{env:varName}} in later steps. ONLY use setVariable when the step instruction explicitly asks to set, store, save, or remember a variable (e.g., "Set env X to Y", "Store the value as env.token"). NEVER use setVariable as a substitute for page interactions, assertions, or any other action. If the step does not explicitly mention setting a variable, do not call setVariable.`
 }
 
@@ -107,17 +135,17 @@ function completionRules(): string {
 // Rule composer — joins groups into the Rules: block
 // ---------------------------------------------------------------------------
 
-function buildRules(agentRules?: string): string {
+function buildRules(platform?: PromptPlatform, agentRules?: string): string {
   const groups = [
-    actionSelectionRules(),
+    actionSelectionRules(platform),
     scrollRules(),
     generalRules(),
     stepLifecycleRules(),
     elementTargetingRules(),
     assertionRules(),
-    qaMindsetRules(),
+    qaMindsetRules(platform),
     recoveryRules(),
-    completionRules(),
+    completionRules(platform),
   ]
   let rules = 'Rules:\n' + groups.join('\n')
   if (agentRules) {
@@ -209,8 +237,8 @@ function appendDomContext(parts: string[], screenState: ScreenState): void {
 // Exported prompt composers
 // ---------------------------------------------------------------------------
 
-export function buildSystemPrompt(platform?: 'web' | 'android' | 'ios', agentRules?: string): string {
-  const rulesBlock = buildRules(agentRules)
+export function buildSystemPrompt(platform?: PromptPlatform, agentRules?: string): string {
+  const rulesBlock = buildRules(platform, agentRules)
 
   return `You are the agent-qa test automation agent. Your job is to determine the correct action to execute for a given test step based on the current screen state.
 
@@ -410,7 +438,7 @@ export function buildVerificationPrompt(
   parts.push('IMPORTANT: Absence of visible screen change is NOT evidence of failure. Many interactions produce results outside the current page (navigating to new tabs, triggering background processes, initiating file operations, updating server state). If the action targeted a valid element and no error or contradicting state is visible, the goal is likely accomplished.')
   parts.push('')
   parts.push('For verification/assertion steps (step says "verify", "check", "confirm"): require POSITIVE evidence — the claimed condition must be visible on screen or in the ARIA tree.')
-  parts.push('For action steps (step says "click", "tap", "fill", "select", "press"): if the target element existed and no error appeared, return success unless there is clear evidence of failure.')
+  parts.push('For action steps (step uses the surface-correct interaction verb, such as "click" on web or "tap"/"press" on mobile, or says "fill" or "select"): if the target element existed and no error appeared, return success unless there is clear evidence of failure.')
   if (hasScreenshot) {
     parts.push('')
     parts.push('Analyze the attached screenshot for visual cues the ARIA tree cannot capture: colors, layout, images, visual indicators, error states. When the screenshot and ARIA tree conflict, visual evidence takes precedence. For quantity claims, only confirm what you can count in the screenshot.')
