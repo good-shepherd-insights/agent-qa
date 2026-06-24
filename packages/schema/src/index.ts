@@ -15,14 +15,18 @@ export { asRef, type Ref, type Point, type BoundingBox, type Viewport } from './
 
 export type {
   Action,
+  AndroidAction,
   CrossPlatformAction,
+  IosAction,
   MobileAction,
   Platform,
   RefTargeted,
+  Surface,
   TabSelector,
   WebAction,
 } from './action/index'
 export type { ActionExecutor, ActionsFor } from './action/adapter'
+export type { Fill, Scroll, SwipeByDirection, SwipeByPath, WaitFor } from './action/params'
 export type { ActionAnnotation, ActionResult } from './result/index'
 export { normalizeAccessibleName } from './screen/index'
 export type { ElementBounds, ScrollContext } from './screen/index'
