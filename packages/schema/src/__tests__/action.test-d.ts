@@ -19,7 +19,8 @@ expectTypeOf<Platform>().toEqualTypeOf<'web' | 'android' | 'ios'>()
 expectTypeOf<AndroidAction>().toEqualTypeOf<never>()
 expectTypeOf<IosAction>().toEqualTypeOf<never>()
 
-// `fill` intentionally appears in both web and mobile with the exact shared Fill shape.
+// Populated legs are mutually exclusive except `fill`, the sole documented shared verb;
+// Phase 318 registry IDs and the Phase 322 lint enforce tool-level exclusivity.
 type SharedWebMobileVerb = 'fill'
 expectTypeOf<Extract<WebAction['type'], MobileAction['type']>>().toEqualTypeOf<SharedWebMobileVerb>()
 expectTypeOf<
