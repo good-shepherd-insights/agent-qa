@@ -4,7 +4,7 @@ import type { ToolRegistry } from '../registry.js'
 import type { ToolDefinition } from '../types.js'
 import { NON_EXPOSED, VERB_SURFACE } from './surface-map.js'
 
-function actionWithSurface(verb: string, surface: Surface, description: string, schema: z.ZodObject<any>): ToolDefinition {
+function actionWithSurface(verb: string, surface: Surface, description: string, schema: z.ZodType): ToolDefinition {
   return {
     id: `${surface}_${verb}`,
     type: verb,
@@ -16,16 +16,66 @@ function actionWithSurface(verb: string, surface: Surface, description: string, 
   }
 }
 
-function action(verb: string, description: string, schema: z.ZodObject<any>): ToolDefinition {
+function action(verb: string, description: string, schema: z.ZodType): ToolDefinition {
   const surface = VERB_SURFACE[verb]
   if (!surface) throw new Error(`No surface mapping for verb "${verb}"`)
   return actionWithSurface(verb, surface, description, schema)
 }
 
 const fillSchema = z.object({
-  ref: z.string().describe('Element reference for the input field'),
-  value: z.string().describe('Text value to fill into the input'),
-})
+  ref: z.string().describe('Element reference for the input field from the current screen state'),
+  text: z.string().describe('Text to enter into the field'),
+  clearMode: z.enum(['replace', 'append']).default('replace')
+    .describe('replace = clear the field first (default); append = type at the cursor. Omit when replacing the current field value.'),
+  submit: z.boolean().default(false)
+    .describe('Press Enter after typing. Omit when the field should keep focus after typing.'),
+}).strict()
+
+const scrollSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('direction'),
+    direction: z.enum(['up', 'down', 'left', 'right']).describe('Direction to scroll'),
+    ref: z.string().optional()
+      .describe('Element to scroll within. Omit when scrolling the whole page or screen.'),
+    amount: z.enum(['page', 'halfPage', 'toEnd']).default('page')
+      .describe('How far to scroll in the selected direction. Omit when a normal page-sized scroll is appropriate.'),
+    retryOpposite: z.boolean().default(true)
+      .describe('Retry in the opposite direction if the first scroll produces no movement. Omit when retrying opposite is acceptable.'),
+  }).strict(),
+  z.object({
+    mode: z.literal('untilVisible'),
+    target: z.string().describe('Visible text or accessible name to reveal'),
+    ref: z.string().optional()
+      .describe('Search within this element or list. Omit when searching the whole page or screen.'),
+    direction: z.enum(['up', 'down', 'left', 'right']).default('down')
+      .describe('Initial direction to search for the target. Omit when scrolling down is the natural direction.'),
+    maxSwipes: z.number().int().min(1).max(20).default(10)
+      .describe('Maximum scroll attempts before giving up. Omit when ten attempts is enough.'),
+    retryOpposite: z.boolean().default(true)
+      .describe('Reverse direction after maxSwipes without reveal. Omit when reverse search is acceptable.'),
+  }).strict(),
+])
+
+const waitForSchema = z.discriminatedUnion('on', [
+  z.object({
+    on: z.literal('text'),
+    text: z.string().describe('Visible text to wait for'),
+    timeoutMs: z.number().default(5000)
+      .describe('Maximum wait time in milliseconds. Omit when the default 5000ms timeout is acceptable.'),
+  }).strict(),
+  z.object({
+    on: z.literal('selector'),
+    selector: z.string().describe('CSS selector to wait for'),
+    timeoutMs: z.number().default(5000)
+      .describe('Maximum wait time in milliseconds. Omit when the default 5000ms timeout is acceptable.'),
+  }).strict(),
+  z.object({
+    on: z.literal('gone'),
+    text: z.string().describe('Text that must disappear'),
+    timeoutMs: z.number().default(5000)
+      .describe('Maximum wait time in milliseconds. Omit when the default 5000ms timeout is acceptable.'),
+  }).strict(),
+])
 
 const mobileFillDefinition = actionWithSurface('fill', 'mobile', 'Fill text into an input field', fillSchema)
 if (mobileFillDefinition.id !== 'mobile_fill') {
@@ -56,21 +106,13 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     url: z.string().describe('URL to navigate to'),
   })),
 
-  action('scroll', 'Scroll the page or a specific element', z.object({
-    scrollType: z.enum(['vertical', 'horizontal']).describe('Scroll axis: vertical (up/down) or horizontal (left/right)'),
-    value: z.number().describe('Scroll distance in pixels. Positive = down/right, negative = up/left'),
-    ref: z.string().optional().describe('Optional element to scroll within'),
-    duration: z.number().optional().describe('Scroll duration in ms (mobile only — web ignores this)'),
-  })),
+  action('scroll', 'Scroll the page or a specific element', scrollSchema),
 
   action('delay', 'Pause execution for a fixed duration — use when a specific duration is requested (e.g. "wait 3 seconds"). Do NOT use for waiting on conditions (use waitFor for that).', z.object({
     ms: z.number().describe('Duration in milliseconds'),
   })),
 
-  action('waitFor', 'Wait for a condition to be met (text content match or selector)', z.object({
-    condition: z.string().describe('Condition to wait for — either visible text content or a CSS selector'),
-    timeout: z.number().optional().describe('Maximum wait time in ms (default: 5000)'),
-  })),
+  action('waitFor', 'Wait for text, selector presence, or text disappearance', waitForSchema),
 
   action('assert', 'Assert a condition on the current page state', z.object({
     condition: z.string().describe('Assertion condition to check'),
