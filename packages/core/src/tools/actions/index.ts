@@ -22,7 +22,7 @@ function action(verb: string, description: string, schema: z.ZodType): ToolDefin
   return actionWithSurface(verb, surface, description, schema)
 }
 
-const fillSchema = z.object({
+export const fillSchema = z.object({
   ref: z.string().describe('Element reference for the input field from the current screen state'),
   text: z.string().describe('Text to enter into the field'),
   clearMode: z.enum(['replace', 'append']).default('replace')
@@ -31,7 +31,7 @@ const fillSchema = z.object({
     .describe('Press Enter after typing. Omit when the field should keep focus after typing.'),
 }).strict()
 
-const scrollSchema = z.discriminatedUnion('mode', [
+export const scrollSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Direction to scroll'),
@@ -56,7 +56,7 @@ const scrollSchema = z.discriminatedUnion('mode', [
   }).strict(),
 ])
 
-const waitForSchema = z.discriminatedUnion('on', [
+export const waitForSchema = z.discriminatedUnion('on', [
   z.object({
     on: z.literal('text'),
     text: z.string().describe('Visible text to wait for'),
@@ -92,15 +92,21 @@ const pointSchema = z.object({
   y: z.number().describe('Y coordinate in pixels'),
 }).strict()
 
-const swipeSchema = z.union([
+export const swipeSchema = z.union([
   z.object({
+    type: z.literal('swipe').default('swipe')
+      .describe('Canonical swipe action type. Omit because the registry supplies this value.'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: z.string().optional()
       .describe('Element to swipe within. Omit when swiping the whole screen.'),
     duration: z.number().optional()
       .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
+    start: z.never().optional(),
+    end: z.never().optional(),
   }).strict(),
   z.object({
+    type: z.literal('swipe').default('swipe')
+      .describe('Canonical swipe action type. Omit because the registry supplies this value.'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: z.string().optional()
       .describe('Element to swipe within. Omit when swiping the whole screen.'),
