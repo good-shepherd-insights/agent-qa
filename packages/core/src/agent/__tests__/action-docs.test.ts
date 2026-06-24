@@ -22,9 +22,9 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('contains exactly 46 action lines', () => {
+    it('contains exactly 43 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      expect(actionLines(result)).toHaveLength(46)
+      expect(actionLines(result)).toHaveLength(43)
     })
   })
 
@@ -131,10 +131,10 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- web_click: Click an element\. Params: ref/m)
     })
 
-    it('fill actions include ref and value parameters', () => {
+    it('fill actions include ref and text parameters', () => {
       const result = defaultRegistry.generateDocs()
-      expect(result).toMatch(/^- web_fill: .+\. Params: .*ref.*value/m)
-      expect(result).toMatch(/^- mobile_fill: .+\. Params: .*ref.*value/m)
+      expect(result).toMatch(/^- web_fill: .+\. Params: .*ref.*text/m)
+      expect(result).toMatch(/^- mobile_fill: .+\. Params: .*ref.*text/m)
     })
 
     it('nativeSelect action uses its mobile-prefixed line', () => {
@@ -150,9 +150,9 @@ describe('defaultRegistry.generateDocs', () => {
       expect(line).toContain('direction')
     })
 
-    it('scroll action shows scrollType and ref params', () => {
+    it('scroll action shows mode and ref params', () => {
       const result = defaultRegistry.generateDocs()
-      expect(result).toMatch(/^- common_scroll: .+\. Params: .*scrollType.*ref/m)
+      expect(result).toMatch(/^- common_scroll: .+\. Params: .*mode.*ref/m)
     })
 
     it('doubleClick docs discourage default top-left offsets and no-op delay', () => {

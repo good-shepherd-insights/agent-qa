@@ -292,11 +292,11 @@ describe('ToolRegistry', () => {
       expect(docs).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('returns all 46 registered actions when no platform is specified', () => {
+    it('returns all 43 registered actions when no platform is specified', () => {
       registerAllActions(registry)
       const docs = registry.generateDocs()
       const lines = docs.split('\n').filter(l => l.startsWith('- '))
-      expect(lines).toHaveLength(46)
+      expect(lines).toHaveLength(43)
     })
 
     it('keeps generated docs platform availability aligned for nativeSelect', () => {
