@@ -1,5 +1,6 @@
 export type {
   PlatformAdapter,
+  ActionsFor,
   ObserveOptions,
   ScreenState,
   ScreenStateMetadata,
@@ -11,6 +12,7 @@ export type {
   DeviceConfig,
   TimeoutConfig,
 } from './platform.js'
+export { assertNever } from './platform.js'
 
 export type {
   StepStatus,
