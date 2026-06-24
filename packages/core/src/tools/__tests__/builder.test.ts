@@ -193,3 +193,104 @@ describe('toolCallToActionPlan', () => {
     })
   })
 })
+
+describe('buildTools discriminated-union merge', () => {
+  function buildDiscriminatedTools() {
+    const registry = new ToolRegistry()
+    registry.register({
+      id: 'common_discriminatedProbe',
+      type: 'discriminatedProbe',
+      surface: 'common',
+      description: 'Probe discriminated tool schema handling',
+      category: 'action',
+      schema: z.discriminatedUnion('mode', [
+        z.object({
+          mode: z.literal('direction'),
+          direction: z.enum(['up', 'down']),
+        }),
+        z.object({
+          mode: z.literal('untilVisible'),
+          target: z.string(),
+        }),
+      ]),
+    })
+
+    return buildTools(registry, { platform: 'web' })
+  }
+
+  function getInputSchema(toolDef: unknown): z.ZodType {
+    const builtTool = toolDef as { inputSchema?: z.ZodType, parameters?: z.ZodType }
+    const schema = builtTool.inputSchema ?? builtTool.parameters
+    expect(schema).toBeDefined()
+    return schema as z.ZodType
+  }
+
+  it('merges plan fields into the direction variant', () => {
+    const tools = buildDiscriminatedTools()
+    const schema = getInputSchema(tools['common_discriminatedProbe'])
+
+    const parsed = schema.safeParse({
+      reasoning: 'Scroll down to find the button',
+      confidence: 0.9,
+      stepComplete: false,
+      mode: 'direction',
+      direction: 'down',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data).toMatchObject({
+      reasoning: 'Scroll down to find the button',
+      confidence: 0.9,
+      stepComplete: false,
+      mode: 'direction',
+      direction: 'down',
+    })
+  })
+
+  it('merges plan fields into the untilVisible variant', () => {
+    const tools = buildDiscriminatedTools()
+    const schema = getInputSchema(tools['common_discriminatedProbe'])
+
+    const parsed = schema.safeParse({
+      reasoning: 'Scroll until Sign in appears',
+      confidence: 0.8,
+      stepComplete: true,
+      mode: 'untilVisible',
+      target: 'Sign in',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data).toMatchObject({
+      reasoning: 'Scroll until Sign in appears',
+      confidence: 0.8,
+      stepComplete: true,
+      mode: 'untilVisible',
+      target: 'Sign in',
+    })
+  })
+
+  it('preserves plain object tool schema merging', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    const tools = buildTools(registry, { platform: 'web' })
+    const schema = getInputSchema(tools['web_click'])
+
+    const parsed = schema.safeParse({
+      reasoning: 'Click the submit button',
+      confidence: 0.9,
+      stepComplete: false,
+      ref: 'e1',
+    })
+
+    expect(parsed.success).toBe(true)
+    if (!parsed.success) return
+    expect(parsed.data).toMatchObject({
+      reasoning: 'Click the submit button',
+      confidence: 0.9,
+      stepComplete: false,
+      ref: 'e1',
+    })
+  })
+})
