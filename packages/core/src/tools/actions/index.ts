@@ -77,6 +77,44 @@ const waitForSchema = z.discriminatedUnion('on', [
   }).strict(),
 ])
 
+const assertSchema = z.object({
+  claim: z.string().describe('The condition to verify, phrased as a checkable statement'),
+  kind: z.enum(['visible', 'text', 'value', 'state', 'url', 'custom']).default('visible')
+    .describe('Assertion kind. Omit when checking simple visibility.'),
+  expected: z.string().optional()
+    .describe('Expected value for comparison. Omit when the claim is self-contained.'),
+  evidence: z.enum(['screen', 'dom', 'none']).default('screen')
+    .describe('screen = needs screenshot evidence; dom = DOM/a11y-tree check; none = non-visual. Omit when screen evidence is appropriate.'),
+}).strict()
+
+const pointSchema = z.object({
+  x: z.number().describe('X coordinate in pixels'),
+  y: z.number().describe('Y coordinate in pixels'),
+}).strict()
+
+const swipeSchema = z.union([
+  z.object({
+    type: z.literal('swipe').default('swipe')
+      .describe('Swipe action type. Omit when calling the mobile_swipe tool.'),
+    direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
+    ref: z.string().optional()
+      .describe('Element to swipe within. Omit when swiping the whole screen.'),
+    duration: z.number().optional()
+      .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
+  }).strict(),
+  z.object({
+    type: z.literal('swipe').default('swipe')
+      .describe('Swipe action type. Omit when calling the mobile_swipe tool.'),
+    direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
+    ref: z.string().optional()
+      .describe('Element to swipe within. Omit when swiping the whole screen.'),
+    duration: z.number().optional()
+      .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
+    start: pointSchema.describe('Start coordinate for the explicit swipe path'),
+    end: pointSchema.describe('End coordinate for the explicit swipe path'),
+  }).strict(),
+])
+
 const mobileFillDefinition = actionWithSurface('fill', 'mobile', 'Fill text into an input field', fillSchema)
 if (mobileFillDefinition.id !== 'mobile_fill') {
   throw new Error(`Unexpected mobile fill id "${mobileFillDefinition.id}"`)
@@ -114,12 +152,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('waitFor', 'Wait for text, selector presence, or text disappearance', waitForSchema),
 
-  action('assert', 'Assert a condition on the current page state', z.object({
-    condition: z.string().describe('Assertion condition to check'),
-    expected: z.string().optional().describe('Expected value for comparison'),
-    visual: z.boolean().optional().default(true)
-      .describe('Whether this assertion requires screen evidence. Set false for non-visual checks (tautologies, hook/env results, runJS outputs, computed values). Default true for screen-visible assertions.'),
-  })),
+  action('assert', 'Assert a condition on the current page state', assertSchema),
 
   action('keypress', 'Press one or more keyboard keys/combos in sequence', z.object({
     keys: z.array(z.string()).min(1).describe('Array of keys/combos to press in sequence. Each entry may be a single key (e.g. "Enter", "Tab", "Escape") or a combo with "+" separators (e.g. "Meta+k", "Control+Shift+T"). Use "Meta" for the Cmd/Win/Super key — on non-Mac platforms it is automatically converted to "Control" when convertPlatformKeys is true. On mobile, only single special keys from the KEY_MAP work meaningfully; combos are a no-op.'),
@@ -205,15 +238,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ref: z.string().describe('Element reference to tap'),
   })),
 
-  action('swipe', 'Swipe gesture on a mobile device', z.object({
-    direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
-    ref: z.string().optional().describe('Optional element to swipe within'),
-    startX: z.number().optional().describe('Start X coordinate (overrides direction-based calculation)'),
-    startY: z.number().optional().describe('Start Y coordinate (overrides direction-based calculation)'),
-    endX: z.number().optional().describe('End X coordinate (overrides direction-based calculation)'),
-    endY: z.number().optional().describe('End Y coordinate (overrides direction-based calculation)'),
-    duration: z.number().optional().describe('Swipe duration in ms (default: 300)'),
-  })),
+  action('swipe', 'Swipe gesture on a mobile device', swipeSchema),
 
   action('longpress', 'Long-press an element on a mobile device', z.object({
     ref: z.string().describe('Element reference to long-press'),
