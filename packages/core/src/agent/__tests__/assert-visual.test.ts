@@ -12,27 +12,34 @@ function getAssertSchema(): z.ZodObject<any> {
   return assertTool.schema
 }
 
-describe('assert visual field', () => {
+describe('assert evidence field', () => {
   describe('schema parsing', () => {
-    it('accepts visual: false', () => {
+    it('defaults to visible screen-backed assertions', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ condition: 'check', visual: false })
+      const result = schema.safeParse({ claim: 'banner visible' })
       expect(result.success).toBe(true)
-      expect(result.data!.visual).toBe(false)
+      expect(result.data!.kind).toBe('visible')
+      expect(result.data!.evidence).toBe('screen')
     })
 
-    it('defaults visual to true when omitted', () => {
+    it('accepts explicit text assertions backed by DOM evidence', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ condition: 'check' })
+      const result = schema.safeParse({
+        claim: 'x',
+        kind: 'text',
+        expected: 'Done',
+        evidence: 'dom',
+      })
       expect(result.success).toBe(true)
-      expect(result.data!.visual).toBe(true)
+      expect(result.data!.kind).toBe('text')
+      expect(result.data!.expected).toBe('Done')
+      expect(result.data!.evidence).toBe('dom')
     })
 
-    it('accepts visual: true explicitly', () => {
+    it('rejects unknown evidence modes', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ condition: 'check', visual: true })
-      expect(result.success).toBe(true)
-      expect(result.data!.visual).toBe(true)
+      const result = schema.safeParse({ claim: 'x', evidence: 'bogus' })
+      expect(result.success).toBe(false)
     })
   })
 

@@ -75,11 +75,13 @@ function assertionRules(): string {
    STRICT LITERAL ASSERTION: Assert the EXACT condition from the step text. If the step says "verify 42 equals 30", you assert whether 42 equals 30 — it does not, so stepFailed. You do NOT rewrite it as "42 does not equal 30" and pass. You do NOT store "42 ≠ 30" via setVariable and pass. The step text is the test spec. If reality contradicts the spec, the test FAILS. This is QA — your job is to report truth, not make tests pass.
    When asserting about something NOT visible on screen — tautologies ("42 equals 42"),
    hook/env variable checks ("hook set env MY_VAR to abc"), runJS output comparisons
-   ("runJS returned 42"), or computed value checks — set visual: false on the assert action.
+   ("runJS returned 42"), or computed value checks — set evidence: 'none' on the assert action.
    The system will trust your judgment without requiring screen evidence.
    When asserting about something visible on screen ("button says Submit", "title is Dashboard",
-   "error message appears") — leave visual as default (true) or set visual: true.
-   The system will verify your claim against the screenshot.`
+   "error message appears") — omit evidence or set evidence: 'screen'.
+   The system will verify your claim against the screenshot.
+   When a claim should be checked from DOM or accessibility-tree state rather than pixels,
+   set evidence: 'dom'.`
 }
 
 function qaMindsetExample(platform?: PromptPlatform): string {
