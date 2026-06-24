@@ -89,13 +89,15 @@ describe('toolCallToActionPlan', () => {
       confidence: 0.8,
       stepComplete: false,
       ref: 'e2',
-      value: 'test@example.com',
+      text: 'test@example.com',
     }, registry)
 
     expect(result.action).toEqual({
       type: 'fill',
       ref: 'e2',
-      value: 'test@example.com',
+      text: 'test@example.com',
+      clearMode: 'replace',
+      submit: false,
     })
   })
 
@@ -105,7 +107,7 @@ describe('toolCallToActionPlan', () => {
       confidence: 0.5,
       stepComplete: false,
       ref: 'e1',
-      // missing required 'value' field
+      // missing required 'text' field
     }, registry)).toThrow(ToolValidationError)
   })
 
@@ -149,19 +151,21 @@ describe('toolCallToActionPlan', () => {
     expect(result.stepFailed).toBe(false)
   })
 
-  it('handles scroll action with scrollType and value', () => {
+  it('handles scroll action with mode and direction', () => {
     const result = toolCallToActionPlan('common_scroll', {
       reasoning: 'Scroll down to find the button',
       confidence: 0.9,
       stepComplete: false,
-      scrollType: 'vertical',
-      value: 500,
+      mode: 'direction',
+      direction: 'down',
     }, registry)
 
     expect(result.action).toEqual({
       type: 'scroll',
-      scrollType: 'vertical',
-      value: 500,
+      mode: 'direction',
+      direction: 'down',
+      amount: 'page',
+      retryOpposite: true,
     })
   })
 

@@ -9,6 +9,16 @@ import type { Platform } from '@vostride/agent-qa-schema'
 
 const platforms: Platform[] = ['web', 'android', 'ios']
 
+function schemaShapes(schema: z.ZodType): Array<Record<string, z.ZodType>> {
+  if (schema instanceof z.ZodDiscriminatedUnion) {
+    return schema.options.map(option => (option as z.ZodObject<any>).shape as Record<string, z.ZodType>)
+  }
+  if (schema instanceof z.ZodUnion) {
+    return schema.options.map(option => (option as z.ZodObject<any>).shape as Record<string, z.ZodType>)
+  }
+  return [(schema as z.ZodObject<any>).shape as Record<string, z.ZodType>]
+}
+
 function typesFor(registry: ToolRegistry, platform: Platform): string[] {
   return registry.getForPlatform(platform).map(def => def.type)
 }
@@ -366,16 +376,21 @@ describe('surface + id integrity', () => {
     expect(all.every(d => d.id === `${d.surface}_${d.type}`)).toBe(true)
   })
 
-  it('each action schema does NOT contain type or plan metadata fields', () => {
+  it('each action schema keeps plan metadata out of registry args', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     for (const def of registry.getAll()) {
-      const shape = (def.schema as z.ZodObject<any>).shape
-      expect(shape).not.toHaveProperty('type')
-      expect(shape).not.toHaveProperty('reasoning')
-      expect(shape).not.toHaveProperty('confidence')
-      expect(shape).not.toHaveProperty('stepComplete')
-      expect(shape).not.toHaveProperty('visualCheck')
+      for (const shape of schemaShapes(def.schema)) {
+        if (def.id === 'mobile_swipe') {
+          expect(shape).toHaveProperty('type')
+        } else {
+          expect(shape).not.toHaveProperty('type')
+        }
+        expect(shape).not.toHaveProperty('reasoning')
+        expect(shape).not.toHaveProperty('confidence')
+        expect(shape).not.toHaveProperty('stepComplete')
+        expect(shape).not.toHaveProperty('visualCheck')
+      }
     }
   })
 
@@ -386,28 +401,31 @@ describe('surface + id integrity', () => {
     expect(clickSchema.shape).toHaveProperty('ref')
   })
 
-  it('fill schemas have ref and value fields', () => {
+  it('fill schemas have ref, text, clearMode, and submit fields', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const webFillSchema = registry.getSchema('web_fill') as z.ZodObject<any>
     const mobileFillSchema = registry.getSchema('mobile_fill') as z.ZodObject<any>
+    expect(webFillSchema).toBe(mobileFillSchema)
     expect(webFillSchema.shape).toHaveProperty('ref')
-    expect(webFillSchema.shape).toHaveProperty('value')
+    expect(webFillSchema.shape).toHaveProperty('text')
+    expect(webFillSchema.shape).toHaveProperty('clearMode')
+    expect(webFillSchema.shape).toHaveProperty('submit')
+    expect(webFillSchema.shape).not.toHaveProperty('value')
     expect(mobileFillSchema.shape).toHaveProperty('ref')
-    expect(mobileFillSchema.shape).toHaveProperty('value')
+    expect(mobileFillSchema.shape).toHaveProperty('text')
+    expect(mobileFillSchema.shape).toHaveProperty('clearMode')
+    expect(mobileFillSchema.shape).toHaveProperty('submit')
+    expect(mobileFillSchema.shape).not.toHaveProperty('value')
   })
 
-  it('scroll schema has scrollType, value, optional ref, duration', () => {
+  it('scroll schema validates discriminated mode variants', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
-    const scrollSchema = registry.getSchema('common_scroll') as z.ZodObject<any>
-    expect(scrollSchema.shape).toHaveProperty('scrollType')
-    expect(scrollSchema.shape).toHaveProperty('value')
-    expect(scrollSchema.shape).toHaveProperty('ref')
-    expect(scrollSchema.shape).toHaveProperty('duration')
-    expect(scrollSchema.shape).not.toHaveProperty('direction')
-    expect(scrollSchema.shape).not.toHaveProperty('deltaX')
-    expect(scrollSchema.shape).not.toHaveProperty('deltaY')
+    const scrollSchema = registry.getSchema('common_scroll') as z.ZodType
+    expect(scrollSchema.safeParse({ mode: 'direction', direction: 'down' }).success).toBe(true)
+    expect(scrollSchema.safeParse({ mode: 'untilVisible', target: 'Submit' }).success).toBe(true)
+    expect(scrollSchema.safeParse({ scrollType: 'vertical', value: 500 }).success).toBe(false)
   })
 
   it('pinch schema has scale, optional x, y, ref', () => {
@@ -420,11 +438,9 @@ describe('surface + id integrity', () => {
     expect(pinchSchema.shape).toHaveProperty('ref')
   })
 
-  it('executeScript schema has command, optional args', () => {
+  it('executeScript is not registered as a planner-facing tool', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
-    const schema = registry.getSchema('common_executeScript') as z.ZodObject<any>
-    expect(schema.shape).toHaveProperty('command')
-    expect(schema.shape).toHaveProperty('args')
+    expect(registry.get('common_executeScript')).toBeUndefined()
   })
 })
