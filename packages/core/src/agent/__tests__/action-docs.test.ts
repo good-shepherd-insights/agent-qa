@@ -22,6 +22,16 @@ const CAT_02_WEB_IDS = [
   'web_focus',
 ] as const
 
+const CAT_03_ANDROID_IDS = [
+  'android_pressBack',
+  'android_pressHome',
+  'android_pressRecent',
+  'android_openNotifications',
+  'android_openQuickSettings',
+  'android_intent',
+  'android_keyevent',
+] as const
+
 describe('defaultRegistry.generateDocs', () => {
   describe('no platform filter (all actions)', () => {
     it('returns a string containing all registered action ids', () => {
@@ -32,9 +42,9 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('contains exactly 45 action lines', () => {
+    it('contains exactly 52 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      expect(actionLines(result)).toHaveLength(45)
+      expect(actionLines(result)).toHaveLength(52)
     })
   })
 
@@ -132,10 +142,22 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
+    it('renders CAT-03 android additions only in the android docs', () => {
+      const webDocs = defaultRegistry.generateDocs('web')
+      const androidDocs = defaultRegistry.generateDocs('android')
+      const iosDocs = defaultRegistry.generateDocs('ios')
+
+      for (const id of CAT_03_ANDROID_IDS) {
+        expect(androidDocs).toMatch(new RegExp(`^- ${id}:`, 'm'))
+        expect(webDocs).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+        expect(iosDocs).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+      }
+    })
+
     it('contains the expected exposed android slice line count', () => {
       const result = defaultRegistry.generateDocs('android')
 
-      expect(expectedLineCount('android')).toBe(23)
+      expect(expectedLineCount('android')).toBe(30)
       expect(actionLines(result)).toHaveLength(expectedLineCount('android'))
     })
   })
