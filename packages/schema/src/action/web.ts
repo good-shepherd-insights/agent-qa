@@ -6,9 +6,10 @@ import type { NoPlatform, RefTargeted, TabSelector } from './shared'
 type WebRefTargeted = RefTargeted & { ref: Ref }
 
 export type WebAction = NoPlatform & (
-  | { type: 'navigate'; url: string }
-  | { type: 'refresh' }
-  | { type: 'navigateHistory'; direction: 'back' | 'forward' }
+  | { type: 'navigate'; to: 'url'; url: string }
+  | { type: 'navigate'; to: 'back' }
+  | { type: 'navigate'; to: 'forward' }
+  | { type: 'navigate'; to: 'reload' }
   | { type: 'waitForUrl'; pattern: string }
   | ({ type: 'click'; clickDelay?: number } & WebRefTargeted)
   | ({ type: 'doubleClick'; relativePosition?: Point; clickDelay?: number } & WebRefTargeted)
@@ -16,16 +17,15 @@ export type WebAction = NoPlatform & (
   | ({ type: 'fill' } & Fill)
   | ({ type: 'select'; value: string } & WebRefTargeted)
   | ({ type: 'hover' } & WebRefTargeted)
-  | { type: 'keyDown'; key: string }
-  | { type: 'keyUp'; key: string }
   | ({ type: 'paste'; value: string } & WebRefTargeted)
   | ({ type: 'copy' } & WebRefTargeted)
   | ({ type: 'fileUpload'; files: string[] } & WebRefTargeted)
-  | { type: 'newTab'; url: string }
-  | ({ type: 'switchTab' } & TabSelector)
-  | { type: 'readConsoleLogs'; level?: 'log' | 'info' | 'warn' | 'error'; tab?: TabSelector }
-  | { type: 'readNetworkLogs'; urlPattern?: string; tab?: TabSelector }
-  | { type: 'readCookies'; name?: string }
+  | { type: 'tab'; action: 'new'; url: string }
+  | ({ type: 'tab'; action: 'switch' } & TabSelector)
+  | { type: 'web_inspect'; what: 'console'; level?: 'log' | 'info' | 'warn' | 'error'; tab?: TabSelector }
+  | { type: 'web_inspect'; what: 'network'; urlPattern?: string; tab?: TabSelector }
+  | { type: 'web_inspect'; what: 'cookies'; name?: string }
+  | { type: 'web_inspect'; what: 'localStorage'; key?: string }
   | {
       type: 'setCookies'
       cookies: Array<{
@@ -39,6 +39,5 @@ export type WebAction = NoPlatform & (
         expires?: number
       }>
     }
-  | { type: 'readLocalStorage'; key?: string }
   | { type: 'setLocalStorage'; entries: Array<{ key: string; value: string }> }
 )

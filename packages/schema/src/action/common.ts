@@ -17,5 +17,5 @@ export type CommonAction = NoPlatform & (
     }
   | { type: 'executeScript'; command: string; args?: unknown }
   | { type: 'setVariable'; name: string; value: string }
-  | { type: 'keypress'; keys: string[]; convertPlatformKeys?: boolean }
+  | { type: 'keypress'; keys: string[]; mode: 'press' | 'down' | 'up'; convertPlatformKeys?: boolean }
 )
