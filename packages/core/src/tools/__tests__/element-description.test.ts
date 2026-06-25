@@ -12,6 +12,7 @@ const ELEMENT_DESCRIPTION_IDS = [
   'web_hover',
   'web_paste',
   'web_focus',
+  'ios_pickerSelect',
   'mobile_tap',
   'mobile_longpress',
   'common_clearText',

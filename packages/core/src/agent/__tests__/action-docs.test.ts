@@ -32,6 +32,13 @@ const CAT_03_ANDROID_IDS = [
   'android_keyevent',
 ] as const
 
+const CAT_04_IOS_IDS = [
+  'ios_pressButton',
+  'ios_pickerSelect',
+  'ios_swipeFromEdge',
+  'ios_openUniversalLink',
+] as const
+
 describe('defaultRegistry.generateDocs', () => {
   describe('no platform filter (all actions)', () => {
     it('returns a string containing all registered action ids', () => {
@@ -42,9 +49,9 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('contains exactly 52 action lines', () => {
+    it('contains exactly 56 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      expect(actionLines(result)).toHaveLength(52)
+      expect(actionLines(result)).toHaveLength(56)
     })
   })
 
@@ -181,10 +188,22 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
+    it('renders CAT-04 ios additions only in the ios docs', () => {
+      const webDocs = defaultRegistry.generateDocs('web')
+      const androidDocs = defaultRegistry.generateDocs('android')
+      const iosDocs = defaultRegistry.generateDocs('ios')
+
+      for (const id of CAT_04_IOS_IDS) {
+        expect(iosDocs).toMatch(new RegExp(`^- ${id}:`, 'm'))
+        expect(webDocs).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+        expect(androidDocs).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+      }
+    })
+
     it('contains the expected exposed ios slice line count', () => {
       const result = defaultRegistry.generateDocs('ios')
 
-      expect(expectedLineCount('ios')).toBe(23)
+      expect(expectedLineCount('ios')).toBe(27)
       expect(actionLines(result)).toHaveLength(expectedLineCount('ios'))
     })
   })
