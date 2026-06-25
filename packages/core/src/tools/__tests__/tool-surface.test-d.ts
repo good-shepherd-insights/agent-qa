@@ -41,7 +41,10 @@ expectTypeOf<Extract<MobileAction, { type: 'setOrientation' }>>().not.toEqualTyp
 expectTypeOf<Extract<MobileAction, { type: 'launchApp' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<MobileAction, { type: 'stopApp' }>>().not.toEqualTypeOf<never>()
 
-expectTypeOf<Extract<CommonAction, { type: 'assert' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'assertAI' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'assertValue' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'extractAI' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'assert' }>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'waitFor' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'delay' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'scroll' }>>().not.toEqualTypeOf<never>()

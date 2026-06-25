@@ -22,9 +22,9 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('contains exactly 35 action lines', () => {
+    it('contains exactly 37 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      expect(actionLines(result)).toHaveLength(35)
+      expect(actionLines(result)).toHaveLength(37)
     })
   })
 
@@ -83,7 +83,7 @@ describe('defaultRegistry.generateDocs', () => {
     it('contains the expected exposed web slice line count', () => {
       const result = defaultRegistry.generateDocs('web')
 
-      expect(expectedLineCount('web')).toBe(22)
+      expect(expectedLineCount('web')).toBe(24)
       expect(actionLines(result)).toHaveLength(expectedLineCount('web'))
     })
   })
@@ -110,7 +110,7 @@ describe('defaultRegistry.generateDocs', () => {
     it('contains the expected exposed android slice line count', () => {
       const result = defaultRegistry.generateDocs('android')
 
-      expect(expectedLineCount('android')).toBe(19)
+      expect(expectedLineCount('android')).toBe(21)
       expect(actionLines(result)).toHaveLength(expectedLineCount('android'))
     })
   })
@@ -137,7 +137,7 @@ describe('defaultRegistry.generateDocs', () => {
     it('contains the expected exposed ios slice line count', () => {
       const result = defaultRegistry.generateDocs('ios')
 
-      expect(expectedLineCount('ios')).toBe(19)
+      expect(expectedLineCount('ios')).toBe(21)
       expect(actionLines(result)).toHaveLength(expectedLineCount('ios'))
     })
   })
