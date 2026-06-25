@@ -1,6 +1,7 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import type { Platform } from '@vostride/agent-qa-schema'
+import { groundingError } from './errors.js'
 import type { ToolRegistry } from './registry.js'
 import type { ToolCategory } from './types.js'
 
@@ -28,17 +29,7 @@ function withPlanFields(schema: z.ZodType): z.ZodType {
   return (schema as z.ZodObject<any>).extend(PLAN_FIELDS)
 }
 
-export class ToolValidationError extends Error {
-  toolName: string
-  zodError: z.ZodError
-
-  constructor(toolName: string, zodError: z.ZodError) {
-    super(`Invalid args for tool "${toolName}": ${zodError.message}`)
-    this.name = 'ToolValidationError'
-    this.toolName = toolName
-    this.zodError = zodError
-  }
-}
+export { GroundingError as ToolValidationError } from './errors.js'
 
 export function buildTools(
   registry: ToolRegistry,
@@ -75,7 +66,7 @@ export function toolCallToActionPlan(
   const parsed = def.schema.safeParse(actionFields)
 
   if (!parsed.success) {
-    throw new ToolValidationError(toolId, parsed.error)
+    throw groundingError.schemaInvalid(toolId, parsed.error)
   }
 
   return {
