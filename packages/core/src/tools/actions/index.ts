@@ -133,6 +133,88 @@ export const swipeSchema = z.union([
   }).strict(),
 ])
 
+export const navigateSchema = z.discriminatedUnion('to', [
+  z.object({
+    to: z.literal('url'),
+    url: z.string().describe('URL to navigate to'),
+  }).strict(),
+  z.object({ to: z.literal('back') }).strict(),
+  z.object({ to: z.literal('forward') }).strict(),
+  z.object({ to: z.literal('reload') }).strict(),
+])
+
+export const webInspectSchema = z.discriminatedUnion('what', [
+  z.object({
+    what: z.literal('console'),
+    level: z.enum(['log', 'info', 'warn', 'error']).optional()
+      .describe('Filter by log level. Omit to get all levels.'),
+    tab: tabSelectorSchema.optional()
+      .describe('Target a specific tab. Omit to read logs from all tabs.'),
+  }).strict(),
+  z.object({
+    what: z.literal('network'),
+    urlPattern: z.string().optional()
+      .describe('Filter by URL substring match. Omit to get all requests.'),
+    tab: tabSelectorSchema.optional()
+      .describe('Target a specific tab. Omit to read logs from all tabs.'),
+  }).strict(),
+  z.object({
+    what: z.literal('cookies'),
+    name: z.string().optional()
+      .describe('Cookie name to read. Omit to get all cookies.'),
+  }).strict(),
+  z.object({
+    what: z.literal('localStorage'),
+    key: z.string().optional()
+      .describe('Storage key to read. Omit to get all entries.'),
+  }).strict(),
+])
+
+export const pinchSchema = z.union([
+  z.object({
+    scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
+    ref: refSchema(`Element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict(),
+  z.object({
+    scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
+    x: z.number().describe('Center X coordinate for pinch gesture'),
+    y: z.number().describe('Center Y coordinate for pinch gesture'),
+    coordSpace: z.enum(['viewport', 'content', 'screen'])
+      .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict(),
+])
+
+export const multiTapSchema = z.union([
+  z.object({
+    fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
+    ref: refSchema(`Element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict(),
+  z.object({
+    fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
+    x: z.number().describe('Center X coordinate for multi-finger tap'),
+    y: z.number().describe('Center Y coordinate for multi-finger tap'),
+    coordSpace: z.enum(['viewport', 'content', 'screen'])
+      .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict(),
+])
+
+export const tabSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('new'),
+    url: z.string().describe('URL to open in the new tab'),
+  }).strict(),
+  z.object({
+    action: z.literal('switch'),
+    index: z.number().optional().describe('0-based tab index to switch to'),
+    title: z.string().optional().describe('Substring match on page title'),
+    url: z.string().optional().describe('Substring match on page URL'),
+  }).strict(),
+])
+
 const mobileFillDefinition = actionWithSurface('fill', 'mobile', 'Fill text into an input field', fillSchema)
 if (mobileFillDefinition.id !== 'mobile_fill') {
   throw new Error(`Unexpected mobile fill id "${mobileFillDefinition.id}"`)
@@ -161,15 +243,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Visible text/value to select'),
   }).strict()),
 
-  action('navigate', 'Navigate to a URL, browser history entry, or reload the current page', z.discriminatedUnion('to', [
-    z.object({
-      to: z.literal('url'),
-      url: z.string().describe('URL to navigate to'),
-    }).strict(),
-    z.object({ to: z.literal('back') }).strict(),
-    z.object({ to: z.literal('forward') }).strict(),
-    z.object({ to: z.literal('reload') }).strict(),
-  ])),
+  action('navigate', 'Navigate to a URL, browser history entry, or reload the current page', navigateSchema),
 
   action('scroll', 'Scroll the page or a specific element', scrollSchema),
 
@@ -199,32 +273,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Text value to paste'),
   }).strict()),
 
-  action('web_inspect', 'Read browser console, network, cookie, or localStorage data', z.discriminatedUnion('what', [
-    z.object({
-      what: z.literal('console'),
-      level: z.enum(['log', 'info', 'warn', 'error']).optional()
-        .describe('Filter by log level. Omit to get all levels.'),
-      tab: tabSelectorSchema.optional()
-        .describe('Target a specific tab. Omit to read logs from all tabs.'),
-    }).strict(),
-    z.object({
-      what: z.literal('network'),
-      urlPattern: z.string().optional()
-        .describe('Filter by URL substring match. Omit to get all requests.'),
-      tab: tabSelectorSchema.optional()
-        .describe('Target a specific tab. Omit to read logs from all tabs.'),
-    }).strict(),
-    z.object({
-      what: z.literal('cookies'),
-      name: z.string().optional()
-        .describe('Cookie name to read. Omit to get all cookies.'),
-    }).strict(),
-    z.object({
-      what: z.literal('localStorage'),
-      key: z.string().optional()
-        .describe('Storage key to read. Omit to get all entries.'),
-    }).strict(),
-  ])),
+  action('web_inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({
@@ -292,37 +341,9 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     orientation: z.enum(['portrait', 'landscape']).describe('Device orientation'),
   })),
 
-  action('pinch', 'Pinch zoom gesture on a mobile device (mobile only)', z.union([
-    z.object({
-      scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
-      ref: refSchema(`Element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    }).strict(),
-    z.object({
-      scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
-      x: z.number().describe('Center X coordinate for pinch gesture'),
-      y: z.number().describe('Center Y coordinate for pinch gesture'),
-      coordSpace: z.enum(['viewport', 'content', 'screen'])
-        .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
-      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    }).strict(),
-  ])),
+  action('pinch', 'Pinch zoom gesture on a mobile device (mobile only)', pinchSchema),
 
-  action('multiTap', 'Multi-finger tap gesture on a mobile device (mobile only)', z.union([
-    z.object({
-      fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
-      ref: refSchema(`Element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    }).strict(),
-    z.object({
-      fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
-      x: z.number().describe('Center X coordinate for multi-finger tap'),
-      y: z.number().describe('Center Y coordinate for multi-finger tap'),
-      coordSpace: z.enum(['viewport', 'content', 'screen'])
-        .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
-      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    }).strict(),
-  ])),
+  action('multiTap', 'Multi-finger tap gesture on a mobile device (mobile only)', multiTapSchema),
 
   action('tapCoordinate', 'Tap at specific pixel coordinates — use when target element has no ref in accessibility tree', z.object({
     x: z.number().describe('X coordinate in pixels'),
@@ -337,18 +358,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Variable value to store'),
   })),
 
-  action('tab', 'Open a new browser tab or switch to an existing tab', z.discriminatedUnion('action', [
-    z.object({
-      action: z.literal('new'),
-      url: z.string().describe('URL to open in the new tab'),
-    }).strict(),
-    z.object({
-      action: z.literal('switch'),
-      index: z.number().optional().describe('0-based tab index to switch to'),
-      title: z.string().optional().describe('Substring match on page title'),
-      url: z.string().optional().describe('Substring match on page URL'),
-    }).strict(),
-  ])),
+  action('tab', 'Open a new browser tab or switch to an existing tab', tabSchema),
 
   action('doubleClick', 'Double-click an element (text selection, expand, web-only)', z.object({
     ref: refSchema(`Element to double-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),

@@ -52,8 +52,14 @@ expectTypeOf<Extract<WebAction, { type: 'nativeSelect' }>>().toEqualTypeOf<never
 expectTypeOf<Extract<WebAction, { type: 'fill' }>>().toEqualTypeOf<
   Extract<MobileAction, { type: 'fill' }>
 >()
-expectTypeOf<Extract<WebAction, { type: 'keyDown' }>>().not.toEqualTypeOf<never>()
-expectTypeOf<Extract<WebAction, { type: 'keyUp' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'tab' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'web_inspect' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().toMatchTypeOf<{
+  type: 'keypress'
+  keys: string[]
+  mode: 'press' | 'down' | 'up'
+}>()
 
 type CommonAssert = Extract<CommonAction, { type: 'assert' }>
 expectTypeOf<CommonAssert>().toMatchTypeOf<{
@@ -95,13 +101,13 @@ const invalidFromVariable: Action = taggedTap
 // @ts-expect-error non-fresh values carrying forbidden platform metadata must not execute on mobile.
 mobileExec(taggedTap)
 
-const tabByIndex: Action = { type: 'switchTab', index: 0 }
+const tabByIndex: Action = { type: 'tab', action: 'switch', index: 0 }
 
 // @ts-expect-error empty tab selectors are guaranteed to fail.
-const emptyTab: Action = { type: 'switchTab' }
+const emptyTab: Action = { type: 'tab', action: 'switch' }
 
 const twoFingerTap: Action = { type: 'multiTap', fingers: 2, ref: asRef('e3') }
-const threeFingerTap: Action = { type: 'multiTap', fingers: 3, point: { x: 10, y: 20 } }
+const threeFingerTap: Action = { type: 'multiTap', fingers: 3, x: 10, y: 20, coordSpace: 'viewport' }
 
 // @ts-expect-error unsupported finger counts are rejected.
 const zeroFingerTap: Action = { type: 'multiTap', fingers: 0, ref: asRef('e3') }
