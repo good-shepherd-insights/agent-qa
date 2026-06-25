@@ -328,11 +328,11 @@ describe('ToolRegistry', () => {
       expect(docs).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('returns all 45 registered actions when no platform is specified', () => {
+    it('returns all 52 registered actions when no platform is specified', () => {
       registerAllActions(registry)
       const docs = registry.generateDocs()
       const lines = docs.split('\n').filter(l => l.startsWith('- '))
-      expect(lines).toHaveLength(45)
+      expect(lines).toHaveLength(52)
     })
 
     it('keeps generated docs platform availability aligned for nativeSelect', () => {
@@ -389,11 +389,11 @@ describe('toolCallToActionPlan', () => {
 })
 
 describe('surface + id integrity', () => {
-  it('registers exactly 45 action tools', () => {
+  it('registers exactly 52 action tools', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const all = registry.getAll()
-    expect(all).toHaveLength(45)
+    expect(all).toHaveLength(52)
   })
 
   it('every action has category "action"', () => {
@@ -441,7 +441,7 @@ describe('surface + id integrity', () => {
     registerAllActions(registry)
 
     expect(registry.getForPlatform('web')).toHaveLength(33)
-    expect(registry.getForPlatform('android')).toHaveLength(23)
+    expect(registry.getForPlatform('android')).toHaveLength(30)
     expect(registry.getForPlatform('ios')).toHaveLength(23)
   })
 

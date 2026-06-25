@@ -287,6 +287,33 @@ export const focusSchema = z.object({
   elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
 }).strict()
 
+export const pressBackSchema = z.object({}).strict()
+export const pressHomeSchema = z.object({}).strict()
+export const pressRecentSchema = z.object({}).strict()
+export const openNotificationsSchema = z.object({}).strict()
+export const openQuickSettingsSchema = z.object({}).strict()
+
+export const intentExtraSchema = z.object({
+  key: z.string().describe('Android intent extra key'),
+  type: z.enum(['string', 'int', 'long', 'float', 'bool'])
+    .describe('Android am CLI extra type tag, e.g. --es/--ei/--ez'),
+  value: z.string().describe('Stringified extra value parsed according to the type tag'),
+}).strict()
+
+export const intentSchema = z.object({
+  action: z.string().describe('Android intent action, e.g. android.intent.action.VIEW'),
+  data: z.string().optional()
+    .describe('Data URI for the intent. Omit when the intent needs no data URI.'),
+  packageName: z.string().optional()
+    .describe('Target Android package name. Omit to let the system resolve the intent.'),
+  extras: z.array(intentExtraSchema).optional()
+    .describe('Typed Android intent extras. Omit when the intent carries no extras.'),
+}).strict()
+
+export const keyeventSchema = z.object({
+  keycode: z.string().describe('Android KEYCODE_* value, e.g. KEYCODE_ENTER'),
+}).strict()
+
 export const pinchSchema = z.union([
   z.object({
     scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
@@ -413,6 +440,20 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('handleDialog', 'Accept or dismiss a native web alert/confirm/prompt dialog', handleDialogSchema),
 
   action('uniqueValue', 'Generate a unique test value with a stable prefix', uniqueValueSchema, { readOnly: true }),
+
+  action('pressBack', 'Press the Android system Back button', pressBackSchema),
+
+  action('pressHome', 'Press the Android system Home button', pressHomeSchema),
+
+  action('pressRecent', 'Open the Android recent-apps overview', pressRecentSchema),
+
+  action('openNotifications', 'Open the Android notification shade', openNotificationsSchema),
+
+  action('openQuickSettings', 'Open Android quick settings', openQuickSettingsSchema),
+
+  action('intent', 'Start an Android intent with typed action/data/package/extras fields', intentSchema, { destructive: true }),
+
+  action('keyevent', 'Send an Android KEYCODE_* key event', keyeventSchema, { destructive: true }),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({
