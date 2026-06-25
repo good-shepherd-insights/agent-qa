@@ -273,7 +273,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Text value to paste'),
   }).strict()),
 
-  action('web_inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema),
+  action('inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({

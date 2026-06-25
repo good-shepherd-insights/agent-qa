@@ -34,7 +34,7 @@ export const VERB_SURFACE: Record<string, Surface> = {
   tapCoordinate: 'mobile',
   waitFor: 'common',
   waitForUrl: 'web',
-  web_inspect: 'web',
+  inspect: 'web',
 }
 
 export const NON_EXPOSED = new Set(['openLink'])
