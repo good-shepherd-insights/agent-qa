@@ -91,19 +91,14 @@ describe('ToolRegistry', () => {
         'doubleClick',
         'rightClick',
         'hover',
+        'copy',
         'paste',
-        'keyDown',
-        'keyUp',
-        'refresh',
-        'navigateHistory',
-        'readConsoleLogs',
-        'readNetworkLogs',
-        'readCookies',
+        'web_inspect',
+        'navigate',
+        'tab',
         'setCookies',
-        'readLocalStorage',
         'setLocalStorage',
-        'newTab',
-        'switchTab',
+        'waitForUrl',
         'assert',
         'waitFor',
         'delay',
@@ -117,8 +112,19 @@ describe('ToolRegistry', () => {
 
       expect(ids).toContain('web_fill')
       expect(ids).not.toContain('mobile_fill')
+      expect(registry.getForPlatform('web')).toHaveLength(22)
 
       for (const type of [
+        'keyDown',
+        'keyUp',
+        'refresh',
+        'navigateHistory',
+        'readConsoleLogs',
+        'readNetworkLogs',
+        'readCookies',
+        'readLocalStorage',
+        'newTab',
+        'switchTab',
         'tap',
         'doubleTap',
         'multiTap',
@@ -240,9 +246,26 @@ describe('ToolRegistry', () => {
       const result = schema.safeParse({ keys: ['Enter'] })
       expect(result.success).toBe(true)
       if (result.success) {
-        const data = result.data as { keys: string[]; convertPlatformKeys: boolean }
+        const data = result.data as { keys: string[]; convertPlatformKeys: boolean; mode: string }
         expect(data.keys).toEqual(['Enter'])
         expect(data.convertPlatformKeys).toBe(true)
+        expect(data.mode).toBe('press')
+      }
+    })
+
+    it('accepts hold and release keypress modes', () => {
+      registerAllActions(registry)
+      const schema = registry.getSchema('common_keypress')
+      const down = schema.safeParse({ keys: ['Shift'], mode: 'down' })
+      const up = schema.safeParse({ keys: ['Shift'], mode: 'up' })
+
+      expect(down.success).toBe(true)
+      expect(up.success).toBe(true)
+      if (down.success) {
+        expect((down.data as { mode: string }).mode).toBe('down')
+      }
+      if (up.success) {
+        expect((up.data as { mode: string }).mode).toBe('up')
       }
     })
 
@@ -285,18 +308,18 @@ describe('ToolRegistry', () => {
       const docs = registry.generateDocs('web')
       expect(docs).toMatch(/^- web_click:/m)
       expect(docs).toMatch(/^- web_hover:/m)
-      expect(docs).toMatch(/^- web_readConsoleLogs:/m)
+      expect(docs).toMatch(/^- web_web_inspect:/m)
       expect(docs).toMatch(/^- common_keypress:/m)
       expect(docs).not.toMatch(/^- mobile_tap:/m)
       expect(docs).not.toMatch(/^- mobile_swipe:/m)
       expect(docs).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('returns all 43 registered actions when no platform is specified', () => {
+    it('returns all 35 registered actions when no platform is specified', () => {
       registerAllActions(registry)
       const docs = registry.generateDocs()
       const lines = docs.split('\n').filter(l => l.startsWith('- '))
-      expect(lines).toHaveLength(43)
+      expect(lines).toHaveLength(35)
     })
 
     it('keeps generated docs platform availability aligned for nativeSelect', () => {
@@ -353,11 +376,11 @@ describe('toolCallToActionPlan', () => {
 })
 
 describe('surface + id integrity', () => {
-  it('registers exactly 43 action tools', () => {
+  it('registers exactly 35 action tools', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const all = registry.getAll()
-    expect(all).toHaveLength(43)
+    expect(all).toHaveLength(35)
   })
 
   it('every action has category "action"', () => {
@@ -428,14 +451,57 @@ describe('surface + id integrity', () => {
     expect(scrollSchema.safeParse({ scrollType: 'vertical', value: 500 }).success).toBe(false)
   })
 
-  it('pinch schema has scale, optional x, y, ref', () => {
+  it('web_inspect schema validates browser read variants', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
-    const pinchSchema = registry.getSchema('mobile_pinch') as z.ZodObject<any>
-    expect(pinchSchema.shape).toHaveProperty('scale')
-    expect(pinchSchema.shape).toHaveProperty('x')
-    expect(pinchSchema.shape).toHaveProperty('y')
-    expect(pinchSchema.shape).toHaveProperty('ref')
+    const inspectSchema = registry.getSchema('web_web_inspect') as z.ZodType
+
+    expect(inspectSchema.safeParse({ what: 'console' }).success).toBe(true)
+    expect(inspectSchema.safeParse({ what: 'network', urlPattern: '/api' }).success).toBe(true)
+    expect(inspectSchema.safeParse({ what: 'cookies', name: 'sid' }).success).toBe(true)
+    expect(inspectSchema.safeParse({ what: 'localStorage', key: 'k' }).success).toBe(true)
+    expect(inspectSchema.safeParse({ what: 'bogus' }).success).toBe(false)
+  })
+
+  it('navigate schema validates folded navigation variants', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    const navigateSchema = registry.getSchema('web_navigate') as z.ZodType
+
+    expect(navigateSchema.safeParse({ to: 'url', url: 'https://x' }).success).toBe(true)
+    expect(navigateSchema.safeParse({ to: 'back' }).success).toBe(true)
+    expect(navigateSchema.safeParse({ to: 'reload' }).success).toBe(true)
+    expect(navigateSchema.safeParse({ to: 'url' }).success).toBe(false)
+  })
+
+  it('tab schema validates new and switch variants', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    const tabSchema = registry.getSchema('web_tab') as z.ZodType
+
+    expect(tabSchema.safeParse({ action: 'new', url: 'https://x' }).success).toBe(true)
+    expect(tabSchema.safeParse({ action: 'switch', index: 0 }).success).toBe(true)
+    expect(tabSchema.safeParse({ action: 'switch' }).success).toBe(true)
+  })
+
+  it('pinch schema requires a ref or coordinate target', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    const pinchSchema = registry.getSchema('mobile_pinch') as z.ZodType
+
+    expect(pinchSchema.safeParse({ scale: 2, ref: 'e1' }).success).toBe(true)
+    expect(pinchSchema.safeParse({ scale: 2, x: 10, y: 20, coordSpace: 'viewport' }).success).toBe(true)
+    expect(pinchSchema.safeParse({ scale: 2 }).success).toBe(false)
+  })
+
+  it('multiTap schema requires a ref or coordinate target', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    const multiTapSchema = registry.getSchema('mobile_multiTap') as z.ZodType
+
+    expect(multiTapSchema.safeParse({ fingers: 2, ref: 'e1' }).success).toBe(true)
+    expect(multiTapSchema.safeParse({ fingers: 3, x: 10, y: 20, coordSpace: 'content' }).success).toBe(true)
+    expect(multiTapSchema.safeParse({ fingers: 2 }).success).toBe(false)
   })
 
   it('executeScript is not registered as a planner-facing tool', () => {
