@@ -51,7 +51,7 @@ type RegistryPinchAction = WithActionType<'pinch', WithoutElementDescription<z.i
 type RegistryMultiTapAction = WithActionType<'multiTap', WithoutElementDescription<z.infer<typeof multiTapSchema>>>
 type RegistryNavigateAction = WithActionType<'navigate', z.infer<typeof navigateSchema>>
 type RegistryTabAction = WithActionType<'tab', WithSchemaTabSelector<z.infer<typeof tabSchema>>>
-type RegistryWebInspectAction = WithActionType<'web_inspect', WithSchemaInspectTab<z.infer<typeof webInspectSchema>>>
+type RegistryWebInspectAction = WithActionType<'inspect', WithSchemaInspectTab<z.infer<typeof webInspectSchema>>>
 
 expectTypeOf<z.infer<typeof fillSchema>['ref']>().toEqualTypeOf<Ref>()
 expectTypeOf<ScrollParams['ref']>().toEqualTypeOf<Ref | undefined>()
@@ -70,5 +70,5 @@ expectTypeOf<RegistryNavigateAction>().toMatchTypeOf<Extract<WebAction, { type: 
 expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().toMatchTypeOf<RegistryNavigateAction>()
 expectTypeOf<RegistryTabAction>().toMatchTypeOf<Extract<WebAction, { type: 'tab' }>>()
 expectTypeOf<Extract<WebAction, { type: 'tab' }>>().toMatchTypeOf<RegistryTabAction>()
-expectTypeOf<RegistryWebInspectAction>().toMatchTypeOf<Extract<WebAction, { type: 'web_inspect' }>>()
-expectTypeOf<Extract<WebAction, { type: 'web_inspect' }>>().toMatchTypeOf<RegistryWebInspectAction>()
+expectTypeOf<RegistryWebInspectAction>().toMatchTypeOf<Extract<WebAction, { type: 'inspect' }>>()
+expectTypeOf<Extract<WebAction, { type: 'inspect' }>>().toMatchTypeOf<RegistryWebInspectAction>()

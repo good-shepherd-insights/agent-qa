@@ -39,7 +39,7 @@ describe('defaultRegistry.generateDocs', () => {
     it('includes folded web ids and excludes folded-away ids', () => {
       const result = defaultRegistry.generateDocs('web')
 
-      expect(result).toMatch(/^- web_web_inspect:/m)
+      expect(result).toMatch(/^- web_inspect:/m)
       expect(result).toMatch(/^- web_navigate:/m)
       expect(result).toMatch(/^- web_tab:/m)
 
@@ -103,7 +103,7 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- mobile_fill:/m)
       expect(result).toMatch(/^- common_keypress:/m)
       expect(result).not.toMatch(/^- web_doubleClick:/m)
-      expect(result).not.toMatch(/^- web_web_inspect:/m)
+      expect(result).not.toMatch(/^- web_inspect:/m)
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
@@ -130,7 +130,7 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- mobile_fill:/m)
       expect(result).toMatch(/^- common_keypress:/m)
       expect(result).not.toMatch(/^- web_doubleClick:/m)
-      expect(result).not.toMatch(/^- web_web_inspect:/m)
+      expect(result).not.toMatch(/^- web_inspect:/m)
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 

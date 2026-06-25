@@ -22,7 +22,7 @@ expectTypeOf<Extract<WebAction, { type: 'fileUpload' }>>().not.toEqualTypeOf<nev
 expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'waitForUrl' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'tab' }>>().not.toEqualTypeOf<never>()
-expectTypeOf<Extract<WebAction, { type: 'web_inspect' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'inspect' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'setCookies' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'setLocalStorage' }>>().not.toEqualTypeOf<never>()
 

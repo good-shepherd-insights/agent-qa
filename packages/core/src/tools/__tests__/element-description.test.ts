@@ -32,7 +32,7 @@ const EXCLUDED_ELEMENT_DESCRIPTION_IDS = [
   'common_waitFor',
   'common_assert',
   'common_keypress',
-  'web_web_inspect',
+  'web_inspect',
   'web_setCookies',
   'web_setLocalStorage',
   'mobile_hideKeyboard',

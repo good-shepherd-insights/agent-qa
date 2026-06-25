@@ -93,7 +93,7 @@ describe('ToolRegistry', () => {
         'hover',
         'copy',
         'paste',
-        'web_inspect',
+        'inspect',
         'navigate',
         'tab',
         'setCookies',
@@ -308,7 +308,7 @@ describe('ToolRegistry', () => {
       const docs = registry.generateDocs('web')
       expect(docs).toMatch(/^- web_click:/m)
       expect(docs).toMatch(/^- web_hover:/m)
-      expect(docs).toMatch(/^- web_web_inspect:/m)
+      expect(docs).toMatch(/^- web_inspect:/m)
       expect(docs).toMatch(/^- common_keypress:/m)
       expect(docs).not.toMatch(/^- mobile_tap:/m)
       expect(docs).not.toMatch(/^- mobile_swipe:/m)
@@ -454,7 +454,7 @@ describe('surface + id integrity', () => {
   it('web_inspect schema validates browser read variants', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
-    const inspectSchema = registry.getSchema('web_web_inspect') as z.ZodType
+    const inspectSchema = registry.getSchema('web_inspect') as z.ZodType
 
     expect(inspectSchema.safeParse({ what: 'console' }).success).toBe(true)
     expect(inspectSchema.safeParse({ what: 'network', urlPattern: '/api' }).success).toBe(true)
