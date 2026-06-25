@@ -94,14 +94,56 @@ export const waitForSchema = z.discriminatedUnion('on', [
   }).strict(),
 ])
 
-const assertSchema = z.object({
-  claim: z.string().describe('The condition to verify, phrased as a checkable statement'),
-  kind: z.enum(['visible', 'text', 'value', 'state', 'url', 'custom']).default('visible')
-    .describe('Assertion kind. Omit when checking simple visibility.'),
+// D-06: assertAI is non-deterministic and should bypass runtime caches in M1; this phase records schema intent only.
+export const assertAISchema = z.object({
+  claim: z.string().describe('AI-judged claim to verify against the current screen state'),
+  mode: z.enum(['multimodal', 'visual', 'text']).default('multimodal')
+    .describe('multimodal = use all available evidence. Omit for multimodal.'),
+  effort: z.enum(['low', 'medium', 'high']).default('medium')
+    .describe('Model reasoning effort for the assertion. Omit for medium.'),
+  consensus: z.number().int().min(1).max(5).default(1)
+    .describe('Number of model votes — accepted but NOT honored until M3/M4. Omit for single-judge.'),
+  video: z.boolean().optional()
+    .describe('Assert over a recorded clip — accepted but NOT honored until M3/M4. Omit when a still-frame assertion is enough.'),
+}).strict()
+
+const assertValueSourceSchema = z.object({
+  source: z.enum(['url', 'storage', 'network', 'expr-result'])
+    .describe('Deterministic machine-value source to assert against'),
+  op: z.enum(['isNull', 'isDefined', 'equals', 'notEquals', 'gt', 'lt', 'contains'])
+    .describe('Deterministic comparison operation'),
   expected: z.string().optional()
-    .describe('Expected value for comparison. Omit when the claim is self-contained.'),
-  evidence: z.enum(['screen', 'dom', 'none']).default('screen')
-    .describe('screen = needs screenshot evidence; dom = DOM/a11y-tree check; none = non-visual. Omit when screen evidence is appropriate.'),
+    .describe('Expected comparison value. Omit when op is isNull or isDefined.'),
+}).strict()
+
+const assertValueExprSchema = z.object({
+  expr: z.string().describe('JavaScript expression whose deterministic result is asserted'),
+  op: z.enum(['isNull', 'isDefined', 'equals', 'notEquals', 'gt', 'lt', 'contains'])
+    .describe('Deterministic comparison operation'),
+  expected: z.string().optional()
+    .describe('Expected comparison value. Omit when op is isNull or isDefined.'),
+}).strict()
+
+export const assertValueSchema = z.union([assertValueSourceSchema, assertValueExprSchema])
+
+const extractArrayItemSchema = z.object({
+  type: z.enum(['string', 'number', 'boolean', 'object']).describe('Array item type'),
+}).strict()
+
+export const extractFieldSchema = z.object({
+  name: z.string().describe('Output field name'),
+  type: z.enum(['string', 'number', 'boolean', 'array', 'object']).describe('Output field value type'),
+  description: z.string().describe('Natural-language description of the field to extract'),
+  item: extractArrayItemSchema.optional()
+    .describe('Array item type. Omit when type is not array.'),
+}).strict()
+
+// D-06: extractAI is non-deterministic and should bypass runtime caches in M1; this phase records schema intent only.
+export const extractAISchema = z.object({
+  query: z.string().describe('Perceptual extraction request for the current rendered state'),
+  schema: z.array(extractFieldSchema).describe('Typed field-list output schema'),
+  scope: z.enum(['run', 'global']).default('run')
+    .describe('Where extracted values may be reused. Omit for run scope.'),
 }).strict()
 
 const pointSchema = z.object({
@@ -262,7 +304,11 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('waitFor', 'Wait for text, selector presence, or text disappearance', waitForSchema),
 
-  action('assert', 'Assert a condition on the current page state', assertSchema),
+  action('assertAI', 'Ask AI to judge a perceptual claim about the current screen state', assertAISchema, { readOnly: true }),
+
+  action('assertValue', 'Assert a deterministic machine-readable value without AI judgment', assertValueSchema, { readOnly: true }),
+
+  action('extractAI', 'Extract structured perceptual data from the current screen state', extractAISchema, { readOnly: true }),
 
   action('keypress', 'Press one or more keyboard keys/combos in sequence, or hold/release a modifier key', z.object({
     keys: z.array(z.string()).min(1).describe('Array of keys/combos to press in sequence. Each entry may be a single key (e.g. "Enter", "Tab", "Escape") or a combo with "+" separators (e.g. "Meta+k", "Control+Shift+T"). Use "Meta" for the Cmd/Win/Super key — on non-Mac platforms it is automatically converted to "Control" when convertPlatformKeys is true. On mobile, only single special keys from the KEY_MAP work meaningfully; combos are a no-op.'),

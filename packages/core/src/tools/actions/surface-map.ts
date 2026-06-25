@@ -1,7 +1,8 @@
 import type { Surface } from '@vostride/agent-qa-schema'
 
 export const VERB_SURFACE: Record<string, Surface> = {
-  assert: 'common',
+  assertAI: 'common',
+  assertValue: 'common',
   clearText: 'common',
   click: 'web',
   copy: 'web',
@@ -9,6 +10,7 @@ export const VERB_SURFACE: Record<string, Surface> = {
   doubleClick: 'web',
   doubleTap: 'mobile',
   drag: 'mobile',
+  extractAI: 'common',
   fileUpload: 'web',
   fill: 'web',
   hideKeyboard: 'mobile',
