@@ -73,9 +73,11 @@ expectTypeOf<CommonAssertAI>().toMatchTypeOf<{
   effort: 'low' | 'medium' | 'high'
   consensus: number
 }>()
-expectTypeOf<Extract<CommonAction, { type: 'openLink' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'reportValue' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'openApp' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'openLink' }>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'executeScript' }>>().not.toEqualTypeOf<never>()
-expectTypeOf<Extract<MobileAction, { type: 'launchApp' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<MobileAction, { type: 'launchApp' }>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<MobileAction, { type: 'stopApp' }>>().not.toEqualTypeOf<never>()
 
 const webExec = (((_: never) => {}) as unknown) as ActionExecutor<'web'>
