@@ -18,6 +18,13 @@ const androidToolIds = [
   'android_keyevent',
 ]
 
+const iosToolIds = [
+  'ios_pressButton',
+  'ios_pickerSelect',
+  'ios_swipeFromEdge',
+  'ios_openUniversalLink',
+]
+
 function schemaShapes(schema: z.ZodType): Array<Record<string, z.ZodType>> {
   if (schema instanceof z.ZodDiscriminatedUnion) {
     return schema.options.map(option => (option as z.ZodObject<any>).shape as Record<string, z.ZodType>)
@@ -328,11 +335,11 @@ describe('ToolRegistry', () => {
       expect(docs).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('returns all 52 registered actions when no platform is specified', () => {
+    it('returns all 56 registered actions when no platform is specified', () => {
       registerAllActions(registry)
       const docs = registry.generateDocs()
       const lines = docs.split('\n').filter(l => l.startsWith('- '))
-      expect(lines).toHaveLength(52)
+      expect(lines).toHaveLength(56)
     })
 
     it('keeps generated docs platform availability aligned for nativeSelect', () => {
@@ -389,11 +396,11 @@ describe('toolCallToActionPlan', () => {
 })
 
 describe('surface + id integrity', () => {
-  it('registers exactly 52 action tools', () => {
+  it('registers exactly 56 action tools', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const all = registry.getAll()
-    expect(all).toHaveLength(52)
+    expect(all).toHaveLength(56)
   })
 
   it('every action has category "action"', () => {
@@ -442,7 +449,7 @@ describe('surface + id integrity', () => {
 
     expect(registry.getForPlatform('web')).toHaveLength(33)
     expect(registry.getForPlatform('android')).toHaveLength(30)
-    expect(registry.getForPlatform('ios')).toHaveLength(23)
+    expect(registry.getForPlatform('ios')).toHaveLength(27)
   })
 
   it('each action schema keeps plan metadata out of registry args', () => {
@@ -612,6 +619,53 @@ describe('surface + id integrity', () => {
     const keyeventSchema = registry.getSchema('android_keyevent') as z.ZodType
     expect(keyeventSchema.safeParse({ keycode: 'KEYCODE_ENTER' }).success).toBe(true)
     expect(keyeventSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('registers CAT-04 ios-tier tool definitions on the ios surface only', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    for (const id of iosToolIds) {
+      const def = registry.get(id)
+      expect(def?.surface).toBe('ios')
+      expect(registry.getForPlatform('ios').map(tool => tool.id)).toContain(id)
+      expect(registry.getForPlatform('web').map(tool => tool.id)).not.toContain(id)
+      expect(registry.getForPlatform('android').map(tool => tool.id)).not.toContain(id)
+    }
+
+    expect(registry.get('ios_pressHome')).toBeUndefined()
+    expect(registry.getForPlatform('ios').map(tool => tool.id)).toContain('mobile_nativeSelect')
+  })
+
+  it('validates CAT-04 ios schemas with pickerSelect ref/value and ref/order variants', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    const pressButtonSchema = registry.getSchema('ios_pressButton') as z.ZodType
+    expect(pressButtonSchema.safeParse({ button: 'home' }).success).toBe(true)
+    expect(pressButtonSchema.safeParse({ button: 'volumeUp' }).success).toBe(true)
+    expect(pressButtonSchema.safeParse({ button: 'action' }).success).toBe(true)
+    expect(pressButtonSchema.safeParse({ button: 'lock' }).success).toBe(false)
+
+    const pickerSelectSchema = registry.getSchema('ios_pickerSelect') as z.ZodUnion<any>
+    expect(pickerSelectSchema.safeParse({ ref: 'e1', value: 'March' }).success).toBe(true)
+    expect(pickerSelectSchema.safeParse({ ref: 'e1', order: 0 }).success).toBe(true)
+    expect(pickerSelectSchema.safeParse({}).success).toBe(false)
+    expect(pickerSelectSchema.safeParse({ ref: 'e1' }).success).toBe(false)
+    for (const option of pickerSelectSchema.options as z.ZodObject<any>[]) {
+      expect(option.shape).toHaveProperty('ref')
+      expect(option.shape).toHaveProperty('elementDescription')
+    }
+
+    const swipeFromEdgeSchema = registry.getSchema('ios_swipeFromEdge') as z.ZodType
+    expect(swipeFromEdgeSchema.safeParse({ edge: 'left' }).success).toBe(true)
+    expect(swipeFromEdgeSchema.safeParse({ edge: 'diagonal' }).success).toBe(false)
+
+    const openUniversalLinkSchema = registry.getSchema('ios_openUniversalLink') as z.ZodObject<any>
+    expect(openUniversalLinkSchema.safeParse({ url: 'https://x' }).success).toBe(true)
+    expect(openUniversalLinkSchema.safeParse({ url: 'https://x', bundleId: 'com.app' }).success).toBe(true)
+    expect(openUniversalLinkSchema.safeParse({}).success).toBe(false)
+    expect(openUniversalLinkSchema.shape.bundleId.description).toMatch(/omit/i)
   })
 
   it('click schema has ref field', () => {
