@@ -54,7 +54,7 @@ expectTypeOf<Extract<WebAction, { type: 'fill' }>>().toEqualTypeOf<
 >()
 expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'tab' }>>().not.toEqualTypeOf<never>()
-expectTypeOf<Extract<WebAction, { type: 'web_inspect' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'inspect' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().toMatchTypeOf<{
   type: 'keypress'
   keys: string[]

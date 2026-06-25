@@ -22,10 +22,10 @@ export type WebAction = NoPlatform & (
   | ({ type: 'fileUpload'; files: string[] } & WebRefTargeted)
   | { type: 'tab'; action: 'new'; url: string }
   | ({ type: 'tab'; action: 'switch' } & TabSelector)
-  | { type: 'web_inspect'; what: 'console'; level?: 'log' | 'info' | 'warn' | 'error'; tab?: TabSelector }
-  | { type: 'web_inspect'; what: 'network'; urlPattern?: string; tab?: TabSelector }
-  | { type: 'web_inspect'; what: 'cookies'; name?: string }
-  | { type: 'web_inspect'; what: 'localStorage'; key?: string }
+  | { type: 'inspect'; what: 'console'; level?: 'log' | 'info' | 'warn' | 'error'; tab?: TabSelector }
+  | { type: 'inspect'; what: 'network'; urlPattern?: string; tab?: TabSelector }
+  | { type: 'inspect'; what: 'cookies'; name?: string }
+  | { type: 'inspect'; what: 'localStorage'; key?: string }
   | {
       type: 'setCookies'
       cookies: Array<{
