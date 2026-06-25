@@ -22,9 +22,9 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('contains exactly 43 action lines', () => {
+    it('contains exactly 35 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      expect(actionLines(result)).toHaveLength(43)
+      expect(actionLines(result)).toHaveLength(35)
     })
   })
 
@@ -34,6 +34,29 @@ describe('defaultRegistry.generateDocs', () => {
 
       expect(result).toMatch(/^- web_click:/m)
       expect(result).not.toMatch(/^- mobile_tap:/m)
+    })
+
+    it('includes folded web ids and excludes folded-away ids', () => {
+      const result = defaultRegistry.generateDocs('web')
+
+      expect(result).toMatch(/^- web_web_inspect:/m)
+      expect(result).toMatch(/^- web_navigate:/m)
+      expect(result).toMatch(/^- web_tab:/m)
+
+      for (const id of [
+        'web_keyDown',
+        'web_keyUp',
+        'web_navigateHistory',
+        'web_newTab',
+        'web_readConsoleLogs',
+        'web_readCookies',
+        'web_readLocalStorage',
+        'web_readNetworkLogs',
+        'web_refresh',
+        'web_switchTab',
+      ]) {
+        expect(result).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+      }
     })
 
     it('excludes mobile interaction ids from the web docs', () => {
@@ -60,7 +83,7 @@ describe('defaultRegistry.generateDocs', () => {
     it('contains the expected exposed web slice line count', () => {
       const result = defaultRegistry.generateDocs('web')
 
-      expect(expectedLineCount('web')).toBe(30)
+      expect(expectedLineCount('web')).toBe(22)
       expect(actionLines(result)).toHaveLength(expectedLineCount('web'))
     })
   })
@@ -80,7 +103,7 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- mobile_fill:/m)
       expect(result).toMatch(/^- common_keypress:/m)
       expect(result).not.toMatch(/^- web_doubleClick:/m)
-      expect(result).not.toMatch(/^- web_readConsoleLogs:/m)
+      expect(result).not.toMatch(/^- web_web_inspect:/m)
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
@@ -107,7 +130,7 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- mobile_fill:/m)
       expect(result).toMatch(/^- common_keypress:/m)
       expect(result).not.toMatch(/^- web_doubleClick:/m)
-      expect(result).not.toMatch(/^- web_readConsoleLogs:/m)
+      expect(result).not.toMatch(/^- web_web_inspect:/m)
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
@@ -142,12 +165,12 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- mobile_nativeSelect: .+\. Params: .*ref.*value/m)
     })
 
-    it('navigateHistory action shows direction param', () => {
+    it('navigate action shows the to param', () => {
       const result = defaultRegistry.generateDocs()
-      const line = result.split('\n').find((l: string) => l.startsWith('- web_navigateHistory:'))
+      const line = result.split('\n').find((l: string) => l.startsWith('- web_navigate:'))
       expect(line).toBeDefined()
       expect(line).toContain('Params:')
-      expect(line).toContain('direction')
+      expect(line).toContain('to')
     })
 
     it('scroll action shows mode and ref params', () => {
