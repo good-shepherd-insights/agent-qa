@@ -61,14 +61,18 @@ expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().toMatchTypeOf<{
   mode: 'press' | 'down' | 'up'
 }>()
 
-type CommonAssert = Extract<CommonAction, { type: 'assert' }>
-expectTypeOf<CommonAssert>().toMatchTypeOf<{
-  type: 'assert'
-  condition: string
-  expected?: string
-  visual?: boolean
+type CommonAssertAI = Extract<CommonAction, { type: 'assertAI' }>
+expectTypeOf<CommonAssertAI>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'assertValue' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'extractAI' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<CommonAction, { type: 'assert' }>>().toEqualTypeOf<never>()
+expectTypeOf<CommonAssertAI>().toMatchTypeOf<{
+  type: 'assertAI'
+  claim: string
+  mode: 'multimodal' | 'visual' | 'text'
+  effort: 'low' | 'medium' | 'high'
+  consensus: number
 }>()
-expectTypeOf<Extract<keyof CommonAssert, 'claim' | 'kind' | 'evidence'>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'openLink' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'executeScript' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<MobileAction, { type: 'launchApp' }>>().not.toEqualTypeOf<never>()
