@@ -480,6 +480,80 @@ describe('surface + id integrity', () => {
     expect(registry.get('common_executeScript')).toBeUndefined()
   })
 
+  it('registers CAT-02 web-tier tool definitions on the web surface only', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    for (const id of [
+      'web_route',
+      'web_unroute',
+      'web_networkState',
+      'web_storageState',
+      'web_handleDialog',
+      'web_uniqueValue',
+      'web_focus',
+    ]) {
+      const def = registry.get(id)
+      expect(def?.surface).toBe('web')
+      expect(registry.getForPlatform('web').map(tool => tool.id)).toContain(id)
+      expect(registry.getForPlatform('android').map(tool => tool.id)).not.toContain(id)
+      expect(registry.getForPlatform('ios').map(tool => tool.id)).not.toContain(id)
+    }
+
+    expect(registry.get('web_route')?.destructive).toBe(true)
+    expect(registry.get('web_networkState')?.readOnly).toBe(true)
+    expect(registry.get('web_uniqueValue')?.readOnly).toBe(true)
+  })
+
+  it('validates CAT-02 web-tier schemas without escape-hatch shapes', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    const routeSchema = registry.getSchema('web_route') as z.ZodType
+    expect(routeSchema.safeParse({
+      urlPattern: '**/api/users',
+      headers: { 'X-Test': '1' },
+      body: '{"a":1}',
+      contentType: 'application/json',
+    }).success).toBe(true)
+    expect(routeSchema.safeParse({ urlPattern: '**/api/users' }).success).toBe(true)
+    expect(routeSchema.safeParse({ urlPattern: '**/api/users', extra: true }).success).toBe(false)
+
+    const unrouteSchema = registry.getSchema('web_unroute') as z.ZodType
+    expect(unrouteSchema.safeParse({ urlPattern: '**/api/users' }).success).toBe(true)
+    expect(unrouteSchema.safeParse({}).success).toBe(true)
+
+    const networkStateSchema = registry.getSchema('web_networkState') as z.ZodType
+    expect(networkStateSchema.safeParse({ mode: 'offline' }).success).toBe(true)
+    expect(networkStateSchema.safeParse({
+      mode: 'throttle',
+      latencyMs: 150,
+      downloadKbps: 750,
+      uploadKbps: 250,
+    }).success).toBe(true)
+    expect(networkStateSchema.safeParse({ mode: 'throttle' }).success).toBe(false)
+
+    const storageStateSchema = registry.getSchema('web_storageState') as z.ZodType
+    expect(storageStateSchema.safeParse({ op: 'save', name: 'admin' }).success).toBe(true)
+    expect(storageStateSchema.safeParse({ op: 'restore', name: 'admin' }).success).toBe(true)
+    expect(storageStateSchema.safeParse({ op: 'delete', name: 'admin' }).success).toBe(false)
+
+    const handleDialogSchema = registry.getSchema('web_handleDialog') as z.ZodType
+    expect(handleDialogSchema.safeParse({ accept: true }).success).toBe(true)
+    expect(handleDialogSchema.safeParse({ accept: true, promptText: 'hello' }).success).toBe(true)
+
+    const uniqueValueSchema = registry.getSchema('web_uniqueValue') as z.ZodType
+    expect(uniqueValueSchema.safeParse({ prefix: 'user' }).success).toBe(true)
+
+    const focusSchema = registry.getSchema('web_focus') as z.ZodObject<any>
+    expect(focusSchema.safeParse({ ref: 'e1' }).success).toBe(true)
+    expect(focusSchema.safeParse({ ref: 'e1', elementDescription: 'email field' }).success).toBe(true)
+    expect(focusSchema.safeParse({}).success).toBe(false)
+    expect(focusSchema.shape).toHaveProperty('ref')
+    expect(focusSchema.shape).toHaveProperty('elementDescription')
+    expect(focusSchema.shape).not.toHaveProperty('text')
+  })
+
   it('click schema has ref field', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
