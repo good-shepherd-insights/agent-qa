@@ -1,8 +1,27 @@
 import type { Scroll, WaitFor } from './params'
 import type { NoPlatform, RefTargeted } from './shared'
 
+type AssertValueOp = 'isNull' | 'isDefined' | 'equals' | 'notEquals' | 'gt' | 'lt' | 'contains'
+
+type ExtractAIField = {
+  name: string
+  type: 'string' | 'number' | 'boolean' | 'array' | 'object'
+  description: string
+  item?: { type: 'string' | 'number' | 'boolean' | 'object' }
+}
+
 export type CommonAction = NoPlatform & (
-  | { type: 'assert'; condition: string; expected?: string; visual?: boolean }
+  | {
+      type: 'assertAI'
+      claim: string
+      mode: 'multimodal' | 'visual' | 'text'
+      effort: 'low' | 'medium' | 'high'
+      consensus: number
+      video?: boolean
+    }
+  | { type: 'assertValue'; source: 'url' | 'storage' | 'network' | 'expr-result'; op: AssertValueOp; expected?: string }
+  | { type: 'assertValue'; expr: string; op: AssertValueOp; expected?: string }
+  | { type: 'extractAI'; query: string; schema: ExtractAIField[]; scope: 'run' | 'global' }
   | ({ type: 'waitFor' } & WaitFor)
   | { type: 'delay'; ms: number }
   | ({ type: 'scroll' } & Scroll)
