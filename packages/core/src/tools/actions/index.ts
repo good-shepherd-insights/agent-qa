@@ -234,6 +234,59 @@ export const webInspectSchema = z.discriminatedUnion('what', [
   }).strict(),
 ])
 
+export const routeSchema = z.object({
+  urlPattern: z.string().describe('URL glob or substring pattern to intercept'),
+  headers: z.record(z.string(), z.string()).optional()
+    .describe('Header overrides to apply to mocked responses. Omit when no header override needed.'),
+  body: z.string().optional()
+    .describe('JSON-stringified response body. Omit for pass-through routes.'),
+  contentType: z.string().optional()
+    .describe('Response content type. Omit when body is absent or content type is application/json.'),
+}).strict()
+
+export const unrouteSchema = z.object({
+  urlPattern: z.string().optional()
+    .describe('URL pattern to stop intercepting. Omit when removing all web routes.'),
+}).strict()
+
+export const networkStateSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('offline'),
+  }).strict(),
+  z.object({
+    mode: z.literal('throttle'),
+    latencyMs: z.number().int().min(0).describe('Additional network latency in milliseconds'),
+    downloadKbps: z.number().positive().describe('Download throughput limit in kilobits per second'),
+    uploadKbps: z.number().positive().describe('Upload throughput limit in kilobits per second'),
+  }).strict(),
+])
+
+export const storageStateSchema = z.discriminatedUnion('op', [
+  z.object({
+    op: z.literal('save'),
+    name: z.string().describe('Named auth/storage-state slot to save'),
+  }).strict(),
+  z.object({
+    op: z.literal('restore'),
+    name: z.string().describe('Named auth/storage-state slot to restore'),
+  }).strict(),
+])
+
+export const handleDialogSchema = z.object({
+  accept: z.boolean().describe('true to accept the dialog, false to dismiss it'),
+  promptText: z.string().optional()
+    .describe('Text to enter into a prompt dialog. Omit when the dialog has no text input or you accept the default.'),
+}).strict()
+
+export const uniqueValueSchema = z.object({
+  prefix: z.string().describe('Prefix for the generated unique test value'),
+}).strict()
+
+export const focusSchema = z.object({
+  ref: refSchema(`Element to focus; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+  elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+}).strict()
+
 export const pinchSchema = z.union([
   z.object({
     scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
@@ -345,7 +398,21 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Text value to paste'),
   }).strict(), { destructive: true }),
 
+  action('focus', 'Focus an element without typing text', focusSchema),
+
   action('inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema, { readOnly: true }),
+
+  action('route', 'Mock or intercept web network requests matching a URL pattern', routeSchema, { destructive: true }),
+
+  action('unroute', 'Remove web network request mocks/intercepts', unrouteSchema, { destructive: true }),
+
+  action('networkState', 'Set web network state to offline or a throttled profile', networkStateSchema, { readOnly: true }),
+
+  action('storageState', 'Save or restore a named web auth/storage state', storageStateSchema, { destructive: true }),
+
+  action('handleDialog', 'Accept or dismiss a native web alert/confirm/prompt dialog', handleDialogSchema),
+
+  action('uniqueValue', 'Generate a unique test value with a stable prefix', uniqueValueSchema, { readOnly: true }),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({

@@ -116,7 +116,7 @@ describe('ToolRegistry', () => {
 
       expect(ids).toContain('web_fill')
       expect(ids).not.toContain('mobile_fill')
-      expect(registry.getForPlatform('web')).toHaveLength(26)
+      expect(registry.getForPlatform('web')).toHaveLength(33)
 
       for (const type of [
         'keyDown',
@@ -319,11 +319,11 @@ describe('ToolRegistry', () => {
       expect(docs).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('returns all 38 registered actions when no platform is specified', () => {
+    it('returns all 45 registered actions when no platform is specified', () => {
       registerAllActions(registry)
       const docs = registry.generateDocs()
       const lines = docs.split('\n').filter(l => l.startsWith('- '))
-      expect(lines).toHaveLength(38)
+      expect(lines).toHaveLength(45)
     })
 
     it('keeps generated docs platform availability aligned for nativeSelect', () => {
@@ -380,11 +380,11 @@ describe('toolCallToActionPlan', () => {
 })
 
 describe('surface + id integrity', () => {
-  it('registers exactly 38 action tools', () => {
+  it('registers exactly 45 action tools', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const all = registry.getAll()
-    expect(all).toHaveLength(38)
+    expect(all).toHaveLength(45)
   })
 
   it('every action has category "action"', () => {
@@ -431,7 +431,7 @@ describe('surface + id integrity', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
-    expect(registry.getForPlatform('web')).toHaveLength(26)
+    expect(registry.getForPlatform('web')).toHaveLength(33)
     expect(registry.getForPlatform('android')).toHaveLength(23)
     expect(registry.getForPlatform('ios')).toHaveLength(23)
   })
