@@ -16,7 +16,6 @@ import type {
 expectTypeOf<Surface>().toEqualTypeOf<'web' | 'mobile' | 'android' | 'ios' | 'common'>()
 expectTypeOf<Platform>().toEqualTypeOf<'web' | 'android' | 'ios'>()
 
-expectTypeOf<AndroidAction>().toEqualTypeOf<never>()
 expectTypeOf<IosAction>().toEqualTypeOf<never>()
 
 // Populated legs are mutually exclusive except `fill`, the sole documented shared verb;
@@ -41,7 +40,7 @@ expectTypeOf<Exclude<Action['type'], LegUnion>>().toEqualTypeOf<never>()
 expectTypeOf<Exclude<LegUnion, Action['type']>>().toEqualTypeOf<never>()
 
 expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<WebAction | CommonAction>()
-expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<MobileAction | CommonAction>()
+expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<MobileAction | AndroidAction | CommonAction>()
 expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<MobileAction | CommonAction>()
 
 expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().not.toEqualTypeOf<never>()
@@ -88,6 +87,28 @@ expectTypeOf<Extract<WebAction, { type: 'uniqueValue' }>>().toMatchTypeOf<{
 type WebFocus = Extract<WebAction, { type: 'focus' }>
 expectTypeOf<WebFocus>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebFocus, { text: string }>>().toEqualTypeOf<never>()
+
+expectTypeOf<Extract<AndroidAction, { type: 'pressBack' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'pressHome' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'pressRecent' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'openNotifications' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'openQuickSettings' }>>().not.toEqualTypeOf<never>()
+type AndroidIntent = Extract<AndroidAction, { type: 'intent' }>
+expectTypeOf<AndroidIntent>().toMatchTypeOf<{
+  type: 'intent'
+  action: string
+  data?: string
+  packageName?: string
+  extras?: Array<{
+    key: string
+    type: 'string' | 'int' | 'long' | 'float' | 'bool'
+    value: string
+  }>
+}>()
+expectTypeOf<Extract<AndroidAction, { type: 'keyevent' }>>().toMatchTypeOf<{
+  type: 'keyevent'
+  keycode: string
+}>()
 expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().toMatchTypeOf<{
   type: 'keypress'
   keys: string[]
@@ -122,6 +143,7 @@ webExec({ type: 'tap', ref: asRef('e1') })
 
 const mobileExec = (((_: never) => {}) as unknown) as ActionExecutor<'android'>
 mobileExec({ type: 'tap', ref: asRef('e1') })
+mobileExec({ type: 'pressBack' })
 mobileExec({ type: 'delay', ms: 10 })
 
 // @ts-expect-error click is a WebAction and is illegal on a mobile executor.

@@ -7,8 +7,28 @@ import type {
   WebAction,
 } from '@vostride/agent-qa-schema'
 
-expectTypeOf<AndroidAction>().toEqualTypeOf<never>()
 expectTypeOf<IosAction>().toEqualTypeOf<never>()
+
+expectTypeOf<Extract<AndroidAction, { type: 'pressBack' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'pressHome' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'pressRecent' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'openNotifications' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'openQuickSettings' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<AndroidAction, { type: 'intent' }>>().toMatchTypeOf<{
+  type: 'intent'
+  action: string
+  data?: string
+  packageName?: string
+  extras?: Array<{
+    key: string
+    type: 'string' | 'int' | 'long' | 'float' | 'bool'
+    value: string
+  }>
+}>()
+expectTypeOf<Extract<AndroidAction, { type: 'keyevent' }>>().toMatchTypeOf<{
+  type: 'keyevent'
+  keycode: string
+}>()
 
 expectTypeOf<Extract<WebAction, { type: 'click' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'doubleClick' }>>().not.toEqualTypeOf<never>()
