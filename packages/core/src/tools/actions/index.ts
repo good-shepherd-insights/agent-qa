@@ -146,6 +146,19 @@ export const extractAISchema = z.object({
     .describe('Where extracted values may be reused. Omit for run scope.'),
 }).strict()
 
+export const openAppSchema = z.union([
+  z.object({
+    appName: z.string().describe('Human app name, e.g. Settings'),
+  }).strict(),
+  z.object({
+    bundleId: z.string().describe('Exact bundle id / package name'),
+  }).strict(),
+])
+
+export const reportValueSchema = z.object({
+  value: z.string().describe('The answer/value to report back to the caller'),
+}).strict()
+
 const pointSchema = z.object({
   x: z.number().describe('X coordinate in pixels'),
   y: z.number().describe('Y coordinate in pixels'),
@@ -310,6 +323,10 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('extractAI', 'Extract structured perceptual data from the current screen state', extractAISchema, { readOnly: true }),
 
+  action('openApp', 'Open an installed app by human-readable app name or exact bundle/package id', openAppSchema),
+
+  action('reportValue', 'Report an answer or extracted value back to the caller', reportValueSchema, { readOnly: true }),
+
   action('keypress', 'Press one or more keyboard keys/combos in sequence, or hold/release a modifier key', z.object({
     keys: z.array(z.string()).min(1).describe('Array of keys/combos to press in sequence. Each entry may be a single key (e.g. "Enter", "Tab", "Escape") or a combo with "+" separators (e.g. "Meta+k", "Control+Shift+T"). Use "Meta" for the Cmd/Win/Super key — on non-Mac platforms it is automatically converted to "Control" when convertPlatformKeys is true. On mobile, only single special keys from the KEY_MAP work meaningfully; combos are a no-op.'),
     mode: z.enum(['press', 'down', 'up']).default('press')
@@ -369,14 +386,6 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ref: refSchema(`Input field to clear; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict()),
-
-  action('openLink', 'Open a deep link in a mobile app — use navigate for web URLs', z.object({
-    url: z.string().describe('Deep link URL to open (e.g. myapp://screen, intent://...)'),
-    appId: z.string().optional().describe('Generic mobile app identifier. Android uses package name; iOS uses bundle ID.'),
-    bundleId: z.string().optional().describe('iOS bundle ID to open the link in'),
-    appPackage: z.string().optional().describe('Android package name to open the link in'),
-    waitForLaunch: z.boolean().optional().describe('Whether to wait for the app to launch after opening the link'),
-  })),
 
   action('drag', 'Drag an element to another element (reorder lists, sliders)', z.object({
     fromRef: refSchema(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}`),

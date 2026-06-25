@@ -20,9 +20,10 @@ export const VERB_SURFACE: Record<string, Surface> = {
   multiTap: 'mobile',
   nativeSelect: 'mobile',
   navigate: 'web',
-  openLink: 'common',
+  openApp: 'common',
   paste: 'web',
   pinch: 'mobile',
+  reportValue: 'common',
   rightClick: 'web',
   scroll: 'common',
   select: 'web',
@@ -39,4 +40,4 @@ export const VERB_SURFACE: Record<string, Surface> = {
   inspect: 'web',
 }
 
-export const NON_EXPOSED = new Set(['openLink'])
+export const NON_EXPOSED = new Set<string>([])

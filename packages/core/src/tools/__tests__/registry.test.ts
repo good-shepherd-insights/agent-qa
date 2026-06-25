@@ -102,6 +102,8 @@ describe('ToolRegistry', () => {
         'assertAI',
         'assertValue',
         'extractAI',
+        'openApp',
+        'reportValue',
         'waitFor',
         'delay',
         'scroll',
@@ -114,7 +116,7 @@ describe('ToolRegistry', () => {
 
       expect(ids).toContain('web_fill')
       expect(ids).not.toContain('mobile_fill')
-      expect(registry.getForPlatform('web')).toHaveLength(24)
+      expect(registry.getForPlatform('web')).toHaveLength(26)
 
       for (const type of [
         'keyDown',
@@ -317,11 +319,11 @@ describe('ToolRegistry', () => {
       expect(docs).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('returns all 37 registered actions when no platform is specified', () => {
+    it('returns all 38 registered actions when no platform is specified', () => {
       registerAllActions(registry)
       const docs = registry.generateDocs()
       const lines = docs.split('\n').filter(l => l.startsWith('- '))
-      expect(lines).toHaveLength(37)
+      expect(lines).toHaveLength(38)
     })
 
     it('keeps generated docs platform availability aligned for nativeSelect', () => {
@@ -378,11 +380,11 @@ describe('toolCallToActionPlan', () => {
 })
 
 describe('surface + id integrity', () => {
-  it('registers exactly 37 action tools', () => {
+  it('registers exactly 38 action tools', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
     const all = registry.getAll()
-    expect(all).toHaveLength(37)
+    expect(all).toHaveLength(38)
   })
 
   it('every action has category "action"', () => {
@@ -409,6 +411,7 @@ describe('surface + id integrity', () => {
     expect(registry.get('common_assertAI')?.readOnly).toBe(true)
     expect(registry.get('common_assertValue')?.readOnly).toBe(true)
     expect(registry.get('common_extractAI')?.readOnly).toBe(true)
+    expect(registry.get('common_reportValue')?.readOnly).toBe(true)
 
     for (const id of [
       'web_fill',
@@ -428,9 +431,9 @@ describe('surface + id integrity', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
-    expect(registry.getForPlatform('web')).toHaveLength(24)
-    expect(registry.getForPlatform('android')).toHaveLength(21)
-    expect(registry.getForPlatform('ios')).toHaveLength(21)
+    expect(registry.getForPlatform('web')).toHaveLength(26)
+    expect(registry.getForPlatform('android')).toHaveLength(23)
+    expect(registry.getForPlatform('ios')).toHaveLength(23)
   })
 
   it('each action schema keeps plan metadata out of registry args', () => {
