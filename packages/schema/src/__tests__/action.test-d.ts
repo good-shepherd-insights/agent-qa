@@ -55,6 +55,39 @@ expectTypeOf<Extract<WebAction, { type: 'fill' }>>().toEqualTypeOf<
 expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'tab' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'inspect' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'route' }>>().toMatchTypeOf<{
+  type: 'route'
+  urlPattern: string
+  headers?: Record<string, string>
+  body?: string
+  contentType?: string
+}>()
+expectTypeOf<Extract<WebAction, { type: 'unroute' }>>().toMatchTypeOf<{
+  type: 'unroute'
+  urlPattern?: string
+}>()
+expectTypeOf<Extract<WebAction, { type: 'networkState'; mode: 'offline' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'networkState'; mode: 'throttle' }>>().toMatchTypeOf<{
+  type: 'networkState'
+  mode: 'throttle'
+  latencyMs: number
+  downloadKbps: number
+  uploadKbps: number
+}>()
+expectTypeOf<Extract<WebAction, { type: 'storageState'; op: 'save' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'storageState'; op: 'restore' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'handleDialog' }>>().toMatchTypeOf<{
+  type: 'handleDialog'
+  accept: boolean
+  promptText?: string
+}>()
+expectTypeOf<Extract<WebAction, { type: 'uniqueValue' }>>().toMatchTypeOf<{
+  type: 'uniqueValue'
+  prefix: string
+}>()
+type WebFocus = Extract<WebAction, { type: 'focus' }>
+expectTypeOf<WebFocus>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebFocus, { text: string }>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().toMatchTypeOf<{
   type: 'keypress'
   keys: string[]
