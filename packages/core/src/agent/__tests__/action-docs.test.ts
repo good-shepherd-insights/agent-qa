@@ -12,6 +12,16 @@ function expectedLineCount(platform: Platform): number {
   return defaultRegistry.getAll().filter(def => def.exposed !== false && surfaces.has(def.surface)).length
 }
 
+const CAT_02_WEB_IDS = [
+  'web_route',
+  'web_unroute',
+  'web_networkState',
+  'web_storageState',
+  'web_handleDialog',
+  'web_uniqueValue',
+  'web_focus',
+] as const
+
 describe('defaultRegistry.generateDocs', () => {
   describe('no platform filter (all actions)', () => {
     it('returns a string containing all registered action ids', () => {
@@ -22,9 +32,9 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('contains exactly 38 action lines', () => {
+    it('contains exactly 45 action lines', () => {
       const result = defaultRegistry.generateDocs()
-      expect(actionLines(result)).toHaveLength(38)
+      expect(actionLines(result)).toHaveLength(45)
     })
   })
 
@@ -42,6 +52,9 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).toMatch(/^- web_inspect:/m)
       expect(result).toMatch(/^- web_navigate:/m)
       expect(result).toMatch(/^- web_tab:/m)
+      expect(result).toMatch(/^- web_route:/m)
+      expect(result).toMatch(/^- web_focus:/m)
+      expect(result).toMatch(/^- web_handleDialog:/m)
 
       for (const id of [
         'web_keyDown',
@@ -56,6 +69,18 @@ describe('defaultRegistry.generateDocs', () => {
         'web_switchTab',
       ]) {
         expect(result).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+      }
+    })
+
+    it('renders CAT-02 web additions only in the web docs', () => {
+      const webDocs = defaultRegistry.generateDocs('web')
+      const androidDocs = defaultRegistry.generateDocs('android')
+      const iosDocs = defaultRegistry.generateDocs('ios')
+
+      for (const id of CAT_02_WEB_IDS) {
+        expect(webDocs).toMatch(new RegExp(`^- ${id}:`, 'm'))
+        expect(androidDocs).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
+        expect(iosDocs).not.toMatch(new RegExp(`^- ${id}:`, 'm'))
       }
     })
 
@@ -83,7 +108,7 @@ describe('defaultRegistry.generateDocs', () => {
     it('contains the expected exposed web slice line count', () => {
       const result = defaultRegistry.generateDocs('web')
 
-      expect(expectedLineCount('web')).toBe(26)
+      expect(expectedLineCount('web')).toBe(33)
       expect(actionLines(result)).toHaveLength(expectedLineCount('web'))
     })
   })

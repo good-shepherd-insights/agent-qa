@@ -11,6 +11,7 @@ const ELEMENT_DESCRIPTION_IDS = [
   'mobile_nativeSelect',
   'web_hover',
   'web_paste',
+  'web_focus',
   'mobile_tap',
   'mobile_longpress',
   'common_clearText',

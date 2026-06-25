@@ -23,6 +23,13 @@ expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().not.toEqualTypeOf<never
 expectTypeOf<Extract<WebAction, { type: 'waitForUrl' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'tab' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'inspect' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'route' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'unroute' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'networkState' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'storageState' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'handleDialog' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'uniqueValue' }>>().not.toEqualTypeOf<never>()
+expectTypeOf<Extract<WebAction, { type: 'focus' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'setCookies' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<WebAction, { type: 'setLocalStorage' }>>().not.toEqualTypeOf<never>()
 
