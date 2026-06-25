@@ -20,7 +20,9 @@ type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type']
 type IosVerbs = (MobileAction | IosAction | CommonAction)['type']
 
 export type ActionsFor<P extends Platform = Platform> =
-  P extends 'web'
+  [Platform] extends [P]
+    ? Action
+    : P extends 'web'
     ? Extract<Action, { type: WebVerbs }>
     : P extends 'android'
       ? Extract<Action, { type: MobileVerbs }>
