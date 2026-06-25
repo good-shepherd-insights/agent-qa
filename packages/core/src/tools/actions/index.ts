@@ -314,6 +314,33 @@ export const keyeventSchema = z.object({
   keycode: z.string().describe('Android KEYCODE_* value, e.g. KEYCODE_ENTER'),
 }).strict()
 
+export const pressButtonSchema = z.object({
+  button: z.enum(['home', 'volumeUp', 'action']).describe('iOS hardware button to press'),
+}).strict()
+
+export const pickerSelectSchema = z.union([
+  z.object({
+    ref: refSchema(`iOS picker wheel ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    value: z.string().describe('Visible value to select'),
+  }).strict(),
+  z.object({
+    ref: refSchema(`iOS picker wheel ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    order: z.number().int().describe('0-based wheel index'),
+  }).strict(),
+])
+
+export const swipeFromEdgeSchema = z.object({
+  edge: z.enum(['left', 'right', 'top', 'bottom']).describe('Screen edge to start the iOS edge swipe from'),
+}).strict()
+
+export const openUniversalLinkSchema = z.object({
+  url: z.string().describe('Universal link URL to open on iOS'),
+  bundleId: z.string().optional()
+    .describe('Target iOS bundle id. Omit to let iOS resolve the universal link.'),
+}).strict()
+
 export const pinchSchema = z.union([
   z.object({
     scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
@@ -454,6 +481,14 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('intent', 'Start an Android intent with typed action/data/package/extras fields', intentSchema, { destructive: true }),
 
   action('keyevent', 'Send an Android KEYCODE_* key event', keyeventSchema, { destructive: true }),
+
+  action('pressButton', 'Press an iOS hardware button such as Home, Volume Up, or Action', pressButtonSchema, { destructive: true }),
+
+  action('pickerSelect', 'Select a value from an iOS picker wheel by visible value or wheel index', pickerSelectSchema, { destructive: true }),
+
+  action('swipeFromEdge', 'Perform an iOS edge swipe from the selected screen edge', swipeFromEdgeSchema, { destructive: true }),
+
+  action('openUniversalLink', 'Open an iOS universal link, optionally scoped to a bundle id', openUniversalLinkSchema, { destructive: true }),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({
