@@ -4,10 +4,11 @@ import type {
   CommonAction,
   IosAction,
   MobileAction,
+  Ref,
   WebAction,
 } from '@vostride/agent-qa-schema'
 
-expectTypeOf<IosAction>().toEqualTypeOf<never>()
+expectTypeOf<IosAction>().not.toEqualTypeOf<never>()
 
 expectTypeOf<Extract<AndroidAction, { type: 'pressBack' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<AndroidAction, { type: 'pressHome' }>>().not.toEqualTypeOf<never>()
@@ -28,6 +29,29 @@ expectTypeOf<Extract<AndroidAction, { type: 'intent' }>>().toMatchTypeOf<{
 expectTypeOf<Extract<AndroidAction, { type: 'keyevent' }>>().toMatchTypeOf<{
   type: 'keyevent'
   keycode: string
+}>()
+expectTypeOf<Extract<IosAction, { type: 'pressButton' }>>().toMatchTypeOf<{
+  type: 'pressButton'
+  button: 'home' | 'volumeUp' | 'action'
+}>()
+expectTypeOf<Extract<IosAction, { type: 'pickerSelect'; value: string }>>().toMatchTypeOf<{
+  type: 'pickerSelect'
+  ref: Ref
+  value: string
+}>()
+expectTypeOf<Extract<IosAction, { type: 'pickerSelect'; order: number }>>().toMatchTypeOf<{
+  type: 'pickerSelect'
+  ref: Ref
+  order: number
+}>()
+expectTypeOf<Extract<IosAction, { type: 'swipeFromEdge' }>>().toMatchTypeOf<{
+  type: 'swipeFromEdge'
+  edge: 'left' | 'right' | 'top' | 'bottom'
+}>()
+expectTypeOf<Extract<IosAction, { type: 'openUniversalLink' }>>().toMatchTypeOf<{
+  type: 'openUniversalLink'
+  url: string
+  bundleId?: string
 }>()
 
 expectTypeOf<Extract<WebAction, { type: 'click' }>>().not.toEqualTypeOf<never>()

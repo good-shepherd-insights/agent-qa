@@ -16,7 +16,7 @@ import type {
 expectTypeOf<Surface>().toEqualTypeOf<'web' | 'mobile' | 'android' | 'ios' | 'common'>()
 expectTypeOf<Platform>().toEqualTypeOf<'web' | 'android' | 'ios'>()
 
-expectTypeOf<IosAction>().toEqualTypeOf<never>()
+expectTypeOf<IosAction>().not.toEqualTypeOf<never>()
 
 // Populated legs are mutually exclusive except `fill`, the sole documented shared verb;
 // Phase 318 registry IDs and the Phase 322 lint enforce tool-level exclusivity.
@@ -41,7 +41,7 @@ expectTypeOf<Exclude<LegUnion, Action['type']>>().toEqualTypeOf<never>()
 
 expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<WebAction | CommonAction>()
 expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<MobileAction | AndroidAction | CommonAction>()
-expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<MobileAction | CommonAction>()
+expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<MobileAction | IosAction | CommonAction>()
 
 expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().not.toEqualTypeOf<never>()
 expectTypeOf<Extract<MobileAction, { type: 'nativeSelect' }>>().not.toEqualTypeOf<never>()
@@ -108,6 +108,29 @@ expectTypeOf<AndroidIntent>().toMatchTypeOf<{
 expectTypeOf<Extract<AndroidAction, { type: 'keyevent' }>>().toMatchTypeOf<{
   type: 'keyevent'
   keycode: string
+}>()
+expectTypeOf<Extract<IosAction, { type: 'pressButton' }>>().toMatchTypeOf<{
+  type: 'pressButton'
+  button: 'home' | 'volumeUp' | 'action'
+}>()
+expectTypeOf<Extract<IosAction, { type: 'pickerSelect'; value: string }>>().toMatchTypeOf<{
+  type: 'pickerSelect'
+  ref: ReturnType<typeof asRef>
+  value: string
+}>()
+expectTypeOf<Extract<IosAction, { type: 'pickerSelect'; order: number }>>().toMatchTypeOf<{
+  type: 'pickerSelect'
+  ref: ReturnType<typeof asRef>
+  order: number
+}>()
+expectTypeOf<Extract<IosAction, { type: 'swipeFromEdge' }>>().toMatchTypeOf<{
+  type: 'swipeFromEdge'
+  edge: 'left' | 'right' | 'top' | 'bottom'
+}>()
+expectTypeOf<Extract<IosAction, { type: 'openUniversalLink' }>>().toMatchTypeOf<{
+  type: 'openUniversalLink'
+  url: string
+  bundleId?: string
 }>()
 expectTypeOf<Extract<CommonAction, { type: 'keypress' }>>().toMatchTypeOf<{
   type: 'keypress'
