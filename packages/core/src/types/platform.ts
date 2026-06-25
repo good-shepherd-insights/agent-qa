@@ -27,11 +27,12 @@ type LegacyFoldedWebVerbs =
   | 'readLocalStorage'
   | 'newTab'
   | 'switchTab'
-// Runtime-only common verbs remain in platform.ts until M1 adapter reconciliation.
-type RuntimeOnlyCommonVerbs = 'assert'
+// Runtime-only verbs remain in platform.ts until M1 adapter reconciliation.
+type RuntimeOnlyCommonVerbs = 'assert' | 'openLink'
+type RuntimeOnlyMobileVerbs = 'launchApp'
 type WebRuntimeVerbs = WebVerbs | LegacyFoldedWebVerbs | RuntimeOnlyCommonVerbs
-type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs
-type IosVerbs = (MobileAction | IosAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs
+type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs | RuntimeOnlyMobileVerbs
+type IosVerbs = (MobileAction | IosAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs | RuntimeOnlyMobileVerbs
 
 export type ActionsFor<P extends Platform = Platform> =
   [Platform] extends [P]
