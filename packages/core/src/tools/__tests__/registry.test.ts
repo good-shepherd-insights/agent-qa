@@ -8,6 +8,15 @@ import type { ToolDefinition } from '../types.js'
 import type { Platform } from '@vostride/agent-qa-schema'
 
 const platforms: Platform[] = ['web', 'android', 'ios']
+const androidToolIds = [
+  'android_pressBack',
+  'android_pressHome',
+  'android_pressRecent',
+  'android_openNotifications',
+  'android_openQuickSettings',
+  'android_intent',
+  'android_keyevent',
+]
 
 function schemaShapes(schema: z.ZodType): Array<Record<string, z.ZodType>> {
   if (schema instanceof z.ZodDiscriminatedUnion) {
@@ -552,6 +561,57 @@ describe('surface + id integrity', () => {
     expect(focusSchema.shape).toHaveProperty('ref')
     expect(focusSchema.shape).toHaveProperty('elementDescription')
     expect(focusSchema.shape).not.toHaveProperty('text')
+  })
+
+  it('registers CAT-03 android-tier tool definitions on the android surface only', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    for (const id of androidToolIds) {
+      const def = registry.get(id)
+      expect(def?.surface).toBe('android')
+      expect(registry.getForPlatform('android').map(tool => tool.id)).toContain(id)
+      expect(registry.getForPlatform('web').map(tool => tool.id)).not.toContain(id)
+      expect(registry.getForPlatform('ios').map(tool => tool.id)).not.toContain(id)
+    }
+
+    expect(registry.get('android_intent')?.destructive).toBe(true)
+    expect(registry.get('android_keyevent')?.destructive).toBe(true)
+  })
+
+  it('validates CAT-03 android schemas with typed intent extras', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    for (const id of [
+      'android_pressBack',
+      'android_pressHome',
+      'android_pressRecent',
+      'android_openNotifications',
+      'android_openQuickSettings',
+    ]) {
+      const schema = registry.getSchema(id) as z.ZodType
+      expect(schema.safeParse({}).success).toBe(true)
+      expect(schema.safeParse({ extra: true }).success).toBe(false)
+    }
+
+    const intentSchema = registry.getSchema('android_intent') as z.ZodObject<any>
+    expect(intentSchema.safeParse({ action: 'android.intent.action.VIEW' }).success).toBe(true)
+    expect(intentSchema.safeParse({
+      action: 'android.intent.action.VIEW',
+      data: 'https://x',
+      packageName: 'com.app',
+      extras: [{ key: 'k', type: 'string', value: 'v' }],
+    }).success).toBe(true)
+    expect(intentSchema.safeParse({
+      action: 'android.intent.action.VIEW',
+      extras: [{ key: 'k', type: 'bytes', value: 'v' }],
+    }).success).toBe(false)
+    expect(intentSchema.shape).toHaveProperty('extras')
+
+    const keyeventSchema = registry.getSchema('android_keyevent') as z.ZodType
+    expect(keyeventSchema.safeParse({ keycode: 'KEYCODE_ENTER' }).success).toBe(true)
+    expect(keyeventSchema.safeParse({}).success).toBe(false)
   })
 
   it('click schema has ref field', () => {
