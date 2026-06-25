@@ -26,14 +26,9 @@ export type CommonAction = NoPlatform & (
   | { type: 'delay'; ms: number }
   | ({ type: 'scroll' } & Scroll)
   | ({ type: 'clearText' } & RefTargeted)
-  | {
-      type: 'openLink'
-      url: string
-      appId?: string
-      bundleId?: string
-      appPackage?: string
-      waitForLaunch?: boolean
-    }
+  | { type: 'reportValue'; value: string }
+  | { type: 'openApp'; appName: string }
+  | { type: 'openApp'; bundleId: string }
   | { type: 'executeScript'; command: string; args?: unknown }
   | { type: 'setVariable'; name: string; value: string }
   | { type: 'keypress'; keys: string[]; mode: 'press' | 'down' | 'up'; convertPlatformKeys?: boolean }

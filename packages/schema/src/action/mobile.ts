@@ -21,6 +21,5 @@ export type MobileAction = NoPlatform & (
   | ({ type: 'fill' } & Fill)
   | { type: 'hideKeyboard' }
   | { type: 'setOrientation'; orientation: 'portrait' | 'landscape' }
-  | { type: 'launchApp'; bundleId: string }
   | { type: 'stopApp'; bundleId: string }
 )
