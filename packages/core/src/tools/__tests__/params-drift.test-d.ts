@@ -15,14 +15,25 @@ import {
   waitForSchema,
 } from '../actions/index.js'
 
-// Phase 321 brands core `ref` schemas; delete DeBrand once refs infer as Ref.
-type DeBrand<T> = T extends Ref
-  ? string
-  : T extends object
-    ? { [K in keyof T]: DeBrand<T[K]> }
-    : T
+type WithoutElementDescription<T> = T extends unknown
+  ? Omit<T, 'elementDescription'>
+  : never
 
-expectTypeOf<z.infer<typeof fillSchema>>().toEqualTypeOf<DeBrand<Fill>>()
-expectTypeOf<z.infer<typeof scrollSchema>>().toEqualTypeOf<DeBrand<Scroll>>()
-expectTypeOf<z.infer<typeof waitForSchema>>().toEqualTypeOf<DeBrand<WaitFor>>()
-expectTypeOf<z.infer<typeof swipeSchema>>().toEqualTypeOf<DeBrand<SwipeByDirection | SwipeByPath>>()
+type ScrollParams = z.infer<typeof scrollSchema>
+type SwipeParams = z.infer<typeof swipeSchema>
+type WithSwipeCompanions<T> = T extends unknown
+  ? T extends { start: { x: number, y: number }, end: { x: number, y: number } }
+    ? T & { elementDescription?: string | undefined, coordSpace: 'viewport' | 'screen' }
+    : T & { elementDescription?: string | undefined }
+  : never
+type SwipeParamsWithKnownCompanions = WithSwipeCompanions<SwipeByDirection | SwipeByPath>
+
+expectTypeOf<z.infer<typeof fillSchema>['ref']>().toEqualTypeOf<Ref>()
+expectTypeOf<ScrollParams['ref']>().toEqualTypeOf<Ref | undefined>()
+expectTypeOf<SwipeParams['ref']>().toEqualTypeOf<Ref | undefined>()
+
+expectTypeOf<WithoutElementDescription<z.infer<typeof fillSchema>>>().toEqualTypeOf<Fill>()
+expectTypeOf<WithoutElementDescription<z.infer<typeof scrollSchema>>>().toEqualTypeOf<Scroll>()
+expectTypeOf<z.infer<typeof waitForSchema>>().toEqualTypeOf<WaitFor>()
+expectTypeOf<SwipeParams>().toMatchTypeOf<SwipeParamsWithKnownCompanions>()
+expectTypeOf<SwipeParamsWithKnownCompanions>().toMatchTypeOf<SwipeParams>()
