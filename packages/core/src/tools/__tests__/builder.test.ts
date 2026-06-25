@@ -259,6 +259,7 @@ describe('buildTools discriminated-union merge', () => {
       reasoning: 'Scroll down to find the button',
       confidence: 0.9,
       stepComplete: false,
+      doesActionAdvanceUsTowardsGoal: true,
       mode: 'direction',
       direction: 'down',
     })
@@ -269,6 +270,7 @@ describe('buildTools discriminated-union merge', () => {
       reasoning: 'Scroll down to find the button',
       confidence: 0.9,
       stepComplete: false,
+      doesActionAdvanceUsTowardsGoal: true,
       mode: 'direction',
       direction: 'down',
     })
@@ -282,6 +284,7 @@ describe('buildTools discriminated-union merge', () => {
       reasoning: 'Scroll until Sign in appears',
       confidence: 0.8,
       stepComplete: true,
+      doesActionAdvanceUsTowardsGoal: true,
       mode: 'untilVisible',
       target: 'Sign in',
     })
@@ -292,6 +295,7 @@ describe('buildTools discriminated-union merge', () => {
       reasoning: 'Scroll until Sign in appears',
       confidence: 0.8,
       stepComplete: true,
+      doesActionAdvanceUsTowardsGoal: true,
       mode: 'untilVisible',
       target: 'Sign in',
     })
@@ -307,6 +311,7 @@ describe('buildTools discriminated-union merge', () => {
       reasoning: 'Click the submit button',
       confidence: 0.9,
       stepComplete: false,
+      doesActionAdvanceUsTowardsGoal: true,
       ref: 'e1',
     })
 
@@ -316,6 +321,7 @@ describe('buildTools discriminated-union merge', () => {
       reasoning: 'Click the submit button',
       confidence: 0.9,
       stepComplete: false,
+      doesActionAdvanceUsTowardsGoal: true,
       ref: 'e1',
     })
   })

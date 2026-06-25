@@ -10,6 +10,7 @@ const PLAN_FIELDS = {
   confidence: z.number().describe('Confidence level from 0 to 1'),
   stepComplete: z.boolean().describe('Whether this action completes the step goal'),
   stepFailed: z.boolean().optional().describe('Set true when the step goal cannot be achieved'),
+  doesActionAdvanceUsTowardsGoal: z.boolean().describe('True if this action moves the test toward its goal; a cheap hallucination-gate (§9.7).'),
 }
 
 function withPlanFields(schema: z.ZodType): z.ZodType {
@@ -56,7 +57,7 @@ export function toolCallToActionPlan(
   args: Record<string, unknown>,
   registry: ToolRegistry,
 ) {
-  const { reasoning, confidence, stepComplete, stepFailed, ...actionFields } = args
+  const { reasoning, confidence, stepComplete, stepFailed, doesActionAdvanceUsTowardsGoal, ...actionFields } = args
   const def = registry.get(toolId)
 
   if (!def) {
@@ -74,6 +75,7 @@ export function toolCallToActionPlan(
     confidence: confidence as number,
     stepComplete: stepComplete as boolean,
     stepFailed: (stepFailed as boolean | undefined) ?? false,
+    doesActionAdvanceUsTowardsGoal: (doesActionAdvanceUsTowardsGoal as boolean | undefined) ?? false,
     action: { type: def.type, ...(parsed.data as Record<string, unknown>) },
   }
 }
