@@ -48,6 +48,7 @@ describe('buildTools', () => {
     expect(shape).toHaveProperty('confidence')
     expect(shape).toHaveProperty('stepComplete')
     expect(shape).toHaveProperty('stepFailed')
+    expect(shape).toHaveProperty('doesActionAdvanceUsTowardsGoal')
     // Action-specific fields
     expect(shape).toHaveProperty('ref')
   })
@@ -79,9 +80,24 @@ describe('toolCallToActionPlan', () => {
       reasoning: 'Click the submit button',
       confidence: 0.9,
       stepComplete: false,
+      doesActionAdvanceUsTowardsGoal: false,
       stepFailed: false,
       action: { type: 'click', ref: 'e1' },
     })
+  })
+
+  it('strips doesActionAdvanceUsTowardsGoal before strict action parsing and returns it', () => {
+    const result = toolCallToActionPlan('web_click', {
+      reasoning: 'Click the submit button',
+      confidence: 0.9,
+      stepComplete: false,
+      doesActionAdvanceUsTowardsGoal: true,
+      ref: 'e1',
+    }, registry)
+
+    expect(result.doesActionAdvanceUsTowardsGoal).toBe(true)
+    expect(result.action).toEqual({ type: 'click', ref: 'e1' })
+    expect(result.action).not.toHaveProperty('doesActionAdvanceUsTowardsGoal')
   })
 
   it('validates action fields against registry schema', () => {
@@ -197,6 +213,7 @@ describe('toolCallToActionPlan', () => {
       reasoning: 'Pick month',
       confidence: 0.9,
       stepComplete: true,
+      doesActionAdvanceUsTowardsGoal: false,
       stepFailed: false,
       action: { type: 'nativeSelect', ref: 'e3', value: 'March' },
     })

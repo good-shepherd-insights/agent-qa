@@ -441,6 +441,7 @@ describe('surface + id integrity', () => {
         expect(shape).not.toHaveProperty('reasoning')
         expect(shape).not.toHaveProperty('confidence')
         expect(shape).not.toHaveProperty('stepComplete')
+        expect(shape).not.toHaveProperty('doesActionAdvanceUsTowardsGoal')
         expect(shape).not.toHaveProperty('visualCheck')
       }
     }
