@@ -399,6 +399,35 @@ describe('surface + id integrity', () => {
     expect(all.every(d => d.id === `${d.surface}_${d.type}`)).toBe(true)
   })
 
+  it('carries advisory static metadata on existing read and mutation tools', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    expect(registry.get('web_inspect')?.readOnly).toBe(true)
+
+    for (const id of [
+      'web_fill',
+      'mobile_fill',
+      'web_navigate',
+      'web_setCookies',
+      'web_setLocalStorage',
+      'web_fileUpload',
+      'web_paste',
+      'web_copy',
+    ]) {
+      expect(registry.get(id)?.destructive).toBe(true)
+    }
+  })
+
+  it('keeps advisory metadata out of platform slice filtering', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    expect(registry.getForPlatform('web')).toHaveLength(22)
+    expect(registry.getForPlatform('android')).toHaveLength(19)
+    expect(registry.getForPlatform('ios')).toHaveLength(19)
+  })
+
   it('each action schema keeps plan metadata out of registry args', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
