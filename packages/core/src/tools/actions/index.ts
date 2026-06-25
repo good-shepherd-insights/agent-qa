@@ -5,6 +5,8 @@ import type { ToolDefinition } from '../types.js'
 import { NON_EXPOSED, VERB_SURFACE } from './surface-map.js'
 
 const CURRENT_SCREEN_REF_DESCRIPTION = 'current-screen element reference (e.g. e12), never a CSS selector or label'
+const ELEMENT_DESCRIPTION_SCHEMA = z.string().optional()
+  .describe('Human-readable label of the target element for disambiguation/logging; omit when the ref is unambiguous; never the sole handle — always alongside the ref/coordinates.')
 
 export const refSchema = (description: string) =>
   z.string().transform((v): Ref => asRef(v)).describe(description)
@@ -30,6 +32,7 @@ function action(verb: string, description: string, schema: z.ZodType): ToolDefin
 export const fillSchema = z.object({
   ref: refSchema(`Input field ${CURRENT_SCREEN_REF_DESCRIPTION}`),
   text: z.string().describe('Text to enter into the field'),
+  elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   clearMode: z.enum(['replace', 'append']).default('replace')
     .describe('replace = clear the field first (default); append = type at the cursor. Omit when replacing the current field value.'),
   submit: z.boolean().default(false)
@@ -41,6 +44,7 @@ export const scrollSchema = z.discriminatedUnion('mode', [
     mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Direction to scroll'),
     ref: refSchema(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when scrolling the whole page or screen.`).optional(),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     amount: z.enum(['page', 'halfPage', 'toEnd']).default('page')
       .describe('How far to scroll in the selected direction. Omit when a normal page-sized scroll is appropriate.'),
     retryOpposite: z.boolean().default(true)
@@ -50,6 +54,7 @@ export const scrollSchema = z.discriminatedUnion('mode', [
     mode: z.literal('untilVisible'),
     target: z.string().describe('Visible text or accessible name to reveal'),
     ref: refSchema(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when searching the whole page or screen.`).optional(),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     direction: z.enum(['up', 'down', 'left', 'right']).default('down')
       .describe('Initial direction to search for the target. Omit when scrolling down is the natural direction.'),
     maxSwipes: z.number().int().min(1).max(20).default(10)
@@ -101,6 +106,7 @@ export const swipeSchema = z.union([
       .describe('Canonical swipe action type. Omit because the registry supplies this value.'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen.`).optional(),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     duration: z.number().optional()
       .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
     start: z.never().optional(),
@@ -111,10 +117,13 @@ export const swipeSchema = z.union([
       .describe('Canonical swipe action type. Omit because the registry supplies this value.'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen.`).optional(),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     duration: z.number().optional()
       .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
     start: pointSchema.describe('Start coordinate for the explicit swipe path'),
     end: pointSchema.describe('End coordinate for the explicit swipe path'),
+    coordSpace: z.enum(['viewport', 'screen'])
+      .describe('Coordinate space for the explicit start/end path: viewport = visible area; screen = physical device screen.'),
   }).strict(),
 ])
 
@@ -126,8 +135,9 @@ if (mobileFillDefinition.id !== 'mobile_fill') {
 const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('click', 'Click an element', z.object({
     ref: refSchema(`Element to click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
-  })),
+  }).strict()),
 
   action('fill', 'Fill text into an input field', fillSchema),
 
@@ -135,13 +145,15 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('select', 'Select an option from a dropdown', z.object({
     ref: refSchema(`Select/dropdown control ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Option value to select'),
-  })),
+  }).strict()),
 
   action('nativeSelect', 'Select a value from a native mobile picker, picker wheel, spinner, or dropdown/list control', z.object({
     ref: refSchema(`Native picker/dropdown control ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Visible text/value to select'),
-  })),
+  }).strict()),
 
   action('navigate', 'Navigate to a URL', z.object({
     url: z.string().describe('URL to navigate to'),
@@ -164,12 +176,14 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('hover', 'Hover over an element', z.object({
     ref: refSchema(`Element to hover over; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('paste', 'Paste text into an element via clipboard paste event', z.object({
     ref: refSchema(`Paste target ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Text value to paste'),
-  })),
+  }).strict()),
 
   action('keyDown', 'Hold down a key (for modifier combos like Shift+Click)', z.object({
     key: z.string().describe('Key to hold down (e.g., Shift, Control, Alt, Meta)'),
@@ -239,20 +253,23 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('tap', 'Tap an element on a mobile device', z.object({
     ref: refSchema(`Element to tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('swipe', 'Swipe gesture on a mobile device', swipeSchema),
 
   action('longpress', 'Long-press an element on a mobile device', z.object({
     ref: refSchema(`Element to long-press; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     duration: z.number().optional().describe('Long-press duration in ms'),
-  })),
+  }).strict()),
 
   action('hideKeyboard', 'Dismiss the on-screen keyboard (mobile only, no-op on web)', z.object({})),
 
   action('clearText', 'Clear all text from an input field without typing new text', z.object({
     ref: refSchema(`Input field to clear; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('openLink', 'Open a deep link in a mobile app — use navigate for web URLs', z.object({
     url: z.string().describe('Deep link URL to open (e.g. myapp://screen, intent://...)'),
@@ -265,11 +282,16 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('drag', 'Drag an element to another element (reorder lists, sliders)', z.object({
     fromRef: refSchema(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     toRef: refSchema(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-  })),
+    fromDescription: z.string().optional()
+      .describe('Human-readable label of the drag source. Omit when fromRef is unambiguous.'),
+    toDescription: z.string().optional()
+      .describe('Human-readable label of the drop target. Omit when toRef is unambiguous.'),
+  }).strict()),
 
   action('doubleTap', 'Double-tap an element (text selection, zoom)', z.object({
     ref: refSchema(`Element to double-tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('setOrientation', 'Set the device orientation (mobile only)', z.object({
     orientation: z.enum(['portrait', 'landscape']).describe('Device orientation'),
@@ -280,19 +302,24 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     x: z.number().optional().describe('Center X coordinate for pinch gesture'),
     y: z.number().optional().describe('Center Y coordinate for pinch gesture'),
     ref: refSchema(`Optional element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional(),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('multiTap', 'Multi-finger tap gesture on a mobile device (mobile only)', z.object({
     fingers: z.number().describe('Number of fingers (2 or 3)'),
     x: z.number().optional().describe('Center X coordinate for multi-finger tap'),
     y: z.number().optional().describe('Center Y coordinate for multi-finger tap'),
     ref: refSchema(`Optional element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional(),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('tapCoordinate', 'Tap at specific pixel coordinates — use when target element has no ref in accessibility tree', z.object({
     x: z.number().describe('X coordinate in pixels'),
     y: z.number().describe('Y coordinate in pixels'),
-  })),
+    coordSpace: z.enum(['viewport', 'content', 'screen'])
+      .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 
   action('setVariable', 'Set a runtime environment variable for use in subsequent steps', z.object({
     name: z.string().describe('Variable name (will be accessible via {{env:varName}})'),
@@ -311,21 +338,23 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('doubleClick', 'Double-click an element (text selection, expand, web-only)', z.object({
     ref: refSchema(`Element to double-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     relativePosition: z.object({
       x: z.number().describe('X offset in pixels from element top-left'),
       y: z.number().describe('Y offset in pixels from element top-left'),
-    }).optional().describe('Omit for normal element-center interaction. Only provide when the user explicitly asks for an offset. Do not use { x: 0, y: 0 } for a normal button double-click/right-click; top-left is often intercepted.'),
+    }).strict().optional().describe('Omit for normal element-center interaction. Only provide when the user explicitly asks for an offset. Do not use { x: 0, y: 0 } for a normal button double-click/right-click; top-left is often intercepted.'),
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
-  })),
+  }).strict()),
 
   action('rightClick', 'Right-click an element to open context menu (web-only)', z.object({
     ref: refSchema(`Element to right-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     relativePosition: z.object({
       x: z.number().describe('X offset in pixels from element top-left'),
       y: z.number().describe('Y offset in pixels from element top-left'),
-    }).optional().describe('Omit for normal element-center interaction. Only provide when the user explicitly asks for an offset. Do not use { x: 0, y: 0 } for a normal button double-click/right-click; top-left is often intercepted.'),
+    }).strict().optional().describe('Omit for normal element-center interaction. Only provide when the user explicitly asks for an offset. Do not use { x: 0, y: 0 } for a normal button double-click/right-click; top-left is often intercepted.'),
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
-  })),
+  }).strict()),
 
   action('waitForUrl', 'Wait for the page URL to match a glob pattern (web only)', z.object({
     pattern: z.string().describe('URL glob pattern. Use "**" for substring matching (e.g., "**/dashboard**"). Plain strings WITHOUT wildcards require EXACT URL match, not substring.'),
@@ -333,12 +362,14 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('fileUpload', 'Upload one or more files to a file input element (web only)', z.object({
     ref: refSchema(`File input ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     files: z.array(z.string()).min(1).describe('Paths to files — relative to the test YAML file, or absolute paths. Missing files fail the action.'),
-  })),
+  }).strict()),
 
   action('copy', 'Copy the text content of an element to the system clipboard (web only, chromium only)', z.object({
     ref: refSchema(`Element whose text content to copy; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-  })),
+    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+  }).strict()),
 ]
 
 export function registerAllActions(registry: ToolRegistry): void {
