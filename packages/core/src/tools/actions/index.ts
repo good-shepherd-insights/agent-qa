@@ -73,7 +73,7 @@ export const waitForSchema = z.discriminatedUnion('on', [
   }).strict(),
   z.object({
     on: z.literal('selector'),
-    selector: z.string().describe('CSS selector to wait for'),
+    selector: z.string().describe('CSS selector to wait for as a condition, never an interaction target'),
     timeoutMs: z.number().default(5000)
       .describe('Maximum wait time in milliseconds. Omit when the default 5000ms timeout is acceptable.'),
   }).strict(),
