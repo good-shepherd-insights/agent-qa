@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { z } from 'zod'
 import { ToolRegistry } from '../registry.js'
 import { registerAllActions } from '../actions/index.js'
-import { buildTools, toolCallToActionPlan, ToolValidationError } from '../builder.js'
+import { buildTools, toolCallToActionPlan } from '../builder.js'
+import { GroundingError } from '../errors.js'
 
 describe('buildTools', () => {
   let registry: ToolRegistry
@@ -101,17 +102,17 @@ describe('toolCallToActionPlan', () => {
     })
   })
 
-  it('throws ToolValidationError on invalid args', () => {
+  it('throws GroundingError on invalid args', () => {
     expect(() => toolCallToActionPlan('web_fill', {
       reasoning: 'Fill something',
       confidence: 0.5,
       stepComplete: false,
       ref: 'e1',
       // missing required 'text' field
-    }, registry)).toThrow(ToolValidationError)
+    }, registry)).toThrow(GroundingError)
   })
 
-  it('ToolValidationError has toolName and zodError', () => {
+  it('GroundingError has schema code, toolName, zodError, and hint', () => {
     try {
       toolCallToActionPlan('web_fill', {
         reasoning: 'test',
@@ -121,10 +122,13 @@ describe('toolCallToActionPlan', () => {
       }, registry)
       expect.unreachable()
     } catch (e) {
-      expect(e).toBeInstanceOf(ToolValidationError)
-      const err = e as ToolValidationError
+      expect(e).toBeInstanceOf(GroundingError)
+      const err = e as GroundingError
+      expect(err.code).toBe('schema_invalid')
       expect(err.toolName).toBe('web_fill')
       expect(err.zodError).toBeDefined()
+      expect(err.hint).toEqual(expect.any(String))
+      expect(err.hint.length).toBeGreaterThan(0)
     }
   })
 
