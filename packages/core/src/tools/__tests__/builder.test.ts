@@ -173,14 +173,15 @@ describe('toolCallToActionPlan', () => {
     })
   })
 
-  it('handles actions with no required fields (like refresh)', () => {
-    const result = toolCallToActionPlan('web_refresh', {
+  it('handles folded navigate variants with no required fields', () => {
+    const result = toolCallToActionPlan('web_navigate', {
       reasoning: 'Refresh page',
       confidence: 1.0,
       stepComplete: true,
+      to: 'reload',
     }, registry)
 
-    expect(result.action).toEqual({ type: 'refresh' })
+    expect(result.action).toEqual({ type: 'navigate', to: 'reload' })
   })
 
   it('converts nativeSelect tool calls into action plans', () => {

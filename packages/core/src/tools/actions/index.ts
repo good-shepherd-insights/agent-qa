@@ -100,6 +100,12 @@ const pointSchema = z.object({
   y: z.number().describe('Y coordinate in pixels'),
 }).strict()
 
+const tabSelectorSchema = z.object({
+  index: z.number().optional().describe('0-based tab index'),
+  title: z.string().optional().describe('Substring match on page title'),
+  url: z.string().optional().describe('Substring match on page URL'),
+}).strict()
+
 export const swipeSchema = z.union([
   z.object({
     type: z.literal('swipe').default('swipe')
@@ -155,9 +161,15 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Visible text/value to select'),
   }).strict()),
 
-  action('navigate', 'Navigate to a URL', z.object({
-    url: z.string().describe('URL to navigate to'),
-  })),
+  action('navigate', 'Navigate to a URL, browser history entry, or reload the current page', z.discriminatedUnion('to', [
+    z.object({
+      to: z.literal('url'),
+      url: z.string().describe('URL to navigate to'),
+    }).strict(),
+    z.object({ to: z.literal('back') }).strict(),
+    z.object({ to: z.literal('forward') }).strict(),
+    z.object({ to: z.literal('reload') }).strict(),
+  ])),
 
   action('scroll', 'Scroll the page or a specific element', scrollSchema),
 
@@ -169,8 +181,10 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('assert', 'Assert a condition on the current page state', assertSchema),
 
-  action('keypress', 'Press one or more keyboard keys/combos in sequence', z.object({
+  action('keypress', 'Press one or more keyboard keys/combos in sequence, or hold/release a modifier key', z.object({
     keys: z.array(z.string()).min(1).describe('Array of keys/combos to press in sequence. Each entry may be a single key (e.g. "Enter", "Tab", "Escape") or a combo with "+" separators (e.g. "Meta+k", "Control+Shift+T"). Use "Meta" for the Cmd/Win/Super key — on non-Mac platforms it is automatically converted to "Control" when convertPlatformKeys is true. On mobile, only single special keys from the KEY_MAP work meaningfully; combos are a no-op.'),
+    mode: z.enum(['press', 'down', 'up']).default('press')
+      .describe('press = atomic press and release (default); down = hold without releasing for modifier combos; up = release a previously held key. Omit for a normal key press.'),
     convertPlatformKeys: z.boolean().optional().default(true).describe('When true (default), replaces "Meta" with "Control" in each key string on non-Mac platforms so that "Meta+k" works as Cmd+K on Mac and Ctrl+K on Windows/Linux. Set to false to pass keys through unchanged. No-op on mobile.'),
   })),
 
@@ -185,46 +199,32 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Text value to paste'),
   }).strict()),
 
-  action('keyDown', 'Hold down a key (for modifier combos like Shift+Click)', z.object({
-    key: z.string().describe('Key to hold down (e.g., Shift, Control, Alt, Meta)'),
-  })),
-
-  action('keyUp', 'Release a held key', z.object({
-    key: z.string().describe('Key to release (e.g., Shift, Control, Alt, Meta)'),
-  })),
-
-  action('refresh', 'Refresh the current page', z.object({})),
-
-  action('navigateHistory', 'Navigate browser history (back or forward)', z.object({
-    direction: z.enum(['back', 'forward']).describe('Navigation direction in browser history'),
-  })),
-
-  action('readConsoleLogs', 'Read console log entries from the browser', z.object({
-    level: z.enum(['log', 'info', 'warn', 'error']).optional()
-      .describe('Filter by log level. Omit to get all levels.'),
-    tab: z.object({
-      index: z.number().optional().describe('0-based tab index'),
-      title: z.string().optional().describe('Substring match on page title'),
-      url: z.string().optional().describe('Substring match on page URL'),
-    }).optional()
-      .describe('Target a specific tab. Omit to read logs from all tabs.'),
-  })),
-
-  action('readNetworkLogs', 'Read network request/response log entries', z.object({
-    urlPattern: z.string().optional()
-      .describe('Filter by URL substring match. Omit to get all requests.'),
-    tab: z.object({
-      index: z.number().optional().describe('0-based tab index'),
-      title: z.string().optional().describe('Substring match on page title'),
-      url: z.string().optional().describe('Substring match on page URL'),
-    }).optional()
-      .describe('Target a specific tab. Omit to read logs from all tabs.'),
-  })),
-
-  action('readCookies', 'Read browser cookies', z.object({
-    name: z.string().optional()
-      .describe('Cookie name to read. Omit to get all cookies.'),
-  })),
+  action('web_inspect', 'Read browser console, network, cookie, or localStorage data', z.discriminatedUnion('what', [
+    z.object({
+      what: z.literal('console'),
+      level: z.enum(['log', 'info', 'warn', 'error']).optional()
+        .describe('Filter by log level. Omit to get all levels.'),
+      tab: tabSelectorSchema.optional()
+        .describe('Target a specific tab. Omit to read logs from all tabs.'),
+    }).strict(),
+    z.object({
+      what: z.literal('network'),
+      urlPattern: z.string().optional()
+        .describe('Filter by URL substring match. Omit to get all requests.'),
+      tab: tabSelectorSchema.optional()
+        .describe('Target a specific tab. Omit to read logs from all tabs.'),
+    }).strict(),
+    z.object({
+      what: z.literal('cookies'),
+      name: z.string().optional()
+        .describe('Cookie name to read. Omit to get all cookies.'),
+    }).strict(),
+    z.object({
+      what: z.literal('localStorage'),
+      key: z.string().optional()
+        .describe('Storage key to read. Omit to get all entries.'),
+    }).strict(),
+  ])),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({
@@ -237,11 +237,6 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
       sameSite: z.enum(['Strict', 'Lax', 'None']).optional().describe('SameSite attribute'),
       expires: z.number().optional().describe('Expiry as Unix timestamp in seconds'),
     })).describe('Array of cookies to set'),
-  })),
-
-  action('readLocalStorage', 'Read local storage entries', z.object({
-    key: z.string().optional()
-      .describe('Storage key to read. Omit to get all entries.'),
   })),
 
   action('setLocalStorage', 'Set local storage entries', z.object({
@@ -297,21 +292,37 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     orientation: z.enum(['portrait', 'landscape']).describe('Device orientation'),
   })),
 
-  action('pinch', 'Pinch zoom gesture on a mobile device (mobile only)', z.object({
-    scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
-    x: z.number().optional().describe('Center X coordinate for pinch gesture'),
-    y: z.number().optional().describe('Center Y coordinate for pinch gesture'),
-    ref: refSchema(`Optional element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional(),
-    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-  }).strict()),
+  action('pinch', 'Pinch zoom gesture on a mobile device (mobile only)', z.union([
+    z.object({
+      scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
+      ref: refSchema(`Element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    }).strict(),
+    z.object({
+      scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
+      x: z.number().describe('Center X coordinate for pinch gesture'),
+      y: z.number().describe('Center Y coordinate for pinch gesture'),
+      coordSpace: z.enum(['viewport', 'content', 'screen'])
+        .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
+      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    }).strict(),
+  ])),
 
-  action('multiTap', 'Multi-finger tap gesture on a mobile device (mobile only)', z.object({
-    fingers: z.number().describe('Number of fingers (2 or 3)'),
-    x: z.number().optional().describe('Center X coordinate for multi-finger tap'),
-    y: z.number().optional().describe('Center Y coordinate for multi-finger tap'),
-    ref: refSchema(`Optional element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional(),
-    elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-  }).strict()),
+  action('multiTap', 'Multi-finger tap gesture on a mobile device (mobile only)', z.union([
+    z.object({
+      fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
+      ref: refSchema(`Element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    }).strict(),
+    z.object({
+      fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
+      x: z.number().describe('Center X coordinate for multi-finger tap'),
+      y: z.number().describe('Center Y coordinate for multi-finger tap'),
+      coordSpace: z.enum(['viewport', 'content', 'screen'])
+        .describe('Which coordinate space x/y are in: viewport = visible area; content = full scrollable page; screen = physical device screen. Read it from the [Viewport: WxH] observation header.'),
+      elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    }).strict(),
+  ])),
 
   action('tapCoordinate', 'Tap at specific pixel coordinates — use when target element has no ref in accessibility tree', z.object({
     x: z.number().describe('X coordinate in pixels'),
@@ -326,15 +337,18 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Variable value to store'),
   })),
 
-  action('newTab', 'Open a URL in a new browser tab and switch to it', z.object({
-    url: z.string().describe('URL to open in the new tab'),
-  })),
-
-  action('switchTab', 'Switch to an open browser tab', z.object({
-    index: z.number().optional().describe('0-based tab index to switch to'),
-    title: z.string().optional().describe('Substring match on page title'),
-    url: z.string().optional().describe('Substring match on page URL'),
-  })),
+  action('tab', 'Open a new browser tab or switch to an existing tab', z.discriminatedUnion('action', [
+    z.object({
+      action: z.literal('new'),
+      url: z.string().describe('URL to open in the new tab'),
+    }).strict(),
+    z.object({
+      action: z.literal('switch'),
+      index: z.number().optional().describe('0-based tab index to switch to'),
+      title: z.string().optional().describe('Substring match on page title'),
+      url: z.string().optional().describe('Substring match on page URL'),
+    }).strict(),
+  ])),
 
   action('doubleClick', 'Double-click an element (text selection, expand, web-only)', z.object({
     ref: refSchema(`Element to double-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
