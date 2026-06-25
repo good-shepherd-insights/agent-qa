@@ -20,7 +20,7 @@ type ExpectedFill = {
 
 expectTypeOf<Surface>().toEqualTypeOf<'web' | 'mobile' | 'android' | 'ios' | 'common'>()
 expectTypeOf<AndroidAction>().not.toEqualTypeOf<never>()
-expectTypeOf<IosAction>().toEqualTypeOf<never>()
+expectTypeOf<IosAction>().not.toEqualTypeOf<never>()
 expectTypeOf<Fill>().toEqualTypeOf<ExpectedFill>()
 
 const fill: Fill = {

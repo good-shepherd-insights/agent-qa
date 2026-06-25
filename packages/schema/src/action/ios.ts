@@ -1,2 +1,10 @@
-/** iOS-divergent verbs. Empty until Phase 323 (CAT-04) populates them. */
-export type IosAction = never
+import type { Ref } from '../primitives/ref'
+import type { NoPlatform } from './shared'
+
+export type IosAction = NoPlatform & (
+  | { type: 'pressButton'; button: 'home' | 'volumeUp' | 'action' }
+  | { type: 'pickerSelect'; ref: Ref; value: string }
+  | { type: 'pickerSelect'; ref: Ref; order: number }
+  | { type: 'swipeFromEdge'; edge: 'left' | 'right' | 'top' | 'bottom' }
+  | { type: 'openUniversalLink'; url: string; bundleId?: string }
+)
