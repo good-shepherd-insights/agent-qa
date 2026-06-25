@@ -27,6 +27,27 @@ export type WebAction = NoPlatform & (
   | { type: 'inspect'; what: 'cookies'; name?: string }
   | { type: 'inspect'; what: 'localStorage'; key?: string }
   | {
+      type: 'route'
+      urlPattern: string
+      headers?: Record<string, string>
+      body?: string
+      contentType?: string
+    }
+  | { type: 'unroute'; urlPattern?: string }
+  | { type: 'networkState'; mode: 'offline' }
+  | {
+      type: 'networkState'
+      mode: 'throttle'
+      latencyMs: number
+      downloadKbps: number
+      uploadKbps: number
+    }
+  | { type: 'storageState'; op: 'save'; name: string }
+  | { type: 'storageState'; op: 'restore'; name: string }
+  | { type: 'handleDialog'; accept: boolean; promptText?: string }
+  | { type: 'uniqueValue'; prefix: string }
+  | ({ type: 'focus' } & WebRefTargeted)
+  | {
       type: 'setCookies'
       cookies: Array<{
         name: string
