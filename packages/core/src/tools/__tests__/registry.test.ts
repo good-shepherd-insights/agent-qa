@@ -452,6 +452,31 @@ describe('surface + id integrity', () => {
     }
   })
 
+  it('registers reportValue and openApp while removing openLink', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+
+    expect(registry.get('common_openLink')).toBeUndefined()
+
+    const openApp = registry.get('common_openApp')
+    const reportValue = registry.get('common_reportValue')
+    expect(openApp?.surface).toBe('common')
+    expect(reportValue?.surface).toBe('common')
+    expect(reportValue?.readOnly).toBe(true)
+
+    const openAppSchema = registry.getSchema('common_openApp') as z.ZodType
+    expect(openAppSchema.safeParse({ appName: 'Settings' }).success).toBe(true)
+    expect(openAppSchema.safeParse({ bundleId: 'com.apple.Preferences' }).success).toBe(true)
+    expect(openAppSchema.safeParse({}).success).toBe(false)
+    expect(openAppSchema.safeParse({ appName: 'Settings', bundleId: 'com.apple.Preferences' }).success).toBe(false)
+
+    const reportValueSchema = registry.getSchema('common_reportValue') as z.ZodType
+    expect(reportValueSchema.safeParse({ value: 'the order total is 42' }).success).toBe(true)
+    expect(reportValueSchema.safeParse({}).success).toBe(false)
+
+    expect(registry.get('common_executeScript')).toBeUndefined()
+  })
+
   it('click schema has ref field', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
