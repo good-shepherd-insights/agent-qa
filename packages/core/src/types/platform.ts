@@ -16,6 +16,18 @@ export interface ObserveOptions {
 }
 
 type WebVerbs = (WebAction | CommonAction)['type']
+type LegacyFoldedWebVerbs =
+  | 'keyDown'
+  | 'keyUp'
+  | 'refresh'
+  | 'navigateHistory'
+  | 'readConsoleLogs'
+  | 'readNetworkLogs'
+  | 'readCookies'
+  | 'readLocalStorage'
+  | 'newTab'
+  | 'switchTab'
+type WebRuntimeVerbs = WebVerbs | LegacyFoldedWebVerbs
 type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type']
 type IosVerbs = (MobileAction | IosAction | CommonAction)['type']
 
@@ -23,7 +35,7 @@ export type ActionsFor<P extends Platform = Platform> =
   [Platform] extends [P]
     ? Action
     : P extends 'web'
-    ? Extract<Action, { type: WebVerbs }>
+    ? Extract<Action, { type: WebRuntimeVerbs }>
     : P extends 'android'
       ? Extract<Action, { type: MobileVerbs }>
       : Extract<Action, { type: IosVerbs }>

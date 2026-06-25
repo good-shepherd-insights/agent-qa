@@ -11,10 +11,22 @@ import type {
 import type { Action, ActionsFor, PlatformAdapter } from '../platform.js'
 
 type WebVerbs = (WebAction | CommonAction)['type']
+type LegacyFoldedWebVerbs =
+  | 'keyDown'
+  | 'keyUp'
+  | 'refresh'
+  | 'navigateHistory'
+  | 'readConsoleLogs'
+  | 'readNetworkLogs'
+  | 'readCookies'
+  | 'readLocalStorage'
+  | 'newTab'
+  | 'switchTab'
+type WebRuntimeVerbs = WebVerbs | LegacyFoldedWebVerbs
 type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type']
 type IosVerbs = (MobileAction | IosAction | CommonAction)['type']
 
-expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<Extract<Action, { type: WebVerbs }>>()
+expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<Extract<Action, { type: WebRuntimeVerbs }>>()
 expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<Extract<Action, { type: MobileVerbs }>>()
 expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<Extract<Action, { type: IosVerbs }>>()
 expectTypeOf<ActionsFor<Platform>>().toEqualTypeOf<Action>()
