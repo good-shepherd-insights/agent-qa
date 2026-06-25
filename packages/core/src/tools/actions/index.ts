@@ -11,7 +11,15 @@ const ELEMENT_DESCRIPTION_SCHEMA = z.string().optional()
 export const refSchema = (description: string) =>
   z.string().transform((v): Ref => asRef(v)).describe(description)
 
-function actionWithSurface(verb: string, surface: Surface, description: string, schema: z.ZodType): ToolDefinition {
+type ActionMeta = Pick<ToolDefinition, 'destructive' | 'readOnly'>
+
+function actionWithSurface(
+  verb: string,
+  surface: Surface,
+  description: string,
+  schema: z.ZodType,
+  meta: ActionMeta = {},
+): ToolDefinition {
   return {
     id: `${surface}_${verb}`,
     type: verb,
@@ -20,13 +28,14 @@ function actionWithSurface(verb: string, surface: Surface, description: string, 
     description,
     category: 'action',
     schema,
+    ...meta,
   }
 }
 
-function action(verb: string, description: string, schema: z.ZodType): ToolDefinition {
+function action(verb: string, description: string, schema: z.ZodType, meta: ActionMeta = {}): ToolDefinition {
   const surface = VERB_SURFACE[verb]
   if (!surface) throw new Error(`No surface mapping for verb "${verb}"`)
-  return actionWithSurface(verb, surface, description, schema)
+  return actionWithSurface(verb, surface, description, schema, meta)
 }
 
 export const fillSchema = z.object({
@@ -215,7 +224,7 @@ export const tabSchema = z.discriminatedUnion('action', [
   }).strict(),
 ])
 
-const mobileFillDefinition = actionWithSurface('fill', 'mobile', 'Fill text into an input field', fillSchema)
+const mobileFillDefinition = actionWithSurface('fill', 'mobile', 'Fill text into an input field', fillSchema, { destructive: true })
 if (mobileFillDefinition.id !== 'mobile_fill') {
   throw new Error(`Unexpected mobile fill id "${mobileFillDefinition.id}"`)
 }
@@ -227,7 +236,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
   }).strict()),
 
-  action('fill', 'Fill text into an input field', fillSchema),
+  action('fill', 'Fill text into an input field', fillSchema, { destructive: true }),
 
   mobileFillDefinition,
 
@@ -243,7 +252,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Visible text/value to select'),
   }).strict()),
 
-  action('navigate', 'Navigate to a URL, browser history entry, or reload the current page', navigateSchema),
+  action('navigate', 'Navigate to a URL, browser history entry, or reload the current page', navigateSchema, { destructive: true }),
 
   action('scroll', 'Scroll the page or a specific element', scrollSchema),
 
@@ -271,9 +280,9 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ref: refSchema(`Paste target ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Text value to paste'),
-  }).strict()),
+  }).strict(), { destructive: true }),
 
-  action('inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema),
+  action('inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema, { readOnly: true }),
 
   action('setCookies', 'Set browser cookies', z.object({
     cookies: z.array(z.object({
@@ -286,14 +295,14 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
       sameSite: z.enum(['Strict', 'Lax', 'None']).optional().describe('SameSite attribute'),
       expires: z.number().optional().describe('Expiry as Unix timestamp in seconds'),
     })).describe('Array of cookies to set'),
-  })),
+  }), { destructive: true }),
 
   action('setLocalStorage', 'Set local storage entries', z.object({
     entries: z.array(z.object({
       key: z.string().describe('Storage key'),
       value: z.string().describe('Storage value'),
     })).describe('Array of key-value pairs to set'),
-  })),
+  }), { destructive: true }),
 
   action('tap', 'Tap an element on a mobile device', z.object({
     ref: refSchema(`Element to tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
@@ -388,12 +397,12 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ref: refSchema(`File input ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     files: z.array(z.string()).min(1).describe('Paths to files — relative to the test YAML file, or absolute paths. Missing files fail the action.'),
-  }).strict()),
+  }).strict(), { destructive: true }),
 
   action('copy', 'Copy the text content of an element to the system clipboard (web only, chromium only)', z.object({
     ref: refSchema(`Element whose text content to copy; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-  }).strict()),
+  }).strict(), { destructive: true }),
 ]
 
 export function registerAllActions(registry: ToolRegistry): void {

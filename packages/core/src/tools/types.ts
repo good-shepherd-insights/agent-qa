@@ -11,4 +11,8 @@ export interface ToolDefinition<T extends z.ZodType = z.ZodType> {
   description: string
   category: ToolCategory
   schema: T
+  /** Advisory audit/confirmation hint only; must not gate platform slices. */
+  destructive?: boolean
+  /** Advisory audit/trace hint only; must not gate platform slices. */
+  readOnly?: boolean
 }
