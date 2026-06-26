@@ -9,6 +9,7 @@ const ok: ModelProfile = {
 }
 
 const badProvider: ModelProfile = {
+  // @ts-expect-error provider must be one of the five built-in ids.
   provider: 'gateway',
   model: 'x',
   auth: { mode: 'none' },
