@@ -33,10 +33,18 @@ export type WaitFor =
 
 type SwipeBase = {
   type: 'swipe'
-  direction: 'up' | 'down' | 'left' | 'right'
-  ref?: Ref
-  duration?: number
+  durationMs: number
 }
 
-export type SwipeByDirection = SwipeBase & { start?: never; end?: never }
-export type SwipeByPath = SwipeBase & { start: Point; end: Point }
+export type SwipeByDirection = SwipeBase & {
+  mode: 'direction'
+  direction: 'up' | 'down' | 'left' | 'right'
+  ref?: Ref
+}
+
+export type SwipeByPath = SwipeBase & {
+  mode: 'path'
+  from: Point
+  to: Point
+  coordSpace: 'viewport' | 'screen'
+}

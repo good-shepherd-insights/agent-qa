@@ -170,30 +170,24 @@ const tabSelectorSchema = z.object({
   url: z.string().optional().describe('Substring match on page URL'),
 }).strict()
 
-export const swipeSchema = z.union([
+export const swipeSchema = z.discriminatedUnion('mode', [
   z.object({
-    type: z.literal('swipe').default('swipe')
-      .describe('Canonical swipe action type. Omit because the registry supplies this value.'),
+    mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
     ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen.`).optional(),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    duration: z.number().optional()
-      .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
-    start: z.never().optional(),
-    end: z.never().optional(),
+    durationMs: z.number().int().min(50).max(5000).default(300)
+      .describe('Swipe duration in milliseconds. Omit when the default 300ms gesture duration is acceptable.'),
   }).strict(),
   z.object({
-    type: z.literal('swipe').default('swipe')
-      .describe('Canonical swipe action type. Omit because the registry supplies this value.'),
-    direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
-    ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen.`).optional(),
+    mode: z.literal('path'),
+    from: pointSchema.describe('Start coordinate for the explicit swipe path'),
+    to: pointSchema.describe('End coordinate for the explicit swipe path'),
+    coordSpace: z.enum(['viewport', 'screen']).default('viewport')
+      .describe('Coordinate space for the explicit path: viewport = visible area; screen = physical device screen. Omit for viewport.'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    duration: z.number().optional()
-      .describe('Swipe duration in milliseconds. Omit when the default gesture duration is acceptable.'),
-    start: pointSchema.describe('Start coordinate for the explicit swipe path'),
-    end: pointSchema.describe('End coordinate for the explicit swipe path'),
-    coordSpace: z.enum(['viewport', 'screen'])
-      .describe('Coordinate space for the explicit start/end path: viewport = visible area; screen = physical device screen.'),
+    durationMs: z.number().int().min(50).max(5000).default(300)
+      .describe('Swipe duration in milliseconds. Omit when the default 300ms gesture duration is acceptable.'),
   }).strict(),
 ])
 
