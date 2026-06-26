@@ -165,9 +165,9 @@ const pointSchema = z.object({
 }).strict()
 
 const tabSelectorSchema = z.object({
-  index: z.number().optional().describe('0-based tab index'),
-  title: z.string().optional().describe('Substring match on page title'),
-  url: z.string().optional().describe('Substring match on page URL'),
+  index: z.number().optional().describe('0-based tab index. Omit when selecting by title or url.'),
+  title: z.string().optional().describe('Substring match on page title. Omit when selecting by index or url.'),
+  url: z.string().optional().describe('Substring match on page URL. Omit when selecting by index or title.'),
 }).strict()
 
 export const swipeSchema = z.discriminatedUnion('mode', [
@@ -488,12 +488,12 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     cookies: z.array(z.object({
       name: z.string().describe('Cookie name'),
       value: z.string().describe('Cookie value'),
-      domain: z.string().optional().describe('Cookie domain'),
-      path: z.string().optional().describe('Cookie path'),
-      httpOnly: z.boolean().optional().describe('HTTP only flag'),
-      secure: z.boolean().optional().describe('Secure flag'),
-      sameSite: z.enum(['Strict', 'Lax', 'None']).optional().describe('SameSite attribute'),
-      expires: z.number().optional().describe('Expiry as Unix timestamp in seconds'),
+      domain: z.string().optional().describe('Cookie domain. Omit to scope the cookie to the current page host.'),
+      path: z.string().optional().describe("Cookie path. Omit to use the default '/' path."),
+      httpOnly: z.boolean().optional().describe('HTTP only flag. Omit when the cookie may be read by client scripts.'),
+      secure: z.boolean().optional().describe('Secure flag. Omit when the cookie need not be HTTPS-only.'),
+      sameSite: z.enum(['Strict', 'Lax', 'None']).optional().describe('SameSite attribute. Omit to use the browser default SameSite policy.'),
+      expires: z.number().optional().describe('Expiry as Unix timestamp in seconds. Omit for a session cookie.'),
     })).describe('Array of cookies to set'),
   }), { destructive: true }),
 
