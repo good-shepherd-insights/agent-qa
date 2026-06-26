@@ -7,38 +7,39 @@ import type { Action } from '../../types/platform.js'
 import { defaultRegistry } from '../../tools/index.js'
 
 function getAssertSchema(): z.ZodObject<any> {
-  const tools = (defaultRegistry as any).tools as Map<string, any>
-  const assertTool = tools.get('common_assert')
-  return assertTool.schema
+  return defaultRegistry.getSchema('common_assertAI') as z.ZodObject<any>
 }
 
 describe('assert evidence field', () => {
   describe('schema parsing', () => {
-    it('defaults to visible screen-backed assertions', () => {
+    it('defaults to multimodal medium-effort assertions', () => {
       const schema = getAssertSchema()
       const result = schema.safeParse({ claim: 'banner visible' })
       expect(result.success).toBe(true)
-      expect(result.data!.kind).toBe('visible')
-      expect(result.data!.evidence).toBe('screen')
+      expect(result.data!.mode).toBe('multimodal')
+      expect(result.data!.effort).toBe('medium')
+      expect(result.data!.consensus).toBe(1)
     })
 
-    it('accepts explicit text assertions backed by DOM evidence', () => {
+    it('accepts explicit visual assertion knobs', () => {
       const schema = getAssertSchema()
       const result = schema.safeParse({
         claim: 'x',
-        kind: 'text',
-        expected: 'Done',
-        evidence: 'dom',
+        mode: 'visual',
+        effort: 'high',
+        consensus: 3,
+        video: true,
       })
       expect(result.success).toBe(true)
-      expect(result.data!.kind).toBe('text')
-      expect(result.data!.expected).toBe('Done')
-      expect(result.data!.evidence).toBe('dom')
+      expect(result.data!.mode).toBe('visual')
+      expect(result.data!.effort).toBe('high')
+      expect(result.data!.consensus).toBe(3)
+      expect(result.data!.video).toBe(true)
     })
 
-    it('rejects unknown evidence modes', () => {
+    it('rejects unknown assertion modes', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ claim: 'x', evidence: 'bogus' })
+      const result = schema.safeParse({ claim: 'x', mode: 'bogus' })
       expect(result.success).toBe(false)
     })
   })

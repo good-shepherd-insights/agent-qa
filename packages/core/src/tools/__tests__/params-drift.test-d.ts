@@ -42,11 +42,10 @@ type WithSchemaInspectTab<T> = T extends { tab?: unknown }
 type ScrollParams = z.infer<typeof scrollSchema>
 type SwipeParams = z.infer<typeof swipeSchema>
 type WithSwipeCompanions<T> = T extends unknown
-  ? T extends { start: { x: number, y: number }, end: { x: number, y: number } }
-    ? T & { elementDescription?: string | undefined, coordSpace: 'viewport' | 'screen' }
-    : T & { elementDescription?: string | undefined }
+  ? Omit<T, 'type'> & { elementDescription?: string | undefined }
   : never
 type SwipeParamsWithKnownCompanions = WithSwipeCompanions<SwipeByDirection | SwipeByPath>
+type DirectionSwipeParams = Extract<SwipeParams, { mode: 'direction' }>
 type RegistryPinchAction = WithActionType<'pinch', WithoutElementDescription<z.infer<typeof pinchSchema>>>
 type RegistryMultiTapAction = WithActionType<'multiTap', WithoutElementDescription<z.infer<typeof multiTapSchema>>>
 type RegistryNavigateAction = WithActionType<'navigate', z.infer<typeof navigateSchema>>
@@ -55,7 +54,7 @@ type RegistryWebInspectAction = WithActionType<'inspect', WithSchemaInspectTab<z
 
 expectTypeOf<z.infer<typeof fillSchema>['ref']>().toEqualTypeOf<Ref>()
 expectTypeOf<ScrollParams['ref']>().toEqualTypeOf<Ref | undefined>()
-expectTypeOf<SwipeParams['ref']>().toEqualTypeOf<Ref | undefined>()
+expectTypeOf<DirectionSwipeParams['ref']>().toEqualTypeOf<Ref | undefined>()
 
 expectTypeOf<WithoutElementDescription<z.infer<typeof fillSchema>>>().toEqualTypeOf<Fill>()
 expectTypeOf<WithoutElementDescription<z.infer<typeof scrollSchema>>>().toEqualTypeOf<Scroll>()

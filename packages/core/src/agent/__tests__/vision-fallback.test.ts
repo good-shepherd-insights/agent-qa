@@ -65,6 +65,7 @@ const expectedPlan = {
   confidence: 0.9,
   stepComplete: false,
   stepFailed: false,
+  doesActionAdvanceUsTowardsGoal: false,
 }
 
 function makeMockModel(): LanguageModel {
