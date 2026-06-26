@@ -1,3 +1,6 @@
+import { globSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import type { Surface } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -12,6 +15,19 @@ const platforms = ['web', 'android', 'ios'] as const
 const registry = new ToolRegistry()
 registerAllActions(registry)
 const defs = registry.getAll()
+const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+
+interface SourceFile {
+  path: string
+  source: string
+}
+
+const actionSourceFiles: SourceFile[] = globSync('src/tools/actions/**/*.ts', { cwd: pkgRoot })
+  .filter(file => !file.includes('__tests__'))
+  .map(file => ({
+    path: file,
+    source: readFileSync(join(pkgRoot, file), 'utf8'),
+  }))
 
 function fixtureTool(overrides: Record<string, unknown> = {}): ToolDefinition {
   return {
@@ -135,6 +151,95 @@ function findHiddenPlannerToolOffenders(
   return offenders
 }
 
+function findLooseZodOffenders(sourceFiles: readonly SourceFile[]): string[] {
+  const offenders: string[] = []
+  const looseZodPattern = /\bz\.(?:any|unknown)\s*\(/
+
+  for (const file of sourceFiles) {
+    const lines = file.source.split('\n')
+
+    lines.forEach((line, index) => {
+      if (!looseZodPattern.test(line)) return
+
+      const previousLine = lines[index - 1] ?? ''
+      if (line.includes('// escape-hatch:') || previousLine.trim().startsWith('// escape-hatch:')) {
+        return
+      }
+
+      offenders.push(`${file.path}:${index + 1}: z.any()/z.unknown() requires // escape-hatch:`)
+    })
+  }
+
+  return offenders
+}
+
+function collectFieldDeclaration(lines: readonly string[], startIndex: number): string {
+  const parts = [lines[startIndex]]
+
+  for (let index = startIndex + 1; index < Math.min(lines.length, startIndex + 8); index += 1) {
+    const line = lines[index]
+    if (/^\s{0,4}[A-Za-z_$][\w$]*\s*:/.test(line)) break
+
+    parts.push(line)
+    if (line.includes('.describe(')) break
+  }
+
+  return parts.join('\n')
+}
+
+function isInsideTabSelectorSchema(lines: readonly string[], index: number): boolean {
+  let inside = false
+
+  for (let cursor = 0; cursor <= index; cursor += 1) {
+    const line = lines[cursor]
+    if (line.includes('const tabSelectorSchema = z.object({')) inside = true
+    if (inside && line.includes('}).strict()')) inside = false
+  }
+
+  return inside
+}
+
+function findOptionalDescribeOffenders(sourceFiles: readonly SourceFile[]): string[] {
+  const offenders: string[] = []
+
+  for (const file of sourceFiles) {
+    const lines = file.source.split('\n')
+
+    lines.forEach((line, index) => {
+      const fieldMatch = /^(\s{0,4})([A-Za-z_$][\w$]*)\s*:/.exec(line)
+      if (!fieldMatch) return
+      if (isInsideTabSelectorSchema(lines, index)) return
+      if (!line.includes('.optional()') && !line.includes('.default(')) return
+
+      const declaration = collectFieldDeclaration(lines, index)
+      if (declaration.includes('z.never(')) return
+      if (/omit/i.test(declaration)) return
+
+      offenders.push(`${file.path}:${index + 1}: ${fieldMatch[2]} optional/default field must describe when to omit it`)
+    })
+  }
+
+  return offenders
+}
+
+function findBareRefSchemaOffenders(sourceFiles: readonly SourceFile[]): string[] {
+  const offenders: string[] = []
+  const bareRefPattern = /^\s*(ref|fromRef|toRef)\s*:\s*z\.string\s*\(/
+
+  for (const file of sourceFiles) {
+    const lines = file.source.split('\n')
+
+    lines.forEach((line, index) => {
+      const match = bareRefPattern.exec(line)
+      if (match) {
+        offenders.push(`${file.path}:${index + 1}: ${match[1]} must use refSchema(`)
+      }
+    })
+  }
+
+  return offenders
+}
+
 describe('LINT-02', () => {
   it('requires every tool id to match its declared surface and type', () => {
     expect(findSurfaceIdOffenders(defs)).toEqual([])
@@ -203,5 +308,74 @@ describe('LINT-07', () => {
     expect(findHiddenPlannerToolOffenders([cleanDef], [[]])).toEqual([
       'mobile_tap: exposed tool missing from every platform slice',
     ])
+  })
+})
+
+describe('LINT-04', () => {
+  it('requires z.any() and z.unknown() to carry an escape-hatch marker', () => {
+    expect(findLooseZodOffenders(actionSourceFiles)).toEqual([])
+  })
+
+  it('rejects held-out loose Zod usage and accepts documented escape hatches', () => {
+    expect(findLooseZodOffenders([
+      { path: 'fixture.ts', source: 'const raw = z.any()' },
+    ])).toEqual([
+      'fixture.ts:1: z.any()/z.unknown() requires // escape-hatch:',
+    ])
+
+    expect(findLooseZodOffenders([
+      { path: 'fixture.ts', source: 'const raw = z.any() // escape-hatch: raw bridge' },
+      { path: 'fixture.ts', source: '// escape-hatch: raw bridge\nconst raw = z.unknown()' },
+    ])).toEqual([])
+  })
+})
+
+describe('LINT-05', () => {
+  it('requires in-scope optional/default action params to explain when to omit them', () => {
+    expect(findOptionalDescribeOffenders(actionSourceFiles)).toEqual([])
+  })
+
+  it('rejects held-out optionals without omit guidance and accepts clean guidance', () => {
+    expect(findOptionalDescribeOffenders([
+      {
+        path: 'fixture.ts',
+        source: [
+          'export const fixtureSchema = z.object({',
+          "  timeoutMs: z.number().optional().describe('Timeout in milliseconds'),",
+          '}).strict()',
+        ].join('\n'),
+      },
+    ])).toEqual([
+      'fixture.ts:2: timeoutMs optional/default field must describe when to omit it',
+    ])
+
+    expect(findOptionalDescribeOffenders([
+      {
+        path: 'fixture.ts',
+        source: [
+          'export const fixtureSchema = z.object({',
+          "  timeoutMs: z.number().optional().describe('Timeout in milliseconds. Omit when the default is acceptable.'),",
+          '}).strict()',
+        ].join('\n'),
+      },
+    ])).toEqual([])
+  })
+})
+
+describe('LINT-06', () => {
+  it('requires ref/fromRef/toRef fields to use refSchema', () => {
+    expect(findBareRefSchemaOffenders(actionSourceFiles)).toEqual([])
+  })
+
+  it('rejects held-out bare ref strings and accepts refSchema handles', () => {
+    expect(findBareRefSchemaOffenders([
+      { path: 'fixture.ts', source: "const schema = z.object({\n  ref: z.string().describe('raw')\n})" },
+    ])).toEqual([
+      'fixture.ts:2: ref must use refSchema(',
+    ])
+
+    expect(findBareRefSchemaOffenders([
+      { path: 'fixture.ts', source: "const schema = z.object({\n  ref: refSchema('target')\n})" },
+    ])).toEqual([])
   })
 })
