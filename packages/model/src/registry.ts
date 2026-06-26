@@ -1,4 +1,9 @@
-import { createProviderRegistry, customProvider } from 'ai'
+import {
+  addToolInputExamplesMiddleware,
+  createProviderRegistry,
+  customProvider,
+  extractJsonMiddleware,
+} from 'ai'
 
 import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
@@ -8,10 +13,23 @@ import { ADAPTERS } from './adapters/index.js'
 import type { AdapterBody } from './adapters/index.js'
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
+import { deriveExamplesMiddleware } from './middleware/examples.js'
+import { extractJsonStrategy } from './middleware/extract-json.js'
+import { repairMiddleware } from './middleware/repair.js'
+import { retryMiddleware } from './middleware/retry.js'
 import { toolSchemaMiddleware } from './middleware.js'
 import { validateProfile } from './validate.js'
 
-const MIDDLEWARE: LanguageModelMiddleware[] = [toolSchemaMiddleware]
+// D-06 order: retry is outermost on response/errors; repair sees text after SDK
+// extraction; request transforms normalize schema, derive examples, then serialize.
+const MIDDLEWARE: LanguageModelMiddleware[] = [
+  retryMiddleware(),
+  repairMiddleware(),
+  extractJsonMiddleware({ transform: extractJsonStrategy }),
+  toolSchemaMiddleware,
+  deriveExamplesMiddleware(),
+  addToolInputExamplesMiddleware(),
+]
 const SUPPORTED_PROVIDERS = Object.keys(ADAPTERS)
 
 export interface ModelProviderOverrides {
