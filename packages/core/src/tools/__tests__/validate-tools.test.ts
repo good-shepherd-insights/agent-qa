@@ -178,25 +178,13 @@ function collectFieldDeclaration(lines: readonly string[], startIndex: number): 
 
   for (let index = startIndex + 1; index < Math.min(lines.length, startIndex + 8); index += 1) {
     const line = lines[index]
-    if (/^\s{0,4}[A-Za-z_$][\w$]*\s*:/.test(line)) break
+    if (/^\s+[A-Za-z_$][\w$]*\s*:/.test(line)) break
 
     parts.push(line)
     if (line.includes('.describe(')) break
   }
 
   return parts.join('\n')
-}
-
-function isInsideTabSelectorSchema(lines: readonly string[], index: number): boolean {
-  let inside = false
-
-  for (let cursor = 0; cursor <= index; cursor += 1) {
-    const line = lines[cursor]
-    if (line.includes('const tabSelectorSchema = z.object({')) inside = true
-    if (inside && line.includes('}).strict()')) inside = false
-  }
-
-  return inside
 }
 
 function findOptionalDescribeOffenders(sourceFiles: readonly SourceFile[]): string[] {
@@ -206,9 +194,8 @@ function findOptionalDescribeOffenders(sourceFiles: readonly SourceFile[]): stri
     const lines = file.source.split('\n')
 
     lines.forEach((line, index) => {
-      const fieldMatch = /^(\s{0,4})([A-Za-z_$][\w$]*)\s*:/.exec(line)
+      const fieldMatch = /^(\s+)([A-Za-z_$][\w$]*)\s*:/.exec(line)
       if (!fieldMatch) return
-      if (isInsideTabSelectorSchema(lines, index)) return
       if (!line.includes('.optional()') && !line.includes('.default(')) return
 
       const declaration = collectFieldDeclaration(lines, index)
@@ -355,6 +342,36 @@ describe('LINT-05', () => {
         source: [
           'export const fixtureSchema = z.object({',
           "  timeoutMs: z.number().optional().describe('Timeout in milliseconds. Omit when the default is acceptable.'),",
+          '}).strict()',
+        ].join('\n'),
+      },
+    ])).toEqual([])
+  })
+
+  it('rejects held-out six-space nested optionals without omit guidance and accepts clean guidance', () => {
+    expect(findOptionalDescribeOffenders([
+      {
+        path: 'fixture.ts',
+        source: [
+          'export const fixtureSchema = z.object({',
+          '  cookies: z.array(z.object({',
+          "      domain: z.string().optional().describe('Cookie domain'),",
+          '  })).describe(\'Cookies\'),',
+          '}).strict()',
+        ].join('\n'),
+      },
+    ])).toEqual([
+      'fixture.ts:3: domain optional/default field must describe when to omit it',
+    ])
+
+    expect(findOptionalDescribeOffenders([
+      {
+        path: 'fixture.ts',
+        source: [
+          'export const fixtureSchema = z.object({',
+          '  cookies: z.array(z.object({',
+          "      domain: z.string().optional().describe('Cookie domain. Omit to use the current page host.'),",
+          '  })).describe(\'Cookies\'),',
           '}).strict()',
         ].join('\n'),
       },
