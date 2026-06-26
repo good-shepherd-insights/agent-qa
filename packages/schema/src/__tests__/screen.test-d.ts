@@ -22,7 +22,16 @@ const full: ScreenStateMetadata = {
 // @ts-expect-error textOnly captures carry no image dimensions (SC5 / D-01 / D-03).
 const bad: ScreenStateMetadata = { captureMode: 'textOnly', coordSpace: 'viewport', viewportWidth: 1, viewportHeight: 1, scroll: { offsetX: 0, offsetY: 0, contentWidth: 1, contentHeight: 1 }, imageWidth: 1920 }
 
-expectTypeOf<ModelCapabilities>().toEqualTypeOf<{ vision: boolean }>()
+expectTypeOf<ModelCapabilities>().toEqualTypeOf<{
+  text: boolean
+  vision: boolean
+  visionToolMessages: boolean
+  toolCalling: boolean
+  structuredOutput: boolean
+  streaming: boolean
+  contextWindow: number
+  maxOutput: number
+}>()
 expectTypeOf<ScreenState['refMap']>().toEqualTypeOf<Record<Ref, ElementBounds>>()
 expectTypeOf<ScreenState['elements']>().toEqualTypeOf<ElementInfo[]>()
 expectTypeOf<ScreenState['platform']>().toEqualTypeOf<'web' | 'android' | 'ios'>()
