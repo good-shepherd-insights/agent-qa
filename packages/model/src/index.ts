@@ -12,4 +12,11 @@ export type {
   AgentQaModelOwnershipContract,
   AgentQaModelPackageClass,
 } from './ownership-contract'
+export { getProviderOptions } from './adapters/index'
+export { deriveTransport } from './auth'
+export type { ResolvedModelAuth, Transport } from './auth'
 export { toolSchemaMiddleware } from './middleware'
+export { createModel } from './registry'
+export type { ModelProviderOverrides } from './registry'
+export { validateProfile } from './validate'
+export type { ModelProfile, ModelProviderId, ModelAuthDeclaration } from '@vostride/agent-qa-schema'
