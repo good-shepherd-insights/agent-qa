@@ -380,9 +380,9 @@ export const tabSchema = z.discriminatedUnion('action', [
   }).strict(),
   z.object({
     action: z.literal('switch'),
-    index: z.number().optional().describe('0-based tab index to switch to'),
-    title: z.string().optional().describe('Substring match on page title'),
-    url: z.string().optional().describe('Substring match on page URL'),
+    index: z.number().optional().describe('0-based tab index to switch to. Omit when selecting by title or url instead.'),
+    title: z.string().optional().describe('Substring match on page title. Omit when selecting by index or url instead.'),
+    url: z.string().optional().describe('Substring match on page URL. Omit when selecting by index or title instead.'),
   }).strict(),
 ])
 
@@ -438,7 +438,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     keys: z.array(z.string()).min(1).describe('Array of keys/combos to press in sequence. Each entry may be a single key (e.g. "Enter", "Tab", "Escape") or a combo with "+" separators (e.g. "Meta+k", "Control+Shift+T"). Use "Meta" for the Cmd/Win/Super key — on non-Mac platforms it is automatically converted to "Control" when convertPlatformKeys is true. On mobile, only single special keys from the KEY_MAP work meaningfully; combos are a no-op.'),
     mode: z.enum(['press', 'down', 'up']).default('press')
       .describe('press = atomic press and release (default); down = hold without releasing for modifier combos; up = release a previously held key. Omit for a normal key press.'),
-    convertPlatformKeys: z.boolean().optional().default(true).describe('When true (default), replaces "Meta" with "Control" in each key string on non-Mac platforms so that "Meta+k" works as Cmd+K on Mac and Ctrl+K on Windows/Linux. Set to false to pass keys through unchanged. No-op on mobile.'),
+    convertPlatformKeys: z.boolean().optional().default(true).describe('When true (default), replaces "Meta" with "Control" in each key string on non-Mac platforms so that "Meta+k" works as Cmd+K on Mac and Ctrl+K on Windows/Linux. Set to false to pass keys through unchanged. No-op on mobile. Omit to keep the default platform conversion.'),
   })),
 
   action('hover', 'Hover over an element', z.object({
@@ -520,7 +520,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('longpress', 'Long-press an element on a mobile device', z.object({
     ref: refSchema(`Element to long-press; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
-    duration: z.number().optional().describe('Long-press duration in ms'),
+    duration: z.number().optional().describe('Long-press duration in ms. Omit to use the platform default press duration.'),
   }).strict()),
 
   action('hideKeyboard', 'Dismiss the on-screen keyboard (mobile only, no-op on web)', z.object({})),
