@@ -1,6 +1,5 @@
 import { z } from 'zod'
 
-import type { ModelCapabilities } from '../capability/model-capabilities'
 import type { Viewport } from '../primitives/viewport'
 import { viewportSchema } from './browser'
 
@@ -16,7 +15,7 @@ export interface PlatformBase {
   verbose?: boolean
   farmSession?: { hostname: string; port: number; path: string; capabilities: Record<string, unknown> }
   logCapture?: { console?: boolean; network?: boolean }
-  model: ModelCapabilities
+  model: { vision: boolean }
 }
 
 export const timeoutConfigSchema = z.object({
