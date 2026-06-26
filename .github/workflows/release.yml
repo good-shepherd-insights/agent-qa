@@ -86,6 +86,9 @@ jobs:
       - name: Validate publish surface
         run: pnpm run validate:publish
 
+      - name: Validate tools
+        run: pnpm run validate:tools
+
       - name: Stage packages
         run: pnpm exec node scripts/release/stage-packages.mjs --target-version "${{ steps.version.outputs.version }}" --out .release/staged-packages
 
