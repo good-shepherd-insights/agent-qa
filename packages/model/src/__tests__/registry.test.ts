@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { APICallError } from '@ai-sdk/provider'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
-import type { ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
+import type { ModelCapabilities, ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
 
+import { capabilityKey, overrideStore } from '../capability/override-store.js'
+import { resolveCapabilities } from '../capability/resolve.js'
 import { createModel } from '../registry.js'
 import type { ResolvedModelAuth } from '../auth.js'
 
@@ -50,7 +53,23 @@ function fakeLanguageModel(onGenerate: (params: LanguageModelV3CallOptions) => v
   }
 }
 
+function apiError(message: string): APICallError {
+  return new APICallError({
+    message,
+    url: 'http://localhost/v1/chat/completions',
+    requestBodyValues: {},
+    statusCode: 400,
+    responseHeaders: {},
+    responseBody: '',
+    isRetryable: false,
+  })
+}
+
 describe('createModel', () => {
+  beforeEach(() => {
+    overrideStore.clear()
+  })
+
   it('resolves a v3 model for each built-in provider through the registry', () => {
     const cases: RegistryCase[] = [
       {
@@ -151,5 +170,73 @@ describe('createModel', () => {
       },
     })
     expect(transformedTool.inputSchema).not.toHaveProperty('$schema')
+  })
+
+  it('auto-fills capabilities when absent and preserves declared capabilities', () => {
+    const autoProfile = profile({
+      provider: 'openai-compatible',
+      modelId: 'gpt-4o',
+      expectedProvider: 'openai.chat',
+      baseURL: 'http://localhost:11434/v1',
+    })
+    const expected = resolveCapabilities(autoProfile)
+
+    createModel(autoProfile, noneAuth)
+
+    expect(autoProfile.capabilities).toEqual(expected)
+
+    const declared: ModelCapabilities = {
+      text: true,
+      vision: false,
+      visionToolMessages: false,
+      toolCalling: true,
+      structuredOutput: true,
+      streaming: true,
+      contextWindow: 12345,
+      maxOutput: 2048,
+    }
+    const declaredProfile = profile({
+      provider: 'openai-compatible',
+      modelId: 'gpt-4o',
+      expectedProvider: 'openai.chat',
+      baseURL: 'http://localhost:11434/v1',
+    })
+    declaredProfile.capabilities = declared
+
+    createModel(declaredProfile, noneAuth)
+
+    expect(declaredProfile.capabilities).toBe(declared)
+  })
+
+  it('records un-retried overflow through the full registry stack', async () => {
+    let calls = 0
+    const modelProfile = profile({
+      provider: 'openai-compatible',
+      modelId: 'override-model',
+      expectedProvider: 'override.test',
+      baseURL: 'http://localhost:11434/v1',
+    })
+    const overflow = apiError(
+      "This model's maximum context length is 32768 tokens. However, you requested 40000 tokens",
+    )
+    const model = createModel(modelProfile, noneAuth, {
+      languageModels: {
+        'override-model': {
+          ...fakeLanguageModel(() => {
+            calls += 1
+            throw overflow
+          }),
+          async doGenerate(params) {
+            calls += 1
+            throw overflow
+          },
+        },
+      },
+    })
+
+    await expect(model.doGenerate({ prompt: [] })).rejects.toBe(overflow)
+
+    expect(calls).toBe(1)
+    expect(overrideStore.get(capabilityKey(modelProfile.provider, modelProfile.model))).toBe(32768)
   })
 })
