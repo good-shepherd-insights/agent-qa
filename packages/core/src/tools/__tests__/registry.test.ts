@@ -457,11 +457,7 @@ describe('surface + id integrity', () => {
     registerAllActions(registry)
     for (const def of registry.getAll()) {
       for (const shape of schemaShapes(def.schema)) {
-        if (def.id === 'mobile_swipe') {
-          expect(shape).toHaveProperty('type')
-        } else {
-          expect(shape).not.toHaveProperty('type')
-        }
+        expect(shape).not.toHaveProperty('type')
         expect(shape).not.toHaveProperty('reasoning')
         expect(shape).not.toHaveProperty('confidence')
         expect(shape).not.toHaveProperty('stepComplete')
@@ -700,6 +696,16 @@ describe('surface + id integrity', () => {
     expect(scrollSchema.safeParse({ mode: 'direction', direction: 'down' }).success).toBe(true)
     expect(scrollSchema.safeParse({ mode: 'untilVisible', target: 'Submit' }).success).toBe(true)
     expect(scrollSchema.safeParse({ scrollType: 'vertical', value: 500 }).success).toBe(false)
+  })
+
+  it('swipe schema validates discriminated mode variants', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    const swipeSchema = registry.getSchema('mobile_swipe') as z.ZodType
+    expect(swipeSchema.safeParse({ mode: 'direction', direction: 'up' }).success).toBe(true)
+    expect(swipeSchema.safeParse({ mode: 'path', from: { x: 0, y: 0 }, to: { x: 10, y: 20 } }).success).toBe(true)
+    expect(swipeSchema.safeParse({ direction: 'up', start: { x: 0, y: 0 }, end: { x: 1, y: 1 } }).success).toBe(false)
+    expect(swipeSchema.safeParse({ mode: 'path', from: { x: 0, y: 0 }, to: { x: 1, y: 1 }, direction: 'up' }).success).toBe(false)
   })
 
   it('web_inspect schema validates browser read variants', () => {

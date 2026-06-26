@@ -28,7 +28,6 @@ expectTypeOf<
 expectTypeOf<Extract<WebAction['type'], CommonAction['type']>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<MobileAction['type'], CommonAction['type']>>().toEqualTypeOf<never>()
 
-// Closure is currently over web, mobile, and common; Android/iOS join in Phase 323.
 type LegUnion =
   | WebAction['type']
   | MobileAction['type']
@@ -204,14 +203,21 @@ const manyFingerTap: Action = { type: 'multiTap', fingers: 99, ref: asRef('e3') 
 
 const swipeStart = { x: 0, y: 0 }
 const swipeEnd = { x: 10, y: 20 }
-const directionSwipe: Action = { type: 'swipe', direction: 'up' }
-const pathSwipe: Action = { type: 'swipe', direction: 'up', start: swipeStart, end: swipeEnd }
+const directionSwipe: Action = { type: 'swipe', mode: 'direction', direction: 'up', durationMs: 300 }
+const pathSwipe: Action = {
+  type: 'swipe',
+  mode: 'path',
+  from: swipeStart,
+  to: swipeEnd,
+  coordSpace: 'viewport',
+  durationMs: 300,
+}
 
-// @ts-expect-error half-specified swipe paths are rejected.
-const swipeMissingEnd: Action = { type: 'swipe', direction: 'up', start: swipeStart }
+// @ts-expect-error path swipes require a to point.
+const swipeMissingTo: Action = { type: 'swipe', mode: 'path', from: swipeStart, coordSpace: 'viewport', durationMs: 300 }
 
-// @ts-expect-error half-specified swipe paths are rejected.
-const swipeMissingStart: Action = { type: 'swipe', direction: 'up', end: swipeEnd }
+// @ts-expect-error path swipes cannot carry direction.
+const pathSwipeWithDirection: Action = { type: 'swipe', mode: 'path', from: swipeStart, to: swipeEnd, coordSpace: 'viewport', durationMs: 300, direction: 'up' }
 
 void valid
 void invalid
@@ -225,5 +231,5 @@ void oneFingerTap
 void manyFingerTap
 void directionSwipe
 void pathSwipe
-void swipeMissingEnd
-void swipeMissingStart
+void swipeMissingTo
+void pathSwipeWithDirection

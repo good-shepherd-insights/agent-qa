@@ -75,23 +75,22 @@ const goneWait: WaitFor = {
 
 const swipeByDirection: SwipeByDirection = {
   type: 'swipe',
+  mode: 'direction',
   direction: 'up',
-  duration: 300,
+  durationMs: 300,
 }
 
 const swipeByPath: SwipeByPath = {
   type: 'swipe',
-  direction: 'up',
-  start: { x: 0, y: 0 },
-  end: { x: 10, y: 20 },
+  mode: 'path',
+  from: { x: 0, y: 0 },
+  to: { x: 10, y: 20 },
+  coordSpace: 'viewport',
+  durationMs: 300,
 }
 
-// @ts-expect-error path swipes require an end point.
-const swipeMissingEnd: SwipeByPath = {
-  type: 'swipe',
-  direction: 'up',
-  start: { x: 0, y: 0 },
-}
+// @ts-expect-error path swipes require a to point.
+const swipeMissingTo: SwipeByPath = { type: 'swipe', mode: 'path', from: { x: 0, y: 0 }, coordSpace: 'viewport', durationMs: 300 }
 
 void fill
 void directionScroll
@@ -102,4 +101,4 @@ void selectorWait
 void goneWait
 void swipeByDirection
 void swipeByPath
-void swipeMissingEnd
+void swipeMissingTo
