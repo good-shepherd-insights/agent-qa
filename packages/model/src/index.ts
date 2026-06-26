@@ -12,3 +12,4 @@ export type {
   AgentQaModelOwnershipContract,
   AgentQaModelPackageClass,
 } from './ownership-contract'
+export { toolSchemaMiddleware } from './middleware'
