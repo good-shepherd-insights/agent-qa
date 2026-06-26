@@ -34,6 +34,7 @@ export type { ElementInfo, ElementState, ElementLabels, ElementHierarchy } from 
 export type { ScreenState } from './screen/index'
 export type { ScreenStateMetadata, ScreenStateMetadataBase } from './screen/index'
 export type { ModelCapabilities } from './capability/index'
+export type { ModelProfile, ModelProviderId, ModelAuthDeclaration } from './model-profile/index'
 export type {
   AndroidPlatformConfig,
   BrowserConfig,
