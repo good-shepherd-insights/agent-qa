@@ -13,6 +13,8 @@ import { ADAPTERS } from './adapters/index.js'
 import type { AdapterBody } from './adapters/index.js'
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
+import { resolveCapabilities } from './capability/resolve.js'
+import { capabilityUpdateMiddleware } from './middleware/capability-update.js'
 import { deriveExamplesMiddleware } from './middleware/examples.js'
 import { extractJsonStrategy } from './middleware/extract-json.js'
 import { repairMiddleware } from './middleware/repair.js'
@@ -43,6 +45,8 @@ export function createModel(
 ): LanguageModelV3 {
   validateProfile(profile)
 
+  profile.capabilities ??= resolveCapabilities(profile)
+
   const transport = deriveTransport(profile, auth)
   const build = ADAPTERS[profile.provider as keyof typeof ADAPTERS] as AdapterBody | undefined
   if (!build) {
@@ -56,9 +60,10 @@ export function createModel(
     languageModels: overrides.languageModels ?? {},
     fallbackProvider: baseProvider,
   })
+  const middleware = [capabilityUpdateMiddleware(profile), ...MIDDLEWARE]
   const registry = createProviderRegistry(
     { [profile.provider]: provider },
-    { languageModelMiddleware: MIDDLEWARE },
+    { languageModelMiddleware: middleware },
   )
 
   return registry.languageModel(`${profile.provider}:${profile.model}`)

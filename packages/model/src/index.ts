@@ -15,7 +15,12 @@ export type {
 export { getProviderOptions } from './adapters/index'
 export { deriveTransport } from './auth'
 export type { ResolvedModelAuth, Transport } from './auth'
+export { FAMILIES, UNKNOWN_FLOOR, matchFamily } from './capability/family-table'
+export { capabilityKey, getObservedWindow, overrideStore } from './capability/override-store'
+export { isContextOverflow, parseRealWindow } from './capability/overflow-parse'
+export { resolveCapabilities } from './capability/resolve'
 export { toolSchemaMiddleware } from './middleware'
+export { capabilityUpdateMiddleware } from './middleware/capability-update'
 export { deriveExamplesMiddleware } from './middleware/examples'
 export { extractJsonStrategy } from './middleware/extract-json'
 export { repairMiddleware } from './middleware/repair'
@@ -23,4 +28,9 @@ export { retryMiddleware } from './middleware/retry'
 export { createModel } from './registry'
 export type { ModelProviderOverrides } from './registry'
 export { validateProfile } from './validate'
-export type { ModelProfile, ModelProviderId, ModelAuthDeclaration } from '@vostride/agent-qa-schema'
+export type {
+  ModelAuthDeclaration,
+  ModelCapabilities,
+  ModelProfile,
+  ModelProviderId,
+} from '@vostride/agent-qa-schema'
