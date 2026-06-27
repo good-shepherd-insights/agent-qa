@@ -61,7 +61,7 @@ describe('live model catalog helpers', () => {
       throw new Error('econnrefused')
     })
     const timeoutFetch = vi.fn(
-      (_url: RequestInfo | URL, init?: RequestInit) =>
+      (_url: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
         }),
