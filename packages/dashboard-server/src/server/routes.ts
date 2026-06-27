@@ -16,7 +16,7 @@ import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, ModelConfig, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getProviderOptions, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
-import { resolveVisionConfig } from '@vostride/agent-qa-model'
+import { fetchLiveModels, getModelCatalog, mergeCatalog, resolveVisionConfig } from '@vostride/agent-qa-model'
 import { parse as parseYaml } from 'yaml'
 
 const LLM_PROVIDER_MODES = new Set([
@@ -3119,6 +3119,89 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           ...listLLMAuthProviderPlugins().map(serializeAuthProviderPlugin),
         ],
       })
+      return
+    }
+
+    if (path === '/api/llm/catalog' && req.method === 'GET') {
+      json(res, { catalog: getModelCatalog() })
+      return
+    }
+
+    if (path === '/api/llm/catalog/live' && req.method === 'POST') {
+      readJsonBody<{
+        configName?: string
+        baseURL?: string
+        providerHeaders?: Record<string, string>
+      }>(req)
+        .then(async (body) => {
+          const rawBody = body as Record<string, unknown>
+          if ('apiKey' in rawBody) {
+            json(res, {
+              error: 'invalid_request',
+              message: 'apiKey is not accepted; save credentials for the named config instead.',
+            }, 400)
+            return
+          }
+
+          const staticOpenAI = getModelCatalog()['openai-compatible']
+          const baseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : ''
+          if (!baseURL) {
+            json(res, { models: staticOpenAI })
+            return
+          }
+
+          const headers: Record<string, string> = {}
+          if (body.providerHeaders !== undefined) {
+            for (const [key, value] of Object.entries(body.providerHeaders)) {
+              if (typeof value === 'string') headers[key] = value
+            }
+          }
+
+          const llmCandidate: Record<string, unknown> = {
+            provider: 'openai-compatible',
+            model: 'catalog-live-probe',
+            baseURL,
+          }
+          if (Object.keys(headers).length > 0) {
+            llmCandidate.providerHeaders = headers
+          }
+
+          const parsedConfig = ModelConfigSchema.safeParse(llmCandidate)
+          if (!parsedConfig.success) {
+            json(res, {
+              error: 'invalid_request',
+              message: parsedConfig.error.issues
+                .map((issue: { path: PropertyKey[]; message: string }) => `${issue.path.map(String).join('.') || 'config'}: ${issue.message}`)
+                .join('; '),
+            }, 400)
+            return
+          }
+
+          const configName = typeof body.configName === 'string' ? body.configName.trim() : ''
+          const llmConfig = parsedConfig.data
+          const coreAuth = await import('@vostride/agent-qa-core') as typeof import('@vostride/agent-qa-core') & {
+            resolveLLMAuth: (name: string, config: typeof llmConfig) => Promise<
+              | { kind: 'api-key'; apiKey: string }
+              | { kind: 'bearer-token'; token: string }
+              | { kind: 'auth-fetch'; fetch: typeof globalThis.fetch; modelAdapter: 'openai-responses' | 'anthropic-messages' }
+              | { kind: 'unauthenticated'; message: string }
+              | { kind: 'missing'; message: string }
+            >
+          }
+          const resolvedAuth = await coreAuth.resolveLLMAuth(configName, llmConfig)
+          if (resolvedAuth.kind === 'api-key') {
+            headers.Authorization ??= `Bearer ${resolvedAuth.apiKey}`
+          } else if (resolvedAuth.kind === 'bearer-token') {
+            headers.Authorization ??= `Bearer ${resolvedAuth.token}`
+          }
+
+          const live = await fetchLiveModels({
+            baseURL,
+            headers: Object.keys(headers).length > 0 ? headers : undefined,
+          })
+          json(res, { models: mergeCatalog(staticOpenAI, live) })
+        })
+        .catch(() => json(res, { error: 'invalid_request' }, 400))
       return
     }
 
