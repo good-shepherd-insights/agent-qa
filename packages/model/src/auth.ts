@@ -1,4 +1,4 @@
-import type { ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
+import type { ModelProfile } from '@vostride/agent-qa-schema'
 
 export type ResolvedModelAuth =
   | { kind: 'api-key'; apiKey: string }
@@ -36,7 +36,7 @@ export function deriveTransport(profile: ModelProfile, auth: ResolvedModelAuth):
   }
 }
 
-function placeholderApiKey(provider: ModelProviderId): string {
+function placeholderApiKey(provider: string): string {
   switch (provider) {
     case 'openai-compatible':
       return 'openai-compatible'

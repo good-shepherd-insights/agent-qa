@@ -1,4 +1,4 @@
-import type { ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
+import type { ModelProfile } from '@vostride/agent-qa-schema'
 
 export function validateProfile(profile: ModelProfile): void {
   if (profile.provider === 'openai-compatible' && !profile.baseURL) {
@@ -16,7 +16,7 @@ export function validateProfile(profile: ModelProfile): void {
   }
 }
 
-function displayProvider(provider: ModelProviderId): string {
+function displayProvider(provider: string): string {
   switch (provider) {
     case 'openai-compatible':
       return 'OpenAI-Compatible'
@@ -28,5 +28,7 @@ function displayProvider(provider: ModelProviderId): string {
       return 'Anthropic Subscription'
     case 'gemini':
       return 'Gemini'
+    default:
+      return provider
   }
 }

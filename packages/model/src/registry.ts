@@ -9,8 +9,6 @@ import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 
-import { ADAPTERS } from './adapters/index.js'
-import type { AdapterBody } from './adapters/index.js'
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
 import { resolveCapabilities } from './capability/resolve.js'
@@ -20,6 +18,7 @@ import { extractJsonStrategy } from './middleware/extract-json.js'
 import { repairMiddleware } from './middleware/repair.js'
 import { retryMiddleware } from './middleware/retry.js'
 import { toolSchemaMiddleware } from './middleware.js'
+import { getProvider, listProviders } from './providers/registry.js'
 import { validateProfile } from './validate.js'
 
 // D-06 order: retry is outermost on response/errors; repair sees text after SDK
@@ -32,7 +31,6 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
 ]
-const SUPPORTED_PROVIDERS = Object.keys(ADAPTERS)
 
 export interface ModelProviderOverrides {
   languageModels?: Record<string, LanguageModelV3>
@@ -48,14 +46,14 @@ export function createModel(
   profile.capabilities ??= resolveCapabilities(profile)
 
   const transport = deriveTransport(profile, auth)
-  const build = ADAPTERS[profile.provider as keyof typeof ADAPTERS] as AdapterBody | undefined
-  if (!build) {
+  const descriptor = getProvider(profile.provider as string)
+  if (!descriptor) {
     throw new Error(
-      `Unknown provider "${profile.provider}". Supported: ${SUPPORTED_PROVIDERS.join(', ')}.`,
+      `Unknown provider "${profile.provider}". Supported: ${listProviders().map(provider => provider.id).join(', ')}.`,
     )
   }
 
-  const baseProvider = toProviderV3((modelId) => build(transport, modelId))
+  const baseProvider = toProviderV3((modelId) => descriptor.adapter(transport, modelId))
   const provider: ProviderV3 = customProvider({
     languageModels: overrides.languageModels ?? {},
     fallbackProvider: baseProvider,

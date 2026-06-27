@@ -14,7 +14,7 @@ export type ModelAuthDeclaration =
   | { mode: 'none' }
 
 export interface ModelProfile {
-  provider: ModelProviderId
+  provider: ModelProviderId | (string & {})
   model: string
   baseURL?: string
   headers?: Record<string, string>
