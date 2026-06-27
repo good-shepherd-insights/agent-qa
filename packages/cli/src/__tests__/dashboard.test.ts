@@ -199,8 +199,7 @@ describe('createDashboardCommand', () => {
         mcp: { enabled: true, port: 3472, path: '/mcp' },
         llmConfig: expect.objectContaining({
           provider: 'anthropic-compatible',
-          vision: true,
-          visionOverride: {
+          vision: {
             screenshotSize: 1048576,
             effectiveResolution: 1568,
           },

@@ -3,6 +3,7 @@ import { resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import pc from 'picocolors'
 import { flushAnalytics, resolveWorkspacePaths } from '@vostride/agent-qa-core'
+import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import { resolveConfig } from '../config.js'
 import { applyResolvedAuthToModelConfig, resolveModelAuth, type LLMConfigLike } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
@@ -66,6 +67,13 @@ async function startDashboardBackedServices(
       authFetch = fetch
       resolvedLLMConfig = modelConfig
     }
+    const { vision: _modelVision, visionOverride: _visionOverride, ...serverLLMConfig } = resolvedLLMConfig
+    void _modelVision
+    void _visionOverride
+    const dashboardLLMConfig = {
+      ...serverLLMConfig,
+      vision: resolveVisionConfig((config as any).services?.vision, defaultCfg.visionOverride),
+    }
 
     const { DashboardDatabase, resolveDashboardDbPath, startServer } = await import('@vostride/agent-qa-dashboard')
 
@@ -92,7 +100,7 @@ async function startDashboardBackedServices(
       workspacePaths,
       configPath: configFilePath,
       mcp: mcpConfig,
-      llmConfig: resolvedLLMConfig,
+      llmConfig: dashboardLLMConfig,
       authFetch,
     })
 
