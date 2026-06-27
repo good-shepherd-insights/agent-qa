@@ -199,6 +199,11 @@ export interface LLMProviderMetadata {
       buttonLabel?: string
     }
   modelAdapter?: 'openai-responses' | 'anthropic-messages'
+  needsBaseURL?: boolean
+  authModes?: Array<'api-key' | 'bearer-token' | 'subscription' | 'none'>
+  subscription?: boolean
+  baseURLPlaceholder?: string
+  defaultModel?: string
 }
 
 export interface ModelCatalogEntry {

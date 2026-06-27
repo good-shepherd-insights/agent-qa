@@ -98,17 +98,25 @@ function defaultProviderMetadata(): LLMProviderMetadata[] {
       label: "OpenAI-compatible",
       auth: { kind: "api-key", credentialTypes: ["api-key"], optional: true },
       modelAdapter: "openai-responses",
+      needsBaseURL: true,
+      authModes: ["api-key"],
+      baseURLPlaceholder: "https://openrouter.ai/api/v1",
     },
     {
       id: "anthropic-compatible",
       label: "Anthropic-compatible",
       auth: { kind: "api-key", credentialTypes: ["api-key", "bearer-token"], optional: true },
       modelAdapter: "anthropic-messages",
+      needsBaseURL: true,
+      authModes: ["api-key", "bearer-token"],
+      baseURLPlaceholder: "https://anthropic-proxy.example/messages",
     },
     {
       id: "gemini",
       label: "Gemini",
       auth: { kind: "api-key", credentialTypes: ["api-key"] },
+      needsBaseURL: false,
+      authModes: ["api-key"],
     },
   ]
 }
