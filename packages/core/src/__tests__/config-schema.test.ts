@@ -908,13 +908,18 @@ describe('ModelConfigSchema — vision config relocation', () => {
     }
   })
 
-  it('rejects relocated per-model screenshotSize', () => {
-    const result = ModelConfigSchema.safeParse({
+  it('rejects relocated per-model screenshotSize and effectiveResolution', () => {
+    expect(ModelConfigSchema.safeParse({
       provider: 'anthropic-subscription',
       model: 'claude-sonnet-4-20250514',
       screenshotSize: '1m',
-    })
-    expect(result.success).toBe(false)
+    }).success).toBe(false)
+
+    expect(ModelConfigSchema.safeParse({
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+      effectiveResolution: 1024,
+    }).success).toBe(false)
   })
 
   it('accepts services.vision sizing and transforms screenshotSize', () => {
@@ -932,33 +937,39 @@ describe('ModelConfigSchema — vision config relocation', () => {
     }
   })
 
-  it('parses model visionOverride sizing and transforms screenshotSize', () => {
-    const result = ModelConfigSchema.safeParse({
+  it('rejects removed per-model vision sizing override', () => {
+    const removedOverrideKey = ['vision', 'Override'].join('')
+
+    expect(ModelConfigSchema.safeParse({
       provider: 'anthropic-subscription',
       model: 'claude-sonnet-4-20250514',
-      visionOverride: {
+      [removedOverrideKey]: {
         screenshotSize: '128k',
         effectiveResolution: 1024,
       },
+    }).success).toBe(false)
+
+    expect(NamedLLMConfigSchema.safeParse({
+      name: 'claude-main',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+      [removedOverrideKey]: {
+        screenshotSize: '128k',
+      },
+    }).success).toBe(false)
+
+    const validResult = NamedLLMConfigSchema.safeParse({
+      name: 'claude-main',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
     })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.visionOverride?.screenshotSize).toBe(131072)
-      expect(result.data.visionOverride?.effectiveResolution).toBe(1024)
+    expect(validResult.success).toBe(true)
+    if (validResult.success) {
+      expect(validResult.data.vision).toBe(true)
     }
   })
 
-  it('rejects unknown visionOverride and services.vision keys', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-      visionOverride: {
-        screenshotSize: '128k',
-        unsupported: true,
-      },
-    })
-    expect(result.success).toBe(false)
-
+  it('rejects unknown services.vision keys', () => {
     expect(VisionServiceSchema.safeParse({
       screenshotSize: '256k',
       extra: true,

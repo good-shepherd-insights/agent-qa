@@ -322,12 +322,9 @@ async function resolveDashboardRuntimeLLM(
   const servicesVision = isPlainRecord(rawConfig.services)
     ? normalizeDashboardVisionConfig(rawConfig.services.vision)
     : undefined
-  const selectedVisionOverride = isPlainRecord(selected)
-    ? normalizeDashboardVisionConfig(selected.visionOverride)
-    : undefined
   const runtimeConfig: DashboardRuntimeLLMConfig = {
     ...normalized.config,
-    vision: resolveVisionConfig(servicesVision, selectedVisionOverride),
+    vision: resolveVisionConfig(servicesVision),
   }
   let resolvedAuthFetch: typeof globalThis.fetch | undefined
   if (auth.kind === 'api-key') {

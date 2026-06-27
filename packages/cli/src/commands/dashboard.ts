@@ -56,7 +56,6 @@ async function startDashboardBackedServices(
       baseURL: defaultCfg.baseURL,
       providerHeaders: defaultCfg.providerHeaders,
       vision: defaultCfg.vision,
-      visionOverride: defaultCfg.visionOverride,
     }
     const resolvedAuth = await resolveModelAuth(configName, llmConfig)
     let authFetch: typeof globalThis.fetch | undefined
@@ -67,12 +66,11 @@ async function startDashboardBackedServices(
       authFetch = fetch
       resolvedLLMConfig = modelConfig
     }
-    const { vision: _modelVision, visionOverride: _visionOverride, ...serverLLMConfig } = resolvedLLMConfig
+    const { vision: _modelVision, ...serverLLMConfig } = resolvedLLMConfig
     void _modelVision
-    void _visionOverride
     const dashboardLLMConfig = {
       ...serverLLMConfig,
-      vision: resolveVisionConfig((config as any).services?.vision, defaultCfg.visionOverride),
+      vision: resolveVisionConfig((config as any).services?.vision),
     }
 
     const { DashboardDatabase, resolveDashboardDbPath, startServer } = await import('@vostride/agent-qa-dashboard')

@@ -167,10 +167,6 @@ describe('createDashboardCommand', () => {
           model: 'claude-sonnet-4-6',
           baseURL: 'https://anthropic-proxy.example/messages',
           vision: true,
-          visionOverride: {
-            screenshotSize: 1048576,
-            effectiveResolution: 1568,
-          },
         }],
       },
       use: { llm: 'default' },
@@ -200,8 +196,8 @@ describe('createDashboardCommand', () => {
         llmConfig: expect.objectContaining({
           provider: 'anthropic-compatible',
           vision: {
-            screenshotSize: 1048576,
-            effectiveResolution: 1568,
+            screenshotSize: 524288,
+            effectiveResolution: 768,
           },
         }),
       }),

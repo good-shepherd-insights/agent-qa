@@ -5,10 +5,9 @@ export interface VisionSizingConfig {
 
 export function resolveVisionConfig(
   servicesVision: VisionSizingConfig | undefined,
-  visionOverride: VisionSizingConfig | undefined,
 ): VisionSizingConfig {
   return {
-    screenshotSize: visionOverride?.screenshotSize ?? servicesVision?.screenshotSize,
-    effectiveResolution: visionOverride?.effectiveResolution ?? servicesVision?.effectiveResolution,
+    screenshotSize: servicesVision?.screenshotSize,
+    effectiveResolution: servicesVision?.effectiveResolution,
   }
 }

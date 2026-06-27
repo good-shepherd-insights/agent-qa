@@ -1441,7 +1441,7 @@ async function executeSuites(
       logCapture: suiteLogCapture,
       accessibility: config.services?.accessibility,
       accessibilityCheck: runWebAccessibilityCheck,
-      vision: resolveVisionConfig(config.services?.vision, plannerCfg.visionOverride),
+      vision: resolveVisionConfig(config.services?.vision),
       memoryProvider: suiteMemoryProvider,
       memoryConfig: suiteMemoryConfig,
       memoryRoot: suiteMemoryRoot,
@@ -2446,7 +2446,7 @@ export function createRunCommand(): Command {
               logCapture: testLogCapture,
               accessibility: config.services?.accessibility,
               accessibilityCheck: runWebAccessibilityCheck,
-              vision: resolveVisionConfig(config.services?.vision, plannerCfg.visionOverride),
+              vision: resolveVisionConfig(config.services?.vision),
               contextWindow: plannerCfg.contextWindow,
               memoryProvider,
               memoryInitParams,
@@ -2578,7 +2578,7 @@ export function createRunCommand(): Command {
                       logCapture: testLogCapture,
                       accessibility: config.services?.accessibility,
                       accessibilityCheck: runWebAccessibilityCheck,
-                      vision: resolveVisionConfig(config.services?.vision, plannerCfg.visionOverride),
+                      vision: resolveVisionConfig(config.services?.vision),
                       contextWindow: plannerCfg.contextWindow,
                     }, filePath)
 

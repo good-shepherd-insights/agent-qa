@@ -47,7 +47,6 @@ export type LLMConfigLike = {
   baseURL?: string
   providerHeaders?: Record<string, string>
   vision?: boolean
-  visionOverride?: { screenshotSize?: number; effectiveResolution?: number }
   contextWindow?: number
 }
 
@@ -71,7 +70,6 @@ function normalizeLLMConfig(raw: NamedLLMConfigLike & Record<string, unknown>): 
     ...(raw.baseURL !== undefined ? { baseURL: raw.baseURL } : {}),
     ...(raw.providerHeaders !== undefined ? { providerHeaders: raw.providerHeaders } : {}),
     ...(raw.vision !== undefined ? { vision: raw.vision } : {}),
-    ...(raw.visionOverride !== undefined ? { visionOverride: raw.visionOverride } : {}),
     ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}),
   }
 }
