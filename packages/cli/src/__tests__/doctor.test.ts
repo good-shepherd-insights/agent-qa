@@ -94,8 +94,16 @@ vi.mock('@vostride/agent-qa-core', async () => {
   }
 })
 
-vi.mock('ai', () => ({
-  generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
+vi.mock('ai', async () => {
+  const actual = await vi.importActual<typeof import('ai')>('ai')
+  return {
+    ...actual,
+    generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
+  }
+})
+
+vi.mock('../provider-plugins.js', () => ({
+  loadProviderPluginsForRawConfig: vi.fn(() => Promise.resolve()),
 }))
 
 // Capture console output
@@ -109,7 +117,9 @@ import { execFileSync, execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import * as core from '@vostride/agent-qa-core'
+import { clearProviderRegistry, registerProvider } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
+import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 
 const mockExecSync = vi.mocked(execSync)
 const mockExecFileSync = vi.mocked(execFileSync)
@@ -118,6 +128,7 @@ const mockReadFile = vi.mocked(readFile)
 const mockCreateModel = vi.mocked(core.createModel)
 const mockGetCredential = vi.mocked(core.getCredential)
 const mockLoadLLMAuthPlugins = vi.mocked(core.loadLLMAuthPlugins)
+const mockLoadProviderPluginsForRawConfig = vi.mocked(loadProviderPluginsForRawConfig)
 const mockResolveLLMAuth = vi.mocked((core as any).resolveLLMAuth) as any
 const mockResolveAppiumExecutable = vi.mocked(core.resolveAppiumExecutable)
 const mockGenerateText = vi.mocked(generateText)
@@ -148,6 +159,7 @@ describe('doctor command', () => {
     mockExistsSync.mockReturnValue(false)
     mockReadFile.mockRejectedValue({ code: 'ENOENT' })
     mockLoadLLMAuthPlugins.mockResolvedValue([])
+    mockLoadProviderPluginsForRawConfig.mockResolvedValue()
     mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
     // Clean env for consistent tests
     delete process.env.ANTHROPIC_API_KEY
@@ -158,6 +170,7 @@ describe('doctor command', () => {
   })
 
   afterEach(() => {
+    clearProviderRegistry()
     Object.defineProperty(process, 'version', { value: originalVersion, writable: true })
     Object.defineProperty(process, 'platform', { value: originalPlatform })
     process.env = { ...originalEnv }
@@ -422,6 +435,8 @@ use:
 plugins:
   auth:
     - package: "@vostride/agent-qa-subscription-auth"
+  providers:
+    - path: ./providers/sixth-provider.js
 registry:
   llms:
     - name: codex
@@ -446,12 +461,84 @@ use:
       [{ package: '@vostride/agent-qa-subscription-auth' }],
       expect.objectContaining({ baseDir: expect.any(String) }),
     )
+    expect(mockLoadProviderPluginsForRawConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugins: expect.objectContaining({
+          providers: [{ path: './providers/sixth-provider.js' }],
+        }),
+      }),
+      'agent-qa.config.yaml',
+    )
     expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'openai-subscription',
       model: 'gpt-5.5',
       fetch: authFetch,
       modelAdapter: 'openai-responses',
     }))
+  })
+
+  it('classifies a registered sixth provider as subscription through registry metadata', async () => {
+    registerProvider({
+      id: 'sixth-subscription',
+      label: 'Sixth Subscription',
+      adapter: () => ({} as any),
+      needsBaseURL: false,
+      authModes: ['subscription'],
+      subscription: true,
+    })
+    const subscriptionConfig = `
+registry:
+  llms:
+    - name: sixth
+      provider: sixth-subscription
+      model: hosted-sixth
+use:
+  llm: sixth
+`
+    const authFetch = vi.fn() as unknown as typeof globalThis.fetch
+    mockReadFile.mockResolvedValue(subscriptionConfig as never)
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'auth-fetch',
+      credentialKey: 'sixth',
+      provider: 'sixth-subscription',
+      modelAdapter: 'openai-responses',
+      fetch: authFetch,
+    })
+
+    await runDoctor()
+
+    const output = getOutput()
+    expect(output).not.toContain('subscription not used for sixth-subscription')
+    expect(output).toContain('OAuth connected')
+    expect(mockResolveLLMAuth).toHaveBeenCalledWith('sixth', expect.objectContaining({
+      provider: 'sixth-subscription',
+      model: 'hosted-sixth',
+    }))
+  })
+
+  it('classifies a registered sixth provider as requiring baseURL through registry metadata', async () => {
+    registerProvider({
+      id: 'sixth-compatible',
+      label: 'Sixth Compatible',
+      adapter: () => ({} as any),
+      needsBaseURL: true,
+      authModes: ['api-key'],
+    })
+    const compatibleConfig = `
+registry:
+  llms:
+    - name: sixth
+      provider: sixth-compatible
+      model: hosted-sixth
+use:
+  llm: sixth
+`
+    mockReadFile.mockResolvedValue(compatibleConfig as never)
+
+    await runDoctor()
+
+    expect(getOutput()).toContain('baseURL required for sixth-compatible')
+    expect(mockCreateModel).not.toHaveBeenCalled()
   })
 
   it('openai-compatible connection check fails when baseURL is missing', async () => {
