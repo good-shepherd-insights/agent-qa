@@ -15,7 +15,6 @@ export interface PlatformBase {
   verbose?: boolean
   farmSession?: { hostname: string; port: number; path: string; capabilities: Record<string, unknown> }
   logCapture?: { console?: boolean; network?: boolean }
-  model: { vision: boolean }
 }
 
 export const timeoutConfigSchema = z.object({
@@ -42,9 +41,6 @@ export const platformBaseShape = {
     console: z.boolean().optional(),
     network: z.boolean().optional(),
   }).strict().optional(),
-  model: z.object({
-    vision: z.boolean(),
-  }).strict(),
 }
 
 export const platformBase = z.object(platformBaseShape).strict()

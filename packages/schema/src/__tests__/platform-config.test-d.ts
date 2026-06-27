@@ -45,13 +45,11 @@ const iosBase: PlatformBase = {} as IosPlatformConfig
 const web: PlatformConfig = {
   platform: 'web',
   browser: { name: 'chromium' },
-  model: { vision: true },
 }
 
 const invalidWeb: PlatformConfig = {
   platform: 'web',
   browser: { name: 'chromium' },
-  model: { vision: true },
   // @ts-expect-error web configs have no `bundleId` field.
   bundleId: 'com.x',
 }
@@ -59,7 +57,6 @@ const invalidWeb: PlatformConfig = {
 const invalidAndroid: PlatformConfig = {
   platform: 'android',
   device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
-  model: { vision: true },
   // @ts-expect-error android configs have no `browser` field.
   browser: { name: 'chromium' },
 }

@@ -11,7 +11,6 @@ describe('platformConfigSchema', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'web',
       browser: { name: 'chromium' },
-      model: { vision: true },
     })
 
     expect(result.success).toBe(true)
@@ -21,7 +20,6 @@ describe('platformConfigSchema', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'web',
       browser: { name: 'chromium' },
-      model: { vision: true },
       bundleId: 'com.x',
     })
 
@@ -32,7 +30,6 @@ describe('platformConfigSchema', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'android',
       device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
-      model: { vision: true },
       bundleId: 'com.x',
       remoteDevice: { appiumUrl: 'http://x' },
     })
@@ -44,7 +41,6 @@ describe('platformConfigSchema', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'android',
       device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
-      model: { vision: true },
       browser: { name: 'chromium' },
     })
 
@@ -55,7 +51,6 @@ describe('platformConfigSchema', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'android',
       device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
-      model: { vision: true },
       remoteDevice: { app: 'ref' },
     })
 
@@ -66,7 +61,6 @@ describe('platformConfigSchema', () => {
     const result = platformConfigSchema.safeParse({
       platform: 'desktop',
       browser: { name: 'chromium' },
-      model: { vision: true },
     })
 
     expect(result.success).toBe(false)
