@@ -75,9 +75,11 @@ export interface AgentLoopConfig {
   suiteTestIndex?: number
   cacheState?: { invalidated: boolean }
   logCapture?: { console?: boolean; network?: boolean }
-  screenshotSize?: number
-  /** Max image edge (pixels) to resize screenshots to before sending to LLM. From ModelConfig. */
-  effectiveResolution?: number
+  vision?: {
+    screenshotSize?: number
+    /** Max image edge (pixels) to resize screenshots to before sending to LLM. */
+    effectiveResolution?: number
+  }
   onSetVariable?: (name: string, value: string) => void
   onPhase?: (event: StepPhaseEvent) => void | Promise<void>
   abortSignal?: AbortSignal

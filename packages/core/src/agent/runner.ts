@@ -75,8 +75,7 @@ export interface RunTestConfig {
   suiteTestIndex?: number
   suiteContext?: string
   logCapture?: { console?: boolean; network?: boolean }
-  screenshotSize?: number
-  effectiveResolution?: number
+  vision?: { screenshotSize?: number; effectiveResolution?: number }
   contextWindow?: number
   memoryProvider?: MemoryProvider
   memoryInitParams?: MemoryIndexParams
@@ -481,8 +480,7 @@ export async function runTest(
         suiteTestIndex: config.suiteTestIndex,
         cacheState,
         logCapture: config.logCapture,
-        screenshotSize: config.screenshotSize,
-        effectiveResolution: config.effectiveResolution,
+        vision: config.vision,
         onSetVariable: (name: string, value: string) => {
           variableStore.set(name, value, 'step')
         },

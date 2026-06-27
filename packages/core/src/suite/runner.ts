@@ -54,8 +54,7 @@ export interface RunSuiteConfig {
   logCapture?: { console?: boolean; network?: boolean }
   accessibility?: RunTestConfig['accessibility']
   accessibilityCheck?: RunTestConfig['accessibilityCheck']
-  screenshotSize?: number
-  effectiveResolution?: number
+  vision?: { screenshotSize?: number; effectiveResolution?: number }
   memoryProvider?: MemoryProvider
   memoryRoot?: string
   memoryConfig?: {
@@ -440,8 +439,7 @@ export async function runSuite(
         accessibility: config.accessibility,
         accessibilityCheck: config.accessibilityCheck,
         logCapture: config.logCapture,
-        screenshotSize: config.screenshotSize,
-        effectiveResolution: config.effectiveResolution,
+        vision: config.vision,
         memoryProvider: memoryEnabled ? config.memoryProvider : undefined,
         memoryInitParams,
         circuitBreaker: config.circuitBreaker,

@@ -179,8 +179,8 @@ export async function executeStep(
     previousScreenHash = currentScreenHash
 
     // Compress screenshot for LLM planner (dashboard screenshots stay raw)
-    if (screenshot && (config.screenshotSize || config.effectiveResolution)) {
-      if (!config.effectiveResolution) {
+    if (screenshot && (config.vision?.screenshotSize || config.vision?.effectiveResolution)) {
+      if (!config.vision?.effectiveResolution) {
         throw new Error('effectiveResolution is required in LLM config when screenshot compression is enabled')
       }
       try {
@@ -190,8 +190,8 @@ export async function executeStep(
           ?? 0
         const result = await withAbort(
           compressScreenshot(screenshot, {
-            effectiveResolution: config.effectiveResolution,
-            maxBytes: config.screenshotSize,
+            effectiveResolution: config.vision.effectiveResolution,
+            maxBytes: config.vision.screenshotSize,
             actionSpaceWidth,
           }, compressLogger),
           config.abortSignal,
@@ -585,8 +585,8 @@ export async function executeStep(
       if (config.adapter.screenshot) {
         try { verifyScreenshot = await withAbort(config.adapter.screenshot(), config.abortSignal) } catch { /* best-effort */ }
       }
-      if (verifyScreenshot && (config.screenshotSize || config.effectiveResolution)) {
-        if (!config.effectiveResolution) {
+      if (verifyScreenshot && (config.vision?.screenshotSize || config.vision?.effectiveResolution)) {
+        if (!config.vision?.effectiveResolution) {
           throw new Error('effectiveResolution is required in LLM config when screenshot compression is enabled')
         }
         try {
@@ -596,8 +596,8 @@ export async function executeStep(
             ?? 0
           const result = await withAbort(
             compressScreenshot(verifyScreenshot, {
-              effectiveResolution: config.effectiveResolution,
-              maxBytes: config.screenshotSize,
+              effectiveResolution: config.vision.effectiveResolution,
+              maxBytes: config.vision.screenshotSize,
               actionSpaceWidth,
             }, compressLogger),
             config.abortSignal,
