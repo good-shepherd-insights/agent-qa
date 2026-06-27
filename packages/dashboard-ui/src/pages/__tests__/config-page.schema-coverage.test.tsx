@@ -82,6 +82,10 @@ const { sampleConfig } = vi.hoisted(() => ({
       circuitBreakerBaselineSize: 3,
       circuitBreakerThreshold: 0.15,
     },
+    vision: {
+      screenshotSize: '256k',
+      effectiveResolution: 768,
+    },
   },
   registry: {
     llms: [
@@ -174,6 +178,7 @@ const EXPECTED_DESTINATIONS = [
   'services:recording',
   'services:accessibility',
   'services:memory',
+  'services:vision',
   'registry:llms',
   'registry:targets',
   'registry:devices',
@@ -199,6 +204,7 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'services:recording': { title: 'Recording', marker: 'Record video of test execution' },
   'services:accessibility': { title: 'Accessibility', marker: 'Run After' },
   'services:memory': { title: 'Memory', marker: 'Memory Directory' },
+  'services:vision': { title: 'Vision', marker: 'Screenshot Size' },
   'registry:llms': { title: 'LLMs', marker: 'Add Configuration' },
   'registry:targets': { title: 'Targets', marker: 'Add Target' },
   'registry:devices': { title: 'Devices', marker: 'Add Device' },
@@ -459,7 +465,7 @@ describe('ConfigPage schema coverage', () => {
     }
   })
 
-  it('Config section shells: all 21 destinations', async () => {
+  it('Config section shells: all 22 destinations', async () => {
     const destinations = CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)
 
     expect(destinations).toEqual(EXPECTED_DESTINATIONS)

@@ -21,6 +21,7 @@ describe('config navigation inventory', () => {
       'services:recording',
       'services:accessibility',
       'services:memory',
+      'services:vision',
       'registry:llms',
       'registry:targets',
       'registry:devices',
@@ -78,6 +79,7 @@ describe('config navigation inventory', () => {
     const cacheItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'cache')
     const authStatesItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'auth-states')
     const memoryItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'memory')
+    const visionItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'vision')
 
     expect(dashboardItem?.fieldPaths).toEqual(expect.arrayContaining([
       'services.dashboard',
@@ -99,7 +101,13 @@ describe('config navigation inventory', () => {
       'services.memory.provider',
       'services.memory.curatorEnabled',
     ]))
+    expect(visionItem?.fieldPaths).toEqual(expect.arrayContaining([
+      'services.vision',
+      'services.vision.screenshotSize',
+      'services.vision.effectiveResolution',
+    ]))
     expect(searchConfigNavigationItems('memory directory').map((item) => item.item)).toEqual(['memory'])
+    expect(searchConfigNavigationItems('screenshot size').map((item) => item.item)).toEqual(['vision'])
   })
 
   it('formats the shared command label contract', () => {

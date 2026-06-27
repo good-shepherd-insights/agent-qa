@@ -44,6 +44,7 @@ import { LogCaptureSection } from "@/components/config-manager/log-capture-secti
 import { ExecutionDefaultsSection } from "@/components/config-manager/execution-defaults-section"
 import { MobileSection } from "@/components/config-manager/mobile-section"
 import { MemorySection } from "@/components/config-manager/memory-section"
+import { VisionSection } from "@/components/config-manager/vision-section"
 import { TargetsSection } from "@/components/config-manager/targets-section"
 import { DevicesSection } from "@/components/config-manager/devices-section"
 import { ProvidersSection } from "@/components/config-manager/providers-section"
@@ -65,6 +66,7 @@ const SECTION_COMPONENTS: Record<string, ComponentType<SectionProps>> = {
   'services:recording': RecordingSection,
   'services:accessibility': AccessibilitySection,
   'services:memory': MemorySection,
+  'services:vision': VisionSection,
   'registry:llms': LlmSection,
   'registry:targets': TargetsSection,
   'registry:devices': DevicesSection,

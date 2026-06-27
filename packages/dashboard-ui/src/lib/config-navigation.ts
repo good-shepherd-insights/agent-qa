@@ -135,6 +135,16 @@ const CONFIG_ITEMS = [
     aliases: ['memory', 'memory dir', 'memory directory', 'memory path', 'curator', 'trust'],
   },
   {
+    bucket: 'services',
+    bucketLabel: 'Services',
+    item: 'vision',
+    itemLabel: 'Vision',
+    title: 'Vision',
+    description: 'Shared screenshot sizing applied to every vision-capable model.',
+    fieldPaths: ['services.vision', 'services.vision.screenshotSize', 'services.vision.effectiveResolution'],
+    aliases: ['vision', 'screenshot', 'screenshot size', 'resolution'],
+  },
+  {
     bucket: 'registry',
     bucketLabel: 'Registry',
     item: 'llms',
