@@ -86,7 +86,6 @@ const PROVIDER_LABELS = Object.fromEntries(
   LLM_PROVIDER_OPTIONS.map((option) => [option.value, option.label]),
 ) as Record<string, string>
 
-const COMPATIBLE_PROVIDERS = new Set<string>(["openai-compatible", "anthropic-compatible"])
 const BASE_URL_HELPER = "Enter the exact endpoint base URL. agent-qa will not append paths."
 const COMPATIBLE_UNAUTHENTICATED_COPY = "Testing without a saved credential."
 const GEMINI_MISSING_COPY = "Save a Gemini API key for this config before testing."
@@ -188,8 +187,9 @@ function getCredentialForConfig(credentials: AuthCredentialInfo[], config: Named
   return credentials.find((credential) => credentialMatchesConfigProvider(credential, config.name, config.provider))
 }
 
-function getMissingCredentialLabel(config: NamedLLMConfig): string {
-  if (COMPATIBLE_PROVIDERS.has(config.provider)) return "No credential"
+function getMissingCredentialLabel(config: NamedLLMConfig, providers: LLMProviderMetadata[]): string {
+  const metadata = providers.length ? providers : defaultProviderMetadata()
+  if (metadata.find((provider) => provider.id === config.provider)?.needsBaseURL === true) return "No credential"
   return "Missing credential"
 }
 
@@ -305,7 +305,7 @@ export function LlmSection({ config, onConfigChange }: LlmSectionProps) {
   function renderCredentialBadge(cfg: NamedLLMConfig) {
     const credential = getCredentialForConfig(authCredentials, cfg)
     if (!credential) {
-      return <Badge variant="secondary">{getMissingCredentialLabel(cfg)}</Badge>
+      return <Badge variant="secondary">{getMissingCredentialLabel(cfg, llmProviders)}</Badge>
     }
     const expiry = formatExpiry(credential.expires)
     const isExpired = credential.expires !== null && credential.expires < Date.now()
@@ -570,7 +570,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   }, [effectiveProviderMetadata, provider])
   const providerInfo = effectiveProviderMetadata.find((item) => item.id === provider)
   const hasSavedCredential = authCredentials.some((credential) => credentialMatchesConfigProvider(credential, name, provider))
-  const isCompatible = COMPATIBLE_PROVIDERS.has(provider)
+  const isCompatible = providerInfo?.needsBaseURL === true
   const isAnthropicCompatible = provider === "anthropic-compatible"
   const showBaseURL = isCompatible
   const showCredentialSave = providerInfo?.auth.kind === "api-key"
@@ -1100,7 +1100,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
                 </div>
                 <Input
                   id="config-base-url"
-                  placeholder={provider === "openai-compatible" ? "https://openrouter.ai/api/v1" : "https://anthropic-proxy.example/messages"}
+                  placeholder={providerInfo?.baseURLPlaceholder ?? "https://provider.example/v1"}
                   value={baseURL}
                   onChange={(event) => {
                     setBaseURL(event.target.value)
