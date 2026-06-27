@@ -60,6 +60,7 @@ import {
   buildDefaultConfig,
   getProviderChoices,
   getCompatibleProviderChoices,
+  defaultModelForProvider,
   LLM_SETUP_CHOICES,
 } from '../commands/init.js'
 import { formatInstallBrowsersRetryCommand, runBrowserInstall } from '../commands/install-browsers.js'
@@ -71,6 +72,7 @@ import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import password from '@inquirer/password'
 import { resolveAppiumExecutable, writeAuth } from '@vostride/agent-qa-core'
+import { clearProviderRegistry, registerProvider, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
@@ -122,6 +124,7 @@ async function loadCoreYamlValidators() {
 
 describe('init command', () => {
   beforeEach(() => {
+    clearProviderRegistry()
     vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.clearAllMocks()
     mockExistsSync.mockReturnValue(false)
@@ -132,6 +135,7 @@ describe('init command', () => {
   })
 
   afterEach(() => {
+    clearProviderRegistry()
     vi.restoreAllMocks()
   })
 
@@ -270,6 +274,23 @@ describe('init command', () => {
       'anthropic-compatible',
       'gemini',
     ])
+  })
+
+  it('includes newly registered provider descriptors in init choices at call time', () => {
+    const descriptor: ProviderDescriptor = {
+      id: 'sixth-provider',
+      label: 'Sixth',
+      adapter: (_transport, _modelId) => ({}) as ReturnType<ProviderDescriptor['adapter']>,
+      needsBaseURL: true,
+      authModes: ['api-key'],
+      defaultModel: 'sixth-default',
+    }
+
+    registerProvider(descriptor)
+
+    expect(getProviderChoices()).toContainEqual({ value: 'sixth-provider', name: 'Sixth' })
+    expect(getCompatibleProviderChoices().map(choice => choice.value)).toContain('sixth-provider')
+    expect(defaultModelForProvider('sixth-provider')).toBe('sixth-default')
   })
 
   it('LLM setup choices offer no subscription auth, Codex, and Claude Code', () => {
