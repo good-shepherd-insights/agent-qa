@@ -201,6 +201,13 @@ export interface LLMProviderMetadata {
   modelAdapter?: 'openai-responses' | 'anthropic-messages'
 }
 
+export interface ModelCatalogEntry {
+  id: string
+  label: string
+  vision: boolean
+  notes?: string
+}
+
 export interface AuthStateMetadata {
   version: 1
   kind: 'web'
@@ -940,6 +947,18 @@ export async function fetchAuthStatus(): Promise<AuthStatusResponse> {
 
 export async function fetchLLMProviders(): Promise<{ providers: LLMProviderMetadata[] }> {
   return request('/api/llm/providers')
+}
+
+export async function fetchModelCatalog(): Promise<{ catalog: Record<string, ModelCatalogEntry[]> }> {
+  return request('/api/llm/catalog')
+}
+
+export async function fetchLiveModelCatalog(opts: {
+  baseURL: string
+  configName?: string
+  providerHeaders?: Record<string, string>
+}): Promise<{ models: ModelCatalogEntry[] }> {
+  return postJson('/api/llm/catalog/live', opts)
 }
 
 export async function testLLMConnection(opts: {
