@@ -1,5 +1,5 @@
 import { expectTypeOf } from 'vitest'
-import type { ModelProfile } from '../model-profile/index'
+import type { ModelProfile, ModelProviderId } from '../model-profile/index'
 
 const ok: ModelProfile = {
   provider: 'openai-compatible',
@@ -8,14 +8,19 @@ const ok: ModelProfile = {
   auth: { mode: 'none' },
 }
 
-const badProvider: ModelProfile = {
-  // @ts-expect-error provider must be one of the five built-in ids.
+const pluginProvider: ModelProfile = {
   provider: 'gateway',
   model: 'x',
   auth: { mode: 'none' },
 }
 
+const builtInProvider: ModelProviderId = 'openai-compatible'
+// @ts-expect-error ModelProviderId stays closed to the five built-in ids.
+const badBuiltInProvider: ModelProviderId = 'gateway'
+
 expectTypeOf<ModelProfile>().not.toHaveProperty('fetch')
 
 void ok
-void badProvider
+void pluginProvider
+void builtInProvider
+void badBuiltInProvider
