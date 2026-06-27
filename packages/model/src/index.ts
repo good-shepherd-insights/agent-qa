@@ -28,6 +28,10 @@ export { retryMiddleware } from './middleware/retry'
 export { createModel } from './registry'
 export type { ModelProviderOverrides } from './registry'
 export { validateProfile } from './validate'
+export { resolveVisionConfig } from './vision/resolve-config'
+export type { VisionSizingConfig } from './vision/resolve-config'
+export { resolveVisionGate } from './vision/resolve-gate'
+export type { VisionGate } from './vision/resolve-gate'
 export type {
   ModelAuthDeclaration,
   ModelCapabilities,

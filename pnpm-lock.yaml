@@ -91,6 +91,9 @@ importers:
       '@vostride/agent-qa-mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@vostride/agent-qa-model':
+        specifier: workspace:*
+        version: link:../model
       '@vostride/agent-qa-web':
         specifier: workspace:*
         version: link:../web
@@ -225,6 +228,9 @@ importers:
       '@vostride/agent-qa-mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@vostride/agent-qa-model':
+        specifier: workspace:*
+        version: link:../model
       '@vostride/agent-qa-web':
         specifier: workspace:*
         version: link:../web

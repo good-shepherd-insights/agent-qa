@@ -53,6 +53,7 @@
     "@vostride/agent-qa-ids": "workspace:*",
     "@vostride/agent-qa-ios": "workspace:*",
     "@vostride/agent-qa-mcp": "workspace:*",
+    "@vostride/agent-qa-model": "workspace:*",
     "@vostride/agent-qa-web": "workspace:*",
     "ai": "6.0.174",
     "better-sqlite3": "12.9.0",
