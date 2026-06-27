@@ -6,6 +6,7 @@ import pc from 'picocolors'
 import { loadConfigFile } from '../config.js'
 import { loadAuthPluginsForRawConfig, type LLMModelAdapter } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 import {
   discoverWorkspaceFiles,
   formatAppiumInstallGuidance,
@@ -14,6 +15,7 @@ import {
   type AgentQaConfig,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import { getProvider } from '@vostride/agent-qa-model'
 
 type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
@@ -58,9 +60,6 @@ type ResolvedDoctorAuth =
   | { kind: 'auth-fetch'; fetch: typeof globalThis.fetch; modelAdapter: LLMModelAdapter }
   | { kind: 'unauthenticated'; message: string }
   | { kind: 'missing'; message: string }
-
-const COMPATIBLE_PROVIDERS = new Set(['openai-compatible', 'anthropic-compatible'])
-const SUBSCRIPTION_PROVIDERS = new Set(['openai-subscription', 'anthropic-subscription'])
 
 interface ActiveLLMConfig {
   name: string
@@ -302,7 +301,7 @@ function checkSubscriptionAuth(config: Record<string, unknown> | null): DoctorCh
     fixInstructions: 'Install `@vostride/agent-qa-subscription-auth`, declare it in plugins.auth, and authenticate from `agent-qa dashboard`.',
     check: async () => {
       const llm = getActiveLLMConfig(config)
-      if (!SUBSCRIPTION_PROVIDERS.has(llm.provider)) {
+      if (getProvider(llm.provider)?.subscription !== true) {
         return { status: 'skip', message: `subscription not used for ${llm.provider}` }
       }
 
@@ -335,7 +334,7 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
       const provider = llm.provider
       const baseURL = llm.baseURL
 
-      if (COMPATIBLE_PROVIDERS.has(provider) && (!baseURL || baseURL.trim() === '')) {
+      if (getProvider(provider)?.needsBaseURL && (!baseURL || baseURL.trim() === '')) {
         return { status: 'fail', message: `baseURL required for ${provider}` }
       }
 
@@ -617,6 +616,7 @@ export function createDoctorCommand(): Command {
         if (loaded && typeof loaded === 'object') {
           config = loaded as Record<string, unknown>
           await loadAuthPluginsForRawConfig(config, configPath)
+          await loadProviderPluginsForRawConfig(config, configPath)
         }
       } catch {
         // Config load failed — doctor will report it
