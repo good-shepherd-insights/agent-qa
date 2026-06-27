@@ -67,7 +67,12 @@ vi.mock('@vostride/agent-qa-core', async () => {
 })
 
 vi.mock('ai', () => ({
+  addToolInputExamplesMiddleware: vi.fn(() => ({})),
+  createProviderRegistry: vi.fn(),
+  customProvider: vi.fn(),
+  extractJsonMiddleware: vi.fn(() => ({})),
   generateText: (...args: unknown[]) => mockGenerateText(...args),
+  parsePartialJson: vi.fn(),
 }))
 
 import { ConfigManager } from '../config/config-manager.js'

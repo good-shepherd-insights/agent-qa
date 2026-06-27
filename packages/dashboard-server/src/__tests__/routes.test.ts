@@ -23,7 +23,12 @@ import { extractTestFileMetadata, TestFileManager } from '../tests/test-file-man
 import { generateText } from 'ai'
 
 vi.mock('ai', () => ({
+  addToolInputExamplesMiddleware: vi.fn(() => ({})),
+  createProviderRegistry: vi.fn(),
+  customProvider: vi.fn(),
+  extractJsonMiddleware: vi.fn(() => ({})),
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
+  parsePartialJson: vi.fn(),
 }))
 
 const mockGenerateText = vi.mocked(generateText)
