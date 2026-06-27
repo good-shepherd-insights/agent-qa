@@ -33,8 +33,8 @@ const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth
 const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
 const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
 const PACKAGE_JSON_FILE = 'package.json'
-const DEFAULT_SCREENSHOT_SIZE = '50kb'
-const DEFAULT_EFFECTIVE_RESOLUTION = 500
+const DEFAULT_SCREENSHOT_SIZE = '256k'
+const DEFAULT_EFFECTIVE_RESOLUTION = 768
 const OPENAI_SUBSCRIPTION_CONFIG: InitLLMConfig = {
   name: 'codex',
   provider: 'openai-subscription',
@@ -361,8 +361,6 @@ function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
     name: config.name,
     provider: config.provider,
     model: config.model,
-    screenshotSize: DEFAULT_SCREENSHOT_SIZE,
-    effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION,
   }
 
   if (config.provider === 'openai-compatible' || config.provider === 'anthropic-compatible') {
@@ -425,6 +423,7 @@ export function buildDefaultConfig(
       mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
       cache: { dir: INIT_CACHE_DIR, ttl: '7d' },
       authState: { dir: INIT_AUTH_STATES_DIR },
+      vision: { screenshotSize: DEFAULT_SCREENSHOT_SIZE, effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION },
       ...(hasWeb(platform)
         ? {
             accessibility: {

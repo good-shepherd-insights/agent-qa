@@ -172,8 +172,9 @@ describe('init command', () => {
     expect(content).toContain('package: "@vostride/agent-qa-subscription-auth"')
     expect(content).toContain('provider: anthropic-subscription')
     expect(content).toContain('model: claude-sonnet-4-6')
-    expect(content).toContain('screenshotSize: 50kb')
-    expect(content).toContain('effectiveResolution: 500')
+    expect(content).toContain('vision:')
+    expect(content).toContain('screenshotSize: 256k')
+    expect(content).toContain('effectiveResolution: 768')
     expect(content).not.toContain('screenshotSize: 1m')
     expect(content).toContain('timeout:')
     expect(content).toContain('step: 5m')
@@ -287,10 +288,11 @@ describe('init command', () => {
         provider: 'openai-compatible',
         model: 'deepseek-chat',
         baseURL: 'https://remote.example/api/v1',
-        screenshotSize: '50kb',
-        effectiveResolution: 500,
       }),
     ])
+    expect(config.registry.llms[0]).not.toHaveProperty('screenshotSize')
+    expect(config.registry.llms[0]).not.toHaveProperty('effectiveResolution')
+    expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
     expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
     expect(config.registry.llms[0]).not.toHaveProperty('authMethod')
     expect(config.use.mobile.appState).toBe('preserve')
@@ -316,10 +318,11 @@ describe('init command', () => {
         provider: 'anthropic-compatible',
         model: 'claude-remote',
         baseURL: 'https://anthropic-proxy.example/messages',
-        screenshotSize: '50kb',
-        effectiveResolution: 500,
       }),
     ])
+    expect(config.registry.llms[0]).not.toHaveProperty('screenshotSize')
+    expect(config.registry.llms[0]).not.toHaveProperty('effectiveResolution')
+    expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
     expect(config.registry.llms[0]).not.toHaveProperty('authMethod')
     expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
     expect(config.use.mobile.appState).toBe('preserve')
@@ -339,10 +342,11 @@ describe('init command', () => {
         name: 'default',
         provider: 'gemini',
         model: 'gemini-3-flash-preview',
-        screenshotSize: '50kb',
-        effectiveResolution: 500,
       }),
     ])
+    expect(config.registry.llms[0]).not.toHaveProperty('screenshotSize')
+    expect(config.registry.llms[0]).not.toHaveProperty('effectiveResolution')
+    expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
     expect(config.registry.llms[0]).not.toHaveProperty('baseURL')
     expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
     expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
@@ -360,17 +364,18 @@ describe('init command', () => {
         name: 'codex',
         provider: 'openai-subscription',
         model: 'gpt-5.5',
-        screenshotSize: '50kb',
-        effectiveResolution: 500,
       }),
       expect.objectContaining({
         name: 'claude-subscription',
         provider: 'anthropic-subscription',
         model: 'claude-sonnet-4-6',
-        screenshotSize: '50kb',
-        effectiveResolution: 500,
       }),
     ])
+    for (const llm of config.registry.llms) {
+      expect(llm).not.toHaveProperty('screenshotSize')
+      expect(llm).not.toHaveProperty('effectiveResolution')
+    }
+    expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
     expect(config.plugins).toEqual({
       auth: [{ package: '@vostride/agent-qa-subscription-auth' }],
     })

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { buildDefaultConfig } from '../commands/init.js'
 
-const SCREENSHOT_SIZE_BYTES = 50 * 1024
+const SCREENSHOT_SIZE_BYTES = 256 * 1024
 
 function parseGeneratedConfig(config: Record<string, unknown>) {
   const result = AgentQaConfigSchema.safeParse(config)
@@ -15,9 +15,11 @@ function parseGeneratedConfig(config: Record<string, unknown>) {
 function expectCompressionDefaults(config: Record<string, unknown>): void {
   const parsed = parseGeneratedConfig(config)
   expect(parsed.registry?.llms.length).toBeGreaterThan(0)
+  expect(parsed.services?.vision?.screenshotSize).toBe(SCREENSHOT_SIZE_BYTES)
+  expect(parsed.services?.vision?.effectiveResolution).toBe(768)
   for (const llm of parsed.registry?.llms ?? []) {
-    expect(llm.screenshotSize).toBe(SCREENSHOT_SIZE_BYTES)
-    expect(llm.effectiveResolution).toBe(500)
+    expect(llm).not.toHaveProperty('screenshotSize')
+    expect(llm).not.toHaveProperty('effectiveResolution')
   }
 }
 
@@ -77,9 +79,6 @@ describe('init generated config schema compatibility', () => {
     expect(parsed.plugins?.auth).toEqual([
       { package: '@vostride/agent-qa-subscription-auth' },
     ])
-    for (const llm of parsed.registry?.llms ?? []) {
-      expect(llm.screenshotSize).toBe(SCREENSHOT_SIZE_BYTES)
-      expect(llm.effectiveResolution).toBe(500)
-    }
+    expectCompressionDefaults(config)
   })
 })
