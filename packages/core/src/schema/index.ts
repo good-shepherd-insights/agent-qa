@@ -7,6 +7,7 @@ export {
   AuthStateUseSchema,
   PluginsSchema,
   AuthPluginDeclarationSchema,
+  ProviderPluginDeclarationSchema,
   MobileAppStateSchema,
   MobileUseSchema,
   MobileUseOverrideSchema,

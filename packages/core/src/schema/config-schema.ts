@@ -14,8 +14,20 @@ export const AuthPluginDeclarationSchema = z.union([
   }).strict(),
 ])
 
+// Provider plugins load in-process with full Node access; keep them first-party-only
+// until a container sandbox exists.
+export const ProviderPluginDeclarationSchema = z.union([
+  z.object({
+    package: z.string().trim().min(1),
+  }).strict(),
+  z.object({
+    path: z.string().trim().min(1),
+  }).strict(),
+])
+
 export const PluginsSchema = z.object({
   auth: z.array(AuthPluginDeclarationSchema).optional().default([]),
+  providers: z.array(ProviderPluginDeclarationSchema).optional().default([]),
 }).strict()
 
 export const AgentQaConfigSchema = z.object({
