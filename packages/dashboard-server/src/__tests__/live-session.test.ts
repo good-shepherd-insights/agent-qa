@@ -798,32 +798,37 @@ describe('LiveSession', () => {
     expect(screenshot).toBeInstanceOf(Buffer)
   })
 
-  it('initialize does not pass screenshotSize to adapter.setup()', async () => {
+  it('initialize does not pass resolved vision sizing to adapter.setup() or createModel()', async () => {
     const configWithSize: LiveSessionConfig = {
       platform: 'web',
       llmConfig: {
         provider: 'anthropic-compatible',
         model: 'claude-sonnet-4-20250514',
         baseURL: 'https://anthropic-proxy.example/messages',
-        screenshotSize: 1048576,
+        vision: { screenshotSize: 1048576 },
       },
       headless: true,
     }
     await session.initialize(configWithSize)
     expect(mockSetup).toHaveBeenCalledWith(
-      expect.not.objectContaining({ screenshotSize: expect.anything() }),
+      expect.not.objectContaining({ vision: expect.anything() }),
+    )
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.not.objectContaining({ vision: expect.anything() }),
     )
   })
 
-  it('executeStepCommand passes screenshotSize to loopConfig when configured', async () => {
+  it('executeStepCommand passes resolved vision sizing to loopConfig when configured', async () => {
     const configWithSize: LiveSessionConfig = {
       platform: 'web',
       llmConfig: {
         provider: 'anthropic-compatible',
         model: 'claude-sonnet-4-20250514',
         baseURL: 'https://anthropic-proxy.example/messages',
-        screenshotSize: 1048576,
-        effectiveResolution: 1568,
+        vision: {
+          screenshotSize: 1048576,
+          effectiveResolution: 1568,
+        },
       },
       headless: true,
     }
@@ -832,8 +837,10 @@ describe('LiveSession', () => {
     expect(mockExecuteStep).toHaveBeenCalledWith(
       'Click the button',
       expect.objectContaining({
-        screenshotSize: 1048576,
-        effectiveResolution: 1568,
+        vision: {
+          screenshotSize: 1048576,
+          effectiveResolution: 1568,
+        },
       }),
       expect.anything(),
     )

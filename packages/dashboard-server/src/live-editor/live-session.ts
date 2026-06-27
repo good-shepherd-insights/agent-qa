@@ -243,8 +243,7 @@ export class LiveSession {
   private executing = false
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private _modelName = 'unknown'
-  private screenshotSize: number | undefined
-  private effectiveResolution: number | undefined
+  private vision: { screenshotSize?: number; effectiveResolution?: number } | undefined
   private readyForInteraction = false
   private terminalError: string | null = null
   private setupHooks: string[] = []
@@ -578,8 +577,7 @@ export class LiveSession {
     this.teardownHooks = [...(config.teardownHooks ?? [])]
     this.resolvedHooks = new Map(config.resolvedHooks ?? [])
     this.hookRegistryError = config.hookRegistryError ?? null
-    this.screenshotSize = config.llmConfig.screenshotSize
-    this.effectiveResolution = config.llmConfig.effectiveResolution
+    this.vision = config.llmConfig.vision
     this.readyForInteraction = false
     this.terminalError = null
 
@@ -612,8 +610,10 @@ export class LiveSession {
       }
     }
 
+    const { vision: _vision, ...modelIdentity } = config.llmConfig
+    void _vision
     const modelConfig = {
-      ...config.llmConfig,
+      ...modelIdentity,
       ...(config.authFetch ? { fetch: config.authFetch } : {}),
     }
     this.model = await createModel(modelConfig)
@@ -881,8 +881,7 @@ export class LiveSession {
         verifier: this.verifier!,
         healingConfig: { maxAttempts: 3 },
         plannerConfig: { maxSubActions: 50, previousStepCount: 5 },
-        screenshotSize: this.screenshotSize,
-        effectiveResolution: this.effectiveResolution,
+        vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
         onPhase,
         stepIndex,

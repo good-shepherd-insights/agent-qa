@@ -12,8 +12,7 @@ export type LiveSessionLLMConfig = Pick<
   ModelConfig,
   'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
 > & {
-  screenshotSize?: number
-  effectiveResolution?: number
+  vision?: { screenshotSize?: number; effectiveResolution?: number }
 }
 
 export interface LiveDraftMetadata {

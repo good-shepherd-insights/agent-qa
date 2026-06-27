@@ -14,8 +14,9 @@ import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, ModelConfig, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getProviderOptions, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getProviderOptions, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
+import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import { parse as parseYaml } from 'yaml'
 
 const LLM_PROVIDER_MODES = new Set([
@@ -208,9 +209,13 @@ type DashboardRuntimeLLMConfig = Pick<
   ModelConfig,
   'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
 > & {
+  vision?: DashboardVisionConfig
+  modelAdapter?: 'openai-responses' | 'anthropic-messages'
+}
+
+type DashboardVisionConfig = {
   screenshotSize?: number
   effectiveResolution?: number
-  modelAdapter?: 'openai-responses' | 'anthropic-messages'
 }
 
 const writeDashboardAuth = writeAuth as unknown as (
@@ -240,10 +245,23 @@ function normalizeRuntimeLLMConfig(raw: unknown): { configName: string; config: 
     }
     config.providerHeaders = headers
   }
-  if (typeof raw.screenshotSize === 'number') config.screenshotSize = raw.screenshotSize
-  if (typeof raw.effectiveResolution === 'number') config.effectiveResolution = raw.effectiveResolution
 
   return { configName: raw.name, config }
+}
+
+function normalizeDashboardVisionConfig(raw: unknown): DashboardVisionConfig | undefined {
+  if (!isPlainRecord(raw)) return undefined
+  const config: DashboardVisionConfig = {}
+  if (typeof raw.screenshotSize === 'number') {
+    config.screenshotSize = raw.screenshotSize
+  } else if (typeof raw.screenshotSize === 'string') {
+    const parsedSize = SizeString.safeParse(raw.screenshotSize)
+    if (parsedSize.success) config.screenshotSize = parsedSize.data
+  }
+  if (typeof raw.effectiveResolution === 'number' && Number.isInteger(raw.effectiveResolution) && raw.effectiveResolution > 0) {
+    config.effectiveResolution = raw.effectiveResolution
+  }
+  return config.screenshotSize !== undefined || config.effectiveResolution !== undefined ? config : undefined
 }
 
 async function resolveDashboardRuntimeLLM(
@@ -292,7 +310,16 @@ async function resolveDashboardRuntimeLLM(
     return { ok: false, error: auth.message }
   }
 
-  const runtimeConfig: DashboardRuntimeLLMConfig = { ...normalized.config }
+  const servicesVision = isPlainRecord(rawConfig.services)
+    ? normalizeDashboardVisionConfig(rawConfig.services.vision)
+    : undefined
+  const selectedVisionOverride = isPlainRecord(selected)
+    ? normalizeDashboardVisionConfig(selected.visionOverride)
+    : undefined
+  const runtimeConfig: DashboardRuntimeLLMConfig = {
+    ...normalized.config,
+    vision: resolveVisionConfig(servicesVision, selectedVisionOverride),
+  }
   let resolvedAuthFetch: typeof globalThis.fetch | undefined
   if (auth.kind === 'api-key') {
     runtimeConfig.apiKey = auth.apiKey

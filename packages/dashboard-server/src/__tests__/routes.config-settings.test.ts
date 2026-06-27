@@ -60,6 +60,8 @@ vi.mock('@vostride/agent-qa-core', async () => {
     model: z.string(),
     baseURL: z.string().optional(),
     providerHeaders: providerHeadersSchema.optional(),
+    // Deferred to Phase 333: settings write still accepts legacy per-model
+    // sizing fields while runtime reads resolve services.vision instead.
     screenshotSize: z.union([z.string(), z.number()]).optional(),
     effectiveResolution: z.number().positive().int().optional(),
   }).strict()
@@ -112,6 +114,11 @@ vi.mock('@vostride/agent-qa-core', async () => {
 
 vi.mock('ai', () => ({
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
+  addToolInputExamplesMiddleware: vi.fn(() => ({})),
+  createProviderRegistry: vi.fn(),
+  customProvider: vi.fn(),
+  extractJsonMiddleware: vi.fn(() => ({})),
+  parsePartialJson: vi.fn(),
 }))
 
 const mockCreateModel = vi.mocked(createModel)
@@ -272,12 +279,17 @@ async function writeWorkspaceSupportFiles(configPath: string): Promise<void> {
 
 const subscriptionConfig = [
   'workspace: {}',
-  'services: {}',
+  'services:',
+  '  vision:',
+  '    screenshotSize: 256k',
+  '    effectiveResolution: 768',
   'registry:',
   '  llms:',
   '    - name: codex',
   '      provider: openai-subscription',
   '      model: gpt-5.3-codex',
+  '      visionOverride:',
+  '        screenshotSize: 128k',
   '    - name: claude',
   '      provider: anthropic-subscription',
   '      model: claude-sonnet-4-20250514',
@@ -1522,12 +1534,17 @@ describe('dashboard LLM auth and test routes', () => {
       '  agentRules: agent-rules.md',
       '  envFile: .env',
       '  secretsFile: .env.secrets.local',
-      'services: {}',
+      'services:',
+      '  vision:',
+      '    screenshotSize: 256k',
+      '    effectiveResolution: 768',
       'registry:',
       '  llms:',
       '    - name: codex',
       '      provider: openai-subscription',
       '      model: gpt-5.3-codex',
+      '      visionOverride:',
+      '        screenshotSize: 128k',
       'use:',
       '  llm: codex',
       '',
@@ -1588,6 +1605,10 @@ describe('dashboard LLM auth and test routes', () => {
         provider: 'openai-subscription',
         model: 'gpt-5.3-codex',
         modelAdapter: 'openai-responses',
+        vision: {
+          screenshotSize: 131072,
+          effectiveResolution: 768,
+        },
       }),
       authFetch,
     }), undefined)
