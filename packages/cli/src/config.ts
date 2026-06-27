@@ -240,6 +240,8 @@ export async function resolveConfig(options: {
     await loadLLMAuthPlugins(result.data.plugins?.auth, {
       baseDir: dirname(resolvePath(configPath)),
     })
+    const { loadProviderPluginsForRawConfig } = await import('./provider-plugins.js')
+    await loadProviderPluginsForRawConfig(result.data, configPath)
   }
   return result.data
 }

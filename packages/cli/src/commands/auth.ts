@@ -334,7 +334,11 @@ export function createAuthCommand(): Command {
     new Command('status')
       .description('Show credential status for configured LLMs')
       .action(async function (this: Command) {
-        const { loadAuthPluginsForRawConfig, resolveModelAuth } = await import('../llm-utils.js')
+        const {
+          loadAuthPluginsForRawConfig,
+          loadProviderPluginsForRawConfig,
+          resolveModelAuth,
+        } = await import('../llm-utils.js')
         const { loadConfigFile } = await import('../config.js')
         const configPath = getGlobalConfigPath(this) ?? 'agent-qa.config.yaml'
 
@@ -345,6 +349,7 @@ export function createAuthCommand(): Command {
         try {
           const cfg = (await loadConfigFile(configPath)) as any
           await loadAuthPluginsForRawConfig(cfg, configPath)
+          await loadProviderPluginsForRawConfig(cfg, configPath)
           llms = cfg?.registry?.llms
           defaultLLM = cfg?.use?.llm
         } catch {

@@ -1,5 +1,8 @@
 import { dirname, resolve as resolvePath } from 'node:path'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
+import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
+
+export { loadProviderPluginsForRawConfig }
 
 export type BuiltInLLMProviderMode =
   | 'openai-compatible'
@@ -94,6 +97,7 @@ export async function resolveNamedConfig(
   const { loadConfigFile } = await import('./config.js')
   const raw = (await loadConfigFile(configPath)) as Record<string, unknown> | null
   await loadAuthPluginsForRawConfig(raw, configPath)
+  await loadProviderPluginsForRawConfig(raw, configPath)
   const llms = ((raw as any)?.registry?.llms as Array<NamedLLMConfigLike & Record<string, unknown>> | undefined)
     ?.map(normalizeLLMConfig)
   const defaultLLM = (raw as any)?.use?.llm as string | undefined

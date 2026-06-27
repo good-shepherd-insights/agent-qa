@@ -37,6 +37,7 @@ vi.mock('ai', () => ({
 
 vi.mock('../llm-utils.js', () => ({
   loadAuthPluginsForRawConfig: vi.fn(() => Promise.resolve()),
+  loadProviderPluginsForRawConfig: vi.fn(() => Promise.resolve()),
   resolveCredentials: vi.fn(() => Promise.resolve({ apiKey: 'test-key' })),
   resolveModelAuth: vi.fn(() => Promise.resolve({
     kind: 'api-key',
