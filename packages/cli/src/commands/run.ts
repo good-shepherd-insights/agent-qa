@@ -6,6 +6,7 @@ import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, 
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveMemoryRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
+import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { applyResolvedAuthToModelConfig, resolveLLMModels, resolveModelAuth } from '../llm-utils.js'
@@ -1440,8 +1441,7 @@ async function executeSuites(
       logCapture: suiteLogCapture,
       accessibility: config.services?.accessibility,
       accessibilityCheck: runWebAccessibilityCheck,
-      screenshotSize: plannerCfg.screenshotSize,
-      effectiveResolution: plannerCfg.effectiveResolution,
+      vision: resolveVisionConfig(config.services?.vision, plannerCfg.visionOverride),
       memoryProvider: suiteMemoryProvider,
       memoryConfig: suiteMemoryConfig,
       memoryRoot: suiteMemoryRoot,
@@ -2446,8 +2446,7 @@ export function createRunCommand(): Command {
               logCapture: testLogCapture,
               accessibility: config.services?.accessibility,
               accessibilityCheck: runWebAccessibilityCheck,
-              screenshotSize: plannerCfg.screenshotSize,
-              effectiveResolution: plannerCfg.effectiveResolution,
+              vision: resolveVisionConfig(config.services?.vision, plannerCfg.visionOverride),
               contextWindow: plannerCfg.contextWindow,
               memoryProvider,
               memoryInitParams,
@@ -2579,8 +2578,7 @@ export function createRunCommand(): Command {
                       logCapture: testLogCapture,
                       accessibility: config.services?.accessibility,
                       accessibilityCheck: runWebAccessibilityCheck,
-                      screenshotSize: plannerCfg.screenshotSize,
-                      effectiveResolution: plannerCfg.effectiveResolution,
+                      vision: resolveVisionConfig(config.services?.vision, plannerCfg.visionOverride),
                       contextWindow: plannerCfg.contextWindow,
                     }, filePath)
 

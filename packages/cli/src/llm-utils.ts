@@ -43,8 +43,8 @@ export type LLMConfigLike = {
   model: string
   baseURL?: string
   providerHeaders?: Record<string, string>
-  screenshotSize?: number
-  effectiveResolution?: number
+  vision?: boolean
+  visionOverride?: { screenshotSize?: number; effectiveResolution?: number }
   contextWindow?: number
 }
 
@@ -57,8 +57,6 @@ export type RuntimeModelConfigLike = LLMConfigLike & {
   authToken?: string
   fetch?: typeof globalThis.fetch
   modelAdapter?: LLMModelAdapter
-  screenshotSize?: number
-  effectiveResolution?: number
   contextWindow?: number
 }
 
@@ -69,8 +67,8 @@ function normalizeLLMConfig(raw: NamedLLMConfigLike & Record<string, unknown>): 
     model: raw.model,
     ...(raw.baseURL !== undefined ? { baseURL: raw.baseURL } : {}),
     ...(raw.providerHeaders !== undefined ? { providerHeaders: raw.providerHeaders } : {}),
-    ...(raw.screenshotSize !== undefined ? { screenshotSize: raw.screenshotSize } : {}),
-    ...(raw.effectiveResolution !== undefined ? { effectiveResolution: raw.effectiveResolution } : {}),
+    ...(raw.vision !== undefined ? { vision: raw.vision } : {}),
+    ...(raw.visionOverride !== undefined ? { visionOverride: raw.visionOverride } : {}),
     ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}),
   }
 }

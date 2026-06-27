@@ -717,8 +717,8 @@ targets:
         envFile: '.env',
         secretsFile: '.secrets.local',
       },
-      registry: { llms: [{ name: 'default', provider: 'openai-compatible', model: 'model-name', baseURL: 'https://remote.example/api/v1', screenshotSize: '1m' }] },
-      services: { cache: { dir: '.agent-qa/cache', ttl: '7d' }, logging: { level: 'warn' } },
+      registry: { llms: [{ name: 'default', provider: 'openai-compatible', model: 'model-name', baseURL: 'https://remote.example/api/v1' }] },
+      services: { cache: { dir: '.agent-qa/cache', ttl: '7d' }, logging: { level: 'warn' }, vision: { screenshotSize: '1m' } },
       use: {
         browser: { name: 'chromium', headless: true },
         timeout: { step: '30s', test: '10m', navigation: '10s' },

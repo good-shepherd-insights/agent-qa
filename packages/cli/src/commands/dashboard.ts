@@ -54,8 +54,8 @@ async function startDashboardBackedServices(
       model: defaultCfg.model ?? DEFAULT_ANTHROPIC_MODEL,
       baseURL: defaultCfg.baseURL,
       providerHeaders: defaultCfg.providerHeaders,
-      screenshotSize: defaultCfg.screenshotSize,
-      effectiveResolution: defaultCfg.effectiveResolution,
+      vision: defaultCfg.vision,
+      visionOverride: defaultCfg.visionOverride,
     }
     const resolvedAuth = await resolveModelAuth(configName, llmConfig)
     let authFetch: typeof globalThis.fetch | undefined

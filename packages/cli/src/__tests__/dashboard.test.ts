@@ -166,14 +166,18 @@ describe('createDashboardCommand', () => {
           provider: 'anthropic-compatible',
           model: 'claude-sonnet-4-6',
           baseURL: 'https://anthropic-proxy.example/messages',
-          screenshotSize: 1048576,
-          effectiveResolution: 1568,
+          vision: true,
+          visionOverride: {
+            screenshotSize: 1048576,
+            effectiveResolution: 1568,
+          },
         }],
       },
       use: { llm: 'default' },
       services: {
         dashboard: { port: 4000 },
         mcp: { enabled: true, port: 3472, path: '/mcp' },
+        vision: { screenshotSize: 524288, effectiveResolution: 768 },
       },
     }))
 
@@ -195,11 +199,17 @@ describe('createDashboardCommand', () => {
         mcp: { enabled: true, port: 3472, path: '/mcp' },
         llmConfig: expect.objectContaining({
           provider: 'anthropic-compatible',
-          screenshotSize: 1048576,
-          effectiveResolution: 1568,
+          vision: true,
+          visionOverride: {
+            screenshotSize: 1048576,
+            effectiveResolution: 1568,
+          },
         }),
       }),
     )
+    const startArg = mockStartServer.mock.calls.at(-1)?.[0]
+    expect(startArg?.llmConfig).not.toHaveProperty('screenshotSize')
+    expect(startArg?.llmConfig).not.toHaveProperty('effectiveResolution')
   })
 
   it('uses the current Claude fallback model when no LLM config is selected', async () => {

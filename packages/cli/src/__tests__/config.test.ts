@@ -19,6 +19,7 @@ function makeValidConfig(overrides: Record<string, unknown> = {}): Record<string
     services: {
       cache: { dir: '.agent-qa/cache', ttl: '7d' },
       logging: { level: 'warn' },
+      vision: { screenshotSize: '1m' },
     },
     registry: {
       llms: [{
@@ -26,7 +27,6 @@ function makeValidConfig(overrides: Record<string, unknown> = {}): Record<string
         provider: 'openai-compatible',
         model: 'gpt-4o',
         baseURL: 'https://api.openai.com/v1',
-        screenshotSize: '1m',
       }],
     },
     use: {
@@ -235,7 +235,6 @@ describe('resolveConfig', () => {
           provider: 'openai-compatible',
           model: 'gpt-4o',
           baseURL: 'https://api.openai.com/v1',
-          screenshotSize: '1m',
         }],
         targets: {
           myapp: { platform: 'web', url: 'https://example.com' },

@@ -21,8 +21,6 @@ type CliLLMConfig = {
   model: string
   baseURL?: string
   providerHeaders?: Record<string, string>
-  screenshotSize?: number
-  effectiveResolution?: number
   contextWindow?: number
 }
 
