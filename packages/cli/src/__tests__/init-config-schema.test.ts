@@ -3,6 +3,11 @@ import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { buildDefaultConfig } from '../commands/init.js'
 
 const SCREENSHOT_SIZE_BYTES = 256 * 1024
+const EXPECTED_TIMEOUT_MS = {
+  step: 1200000,
+  test: 5400000,
+  navigation: 120000,
+}
 
 function parseGeneratedConfig(config: Record<string, unknown>) {
   const result = AgentQaConfigSchema.safeParse(config)
@@ -40,9 +45,7 @@ describe('init generated config schema compatibility', () => {
       expect(parsed.services?.memory?.enabled).toBe(true)
       expect(parsed.services?.memory?.provider).toBe('local')
       expect(parsed.services?.memory?.dir).toBe('agent-qa-memory')
-      expect(parsed.use?.timeout?.step).toBe(300000)
-      expect(parsed.use?.timeout?.test).toBe(1800000)
-      expect(parsed.use?.timeout?.navigation).toBe(60000)
+      expect(parsed.use?.timeout).toEqual(EXPECTED_TIMEOUT_MS)
       expect(parsed.use?.logCapture?.console).toBe(true)
       expect(parsed.use?.logCapture?.network).toBe(true)
       expect(parsed.use?.parallel).toBe(false)
@@ -69,9 +72,7 @@ describe('init generated config schema compatibility', () => {
     expect(parsed.services?.memory?.enabled).toBe(true)
     expect(parsed.services?.memory?.provider).toBe('local')
     expect(parsed.services?.memory?.dir).toBe('agent-qa-memory')
-    expect(parsed.use?.timeout?.step).toBe(300000)
-    expect(parsed.use?.timeout?.test).toBe(1800000)
-    expect(parsed.use?.timeout?.navigation).toBe(60000)
+    expect(parsed.use?.timeout).toEqual(EXPECTED_TIMEOUT_MS)
     expect(parsed.use?.browser?.viewport).toEqual({ width: 1280, height: 720 })
     expect(parsed.use?.logCapture?.console).toBe(true)
     expect(parsed.use?.logCapture?.network).toBe(true)
@@ -80,5 +81,25 @@ describe('init generated config schema compatibility', () => {
       { package: '@vostride/agent-qa-subscription-auth' },
     ])
     expectCompressionDefaults(config)
+  })
+
+  it('emits identical timeout defaults for subscription and compatible baseURL configs', () => {
+    const subscriptionConfig = buildDefaultConfig(
+      'web',
+      'anthropic-subscription',
+      'claude-sonnet-4-6',
+    )
+    const compatibleConfig = buildDefaultConfig(
+      'web',
+      'openai-compatible',
+      'deepseek-chat',
+      'https://remote.example/api/v1',
+    )
+
+    const subscriptionParsed = parseGeneratedConfig(subscriptionConfig)
+    const compatibleParsed = parseGeneratedConfig(compatibleConfig)
+
+    expect(subscriptionParsed.use?.timeout).toEqual(EXPECTED_TIMEOUT_MS)
+    expect(compatibleParsed.use?.timeout).toEqual(subscriptionParsed.use?.timeout)
   })
 })
