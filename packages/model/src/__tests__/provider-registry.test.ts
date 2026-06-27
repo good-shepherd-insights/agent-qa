@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import type { ModelProfile } from '@vostride/agent-qa-schema'
 import type { ProviderAuthMode, ProviderDescriptor } from '../providers/registry.js'
+import type { ResolvedModelAuth } from '../auth.js'
 
 import { stubModel } from './stub-model.js'
+import { createModel } from '../registry.js'
 import {
   clearProviderRegistry,
   getProvider,
@@ -17,6 +20,16 @@ const BUILTIN_IDS = [
   'anthropic-subscription',
   'gemini',
 ]
+
+const noneAuth: ResolvedModelAuth = { kind: 'none' }
+
+function profile(provider: string, model = 'm'): ModelProfile {
+  return {
+    provider: provider as ModelProfile['provider'],
+    model,
+    auth: { mode: 'none' },
+  }
+}
 
 function pluginDescriptor(overrides: Partial<ProviderDescriptor> = {}): ProviderDescriptor {
   return {
@@ -109,5 +122,41 @@ describe('provider registry', () => {
       .toThrow(/authModes must be a non-empty array/)
     expect(() => registerProvider(pluginDescriptor({ authModes: [] })))
       .toThrow(/authModes must be a non-empty array/)
+  })
+
+  it('resolves a registered plugin provider id through createModel', () => {
+    registerProvider(pluginDescriptor({
+      id: 'my-gateway',
+      label: 'My Gateway',
+      adapter: (_transport, modelId) => stubModel({ provider: 'my-gateway', modelId }),
+      needsBaseURL: true,
+      authModes: ['api-key'],
+    }))
+
+    const model = createModel(profile('my-gateway'), noneAuth)
+
+    expect(model.provider).toBe('my-gateway')
+    expect(model.modelId).toBe('m')
+  })
+
+  it('resolves built-in provider overrides through createModel last-writer-wins semantics', () => {
+    registerProvider(pluginDescriptor({
+      id: 'gemini',
+      label: 'Gemini override',
+      adapter: (_transport, modelId) => stubModel({ provider: 'gemini.override', modelId }),
+      needsBaseURL: false,
+      authModes: ['api-key'],
+    }))
+
+    const model = createModel(profile('gemini'), noneAuth)
+
+    expect(model.provider).toBe('gemini.override')
+    expect(model.modelId).toBe('m')
+  })
+
+  it('preserves the supported-providers error for truly unknown provider ids', () => {
+    expect(() => createModel(profile('unknown-provider'), noneAuth)).toThrow(
+      /Unknown provider "unknown-provider".*openai-compatible.*gemini/,
+    )
   })
 })
