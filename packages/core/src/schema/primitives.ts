@@ -123,8 +123,11 @@ const ModelConfigBaseSchema = z.object({
   model: z.string(),
   baseURL: z.string().optional(),
   providerHeaders: z.record(z.string(), z.string()).optional(),
-  screenshotSize: SizeString.optional(),
-  effectiveResolution: z.number().positive().int().optional(),
+  vision: z.boolean().default(true),
+  visionOverride: z.object({
+    screenshotSize: SizeString.optional(),
+    effectiveResolution: z.number().positive().int().optional(),
+  }).strict().optional(),
 }).strict()
 
 export const ModelConfigSchema = ModelConfigBaseSchema.superRefine(validateModelConfig)

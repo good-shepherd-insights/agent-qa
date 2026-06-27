@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
-import { DurationString } from './primitives.js'
+import { DurationString, SizeString } from './primitives.js'
 
 export const DashboardConfigSchema = z.object({
   port: z.number().optional(),
@@ -47,6 +47,11 @@ export const AccessibilityConfigSchema = z.object({
   exclude: z.array(z.string()).optional(),
 }).strict()
 
+export const VisionServiceSchema = z.object({
+  screenshotSize: SizeString.optional(),
+  effectiveResolution: z.number().positive().int().optional(),
+}).strict()
+
 export const MemoryConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
   provider: z.enum(['local']).optional().default('local'),
@@ -72,5 +77,6 @@ export const ServicesSchema = z.object({
   logging: LoggingConfigSchema.optional(),
   recording: RecordingConfigSchema.optional(),
   accessibility: AccessibilityConfigSchema.optional(),
+  vision: VisionServiceSchema.optional(),
   memory: MemoryConfigSchema.optional(),
 }).strict()

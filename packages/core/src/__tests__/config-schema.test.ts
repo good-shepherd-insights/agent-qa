@@ -15,6 +15,8 @@ import {
   CacheConfigSchema,
   AuthStateConfigSchema,
   MemoryConfigSchema,
+  ServicesSchema,
+  VisionServiceSchema,
 } from '../schema/services-schema.js'
 
 const validWorkspace = {
@@ -839,60 +841,73 @@ describe('Sub-schemas — primitives', () => {
   })
 })
 
-describe('ModelConfigSchema — screenshotSize', () => {
-  it('parses screenshotSize string to byte count', () => {
+describe('ModelConfigSchema — vision config relocation', () => {
+  it('defaults model vision to true', () => {
+    const result = ModelConfigSchema.safeParse({
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.vision).toBe(true)
+    }
+  })
+
+  it('rejects relocated per-model screenshotSize', () => {
     const result = ModelConfigSchema.safeParse({
       provider: 'anthropic-subscription',
       model: 'claude-sonnet-4-20250514',
       screenshotSize: '1m',
     })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.screenshotSize).toBe(1048576)
-    }
-  })
-
-  it('parses without screenshotSize (optional field)', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-    })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.screenshotSize).toBeUndefined()
-    }
-  })
-})
-
-describe('ModelConfigSchema — effectiveResolution', () => {
-  it('parses effectiveResolution as positive integer', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-      effectiveResolution: 1568,
-    })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.effectiveResolution).toBe(1568)
-    }
-  })
-
-  it('rejects negative effectiveResolution', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-      effectiveResolution: -100,
-    })
     expect(result.success).toBe(false)
   })
 
-  it('rejects non-integer effectiveResolution', () => {
+  it('accepts services.vision sizing and transforms screenshotSize', () => {
+    const result = ServicesSchema.safeParse({
+      vision: {
+        screenshotSize: '256k',
+        effectiveResolution: 768,
+      },
+    })
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.vision?.screenshotSize).toBe(262144)
+      expect(result.data.vision?.effectiveResolution).toBe(768)
+    }
+  })
+
+  it('parses model visionOverride sizing and transforms screenshotSize', () => {
     const result = ModelConfigSchema.safeParse({
       provider: 'anthropic-subscription',
       model: 'claude-sonnet-4-20250514',
-      effectiveResolution: 1024.5,
+      visionOverride: {
+        screenshotSize: '128k',
+        effectiveResolution: 1024,
+      },
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.visionOverride?.screenshotSize).toBe(131072)
+      expect(result.data.visionOverride?.effectiveResolution).toBe(1024)
+    }
+  })
+
+  it('rejects unknown visionOverride and services.vision keys', () => {
+    const result = ModelConfigSchema.safeParse({
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+      visionOverride: {
+        screenshotSize: '128k',
+        unsupported: true,
+      },
     })
     expect(result.success).toBe(false)
+
+    expect(VisionServiceSchema.safeParse({
+      screenshotSize: '256k',
+      extra: true,
+    }).success).toBe(false)
   })
 })
 
