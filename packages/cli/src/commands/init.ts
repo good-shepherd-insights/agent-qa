@@ -11,7 +11,8 @@ import {
   DEFAULT_AGENT_QA_CACHE_DIR,
   DEFAULT_AGENT_QA_RUNTIME_DIR,
 } from '@vostride/agent-qa-core'
-import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
+import { getProvider, listProviders } from '@vostride/agent-qa-model'
+import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
 
 type Platform = 'web' | 'android' | 'ios' | 'web+android' | 'web+ios'
 type PlatformCapability = 'web' | 'mobile'
@@ -46,16 +47,13 @@ const ANTHROPIC_SUBSCRIPTION_CONFIG: InitLLMConfig = {
   model: DEFAULT_ANTHROPIC_MODEL,
 }
 
-export const PROVIDER_CHOICES = [
-  { value: 'openai-compatible', name: 'OpenAI-compatible' },
-  { value: 'anthropic-compatible', name: 'Anthropic-compatible' },
-  { value: 'openai-subscription', name: 'OpenAI subscription' },
-  { value: 'anthropic-subscription', name: 'Anthropic subscription' },
-  { value: 'gemini', name: 'Gemini' },
-]
-export const COMPATIBLE_PROVIDER_CHOICES = PROVIDER_CHOICES.filter(
-  choice => choice.value === 'openai-compatible' || choice.value === 'anthropic-compatible' || choice.value === 'gemini',
-)
+export function getProviderChoices(): Array<{ value: string; name: string }> {
+  return listProviders().map(provider => ({ value: provider.id, name: provider.label }))
+}
+
+export function getCompatibleProviderChoices(): Array<{ value: string; name: string }> {
+  return getProviderChoices().filter(choice => !getProvider(choice.value)?.subscription)
+}
 export const LLM_SETUP_CHOICES: Array<{ value: LLMSetupChoice; name: string; description: string }> = [
   {
     value: 'none',
@@ -280,7 +278,7 @@ steps:
 }
 
 function isSubscriptionProvider(provider: string): boolean {
-  return provider === 'openai-subscription' || provider === 'anthropic-subscription'
+  return getProvider(provider)?.subscription === true
 }
 
 function readAgentQaPackageVersion(): string | null {
@@ -363,7 +361,7 @@ function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
     model: config.model,
   }
 
-  if (config.provider === 'openai-compatible' || config.provider === 'anthropic-compatible') {
+  if (getProvider(config.provider)?.needsBaseURL) {
     llmEntry.baseURL = config.baseURL
   }
 
@@ -374,17 +372,8 @@ function buildSingleLLMConfig(provider: string, model: string, baseURL?: string)
   return { name: 'default', provider, model, baseURL }
 }
 
-function defaultModelForProvider(provider: string): string {
-  switch (provider) {
-    case 'openai-compatible':
-      return DEFAULT_OPENAI_MODEL
-    case 'anthropic-compatible':
-      return DEFAULT_ANTHROPIC_MODEL
-    case 'gemini':
-      return DEFAULT_GEMINI_MODEL
-    default:
-      return 'model-name'
-  }
+export function defaultModelForProvider(provider: string): string {
+  return getProvider(provider)?.defaultModel ?? 'model-name'
 }
 
 function subscriptionConfigsForChoice(choice: LLMSetupChoice): InitLLMConfig[] {
@@ -675,7 +664,7 @@ export function createInitCommand(): Command {
           // Step 3 — Provider selection for non-subscription paths
           provider = await select({
             message: 'Which LLM provider?',
-            choices: COMPATIBLE_PROVIDER_CHOICES,
+            choices: getCompatibleProviderChoices(),
             default: 'anthropic-compatible',
           })
 
@@ -688,7 +677,7 @@ export function createInitCommand(): Command {
         }
 
         // Step 5 — Exact compatible endpoint URL
-        if (provider === 'openai-compatible' || provider === 'anthropic-compatible') {
+        if (getProvider(provider)?.needsBaseURL) {
           baseURL = await input({
             message: 'Base URL:',
             validate: (value) => value.trim().length > 0 || 'Base URL is required for compatible providers.',
@@ -846,7 +835,7 @@ export function createInitCommand(): Command {
       const subscriptionLLMs = generatedLLMs.filter(llm => isSubscriptionProvider(String(llm.provider)))
       if (subscriptionLLMs.length === 0) {
         console.log(`    ${pc.dim('•')} Save credentials with ${pc.cyan('agent-qa auth set --config default --type api-key')}`)
-        if (provider === 'anthropic-compatible') {
+        if (getProvider(provider)?.authModes.includes('bearer-token')) {
           console.log(`    ${pc.dim('•')} Bearer tokens use ${pc.cyan('agent-qa auth set --config default --type bearer-token')}`)
         }
       } else {

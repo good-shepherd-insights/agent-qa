@@ -55,7 +55,13 @@ vi.mock('@vostride/agent-qa-core', () => ({
 // Suppress console output in tests
 vi.spyOn(console, 'log').mockImplementation(() => {})
 
-import { createInitCommand, buildDefaultConfig, PROVIDER_CHOICES, COMPATIBLE_PROVIDER_CHOICES, LLM_SETUP_CHOICES } from '../commands/init.js'
+import {
+  createInitCommand,
+  buildDefaultConfig,
+  getProviderChoices,
+  getCompatibleProviderChoices,
+  LLM_SETUP_CHOICES,
+} from '../commands/init.js'
 import { formatInstallBrowsersRetryCommand, runBrowserInstall } from '../commands/install-browsers.js'
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
@@ -240,7 +246,7 @@ describe('init command', () => {
   })
 
   it('provider choices include only current LLM providers', () => {
-    const values = PROVIDER_CHOICES.map(choice => choice.value)
+    const values = getProviderChoices().map(choice => choice.value)
 
     expect(values).toEqual([
       'openai-compatible',
@@ -259,7 +265,7 @@ describe('init command', () => {
   })
 
   it('compatible provider choices exclude subscription providers', () => {
-    expect(COMPATIBLE_PROVIDER_CHOICES.map(choice => choice.value)).toEqual([
+    expect(getCompatibleProviderChoices().map(choice => choice.value)).toEqual([
       'openai-compatible',
       'anthropic-compatible',
       'gemini',
@@ -463,7 +469,7 @@ describe('init command', () => {
     }))
     expect(mockSelect).toHaveBeenNthCalledWith(1, expect.objectContaining({
       message: 'Which LLM provider?',
-      choices: COMPATIBLE_PROVIDER_CHOICES,
+      choices: getCompatibleProviderChoices(),
       default: 'anthropic-compatible',
     }))
     expect(mockInput).toHaveBeenNthCalledWith(1, expect.objectContaining({
