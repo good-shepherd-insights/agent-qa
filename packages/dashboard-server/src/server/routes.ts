@@ -16,7 +16,7 @@ import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, ModelConfig, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getProviderOptions, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
-import { fetchLiveModels, getModelCatalog, mergeCatalog, resolveVisionConfig } from '@vostride/agent-qa-model'
+import { fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { parse as parseYaml } from 'yaml'
 
 const LLM_PROVIDER_MODES = new Set([
@@ -157,6 +157,11 @@ interface DashboardLLMProviderMetadata {
     | { kind: 'api-key'; credentialTypes: Array<'api-key' | 'bearer-token'>; optional?: boolean }
     | { kind: 'oauth-plugin'; mode: 'browser-poll' | 'manual-code'; buttonLabel?: string }
   modelAdapter?: 'openai-responses' | 'anthropic-messages'
+  needsBaseURL?: boolean
+  authModes?: Array<'api-key' | 'bearer-token' | 'subscription' | 'none'>
+  subscription?: boolean
+  baseURLPlaceholder?: string
+  defaultModel?: string
 }
 
 interface PluginOAuthSession {
@@ -170,26 +175,30 @@ interface PluginOAuthSession {
   error?: string
 }
 
+function serializeProviderDescriptor(descriptor: ProviderDescriptor): DashboardLLMProviderMetadata {
+  return {
+    id: descriptor.id,
+    label: descriptor.label,
+    auth: {
+      kind: 'api-key',
+      credentialTypes: descriptor.authModes.filter(
+        mode => mode === 'api-key' || mode === 'bearer-token',
+      ),
+      ...(descriptor.credentialOptional ? { optional: true } : {}),
+    },
+    ...(descriptor.modelAdapter ? { modelAdapter: descriptor.modelAdapter } : {}),
+    needsBaseURL: descriptor.needsBaseURL,
+    authModes: descriptor.authModes,
+    ...(descriptor.subscription ? { subscription: true } : {}),
+    ...(descriptor.baseURLPlaceholder ? { baseURLPlaceholder: descriptor.baseURLPlaceholder } : {}),
+    ...(descriptor.defaultModel ? { defaultModel: descriptor.defaultModel } : {}),
+  }
+}
+
 function builtinLLMProviderMetadata(): DashboardLLMProviderMetadata[] {
-  return [
-    {
-      id: 'openai-compatible',
-      label: 'OpenAI-compatible',
-      auth: { kind: 'api-key', credentialTypes: ['api-key'], optional: true },
-      modelAdapter: 'openai-responses',
-    },
-    {
-      id: 'anthropic-compatible',
-      label: 'Anthropic-compatible',
-      auth: { kind: 'api-key', credentialTypes: ['api-key', 'bearer-token'], optional: true },
-      modelAdapter: 'anthropic-messages',
-    },
-    {
-      id: 'gemini',
-      label: 'Gemini',
-      auth: { kind: 'api-key', credentialTypes: ['api-key'] },
-    },
-  ]
+  return listProviders()
+    .filter(descriptor => !descriptor.subscription)
+    .map(serializeProviderDescriptor)
 }
 
 function serializeAuthProviderPlugin(plugin: LLMAuthProviderPlugin): DashboardLLMProviderMetadata {
