@@ -5,6 +5,7 @@ import type { ProviderAuthMode, ProviderDescriptor } from '../providers/registry
 import type { ResolvedModelAuth } from '../auth.js'
 
 import { stubModel } from './stub-model.js'
+import { openaiCompatible } from '../adapters/openai.js'
 import { createModel } from '../registry.js'
 import {
   clearProviderRegistry,
@@ -158,5 +159,30 @@ describe('provider registry', () => {
     expect(() => createModel(profile('unknown-provider'), noneAuth)).toThrow(
       /Unknown provider "unknown-provider".*openai-compatible.*gemini/,
     )
+  })
+
+  it('supports plugin descriptors composed from a built-in adapter body', () => {
+    const descriptor: ProviderDescriptor = {
+      id: 'composing-gateway',
+      label: 'Composing Gateway',
+      adapter: (transport, modelId) =>
+        openaiCompatible({
+          ...transport,
+          baseURL: 'https://gateway.example/v1',
+          headers: {
+            ...(transport.headers ?? {}),
+            'x-provider-route': 'composed',
+          },
+        }, modelId),
+      needsBaseURL: true,
+      authModes: ['api-key'],
+    }
+
+    registerProvider(descriptor)
+
+    const model = createModel(profile('composing-gateway', 'composed-model'), noneAuth)
+
+    expect(model.provider).toBe('openai.chat')
+    expect(model.modelId).toBe('composed-model')
   })
 })
