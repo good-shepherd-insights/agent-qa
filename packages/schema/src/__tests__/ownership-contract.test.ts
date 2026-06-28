@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   AGENT_QA_SCHEMA_ALLOWED_RESPONSIBILITIES,
-  AGENT_QA_SCHEMA_DEPENDENCIES,
+  AGENT_QA_SCHEMA_EXTERNAL_DEPENDENCIES,
   AGENT_QA_SCHEMA_FORBIDDEN_RESPONSIBILITIES,
+  AGENT_QA_SCHEMA_INTERNAL_DEPENDENCIES,
   AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT,
   AGENT_QA_SCHEMA_PACKAGE_CLASSES,
   AGENT_QA_SCHEMA_PACKAGE_DIR,
@@ -18,7 +19,8 @@ describe('schema ownership contract', () => {
       'providerNeutral',
       'storageNeutral',
     ])
-    expect([...AGENT_QA_SCHEMA_DEPENDENCIES]).toEqual(['zod'])
+    expect([...AGENT_QA_SCHEMA_EXTERNAL_DEPENDENCIES]).toEqual(['zod'])
+    expect([...AGENT_QA_SCHEMA_INTERNAL_DEPENDENCIES]).toEqual([])
   })
 
   it('keeps ownership responsibilities explicit', () => {

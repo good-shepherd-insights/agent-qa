@@ -1,3 +1,5 @@
+import type { OwnershipContract } from '@vostride/agent-qa-arch'
+
 export const AGENT_QA_SCHEMA_PACKAGE_NAME = '@vostride/agent-qa-schema'
 export const AGENT_QA_SCHEMA_PACKAGE_DIR = 'packages/schema'
 export const AGENT_QA_SCHEMA_PACKAGE_CLASSES = [
@@ -15,19 +17,8 @@ export const AGENT_QA_SCHEMA_FORBIDDEN_RESPONSIBILITIES = [
   'runner execution side effects',
   'local runtime persistence',
 ] as const
-export const AGENT_QA_SCHEMA_DEPENDENCIES = ['zod'] as const
-
-export type AgentQaSchemaPackageClass = typeof AGENT_QA_SCHEMA_PACKAGE_CLASSES[number]
-export type AgentQaSchemaDependency = typeof AGENT_QA_SCHEMA_DEPENDENCIES[number]
-
-export interface AgentQaSchemaOwnershipContract {
-  packageName: typeof AGENT_QA_SCHEMA_PACKAGE_NAME
-  packageDir: typeof AGENT_QA_SCHEMA_PACKAGE_DIR
-  packageClasses: readonly AgentQaSchemaPackageClass[]
-  allowedResponsibilities: readonly string[]
-  forbiddenResponsibilities: readonly string[]
-  dependencies: readonly AgentQaSchemaDependency[]
-}
+export const AGENT_QA_SCHEMA_EXTERNAL_DEPENDENCIES = ['zod'] as const
+export const AGENT_QA_SCHEMA_INTERNAL_DEPENDENCIES = [] as const
 
 export const AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_SCHEMA_PACKAGE_NAME,
@@ -35,5 +26,6 @@ export const AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT = {
   packageClasses: AGENT_QA_SCHEMA_PACKAGE_CLASSES,
   allowedResponsibilities: AGENT_QA_SCHEMA_ALLOWED_RESPONSIBILITIES,
   forbiddenResponsibilities: AGENT_QA_SCHEMA_FORBIDDEN_RESPONSIBILITIES,
-  dependencies: AGENT_QA_SCHEMA_DEPENDENCIES,
-} as const satisfies AgentQaSchemaOwnershipContract
+  externalDependencies: AGENT_QA_SCHEMA_EXTERNAL_DEPENDENCIES,
+  internalDependencies: AGENT_QA_SCHEMA_INTERNAL_DEPENDENCIES,
+} as const satisfies OwnershipContract

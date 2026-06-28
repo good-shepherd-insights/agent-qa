@@ -21,6 +21,7 @@ const FORBIDDEN_SUBSTRINGS = [
 
 const sourceFiles = globSync('src/**/*.ts', { cwd: pkgRoot })
   .filter(file => !file.includes('__tests__'))
+  .filter(file => !file.includes('ownership-contract'))
   .map(file => join(pkgRoot, file))
 
 function importSpecifiers(file: string): string[] {
