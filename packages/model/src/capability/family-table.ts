@@ -38,7 +38,7 @@ export const FAMILIES: readonly FamilyEntry[] = [
   { match: ['gemini-2.5', 'gemini-3', 'gemini-1.5', 'gemini-'], caps: caps(1048576, 65536, true, true) },
   { match: ['gemini-2.0-flash'], caps: caps(1048576, 8192, true, true) },
   { match: ['deepseek-chat', 'deepseek-r1', 'deepseek-'], caps: caps(65536, 8192, false, false) },
-  { match: ['qwen2.5-vl', 'qwen-vl', 'qwen2-vl', 'qwen-vl', '-vl'], caps: caps(32768, 8192, true, false) },
+  { match: ['qwen2.5-vl', 'qwen-vl', 'qwen2-vl'], caps: caps(32768, 8192, true, false) },
   { match: ['qwen'], caps: caps(32768, 8192, false, false) },
   { match: ['llava'], caps: caps(8192, 4096, true, false) },
   { match: ['llama-3-vision', 'llama3.2-vision', 'vision'], caps: caps(128000, 8192, true, false) },
@@ -48,6 +48,18 @@ export const FAMILIES: readonly FamilyEntry[] = [
   { match: ['mixtral', 'mistral'], caps: caps(32768, 8192, false, false) },
 ]
 
+const BOUNDARIES = new Set(['-', '_', '.', '/', ':'])
+
+function matchesAtBoundary(id: string, token: string): boolean {
+  let from = 0
+  for (;;) {
+    const idx = id.indexOf(token, from)
+    if (idx === -1) return false
+    if (idx === 0 || BOUNDARIES.has(id[idx - 1])) return true
+    from = idx + 1
+  }
+}
+
 export function matchFamily(model: string): ModelCapabilities | undefined {
   const id = model.toLowerCase()
   let best: { length: number; caps: ModelCapabilities } | undefined
@@ -55,7 +67,7 @@ export function matchFamily(model: string): ModelCapabilities | undefined {
   for (const family of FAMILIES) {
     for (const match of family.match) {
       const normalized = match.toLowerCase()
-      if (!id.includes(normalized)) continue
+      if (!matchesAtBoundary(id, normalized)) continue
       if (!best || normalized.length > best.length) {
         best = { length: normalized.length, caps: family.caps }
       }

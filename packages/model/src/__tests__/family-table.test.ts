@@ -35,6 +35,17 @@ describe('matchFamily', () => {
     })
   })
 
+  it('does not classify ids that only incidentally contain family tokens', () => {
+    expect(matchFamily('turbo3')).toBeUndefined()
+    expect(matchFamily('supervision-7b')).toBeUndefined()
+    expect(matchFamily('my-vl-7b')).toBeUndefined()
+  })
+
+  it('still resolves real families whose tokens sit at a segment boundary', () => {
+    expect(matchFamily('o3-mini')).toMatchObject({ contextWindow: 200000 })
+    expect(matchFamily('qwen2.5-vl')).toMatchObject({ vision: true })
+  })
+
   it('returns undefined for unknown model ids so callers can apply the floor', () => {
     expect(matchFamily('totally-unknown-model')).toBeUndefined()
     expect(UNKNOWN_FLOOR).toEqual({
