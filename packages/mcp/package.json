@@ -51,7 +51,6 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@vostride/agent-qa-core": "workspace:*",
     "@vostride/agent-qa-ids": "workspace:*",
-    "glob": "13.0.6",
     "yaml": "2.8.4",
     "zod": "4.4.2"
   },

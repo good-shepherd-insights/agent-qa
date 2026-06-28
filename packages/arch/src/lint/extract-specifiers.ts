@@ -3,7 +3,7 @@ import { builtinModules } from 'node:module'
 import { join } from 'node:path'
 
 export const SPECIFIER_RE =
-  /\bfrom\s+['"]([^'"]+)['"]|\bimport\s+['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g
+  /\bfrom\s+['"]([^'"]+)['"]|\bimport\s+['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\.resolve\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g
 
 export const NODE_BUILTINS = new Set(
   builtinModules.flatMap(moduleName => [moduleName, `node:${moduleName}`]),
@@ -27,7 +27,7 @@ export function specifiersInSource(source: string, file: string): SpecifierHit[]
 
   lines.forEach((text, index) => {
     for (const match of text.matchAll(SPECIFIER_RE)) {
-      const specifier = match[1] ?? match[2] ?? match[3] ?? match[4]
+      const specifier = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5]
       if (specifier) {
         hits.push({ specifier, file, line: index + 1 })
       }
@@ -42,7 +42,7 @@ export function extractSpecifiers(absFile: string): SpecifierHit[] {
 }
 
 export function classifySpecifier(specifier: string): ClassifiedSpecifier {
-  if (specifier.startsWith('.')) {
+  if (specifier.startsWith('.') || specifier.startsWith('@/')) {
     return { kind: 'relative' }
   }
 
@@ -68,7 +68,7 @@ export function sourceFilesFor(packageDir: string, repoRoot: string): string[] {
     return []
   }
 
-  return globSync('src/**/*.ts', { cwd: packageRoot })
+  return globSync('src/**/*.{ts,tsx,css}', { cwd: packageRoot })
     .filter(file => !file.includes('__tests__'))
     .filter(file => !file.includes('ownership-contract'))
     .sort()

@@ -11,13 +11,11 @@ export const AGENT_QA_CLI_FORBIDDEN_RESPONSIBILITIES = [
 ] as const
 export const AGENT_QA_CLI_EXTERNAL_DEPENDENCIES = [
   '@inquirer/checkbox',
-  '@inquirer/confirm',
   '@inquirer/input',
   '@inquirer/password',
   '@inquirer/select',
   'ai',
   'commander',
-  'glob',
   'picocolors',
   'playwright-core',
   'yaml',

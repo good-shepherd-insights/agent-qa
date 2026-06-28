@@ -29,7 +29,6 @@ export const AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES = [
   'react',
   'react-dom',
   'react-icons',
-  'react-is',
   'react-resizable-panels',
   'react-router',
   'recharts',

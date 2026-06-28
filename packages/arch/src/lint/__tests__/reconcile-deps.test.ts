@@ -44,7 +44,10 @@ describe('findSetMismatchOffenders', () => {
 
 describe('findDepReconciliationOffenders', () => {
   it('returns no offenders when source imports, contract deps, and package.json deps align', () => {
-    const repoRoot = fixtureRepoRoot({ zod: '^4.0.0' })
+    const repoRoot = fixtureRepoRoot({
+      '@vostride/agent-qa-schema': 'workspace:*',
+      zod: '^4.0.0',
+    })
     const contract = fixtureContract({
       externalDependencies: ['zod'],
       internalDependencies: ['@vostride/agent-qa-schema'],

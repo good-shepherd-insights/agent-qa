@@ -71,5 +71,7 @@ function readPackageJsonDependencies(repoRoot: string, packageDir: string): stri
     readFileSync(join(repoRoot, packageDir, 'package.json'), 'utf8'),
   ) as { dependencies?: Record<string, string> }
 
-  return Object.keys(packageJson.dependencies ?? {}).sort()
+  return Object.keys(packageJson.dependencies ?? {})
+    .filter(dependency => !dependency.startsWith('@vostride/agent-qa-'))
+    .sort()
 }

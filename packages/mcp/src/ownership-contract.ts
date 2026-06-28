@@ -11,7 +11,6 @@ export const AGENT_QA_MCP_FORBIDDEN_RESPONSIBILITIES = [
 ] as const
 export const AGENT_QA_MCP_EXTERNAL_DEPENDENCIES = [
   '@modelcontextprotocol/sdk',
-  'glob',
   'yaml',
   'zod',
 ] as const

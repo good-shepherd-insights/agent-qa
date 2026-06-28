@@ -56,8 +56,6 @@
     "@vostride/agent-qa-model": "workspace:*",
     "@vostride/agent-qa-web": "workspace:*",
     "ai": "6.0.174",
-    "better-sqlite3": "12.9.0",
-    "id-agent": "1.0.3",
     "picocolors": "1.1.1",
     "tree-kill": "1.2.2",
     "ws": "8.20.0",

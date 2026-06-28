@@ -21,6 +21,7 @@ export const AGENT_QA_CORE_EXTERNAL_DEPENDENCIES = [
   'id-agent',
   'ms',
   'picocolors',
+  'playwright-core',
   'posthog-node',
   'semver',
   'sharp',
