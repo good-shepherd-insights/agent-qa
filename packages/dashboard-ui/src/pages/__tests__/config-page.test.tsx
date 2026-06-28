@@ -74,7 +74,8 @@ const { sampleConfig } = vi.hoisted(() => ({
       provider: 'openai-compatible',
       model: 'gpt-4.1',
       baseURL: 'https://api.openai.com/v1',
-      effectiveResolution: 1568,
+      vision: true,
+      contextWindow: '128k',
     }],
     targets: { staging: { platform: 'web', url: 'https://example.com' } },
     devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
@@ -769,14 +770,21 @@ describe('ConfigPage schema-driven shell', () => {
     })
   })
 
-  it('exposes effective resolution in the LLM configuration modal', async () => {
+  it('exposes vision and context window in the LLM configuration modal', async () => {
     await renderAt('/config?bucket=registry&item=llms')
 
     await openFirstLlmEditor()
 
-    const effectiveResolutionInput = document.body.querySelector('#config-effective-resolution') as HTMLInputElement | null
-    expect(document.body.textContent).toContain('Effective Resolution')
-    expect(effectiveResolutionInput?.value).toBe('1568')
+    const visionSwitch = document.body.querySelector('#config-vision') as HTMLButtonElement | null
+    const contextWindowInput = document.body.querySelector('#config-context-window') as HTMLInputElement | null
+
+    expect(visionSwitch?.getAttribute('role')).toBe('switch')
+    expect(visionSwitch?.getAttribute('aria-checked')).toBe('true')
+    expect(document.body.textContent).toContain('Vision (optional)')
+    expect(document.body.textContent).toContain('Context Window (optional)')
+    expect(contextWindowInput?.value).toBe('128k')
+    expect(document.body.querySelector('#config-effective-resolution')).toBeNull()
+    expect(document.body.textContent).not.toContain('Effective Resolution')
   })
 
   it('formats OpenAI-Compatible configs and keeps static provider fallback built-in only', async () => {
@@ -833,7 +841,8 @@ describe('ConfigPage schema-driven shell', () => {
         provider: 'openai-compatible',
         model: 'openrouter/auto',
         baseURL: 'https://openrouter.ai/api/v1',
-        effectiveResolution: 1568,
+        vision: true,
+        contextWindow: '256k',
       }),
     })
 
@@ -843,6 +852,7 @@ describe('ConfigPage schema-driven shell', () => {
     const modelInput = Array.from(document.body.querySelectorAll('input'))
       .find((input) => input.value === 'openrouter/auto') as HTMLInputElement | undefined
     const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement | null
+    const contextWindowInput = document.body.querySelector('#config-context-window') as HTMLInputElement | null
     const endpointHelp = document.body.querySelector('button[aria-label="Compatible endpoint help"]')
 
     expect(document.body.textContent).toContain('Base URL')
@@ -850,6 +860,7 @@ describe('ConfigPage schema-driven shell', () => {
     expect(endpointHelp).not.toBeNull()
     expect(baseUrlInput?.placeholder).toBe('https://openrouter.ai/api/v1')
     expect(baseUrlInput?.value).toBe('https://openrouter.ai/api/v1')
+    expect(contextWindowInput?.value).toBe('256k')
     expect(modelInput?.getAttribute('list')).toBeNull()
     expect(document.body.textContent).not.toContain('Subscription')
   })

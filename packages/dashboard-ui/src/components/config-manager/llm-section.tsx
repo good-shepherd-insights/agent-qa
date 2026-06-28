@@ -49,6 +49,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import {
   Table,
   TableBody,
@@ -57,7 +58,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { parseConfigNumberInput } from "@/components/config-manager/numeric-input"
 
 import {
   updateSettings,
@@ -140,8 +140,8 @@ interface NamedLLMConfig {
   model: string
   baseURL?: string
   providerHeaders?: Record<string, string>
-  screenshotSize?: string
-  effectiveResolution?: number
+  vision?: boolean
+  contextWindow?: string
 }
 
 interface LlmSectionProps {
@@ -546,8 +546,8 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   const [providerHeaderRows, setProviderHeaderRows] = useState<ProviderHeaderRow[]>([])
   const [credentialType, setCredentialType] = useState<CredentialSaveType>("api-key")
   const [credentialSecret, setCredentialSecret] = useState("")
-  const [screenshotSize, setScreenshotSize] = useState("")
-  const [effectiveResolution, setEffectiveResolution] = useState("")
+  const [vision, setVision] = useState(true)
+  const [contextWindow, setContextWindow] = useState("")
   const [tokenPasteInput, setTokenPasteInput] = useState("")
   const [exchanging, setExchanging] = useState(false)
   const [oauthLoading, setOauthLoading] = useState(false)
@@ -601,8 +601,8 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
           : [],
       )
       setCredentialType(nextProvider === "anthropic-compatible" ? "bearer-token" : "api-key")
-      setScreenshotSize(config.screenshotSize ?? "")
-      setEffectiveResolution(config.effectiveResolution != null ? String(config.effectiveResolution) : "")
+      setVision(config.vision ?? true)
+      setContextWindow(config.contextWindow ?? "")
     } else {
       const defaultProvider = providerMetadata.find((item) => item.id === "openai-compatible")?.id
         ?? providerMetadata[0]?.id
@@ -613,8 +613,8 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
       setBaseURL("")
       setProviderHeaderRows([])
       setCredentialType("api-key")
-      setScreenshotSize("")
-      setEffectiveResolution("")
+      setVision(true)
+      setContextWindow("")
     }
   }, [open, config, providerMetadata])
 
@@ -690,29 +690,18 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
       return
     }
 
-    const parsedEffectiveResolution = parseConfigNumberInput(effectiveResolution, {
-      label: "Effective resolution",
-      min: 1,
-      integer: true,
-      allowEmpty: true,
-      errorMessage: "Effective resolution must be a positive integer",
-    })
-    if (parsedEffectiveResolution.error) {
-      toast.error(parsedEffectiveResolution.error)
-      return
-    }
-
     setSaving(true)
     try {
       const normalizedHeaders = isAnthropicCompatible ? normalizeProviderHeaders(providerHeaderRows) : undefined
+      const trimmedContextWindow = contextWindow.trim()
       await onSave({
         name,
         provider,
         model,
         baseURL: baseURL.trim() || undefined,
         ...(normalizedHeaders ? { providerHeaders: normalizedHeaders } : {}),
-        screenshotSize: screenshotSize || undefined,
-        effectiveResolution: parsedEffectiveResolution.value,
+        vision,
+        ...(trimmedContextWindow ? { contextWindow: trimmedContextWindow } : {}),
       })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to save configuration")
@@ -1121,7 +1110,10 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
             {isAnthropicCompatible && (
               <div className="space-y-2">
                 <div>
-                  <Label>Provider Headers</Label>
+                  <Label>
+                    Provider Headers
+                    <span className="text-muted-foreground font-normal"> (optional)</span>
+                  </Label>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Optional non-secret headers sent with this Anthropic-compatible endpoint.
                   </p>
@@ -1178,30 +1170,36 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
             )}
 
             <div className="space-y-2">
-              <Label>Screenshot Size</Label>
-              <Input
-                placeholder='e.g., "1m", "512k" (empty = no compression)'
-                value={screenshotSize}
-                onChange={(event) => setScreenshotSize(event.target.value)}
-              />
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="config-vision"
+                  checked={vision}
+                  onCheckedChange={setVision}
+                />
+                <Label htmlFor="config-vision">
+                  Vision
+                  <span className="text-muted-foreground font-normal"> (optional)</span>
+                </Label>
+              </div>
               <p className="text-xs text-muted-foreground">
-                Maximum screenshot size for this model (e.g., "1m", "512k"). Empty = no compression.
+                Whether this model can process screenshots. Defaults on; turn off for text-only models (e.g. deepseek-chat).
               </p>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="config-effective-resolution">Effective Resolution</Label>
+              <Label htmlFor="config-context-window">
+                Context Window
+                <span className="text-muted-foreground font-normal"> (optional)</span>
+              </Label>
               <Input
-                id="config-effective-resolution"
-                type="number"
-                min={1}
-                step={1}
-                placeholder="e.g., 1568"
-                value={effectiveResolution}
-                onChange={(event) => setEffectiveResolution(event.target.value)}
+                id="config-context-window"
+                type="text"
+                placeholder='e.g., "256k"'
+                value={contextWindow}
+                onChange={(event) => setContextWindow(event.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Maximum effective screenshot edge sent to the model. Use this with screenshot compression to control token cost.
+                Optional context-window hint as a size string (e.g. "256k"). Leave empty to auto-detect.
               </p>
             </div>
 
