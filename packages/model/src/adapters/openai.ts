@@ -2,6 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 
 import type { LanguageModelV3 } from '@ai-sdk/provider'
 
+import { applyProviderOptions } from '../auth.js'
 import type { Transport } from '../auth.js'
 
 type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue | undefined }
@@ -15,19 +16,25 @@ export interface ProviderOptionsConfig {
 }
 
 export function openaiCompatible(transport: Transport, modelId: string): LanguageModelV3 {
-  return createOpenAI({
-    apiKey: transport.apiKey ?? 'openai-compatible',
-    baseURL: transport.baseURL,
-    fetch: transport.fetch,
-    ...(transport.headers ? { headers: transport.headers } : {}),
-  }).chat(modelId)
+  return applyProviderOptions(
+    createOpenAI({
+      apiKey: transport.apiKey ?? 'openai-compatible',
+      baseURL: transport.baseURL,
+      fetch: transport.fetch,
+      ...(transport.headers ? { headers: transport.headers } : {}),
+    }).chat(modelId),
+    transport,
+  )
 }
 
 export function openaiSubscription(transport: Transport, modelId: string): LanguageModelV3 {
-  return createOpenAI({
-    apiKey: transport.apiKey ?? 'placeholder',
-    fetch: transport.fetch,
-  }).responses(modelId)
+  return applyProviderOptions(
+    createOpenAI({
+      apiKey: transport.apiKey ?? 'placeholder',
+      fetch: transport.fetch,
+    }).responses(modelId),
+    transport,
+  )
 }
 
 export function getProviderOptions(config: ProviderOptionsConfig): ProviderOptions {

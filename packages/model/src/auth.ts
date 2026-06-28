@@ -1,3 +1,6 @@
+import { defaultSettingsMiddleware, wrapLanguageModel } from 'ai'
+
+import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 
 export type ResolvedModelAuth =
@@ -16,12 +19,14 @@ export interface Transport {
   apiKey?: string
   authToken?: string
   fetch?: typeof globalThis.fetch
+  providerOptions?: ModelProfile['providerOptions']
 }
 
 export function deriveTransport(profile: ModelProfile, auth: ResolvedModelAuth): Transport {
   const transport: Transport = {
     ...(profile.baseURL ? { baseURL: profile.baseURL } : {}),
     ...(profile.headers ? { headers: profile.headers } : {}),
+    ...(profile.providerOptions ? { providerOptions: profile.providerOptions } : {}),
   }
 
   switch (auth.kind) {
@@ -34,6 +39,19 @@ export function deriveTransport(profile: ModelProfile, auth: ResolvedModelAuth):
     case 'none':
       return { ...transport, apiKey: placeholderApiKey(profile.provider) }
   }
+}
+
+export function applyProviderOptions(model: LanguageModelV3, transport: Transport): LanguageModelV3 {
+  if (!transport.providerOptions) return model
+
+  return wrapLanguageModel({
+    model,
+    middleware: defaultSettingsMiddleware({
+      settings: {
+        providerOptions: transport.providerOptions as LanguageModelV3CallOptions['providerOptions'],
+      },
+    }),
+  })
 }
 
 function placeholderApiKey(provider: string): string {

@@ -1,9 +1,12 @@
+import { generateText } from 'ai'
 import { describe, expect, it } from 'vitest'
 
-import type { ModelProviderId } from '@vostride/agent-qa-schema'
+import type { ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
 
 import { ADAPTERS, getProviderOptions } from '../adapters/index.js'
+import { applyProviderOptions, deriveTransport } from '../auth.js'
 import type { Transport } from '../auth.js'
+import { stubModel } from './stub-model.js'
 
 interface AdapterCase {
   provider: ModelProviderId
@@ -103,5 +106,52 @@ describe('ADAPTERS', () => {
       },
     })
     expect(getProviderOptions({ provider: 'openai-compatible', fetch })).toBeUndefined()
+  })
+})
+
+describe('providerOptions threading', () => {
+  it('carries profile providerOptions into the derived Transport', () => {
+    const profile: ModelProfile = {
+      provider: 'anthropic-compatible',
+      model: 'claude-local',
+      baseURL: 'http://localhost:8080',
+      providerOptions: { anthropic: { thinking: { type: 'enabled' } } },
+      auth: { mode: 'none' },
+    }
+
+    const transport = deriveTransport(profile, { kind: 'none' })
+
+    expect(transport.providerOptions).toEqual({ anthropic: { thinking: { type: 'enabled' } } })
+  })
+
+  it('returns the same model instance when transport has no providerOptions', () => {
+    const model = stubModel()
+
+    expect(applyProviderOptions(model, {})).toBe(model)
+  })
+
+  it('delivers profile providerOptions to the provider generate call', async () => {
+    let captured: unknown
+    const model = stubModel({
+      async doGenerate(options) {
+        captured = options.providerOptions
+        return {
+          content: [{ type: 'text', text: 'ok' }],
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage: {
+            inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 0, text: 0, reasoning: 0 },
+          },
+          warnings: [],
+        }
+      },
+    })
+
+    const bag = { anthropic: { thinking: { type: 'enabled' } } }
+    const wrapped = applyProviderOptions(model, { providerOptions: bag })
+
+    await generateText({ model: wrapped, prompt: 'hello' })
+
+    expect(captured).toMatchObject(bag)
   })
 })
