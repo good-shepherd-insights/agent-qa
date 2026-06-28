@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -31,6 +33,7 @@ const requiredSkillReferences = {
   'agent-qa-result-triage': ['references/triage-categories.md'],
   'agent-qa-debug-fix': [],
 }
+const ownershipContractMarker = '_OWNERSHIP_CONTRACT'
 const forbiddenPackPatterns = [
   /^\.env($|\.)/,
   /^\.npmrc$/,
@@ -194,6 +197,22 @@ function validateManifestSurface(errors, options = { checkFiles: true }) {
     validatePublicPackage(record, allVersions, errors, options)
   }
   assert(allVersions.size === 1, `public package versions must match, found: ${[...allVersions].join(', ')}`, errors)
+}
+
+function validateNoArchSymbolInDist(errors, records = publicPackageRecords()) {
+  for (const record of records) {
+    for (const file of ['dist/index.d.ts', 'dist/index.js', 'dist/index.cjs']) {
+      const path = join(record.dir, file)
+      if (!existsSync(path)) continue
+
+      const body = readFileSync(path, 'utf-8')
+      if (body.includes(ownershipContractMarker)) {
+        errors.push(
+          `${label(record)} dist must not ship the ownership contract (found ${ownershipContractMarker} in ${file})`,
+        )
+      }
+    }
+  }
 }
 
 function validateCopiedSkills(errors) {
@@ -401,12 +420,27 @@ function runFixtures() {
     }
   }, 'packaged skill missing')
 
+  expectFixtureFailure('ownership contract marker in dist', (errors) => {
+    const temp = mkdtempSync(join(tmpdir(), 'agent-qa-arch-symbol-fixture-'))
+    try {
+      const dist = join(temp, 'dist')
+      mkdirSync(dist, { recursive: true })
+      writeFileSync(join(dist, 'index.d.ts'), `export const BAD${ownershipContractMarker}: string\n`)
+      validateNoArchSymbolInDist(errors, [
+        { dir: temp, pkg: { name: '@vostride/agent-qa-fixture', private: false } },
+      ])
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }, ownershipContractMarker)
+
   console.log('publish surface validation fixtures passed')
 }
 
 function runValidation() {
   const errors = []
   validateManifestSurface(errors)
+  validateNoArchSymbolInDist(errors)
   validateCopiedSkills(errors)
   validateNoStaleMcpToolPrefix(errors)
   runSourceSkillsValidation(errors)
