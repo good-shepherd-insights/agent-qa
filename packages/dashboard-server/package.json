@@ -68,6 +68,7 @@
     "@types/better-sqlite3": "~7.6.13",
     "@types/node": "~24.12.2",
     "@types/ws": "~8.18.1",
+    "@vostride/agent-qa-arch": "workspace:*",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3"
   }

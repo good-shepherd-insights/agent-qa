@@ -59,6 +59,10 @@ function packageRecords() {
     .map(dir => ({ dir, pkg: readJson(join(dir, 'package.json')) }))
 }
 
+function publicPackageRecords() {
+  return packageRecords().filter(record => record.pkg.private !== true)
+}
+
 function label(record) {
   return record.pkg.name ?? relative(root, record.dir)
 }
@@ -181,7 +185,7 @@ function validatePublicPackage(record, allVersions, errors, options = { checkFil
 function validateManifestSurface(errors, options = { checkFiles: true }) {
   validateRootPackage(errors, options)
 
-  const records = packageRecords()
+  const records = publicPackageRecords()
   const entryPackages = records.filter(record => record.pkg.name === entryPackageName)
   assert(entryPackages.length === 1, 'exactly one public entry package named agent-qa is required', errors)
 
@@ -322,7 +326,7 @@ function validatePackDryRuns(errors) {
   delete npmEnv.npm_config_verify_deps_before_run
 
   try {
-    for (const record of packageRecords()) {
+    for (const record of publicPackageRecords()) {
       let output = ''
       try {
         output = execFileSync('npm', ['pack', '--dry-run', '--json'], {
