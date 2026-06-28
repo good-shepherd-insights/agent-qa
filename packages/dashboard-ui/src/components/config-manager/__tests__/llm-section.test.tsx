@@ -66,6 +66,42 @@ vi.mock('@/lib/api', () => ({
   deleteAuthCredential: vi.fn(),
 }))
 
+vi.mock('@/components/ui/select', async () => {
+  const React = await import('react')
+  const SelectContext = React.createContext<{
+    onValueChange?: (value: string) => void
+    value?: string
+  } | null>(null)
+
+  return {
+    Select: ({ children, onValueChange, value }: any) => (
+      <SelectContext.Provider value={{ onValueChange, value }}>{children}</SelectContext.Provider>
+    ),
+    SelectTrigger: ({ children, ...props }: any) => (
+      <button type="button" {...props}>
+        {children}
+      </button>
+    ),
+    SelectValue: () => {
+      const context = React.useContext(SelectContext)
+      return <span>{context?.value}</span>
+    },
+    SelectContent: ({ children }: any) => <div>{children}</div>,
+    SelectItem: ({ children, value }: any) => {
+      const context = React.useContext(SelectContext)
+      return (
+        <button
+          type="button"
+          data-select-value={value}
+          onClick={() => context?.onValueChange?.(value)}
+        >
+          {children}
+        </button>
+      )
+    },
+  }
+})
+
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -129,6 +165,31 @@ function blurInput(input: HTMLInputElement) {
   input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
 }
 
+function clickSelectItem(value: string) {
+  const item = document.body.querySelector(`button[data-select-value="${value}"]`) as HTMLButtonElement | null
+  expect(item).not.toBeNull()
+  item!.click()
+}
+
+function requiredMarkerForLabel(forId: string) {
+  return document.body.querySelector(`label[for="${forId}"] span[aria-hidden="true"]`)
+}
+
+function credentialRequiredMarker() {
+  const heading = Array.from(document.body.querySelectorAll('h3')).find((item) =>
+    item.textContent?.includes('Credentials'),
+  )
+  return heading?.querySelector('span[aria-hidden="true"]') ?? null
+}
+
+function saveChangesButton() {
+  const button = Array.from(document.body.querySelectorAll('button')).find((candidate) =>
+    candidate.textContent?.trim() === 'Save Changes',
+  ) as HTMLButtonElement | undefined
+  expect(button).toBeDefined()
+  return button!
+}
+
 function optionValuesFor(input: HTMLInputElement): string[] {
   const listId = input.getAttribute('list')
   expect(listId).toBeTruthy()
@@ -177,6 +238,137 @@ afterEach(() => {
 })
 
 describe('LlmSection model-config modal', () => {
+  it('marks required controls and toggles conditional markers without blocking Save on credentials', async () => {
+    await renderLlmSection(configWithoutLlms())
+    await openAddLlmEditor()
+
+    const nameInput = document.body.querySelector('#config-name') as HTMLInputElement
+    const providerTrigger = document.body.querySelector('#config-provider') as HTMLButtonElement
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+    const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement
+
+    expect(document.body.textContent).toContain('* Required')
+    expect(nameInput.getAttribute('aria-required')).toBe('true')
+    expect(providerTrigger.getAttribute('aria-required')).toBe('true')
+    expect(modelInput.getAttribute('aria-required')).toBe('true')
+    expect(baseUrlInput.getAttribute('aria-required')).toBe('true')
+    expect(requiredMarkerForLabel('config-name')?.textContent).toBe('*')
+    expect(requiredMarkerForLabel('config-provider')?.textContent).toBe('*')
+    expect(requiredMarkerForLabel('config-model')?.textContent).toBe('*')
+    expect(requiredMarkerForLabel('config-base-url')?.textContent).toBe('*')
+    expect(credentialRequiredMarker()).toBeNull()
+    expect(document.body.querySelector('#provider-error')).toBeNull()
+
+    await act(async () => {
+      setInputValue(nameInput, 'gemini-fast')
+      setInputValue(modelInput, 'gemini-2.5-flash')
+      clickSelectItem('gemini')
+    })
+    await flushRender()
+
+    expect(document.body.querySelector('#config-base-url')).toBeNull()
+    expect(requiredMarkerForLabel('config-base-url')).toBeNull()
+    expect(credentialRequiredMarker()?.textContent).toBe('*')
+    expect(saveChangesButton().disabled).toBe(false)
+
+    await act(async () => {
+      clickSelectItem('openai-compatible')
+    })
+    await flushRender()
+
+    expect(document.body.querySelector('#config-base-url')?.getAttribute('aria-required')).toBe('true')
+    expect(requiredMarkerForLabel('config-base-url')?.textContent).toBe('*')
+    expect(credentialRequiredMarker()).toBeNull()
+
+    await act(async () => {
+      clickSelectItem('gemini')
+    })
+    await flushRender()
+
+    await act(async () => {
+      saveChangesButton().click()
+    })
+    await flushRender()
+
+    expect(mockUpdateSettings).toHaveBeenCalledWith({
+      'registry.llms': [
+        expect.objectContaining({
+          name: 'gemini-fast',
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+        }),
+      ],
+    })
+  })
+
+  it('validates model as required on blur and clears the error while typing', async () => {
+    await renderLlmSection(configWithoutLlms())
+    await openAddLlmEditor()
+
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+
+    await act(async () => {
+      blurInput(modelInput)
+    })
+    await flushRender()
+
+    expect(document.body.textContent).toContain('Model is required.')
+    expect(modelInput.getAttribute('aria-invalid')).toBe('true')
+    expect(modelInput.getAttribute('aria-describedby')).toBe('model-error')
+    expect(document.body.querySelector('#model-error')?.textContent).toBe('Model is required.')
+
+    await act(async () => {
+      setInputValue(modelInput, 'gpt-5.5')
+    })
+    await flushRender()
+
+    expect(document.body.textContent).not.toContain('Model is required.')
+    expect(modelInput.getAttribute('aria-invalid')).toBeNull()
+    expect(modelInput.getAttribute('aria-describedby')).toBeNull()
+  })
+
+  it('validates Base URL as required on blur and submit for compatible providers', async () => {
+    await renderLlmSection(configWithoutLlms())
+    await openAddLlmEditor()
+
+    const nameInput = document.body.querySelector('#config-name') as HTMLInputElement
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+    const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement
+
+    await act(async () => {
+      blurInput(baseUrlInput)
+    })
+    await flushRender()
+
+    expect(document.body.textContent).toContain('Base URL is required for compatible providers.')
+    expect(baseUrlInput.getAttribute('aria-invalid')).toBe('true')
+    expect(baseUrlInput.getAttribute('aria-describedby')).toBe('base-url-error')
+
+    await act(async () => {
+      setInputValue(baseUrlInput, 'https://openrouter.ai/api/v1')
+    })
+    await flushRender()
+
+    expect(document.body.textContent).not.toContain('Base URL is required for compatible providers.')
+    expect(baseUrlInput.getAttribute('aria-invalid')).toBeNull()
+    expect(baseUrlInput.getAttribute('aria-describedby')).toBeNull()
+
+    await act(async () => {
+      setInputValue(baseUrlInput, '')
+      setInputValue(nameInput, 'planner')
+      setInputValue(modelInput, 'gpt-5.5')
+    })
+    await flushRender()
+
+    await act(async () => {
+      saveChangesButton().click()
+    })
+    await flushRender()
+
+    expect(document.body.textContent).toContain('Base URL is required for compatible providers.')
+    expect(mockUpdateSettings).not.toHaveBeenCalled()
+  })
+
   it('binds the model input to provider-scoped catalog datalist options', async () => {
     await renderLlmSection(configWithLlm({
       name: 'planner',

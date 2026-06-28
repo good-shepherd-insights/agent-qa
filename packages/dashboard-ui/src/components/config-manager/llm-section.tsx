@@ -92,6 +92,18 @@ const PROVIDER_LABELS = Object.fromEntries(
 const BASE_URL_HELPER = "Enter the exact endpoint base URL. agent-qa will not append paths."
 const COMPATIBLE_UNAUTHENTICATED_COPY = "Testing without a saved credential."
 const GEMINI_MISSING_COPY = "Save a Gemini API key for this config before testing."
+const MODEL_REQUIRED_ERROR = "Model is required."
+const BASE_URL_REQUIRED_ERROR = "Base URL is required for compatible providers."
+
+function RequiredMarker() {
+  return <span className="text-destructive" aria-hidden="true">*</span>
+}
+
+function providerRequiresCredential(auth: LLMProviderMetadata["auth"] | undefined) {
+  if (!auth) return true
+  if (auth.kind === "api-key") return auth.optional !== true
+  return true
+}
 
 function defaultProviderMetadata(): LLMProviderMetadata[] {
   return [
@@ -590,6 +602,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<LLMTestResult | null>(null)
   const [nameError, setNameError] = useState("")
+  const [modelError, setModelError] = useState("")
   const [baseUrlError, setBaseUrlError] = useState("")
   const [savingCredential, setSavingCredential] = useState(false)
   const [credentialDeleteConfirm, setCredentialDeleteConfirm] = useState<string | null>(null)
@@ -608,6 +621,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   const isAnthropicCompatible = provider === "anthropic-compatible"
   const showBaseURL = isCompatible
   const showCredentialSave = providerInfo?.auth.kind === "api-key"
+  const credentialRequired = providerRequiresCredential(providerInfo?.auth)
   const duplicateHeaderKeys = getDuplicateHeaderKeys(providerHeaderRows)
   const hasDuplicateHeaders = duplicateHeaderKeys.size > 0
   const normalizedProviderHeaders = isAnthropicCompatible ? normalizeProviderHeaders(providerHeaderRows) : undefined
@@ -637,6 +651,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
     if (!open) return
     setTestResult(null)
     setNameError("")
+    setModelError("")
     setBaseUrlError("")
     setCredentialSecret("")
     setTokenPasteInput("")
@@ -709,7 +724,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   async function handleBaseUrlBlur() {
     const trimmedBaseURL = baseURL.trim()
     if (showBaseURL && trimmedBaseURL === "") {
-      setBaseUrlError("Base URL is required for compatible providers.")
+      setBaseUrlError(BASE_URL_REQUIRED_ERROR)
       return
     }
     if (!supportsLiveModelCatalog || !trimmedBaseURL) return
@@ -766,9 +781,13 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
       setNameError(err)
       return
     }
-    if (!name || !provider || !model) return
+    if (!name || !provider) return
+    if (model.trim() === "") {
+      setModelError(MODEL_REQUIRED_ERROR)
+      return
+    }
     if (showBaseURL && baseURL.trim() === "") {
-      setBaseUrlError("Base URL is required for compatible providers.")
+      setBaseUrlError(BASE_URL_REQUIRED_ERROR)
       return
     }
     if (hasDuplicateHeaders) {
@@ -1100,8 +1119,15 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
           </DialogHeader>
 
           <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              <RequiredMarker /> Required
+            </p>
+
             <div className="space-y-2">
-              <Label htmlFor="config-name">Name</Label>
+              <Label htmlFor="config-name">
+                Name
+                <RequiredMarker />
+              </Label>
               <Input
                 id="config-name"
                 placeholder="e.g., claude-fast, gpt-cheap"
@@ -1115,6 +1141,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
                 }}
                 disabled={isEdit}
                 className={isEdit ? "bg-muted" : ""}
+                aria-required="true"
                 aria-describedby={nameError ? "name-error" : undefined}
               />
               <p className="text-xs text-muted-foreground">
@@ -1126,9 +1153,12 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
             </div>
 
             <div className="space-y-2">
-              <Label>Provider</Label>
+              <Label htmlFor="config-provider">
+                Provider
+                <RequiredMarker />
+              </Label>
               <Select value={provider} onValueChange={handleProviderChange}>
-                <SelectTrigger className="w-full">
+                <SelectTrigger id="config-provider" className="w-full" aria-required="true">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1142,13 +1172,25 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="config-model">Model</Label>
+              <Label htmlFor="config-model">
+                Model
+                <RequiredMarker />
+              </Label>
               <Input
                 id="config-model"
                 list={modelOptionsListId}
                 placeholder="model-name"
                 value={model}
-                onChange={(event) => setModel(event.target.value)}
+                onChange={(event) => {
+                  setModel(event.target.value)
+                  if (modelError) setModelError("")
+                }}
+                onBlur={() => {
+                  if (model.trim() === "") setModelError(MODEL_REQUIRED_ERROR)
+                }}
+                aria-required="true"
+                aria-invalid={modelError ? true : undefined}
+                aria-describedby={modelError ? "model-error" : undefined}
               />
               <datalist id={modelOptionsListId}>
                 {modelOptions.map((entry) => (
@@ -1157,12 +1199,18 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
                   </option>
                 ))}
               </datalist>
+              {modelError && (
+                <p id="model-error" className="text-sm text-destructive">{modelError}</p>
+              )}
             </div>
 
             {showBaseURL && (
               <div className="space-y-2">
                 <div className="flex items-center gap-1.5">
-                  <Label htmlFor="config-base-url">Base URL</Label>
+                  <Label htmlFor="config-base-url">
+                    Base URL
+                    <RequiredMarker />
+                  </Label>
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -1189,6 +1237,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
                     if (baseUrlError) setBaseUrlError("")
                   }}
                   onBlur={handleBaseUrlBlur}
+                  aria-required="true"
                   aria-invalid={baseUrlError ? true : undefined}
                   aria-describedby={baseUrlError ? "base-url-error" : undefined}
                 />
@@ -1304,7 +1353,15 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
 
             <div className="space-y-4">
               <div>
-                <h3 className="text-base font-semibold">Credentials</h3>
+                <h3 className="text-base font-semibold">
+                  Credentials
+                  {credentialRequired && (
+                    <>
+                      {" "}
+                      <RequiredMarker />
+                    </>
+                  )}
+                </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Saved credentials are keyed by this named configuration.
                 </p>
