@@ -63,6 +63,8 @@ import {
   updateSettings,
   fetchAuthStatus,
   fetchLLMProviders,
+  fetchModelCatalog,
+  fetchLiveModelCatalog,
   testLLMConnection,
   saveCredential,
   startPluginAuth,
@@ -72,6 +74,7 @@ import {
   type AuthCredentialInfo,
   type LLMProviderMetadata,
   type LLMTestResult,
+  type ModelCatalogEntry,
 } from "@/lib/api"
 
 export const LLM_PROVIDER_OPTIONS = [
@@ -213,6 +216,34 @@ function getDuplicateHeaderKeys(rows: ProviderHeaderRow[]): Set<string> {
     counts.set(key, (counts.get(key) ?? 0) + 1)
   }
   return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([key]) => key))
+}
+
+function mergeCatalogEntries(...entryGroups: ModelCatalogEntry[][]): ModelCatalogEntry[] {
+  const byId = new Map<string, ModelCatalogEntry>()
+  for (const entries of entryGroups) {
+    for (const entry of entries) {
+      if (!byId.has(entry.id)) byId.set(entry.id, entry)
+    }
+  }
+  return [...byId.values()]
+}
+
+function findCatalogVisionMatch(modelValue: string, entries: ModelCatalogEntry[]): ModelCatalogEntry | undefined {
+  const normalized = modelValue.trim().toLowerCase()
+  if (!normalized) return undefined
+
+  const exact = entries.find((entry) => entry.id.toLowerCase() === normalized)
+  if (exact) return exact
+
+  return entries.find((entry) => {
+    const entryId = entry.id.toLowerCase()
+    if (!entryId.endsWith("*")) return false
+    return normalized.startsWith(entryId.slice(0, -1))
+  })
+}
+
+function modelCatalogListId(provider: string): string {
+  return `config-model-options-${provider.replace(/[^a-zA-Z0-9_-]/g, "-")}`
 }
 
 function getConnectionFailureCopy(result: LLMTestResult): string {
@@ -547,7 +578,10 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   const [credentialType, setCredentialType] = useState<CredentialSaveType>("api-key")
   const [credentialSecret, setCredentialSecret] = useState("")
   const [vision, setVision] = useState(true)
+  const [visionUserOverride, setVisionUserOverride] = useState(false)
   const [contextWindow, setContextWindow] = useState("")
+  const [modelCatalog, setModelCatalog] = useState<Record<string, ModelCatalogEntry[]>>({})
+  const [liveModelCatalog, setLiveModelCatalog] = useState<Record<string, ModelCatalogEntry[]>>({})
   const [tokenPasteInput, setTokenPasteInput] = useState("")
   const [exchanging, setExchanging] = useState(false)
   const [oauthLoading, setOauthLoading] = useState(false)
@@ -576,6 +610,28 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
   const showCredentialSave = providerInfo?.auth.kind === "api-key"
   const duplicateHeaderKeys = getDuplicateHeaderKeys(providerHeaderRows)
   const hasDuplicateHeaders = duplicateHeaderKeys.size > 0
+  const normalizedProviderHeaders = isAnthropicCompatible ? normalizeProviderHeaders(providerHeaderRows) : undefined
+  const modelOptions = useMemo(
+    () => mergeCatalogEntries(modelCatalog[provider] ?? [], liveModelCatalog[provider] ?? []),
+    [modelCatalog, liveModelCatalog, provider],
+  )
+  const modelOptionsListId = modelCatalogListId(provider)
+  const supportsLiveModelCatalog = provider === "openai-compatible" || providerInfo?.modelAdapter === "openai-responses"
+
+  useEffect(() => {
+    let cancelled = false
+    fetchModelCatalog()
+      .then((result) => {
+        if (!cancelled) setModelCatalog(result.catalog ?? {})
+      })
+      .catch(() => {
+        if (!cancelled) setModelCatalog({})
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -602,6 +658,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
       )
       setCredentialType(nextProvider === "anthropic-compatible" ? "bearer-token" : "api-key")
       setVision(config.vision ?? true)
+      setVisionUserOverride(true)
       setContextWindow(config.contextWindow ?? "")
     } else {
       const defaultProvider = providerMetadata.find((item) => item.id === "openai-compatible")?.id
@@ -614,9 +671,16 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
       setProviderHeaderRows([])
       setCredentialType("api-key")
       setVision(true)
+      setVisionUserOverride(false)
       setContextWindow("")
     }
   }, [open, config, providerMetadata])
+
+  useEffect(() => {
+    if (!open || isEdit || visionUserOverride) return
+    const matchedEntry = findCatalogVisionMatch(model, modelOptions)
+    if (matchedEntry) setVision(matchedEntry.vision)
+  }, [open, isEdit, visionUserOverride, model, modelOptions])
 
   function validateName(value: string): string {
     if (!value) return ""
@@ -642,6 +706,29 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
     setProviderHeaderRows(newProvider === "anthropic-compatible" ? [makeHeaderRow()] : [])
   }
 
+  async function handleBaseUrlBlur() {
+    const trimmedBaseURL = baseURL.trim()
+    if (showBaseURL && trimmedBaseURL === "") {
+      setBaseUrlError("Base URL is required for compatible providers.")
+      return
+    }
+    if (!supportsLiveModelCatalog || !trimmedBaseURL) return
+
+    try {
+      const result = await fetchLiveModelCatalog({
+        baseURL: trimmedBaseURL,
+        configName: name.trim() || undefined,
+        ...(normalizedProviderHeaders ? { providerHeaders: normalizedProviderHeaders } : {}),
+      })
+      setLiveModelCatalog((current) => ({
+        ...current,
+        [provider]: mergeCatalogEntries(current[provider] ?? [], result.models ?? []),
+      }))
+    } catch {
+      // Static catalog suggestions remain available when live probing fails.
+    }
+  }
+
   function updateHeaderRow(id: string, field: "key" | "value", value: string) {
     setProviderHeaderRows((rows) => rows.map((row) => row.id === id ? { ...row, [field]: value } : row))
   }
@@ -654,12 +741,11 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
     setTesting(true)
     setTestResult(null)
     try {
-      const headers = isAnthropicCompatible ? normalizeProviderHeaders(providerHeaderRows) : undefined
       const result = await testLLMConnection({
         provider,
         model,
         ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
-        ...(headers ? { providerHeaders: headers } : {}),
+        ...(normalizedProviderHeaders ? { providerHeaders: normalizedProviderHeaders } : {}),
         configName: name || undefined,
       })
       setTestResult(result)
@@ -692,14 +778,13 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
 
     setSaving(true)
     try {
-      const normalizedHeaders = isAnthropicCompatible ? normalizeProviderHeaders(providerHeaderRows) : undefined
       const trimmedContextWindow = contextWindow.trim()
       await onSave({
         name,
         provider,
         model,
         baseURL: baseURL.trim() || undefined,
-        ...(normalizedHeaders ? { providerHeaders: normalizedHeaders } : {}),
+        ...(normalizedProviderHeaders ? { providerHeaders: normalizedProviderHeaders } : {}),
         vision,
         ...(trimmedContextWindow ? { contextWindow: trimmedContextWindow } : {}),
       })
@@ -1060,10 +1145,18 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
               <Label htmlFor="config-model">Model</Label>
               <Input
                 id="config-model"
+                list={modelOptionsListId}
                 placeholder="model-name"
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
               />
+              <datalist id={modelOptionsListId}>
+                {modelOptions.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.notes ? `${entry.label} - ${entry.notes}` : entry.label}
+                  </option>
+                ))}
+              </datalist>
             </div>
 
             {showBaseURL && (
@@ -1095,6 +1188,7 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
                     setBaseURL(event.target.value)
                     if (baseUrlError) setBaseUrlError("")
                   }}
+                  onBlur={handleBaseUrlBlur}
                   aria-invalid={baseUrlError ? true : undefined}
                   aria-describedby={baseUrlError ? "base-url-error" : undefined}
                 />
@@ -1174,7 +1268,10 @@ function LlmConfigModal({ open, onOpenChange, config, existingNames, onSave, onA
                 <Switch
                   id="config-vision"
                   checked={vision}
-                  onCheckedChange={setVision}
+                  onCheckedChange={(checked) => {
+                    setVision(checked)
+                    setVisionUserOverride(true)
+                  }}
                 />
                 <Label htmlFor="config-vision">
                   Vision

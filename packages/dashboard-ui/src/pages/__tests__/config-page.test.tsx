@@ -121,6 +121,14 @@ vi.mock('@/lib/api', () => ({
       { id: 'gemini', label: 'Gemini', auth: { kind: 'api-key', credentialTypes: ['api-key'] }, needsBaseURL: false, authModes: ['api-key'] },
     ],
   }),
+  fetchModelCatalog: vi.fn().mockResolvedValue({
+    catalog: {
+      'openai-compatible': [{ id: 'openrouter/auto', label: 'OpenRouter Auto', vision: true }],
+      'anthropic-compatible': [{ id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', vision: true }],
+      gemini: [{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vision: true }],
+    },
+  }),
+  fetchLiveModelCatalog: vi.fn().mockResolvedValue({ models: [] }),
   testLLMConnection: vi.fn().mockResolvedValue({ success: true }),
   saveCredential: vi.fn().mockResolvedValue({ saved: true }),
   startPluginAuth: vi.fn().mockResolvedValue({ authorizeUrl: 'https://auth.example/start', sessionId: 'session-1', mode: 'manual-code' }),
@@ -861,7 +869,7 @@ describe('ConfigPage schema-driven shell', () => {
     expect(baseUrlInput?.placeholder).toBe('https://openrouter.ai/api/v1')
     expect(baseUrlInput?.value).toBe('https://openrouter.ai/api/v1')
     expect(contextWindowInput?.value).toBe('256k')
-    expect(modelInput?.getAttribute('list')).toBeNull()
+    expect(modelInput?.getAttribute('list')).toBe('config-model-options-openai-compatible')
     expect(document.body.textContent).not.toContain('Subscription')
   })
 

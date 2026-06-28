@@ -2,12 +2,29 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { LlmSection } from '@/components/config-manager/llm-section'
-import { updateSettings } from '@/lib/api'
+import { fetchLiveModelCatalog, fetchModelCatalog, updateSettings } from '@/lib/api'
+import { toast } from 'sonner'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const { modelCatalogFixture } = vi.hoisted(() => ({
+  modelCatalogFixture: {
+    'openai-compatible': [
+      { id: 'deepseek-chat', label: 'DeepSeek Chat', vision: false, notes: 'text-only' },
+      { id: 'claude-*', label: 'Claude family', vision: true },
+      { id: 'gpt-5.5', label: 'GPT-5.5', vision: true },
+    ],
+    'anthropic-compatible': [
+      { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', vision: true },
+    ],
+    gemini: [
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vision: true },
+    ],
+  },
+}))
 
 vi.mock('@/lib/api', () => ({
   updateSettings: vi.fn().mockResolvedValue({ updated: true }),
@@ -39,6 +56,8 @@ vi.mock('@/lib/api', () => ({
       },
     ],
   }),
+  fetchModelCatalog: vi.fn().mockResolvedValue({ catalog: modelCatalogFixture }),
+  fetchLiveModelCatalog: vi.fn().mockResolvedValue({ models: [] }),
   testLLMConnection: vi.fn().mockResolvedValue({ success: true }),
   saveCredential: vi.fn().mockResolvedValue({ saved: true }),
   startPluginAuth: vi.fn().mockResolvedValue({ authorizeUrl: 'https://auth.example/start', sessionId: 'session-1', mode: 'manual-code' }),
@@ -55,6 +74,9 @@ vi.mock('sonner', () => ({
 }))
 
 const mockUpdateSettings = vi.mocked(updateSettings)
+const mockFetchModelCatalog = vi.mocked(fetchModelCatalog)
+const mockFetchLiveModelCatalog = vi.mocked(fetchLiveModelCatalog)
+const mockToastError = vi.mocked(toast.error)
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
@@ -87,10 +109,32 @@ async function openFirstLlmEditor() {
   await flushRender()
 }
 
+async function openAddLlmEditor() {
+  await act(async () => {
+    const addButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
+      button.textContent?.trim() === 'Add Configuration',
+    ) as HTMLButtonElement
+    addButton.click()
+  })
+  await flushRender()
+}
+
 function setInputValue(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
   setter?.call(input, value)
   input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+function blurInput(input: HTMLInputElement) {
+  input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+}
+
+function optionValuesFor(input: HTMLInputElement): string[] {
+  const listId = input.getAttribute('list')
+  expect(listId).toBeTruthy()
+  const datalist = document.body.querySelector(`#${listId}`) as HTMLDataListElement | null
+  expect(datalist).not.toBeNull()
+  return Array.from(datalist!.querySelectorAll('option')).map((option) => option.value)
 }
 
 function configWithLlm(llm: Record<string, unknown>) {
@@ -105,6 +149,21 @@ function configWithLlm(llm: Record<string, unknown>) {
   }
 }
 
+function configWithoutLlms() {
+  return {
+    registry: {
+      llms: [],
+    },
+    use: {},
+  }
+}
+
+beforeEach(() => {
+  mockUpdateSettings.mockResolvedValue({ updated: true })
+  mockFetchModelCatalog.mockResolvedValue({ catalog: modelCatalogFixture })
+  mockFetchLiveModelCatalog.mockResolvedValue({ models: [] })
+})
+
 afterEach(() => {
   if (root) {
     act(() => root!.unmount())
@@ -118,6 +177,24 @@ afterEach(() => {
 })
 
 describe('LlmSection model-config modal', () => {
+  it('binds the model input to provider-scoped catalog datalist options', async () => {
+    await renderLlmSection(configWithLlm({
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'gpt-5.5',
+      baseURL: 'https://openrouter.ai/api/v1',
+    }))
+    await openFirstLlmEditor()
+
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+    const optionValues = optionValuesFor(modelInput)
+
+    expect(mockFetchModelCatalog).toHaveBeenCalled()
+    expect(modelInput.getAttribute('list')).toBe('config-model-options-openai-compatible')
+    expect(optionValues).toEqual(expect.arrayContaining(['deepseek-chat', 'claude-*', 'gpt-5.5']))
+    expect(optionValues).not.toContain('gemini-2.5-flash')
+  })
+
   it('saves vision and contextWindow without per-model sizing fields', async () => {
     await renderLlmSection(configWithLlm({
       name: 'planner',
@@ -172,6 +249,126 @@ describe('LlmSection model-config modal', () => {
     const savedConfig = (savedSettings['registry.llms'] as Record<string, unknown>[])[0]
     expect(savedConfig).not.toHaveProperty('screenshotSize')
     expect(savedConfig).not.toHaveProperty('effectiveResolution')
+  })
+
+  it('silently preserves static datalist options when live OpenAI-compatible enrichment fails', async () => {
+    mockFetchLiveModelCatalog.mockRejectedValueOnce(new Error('network down'))
+
+    await renderLlmSection(configWithLlm({
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'gpt-5.5',
+      baseURL: ' https://openrouter.ai/api/v1 ',
+    }))
+    await openFirstLlmEditor()
+
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+    const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement
+
+    await act(async () => {
+      blurInput(baseUrlInput)
+    })
+    await flushRender()
+
+    expect(mockFetchLiveModelCatalog).toHaveBeenCalledWith({
+      baseURL: 'https://openrouter.ai/api/v1',
+      configName: 'planner',
+    })
+    expect(mockFetchLiveModelCatalog.mock.calls[0]?.[0]).not.toHaveProperty('apiKey')
+    expect(optionValuesFor(modelInput)).toEqual(expect.arrayContaining(['deepseek-chat', 'gpt-5.5']))
+    expect(mockToastError).not.toHaveBeenCalled()
+  })
+
+  it('merges live OpenAI-compatible catalog options', async () => {
+    mockFetchLiveModelCatalog.mockResolvedValueOnce({
+      models: [
+        { id: 'live-local-model', label: 'Live Local Model', vision: false },
+      ],
+    })
+
+    await renderLlmSection(configWithLlm({
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'gpt-5.5',
+      baseURL: 'https://openrouter.ai/api/v1',
+    }))
+    await openFirstLlmEditor()
+
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+    const baseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement
+
+    await act(async () => {
+      blurInput(baseUrlInput)
+    })
+    await flushRender()
+
+    expect(optionValuesFor(modelInput)).toEqual(expect.arrayContaining(['gpt-5.5', 'live-local-model']))
+  })
+
+  it('does not fetch live catalog options for Anthropic-compatible providers', async () => {
+    await renderLlmSection(configWithLlm({
+      name: 'claude-proxy',
+      provider: 'anthropic-compatible',
+      model: 'claude-sonnet-4-20250514',
+      baseURL: 'https://anthropic-proxy.example/messages',
+    }))
+    await openFirstLlmEditor()
+
+    const anthropicBaseUrlInput = document.body.querySelector('#config-base-url') as HTMLInputElement
+    await act(async () => {
+      blurInput(anthropicBaseUrlInput)
+    })
+    await flushRender()
+
+    expect(mockFetchLiveModelCatalog).not.toHaveBeenCalled()
+  })
+
+  it('prefills vision from catalog matches until the user manually overrides it', async () => {
+    await renderLlmSection(configWithoutLlms())
+    await openAddLlmEditor()
+
+    const modelInput = document.body.querySelector('#config-model') as HTMLInputElement
+    const visionSwitch = document.body.querySelector('#config-vision') as HTMLButtonElement
+
+    expect(visionSwitch.getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      setInputValue(modelInput, 'deepseek-chat')
+    })
+    await flushRender()
+    expect(visionSwitch.getAttribute('aria-checked')).toBe('false')
+
+    await act(async () => {
+      setInputValue(modelInput, 'claude-sonnet-4-20250514')
+    })
+    await flushRender()
+    expect(visionSwitch.getAttribute('aria-checked')).toBe('true')
+
+    await act(async () => {
+      visionSwitch.click()
+    })
+    await flushRender()
+    expect(visionSwitch.getAttribute('aria-checked')).toBe('false')
+
+    await act(async () => {
+      setInputValue(modelInput, 'claude-opus-4-20250514')
+    })
+    await flushRender()
+    expect(visionSwitch.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('keeps the saved vision value authoritative in edit mode', async () => {
+    await renderLlmSection(configWithLlm({
+      name: 'planner',
+      provider: 'openai-compatible',
+      model: 'claude-sonnet-4-20250514',
+      baseURL: 'https://openrouter.ai/api/v1',
+      vision: false,
+    }))
+    await openFirstLlmEditor()
+
+    const visionSwitch = document.body.querySelector('#config-vision') as HTMLButtonElement
+    expect(visionSwitch.getAttribute('aria-checked')).toBe('false')
   })
 
   it('marks provider headers optional with helper text for Anthropic-compatible configs', async () => {

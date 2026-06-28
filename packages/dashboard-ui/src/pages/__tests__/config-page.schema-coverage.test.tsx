@@ -150,6 +150,14 @@ vi.mock('@/lib/api', () => ({
       { id: 'gemini', label: 'Gemini', auth: { kind: 'api-key', credentialTypes: ['api-key'] }, needsBaseURL: false, authModes: ['api-key'] },
     ],
   }),
+  fetchModelCatalog: vi.fn().mockResolvedValue({
+    catalog: {
+      'openai-compatible': [{ id: 'openrouter/auto', label: 'OpenRouter Auto', vision: true }],
+      'anthropic-compatible': [{ id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', vision: true }],
+      gemini: [{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vision: true }],
+    },
+  }),
+  fetchLiveModelCatalog: vi.fn().mockResolvedValue({ models: [] }),
   testLLMConnection: vi.fn(),
   saveCredential: vi.fn().mockResolvedValue({ saved: true }),
   startPluginAuth: vi.fn(),
@@ -426,19 +434,23 @@ describe('ConfigPage schema coverage', () => {
     expect(document.body.textContent).toContain('Delete Credential')
   })
 
-  it('uses a free text model input without datalist', async () => {
+  it('uses a free text model input with datalist suggestions', async () => {
     await renderLlmEditorForConfig('openai-compatible')
 
-    const input = document.body.querySelector('input[placeholder="model-name"]')
+    const input = document.body.querySelector('input[placeholder="model-name"]') as HTMLInputElement | null
     expect(input).not.toBeNull()
-    expect(input?.getAttribute('list')).toBeNull()
+    expect(input?.getAttribute('list')).toBe('config-model-options-openai-compatible')
+    const datalist = document.body.querySelector('#config-model-options-openai-compatible')
+    expect(datalist).not.toBeNull()
   })
 
-  it('does not render maintained model suggestions', async () => {
+  it('renders maintained model suggestions without replacing free text entry', async () => {
     const view = await renderAt('/config?bucket=registry&item=llms')
     await openAddLlmModal(view)
 
-    expect(document.body.innerHTML).not.toContain('<datalist')
+    expect(document.body.innerHTML).toContain('<datalist')
+    expect(document.body.querySelector('input[placeholder="model-name"]')?.getAttribute('list')).toBe('config-model-options-openai-compatible')
+    expect(document.body.querySelector('option[value="openrouter/auto"]')).not.toBeNull()
     expect(document.body.textContent).not.toContain('PROVIDER_MODELS')
     expect(document.body.textContent).not.toContain('SUBSCRIPTION_MODELS')
     expect(document.body.textContent).not.toContain('Gemini 2.0 Flash')
