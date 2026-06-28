@@ -124,6 +124,26 @@ describe('validate:arch held-out fixtures', () => {
     ).toEqual([])
   })
 
+  it('held-out runner knowledge-write firewall rejects writes for the providerNeutral+storageNeutral runner shape and accepts the read-only reader', () => {
+    const runnerContract = fixtureContract({
+      packageClasses: ['providerNeutral', 'storageNeutral'],
+    })
+
+    expect(
+      findClassRuleOffenders(runnerContract, [
+        fixtureHit('@vostride/agent-qa-knowledge/add'),
+      ]),
+    ).toEqual([
+      'packages/fixture | fixture.ts:1 | @vostride/agent-qa-knowledge/add | storageNeutral forbids knowledge.add',
+    ])
+
+    expect(
+      findClassRuleOffenders(runnerContract, [
+        fixtureHit('@vostride/agent-qa-knowledge/reader'),
+      ]),
+    ).toEqual([])
+  })
+
   it('held-out storage seam rejects native store packages and Node filesystem imports', () => {
     expect(NATIVE_STORE_DENYLIST).toContain('better-sqlite3')
 
