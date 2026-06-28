@@ -930,8 +930,8 @@ export async function updateLLMs(
     model: string
     baseURL?: string
     providerHeaders?: Record<string, string>
-    screenshotSize?: string
-    effectiveResolution?: number
+    vision?: boolean
+    contextWindow?: string
   }>,
   defaultLLM: string,
 ): Promise<{ updated: boolean }> {

@@ -60,10 +60,7 @@ vi.mock('@vostride/agent-qa-core', async () => {
     model: z.string(),
     baseURL: z.string().optional(),
     providerHeaders: providerHeadersSchema.optional(),
-    // Deferred to Phase 333: settings write still accepts legacy per-model
-    // sizing fields while runtime reads resolve services.vision instead.
-    screenshotSize: z.union([z.string(), z.number()]).optional(),
-    effectiveResolution: z.number().positive().int().optional(),
+    vision: z.boolean().optional(),
   }).strict()
   const validateModelConfig = (config: { provider?: string; baseURL?: string; providerHeaders?: Record<string, string> }, ctx: { addIssue: (issue: any) => void }) => {
     if (
@@ -504,6 +501,10 @@ describe('PUT /api/config/settings', () => {
           minTrust: 0.4,
           maxInjections: 4,
         },
+        'services.vision': {
+          screenshotSize: '512k',
+          effectiveResolution: 768,
+        },
         'registry.targets': {
           staging: {
             platform: 'web',
@@ -558,6 +559,10 @@ describe('PUT /api/config/settings', () => {
           minTrust: 0.4,
           maxInjections: 4,
         },
+        vision: {
+          screenshotSize: '512k',
+          effectiveResolution: 768,
+        },
       },
       registry: {
         targets: {
@@ -603,6 +608,56 @@ describe('PUT /api/config/settings', () => {
       },
     })
     expect((config.use as any).headless).toBeUndefined()
+  })
+
+  it('persists shared services.vision settings', async () => {
+    const { configManager, configPath } = await createConfigWorkspace()
+    router = createRouter({
+      db: createMockDatabase() as any,
+      configManager,
+      configPath,
+    })
+
+    const res = await invokeRoute('/api/config/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        'services.vision': {
+          screenshotSize: '384k',
+          effectiveResolution: 640,
+        },
+      }),
+    })
+
+    expect(res.status).toBe(200)
+    expect(JSON.parse(res.body)).toEqual({ updated: true })
+
+    const config = await configManager.read()
+    expect((config.services as any)?.vision).toEqual({
+      screenshotSize: '384k',
+      effectiveResolution: 640,
+    })
+  })
+
+  it('rejects unknown services.vision keys', async () => {
+    const res = await invokeRoute('/api/config/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        'services.vision': {
+          screenshotSize: '384k',
+          cropMode: 'center',
+        },
+      }),
+    })
+
+    expect(res.status).toBe(400)
+    const data = JSON.parse(res.body) as { error: string; details: string[] }
+    expect(data.error).toBe('Validation failed')
+    expect(data.details.some((detail) =>
+      detail.startsWith('services.vision:')
+      && detail.includes('cropMode'),
+    )).toBe(true)
   })
 
   it('persists use.mobile.appState scalar updates', async () => {
