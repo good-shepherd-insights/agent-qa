@@ -54,7 +54,21 @@ export const PACKAGE_CLASS_RULES = {
   },
   storageNeutral: {
     allowed: ['storage access through ports only'],
-    forbidden: ['better-sqlite3', 'sharp', 'node:fs', 'fs', 'node:*'],
+    forbidden: [
+      'better-sqlite3',
+      'sharp',
+      'node:fs',
+      'fs',
+      'node:*',
+      // L2 runner/agent neutral packages use the runner.md §4 reader, not write paths.
+      'knowledge.add',
+      'knowledge.confirm',
+      'knowledge.supersede',
+      'knowledge.deprecate',
+      'knowledge.commit',
+      'knowledge.promotion',
+      'promotion',
+    ],
   },
   storageImplementation: {
     allowed: ['concrete store implementations', 'filesystem access', 'sqlite access'],
