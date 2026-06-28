@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { AGENT_QA_MODEL_PACKAGE_CLASSES, toolSchemaMiddleware } from '../index.js'
+import { toolSchemaMiddleware } from '../index.js'
+import { AGENT_QA_MODEL_PACKAGE_CLASSES } from '../ownership-contract.js'
 
 describe('model package ownership contract', () => {
   it('declares model owner and storage-neutral classes', () => {
