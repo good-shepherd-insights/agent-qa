@@ -35,6 +35,8 @@ export type { ScreenState } from './screen/index'
 export type { ScreenStateMetadata, ScreenStateMetadataBase } from './screen/index'
 export type { ModelCapabilities } from './capability/index'
 export type { ModelProfile, ModelProviderId, ModelAuthDeclaration } from './model-profile/index'
+export type { EmbeddingProfile } from './embedding-profile/index'
+export { DEFAULT_EMBEDDING_PROFILE } from './embedding-profile/index'
 export type {
   AndroidPlatformConfig,
   BrowserConfig,
