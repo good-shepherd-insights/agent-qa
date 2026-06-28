@@ -26,6 +26,7 @@
     "validate:agents": "node scripts/validate-agent-instructions.mjs",
     "validate:publish": "node scripts/validate-publish-surface.mjs",
     "validate:tools": "pnpm --filter @vostride/agent-qa-core exec vitest run src/tools/__tests__/validate-tools.test.ts",
+    "validate:arch": "pnpm --filter @vostride/agent-qa-arch exec vitest run src/__tests__/validate-arch.test.ts",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",
