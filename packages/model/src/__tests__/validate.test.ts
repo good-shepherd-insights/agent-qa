@@ -26,6 +26,15 @@ describe('validateProfile', () => {
     )
   })
 
+  it('rejects whitespace-only baseURL for compatible providers', () => {
+    expect(() => validateProfile(profile({ provider: 'openai-compatible', baseURL: '   ' }))).toThrow(
+      'OpenAI-Compatible provider requires a baseURL',
+    )
+    expect(() => validateProfile(profile({ provider: 'anthropic-compatible', baseURL: '   ' }))).toThrow(
+      'Anthropic-Compatible provider requires a baseURL',
+    )
+  })
+
   it('rejects custom headers outside anthropic-compatible without leaking values', () => {
     const secret = 'secret-sentinel-api-key'
 

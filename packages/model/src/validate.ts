@@ -1,11 +1,11 @@
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 
 export function validateProfile(profile: ModelProfile): void {
-  if (profile.provider === 'openai-compatible' && !profile.baseURL) {
+  if (profile.provider === 'openai-compatible' && !profile.baseURL?.trim()) {
     throw new Error('OpenAI-Compatible provider requires a baseURL')
   }
 
-  if (profile.provider === 'anthropic-compatible' && !profile.baseURL) {
+  if (profile.provider === 'anthropic-compatible' && !profile.baseURL?.trim()) {
     throw new Error('Anthropic-Compatible provider requires a baseURL')
   }
 
