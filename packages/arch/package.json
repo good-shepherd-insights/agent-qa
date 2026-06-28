@@ -1,0 +1,23 @@
+{
+  "name": "@vostride/agent-qa-arch",
+  "version": "0.1.21",
+  "private": true,
+  "description": "Internal architecture-as-code vocabulary for agent-qa workspace packages.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "devDependencies": {
+    "@types/node": "~24.12.2",
+    "typescript": "~6.0.3",
+    "vitest": "~4.1.5"
+  }
+}
