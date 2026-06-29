@@ -4,7 +4,11 @@ export const AGENT_QA_AGENT_PACKAGE_NAME = '@vostride/agent-qa-agent'
 export const AGENT_QA_AGENT_PACKAGE_DIR = 'packages/agent'
 export const AGENT_QA_AGENT_PACKAGE_CLASSES = ['providerNeutral', 'storageNeutral'] as const
 export const AGENT_QA_AGENT_ALLOWED_RESPONSIBILITIES = [
-  'provider-neutral and storage-neutral QA-agent abstract-port shell pending Phase 338 port definitions',
+  'provider-neutral and storage-neutral knowledge write/curation port contract',
+  'provider-neutral and storage-neutral tools execution port contract',
+  'provider-neutral and storage-neutral agent persistence-store port contract',
+  'provider-neutral and storage-neutral approvals gating port contract',
+  'provider-neutral and storage-neutral clock port contract',
 ] as const
 export const AGENT_QA_AGENT_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
@@ -13,7 +17,7 @@ export const AGENT_QA_AGENT_FORBIDDEN_RESPONSIBILITIES = [
   'concrete platform-adapter, knowledge-store, tool-store, or agent-store implementations',
 ] as const
 export const AGENT_QA_AGENT_EXTERNAL_DEPENDENCIES = [] as const
-export const AGENT_QA_AGENT_INTERNAL_DEPENDENCIES = [] as const
+export const AGENT_QA_AGENT_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
 
 export const AGENT_QA_AGENT_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_AGENT_PACKAGE_NAME,
