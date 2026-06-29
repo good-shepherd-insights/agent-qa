@@ -113,3 +113,7 @@ export type { VerifierVerdict, Decision } from './handoff/index'
 export type { BundleKind, OriginStage } from './delta/index'
 export { toRecordedActionResult } from './result/index'
 export { computeEvidenceToken } from './ids/index'
+
+// 338 reader DTOs (PORT-03)
+export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch } from './reader/index'
+export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
