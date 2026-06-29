@@ -13,6 +13,7 @@ export type {
   TimeoutConfig,
   RuntimeAuthStateConfig,
 } from './platform.js'
+export type { KnowledgeHintReader } from './knowledge-hint-reader.js'
 export { assertNever } from './platform.js'
 
 export type {
