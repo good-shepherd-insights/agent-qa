@@ -1,4 +1,7 @@
-/**
- * Neutral QA-agent shell. Abstract ports are introduced in Phase 338.
- */
-export {}
+export type {
+  KnowledgePort,
+  ToolsPort,
+  PersistencePort,
+  ApprovalsPort,
+  ClockPort,
+} from './ports/index.js'
