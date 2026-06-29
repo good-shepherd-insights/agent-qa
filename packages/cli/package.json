@@ -91,6 +91,7 @@
     "@vostride/agent-qa-ios": "workspace:*",
     "@vostride/agent-qa-mcp": "workspace:*",
     "@vostride/agent-qa-model": "workspace:*",
+    "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-web": "workspace:*",
     "ai": "6.0.174",
     "commander": "14.0.3",

@@ -24,6 +24,7 @@ export const AGENT_QA_DASHBOARD_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ios',
   '@vostride/agent-qa-mcp',
   '@vostride/agent-qa-model',
+  '@vostride/agent-qa-runner',
   '@vostride/agent-qa-web',
 ] as const
 

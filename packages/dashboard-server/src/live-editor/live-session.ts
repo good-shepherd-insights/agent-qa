@@ -25,15 +25,17 @@ import type {
   AgentLoopConfig,
   AuthStateMetadata,
   StepContext,
-  PlatformAdapter,
-  PlatformConfig,
-  StepResult,
-  StepPhaseEvent,
   HookDefinition,
   MobilePlatform,
   SecretRedactor,
   SecretStore,
 } from '@vostride/agent-qa-core'
+import type {
+  PlatformAdapter,
+  PlatformConfig,
+  StepResult,
+  StepPhaseEvent,
+} from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
 import { prepareMobileLiveSession } from './mobile-bootstrap.js'
 import type { MobileLiveAppiumLease } from './mobile-bootstrap.js'

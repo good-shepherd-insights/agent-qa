@@ -1,12 +1,14 @@
 import type {
-  ConsoleLogEntry,
-  NetworkLogEntry,
-  StepAnnotation,
   HookDefinition,
   ModelConfig,
   SecretRedactor,
   SecretStore,
 } from '@vostride/agent-qa-core'
+import type {
+  ConsoleLogEntry,
+  NetworkLogEntry,
+  StepAnnotation,
+} from '@vostride/agent-qa-runner'
 
 export type LiveSessionLLMConfig = Pick<
   ModelConfig,

@@ -7,9 +7,9 @@ import {
 } from '@vostride/agent-qa-core'
 import type {
   MobilePlatform,
-  PlatformConfig,
   ResolvedMobileRunConfig,
 } from '@vostride/agent-qa-core'
+import type { PlatformConfig } from '@vostride/agent-qa-runner'
 import type { AppiumManager } from '../execution/appium-manager.js'
 import type { ConfigManager } from '../config/index.js'
 

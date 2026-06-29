@@ -11,7 +11,8 @@ import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { applyResolvedAuthToModelConfig, resolveLLMModels, resolveModelAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
-import type { TestDefinition, TestResult, ParseError, PlatformAdapter, PlatformConfig, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions, SecretStore, SecretRedactor } from '@vostride/agent-qa-core'
+import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions, SecretStore, SecretRedactor } from '@vostride/agent-qa-core'
+import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
 
@@ -2016,7 +2017,7 @@ export function createRunCommand(): Command {
         const runOneDirectTest = async (test: TestDefinition): Promise<DirectTestOutcome> => {
           let currentPlatform: 'web' | 'android' | 'ios' | null = null
           let currentAdapterKey: string | null = null
-          let adapter: import('@vostride/agent-qa-core').PlatformAdapter | null = null
+          let adapter: import('@vostride/agent-qa-runner').PlatformAdapter | null = null
           let analyticsRunId: string | undefined
           let analyticsFilePath = 'unknown'
           let analyticsPlatform: 'web' | 'android' | 'ios' | undefined
@@ -2261,7 +2262,7 @@ export function createRunCommand(): Command {
             }
 
             // Per-test recording override: meta.record takes priority over global
-            let testRecording: import('@vostride/agent-qa-core').PlatformConfig['recording'] | undefined
+            let testRecording: import('@vostride/agent-qa-runner').PlatformConfig['recording'] | undefined
             const testRecordMeta = (testDef.meta as any)?.record
             if (testRecordMeta === true || recordingEnabled) {
               const recCfg2 = config.services?.recording as Record<string, unknown> | undefined

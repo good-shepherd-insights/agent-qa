@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { DashboardReporter } from '../reporter/dashboard-reporter.js'
 import { DashboardDatabase } from '../db/database.js'
 import { generateFailureSummary, SecretRedactor, SecretStore } from '@vostride/agent-qa-core'
-import type { SuiteDefinition, TestDefinition, StepResult, TestResult, RunSummary } from '@vostride/agent-qa-core'
+import type { SuiteDefinition, TestDefinition, RunSummary } from '@vostride/agent-qa-core'
+import type { StepResult, TestResult } from '@vostride/agent-qa-runner'
 
 vi.mock('node:fs/promises', () => ({
   copyFile: vi.fn().mockResolvedValue(undefined),
