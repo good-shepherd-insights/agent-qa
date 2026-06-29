@@ -16,6 +16,7 @@ import {
 import { applyLedger, transitionalLeaks } from '../lint/apply-ledger.js'
 import { findDepReconciliationOffenders } from '../lint/reconcile-deps.js'
 import { findCycleOffenders } from '../lint/walk-dag.js'
+import { findDirectionOffenders } from '../lint/direction.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -80,6 +81,7 @@ describe('validate:arch (LINT-01..05)', () => {
     }
 
     offenders.push(...findCycleOffenders(contracts))
+    offenders.push(...findDirectionOffenders(contracts))
 
     expect(offenders).toEqual([])
   })
@@ -211,6 +213,26 @@ describe('validate:arch held-out fixtures', () => {
       packageName: '@vostride/agent-qa-b',
       packageDir: 'packages/b',
     })])).toEqual([])
+  })
+
+  it('held-out direction firewall rejects neutral to storageImplementation and accepts adapter to port', () => {
+    const neutral = fixtureContract({
+      packageName: '@vostride/agent-qa-neutral',
+      packageDir: 'packages/neutral',
+      packageClasses: ['storageNeutral'],
+      internalDependencies: ['@vostride/agent-qa-local'],
+    })
+    const local = fixtureContract({
+      packageName: '@vostride/agent-qa-local',
+      packageDir: 'packages/local',
+      packageClasses: ['storageImplementation'],
+      internalDependencies: ['@vostride/agent-qa-neutral'],
+    })
+
+    expect(findDirectionOffenders([neutral, local])).toEqual([
+      'direction: @vostride/agent-qa-neutral (storageNeutral) ⇏ @vostride/agent-qa-local (storageImplementation)',
+    ])
+    expect(findDirectionOffenders([local])).toEqual([])
   })
 
   it('held-out core ledger reports uncovered and stale entries while accepting covered leaks', () => {
