@@ -13,8 +13,10 @@ const legalPackageClasses = new Set(Object.keys(PACKAGE_CLASS_RULES))
 
 const expectedPackageDirs = [
   'packages/arch',
+  'packages/agent',
   'packages/schema',
   'packages/model',
+  'packages/runner',
   'packages/core',
   'packages/ids',
   'packages/web',
@@ -27,10 +29,8 @@ const expectedPackageDirs = [
 ] as const
 
 const stalePrototypeDirs = [
-  'packages/agent',
   'packages/agent-local',
   'packages/knowledge-local',
-  'packages/runner',
   'packages/tools-local',
 ] as const
 
