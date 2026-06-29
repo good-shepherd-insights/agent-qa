@@ -1,4 +1,4 @@
-import type { ElementInfo } from '../types/platform.js'
+import type { ElementInfo } from '@vostride/agent-qa-runner'
 
 export interface MobileNode {
   index: number

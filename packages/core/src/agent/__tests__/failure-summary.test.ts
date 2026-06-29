@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { generateFailureSummary } from '../failure-summary.js'
-import type { StepResult, StepTrace } from '../../types/result.js'
+import type { StepResult, StepTrace } from '@vostride/agent-qa-runner'
 
 function makeTrace(overrides: Partial<StepTrace> = {}): StepTrace {
   return {

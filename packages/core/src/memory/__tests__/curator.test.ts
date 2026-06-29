@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { TestResult } from '../../types/result.js'
+import type { TestResult } from '@vostride/agent-qa-runner'
 import type { MemoryProvider } from '../provider.js'
 import type { ProviderOptions } from '../../agent/provider.js'
 

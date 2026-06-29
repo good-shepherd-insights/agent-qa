@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { MobileElementResolver } from '../element-resolver.js'
 import type { MobileRefMap } from '../types.js'
-import type { Action } from '../../types/platform.js'
+import type { Action } from '@vostride/agent-qa-runner'
 
 const sampleRefs: MobileRefMap = {
   e1: { role: 'textbox', name: 'Email', bounds: { x: 100, y: 200, width: 50, height: 30 } },

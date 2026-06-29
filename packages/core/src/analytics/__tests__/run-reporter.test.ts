@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildInternalRunAttributes } from '../../run-attributes.js'
 import type { TestDefinition } from '../../types/test.js'
-import type { StepResult, TestResult } from '../../types/result.js'
+import type { StepResult, TestResult } from '@vostride/agent-qa-runner'
 import { MockAnalyticsTransport } from '../transport.js'
 import { createAnalyticsRunReporter } from '../run-reporter.js'
 

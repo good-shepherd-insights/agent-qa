@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser'
-import type { ElementInfo } from '../types/platform.js'
+import type { ElementInfo } from '@vostride/agent-qa-runner'
 import type { MobileRefMap, ParsedMobileTree } from './types.js'
 import { normalizeRole } from './role-map.js'
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { captureFailureScreenshot } from '../screenshot.js'
-import type { PlatformAdapter } from '../../types/platform.js'
+import type { PlatformAdapter } from '@vostride/agent-qa-runner'
 
 function makeAdapter(overrides?: Partial<PlatformAdapter>): PlatformAdapter {
   return {

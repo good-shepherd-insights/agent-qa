@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '../../types/platform.js'
+import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { Planner, Verifier, VerificationResult, AgentLoopConfig, StepContext, HealingConfig } from '../types.js'
 import { createTimeoutAbortReason, executeStep } from '../loop.js'

@@ -14,7 +14,7 @@ import {
   stripReservedAuthStateHookEnv,
 } from '../auth-state/hook-env.js'
 import { redactAuthStateValue } from '../auth-state/redaction.js'
-import type { RuntimeAuthStateConfig } from '../types/platform.js'
+import type { RuntimeAuthStateConfig } from '@vostride/agent-qa-runner'
 
 export interface SandboxRunnerOptions {
   dockerBin?: string

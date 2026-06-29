@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PlatformAdapter, ScreenStateMetadata } from '../types/platform.js'
+import type { PlatformAdapter, ScreenStateMetadata } from '@vostride/agent-qa-runner'
 import type { CompressResult } from '../screenshot/compress.js'
 import { warnIfOutOfBounds } from '../validation/coord-bounds.js'
 

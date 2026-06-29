@@ -1,4 +1,4 @@
-import type { StepResult } from '../types/result.js'
+import type { StepResult } from '@vostride/agent-qa-runner'
 
 function normalizeFailureTextForComparison(text: string | undefined): string {
   return (text ?? '')

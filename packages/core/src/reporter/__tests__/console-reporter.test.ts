@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ConsoleReporter, humanDuration } from '../console-reporter.js'
 import { generateFailureSummary } from '../../agent/failure-summary.js'
-import type { StepResult, TestResult, StepTrace, SubActionTrace } from '../../types/result.js'
+import type { StepResult, TestResult, StepTrace, SubActionTrace } from '@vostride/agent-qa-runner'
 import type { RunSummary, SuiteSummary } from '../types.js'
 
 describe('humanDuration', () => {

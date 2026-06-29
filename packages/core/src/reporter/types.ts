@@ -1,5 +1,5 @@
 import type { TestDefinition } from '../types/test.js'
-import type { StepPhaseEvent, StepResult, TestResult } from '../types/result.js'
+import type { StepPhaseEvent, StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { SuiteDefinition } from '../suite/types.js'
 import type { RunArtifactReporterContext } from '../artifacts/run-artifact.js'
 

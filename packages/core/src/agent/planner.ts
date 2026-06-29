@@ -1,6 +1,6 @@
 import { generateText } from 'ai'
 import type { LanguageModel } from 'ai'
-import type { ScreenState } from '../types/platform.js'
+import type { ScreenState } from '@vostride/agent-qa-runner'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { ProviderOptions } from './provider.js'
 import type { ScopedLogger } from '../logging/types.js'

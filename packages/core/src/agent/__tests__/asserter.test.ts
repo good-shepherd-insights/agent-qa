@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ScreenState } from '../../types/platform.js'
+import type { ScreenState } from '@vostride/agent-qa-runner'
 import { AssertionEvaluator, LLMAssertionEvaluator, createAsserter } from '../asserter.js'
 import type { AssertionInput } from '../types.js'
 

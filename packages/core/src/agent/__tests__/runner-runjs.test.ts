@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '../../types/platform.js'
+import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'

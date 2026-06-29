@@ -1,4 +1,4 @@
-import type { Action } from '../types/platform.js'
+import type { Action } from '@vostride/agent-qa-runner'
 import type { MobileRefMap } from './types.js'
 
 const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'assert', 'scroll', 'swipe', 'pinch', 'multiTap'])

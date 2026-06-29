@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { ScreenState } from '../types/platform.js'
+import type { ScreenState } from '@vostride/agent-qa-runner'
 
 export function truncateScreenState(state: ScreenState): string {
   const parts: string[] = []

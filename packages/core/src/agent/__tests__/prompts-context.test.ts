@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildStepPrompt, buildSystemPrompt } from '../prompts.js'
-import type { ScreenState } from '../../types/platform.js'
+import type { ScreenState } from '@vostride/agent-qa-runner'
 import type { StepContext } from '../types.js'
 
 function makeContext(overrides: Partial<StepContext> = {}): StepContext {

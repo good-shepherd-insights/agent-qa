@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Action, ActionResult, PlatformAdapter, PlatformConfig, ScreenState } from '../../types/platform.js'
+import type { Action, ActionResult, PlatformAdapter, PlatformConfig, ScreenState } from '@vostride/agent-qa-runner'
 
 const {
   mockRunTest,

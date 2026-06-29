@@ -1,7 +1,7 @@
 import { generateText, Output } from 'ai'
 import type { LanguageModel } from 'ai'
 import { z } from 'zod'
-import type { ScreenState, Action } from '../types/platform.js'
+import type { ScreenState, Action } from '@vostride/agent-qa-runner'
 import type { Verifier, VerifyResult } from './types.js'
 import type { ProviderOptions } from './provider.js'
 import { buildVerificationPrompt } from './prompts.js'

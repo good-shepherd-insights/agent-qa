@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { JUnitReporter } from '../reporter/junit-reporter.js'
-import type { TestResult, StepResult } from '../types/result.js'
+import type { TestResult, StepResult } from '@vostride/agent-qa-runner'
 import type { RunSummary, SuiteSummary } from '../reporter/types.js'
 
 vi.mock('node:fs/promises', () => ({

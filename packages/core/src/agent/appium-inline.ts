@@ -1,4 +1,4 @@
-import type { Action } from '../types/platform.js'
+import type { Action } from '@vostride/agent-qa-runner'
 
 const APPIUM_INLINE_RE = /\{\{appium:\s*(.+?)\}\}/
 

@@ -13,7 +13,7 @@ import type {
   SuiteSummary,
 } from '../reporter/types.js'
 import type { SuiteDefinition } from '../suite/types.js'
-import type { StepResult, TestResult, TokenUsage } from '../types/result.js'
+import type { StepResult, TestResult, TokenUsage } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../types/test.js'
 import { buildAnalyticsEvent, type AnalyticsEventProperties, type AnalyticsSurface } from './events.js'
 import {

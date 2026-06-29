@@ -1,4 +1,4 @@
-import type { BrowserConfig } from '../types/platform.js'
+import type { BrowserConfig } from '@vostride/agent-qa-runner'
 
 export interface FarmProvider {
   readonly name: string

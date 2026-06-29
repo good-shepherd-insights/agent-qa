@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { TestResult } from '../types/result.js'
+import type { TestResult } from '@vostride/agent-qa-runner'
 import type { Reporter, RunSummary, SuiteSummary } from './types.js'
 import type { SuiteDefinition } from '../suite/types.js'
 

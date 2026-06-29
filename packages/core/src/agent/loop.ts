@@ -1,6 +1,6 @@
 import { resolve as resolvePath, isAbsolute, dirname } from 'node:path'
-import type { Action, ActionResult, ScreenState } from '../types/platform.js'
-import type { StepResult, StepTrace, StepAnnotation, TokenUsage, SubActionTrace } from '../types/result.js'
+import type { Action, ActionResult, ScreenState } from '@vostride/agent-qa-runner'
+import type { StepResult, StepTrace, StepAnnotation, TokenUsage, SubActionTrace } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { AgentLoopConfig, StepContext, PlanResult } from './types.js'
 import { hashScreenState, hashStepInstruction } from './observation.js'

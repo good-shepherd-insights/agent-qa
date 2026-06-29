@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { ScreenState } from '../../types/platform.js'
+import type { ScreenState } from '@vostride/agent-qa-runner'
 import type { StepContext } from '../types.js'
 import { buildStepPrompt } from '../prompts.js'
 

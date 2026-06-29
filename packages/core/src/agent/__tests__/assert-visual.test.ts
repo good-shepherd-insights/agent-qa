@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
 import { formatAction } from '../prompts.js'
-import type { Action } from '../../types/platform.js'
+import type { Action } from '@vostride/agent-qa-runner'
 
 // Get the assert schema from the registry
 import { defaultRegistry } from '../../tools/index.js'

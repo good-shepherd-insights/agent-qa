@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { MultiReporter } from '../types.js'
 import type { Reporter, RunSummary, StepEventContext } from '../types.js'
-import type { StepResult, TestResult } from '../../types/result.js'
+import type { StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../../types/test.js'
 
 function makeStepResult(overrides?: Partial<StepResult>): StepResult {

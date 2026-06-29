@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import type { BrowserConfig } from '../types/platform.js'
+import type { BrowserConfig } from '@vostride/agent-qa-runner'
 
 const BROWSER_MAP: Record<string, string> = {
   chromium: 'playwright-chromium',

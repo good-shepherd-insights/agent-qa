@@ -1,4 +1,4 @@
-import type { RuntimeAuthStateConfig } from '../types/platform.js'
+import type { RuntimeAuthStateConfig } from '@vostride/agent-qa-runner'
 
 export const AUTH_STATE_HOOK_JSON_ENV = 'AGENT_QA_AUTH_STATE_JSON'
 export const AUTH_STATE_HOOK_STORAGE_STATE_PATH_ENV = 'AGENT_QA_AUTH_STATE_STORAGE_STATE_PATH'

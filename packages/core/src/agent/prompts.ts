@@ -1,4 +1,4 @@
-import type { ScreenState, Action } from '../types/platform.js'
+import type { ScreenState, Action } from '@vostride/agent-qa-runner'
 import type { StepContext, AssertionInput, ExtractorInput } from './types.js'
 import type { ScopedLogger } from '../logging/types.js'
 import { truncateScreenState } from './observation.js'

@@ -1,6 +1,6 @@
 import pc from 'picocolors'
 import type { TestDefinition } from '../types/test.js'
-import type { StepResult, TestResult } from '../types/result.js'
+import type { StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { Reporter, RunSummary, SuiteSummary, HookEvent, HookResultEvent } from './types.js'
 import type { SuiteDefinition } from '../suite/types.js'
 

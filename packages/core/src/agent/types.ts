@@ -1,6 +1,6 @@
 import type { LanguageModel } from 'ai'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '../types/platform.js'
-import type { StepResult, HealingAttempt, TokenUsage, StepPhaseEvent } from '../types/result.js'
+import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { StepResult, HealingAttempt, TokenUsage, StepPhaseEvent } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { LogManager } from '../logging/log-manager.js'
 import type { SecretRedactor, SecretStore } from './secrets.js'

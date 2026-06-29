@@ -1,4 +1,4 @@
-import type { PlatformAdapter } from '../types/platform.js'
+import type { PlatformAdapter } from '@vostride/agent-qa-runner'
 
 export async function captureFailureScreenshot(
   adapter: PlatformAdapter,
