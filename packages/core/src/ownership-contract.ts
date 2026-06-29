@@ -30,6 +30,7 @@ export const AGENT_QA_CORE_EXTERNAL_DEPENDENCIES = [
 ] as const
 export const AGENT_QA_CORE_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
+  '@vostride/agent-qa-runner',
   '@vostride/agent-qa-schema',
 ] as const
 export const AGENT_QA_CORE_MIGRATION_LEDGER = [
