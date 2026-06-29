@@ -1,5 +1,5 @@
 import { expectTypeOf } from 'vitest'
-import { assertNever } from '../platform.js'
+import { assertNever } from '@vostride/agent-qa-runner'
 import type {
   AndroidAction,
   CommonAction,
@@ -8,7 +8,7 @@ import type {
   Platform,
   WebAction,
 } from '@vostride/agent-qa-schema'
-import type { Action, ActionsFor, PlatformAdapter } from '../platform.js'
+import type { Action, ActionsFor, PlatformAdapter } from '@vostride/agent-qa-runner'
 
 type WebVerbs = (WebAction | CommonAction)['type']
 type LegacyFoldedWebVerbs =

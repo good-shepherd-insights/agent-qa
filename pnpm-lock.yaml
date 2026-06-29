@@ -182,6 +182,9 @@ importers:
       '@vostride/agent-qa-ids':
         specifier: workspace:*
         version: link:../ids
+      '@vostride/agent-qa-runner':
+        specifier: workspace:*
+        version: link:../runner
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema
