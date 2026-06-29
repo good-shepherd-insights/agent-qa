@@ -14,9 +14,11 @@ const legalPackageClasses = new Set(Object.keys(PACKAGE_CLASS_RULES))
 const expectedPackageDirs = [
   'packages/arch',
   'packages/agent',
+  'packages/agent-local',
   'packages/schema',
   'packages/model',
   'packages/runner',
+  'packages/knowledge-local',
   'packages/core',
   'packages/ids',
   'packages/web',
@@ -24,15 +26,12 @@ const expectedPackageDirs = [
   'packages/ios',
   'packages/mcp',
   'packages/cli',
+  'packages/tools-local',
   'packages/dashboard-server',
   'packages/dashboard-ui',
 ] as const
 
-const stalePrototypeDirs = [
-  'packages/agent-local',
-  'packages/knowledge-local',
-  'packages/tools-local',
-] as const
+const stalePrototypeDirs = [] as const
 
 function packageDirsFromManifest(): string[] {
   return ARCH_MANIFEST.packages.map(contract => contract.packageDir)

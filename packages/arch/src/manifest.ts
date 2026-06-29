@@ -1,4 +1,5 @@
 import { AGENT_QA_AGENT_OWNERSHIP_CONTRACT } from '../../agent/src/ownership-contract.js'
+import { AGENT_QA_AGENT_LOCAL_OWNERSHIP_CONTRACT } from '../../agent-local/src/ownership-contract.js'
 import { AGENT_QA_ANDROID_OWNERSHIP_CONTRACT } from '../../android/src/ownership-contract.js'
 import { AGENT_QA_CLI_OWNERSHIP_CONTRACT } from '../../cli/src/ownership-contract.js'
 import { AGENT_QA_CORE_OWNERSHIP_CONTRACT } from '../../core/src/ownership-contract.js'
@@ -6,10 +7,12 @@ import { AGENT_QA_DASHBOARD_OWNERSHIP_CONTRACT } from '../../dashboard-server/sr
 import { AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT } from '../../dashboard-ui/src/ownership-contract.js'
 import { AGENT_QA_IDS_OWNERSHIP_CONTRACT } from '../../ids/src/ownership-contract.js'
 import { AGENT_QA_IOS_OWNERSHIP_CONTRACT } from '../../ios/src/ownership-contract.js'
+import { AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT } from '../../knowledge-local/src/ownership-contract.js'
 import { AGENT_QA_MCP_OWNERSHIP_CONTRACT } from '../../mcp/src/ownership-contract.js'
 import { AGENT_QA_MODEL_OWNERSHIP_CONTRACT } from '../../model/src/ownership-contract.js'
 import { AGENT_QA_RUNNER_OWNERSHIP_CONTRACT } from '../../runner/src/ownership-contract.js'
 import { AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT } from '../../schema/src/ownership-contract.js'
+import { AGENT_QA_TOOLS_LOCAL_OWNERSHIP_CONTRACT } from '../../tools-local/src/ownership-contract.js'
 import { AGENT_QA_WEB_OWNERSHIP_CONTRACT } from '../../web/src/ownership-contract.js'
 import { PACKAGE_CLASS_RULES } from './contract-types.js'
 import type { OwnershipContract } from './contract-types.js'
@@ -19,9 +22,11 @@ export const ARCH_MANIFEST = {
   packages: [
     AGENT_QA_ARCH_OWNERSHIP_CONTRACT,
     AGENT_QA_AGENT_OWNERSHIP_CONTRACT,
+    AGENT_QA_AGENT_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT,
     AGENT_QA_MODEL_OWNERSHIP_CONTRACT,
     AGENT_QA_RUNNER_OWNERSHIP_CONTRACT,
+    AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_CORE_OWNERSHIP_CONTRACT,
     AGENT_QA_IDS_OWNERSHIP_CONTRACT,
     AGENT_QA_WEB_OWNERSHIP_CONTRACT,
@@ -29,6 +34,7 @@ export const ARCH_MANIFEST = {
     AGENT_QA_IOS_OWNERSHIP_CONTRACT,
     AGENT_QA_MCP_OWNERSHIP_CONTRACT,
     AGENT_QA_CLI_OWNERSHIP_CONTRACT,
+    AGENT_QA_TOOLS_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_DASHBOARD_OWNERSHIP_CONTRACT,
     AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT,
   ],
