@@ -78,7 +78,7 @@ vi.mock('webdriverio', () => ({
 }))
 
 import { IOSPlatformAdapter } from '../adapter.js'
-import type { PlatformConfig } from '@vostride/agent-qa-core'
+import type { PlatformConfig } from '@vostride/agent-qa-runner'
 import zlib from 'node:zlib'
 
 // --- PNG helpers (avoids adding sharp as ios dep per Pitfall 5) ---

@@ -1,4 +1,4 @@
-import type { ActionsFor } from '@vostride/agent-qa-core'
+import type { ActionsFor } from '@vostride/agent-qa-runner'
 
 export type ValidationResult =
   | { valid: true }

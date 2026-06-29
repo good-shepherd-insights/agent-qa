@@ -1,4 +1,4 @@
-import type { PlatformConfig } from '@vostride/agent-qa-core'
+import type { PlatformConfig } from '@vostride/agent-qa-runner'
 import type { LaunchOptions, BrowserContextOptions } from 'playwright-core'
 
 export type RefMap = Record<string, { role: string; name?: string; nth?: number; bounds?: { x: number; y: number; width: number; height: number } }>

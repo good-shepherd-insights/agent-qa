@@ -13,6 +13,7 @@ export const AGENT_QA_ANDROID_FORBIDDEN_RESPONSIBILITIES = [
 export const AGENT_QA_ANDROID_EXTERNAL_DEPENDENCIES = ['webdriverio'] as const
 export const AGENT_QA_ANDROID_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-core',
+  '@vostride/agent-qa-runner',
 ] as const
 
 export const AGENT_QA_ANDROID_OWNERSHIP_CONTRACT = {

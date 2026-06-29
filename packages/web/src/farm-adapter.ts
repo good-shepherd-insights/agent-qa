@@ -8,8 +8,9 @@ import type {
   PlatformAdapter,
   PlatformConfig,
   ScreenState,
-} from '@vostride/agent-qa-core'
-import { assertNever, getProvider, registerAllProviders } from '@vostride/agent-qa-core'
+} from '@vostride/agent-qa-runner'
+import { assertNever } from '@vostride/agent-qa-runner'
+import { getProvider, registerAllProviders } from '@vostride/agent-qa-core'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
 import type { FarmWebConfig } from '@vostride/agent-qa-core'
 import { observePage } from './observer.js'

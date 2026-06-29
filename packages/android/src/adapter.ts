@@ -7,12 +7,12 @@ import type {
   PlatformAdapter,
   PlatformConfig,
   ScreenState,
-} from '@vostride/agent-qa-core'
+} from '@vostride/agent-qa-runner'
+import { assertNever } from '@vostride/agent-qa-runner'
 import {
   KEY_MAP,
   MobileElementResolver,
   MobileSetupError,
-  assertNever,
   computeFingerPositions,
   computePinch,
   computeSwipe,

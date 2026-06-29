@@ -64,7 +64,7 @@ vi.mock('webdriverio', () => ({
 }))
 
 import { AndroidPlatformAdapter } from '../adapter.js'
-import type { PlatformConfig } from '@vostride/agent-qa-core'
+import type { PlatformConfig } from '@vostride/agent-qa-runner'
 
 describe('AndroidPlatformAdapter', () => {
   let adapter: AndroidPlatformAdapter

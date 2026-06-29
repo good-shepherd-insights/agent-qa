@@ -14,7 +14,10 @@ export const AGENT_QA_WEB_EXTERNAL_DEPENDENCIES = [
   '@axe-core/playwright',
   'playwright-core',
 ] as const
-export const AGENT_QA_WEB_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-core'] as const
+export const AGENT_QA_WEB_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-core',
+  '@vostride/agent-qa-runner',
+] as const
 
 export const AGENT_QA_WEB_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_WEB_PACKAGE_NAME,

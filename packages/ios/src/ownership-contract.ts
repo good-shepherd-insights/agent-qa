@@ -11,7 +11,10 @@ export const AGENT_QA_IOS_FORBIDDEN_RESPONSIBILITIES = [
   'provider model SDK ownership',
 ] as const
 export const AGENT_QA_IOS_EXTERNAL_DEPENDENCIES = ['webdriverio'] as const
-export const AGENT_QA_IOS_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-core'] as const
+export const AGENT_QA_IOS_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-core',
+  '@vostride/agent-qa-runner',
+] as const
 
 export const AGENT_QA_IOS_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_IOS_PACKAGE_NAME,

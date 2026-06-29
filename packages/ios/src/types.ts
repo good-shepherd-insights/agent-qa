@@ -1,4 +1,4 @@
-import type { PlatformConfig } from '@vostride/agent-qa-core'
+import type { PlatformConfig } from '@vostride/agent-qa-runner'
 
 export interface IOSAdapterConfig extends PlatformConfig {
   appiumUrl?: string

@@ -51,6 +51,7 @@
   "dependencies": {
     "@axe-core/playwright": "4.11.3",
     "@vostride/agent-qa-core": "workspace:*",
+    "@vostride/agent-qa-runner": "workspace:*",
     "playwright-core": "1.59.1"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 import type { Page } from 'playwright-core'
-import type { ScreenState, ElementInfo } from '@vostride/agent-qa-core'
+import type { ScreenState, ElementInfo } from '@vostride/agent-qa-runner'
 import type { RefMap } from './types.js'
 import { extractDom } from './dom-extractor.js'
 

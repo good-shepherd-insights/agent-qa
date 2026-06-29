@@ -8,8 +8,9 @@ import type {
   PlatformAdapter,
   PlatformConfig,
   ScreenState,
-} from '@vostride/agent-qa-core'
-import { assertNever, convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
+} from '@vostride/agent-qa-runner'
+import { assertNever } from '@vostride/agent-qa-runner'
+import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
 import { observePage } from './observer.js'
 import { ElementResolver } from './element-resolver.js'
 import { validateAction } from './action-validator.js'
