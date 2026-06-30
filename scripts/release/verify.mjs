@@ -24,6 +24,8 @@ export function buildReleaseGatePlan(bump) {
     'pnpm build',
     'pnpm run validate:skills',
     'pnpm run validate:publish',
+    'pnpm run validate:tools',
+    'pnpm run validate:arch',
     'stage packages',
     'release postbuild verification',
     'create release commit and tag',
