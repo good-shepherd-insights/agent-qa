@@ -35,18 +35,20 @@ describe('validateProfile', () => {
     )
   })
 
-  it('rejects custom headers outside anthropic-compatible without leaking values', () => {
-    const secret = 'secret-sentinel-api-key'
-
+  it('accepts openai-compatible profiles with baseURL and headers', () => {
     expect(() =>
       validateProfile(
         profile({
           provider: 'openai-compatible',
           baseURL: 'http://localhost:11434/v1',
-          headers: { authorization: secret },
+          headers: { authorization: 'Bearer local-token' },
         }),
       ),
-    ).toThrow(/OpenAI-Compatible provider custom headers are only supported on anthropic-compatible/)
+    ).not.toThrow()
+  })
+
+  it('rejects custom headers outside compatible providers without leaking values', () => {
+    const secret = 'secret-sentinel-api-key'
 
     try {
       validateProfile(
