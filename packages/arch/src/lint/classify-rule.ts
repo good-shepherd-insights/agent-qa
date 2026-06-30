@@ -1,4 +1,5 @@
 import { PACKAGE_CLASS_RULES } from '../contract-types.js'
+import { matchesDenylistEntry } from './denylist.js'
 import { classifySpecifier } from './extract-specifiers.js'
 import type { OwnershipContract, PackageClass } from '../contract-types.js'
 import type { ClassifiedSpecifier, SpecifierHit } from './extract-specifiers.js'
@@ -37,7 +38,7 @@ export function compileForbiddenEntry(entry: string): RuleMatcher | null {
       return true
     }
 
-    return hasPackageName(parsed) && parsed.pkgName === entry
+    return hasPackageName(parsed) && matchesDenylistEntry(parsed.pkgName, entry)
   }
 }
 

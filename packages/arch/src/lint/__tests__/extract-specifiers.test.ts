@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   NODE_BUILTINS,
   classifySpecifier,
+  configFilesFor,
   extractSpecifiers,
   sourceFilesFor,
   specifiersInSource,
@@ -87,11 +88,17 @@ describe('sourceFilesFor', () => {
     writeFileSync(join(packageRoot, 'src', 'index.ts'), 'export const ok = true\n')
     writeFileSync(join(packageRoot, 'src', 'view.tsx'), 'export const ok = <div />\n')
     writeFileSync(join(packageRoot, 'src', 'style.css'), '@import "tailwindcss";\n')
+    writeFileSync(join(packageRoot, 'src', 'script.mjs'), 'import "dotenv/config"\n')
+    writeFileSync(join(packageRoot, 'src', 'runtime.cjs'), 'require("node:fs")\n')
+    writeFileSync(join(packageRoot, 'src', 'plain.js'), 'import "zod"\n')
     writeFileSync(join(packageRoot, 'src', 'ownership-contract.ts'), 'export const contract = {}\n')
     writeFileSync(join(packageRoot, 'src', '__tests__', 'index.test.ts'), 'it("works", () => {})\n')
 
     expect(sourceFilesFor(packageDir, repoRoot)).toEqual([
       join(packageRoot, 'src', 'index.ts'),
+      join(packageRoot, 'src', 'plain.js'),
+      join(packageRoot, 'src', 'runtime.cjs'),
+      join(packageRoot, 'src', 'script.mjs'),
       join(packageRoot, 'src', 'style.css'),
       join(packageRoot, 'src', 'view.tsx'),
     ])
@@ -101,5 +108,30 @@ describe('sourceFilesFor', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-source-empty-'))
 
     expect(sourceFilesFor('packages/missing', repoRoot)).toEqual([])
+  })
+})
+
+describe('configFilesFor', () => {
+  it('returns package-root config files without recursing into src', () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-config-'))
+    const packageDir = 'packages/fixture'
+    const packageRoot = join(repoRoot, packageDir)
+    mkdirSync(join(packageRoot, 'src'), { recursive: true })
+    writeFileSync(join(packageRoot, 'tsup.config.ts'), 'import "tsup"\n')
+    writeFileSync(join(packageRoot, 'vitest.config.mjs'), 'import "vitest/config"\n')
+    writeFileSync(join(packageRoot, 'vite.config.js'), 'import "vite"\n')
+    writeFileSync(join(packageRoot, 'src', 'vite.config.ts'), 'import "node:fs"\n')
+
+    expect(configFilesFor(packageDir, repoRoot)).toEqual([
+      join(packageRoot, 'tsup.config.ts'),
+      join(packageRoot, 'vite.config.js'),
+      join(packageRoot, 'vitest.config.mjs'),
+    ])
+  })
+
+  it('returns an empty list for a missing package', () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-config-empty-'))
+
+    expect(configFilesFor('packages/missing', repoRoot)).toEqual([])
   })
 })

@@ -68,9 +68,20 @@ export function sourceFilesFor(packageDir: string, repoRoot: string): string[] {
     return []
   }
 
-  return globSync('src/**/*.{ts,tsx,css}', { cwd: packageRoot })
+  return globSync('src/**/*.{ts,tsx,css,mjs,cjs,js}', { cwd: packageRoot })
     .filter(file => !file.includes('__tests__'))
     .filter(file => !file.includes('ownership-contract'))
+    .sort()
+    .map(file => join(packageRoot, file))
+}
+
+export function configFilesFor(packageDir: string, repoRoot: string): string[] {
+  const packageRoot = join(repoRoot, packageDir)
+  if (!existsSync(packageRoot)) {
+    return []
+  }
+
+  return globSync('*.config.{ts,mts,cts,mjs,cjs,js}', { cwd: packageRoot })
     .sort()
     .map(file => join(packageRoot, file))
 }
