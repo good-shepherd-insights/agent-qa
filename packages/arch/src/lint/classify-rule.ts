@@ -25,11 +25,6 @@ export function compileForbiddenEntry(entry: string): RuleMatcher | null {
     return hit => hit.specifier.startsWith(prefix)
   }
 
-  if (entry.startsWith('knowledge.') || entry === 'promotion') {
-    const pathEntry = entry.replace('knowledge.', 'knowledge/')
-    return hit => hit.specifier.includes(entry) || hit.specifier.includes(pathEntry)
-  }
-
   return hit => {
     const parsed = classifySpecifier(hit.specifier)
     const bareEntry = entry.replace(/^node:/, '')

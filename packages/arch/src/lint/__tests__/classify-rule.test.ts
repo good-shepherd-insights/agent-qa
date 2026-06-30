@@ -47,16 +47,6 @@ describe('compileForbiddenEntry', () => {
     expect(matcher?.(hit('ai'))).toBe(false)
   })
 
-  it('matches knowledge-write firewall entries by dotted or path substring', () => {
-    const addMatcher = compileForbiddenEntry('knowledge.add')
-    const promotionMatcher = compileForbiddenEntry('promotion')
-
-    expect(addMatcher?.(hit('@vostride/agent-qa-knowledge/src/knowledge.add.js'))).toBe(true)
-    expect(addMatcher?.(hit('@vostride/agent-qa-knowledge/src/knowledge/add.js'))).toBe(true)
-    expect(addMatcher?.(hit('@vostride/agent-qa-knowledge/src/knowledge/read.js'))).toBe(false)
-    expect(promotionMatcher?.(hit('@vostride/agent-qa-knowledge/src/promotion.js'))).toBe(true)
-  })
-
   it('matches exact external packages and builtins', () => {
     const sqliteMatcher = compileForbiddenEntry('better-sqlite3')
     const fsMatcher = compileForbiddenEntry('node:fs')
@@ -103,17 +93,6 @@ describe('findClassRuleOffenders', () => {
     ).toEqual([
       'packages/fixture | fixture.ts:1 | fs | storageNeutral forbids fs',
       'packages/fixture | fixture.ts:2 | sharp | storageNeutral forbids sharp',
-    ])
-  })
-
-  it('flags adapter knowledge-write imports and accepts read imports', () => {
-    expect(
-      findClassRuleOffenders(fixtureContract(['adapter']), [
-        hit('@vostride/agent-qa-knowledge/src/knowledge.add.js'),
-        hit('@vostride/agent-qa-knowledge/src/knowledge/read.js', 2),
-      ]),
-    ).toEqual([
-      'packages/fixture | fixture.ts:1 | @vostride/agent-qa-knowledge/src/knowledge.add.js | adapter forbids knowledge.add',
     ])
   })
 
