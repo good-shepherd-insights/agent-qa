@@ -202,15 +202,6 @@ importers:
 
   packages/core:
     dependencies:
-      '@ai-sdk/anthropic':
-        specifier: 3.0.74
-        version: 3.0.74(zod@4.4.2)
-      '@ai-sdk/google':
-        specifier: 3.0.67
-        version: 3.0.67(zod@4.4.2)
-      '@ai-sdk/openai':
-        specifier: 3.0.58
-        version: 3.0.58(zod@4.4.2)
       '@vostride/agent-qa-ids':
         specifier: workspace:*
         version: link:../ids

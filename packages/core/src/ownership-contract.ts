@@ -10,9 +10,6 @@ export const AGENT_QA_CORE_FORBIDDEN_RESPONSIBILITIES = [
   'new responsibilities or new boundary violations beyond what the ledger already enumerates',
 ] as const
 export const AGENT_QA_CORE_EXTERNAL_DEPENDENCIES = [
-  '@ai-sdk/anthropic',
-  '@ai-sdk/google',
-  '@ai-sdk/openai',
   'ai',
   'better-sqlite3',
   'bytes',
@@ -34,24 +31,6 @@ export const AGENT_QA_CORE_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-schema',
 ] as const
 export const AGENT_QA_CORE_MIGRATION_LEDGER = [
-  {
-    rule: 'modelOwner',
-    target: '@ai-sdk/anthropic',
-    clearedBy: 'v47/Phase 340 MIG-02',
-    reason: 'v1 provider switch in src/agent/provider.ts',
-  },
-  {
-    rule: 'modelOwner',
-    target: '@ai-sdk/openai',
-    clearedBy: 'v47/Phase 340 MIG-02',
-    reason: 'v1 provider switch in src/agent/provider.ts',
-  },
-  {
-    rule: 'modelOwner',
-    target: '@ai-sdk/google',
-    clearedBy: 'v47/Phase 340 MIG-02',
-    reason: 'v1 provider switch in src/agent/provider.ts',
-  },
   {
     rule: 'storageImplementation',
     target: 'better-sqlite3',
