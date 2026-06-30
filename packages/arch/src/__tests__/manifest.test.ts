@@ -254,6 +254,12 @@ describe('ARCH_MANIFEST enumeration', () => {
     expect(findContractlessWorkspaceOffenders(workspaceMemberDirs(), contractBearingDirs())).toEqual([])
   })
 
+  it('reports a contract-less workspace member in a held-out fixture', () => {
+    expect(
+      findContractlessWorkspaceOffenders(['packages/a', 'packages/b'], ['packages/a']),
+    ).toContain('packages/b: workspace package missing src/ownership-contract.ts')
+  })
+
   it('declares exactly the expected Phase 335 package set', () => {
     const packageDirs = packageDirsFromManifest()
 
