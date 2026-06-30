@@ -1,6 +1,5 @@
 import type {
   HookDefinition,
-  ModelConfig,
   SecretRedactor,
   SecretStore,
 } from '@vostride/agent-qa-core'
@@ -9,11 +8,9 @@ import type {
   NetworkLogEntry,
   StepAnnotation,
 } from '@vostride/agent-qa-runner'
+import type { DashboardLLMConfig } from '../llm-model-mapping.js'
 
-export type LiveSessionLLMConfig = Pick<
-  ModelConfig,
-  'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
-> & {
+export type LiveSessionLLMConfig = DashboardLLMConfig & {
   vision?: { screenshotSize?: number; effectiveResolution?: number }
 }
 

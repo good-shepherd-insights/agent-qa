@@ -17,9 +17,9 @@ import {
   buildAnalyticsEvent,
   captureAnalytics,
   resolveAnalyticsStandardProperties,
-  type ModelConfig,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import type { DashboardLLMConfig } from '../llm-model-mapping.js'
 import {
   createLocalMcpHttpHandler,
   resolveLocalMcpEndpoint,
@@ -61,10 +61,7 @@ interface StartServerOptions {
   workspacePaths?: ResolvedWorkspacePaths
   configPath?: string
   mcp?: LocalMcpEndpointConfig
-  llmConfig?: Pick<
-    ModelConfig,
-    'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
-  > & {
+  llmConfig?: DashboardLLMConfig & {
     vision?: { screenshotSize?: number; effectiveResolution?: number }
   }
   authFetch?: typeof globalThis.fetch

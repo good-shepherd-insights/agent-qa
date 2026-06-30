@@ -13,12 +13,12 @@ import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
-import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, ModelConfig, OAuthTokens } from '@vostride/agent-qa-core'
+import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { parse as parseYaml } from 'yaml'
-import { toModelProfileAndAuth } from '../llm-model-mapping.js'
+import { toModelProfileAndAuth, type DashboardLLMConfig } from '../llm-model-mapping.js'
 
 const LLM_PROVIDER_MODES = new Set([
   'openai-compatible',
@@ -215,12 +215,8 @@ function serializeAuthProviderPlugin(plugin: LLMAuthProviderPlugin): DashboardLL
   }
 }
 
-type DashboardRuntimeLLMConfig = Pick<
-  ModelConfig,
-  'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
-> & {
+type DashboardRuntimeLLMConfig = DashboardLLMConfig & {
   vision?: DashboardVisionConfig
-  modelAdapter?: 'openai-responses' | 'anthropic-messages'
 }
 
 type DashboardVisionConfig = {
