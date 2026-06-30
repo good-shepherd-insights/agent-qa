@@ -52,6 +52,14 @@ const {
 
 vi.mock('glob', () => ({ glob: mockGlob }))
 
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: mockCreateModel,
+  }
+})
+
 vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
@@ -83,14 +91,12 @@ vi.mock('@vostride/agent-qa-core', () => ({
   resolveAuthStateForRun: vi.fn(),
   resolveAuthStatePaths: vi.fn(),
   writeAuthStateFiles: vi.fn(),
-  createModel: mockCreateModel,
   resolveLLMAuth: vi.fn(async () => ({
     kind: 'api-key',
     credentialKey: 'default',
     provider: 'anthropic-subscription',
     apiKey: 'test-key',
   })),
-  getProviderOptions: vi.fn(() => ({})),
   LLMPlanner: mockLLMPlanner,
   LLMVerifier: mockLLMVerifier,
   parseEnvFile: vi.fn(() => ({})),

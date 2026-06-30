@@ -101,6 +101,14 @@ const {
 
 vi.mock('glob', () => ({ glob: mockGlob }))
 
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: mockCreateModel,
+  }
+})
+
 vi.mock('@vostride/agent-qa-core', () => {
   class MockMobileSetupError extends Error {
     category: string
@@ -140,14 +148,12 @@ vi.mock('@vostride/agent-qa-core', () => {
     }
     return undefined
   }),
-  createModel: mockCreateModel,
   resolveLLMAuth: vi.fn(async () => ({
     kind: 'api-key',
     credentialKey: 'default',
     provider: 'anthropic-subscription',
     apiKey: 'test-key',
   })),
-  getProviderOptions: vi.fn(() => ({})),
   LLMPlanner: mockLLMPlanner,
   LLMVerifier: mockLLMVerifier,
   FileActionCache: mockFileActionCache,
@@ -950,6 +956,56 @@ describe('run command — reduced flag surface and target resolution', () => {
       expect.anything(),
       expect.anything(),
     )
+  })
+
+  it('passes mapped model profile and auth to model.createModel for direct runs', async () => {
+    const cfg = defaultConfig()
+    cfg.registry.llms[0] = {
+      ...cfg.registry.llms[0],
+      providerHeaders: { 'X-Agent-QA-Test': 'run-path' },
+    } as any
+    mockResolveConfig.mockResolvedValue(cfg)
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({
+      tests: [makeTest()],
+      errors: [],
+    })
+    mockRunTestWithRetry.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockCreateModel).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-sonnet-4-20250514',
+        baseURL: 'https://anthropic-proxy.example/messages',
+        headers: { 'X-Agent-QA-Test': 'run-path' },
+        auth: { mode: 'api-key' },
+      }),
+      { kind: 'api-key', apiKey: 'test-key' },
+    )
+    expect(mockCreateModel).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-sonnet-4-20250514',
+        baseURL: 'https://anthropic-proxy.example/messages',
+        headers: { 'X-Agent-QA-Test': 'run-path' },
+        auth: { mode: 'api-key' },
+      }),
+      { kind: 'api-key', apiKey: 'test-key' },
+    )
+    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(4)
+    expect(mockLLMPlanner.mock.calls[0][0]).toBe(mockCreateModel.mock.results[0].value)
+    expect(mockLLMPlanner.mock.calls[0][1]).toBe('web')
+    expect(mockLLMVerifier.mock.calls[0]).toEqual([mockCreateModel.mock.results[1].value])
   })
 })
 

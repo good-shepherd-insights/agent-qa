@@ -6,10 +6,10 @@ import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, 
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveMemoryRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
-import { resolveVisionConfig } from '@vostride/agent-qa-model'
+import { createModel, resolveVisionConfig } from '@vostride/agent-qa-model'
 import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
-import { applyResolvedAuthToModelConfig, resolveLLMModels, resolveModelAuth } from '../llm-utils.js'
+import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions, SecretStore, SecretRedactor } from '@vostride/agent-qa-core'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
@@ -847,7 +847,7 @@ async function executeSuites(
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
 ): Promise<boolean> {
   const { parseSuiteFile, parseTestFile, runSuite,
-    createModel, getProviderOptions, LLMPlanner, LLMVerifier,
+    LLMPlanner, LLMVerifier,
     ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
   } = await import('@vostride/agent-qa-core')
   const { readFile } = await import('node:fs/promises')
@@ -1264,15 +1264,13 @@ async function executeSuites(
     // Resolve LLM models
     const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveLLMModels(config)
     const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
-    const plannerModelConfig = applyResolvedAuthToModelConfig(plannerCfg, resolvedAuth)
-    const verifierModelConfig = applyResolvedAuthToModelConfig(verifierCfg, resolvedAuth)
+    const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
+    const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
     process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
     process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
 
-    const plannerModel = await createModel(plannerModelConfig)
-    const verifierModel = await createModel(verifierModelConfig)
-
-    const providerOpts = getProviderOptions(plannerModelConfig)
+    const plannerModel = createModel(plannerProfile, plannerAuth)
+    const verifierModel = createModel(verifierProfile, verifierAuth)
 
     const { LogManager } = await import('@vostride/agent-qa-core')
 
@@ -1300,8 +1298,8 @@ async function executeSuites(
     if (suiteLogCapture?.network === false) {
       suiteEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
     }
-    const planner = new LLMPlanner(plannerModel, suitePlatform, providerOpts, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined)
-    const verifier = new LLMVerifier(verifierModel, providerOpts)
+    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined)
+    const verifier = new LLMVerifier(verifierModel)
 
     const reporters: import('@vostride/agent-qa-core').Reporter[] = []
     if (reporterSelection.console) {
@@ -1426,7 +1424,6 @@ async function executeSuites(
       healingConfig,
       plannerModel,
       verifierModel,
-      providerOptions: providerOpts,
       reporters,
       captureScreenshots,
       screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
@@ -1928,7 +1925,7 @@ export function createRunCommand(): Command {
         // Actual execution
         const startTime = Date.now()
         const {
-          createModel, getProviderOptions, LLMPlanner, LLMVerifier, runTestWithRetry,
+          LLMPlanner, LLMVerifier, runTestWithRetry,
           ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
         } = await import('@vostride/agent-qa-core')
 
@@ -2223,21 +2220,20 @@ export function createRunCommand(): Command {
             const mergedForLLM = { registry: (config as any).registry, use: (testMergedConfig as any).use ?? (config as any).use }
             const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveLLMModels(mergedForLLM)
             const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
-            const plannerModelConfig = applyResolvedAuthToModelConfig(plannerCfg, resolvedAuth)
-            const verifierModelConfig = applyResolvedAuthToModelConfig(verifierCfg, resolvedAuth)
+            const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
+            const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
             process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
             process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
             if (effectiveLogLevel === 'debug') {
               console.log(pc.dim(`  Model: ${plannerCfg.model} (${plannerCfg.provider})`))
             }
-            const plannerModel = await createModel(plannerModelConfig)
-            const verifierModel = await createModel(verifierModelConfig)
+            const plannerModel = createModel(plannerProfile, plannerAuth)
+            const verifierModel = createModel(verifierProfile, verifierAuth)
             const plannerConfig = {
               maxSubActions: testMergedConfig.use?.planner?.maxSubActions ?? 10,
               previousStepCount: testMergedConfig.use?.planner?.previousStepCount ?? 3,
             }
 
-            const providerOpts = getProviderOptions(plannerModelConfig)
             const testLogCapture = (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture
             let testEffectiveRules = agentRulesContent ?? ''
             if (testLogCapture?.console === false) {
@@ -2246,8 +2242,8 @@ export function createRunCommand(): Command {
             if (testLogCapture?.network === false) {
               testEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
             }
-            const planner = new LLMPlanner(plannerModel, testPlatform, providerOpts, logger.createScopedLogger('planner'), testEffectiveRules || undefined)
-            const verifier = new LLMVerifier(verifierModel, providerOpts)
+            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testEffectiveRules || undefined)
+            const verifier = new LLMVerifier(verifierModel)
 
             // Per-test timeouts from merged config
             const testTimeouts = {
@@ -2625,7 +2621,6 @@ export function createRunCommand(): Command {
                   testResult: result,
                   provider: memoryProvider,
                   model: plannerModel,
-                  providerOptions: providerOpts,
                   memoryRoot: memoryRoot ?? runtimeMemoryRoot,
                   product: curatorProduct,
                   testId,
