@@ -17,7 +17,10 @@ import { applyLedger, transitionalLeaks } from '../lint/apply-ledger.js'
 import { findDepReconciliationOffenders } from '../lint/reconcile-deps.js'
 import { findCycleOffenders } from '../lint/walk-dag.js'
 import { findDirectionOffenders } from '../lint/direction.js'
-import { findKnowledgeWriteOffenders } from '../lint/knowledge-write.js'
+import {
+  findKnowledgeWriteOffenders,
+  WRITE_SURFACE_PACKAGES,
+} from '../lint/knowledge-write.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -110,42 +113,28 @@ describe('validate:arch held-out fixtures', () => {
     ).toEqual([])
   })
 
-  it('held-out knowledge-write firewall rejects write-path imports and accepts normal imports', () => {
-    expect(
-      findClassRuleOffenders(
-        fixtureContract({ packageClasses: ['adapter'] }),
-        [fixtureHit('@vostride/agent-qa-knowledge/add')],
-      ),
-    ).toEqual([
-      'packages/fixture | fixture.ts:1 | @vostride/agent-qa-knowledge/add | adapter forbids knowledge.add',
-    ])
-
-    expect(
-      findClassRuleOffenders(
-        fixtureContract({ packageClasses: ['adapter'] }),
-        [fixtureHit('@vostride/agent-qa-core')],
-      ),
-    ).toEqual([])
-  })
-
-  it('held-out runner knowledge-write firewall rejects writes for the providerNeutral+storageNeutral runner shape and accepts the read-only reader', () => {
-    const runnerContract = fixtureContract({
+  it('held-out knowledge-write firewall rejects neutral packages that depend on the agent write surface', () => {
+    const neutralContract = fixtureContract({
+      packageName: '@vostride/agent-qa-neutral',
+      packageDir: 'packages/neutral',
       packageClasses: ['providerNeutral', 'storageNeutral'],
+      internalDependencies: [WRITE_SURFACE_PACKAGES[0]],
     })
 
-    expect(
-      findClassRuleOffenders(runnerContract, [
-        fixtureHit('@vostride/agent-qa-knowledge/add'),
-      ]),
-    ).toEqual([
-      'packages/fixture | fixture.ts:1 | @vostride/agent-qa-knowledge/add | storageNeutral forbids knowledge.add',
+    expect(findKnowledgeWriteOffenders([neutralContract])).toEqual([
+      `knowledge-write: @vostride/agent-qa-neutral (providerNeutral) ⇏ ${WRITE_SURFACE_PACKAGES[0]} (write surface)`,
     ])
+  })
 
-    expect(
-      findClassRuleOffenders(runnerContract, [
-        fixtureHit('@vostride/agent-qa-knowledge/reader'),
-      ]),
-    ).toEqual([])
+  it('held-out knowledge-write firewall accepts the schema-only runner shape', () => {
+    const runnerContract = fixtureContract({
+      packageName: '@vostride/agent-qa-runner',
+      packageDir: 'packages/runner',
+      packageClasses: ['providerNeutral', 'storageNeutral'],
+      internalDependencies: ['@vostride/agent-qa-schema'],
+    })
+
+    expect(findKnowledgeWriteOffenders([runnerContract])).toEqual([])
   })
 
   it('held-out storage seam rejects native store packages and Node filesystem imports', () => {
