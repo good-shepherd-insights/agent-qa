@@ -5,6 +5,12 @@ import { fileURLToPath } from 'node:url'
 export const publicPackageNames = [
   '@vostride/agent-qa-ids',
   '@vostride/agent-qa-schema',
+  '@vostride/agent-qa-runner',
+  '@vostride/agent-qa-agent',
+  '@vostride/agent-qa-model',
+  '@vostride/agent-qa-agent-local',
+  '@vostride/agent-qa-knowledge-local',
+  '@vostride/agent-qa-tools-local',
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-web',
   '@vostride/agent-qa-android',

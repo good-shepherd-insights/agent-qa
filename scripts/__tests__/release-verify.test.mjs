@@ -177,7 +177,7 @@ test('preflight verification checks bump, git tag, npm registry, and POSTHOG_PRO
         assert.ok(packages.some(record => (record.pkg?.name ?? record.name) === '@vostride/agent-qa-subscription-auth'))
       },
     })
-    assert.deepEqual(calls, ['git 0.1.1', 'npm 11 0.1.1'])
+    assert.deepEqual(calls, ['git 0.1.1', `npm ${publicPackageNames.length + 1} 0.1.1`])
   } finally {
     await rm(rootDir, { recursive: true, force: true })
   }

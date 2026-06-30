@@ -69,6 +69,8 @@ export function buildReleaseDryRunPlan(options = {}) {
       'pnpm build',
       'pnpm run validate:skills',
       'pnpm run validate:publish',
+      'pnpm run validate:tools',
+      'pnpm run validate:arch',
       `pnpm exec node scripts/release/stage-packages.mjs --target-version ${targetVersion} --out .release/staged-packages`,
       `pnpm exec node scripts/release/verify.mjs --bump ${bump} --stage postbuild --target-version ${targetVersion} --staged-dir .release/staged-packages`,
     ],
