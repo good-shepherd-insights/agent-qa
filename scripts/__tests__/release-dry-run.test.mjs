@@ -38,7 +38,13 @@ test('builds a non-mutating patch release dry-run plan', () => {
   assert.equal(plan.targetVersion, targetVersion)
   assert.ok(plan.releaseGatePlan.includes('release preflight'))
   assert.ok(plan.releaseGatePlan.includes('npm publish'))
-  for (const command of ['pnpm run validate:tools', 'pnpm run validate:arch']) {
+  for (const command of [
+    'pnpm run validate:skills',
+    'pnpm run validate:agents',
+    'pnpm run validate:publish',
+    'pnpm run validate:tools',
+    'pnpm run validate:arch',
+  ]) {
     assert.ok(plan.releaseGatePlan.includes(command))
     assert.ok(plan.localValidation.includes(command))
   }

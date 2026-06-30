@@ -68,6 +68,7 @@ export function buildReleaseDryRunPlan(options = {}) {
       'pnpm test',
       'pnpm build',
       'pnpm run validate:skills',
+      'pnpm run validate:agents',
       'pnpm run validate:publish',
       'pnpm run validate:tools',
       'pnpm run validate:arch',
