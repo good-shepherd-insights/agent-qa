@@ -6,15 +6,18 @@ import {
   PACKAGE_CLASS_RULES,
   PROVIDER_SDK_FORBIDDEN_PREFIX,
 } from '../contract-types.js'
+import { AGENT_QA_CORE_HOST_BASELINE } from '../core-host-baseline.js'
 import type { OwnershipContract, PackageClass } from '../contract-types.js'
 import { findClassRuleOffenders } from '../lint/classify-rule.js'
 import {
+  configFilesFor,
   extractSpecifiers,
   sourceFilesFor,
   type SpecifierHit,
 } from '../lint/extract-specifiers.js'
 import { applyLedger, transitionalLeaks } from '../lint/apply-ledger.js'
 import { findDepReconciliationOffenders } from '../lint/reconcile-deps.js'
+import { AGENT_QA_CORE_MIGRATION_LEDGER } from '../../../core/src/ownership-contract.js'
 import { findCycleOffenders } from '../lint/walk-dag.js'
 import { findDirectionOffenders } from '../lint/direction.js'
 import {
@@ -27,13 +30,24 @@ const testDir = dirname(fileURLToPath(import.meta.url))
 const packagesRoot = join(testDir, '..', '..', '..')
 const repoRoot = join(packagesRoot, '..')
 
-function packageHits(contract: OwnershipContract): SpecifierHit[] {
-  return sourceFilesFor(contract.packageDir, repoRoot)
+function hitsFromFiles(files: readonly string[]): SpecifierHit[] {
+  return files
     .flatMap(extractSpecifiers)
     .map(hit => ({
       ...hit,
       file: relative(repoRoot, hit.file),
     }))
+}
+
+function packageSourceHits(contract: OwnershipContract): SpecifierHit[] {
+  return hitsFromFiles(sourceFilesFor(contract.packageDir, repoRoot))
+}
+
+function packageAllHits(contract: OwnershipContract): SpecifierHit[] {
+  return hitsFromFiles([
+    ...sourceFilesFor(contract.packageDir, repoRoot),
+    ...configFilesFor(contract.packageDir, repoRoot),
+  ])
 }
 
 function fixtureContract(overrides: Partial<OwnershipContract> = {}): OwnershipContract {
@@ -73,15 +87,22 @@ describe('validate:arch (LINT-01..05)', () => {
     const contracts: readonly OwnershipContract[] = ARCH_MANIFEST.packages
 
     for (const contract of contracts) {
-      const hits = packageHits(contract)
+      const sourceHits = packageSourceHits(contract)
+      const allHits = packageAllHits(contract)
 
       if (contract.packageClasses.includes('transitional')) {
-        offenders.push(...applyLedger(transitionalLeaks(hits), contract.ledger ?? []))
+        offenders.push(
+          ...applyLedger(
+            transitionalLeaks(allHits),
+            contract.ledger ?? [],
+            new Set(AGENT_QA_CORE_HOST_BASELINE),
+          ),
+        )
       } else {
-        offenders.push(...findClassRuleOffenders(contract, hits))
+        offenders.push(...findClassRuleOffenders(contract, allHits))
       }
 
-      offenders.push(...findDepReconciliationOffenders(contract, hits, repoRoot))
+      offenders.push(...findDepReconciliationOffenders(contract, sourceHits, repoRoot))
     }
 
     offenders.push(...findCycleOffenders(contracts))
@@ -165,7 +186,7 @@ describe('validate:arch held-out fixtures', () => {
       contract => contract.packageDir === 'packages/schema',
     )
     expect(schemaContract).toBeDefined()
-    expect(findClassRuleOffenders(schemaContract!, packageHits(schemaContract!))).toEqual([])
+    expect(findClassRuleOffenders(schemaContract!, packageAllHits(schemaContract!))).toEqual([])
   })
 
   it('held-out dep reconciliation reports missing and unexpected dependency drift', () => {
@@ -183,6 +204,24 @@ describe('validate:arch held-out fixtures', () => {
       'packages/arch external deps: unexpected runtime-only',
       'packages/arch package.json vs contract: missing declared-only',
     ])
+  })
+
+  it('held-out config hits feed class rules without becoming runtime dep drift', () => {
+    const configAwareContract = fixtureContract({
+      packageDir: 'packages/arch',
+      packageClasses: ['browserSafe'],
+      externalDependencies: [],
+    })
+    const configHits = [
+      fixtureHit('node:fs', { file: 'packages/arch/vitest.config.ts' }),
+      fixtureHit('tsup', { file: 'packages/arch/tsup.config.ts', line: 2 }),
+      fixtureHit('vitest/config', { file: 'packages/arch/vitest.config.ts', line: 3 }),
+    ]
+
+    expect(findClassRuleOffenders(configAwareContract, configHits)).toEqual([
+      'packages/arch | packages/arch/vitest.config.ts:1 | node:fs | browserSafe forbids node:*',
+    ])
+    expect(findDepReconciliationOffenders(configAwareContract, [], repoRoot)).toEqual([])
   })
 
   it('held-out DAG walk reports synthetic cycles and accepts acyclic contracts', () => {
@@ -246,5 +285,19 @@ describe('validate:arch held-out fixtures', () => {
         [fixtureLedgerEntry(`${PROVIDER_SDK_FORBIDDEN_PREFIX}openai`)],
       ),
     ).toEqual([])
+  })
+
+  it('held-out core ratchet rejects a new off-baseline node import', () => {
+    expect(
+      applyLedger(
+        transitionalLeaks([
+          fixtureHit('node:dgram'),
+          fixtureHit('better-sqlite3', { line: 2 }),
+          fixtureHit('sharp', { line: 3 }),
+        ]),
+        AGENT_QA_CORE_MIGRATION_LEDGER,
+        new Set(AGENT_QA_CORE_HOST_BASELINE),
+      ),
+    ).toEqual(['packages/core | fixture.ts:1 | node:dgram | unwaived transitional leak'])
   })
 })

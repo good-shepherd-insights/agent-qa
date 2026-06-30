@@ -306,7 +306,7 @@ describe('ARCH_MANIFEST contract shape', () => {
 })
 
 describe('ARCH_MANIFEST core transitional ledger', () => {
-  it('is exhaustive for current core leaking dependencies and has no stray entries', () => {
+  it('covers current core npm-dependency-level provider/native-store debt and has no stray entries', () => {
     expect(
       findCoreLedgerOffenders(
         ARCH_MANIFEST.packages.find(contract => contract.packageDir === 'packages/core'),

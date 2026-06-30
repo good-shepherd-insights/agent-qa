@@ -30,6 +30,13 @@ export const AGENT_QA_CORE_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-runner',
   '@vostride/agent-qa-schema',
 ] as const
+
+/**
+ * Tracks npm-dependency-level provider-SDK and native-store debt only. Current
+ * core source-level host/storage debt is recorded in the regenerable
+ * @vostride/agent-qa-arch core-host-baseline.ts; both records shrink as M1/M2
+ * delete the parser/suite/hooks/reporter and memory subsystems.
+ */
 export const AGENT_QA_CORE_MIGRATION_LEDGER = [
   {
     rule: 'storageImplementation',
