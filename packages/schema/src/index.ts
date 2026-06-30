@@ -117,3 +117,19 @@ export { computeEvidenceToken } from './ids/index'
 // 338 reader DTOs (PORT-03)
 export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch } from './reader/index'
 export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
+
+// 342 safety contracts
+export type {
+  RiskTier,
+  PolicyVerdict,
+  ExecutionPolicyResult,
+  ScanAction,
+  ScanResult,
+  MaskingContext,
+  ToolCallHookAllowResult,
+  ToolCallHookMutateResult,
+  ToolCallHookDenyResult,
+  ToolCallHookResult,
+  ToolResultHookResult,
+  ContextHookResult,
+} from './safety/index'
