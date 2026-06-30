@@ -9,7 +9,6 @@ import type { BaseObservation, SuiteObservation } from './schema.js'
 import { parseObservation, writeObservation as writeObservationFile, listObservations } from './observation-io.js'
 import { generateObservationId } from './observation-id.js'
 import { scanObservationText } from './security-scanner.js'
-import type { ProviderOptions } from '../agent/provider.js'
 
 export interface MemoryLog {
   added: number
@@ -53,7 +52,6 @@ export interface CuratorContext {
   testResult: TestResult
   provider: MemoryProvider
   model: LanguageModel
-  providerOptions?: ProviderOptions
   memoryRoot: string
   product: string
   testId: string
@@ -301,7 +299,6 @@ export async function runCurator(ctx: CuratorContext): Promise<MemoryLog> {
         model: ctx.model,
         maxRetries: 0,
         output: outputConfig,
-        providerOptions: ctx.providerOptions,
         prompt: fullPrompt,
       })
 

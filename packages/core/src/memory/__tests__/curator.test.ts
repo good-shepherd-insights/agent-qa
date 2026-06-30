@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TestResult } from '@vostride/agent-qa-runner'
 import type { MemoryProvider } from '../provider.js'
-import type { ProviderOptions } from '../../agent/provider.js'
 
 vi.mock('ai', () => ({
   generateText: vi.fn(),
@@ -185,7 +184,7 @@ describe('runCurator', () => {
     expect(prompt).toContain('The login modal appears about two seconds after the page loads.')
   })
 
-  it('forwards providerOptions to generateText', async () => {
+  it('does not forward providerOptions to generateText', async () => {
     const { generateText } = await import('ai')
     const mockGenerateText = vi.mocked(generateText)
     mockGenerateText.mockResolvedValueOnce({
@@ -197,18 +196,10 @@ describe('runCurator', () => {
 
     const { runCurator } = await import('../curator.js')
 
-    const providerOptions: ProviderOptions = {
-      openai: {
-        instructions: 'You are a helpful assistant.',
-        store: false,
-      },
-    }
-
     const log = await runCurator({
       testResult: makeResult(),
       provider: makeProvider(),
       model: {} as any,
-      providerOptions,
       memoryRoot: 'agent-qa-memory',
       product: 'hacker-news',
       testId: 't_lack-auto-quit-dow-boat-urus',
@@ -216,10 +207,8 @@ describe('runCurator', () => {
     })
 
     expect(mockGenerateText).toHaveBeenCalledOnce()
-    expect(mockGenerateText.mock.calls[0]?.[0]).toMatchObject({
-      model: {},
-      providerOptions,
-    })
+    expect(mockGenerateText.mock.calls[0]?.[0]).toMatchObject({ model: {} })
+    expect(mockGenerateText.mock.calls[0]?.[0]).not.toHaveProperty('providerOptions')
     expect(log.errors).toEqual([])
     expect(log.tokenUsage).toEqual({
       promptTokens: 11,

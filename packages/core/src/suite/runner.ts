@@ -21,7 +21,6 @@ import type { MemoryLog } from '../memory/curator.js'
 import { shouldAblate, collectAllInjectedIds } from '../memory/ablation.js'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
 import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
-import type { ProviderOptions } from '../agent/provider.js'
 import { VariableStore, findUnresolvedTemplates, interpolateVariables } from '../agent/variables.js'
 import { resolveSecretTemplatesInValue, type SecretRedactor, type SecretStore } from '../agent/secrets.js'
 import { withAbort } from '../agent/loop.js'
@@ -38,7 +37,6 @@ export interface RunSuiteConfig {
   healingConfig: HealingConfig
   plannerModel: LanguageModel
   verifierModel: LanguageModel
-  providerOptions?: ProviderOptions
   reporters?: Reporter[]
   captureScreenshots?: boolean
   screenshotMode?: 'failure' | 'every-step'
@@ -546,7 +544,6 @@ export async function runSuite(
               testResult: result,
               provider: config.memoryProvider,
               model: config.plannerModel,
-              providerOptions: config.providerOptions,
               memoryRoot,
               product: config.product!,
               testId,
