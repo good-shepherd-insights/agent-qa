@@ -17,6 +17,7 @@ import { applyLedger, transitionalLeaks } from '../lint/apply-ledger.js'
 import { findDepReconciliationOffenders } from '../lint/reconcile-deps.js'
 import { findCycleOffenders } from '../lint/walk-dag.js'
 import { findDirectionOffenders } from '../lint/direction.js'
+import { findKnowledgeWriteOffenders } from '../lint/knowledge-write.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -82,6 +83,7 @@ describe('validate:arch (LINT-01..05)', () => {
 
     offenders.push(...findCycleOffenders(contracts))
     offenders.push(...findDirectionOffenders(contracts))
+    offenders.push(...findKnowledgeWriteOffenders(contracts))
 
     expect(offenders).toEqual([])
   })
