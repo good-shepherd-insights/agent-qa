@@ -24,6 +24,11 @@ import {
   findKnowledgeWriteOffenders,
   WRITE_SURFACE_PACKAGES,
 } from '../lint/knowledge-write.js'
+import {
+  contractBearingDirs,
+  findContractlessWorkspaceOffenders,
+  workspaceMemberDirs,
+} from '../lint/workspace-members.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -108,12 +113,29 @@ describe('validate:arch (LINT-01..05)', () => {
     offenders.push(...findCycleOffenders(contracts))
     offenders.push(...findDirectionOffenders(contracts))
     offenders.push(...findKnowledgeWriteOffenders(contracts))
+    offenders.push(
+      ...findContractlessWorkspaceOffenders(
+        workspaceMemberDirs(repoRoot),
+        contractBearingDirs(repoRoot),
+      ),
+    )
 
     expect(offenders).toEqual([])
   })
 })
 
 describe('validate:arch held-out fixtures', () => {
+  it('held-out workspace-member contract check rejects a contract-less member', () => {
+    expect(
+      findContractlessWorkspaceOffenders(
+        ['packages/with-contract', 'packages/without-contract'],
+        ['packages/with-contract'],
+      ),
+    ).toEqual([
+      'packages/without-contract: workspace package missing src/ownership-contract.ts',
+    ])
+  })
+
   it('held-out provider firewall rejects provider SDKs and accepts the ai substrate', () => {
     expect(PACKAGE_CLASS_RULES.providerNeutral.allowed).toContain('ai')
 
