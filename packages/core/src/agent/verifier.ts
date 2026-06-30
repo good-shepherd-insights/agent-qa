@@ -3,7 +3,6 @@ import type { LanguageModel } from 'ai'
 import { z } from 'zod'
 import type { ScreenState, Action } from '@vostride/agent-qa-runner'
 import type { Verifier, VerifyResult } from './types.js'
-import type { ProviderOptions } from './provider.js'
 import { buildVerificationPrompt } from './prompts.js'
 
 // Three-outcome verification strategy (multi-action replanning):
@@ -22,11 +21,9 @@ export const VerificationResultSchema = z.object({
 
 export class LLMVerifier implements Verifier {
   private model: LanguageModel
-  private providerOptions: ProviderOptions
 
-  constructor(model: LanguageModel, providerOptions?: ProviderOptions) {
+  constructor(model: LanguageModel) {
     this.model = model
-    this.providerOptions = providerOptions
   }
 
   async verify(
@@ -51,7 +48,6 @@ export class LLMVerifier implements Verifier {
             model: this.model,
             maxRetries: 0,
             output: outputConfig,
-            providerOptions: this.providerOptions,
             abortSignal,
             messages: [{
               role: 'user' as const,
@@ -65,7 +61,6 @@ export class LLMVerifier implements Verifier {
             model: this.model,
             maxRetries: 0,
             output: outputConfig,
-            providerOptions: this.providerOptions,
             abortSignal,
             prompt: promptText,
           })

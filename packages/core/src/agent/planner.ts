@@ -2,7 +2,6 @@ import { generateText } from 'ai'
 import type { LanguageModel } from 'ai'
 import type { ScreenState } from '@vostride/agent-qa-runner'
 import type { Planner, PlanResult, StepContext } from './types.js'
-import type { ProviderOptions } from './provider.js'
 import type { ScopedLogger } from '../logging/types.js'
 import { buildSystemPrompt, buildStepPrompt } from './prompts.js'
 import { buildTools, toolCallToActionPlan } from '../tools/builder.js'
@@ -12,14 +11,12 @@ import { createWrappedModel } from '../provider/index.js'
 export class LLMPlanner implements Planner {
   private model: LanguageModel
   private platform: 'web' | 'android' | 'ios'
-  private providerOptions: ProviderOptions
   private logger?: ScopedLogger
   private agentRules?: string
 
-  constructor(model: LanguageModel, platform: 'web' | 'android' | 'ios' = 'web', providerOptions?: ProviderOptions, logger?: ScopedLogger, agentRules?: string) {
+  constructor(model: LanguageModel, platform: 'web' | 'android' | 'ios' = 'web', logger?: ScopedLogger, agentRules?: string) {
     this.model = createWrappedModel(model as Parameters<typeof createWrappedModel>[0])
     this.platform = platform
-    this.providerOptions = providerOptions
     this.logger = logger
     this.agentRules = agentRules
   }
@@ -50,7 +47,6 @@ export class LLMPlanner implements Planner {
             tools,
             toolChoice: 'required',
             system: systemPrompt,
-            providerOptions: this.providerOptions,
             abortSignal,
             messages: [{
               role: 'user',
@@ -69,7 +65,6 @@ export class LLMPlanner implements Planner {
             tools,
             toolChoice: 'required',
             system: systemPrompt,
-            providerOptions: this.providerOptions,
             abortSignal,
             prompt: fallbackPrompt,
           })
@@ -81,7 +76,6 @@ export class LLMPlanner implements Planner {
           tools,
           toolChoice: 'required',
           system: systemPrompt,
-          providerOptions: this.providerOptions,
           abortSignal,
           prompt,
         })

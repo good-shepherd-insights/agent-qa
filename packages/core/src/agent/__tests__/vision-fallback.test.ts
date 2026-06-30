@@ -165,7 +165,7 @@ describe('LLMPlanner vision fallback', () => {
       .mockRejectedValueOnce(new Error('Vision not supported'))
       .mockResolvedValueOnce(validToolCallResult)
 
-    const planner = new LLMPlanner(makeMockModel(), 'web', undefined, mockLogger as any)
+    const planner = new LLMPlanner(makeMockModel(), 'web', mockLogger as any)
     const context = makeStepContext({
       screenshot: Buffer.from('fake-png'),
       plannerConfig: makePlannerConfig(),
