@@ -86,14 +86,6 @@ describe('hack-regression', () => {
     })
   })
 
-  describe('HK-06: @ai-sdk/google resolves', () => {
-    it('module resolves and exports createGoogleGenerativeAI', async () => {
-      const mod = await import('@ai-sdk/google')
-      expect(mod).toBeDefined()
-      expect(mod.createGoogleGenerativeAI).toBeTypeOf('function')
-    })
-  })
-
   describe('HK-07: effectiveResolution fail-fast', () => {
     it('loop.ts does not contain the 1568 magic number fallback', async () => {
       const fs = await import('node:fs')

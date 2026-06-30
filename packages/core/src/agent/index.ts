@@ -29,9 +29,6 @@ export { LLMPlanner } from './planner.js'
 
 export { LLMVerifier, VerificationResultSchema } from './verifier.js'
 
-export { createModel, getProviderOptions } from './provider.js'
-export type { ModelConfig, ProviderOptions } from './provider.js'
-
 export { buildSystemPrompt, buildStepPrompt, buildVerificationPrompt, buildAssertionPrompt, buildExtractionPrompt } from './prompts.js'
 
 export { defaultRegistry, buildTools, toolCallToActionPlan } from '../tools/index.js'
