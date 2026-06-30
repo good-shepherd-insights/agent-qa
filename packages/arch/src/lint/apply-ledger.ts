@@ -2,19 +2,23 @@ import {
   NATIVE_STORE_DENYLIST,
   PROVIDER_SDK_FORBIDDEN_PREFIX,
 } from '../contract-types.js'
+import { HOST_EXTERNALS, matchesDenylistEntry } from './denylist.js'
 import { classifySpecifier } from './extract-specifiers.js'
 import type { LedgerEntry } from '../contract-types.js'
 import type { SpecifierHit } from './extract-specifiers.js'
 
-const nativeStoreTargets = new Set<string>(NATIVE_STORE_DENYLIST)
-
 export function transitionalLeaks(hits: readonly SpecifierHit[]): SpecifierHit[] {
   return hits.filter(hit => {
     const classified = classifySpecifier(hit.specifier)
+    if (classified.kind === 'node') {
+      return true
+    }
+
     return (
       classified.kind === 'external' &&
       (classified.pkgName.startsWith(PROVIDER_SDK_FORBIDDEN_PREFIX) ||
-        nativeStoreTargets.has(classified.pkgName))
+        HOST_EXTERNALS.has(classified.pkgName) ||
+        NATIVE_STORE_DENYLIST.some(entry => matchesDenylistEntry(classified.pkgName, entry)))
     )
   })
 }
@@ -22,6 +26,7 @@ export function transitionalLeaks(hits: readonly SpecifierHit[]): SpecifierHit[]
 export function applyLedger(
   leaks: readonly SpecifierHit[],
   ledger: readonly LedgerEntry[],
+  baseline: ReadonlySet<string> = new Set<string>(),
 ): string[] {
   const offenders: string[] = []
   const ledgerTargets = new Set(ledger.map(entry => entry.target))
@@ -31,6 +36,10 @@ export function applyLedger(
     const target = targetForLeak(leak)
     if (ledgerTargets.has(target)) {
       hitTargets.add(target)
+      continue
+    }
+
+    if (baseline.has(target)) {
       continue
     }
 

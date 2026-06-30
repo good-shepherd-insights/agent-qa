@@ -1,9 +1,10 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { AGENT_QA_CORE_HOST_BASELINE } from '../../core-host-baseline.js'
 import { AGENT_QA_CORE_MIGRATION_LEDGER } from '../../../../core/src/ownership-contract.js'
 import { applyLedger, transitionalLeaks } from '../apply-ledger.js'
-import { extractSpecifiers, sourceFilesFor } from '../extract-specifiers.js'
+import { configFilesFor, extractSpecifiers, sourceFilesFor } from '../extract-specifiers.js'
 import type { LedgerEntry } from '../../contract-types.js'
 import type { SpecifierHit } from '../extract-specifiers.js'
 
@@ -25,7 +26,7 @@ function ledger(targets: readonly string[]): LedgerEntry[] {
 }
 
 describe('transitionalLeaks', () => {
-  it('keeps provider SDK and native-store external hits while excluding node builtins', () => {
+  it('keeps provider SDK, native-store, host external, and node hits', () => {
     expect(
       transitionalLeaks([
         hit('@ai-sdk/openai'),
@@ -36,29 +37,58 @@ describe('transitionalLeaks', () => {
         hit('zod', 6),
         hit('@vostride/agent-qa-schema', 7),
         hit('./local.js', 8),
+        hit('glob', 9),
+        hit('posthog-node', 10),
+        hit('playwright-core', 11),
       ]).map(leak => leak.specifier),
-    ).toEqual(['@ai-sdk/openai', 'better-sqlite3', 'sharp'])
+    ).toEqual([
+      '@ai-sdk/openai',
+      'better-sqlite3',
+      'sharp',
+      'node:fs',
+      'fs',
+      'glob',
+      'posthog-node',
+      'playwright-core',
+    ])
   })
 })
 
 describe('applyLedger', () => {
-  it('waives core source leaks covered by the on-disk five-row migration ledger', () => {
-    const coreHits = sourceFilesFor('packages/core', repoRoot).flatMap(extractSpecifiers)
+  it('waives core source leaks covered by the two-row migration ledger plus host baseline', () => {
+    const coreHits = [
+      ...sourceFilesFor('packages/core', repoRoot),
+      ...configFilesFor('packages/core', repoRoot),
+    ].flatMap(extractSpecifiers)
 
-    expect(applyLedger(transitionalLeaks(coreHits), AGENT_QA_CORE_MIGRATION_LEDGER)).toEqual([])
+    expect(
+      applyLedger(
+        transitionalLeaks(coreHits),
+        AGENT_QA_CORE_MIGRATION_LEDGER,
+        new Set(AGENT_QA_CORE_HOST_BASELINE),
+      ),
+    ).toEqual([])
   })
 
   it('flags an uncovered transitional leak', () => {
-    expect(applyLedger([hit('@ai-sdk/mistral')], ledger(['@ai-sdk/openai']))).toEqual([
+    expect(
+      applyLedger([hit('@ai-sdk/mistral')], ledger(['@ai-sdk/openai']), new Set()),
+    ).toEqual([
       'packages/core | packages/core/src/fixture.ts:1 | @ai-sdk/mistral | unwaived transitional leak',
       'packages/core | ledger | @ai-sdk/openai | stale ledger entry',
     ])
   })
 
+  it('waives baseline-covered transitional leaks without adding ledger hits', () => {
+    expect(
+      applyLedger([hit('node:fs')], ledger(['sharp']), new Set(['node:fs'])),
+    ).toEqual(['packages/core | ledger | sharp | stale ledger entry'])
+  })
+
   it('flags stale ledger rows that do not match current leaks', () => {
-    expect(applyLedger([hit('@ai-sdk/openai')], ledger(['@ai-sdk/openai', 'sharp']))).toEqual([
-      'packages/core | ledger | sharp | stale ledger entry',
-    ])
+    expect(
+      applyLedger([hit('@ai-sdk/openai')], ledger(['@ai-sdk/openai', 'sharp']), new Set()),
+    ).toEqual(['packages/core | ledger | sharp | stale ledger entry'])
   })
 
   it('matches scoped provider targets and exact native-store targets', () => {
@@ -70,6 +100,7 @@ describe('applyLedger', () => {
           hit('sharp'),
         ],
         ledger(['@ai-sdk/openai', 'better-sqlite3', 'sharp']),
+        new Set(),
       ),
     ).toEqual([])
   })

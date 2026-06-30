@@ -2,7 +2,13 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { PACKAGE_CLASS_RULES } from '../contract-types.js'
+import {
+  NATIVE_STORE_DENYLIST,
+  PACKAGE_CLASS_RULES,
+  PROVIDER_SDK_FORBIDDEN_PREFIX,
+} from '../contract-types.js'
+import { AGENT_QA_CORE_HOST_BASELINE } from '../core-host-baseline.js'
+import { HOST_EXTERNALS, matchesDenylistEntry } from '../lint/denylist.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 import type { LedgerEntry, OwnershipContract } from '../contract-types.js'
 
@@ -207,18 +213,14 @@ function findCoreLedgerOffenders(
   const offenders: string[] = []
   const ledger = coreContract.ledger ?? []
   const ledgerTargets = new Set(ledger.map(entry => entry.target))
+  const baselineTargets = new Set(AGENT_QA_CORE_HOST_BASELINE)
   const leakingDependencies = [...coreDependencies]
-    .filter(
-      dependency =>
-        dependency.startsWith('@ai-sdk/') ||
-        dependency === 'better-sqlite3' ||
-        dependency === 'sharp',
-    )
+    .filter(isCoreLeakingDependency)
     .sort()
 
   for (const dependency of leakingDependencies) {
-    if (!ledgerTargets.has(dependency)) {
-      offenders.push(`packages/core: missing ledger entry for ${dependency}`)
+    if (!ledgerTargets.has(dependency) && !baselineTargets.has(dependency)) {
+      offenders.push(`packages/core: missing ledger or baseline entry for ${dependency}`)
     }
   }
 
@@ -237,6 +239,14 @@ function findCoreLedgerOffenders(
   }
 
   return offenders
+}
+
+function isCoreLeakingDependency(dependency: string): boolean {
+  return (
+    dependency.startsWith(PROVIDER_SDK_FORBIDDEN_PREFIX) ||
+    HOST_EXTERNALS.has(dependency) ||
+    NATIVE_STORE_DENYLIST.some(entry => matchesDenylistEntry(dependency, entry))
+  )
 }
 
 describe('ARCH_MANIFEST enumeration', () => {
