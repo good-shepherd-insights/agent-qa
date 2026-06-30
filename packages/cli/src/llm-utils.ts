@@ -1,6 +1,9 @@
 import { dirname, resolve as resolvePath } from 'node:path'
+import { getProviderOptions } from '@vostride/agent-qa-model'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
+
+import type { ModelAuthDeclaration, ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 
 export { loadProviderPluginsForRawConfig }
 
@@ -162,6 +165,53 @@ export function applyResolvedAuthToModelConfig(
       return { ...llmConfig }
     case 'missing':
       throw new Error(auth.message)
+  }
+}
+
+export function toModelProfileAndAuth(
+  llmConfig: LLMConfigLike,
+  resolved: ResolvedLLMAuth,
+): { profile: ModelProfile; auth: ResolvedModelAuth } {
+  const providerOptions = getProviderOptions({
+    provider: llmConfig.provider,
+    modelAdapter: resolved.kind === 'auth-fetch' ? resolved.modelAdapter : undefined,
+    fetch: resolved.kind === 'auth-fetch' ? resolved.fetch : undefined,
+  })
+
+  const profile: ModelProfile = {
+    provider: llmConfig.provider,
+    model: llmConfig.model,
+    ...(llmConfig.baseURL !== undefined ? { baseURL: llmConfig.baseURL } : {}),
+    ...(llmConfig.providerHeaders !== undefined ? { headers: llmConfig.providerHeaders } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
+    auth: toAuthDeclaration(resolved),
+  }
+
+  switch (resolved.kind) {
+    case 'api-key':
+      return { profile, auth: { kind: 'api-key', apiKey: resolved.apiKey } }
+    case 'bearer-token':
+      return { profile, auth: { kind: 'bearer-token', token: resolved.token } }
+    case 'auth-fetch':
+      return { profile, auth: { kind: 'auth-fetch', modelAdapter: resolved.modelAdapter, fetch: resolved.fetch } }
+    case 'unauthenticated':
+      return { profile, auth: { kind: 'none' } }
+    case 'missing':
+      throw new Error(resolved.message)
+  }
+}
+
+function toAuthDeclaration(resolved: ResolvedLLMAuth): ModelAuthDeclaration {
+  switch (resolved.kind) {
+    case 'api-key':
+      return { mode: 'api-key' }
+    case 'bearer-token':
+      return { mode: 'bearer-token' }
+    case 'auth-fetch':
+      return { mode: 'subscription', plugin: resolved.provider }
+    case 'unauthenticated':
+    case 'missing':
+      return { mode: 'none' }
   }
 }
 
