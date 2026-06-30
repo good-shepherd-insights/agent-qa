@@ -50,13 +50,17 @@ describe('validateProfile', () => {
   it('rejects custom headers outside compatible providers without leaking values', () => {
     const secret = 'secret-sentinel-api-key'
 
-    try {
+    expect(() =>
       validateProfile(
         profile({
           provider: 'gemini',
           headers: { authorization: secret },
         }),
-      )
+      ),
+    ).toThrow(/Gemini provider custom headers are only supported on anthropic-compatible/)
+
+    try {
+      validateProfile(profile({ provider: 'gemini', headers: { authorization: secret } }))
     } catch (error) {
       expect((error as Error).message).not.toContain(secret)
       expect((error as Error).message).not.toContain('authorization')
