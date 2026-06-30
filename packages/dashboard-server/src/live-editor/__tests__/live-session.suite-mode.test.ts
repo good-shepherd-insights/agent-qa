@@ -53,7 +53,7 @@ const mockRunHooks = vi.fn()
 const mockParseHookInline = vi.fn(() => [])
 const mockStripHookInline = vi.fn((instruction: string) => instruction)
 const mockRunHookInSandbox = vi.fn()
-const mockCreateModel = vi.fn().mockResolvedValue({ modelId: 'test-model' })
+const mockCreateModel = vi.fn().mockReturnValue({ modelId: 'test-model' })
 const mockGetProviderOptions = vi.fn().mockReturnValue(undefined)
 const mockVariableStoreInstance = {
   set: vi.fn(),
@@ -74,8 +74,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
   },
   resolveMobileRunConfig: (...args: unknown[]) => mockResolveMobileRunConfig(...args),
   executeStep: (...args: unknown[]) => mockExecuteStep(...args),
-  createModel: (...args: unknown[]) => mockCreateModel(...args),
-  getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
   LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
   LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
   VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
@@ -88,6 +86,15 @@ vi.mock('@vostride/agent-qa-core', () => ({
   runHooks: (...args: unknown[]) => mockRunHooks(...args),
   runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
 }))
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: (...args: unknown[]) => mockCreateModel(...args),
+    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
+  }
+})
 
 import { LiveSession } from '../live-session.js'
 

@@ -100,10 +100,17 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
   return {
     ...actual,
-    createModel: vi.fn().mockResolvedValue({ modelId: 'test-model' }),
-    getProviderOptions: vi.fn().mockReturnValue(undefined),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
+  }
+})
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: vi.fn().mockReturnValue({ modelId: 'test-model' }),
+    getProviderOptions: vi.fn().mockReturnValue(undefined),
   }
 })
 

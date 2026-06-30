@@ -10,12 +10,12 @@ import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import {
   clearLLMAuthProviderPlugins,
-  createModel,
   readAuth,
   registerLLMAuthProviderPlugin,
   removeAuth,
   writeAuth,
 } from '@vostride/agent-qa-core'
+import { createModel } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
 
 const { mockGetAgentQaUpdateStatus, mockResolveLLMAuth } = vi.hoisted(() => ({
@@ -98,14 +98,21 @@ vi.mock('@vostride/agent-qa-core', async () => {
     NamedLLMConfigSchema,
     WorkspaceSchema,
     DashboardConfigSchema,
-    createModel: vi.fn(() => ({})),
     getAgentQaVersion: vi.fn(() => '0.1.13'),
     getAgentQaUpdateStatus: mockGetAgentQaUpdateStatus,
-    getProviderOptions: vi.fn(() => undefined),
     resolveLLMAuth: mockResolveLLMAuth,
     readAuth: vi.fn(() => ({})),
     writeAuth: vi.fn(() => Promise.resolve()),
     removeAuth: vi.fn(() => Promise.resolve()),
+  }
+})
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: vi.fn(() => ({})),
+    getProviderOptions: vi.fn(() => undefined),
   }
 })
 
@@ -1889,12 +1896,15 @@ describe('dashboard LLM auth and test routes', () => {
       }),
     })
 
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'anthropic-compatible',
-      providerHeaders: {
-        'anthropic-beta': 'messages-2023-12-15',
-      },
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        headers: {
+          'anthropic-beta': 'messages-2023-12-15',
+        },
+      }),
+      { kind: 'api-key', apiKey: 'sk-anthropic' },
+    )
 
     mockCreateModel.mockClear()
     const invalidHeadersRes = await invokeRoute('/api/llm/test', {
@@ -1988,13 +1998,14 @@ describe('dashboard LLM auth and test routes', () => {
     })
 
     expect(res.status).toBe(200)
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'anthropic-compatible',
-      authToken: 'bearer-remote',
-    }))
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.not.objectContaining({
-      apiKey: expect.anything(),
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-remote',
+        baseURL: 'https://anthropic-proxy.example/messages',
+      }),
+      { kind: 'bearer-token', token: 'bearer-remote' },
+    )
   })
 
   it('returns auth_error copy for authentication failures', async () => {

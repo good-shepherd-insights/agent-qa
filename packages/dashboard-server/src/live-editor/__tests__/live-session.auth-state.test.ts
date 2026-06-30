@@ -20,7 +20,7 @@ const {
   mockVariableStoreInstance,
 } = vi.hoisted(() => ({
   mockCleanup: vi.fn().mockResolvedValue(undefined),
-  mockCreateModel: vi.fn().mockResolvedValue({ modelId: 'test-model' }),
+  mockCreateModel: vi.fn().mockReturnValue({ modelId: 'test-model' }),
   mockDrainConsole: vi.fn(() => []),
   mockDrainNetwork: vi.fn(() => []),
   mockExecute: vi.fn().mockResolvedValue({ success: true }),
@@ -62,8 +62,6 @@ vi.mock('@vostride/agent-qa-core', async () => {
   return {
     ...actual,
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
-    createModel: (...args: unknown[]) => mockCreateModel(...args),
-    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
     VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
@@ -75,6 +73,15 @@ vi.mock('@vostride/agent-qa-core', async () => {
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
     runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
     resolveSecretTemplatesInValue: vi.fn((value: unknown) => value),
+  }
+})
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: (...args: unknown[]) => mockCreateModel(...args),
+    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
   }
 })
 

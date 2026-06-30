@@ -61,6 +61,13 @@ vi.mock('@vostride/agent-qa-core', async () => {
     readAuth: (...args: unknown[]) => mockReadAuth(...args),
     writeAuth: (...args: unknown[]) => mockWriteAuth(...args),
     removeAuth: (...args: unknown[]) => mockRemoveAuth(...args),
+  }
+})
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
     createModel: (...args: unknown[]) => mockCreateModel(...args),
     getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
   }
@@ -153,7 +160,7 @@ beforeEach(async () => {
   mockReadAuth.mockResolvedValue({})
   mockWriteAuth.mockResolvedValue(undefined)
   mockRemoveAuth.mockResolvedValue(undefined)
-  mockCreateModel.mockResolvedValue({ id: 'model' })
+  mockCreateModel.mockReturnValue({ id: 'model' })
   mockGetProviderOptions.mockReturnValue(undefined)
   mockGenerateText.mockResolvedValue({ text: 'ok' })
 })
@@ -416,11 +423,14 @@ describe('dashboard compatible auth routes', () => {
       model: 'openrouter/auto',
       baseURL: 'https://openrouter.ai/api/v1',
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith({
-      provider: 'openai-compatible',
-      model: 'openrouter/auto',
-      baseURL: 'https://openrouter.ai/api/v1',
-    })
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai-compatible',
+        model: 'openrouter/auto',
+        baseURL: 'https://openrouter.ai/api/v1',
+      }),
+      { kind: 'none' },
+    )
   })
 
   it('does not fall back to the provider key when compatible configName is absent', async () => {
@@ -450,11 +460,14 @@ describe('dashboard compatible auth routes', () => {
     expect(mockResolveLLMAuth).toHaveBeenCalledWith('', expect.objectContaining({
       provider: 'openai-compatible',
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith({
-      provider: 'openai-compatible',
-      model: 'openrouter/auto',
-      baseURL: 'https://openrouter.ai/api/v1',
-    })
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai-compatible',
+        model: 'openrouter/auto',
+        baseURL: 'https://openrouter.ai/api/v1',
+      }),
+      { kind: 'none' },
+    )
   })
 
   it('keeps the no-key compatible indicator when the provider rejects auth', async () => {
@@ -539,10 +552,13 @@ describe('dashboard compatible auth routes', () => {
       success: true,
       unauthenticated: true,
     })
-    expect(mockCreateModel).toHaveBeenCalledWith({
-      provider: 'openai-compatible',
-      model: 'openrouter/auto',
-      baseURL: 'https://openrouter.ai/api/v1',
-    })
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai-compatible',
+        model: 'openrouter/auto',
+        baseURL: 'https://openrouter.ai/api/v1',
+      }),
+      { kind: 'none' },
+    )
   })
 })
