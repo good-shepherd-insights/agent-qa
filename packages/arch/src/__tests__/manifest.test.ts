@@ -213,7 +213,7 @@ function findCoreLedgerOffenders(
   const offenders: string[] = []
   const ledger = coreContract.ledger ?? []
   const ledgerTargets = new Set(ledger.map(entry => entry.target))
-  const baselineTargets = new Set(AGENT_QA_CORE_HOST_BASELINE)
+  const baselineTargets = new Set<string>(AGENT_QA_CORE_HOST_BASELINE)
   const leakingDependencies = [...coreDependencies]
     .filter(isCoreLeakingDependency)
     .sort()
