@@ -14,10 +14,11 @@ import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, ModelConfig, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getProviderOptions, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
-import { fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
+import { createModel, fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { parse as parseYaml } from 'yaml'
+import { toModelProfileAndAuth } from '../llm-model-mapping.js'
 
 const LLM_PROVIDER_MODES = new Set([
   'openai-compatible',
@@ -3498,27 +3499,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             return
           }
 
-          const modelConfig: Record<string, unknown> = { ...llmConfig }
           let unauthenticated = false
           let authMessage: string | undefined
-
-          if (resolvedAuth.kind === 'api-key') {
-            modelConfig.apiKey = resolvedAuth.apiKey
-          } else if (resolvedAuth.kind === 'bearer-token') {
-            modelConfig.authToken = resolvedAuth.token
-          } else if (resolvedAuth.kind === 'auth-fetch') {
-            modelConfig.fetch = resolvedAuth.fetch
-            modelConfig.modelAdapter = resolvedAuth.modelAdapter
-          } else if (resolvedAuth.kind === 'unauthenticated') {
+          if (resolvedAuth.kind === 'unauthenticated') {
             unauthenticated = true
             authMessage = resolvedAuth.message
           }
 
           try {
-            const { createModel } = await import('@vostride/agent-qa-core')
-            const model = await createModel(modelConfig as unknown as Parameters<typeof createModel>[0])
-
-            const testProviderOpts = getProviderOptions(modelConfig as unknown as Parameters<typeof getProviderOptions>[0])
+            const { profile, auth } = toModelProfileAndAuth(llmConfig, resolvedAuth)
+            const model = createModel(profile, auth)
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
 
             const controller = new AbortController()
@@ -3529,7 +3519,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
                 model,
                 prompt: 'Say "ok"',
                 abortSignal: controller.signal,
-                providerOptions: testProviderOpts,
               })
             } finally {
               clearTimeout(timeout)

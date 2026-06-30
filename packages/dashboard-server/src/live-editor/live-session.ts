@@ -3,8 +3,6 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import {
   AUTH_STATE_SCHEMA_VERSION,
   executeStep,
-  createModel,
-  getProviderOptions,
   LLMPlanner,
   LLMVerifier,
   VariableStore,
@@ -21,6 +19,7 @@ import {
   resolveSecretTemplatesInValue,
   writeAuthStateFiles,
 } from '@vostride/agent-qa-core'
+import { createModel } from '@vostride/agent-qa-model'
 import type {
   AgentLoopConfig,
   AuthStateMetadata,
@@ -37,6 +36,7 @@ import type {
   StepPhaseEvent,
 } from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
+import { authFromFetch, authFromRuntimeConfig, toModelProfileAndAuth } from '../llm-model-mapping.js'
 import { prepareMobileLiveSession } from './mobile-bootstrap.js'
 import type { MobileLiveAppiumLease } from './mobile-bootstrap.js'
 import type { AppiumManager } from '../execution/appium-manager.js'
@@ -614,14 +614,14 @@ export class LiveSession {
 
     const { vision: _vision, ...modelIdentity } = config.llmConfig
     void _vision
-    const modelConfig = {
-      ...modelIdentity,
-      ...(config.authFetch ? { fetch: config.authFetch } : {}),
-    }
-    this.model = await createModel(modelConfig)
-    const providerOptions = getProviderOptions(modelConfig)
-    this.planner = new LLMPlanner(this.model, config.platform, providerOptions, undefined, config.agentRules)
-    this.verifier = new LLMVerifier(this.model, providerOptions)
+    const runtimeAuth = authFromRuntimeConfig(
+      modelIdentity,
+      authFromFetch(modelIdentity.provider, config.authFetch),
+    )
+    const { profile, auth } = toModelProfileAndAuth(modelIdentity, runtimeAuth)
+    this.model = createModel(profile, auth)
+    this.planner = new LLMPlanner(this.model, config.platform, undefined, config.agentRules)
+    this.verifier = new LLMVerifier(this.model)
 
     this.status = 'idle'
     this.createdAt = Date.now()
