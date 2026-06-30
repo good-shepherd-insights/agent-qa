@@ -6,7 +6,6 @@ import type { ScopedLogger } from '../logging/types.js'
 import { buildSystemPrompt, buildStepPrompt } from './prompts.js'
 import { buildTools, toolCallToActionPlan } from '../tools/builder.js'
 import { defaultRegistry } from '../tools/index.js'
-import { createWrappedModel } from '../provider/index.js'
 
 export class LLMPlanner implements Planner {
   private model: LanguageModel
@@ -15,7 +14,7 @@ export class LLMPlanner implements Planner {
   private agentRules?: string
 
   constructor(model: LanguageModel, platform: 'web' | 'android' | 'ios' = 'web', logger?: ScopedLogger, agentRules?: string) {
-    this.model = createWrappedModel(model as Parameters<typeof createWrappedModel>[0])
+    this.model = model
     this.platform = platform
     this.logger = logger
     this.agentRules = agentRules

@@ -34,8 +34,6 @@ export { buildSystemPrompt, buildStepPrompt, buildVerificationPrompt, buildAsser
 export { defaultRegistry, buildTools, toolCallToActionPlan } from '../tools/index.js'
 export type { ToolRegistry, ToolDefinition, ToolCategory } from '../tools/index.js'
 
-export { createWrappedModel, toolSchemaMiddleware } from '../provider/index.js'
-
 export { AssertionEvaluator, LLMAssertionEvaluator, createAsserter, AssertionResultSchema } from './asserter.js'
 
 export { executeStep } from './loop.js'
