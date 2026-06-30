@@ -9,7 +9,11 @@ export function validateProfile(profile: ModelProfile): void {
     throw new Error('Anthropic-Compatible provider requires a baseURL')
   }
 
-  if (profile.headers && profile.provider !== 'anthropic-compatible') {
+  if (
+    profile.headers
+    && profile.provider !== 'anthropic-compatible'
+    && profile.provider !== 'openai-compatible'
+  ) {
     throw new Error(
       `${displayProvider(profile.provider)} provider custom headers are only supported on anthropic-compatible`,
     )
