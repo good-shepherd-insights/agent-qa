@@ -82,7 +82,7 @@ function validateBrandingInAgentFiles(rootDir, errors) {
 }
 
 export function validateAgentInstructions(rootDir = root, options = {}) {
-  const expectedPackageCount = options.expectedPackageCount ?? 9
+  const expectedPackageCount = options.expectedPackageCount ?? 17
   const errors = []
   const rootAgentsPath = join(rootDir, 'AGENTS.md')
 
