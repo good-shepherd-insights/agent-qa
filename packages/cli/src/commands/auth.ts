@@ -3,6 +3,7 @@ import { exec } from 'node:child_process'
 import pc from 'picocolors'
 import input from '@inquirer/input'
 import password from '@inquirer/password'
+import { createModel } from '@vostride/agent-qa-model'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 
 type ProviderMode =
@@ -75,21 +76,6 @@ function printCredentialGuidance(configName: string, provider: string): void {
   console.log(pc.dim('Use agent-qa auth set --config <name> --type api-key'))
   if (provider === 'anthropic-compatible') {
     console.log(pc.dim('or --type bearer-token'))
-  }
-}
-
-function applyAuthToModelConfig(llmConfig: CliLLMConfig, auth: ResolvedAuth): Record<string, unknown> {
-  switch (auth.kind) {
-    case 'api-key':
-      return { ...llmConfig, apiKey: auth.apiKey }
-    case 'bearer-token':
-      return { ...llmConfig, authToken: auth.token }
-    case 'auth-fetch':
-      return { ...llmConfig, fetch: auth.fetch, modelAdapter: auth.modelAdapter }
-    case 'unauthenticated':
-      return { ...llmConfig }
-    case 'missing':
-      throw new Error(auth.message)
   }
 }
 
@@ -412,7 +398,7 @@ export function createAuthCommand(): Command {
       .option('--provider <name>', 'override config provider')
       .option('--model <name>', 'override config model')
       .action(async (opts: { config?: string; provider?: string; model?: string }, command: Command) => {
-        const { resolveModelAuth, resolveNamedConfig } = await import('../llm-utils.js')
+        const { resolveModelAuth, resolveNamedConfig, toModelProfileAndAuth } = await import('../llm-utils.js')
         const configPath = getGlobalConfigPath(command)
 
         let planner: CliLLMConfig
@@ -442,12 +428,10 @@ export function createAuthCommand(): Command {
           console.log(pc.dim(auth.message))
         }
 
-        const { createModel, getProviderOptions } = await import('@vostride/agent-qa-core')
         const { generateText } = await import('ai')
 
-        const modelConfig = applyAuthToModelConfig(planner, auth)
-        const model = await createModel(modelConfig as any)
-        const providerOpts = getProviderOptions(modelConfig as any)
+        const { profile, auth: modelAuth } = toModelProfileAndAuth(planner, auth as any)
+        const model = createModel(profile, modelAuth)
 
         const start = Date.now()
         const controller = new AbortController()
@@ -457,7 +441,6 @@ export function createAuthCommand(): Command {
             model,
             prompt: 'Say "ok"',
             abortSignal: controller.signal,
-            ...(providerOpts ? { providerOptions: providerOpts } : {}),
           })
           const elapsed = Date.now() - start
           console.log(pc.green(`Connected to ${planner.provider}/${planner.model} (${elapsed}ms)`))

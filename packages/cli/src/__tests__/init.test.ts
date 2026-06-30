@@ -44,7 +44,6 @@ vi.mock('@inquirer/password', () => ({
 
 vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
-  createModel: vi.fn(),
   resolveAppiumExecutable: vi.fn(() => ({ command: 'appium', source: 'path' })),
   formatAppiumInstallGuidance: vi.fn(() => 'Install Appium locally with `npm install -D appium` or globally with `npm install -g appium`.'),
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: '.agent-qa/auth-states',

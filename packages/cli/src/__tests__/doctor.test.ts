@@ -33,7 +33,6 @@ vi.mock('@vostride/agent-qa-core', async () => {
         return { success: true }
       }),
     },
-    createModel: vi.fn(() => ({})),
     getCredential: vi.fn(() => null),
     resolveLLMAuth: vi.fn(() => Promise.resolve({
       kind: 'unauthenticated',
@@ -94,6 +93,14 @@ vi.mock('@vostride/agent-qa-core', async () => {
   }
 })
 
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: vi.fn(() => ({})),
+  }
+})
+
 vi.mock('ai', async () => {
   const actual = await vi.importActual<typeof import('ai')>('ai')
   return {
@@ -117,7 +124,7 @@ import { execFileSync, execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import * as core from '@vostride/agent-qa-core'
-import { clearProviderRegistry, registerProvider } from '@vostride/agent-qa-model'
+import { clearProviderRegistry, createModel, registerProvider } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
 import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 
@@ -125,7 +132,7 @@ const mockExecSync = vi.mocked(execSync)
 const mockExecFileSync = vi.mocked(execFileSync)
 const mockExistsSync = vi.mocked(existsSync)
 const mockReadFile = vi.mocked(readFile)
-const mockCreateModel = vi.mocked(core.createModel)
+const mockCreateModel = vi.mocked(createModel)
 const mockGetCredential = vi.mocked(core.getCredential)
 const mockLoadLLMAuthPlugins = vi.mocked(core.loadLLMAuthPlugins)
 const mockLoadProviderPluginsForRawConfig = vi.mocked(loadProviderPluginsForRawConfig)
@@ -386,11 +393,15 @@ use:
     const output = getOutput()
     expect(output).toContain('Testing without a saved credential.')
     expect(output).toContain('credential optional')
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'openai-compatible',
-      model: 'deepseek-chat',
-      baseURL: 'https://remote.example/api/v1',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai-compatible',
+        model: 'deepseek-chat',
+        baseURL: 'https://remote.example/api/v1',
+        auth: { mode: 'none' },
+      }),
+      { kind: 'none' },
+    )
     expect(mockGetCredential).not.toHaveBeenCalled()
   })
 
@@ -421,13 +432,16 @@ use:
       provider: 'anthropic-compatible',
       providerHeaders: { 'x-workspace': 'agent-qa' },
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'anthropic-compatible',
-      model: 'claude-remote',
-      baseURL: 'https://remote.example/messages',
-      providerHeaders: { 'x-workspace': 'agent-qa' },
-      authToken: 'bearer-planner',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-remote',
+        baseURL: 'https://remote.example/messages',
+        headers: { 'x-workspace': 'agent-qa' },
+        auth: { mode: 'bearer-token' },
+      }),
+      { kind: 'bearer-token', token: 'bearer-planner' },
+    )
   })
 
   it('loads declared auth plugins and forwards auth-fetch modelAdapter to createModel', async () => {
@@ -469,12 +483,14 @@ use:
       }),
       'agent-qa.config.yaml',
     )
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'openai-subscription',
-      model: 'gpt-5.5',
-      fetch: authFetch,
-      modelAdapter: 'openai-responses',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai-subscription',
+        model: 'gpt-5.5',
+        auth: { mode: 'subscription', plugin: 'openai-subscription' },
+      }),
+      { kind: 'auth-fetch', fetch: authFetch, modelAdapter: 'openai-responses' },
+    )
   })
 
   it('classifies a registered sixth provider as subscription through registry metadata', async () => {

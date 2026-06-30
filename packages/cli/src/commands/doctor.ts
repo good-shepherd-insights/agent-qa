@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import pc from 'picocolors'
 import { loadConfigFile } from '../config.js'
-import { loadAuthPluginsForRawConfig, type LLMModelAdapter } from '../llm-utils.js'
+import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
 import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 import {
@@ -15,7 +15,7 @@ import {
   type AgentQaConfig,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
-import { getProvider } from '@vostride/agent-qa-model'
+import { createModel, getProvider } from '@vostride/agent-qa-model'
 
 type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
@@ -104,21 +104,6 @@ async function resolveActiveLLMAuth(llm: ActiveLLMConfig): Promise<ResolvedDocto
     ...(llm.baseURL ? { baseURL: llm.baseURL } : {}),
     ...(llm.providerHeaders ? { providerHeaders: llm.providerHeaders } : {}),
   }) as ResolvedDoctorAuth
-}
-
-function applyResolvedAuth(llm: ActiveLLMConfig, auth: ResolvedDoctorAuth): Record<string, unknown> {
-  switch (auth.kind) {
-    case 'api-key':
-      return { ...llm, apiKey: auth.apiKey }
-    case 'bearer-token':
-      return { ...llm, authToken: auth.token }
-    case 'auth-fetch':
-      return { ...llm, fetch: auth.fetch, modelAdapter: auth.modelAdapter }
-    case 'unauthenticated':
-      return { ...llm }
-    case 'missing':
-      throw new Error(auth.message)
-  }
 }
 
 function formatStatus(status: CheckStatus): string {
@@ -343,11 +328,9 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
         if (auth.kind === 'missing') {
           return { status: 'fail', message: auth.message }
         }
-        const { createModel, getProviderOptions } = await import('@vostride/agent-qa-core')
         const { generateText } = await import('ai')
-        const modelConfig = applyResolvedAuth(llm, auth)
-        const testModel = await createModel(modelConfig as any)
-        const providerOptions = getProviderOptions(modelConfig as any)
+        const { profile, auth: modelAuth } = toModelProfileAndAuth(llm, auth as any)
+        const testModel = createModel(profile, modelAuth)
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 10000)
         try {
@@ -355,7 +338,6 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
             model: testModel,
             prompt: 'Say "ok"',
             abortSignal: controller.signal,
-            ...(providerOptions ? { providerOptions } : {}),
           })
         } finally {
           clearTimeout(timeout)

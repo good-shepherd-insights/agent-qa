@@ -22,8 +22,6 @@ vi.mock('@inquirer/select', () => ({
 }))
 
 vi.mock('@vostride/agent-qa-core', () => ({
-  createModel: vi.fn(() => ({})),
-  getProviderOptions: vi.fn(() => undefined),
   getCredential: vi.fn(() => null),
   getLLMAuthProviderPlugin: vi.fn(() => undefined),
   readAuth: vi.fn(() => ({})),
@@ -31,9 +29,42 @@ vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
 }))
 
+vi.mock('@vostride/agent-qa-model', () => ({
+  createModel: vi.fn(() => ({})),
+}))
+
 vi.mock('ai', () => ({
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
 }))
+
+function mockToModelProfileAndAuth(llmConfig: any, resolved: any) {
+  const profile = {
+    provider: llmConfig.provider,
+    model: llmConfig.model,
+    ...(llmConfig.baseURL !== undefined ? { baseURL: llmConfig.baseURL } : {}),
+    ...(llmConfig.providerHeaders !== undefined ? { headers: llmConfig.providerHeaders } : {}),
+    auth: resolved.kind === 'api-key'
+      ? { mode: 'api-key' }
+      : resolved.kind === 'bearer-token'
+        ? { mode: 'bearer-token' }
+        : resolved.kind === 'auth-fetch'
+          ? { mode: 'subscription', plugin: resolved.provider }
+          : { mode: 'none' },
+  }
+
+  switch (resolved.kind) {
+    case 'api-key':
+      return { profile, auth: { kind: 'api-key', apiKey: resolved.apiKey } }
+    case 'bearer-token':
+      return { profile, auth: { kind: 'bearer-token', token: resolved.token } }
+    case 'auth-fetch':
+      return { profile, auth: { kind: 'auth-fetch', modelAdapter: resolved.modelAdapter, fetch: resolved.fetch } }
+    case 'unauthenticated':
+      return { profile, auth: { kind: 'none' } }
+    case 'missing':
+      throw new Error(resolved.message)
+  }
+}
 
 vi.mock('../llm-utils.js', () => ({
   loadAuthPluginsForRawConfig: vi.fn(() => Promise.resolve()),
@@ -65,6 +96,7 @@ vi.mock('../llm-utils.js', () => ({
     }],
     defaultName: 'default',
   })),
+  toModelProfileAndAuth: vi.fn(mockToModelProfileAndAuth),
 }))
 
 vi.mock('../config.js', () => ({
@@ -93,8 +125,8 @@ vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
 
 import { createAuthCommand } from '../commands/auth.js'
 import { generateText } from 'ai'
+import { createModel } from '@vostride/agent-qa-model'
 import {
-  createModel,
   getLLMAuthProviderPlugin,
   removeAuth,
   writeAuth,
@@ -485,10 +517,14 @@ describe('auth provider mode contract', () => {
     await runAuthTest(['--config', 'remote-anthropic'])
 
     expect(getOutput()).toContain('Testing without a saved credential.')
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'anthropic-compatible',
-      baseURL: 'https://remote.example/messages',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        baseURL: 'https://remote.example/messages',
+        auth: { mode: 'none' },
+      }),
+      { kind: 'none' },
+    )
     expect(mockGenerateText).toHaveBeenCalled()
   })
 
@@ -704,13 +740,16 @@ describe('auth test', () => {
       provider: 'anthropic-compatible',
       providerHeaders: { 'x-workspace': 'agent-qa' },
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith({
-      provider: 'anthropic-compatible',
-      model: 'claude-remote',
-      baseURL: 'https://anthropic.example/messages',
-      providerHeaders: { 'x-workspace': 'agent-qa' },
-      authToken: 'bearer-default',
-    })
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-remote',
+        baseURL: 'https://anthropic.example/messages',
+        headers: { 'x-workspace': 'agent-qa' },
+        auth: { mode: 'bearer-token' },
+      }),
+      { kind: 'bearer-token', token: 'bearer-default' },
+    )
   })
 
   it('blocks subscription tests when resolver reports missing OAuth', async () => {
@@ -748,10 +787,14 @@ describe('auth test', () => {
       provider: 'gemini',
       model: 'gemini-2.5-flash',
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'gemini',
-      model: 'gemini-2.5-flash',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'gemini',
+        model: 'gemini-2.5-flash',
+        auth: { mode: 'api-key' },
+      }),
+      { kind: 'api-key', apiKey: 'test-key' },
+    )
   })
 })
 
