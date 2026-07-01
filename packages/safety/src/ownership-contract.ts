@@ -9,6 +9,9 @@ export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'storage-neutral audit sink port for execution and guardrail audit rows',
   'run-scoped reversible masking context with stable per-run placeholders',
   'provider-request egress masking hook, neutral run-scope resolver seam, and known-value seeding',
+  'deterministic egress guardrail detector and scan engine',
+  'guardrail policy load boundary (parse-or-throw, fail closed)',
+  'buffering streaming egress guardrail scan with block-to-redact promotion',
 ] as const
 export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',

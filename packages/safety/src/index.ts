@@ -1,4 +1,12 @@
 export { createProviderRequestMiddleware } from './egress/provider-request-middleware'
+export { createGuardrailProviderRequestHook, GuardrailBlockError } from './guardrail/egress-hook'
+export {
+  defaultGuardrailPolicyInput,
+  GuardrailConfigError,
+  loadGuardrailPolicy,
+} from './guardrail/policy-loader'
+export { scan } from './guardrail/scan'
+export { createGuardrailStreamScan } from './guardrail/stream-scan'
 export { HookRegistry, createHookRegistry } from './hooks/registry'
 export { createMaskingContext } from './masking/context'
 export { createMaskingProviderRequestHook } from './masking/egress-hook'
