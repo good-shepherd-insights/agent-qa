@@ -1,4 +1,4 @@
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
+export const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g
 
 export function detectEmails(text: string): string[] {
   const matcher = new RegExp(EMAIL_RE.source, EMAIL_RE.flags)
