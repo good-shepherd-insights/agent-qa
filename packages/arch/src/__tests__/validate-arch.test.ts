@@ -194,6 +194,26 @@ describe('validate:arch held-out fixtures', () => {
     ])
   })
 
+  it('held-out safety class set rejects provider SDKs and direct filesystem imports', () => {
+    expect(PACKAGE_CLASS_RULES.providerNeutral.allowed).toContain('ai')
+
+    const safetyContract = fixtureContract({
+      packageClasses: ['providerNeutral', 'storageNeutral'],
+    })
+
+    expect(
+      findClassRuleOffenders(safetyContract, [
+        fixtureHit(`${PROVIDER_SDK_FORBIDDEN_PREFIX}openai`),
+        fixtureHit('node:fs', { line: 2 }),
+      ]),
+    ).toEqual([
+      `packages/fixture | fixture.ts:1 | ${PROVIDER_SDK_FORBIDDEN_PREFIX}openai | providerNeutral forbids ${PROVIDER_SDK_FORBIDDEN_PREFIX}*`,
+      'packages/fixture | fixture.ts:2 | node:fs | storageNeutral forbids node:fs',
+    ])
+
+    expect(findClassRuleOffenders(safetyContract, [fixtureHit('ai')])).toEqual([])
+  })
+
   it('held-out browserSafe seam rejects Node imports while schema real scan stays clean', () => {
     expect(
       findClassRuleOffenders(
