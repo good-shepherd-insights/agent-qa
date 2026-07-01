@@ -1,3 +1,2 @@
-import type { AuditSink } from '@vostride/agent-qa-safety'
-
-export type LocalAuditSink = AuditSink
+export { fingerprint } from './fingerprint'
+export { JsonlAuditSink } from './jsonl-audit-sink'
