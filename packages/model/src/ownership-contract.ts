@@ -20,7 +20,10 @@ export const AGENT_QA_MODEL_EXTERNAL_DEPENDENCIES = [
   '@ai-sdk/google',
   '@ai-sdk/provider',
 ] as const
-export const AGENT_QA_MODEL_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
+export const AGENT_QA_MODEL_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-schema',
+  '@vostride/agent-qa-safety',
+] as const
 
 export const AGENT_QA_MODEL_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_MODEL_PACKAGE_NAME,

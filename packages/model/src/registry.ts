@@ -8,6 +8,10 @@ import {
 import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
+import {
+  createHookRegistry,
+  createProviderRequestMiddleware,
+} from '@vostride/agent-qa-safety'
 
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
@@ -22,7 +26,8 @@ import { getProvider, listProviders } from './providers/registry.js'
 import { validateProfile } from './validate.js'
 
 // D-06 order: retry is outermost on response/errors; repair sees text after SDK
-// extraction; request transforms normalize schema, derive examples, then serialize.
+// extraction; request transforms normalize schema, derive examples, serialize, then
+// the safety egress seam sees fully transformed params closest to the provider wire.
 const MIDDLEWARE: LanguageModelMiddleware[] = [
   retryMiddleware(),
   repairMiddleware(),
@@ -30,6 +35,7 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
+  createProviderRequestMiddleware(createHookRegistry()),
 ]
 
 export interface ModelProviderOverrides {

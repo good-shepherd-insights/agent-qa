@@ -578,6 +578,9 @@ importers:
       '@ai-sdk/provider':
         specifier: 3.0.10
         version: 3.0.10
+      '@vostride/agent-qa-safety':
+        specifier: workspace:*
+        version: link:../safety
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema

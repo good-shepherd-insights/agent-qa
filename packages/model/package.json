@@ -53,6 +53,7 @@
     "@ai-sdk/openai": "3.0.58",
     "@ai-sdk/provider": "3.0.10",
     "@vostride/agent-qa-schema": "workspace:*",
+    "@vostride/agent-qa-safety": "workspace:*",
     "ai": "6.0.174"
   },
   "devDependencies": {
