@@ -659,6 +659,9 @@ importers:
       '@vostride/agent-qa-safety':
         specifier: workspace:*
         version: link:../safety
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
     devDependencies:
       '@types/node':
         specifier: ~24.12.2

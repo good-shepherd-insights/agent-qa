@@ -17,6 +17,7 @@ export const AGENT_QA_SAFETY_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
 export const AGENT_QA_SAFETY_LOCAL_EXTERNAL_DEPENDENCIES = [] as const
 export const AGENT_QA_SAFETY_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-safety',
+  '@vostride/agent-qa-schema',
 ] as const
 
 export const AGENT_QA_SAFETY_LOCAL_OWNERSHIP_CONTRACT = {
