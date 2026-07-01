@@ -10,7 +10,9 @@ import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 import {
   createHookRegistry,
+  createMaskingProviderRequestHook,
   createProviderRequestMiddleware,
+  getActiveMaskingContext,
 } from '@vostride/agent-qa-safety'
 
 import { deriveTransport } from './auth.js'
@@ -35,11 +37,17 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
-  createProviderRequestMiddleware(createHookRegistry()),
+  createMaskingMiddleware(),
 ]
 
 export interface ModelProviderOverrides {
   languageModels?: Record<string, LanguageModelV3>
+}
+
+function createMaskingMiddleware(): LanguageModelMiddleware {
+  const registry = createHookRegistry()
+  registry.registerProviderRequest(createMaskingProviderRequestHook(getActiveMaskingContext))
+  return createProviderRequestMiddleware(registry)
 }
 
 export function createModel(
