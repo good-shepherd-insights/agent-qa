@@ -71,8 +71,26 @@ describe('masking egress middleware', () => {
     // the same createModel seam and needs no separate model fixture here.
   })
 
-  it.todo('variable-extractor egress masking - pending M1 (role does not exist yet)')
-  it.todo('asserter egress masking - pending M4 (role is thin today)')
+  it('masks egress for any createModel consumer, covering variable-extractor and asserter', async () => {
+    const ctx = createMaskingContext()
+    ctx.register(secret)
+    setActiveMaskingContextResolver(() => ctx)
+
+    const { captured, model } = createCapturingModel()
+
+    await model.doGenerate(promptRequest(`consumer uses ${secret}`))
+
+    const text = capturedUserText(captured())
+    expect(text).toContain('<SECRET_0>')
+    expect(text).not.toContain(secret)
+
+    // The removed role markers named live LLM-egress consumers:
+    // packages/core/src/agent/variables.ts:202 (LLMVariableExtractor) and
+    // packages/core/src/agent/asserter.ts:116 (LLMAssertionEvaluator, wired via
+    // createAsserter at :165). Both take a createModel-built LanguageModel, so
+    // CONTEXT D-05's 2026-07-02 correction makes the unbypassable-last masking
+    // middleware the structural proof; the old pending markers were a gap.
+  })
 })
 
 function createCapturingModel(): {
