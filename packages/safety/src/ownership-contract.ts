@@ -14,7 +14,7 @@ export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'concrete audit writer or guardrail config-loader implementations',
   'local runtime persistence',
 ] as const
-export const AGENT_QA_SAFETY_EXTERNAL_DEPENDENCIES = [] as const
+export const AGENT_QA_SAFETY_EXTERNAL_DEPENDENCIES = ['ai'] as const
 export const AGENT_QA_SAFETY_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
 
 export const AGENT_QA_SAFETY_OWNERSHIP_CONTRACT = {

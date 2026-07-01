@@ -77,10 +77,10 @@ export class HookRegistry {
     return { context: currentContext }
   }
 
-  runProviderRequest<TParams extends ProviderRequestParams>(params: TParams): TParams {
+  runProviderRequest(params: ProviderRequestParams): ProviderRequestParams {
     let currentParams = params
 
-    for (const hook of this.providerRequestHooks as ProviderRequestHook<TParams>[]) {
+    for (const hook of this.providerRequestHooks) {
       currentParams = hook(currentParams)
     }
 

@@ -3,10 +3,12 @@ import type {
   ToolCallHookResult,
   ToolResultHookResult,
 } from '@vostride/agent-qa-schema'
+import type { LanguageModelMiddleware } from 'ai'
 
 import type { AuditSink } from '../ports/audit-sink'
 
-export type ProviderRequestParams = unknown
+export type ProviderRequestParams =
+  Parameters<NonNullable<LanguageModelMiddleware['transformParams']>>[0]['params']
 
 export interface ToolCallHook<TCall = unknown> {
   (call: TCall): ToolCallHookResult<TCall>
