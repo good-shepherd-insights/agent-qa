@@ -9,7 +9,9 @@ type ToolMessage = Extract<PromptMessage, { role: 'tool' }>
 type UserContentPart = UserMessage['content'][number]
 type AssistantContentPart = AssistantMessage['content'][number]
 type ToolContentPart = ToolMessage['content'][number]
+type FileContentPart = Extract<UserContentPart | AssistantContentPart, { type: 'file' }>
 type ToolResultOutput = Extract<AssistantContentPart, { type: 'tool-result' }>['output']
+type ToolResultContentPart = Extract<ToolResultOutput, { type: 'content' }>['value'][number]
 
 export function createMaskingProviderRequestHook(
   resolve: MaskingContextResolver,
@@ -23,6 +25,8 @@ export function createMaskingProviderRequestHook(
 }
 
 function maskCallOptions(params: ProviderRequestParams, mask: MaskString): ProviderRequestParams {
+  // Only params.prompt is run content. Top-level headers carry provider auth, while stopSequences,
+  // tools, responseFormat, and providerOptions are caller/transport config outside MASK-03 scope.
   return {
     ...params,
     prompt: params.prompt.map((message) => maskMessage(message, mask)),
@@ -47,12 +51,20 @@ function maskUserPart(part: UserContentPart, mask: MaskString): UserContentPart 
     return { ...part, text: mask(part.text) }
   }
 
+  if (part.type === 'file') {
+    return maskFilePart(part, mask)
+  }
+
   return part
 }
 
 function maskAssistantPart(part: AssistantContentPart, mask: MaskString): AssistantContentPart {
   if (part.type === 'text' || part.type === 'reasoning') {
     return { ...part, text: mask(part.text) }
+  }
+
+  if (part.type === 'file') {
+    return maskFilePart(part, mask)
   }
 
   if (part.type === 'tool-call') {
@@ -71,7 +83,19 @@ function maskToolPart(part: ToolContentPart, mask: MaskString): ToolContentPart 
     return { ...part, output: maskToolResultOutput(part.output, mask) }
   }
 
+  if (part.type === 'tool-approval-response') {
+    return part.reason === undefined ? part : { ...part, reason: mask(part.reason) }
+  }
+
   return part
+}
+
+function maskFilePart(part: FileContentPart, mask: MaskString): FileContentPart {
+  return {
+    ...part,
+    ...(part.filename === undefined ? {} : { filename: mask(part.filename) }),
+    data: typeof part.data === 'string' ? mask(part.data) : part.data,
+  }
 }
 
 function maskToolResultOutput(output: ToolResultOutput, mask: MaskString): ToolResultOutput {
@@ -87,7 +111,37 @@ function maskToolResultOutput(output: ToolResultOutput, mask: MaskString): ToolR
     return { ...output, value: maskJsonLike(output.value, mask) }
   }
 
+  if (output.type === 'content') {
+    return { ...output, value: output.value.map((part) => maskToolResultContentPart(part, mask)) }
+  }
+
   return output
+}
+
+function maskToolResultContentPart(
+  part: ToolResultContentPart,
+  mask: MaskString,
+): ToolResultContentPart {
+  switch (part.type) {
+    case 'text':
+      return { ...part, text: mask(part.text) }
+    case 'file-data':
+      return {
+        ...part,
+        ...(part.filename === undefined ? {} : { filename: mask(part.filename) }),
+        data: mask(part.data),
+      }
+    case 'image-data':
+      return { ...part, data: mask(part.data) }
+    case 'file-url':
+    case 'image-url':
+      return { ...part, url: mask(part.url) }
+    case 'file-id':
+    case 'image-file-id':
+      return typeof part.fileId === 'string' ? { ...part, fileId: mask(part.fileId) } : part
+  }
+
+  return part
 }
 
 function maskJsonLike<T>(input: T, mask: MaskString): T {
