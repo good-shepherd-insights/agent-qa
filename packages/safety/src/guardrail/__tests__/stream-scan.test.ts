@@ -1,10 +1,9 @@
-import type { LanguageModelV3StreamPart } from '@ai-sdk/provider'
 import { simulateReadableStream } from 'ai'
 import { describe, expect, it } from 'vitest'
 
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '../policy-loader'
-import { createGuardrailStreamScan } from '../stream-scan'
+import { createGuardrailStreamScan, type LanguageModelV3StreamPart } from '../stream-scan'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const BEARER = 'Bearer abcdefghijklmno12345'
