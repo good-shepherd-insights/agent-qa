@@ -212,7 +212,7 @@ describe('createGuardrailProviderRequestHook', () => {
           content: [
             {
               type: 'file',
-              filename: `capture-${BEARER}.png`,
+              filename: `capture ${BEARER}`,
               data,
               mediaType: 'image/png',
             },
@@ -229,7 +229,7 @@ describe('createGuardrailProviderRequestHook', () => {
       throw new Error('expected a user file part')
     }
 
-    expect(part.filename).toBe('capture-<REDACTED:bearer>.png')
+    expect(part.filename).toBe('capture <REDACTED:bearer>')
     expect(part.data).toBe(data)
   })
 
