@@ -3,6 +3,7 @@ export { HookRegistry, createHookRegistry } from './hooks/registry'
 export { createMaskingContext } from './masking/context'
 export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
+export { seedMaskingContext } from './masking/seed'
 export type {
   ContextHook,
   HookRegistryOptions,
@@ -13,4 +14,5 @@ export type {
 } from './hooks/interfaces'
 export type { MaskCategory } from './masking/categories'
 export type { MaskingContextResolver } from './masking/resolver'
+export type { MaskingSeedSources } from './masking/seed'
 export type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from './ports/audit-sink'
