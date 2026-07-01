@@ -7,6 +7,7 @@ export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'provider-neutral and storage-neutral safety hook framework contracts',
   'egress-scan and policy seam contracts for execution safety engines',
   'storage-neutral audit sink port for execution and guardrail audit rows',
+  'run-scoped reversible masking context with stable per-run placeholders',
 ] as const
 export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
