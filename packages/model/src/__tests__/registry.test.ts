@@ -1,8 +1,14 @@
 import { APICallError } from '@ai-sdk/provider'
+import { simulateReadableStream } from 'ai'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
 import type { ModelCapabilities, ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
+import {
+  createMaskingContext,
+  GuardrailBlockError,
+  setActiveMaskingContextResolver,
+} from '@vostride/agent-qa-safety'
 
 import { capabilityKey, overrideStore } from '../capability/override-store.js'
 import { resolveCapabilities } from '../capability/resolve.js'
@@ -18,6 +24,14 @@ interface RegistryCase {
 }
 
 const noneAuth: ResolvedModelAuth = { kind: 'none' }
+const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
+const BEARER = 'Bearer abcdefghijklmno12345'
+
+type StreamPart = Awaited<ReturnType<LanguageModelV3['doStream']>>['stream'] extends ReadableStream<
+  infer Part
+>
+  ? Part
+  : never
 
 function profile(testCase: RegistryCase): ModelProfile {
   return {
@@ -29,7 +43,10 @@ function profile(testCase: RegistryCase): ModelProfile {
   }
 }
 
-function fakeLanguageModel(onGenerate: (params: LanguageModelV3CallOptions) => void): LanguageModelV3 {
+function fakeLanguageModel(
+  onGenerate: (params: LanguageModelV3CallOptions) => void,
+  streamChunks: StreamPart[] = [],
+): LanguageModelV3 {
   return {
     specificationVersion: 'v3',
     provider: 'override.test',
@@ -48,7 +65,13 @@ function fakeLanguageModel(onGenerate: (params: LanguageModelV3CallOptions) => v
       }
     },
     async doStream() {
-      return { stream: new ReadableStream() }
+      return {
+        stream: simulateReadableStream({
+          chunks: streamChunks,
+          initialDelayInMs: null,
+          chunkDelayInMs: null,
+        }),
+      }
     },
   }
 }
@@ -65,9 +88,59 @@ function apiError(message: string): APICallError {
   })
 }
 
+function overrideProfile(): ModelProfile {
+  return {
+    provider: 'openai-compatible',
+    model: 'override-model',
+    baseURL: 'http://localhost:11434/v1',
+    auth: { mode: 'none' },
+  }
+}
+
+function promptWithUserText(text: string): LanguageModelV3CallOptions['prompt'] {
+  return [
+    {
+      role: 'user',
+      content: [{ type: 'text', text }],
+    },
+  ] as LanguageModelV3CallOptions['prompt']
+}
+
+function capturedUserText(params: LanguageModelV3CallOptions | undefined): string {
+  const message = params?.prompt[0]
+  const part = message?.role === 'user' ? message.content[0] : undefined
+
+  if (!part || part.type !== 'text') {
+    throw new Error('expected a transformed user text prompt part')
+  }
+
+  return part.text
+}
+
+function textDelta(delta: string): StreamPart {
+  return { type: 'text-delta', id: 'text-1', delta } as StreamPart
+}
+
+async function collectStreamText(stream: ReadableStream<StreamPart>): Promise<string> {
+  const reader = stream.getReader()
+  let output = ''
+
+  for (;;) {
+    const result = await reader.read()
+    if (result.done) break
+
+    if (result.value.type === 'text-delta') {
+      output += result.value.delta
+    }
+  }
+
+  return output
+}
+
 describe('createModel', () => {
   beforeEach(() => {
     overrideStore.clear()
+    setActiveMaskingContextResolver(() => undefined)
   })
 
   it('resolves a v3 model for each built-in provider through the registry', () => {
@@ -238,5 +311,66 @@ describe('createModel', () => {
 
     expect(calls).toBe(1)
     expect(overrideStore.get(capabilityKey(modelProfile.provider, modelProfile.model))).toBe(32768)
+  })
+
+  describe('safety egress middleware', () => {
+    it('runs the guardrail after masking on provider request params', async () => {
+      const maskingContext = createMaskingContext()
+      maskingContext.register(AWS_KEY)
+      setActiveMaskingContextResolver(() => maskingContext)
+
+      let captured: LanguageModelV3CallOptions | undefined
+      const model = createModel(overrideProfile(), noneAuth, {
+        languageModels: {
+          'override-model': fakeLanguageModel((params) => {
+            captured = params
+          }),
+        },
+      })
+
+      await model.doGenerate({
+        prompt: promptWithUserText(`masked ${AWS_KEY}; residual ${BEARER}`),
+      })
+
+      const text = capturedUserText(captured)
+      expect(text).toContain('<SECRET_0>')
+      expect(text).toContain('<REDACTED:bearer>')
+      expect(text).not.toContain(AWS_KEY)
+      expect(text).not.toContain(BEARER)
+    })
+
+    it('blocks an unmasked block-shape prompt before the provider call', async () => {
+      let providerCalled = false
+      const model = createModel(overrideProfile(), noneAuth, {
+        languageModels: {
+          'override-model': fakeLanguageModel(() => {
+            providerCalled = true
+          }),
+        },
+      })
+
+      await expect(
+        model.doGenerate({ prompt: promptWithUserText(`send ${AWS_KEY}`) }),
+      ).rejects.toBeInstanceOf(GuardrailBlockError)
+      expect(providerCalled).toBe(false)
+    })
+
+    it('scans the streaming path instead of passing provider streams through raw', async () => {
+      const model = createModel(overrideProfile(), noneAuth, {
+        languageModels: {
+          'override-model': fakeLanguageModel(() => undefined, [
+            textDelta(`prefix ${AWS_KEY.slice(0, 8)}`),
+            textDelta(`${AWS_KEY.slice(8)} suffix`),
+          ]),
+        },
+      })
+
+      const result = await model.doStream({ prompt: [] })
+      const output = await collectStreamText(result.stream)
+
+      expect(output).toBe('prefix <REDACTED:awsKey> suffix')
+      expect(output).not.toContain(AWS_KEY)
+      expect(output).not.toContain(AWS_KEY.slice(0, 8))
+    })
   })
 })

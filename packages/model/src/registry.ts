@@ -9,11 +9,16 @@ import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
 import {
+  createGuardrailProviderRequestHook,
+  createGuardrailStreamScan,
   createHookRegistry,
   createMaskingProviderRequestHook,
   createProviderRequestMiddleware,
+  defaultGuardrailPolicyInput,
   getActiveMaskingContext,
+  loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
@@ -37,17 +42,20 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
-  createMaskingMiddleware(),
+  createSafetyEgressMiddleware(),
 ]
 
 export interface ModelProviderOverrides {
   languageModels?: Record<string, LanguageModelV3>
 }
 
-function createMaskingMiddleware(): LanguageModelMiddleware {
-  const registry = createHookRegistry()
+function createSafetyEgressMiddleware(auditSink?: AuditSink): LanguageModelMiddleware {
+  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+  const registry = createHookRegistry({ auditSink })
   registry.registerProviderRequest(createMaskingProviderRequestHook(getActiveMaskingContext))
-  return createProviderRequestMiddleware(registry)
+  registry.registerProviderRequest(createGuardrailProviderRequestHook(policy, auditSink))
+
+  return createProviderRequestMiddleware(registry, createGuardrailStreamScan(policy, auditSink))
 }
 
 export function createModel(
