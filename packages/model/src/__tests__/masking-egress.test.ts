@@ -41,13 +41,15 @@ describe('masking egress middleware', () => {
     expect(text).not.toContain(secret)
   })
 
-  it('passes params through unchanged when no masking context is active', async () => {
+  it('redacts residual guardrail secret shapes when no masking context is active', async () => {
     const { captured, model } = createCapturingModel()
     const request = promptRequest(`use ${secret}`)
 
     await model.doGenerate(request)
 
-    expect(captured()).toEqual(request)
+    const text = capturedUserText(captured())
+    expect(text).toBe('use <REDACTED:apiKey>')
+    expect(text).not.toContain(secret)
   })
 
   it('masks planner-shaped and verifier-shaped createModel results', async () => {
