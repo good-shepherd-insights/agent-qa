@@ -56,10 +56,10 @@ describe('HookRegistry', () => {
   })
 
   it('short-circuits a denied tool call and appends one execution audit row', () => {
-    const appendExecutionAudit = vi.fn<void, [ExecutionAuditRow]>()
+    const appendExecutionAudit = vi.fn<(row: ExecutionAuditRow) => void>()
     const auditSink: AuditSink = {
       appendExecutionAudit,
-      appendGuardrailAudit: vi.fn<void, [GuardrailAuditRow]>(),
+      appendGuardrailAudit: vi.fn<(row: GuardrailAuditRow) => void>(),
     }
     const registry = createHookRegistry({ auditSink })
     const laterHook = vi.fn()
@@ -89,7 +89,9 @@ describe('HookRegistry', () => {
     expect(laterHook).not.toHaveBeenCalled()
     expect(appendExecutionAudit).toHaveBeenCalledTimes(1)
     expect(appendExecutionAudit).toHaveBeenCalledWith({
+      action: 'tool_call',
       verdict: 'deny',
+      outcome: 'blocked',
       reason: 'restricted action blocked',
       riskTier: 'restricted',
     })
@@ -99,19 +101,23 @@ describe('HookRegistry', () => {
     const registry = createHookRegistry()
     const callsSeenBySecondHook: ToolCallFixture[] = []
 
-    registry.registerToolCall((call: ToolCallFixture) => ({
-      action: 'mutate',
-      mutated: {
-        ...call,
-        args: {
-          count: call.args.count + 1,
+    registry.registerToolCall((call) => {
+      const fixture = call as ToolCallFixture
+      return {
+        action: 'mutate',
+        mutated: {
+          ...fixture,
+          args: {
+            count: fixture.args.count + 1,
+          },
         },
-      },
-      reason: 'increment count',
-    }))
-    registry.registerToolCall((call: ToolCallFixture) => {
-      callsSeenBySecondHook.push(call)
-      return { action: 'allow', call }
+        reason: 'increment count',
+      }
+    })
+    registry.registerToolCall((call) => {
+      const fixture = call as ToolCallFixture
+      callsSeenBySecondHook.push(fixture)
+      return { action: 'allow', call: fixture }
     })
 
     const result = registry.runToolCall<ToolCallFixture>({ name: 'step', args: { count: 1 } })
@@ -124,16 +130,20 @@ describe('HookRegistry', () => {
     const registry = createHookRegistry()
     const secondHookInputs: unknown[] = []
 
-    registry.registerToolResult((result: string) => ({ result: `${result}:first` }))
-    registry.registerToolResult((result: string) => {
+    registry.registerToolResult((result) => ({ result: `${String(result)}:first` }))
+    registry.registerToolResult((result) => {
       secondHookInputs.push(result)
-      return { result: `${result}:second` }
+      return { result: `${String(result)}:second` }
     })
 
-    registry.registerContext((context: string[]) => ({ context: [...context, 'first'] }))
-    registry.registerContext((context: string[]) => {
-      secondHookInputs.push(context)
-      return { context: [...context, 'second'] }
+    registry.registerContext((context) => {
+      const items = context as string[]
+      return { context: [...items, 'first'] }
+    })
+    registry.registerContext((context) => {
+      const items = context as string[]
+      secondHookInputs.push(items)
+      return { context: [...items, 'second'] }
     })
 
     registry.registerProviderRequest((params) => {

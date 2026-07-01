@@ -89,8 +89,10 @@ export class HookRegistry {
 
   private auditToolCallDeny(result: ToolCallHookDenyResult): void {
     this.options.auditSink?.appendExecutionAudit({
+      action: 'tool_call',
       riskTier: result.policy?.riskTier ?? 'restricted',
       verdict: result.policy?.verdict ?? 'deny',
+      outcome: 'blocked',
       reason: result.reason,
     })
   }
