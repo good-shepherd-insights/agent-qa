@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
+import { createHookRegistry } from '@vostride/agent-qa-safety'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { Planner, Verifier, VerificationResult, AgentLoopConfig, StepContext, HealingConfig } from '../types.js'
 import { createTimeoutAbortReason, executeStep } from '../loop.js'
@@ -120,6 +121,93 @@ describe('executeStep', () => {
     expect(result.status).toBe('passed')
     expect(result.name).toBe('Click the Sign In button')
     expect(result.action).toEqual({ type: 'click', ref: 'btn-1' })
+  })
+
+  it('routes context, tool_call, and tool_result through safety hooks', async () => {
+    const safetyHooks = createHookRegistry()
+    const executedActions: Action[] = []
+    let plannerContext: string | undefined
+
+    safetyHooks.registerContext((context: StepContext) => ({
+      context: {
+        ...context,
+        testContext: 'rewritten by safety',
+      },
+    }))
+    safetyHooks.registerToolCall((action: Action) => {
+      if (action.type !== 'click') {
+        return { action: 'allow', call: action }
+      }
+
+      return {
+        action: 'mutate',
+        mutated: {
+          ...action,
+          ref: 'btn-2',
+        },
+      }
+    })
+    safetyHooks.registerToolResult((result: ActionResult) => ({
+      result: {
+        ...result,
+        data: { rewrittenBySafety: true },
+      },
+    }))
+
+    const adapter = createMockAdapter({
+      observeResults: [makeScreenState({
+        elements: [
+          { ref: 'btn-1', role: 'button', name: 'Sign In', attributes: {} },
+          { ref: 'btn-2', role: 'button', name: 'Continue', attributes: {} },
+        ],
+      })],
+    })
+    const originalExecute = adapter.execute.bind(adapter)
+    adapter.execute = async (actionToExecute: Action) => {
+      executedActions.push(actionToExecute)
+      return originalExecute(actionToExecute)
+    }
+
+    const config = makeConfig({
+      adapter,
+      safetyHooks,
+      planner: {
+        async plan(_step, _screenState, context) {
+          plannerContext = context.testContext
+          return { plan: makeActionPlan({ action: { type: 'click', ref: 'btn-1' } }) }
+        },
+      },
+    })
+
+    const result = await executeStep('Click the Sign In button', config, makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(plannerContext).toBe('rewritten by safety')
+    expect(executedActions).toEqual([{ type: 'click', ref: 'btn-2' }])
+    expect(result.trace?.subActions[0]?.data).toEqual({ rewrittenBySafety: true })
+  })
+
+  it('blocks denied tool_call hooks before adapter execution', async () => {
+    const safetyHooks = createHookRegistry()
+    const execute = vi.fn(async (_action: Action): Promise<ActionResult> => ({ success: true }))
+
+    safetyHooks.registerToolCall(() => ({
+      action: 'deny',
+      reason: 'restricted action blocked',
+    }))
+
+    const adapter = createMockAdapter()
+    adapter.execute = execute
+
+    const result = await executeStep(
+      'Click the Sign In button',
+      makeConfig({ adapter, safetyHooks, maxAttempts: 1 }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('failed')
+    expect(result.error).toContain('restricted action blocked')
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it('execution failure → replan with different action → succeed', async () => {

@@ -28,6 +28,7 @@ export const AGENT_QA_CORE_EXTERNAL_DEPENDENCIES = [
 export const AGENT_QA_CORE_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
   '@vostride/agent-qa-runner',
+  '@vostride/agent-qa-safety',
   '@vostride/agent-qa-schema',
 ] as const
 

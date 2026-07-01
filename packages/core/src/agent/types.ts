@@ -1,6 +1,7 @@
 import type { LanguageModel } from 'ai'
 import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
 import type { StepResult, HealingAttempt, TokenUsage, StepPhaseEvent } from '@vostride/agent-qa-runner'
+import type { HookRegistry } from '@vostride/agent-qa-safety'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { LogManager } from '../logging/log-manager.js'
 import type { SecretRedactor, SecretStore } from './secrets.js'
@@ -82,6 +83,7 @@ export interface AgentLoopConfig {
   }
   onSetVariable?: (name: string, value: string) => void
   onPhase?: (event: StepPhaseEvent) => void | Promise<void>
+  safetyHooks?: HookRegistry
   abortSignal?: AbortSignal
   secretStore?: SecretStore
   secretRedactor?: SecretRedactor

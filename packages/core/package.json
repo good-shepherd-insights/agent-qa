@@ -54,6 +54,7 @@
   "dependencies": {
     "@vostride/agent-qa-ids": "workspace:*",
     "@vostride/agent-qa-runner": "workspace:*",
+    "@vostride/agent-qa-safety": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
     "ai": "6.0.174",
     "better-sqlite3": "12.9.0",

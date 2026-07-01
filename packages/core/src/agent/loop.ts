@@ -245,6 +245,7 @@ export async function executeStep(
         )
       }
       try {
+        context = config.safetyHooks?.runContext(context).context ?? context
         planResult = await withAbort(
           config.planner.plan(stepInstruction, screenState, context, config.abortSignal),
           config.abortSignal,
@@ -281,7 +282,7 @@ export async function executeStep(
 
     const rawPlan = planResult!.plan
     const normalizedAction = normalizePointerActionForStep(rawPlan.action as Action, stepInstruction)
-    const action = redactSecretValue(normalizedAction, config.secretRedactor)
+    let action = redactSecretValue(normalizedAction, config.secretRedactor)
     const plan: ActionPlan = {
       ...rawPlan,
       reasoning: redactSecretValue(rawPlan.reasoning, config.secretRedactor),
@@ -330,26 +331,39 @@ export async function executeStep(
     let execResult: ActionResult
     let execError: string | undefined
     try {
-      const actionForExecution = resolveSecretTemplatesInValue(normalizedAction, config.secretStore)
-      if (actionForExecution.type === 'setVariable') {
-        const sv = actionForExecution as Extract<Action, { type: 'setVariable' }>
-        config.onSetVariable?.(sv.name, sv.value)
-        execResult = { success: true }
+      let actionForExecution = resolveSecretTemplatesInValue(normalizedAction, config.secretStore)
+      const hookResult = config.safetyHooks?.runToolCall(actionForExecution)
+      if (hookResult?.action === 'deny') {
+        execResult = { success: false, error: hookResult.reason }
       } else {
-        // Pre-resolve fileUpload relative paths to absolute using testFilePath (per research Pattern 3)
-        let actionToExecute = actionForExecution
-        if (actionForExecution.type === 'fileUpload' && config.testFilePath) {
-          const testDir = dirname(config.testFilePath)
-          const resolvedFiles = actionForExecution.files.map(f =>
-            isAbsolute(f) ? f : resolvePath(testDir, f)
-          )
-          actionToExecute = { ...actionForExecution, files: resolvedFiles }
+        if (hookResult?.action === 'mutate') {
+          actionForExecution = hookResult.mutated
+          action = redactSecretValue(actionForExecution, config.secretRedactor)
+        } else if (hookResult?.action === 'allow') {
+          actionForExecution = hookResult.call
         }
-        execResult = redactSecretValue(
-          await withAbort(config.adapter.execute(actionToExecute), config.abortSignal),
-          config.secretRedactor,
-        )
+
+        if (actionForExecution.type === 'setVariable') {
+          const sv = actionForExecution as Extract<Action, { type: 'setVariable' }>
+          config.onSetVariable?.(sv.name, sv.value)
+          execResult = { success: true }
+        } else {
+          // Pre-resolve fileUpload relative paths to absolute using testFilePath (per research Pattern 3)
+          let actionToExecute = actionForExecution
+          if (actionForExecution.type === 'fileUpload' && config.testFilePath) {
+            const testDir = dirname(config.testFilePath)
+            const resolvedFiles = actionForExecution.files.map(f =>
+              isAbsolute(f) ? f : resolvePath(testDir, f)
+            )
+            actionToExecute = { ...actionForExecution, files: resolvedFiles }
+          }
+          execResult = redactSecretValue(
+            await withAbort(config.adapter.execute(actionToExecute), config.abortSignal),
+            config.secretRedactor,
+          )
+        }
       }
+      execResult = config.safetyHooks?.runToolResult(execResult).result ?? execResult
       if (!execResult.success) execError = execResult.error ?? 'Action failed'
     } catch (err) {
       execError = redactSecretValue(err instanceof Error ? err.message : String(err), config.secretRedactor)
