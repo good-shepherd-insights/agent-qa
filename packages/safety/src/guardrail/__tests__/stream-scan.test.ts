@@ -1,6 +1,8 @@
 import { simulateReadableStream } from 'ai'
 import { describe, expect, it } from 'vitest'
 
+import { createProviderRequestMiddleware } from '../../egress/provider-request-middleware'
+import { createHookRegistry } from '../../hooks/registry'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '../policy-loader'
 import { createGuardrailStreamScan, type LanguageModelV3StreamPart } from '../stream-scan'
@@ -52,6 +54,22 @@ async function scanChunks(chunks: LanguageModelV3StreamPart[], sink = new FakeAu
   }).pipeThrough(createGuardrailStreamScan(policy, sink)())
 
   return { parts: await collect(stream), sink }
+}
+
+async function runWrapStream(
+  middleware: ReturnType<typeof createProviderRequestMiddleware>,
+  stream: ReadableStream<LanguageModelV3StreamPart>,
+) {
+  if (!middleware.wrapStream) throw new Error('expected wrapStream')
+
+  return middleware.wrapStream({
+    doGenerate: async () => {
+      throw new Error('doGenerate should not be called by wrapStream')
+    },
+    doStream: async () => ({ stream }),
+    params: {} as never,
+    model: {} as never,
+  })
 }
 
 function textOutput(parts: LanguageModelV3StreamPart[]): string {
@@ -141,7 +159,7 @@ describe('createGuardrailStreamScan', () => {
     const textEnd: LanguageModelV3StreamPart = { type: 'text-end', id: 'text-1' }
     const finish: LanguageModelV3StreamPart = {
       type: 'finish',
-      finishReason: 'stop',
+      finishReason: { unified: 'stop', raw: 'stop' },
       usage: {
         inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
         outputTokens: { total: 1, text: 1, reasoning: 0 },
@@ -176,5 +194,42 @@ describe('createGuardrailStreamScan', () => {
     expect(sink.guardrailRows.map((row) => `${row.action}:${row.detector}`)).toEqual([
       'block:awsKey',
     ])
+  })
+})
+
+describe('createProviderRequestMiddleware stream attachment', () => {
+  it('pipes wrapStream through the guardrail stream scan when provided', async () => {
+    const sink = new FakeAuditSink()
+    const middleware = createProviderRequestMiddleware(
+      createHookRegistry(),
+      createGuardrailStreamScan(policy, sink),
+    )
+    const rawStream = simulateReadableStream({
+      chunks: [textDelta(`prefix ${AWS_KEY.slice(0, 8)}`), textDelta(`${AWS_KEY.slice(8)} suffix`)],
+      initialDelayInMs: null,
+      chunkDelayInMs: null,
+    })
+
+    const result = await runWrapStream(middleware, rawStream)
+    const output = textOutput(await collect(result.stream))
+
+    expect(output).toBe('prefix <REDACTED:awsKey> suffix')
+    expect(output).not.toContain(AWS_KEY)
+    expect(sink.guardrailRows.map((row) => `${row.action}:${row.detector}`)).toEqual([
+      'block:awsKey',
+    ])
+  })
+
+  it('keeps wrapStream as a passthrough when no stream scan is provided', async () => {
+    const middleware = createProviderRequestMiddleware(createHookRegistry())
+    const rawStream = simulateReadableStream({
+      chunks: [textDelta(`raw ${AWS_KEY}`)],
+      initialDelayInMs: null,
+      chunkDelayInMs: null,
+    })
+
+    const result = await runWrapStream(middleware, rawStream)
+
+    expect(textOutput(await collect(result.stream))).toBe(`raw ${AWS_KEY}`)
   })
 })
