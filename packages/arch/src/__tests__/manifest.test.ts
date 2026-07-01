@@ -29,6 +29,8 @@ const expectedPackageDirs = [
   'packages/schema',
   'packages/model',
   'packages/runner',
+  'packages/safety',
+  'packages/safety-local',
   'packages/knowledge-local',
   'packages/core',
   'packages/ids',
@@ -221,11 +223,11 @@ describe('ARCH_MANIFEST enumeration', () => {
     ).toContain('packages/b: workspace package missing src/ownership-contract.ts')
   })
 
-  it('declares exactly the expected Phase 335 package set', () => {
+  it('declares exactly the expected package set', () => {
     const packageDirs = packageDirsFromManifest()
 
     expect(
-      findSetMismatchOffenders('manifest vs Phase 335 expected package set', packageDirs, [
+      findSetMismatchOffenders('manifest vs expected package set', packageDirs, [
         ...expectedPackageDirs,
       ]),
     ).toEqual([])
