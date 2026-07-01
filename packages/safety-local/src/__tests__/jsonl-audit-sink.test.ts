@@ -113,8 +113,8 @@ describe('JsonlAuditSink', () => {
     expect(row).not.toHaveProperty('redactedFingerprint')
   })
 
-  it('exports only the write-only sink and fingerprint helper', () => {
-    expect(Object.keys(surface).sort()).toEqual(['JsonlAuditSink', 'fingerprint'])
+  it('exports only the write-only sink, fingerprint helper, and masking scope binding', () => {
+    expect(Object.keys(surface).sort()).toEqual(['JsonlAuditSink', 'fingerprint', 'runMaskingScope'])
   })
 
   it('keeps small same-file appends parseable on local POSIX filesystems', async () => {
