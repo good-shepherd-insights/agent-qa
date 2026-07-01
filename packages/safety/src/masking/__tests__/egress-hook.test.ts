@@ -25,11 +25,15 @@ describe('createMaskingProviderRequestHook', () => {
     })
 
     const masked = hook(params)
-    const text = masked.prompt[0]?.role === 'user' ? masked.prompt[0].content[0]?.text : ''
+    const part = masked.prompt[0]?.role === 'user' ? masked.prompt[0].content[0] : undefined
+
+    if (!part || part.type !== 'text') {
+      throw new Error('expected a user text part')
+    }
 
     expect(masked).not.toBe(params)
-    expect(text).toContain('<SECRET_0>')
-    expect(text).not.toContain(secret)
+    expect(part.text).toContain('<SECRET_0>')
+    expect(part.text).not.toContain(secret)
     expect(masked.temperature).toBe(0.2)
   })
 
@@ -71,8 +75,11 @@ describe('createMaskingProviderRequestHook', () => {
     const masked = hook(params)
     const part = masked.prompt[0]?.role === 'assistant' ? masked.prompt[0].content[0] : undefined
 
-    expect(part?.type).toBe('tool-call')
-    expect(JSON.stringify(part?.input)).toContain('<SECRET_0>')
-    expect(JSON.stringify(part?.input)).not.toContain(secret)
+    if (!part || part.type !== 'tool-call') {
+      throw new Error('expected an assistant tool-call part')
+    }
+
+    expect(JSON.stringify(part.input)).toContain('<SECRET_0>')
+    expect(JSON.stringify(part.input)).not.toContain(secret)
   })
 })

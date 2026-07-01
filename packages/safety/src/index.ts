@@ -1,6 +1,8 @@
 export { createProviderRequestMiddleware } from './egress/provider-request-middleware'
 export { HookRegistry, createHookRegistry } from './hooks/registry'
 export { createMaskingContext } from './masking/context'
+export { createMaskingProviderRequestHook } from './masking/egress-hook'
+export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
 export type {
   ContextHook,
   HookRegistryOptions,
@@ -10,4 +12,5 @@ export type {
   ToolResultHook,
 } from './hooks/interfaces'
 export type { MaskCategory } from './masking/categories'
+export type { MaskingContextResolver } from './masking/resolver'
 export type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from './ports/audit-sink'

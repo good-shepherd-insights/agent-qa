@@ -8,6 +8,7 @@ export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'egress-scan and policy seam contracts for execution safety engines',
   'storage-neutral audit sink port for execution and guardrail audit rows',
   'run-scoped reversible masking context with stable per-run placeholders',
+  'provider-request egress masking hook, neutral run-scope resolver seam, and known-value seeding',
 ] as const
 export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
