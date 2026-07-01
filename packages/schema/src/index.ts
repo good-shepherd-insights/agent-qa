@@ -119,6 +119,7 @@ export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch }
 export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
 
 // 342 safety contracts
+export { guardrailPolicySchema } from './safety/index'
 export type {
   RiskTier,
   PolicyVerdict,
@@ -126,6 +127,8 @@ export type {
   ScanAction,
   ScanResult,
   MaskingContext,
+  GuardrailPolicy,
+  GuardrailDetectorFamily,
   ToolCallHookAllowResult,
   ToolCallHookMutateResult,
   ToolCallHookDenyResult,
