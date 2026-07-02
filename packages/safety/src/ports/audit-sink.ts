@@ -1,4 +1,4 @@
-import type { PolicyVerdict, RiskTier, ScanAction } from '@vostride/agent-qa-schema'
+import type { ContentOrigin, PolicyVerdict, RiskTier, ScanAction } from '@vostride/agent-qa-schema'
 
 export interface ExecutionAuditRow {
   runId?: string
@@ -23,6 +23,9 @@ export interface GuardrailAuditRow {
   action: ScanAction
   detector?: string
   redactedFingerprint?: string
+  overridden?: boolean
+  origin?: ContentOrigin
+  reason?: string
 }
 
 export interface AuditSink {
