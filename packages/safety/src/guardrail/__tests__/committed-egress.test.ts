@@ -71,12 +71,13 @@ describe('assertCommittedEgressSafe', () => {
 
     expect(() =>
       assertCommittedEgressSafe(
-        [{ label: 'issue.md', text: `Authorization: ${BEARER} for ${EMAIL}` }],
+        [{ label: 'issue.md', text: `Authorization: ${BEARER} with ${API_KEY} for ${EMAIL}` }],
         { policy, auditSink: sink },
       ),
     ).toThrow(CommittedEgressBlockedError)
     expect(sink.guardrailRows.map((row) => `${row.action}:${row.detector}`)).toEqual([
       'redact:bearer',
+      'redact:apiKey',
       'redact:email',
     ])
   })
