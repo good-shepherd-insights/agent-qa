@@ -126,6 +126,7 @@ export type {
   ExecutionPolicyResult,
   ScanAction,
   ScanResult,
+  ContentOrigin,
   MaskingContext,
   GuardrailPolicy,
   GuardrailDetectorFamily,
