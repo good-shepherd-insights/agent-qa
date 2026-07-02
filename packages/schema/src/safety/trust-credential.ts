@@ -17,8 +17,8 @@ export interface TrustScope {
 /**
  * Scoped trust credential presented to the policy gate.
  *
- * Token issuance, validation, and crypto are deferred to the M5 cloud-auth model;
- * this DTO models only the credential shape and required scope.
+ * Token issuance, validation, and signing internals are deferred to the M5
+ * cloud-auth model; this DTO models only the credential shape and required scope.
  */
 export interface TrustCredential {
   /** Scope the credential is allowed to satisfy. */
