@@ -6,17 +6,21 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type {
+  AsyncToolCallHook,
   ContextHook,
   HookRegistryOptions,
   ProviderRequestHook,
   ProviderRequestParams,
+  SafetyHookRunner,
   ToolCallHook,
   ToolResultHook,
 } from './interfaces'
+import { FIRST_PARTY, FirstPartyHookError } from './capability'
 import { buildExecutionAuditRow } from '../policy/gate'
 
-export class HookRegistry {
+export class HookRegistry implements SafetyHookRunner {
   private readonly toolCallHooks: ToolCallHook[] = []
+  private readonly asyncToolCallHooks: AsyncToolCallHook[] = []
   private readonly toolResultHooks: ToolResultHook[] = []
   private readonly contextHooks: ContextHook[] = []
   private readonly providerRequestHooks: ProviderRequestHook[] = []
@@ -25,6 +29,11 @@ export class HookRegistry {
 
   registerToolCall(hook: ToolCallHook): void {
     this.toolCallHooks.push(hook)
+  }
+
+  registerToolCallAsync(hook: AsyncToolCallHook, capability: unknown): void {
+    this.assertFirstParty(capability)
+    this.asyncToolCallHooks.push(hook)
   }
 
   registerToolResult(hook: ToolResultHook): void {
@@ -47,6 +56,24 @@ export class HookRegistry {
 
       if (result.action === 'deny') {
         this.auditToolCallDeny(result)
+        return result
+      }
+
+      if (result.action === 'mutate') {
+        currentCall = result.mutated
+      }
+    }
+
+    return { action: 'allow', call: currentCall }
+  }
+
+  async runToolCallAsync<TCall>(call: TCall): Promise<ToolCallHookResult<TCall>> {
+    let currentCall = call
+
+    for (const hook of this.asyncToolCallHooks as AsyncToolCallHook<TCall>[]) {
+      const result = await hook(currentCall)
+
+      if (result.action === 'deny') {
         return result
       }
 
@@ -86,6 +113,12 @@ export class HookRegistry {
     }
 
     return currentParams
+  }
+
+  private assertFirstParty(capability: unknown): void {
+    if (capability !== FIRST_PARTY) {
+      throw new FirstPartyHookError()
+    }
   }
 
   private auditToolCallDeny(result: ToolCallHookDenyResult): void {
