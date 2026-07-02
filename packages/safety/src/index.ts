@@ -11,7 +11,10 @@ export {
 } from './guardrail/policy-loader'
 export { scan } from './guardrail/scan'
 export { createGuardrailStreamScan } from './guardrail/stream-scan'
-export { HookRegistry, createHookRegistry } from './hooks/registry'
+// Raw registry construction (HookRegistry class + createHookRegistry factory) is
+// intentionally NOT re-exported (D-03): registration capability leaves the public
+// surface so registerFirstPartySafetyHooks is the only public registration path.
+// Hook TYPE exports below grant no registration capability and stay public.
 export { registerFirstPartySafetyHooks } from './hooks/first-party'
 export { FirstPartyHookError } from './hooks/capability'
 export { createMaskingContext } from './masking/context'

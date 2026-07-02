@@ -112,4 +112,15 @@ describe('public barrel surface (D-03)', () => {
       expect(value).not.toBe(FIRST_PARTY)
     }
   })
+
+  it('offers exactly one registration path: the registrar, never raw registry construction', () => {
+    const keys = Object.keys(barrel)
+    // The only public registration path.
+    expect(keys).toContain('registerFirstPartySafetyHooks')
+    expect(keys).toContain('FirstPartyHookError')
+    // Raw registry construction left the public surface (runtime proof over the
+    // actual export object — stronger than a source grep).
+    expect(keys).not.toContain('HookRegistry')
+    expect(keys).not.toContain('createHookRegistry')
+  })
 })
