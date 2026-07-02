@@ -12,6 +12,8 @@ export {
 export { scan } from './guardrail/scan'
 export { createGuardrailStreamScan } from './guardrail/stream-scan'
 export { HookRegistry, createHookRegistry } from './hooks/registry'
+export { registerFirstPartySafetyHooks } from './hooks/first-party'
+export { FirstPartyHookError } from './hooks/capability'
 export { createMaskingContext } from './masking/context'
 export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
@@ -32,13 +34,17 @@ export type {
   CommittedEgressPart,
 } from './guardrail/committed-egress'
 export type {
+  AsyncToolCallHook,
   ContextHook,
   HookRegistryOptions,
   ProviderRequestHook,
   ProviderRequestParams,
+  SafetyHookRunner,
   ToolCallHook,
   ToolResultHook,
 } from './hooks/interfaces'
+export type { FirstPartySafetyDeps, FirstPartySafetyHooks } from './hooks/first-party'
+export type { PolicyGateHookDeps } from './policy/gate-hook'
 export type { MaskCategory } from './masking/categories'
 export type { MaskingContextResolver } from './masking/resolver'
 export type { MaskingSeedSources } from './masking/seed'
