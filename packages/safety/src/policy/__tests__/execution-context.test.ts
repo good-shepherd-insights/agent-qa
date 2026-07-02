@@ -44,5 +44,7 @@ describe('active execution context resolver', () => {
     setActiveExecutionContextResolver(() => 'ci')
 
     expect(getActiveExecutionContext()).toBe('ci')
+
+    setActiveExecutionContextResolver(() => 'local-headless')
   })
 })
