@@ -13,6 +13,7 @@ import type {
   ToolCallHook,
   ToolResultHook,
 } from './interfaces'
+import { buildExecutionAuditRow } from '../policy/gate'
 
 export class HookRegistry {
   private readonly toolCallHooks: ToolCallHook[] = []
@@ -88,13 +89,15 @@ export class HookRegistry {
   }
 
   private auditToolCallDeny(result: ToolCallHookDenyResult): void {
-    this.options.auditSink?.appendExecutionAudit({
+    const row = buildExecutionAuditRow({
       action: 'tool_call',
       riskTier: result.policy?.riskTier ?? 'restricted',
       verdict: result.policy?.verdict ?? 'deny',
       outcome: 'blocked',
       reason: result.reason,
     })
+
+    this.options.auditSink?.appendExecutionAudit(row)
   }
 }
 

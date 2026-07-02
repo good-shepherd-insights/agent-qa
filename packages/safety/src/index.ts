@@ -17,6 +17,7 @@ export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
 export { unmaskForHumanOutput } from './masking/human-output'
 export { classifyRisk } from './policy/risk-classifier'
+export { evaluate } from './policy/gate'
 export {
   getActiveExecutionContext,
   requiresFailClosed,
@@ -45,5 +46,11 @@ export type {
   ExecutionContextResolver,
   ExecutionContextSignals,
 } from './policy/execution-context'
+export type {
+  GateDeps,
+  GateTrust,
+  ExecutionPolicyOutcome,
+  ExecutionPolicyTrustSource,
+} from './policy/gate'
 export type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from './ports/audit-sink'
 export type { StandingApprovalReader, ConfirmPort } from './ports/policy-ports'
