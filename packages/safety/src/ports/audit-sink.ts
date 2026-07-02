@@ -10,10 +10,16 @@ export interface ExecutionAuditRow {
   riskTier: RiskTier
   verdict: PolicyVerdict
   /**
-   * Secret-free coded outcome value, e.g. proceeded, blocked, prompted-then-approved, or fail-closed-denied.
+   * Secret-free coded outcome value:
+   * proceeded, prompted-approved, prompted-denied, fail-closed-denied, or blocked.
    */
   outcome: string
   reason: string
+  /**
+   * Trust source that satisfied an ask:
+   * session-trust-mode, trust-credential, standing-approval, or tty-prompt.
+   * Omitted for allow, deny, and fail-closed outcomes.
+   */
   trustSource?: string
 }
 

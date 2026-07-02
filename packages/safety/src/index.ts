@@ -23,6 +23,7 @@ export {
   resolveExecutionContext,
   setActiveExecutionContextResolver,
 } from './policy/execution-context'
+export { NO_STANDING_APPROVALS, DENY_CONFIRM } from './ports/policy-ports'
 export { seedMaskingContext } from './masking/seed'
 export type {
   BlockedDetection,
@@ -45,3 +46,4 @@ export type {
   ExecutionContextSignals,
 } from './policy/execution-context'
 export type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from './ports/audit-sink'
+export type { StandingApprovalReader, ConfirmPort } from './ports/policy-ports'
