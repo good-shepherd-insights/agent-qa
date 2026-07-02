@@ -1,4 +1,5 @@
 export type { RiskTier, PolicyVerdict, ExecutionPolicyResult } from './risk-tier'
+export type { RiskActionDescriptor } from './action-descriptor'
 export type { ScanAction, ScanResult } from './scan'
 export type { ContentOrigin } from './content-origin'
 export type { MaskingContext } from './masking'

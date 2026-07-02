@@ -121,6 +121,7 @@ export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './re
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
 export type {
+  RiskActionDescriptor,
   RiskTier,
   PolicyVerdict,
   ExecutionPolicyResult,
