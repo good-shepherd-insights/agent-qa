@@ -8,6 +8,7 @@ export const AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'local guardrail configuration loader implementation for execution safety',
   'filesystem access for local safety audit and guardrail configuration adapters',
   'local AsyncLocalStorage run-scope binding behind the safety masking-context resolver seam',
+  'host execution-context detection behind the safety resolver seam',
 ] as const
 export const AGENT_QA_SAFETY_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'provider invocation ownership',
