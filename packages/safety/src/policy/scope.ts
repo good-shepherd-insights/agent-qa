@@ -1,4 +1,8 @@
-import type { TrustScope } from '@vostride/agent-qa-schema'
+import type {
+  RiskActionDescriptor,
+  StandingApprovalGrant,
+  TrustScope,
+} from '@vostride/agent-qa-schema'
 
 type TrustScopeKey = keyof TrustScope
 
@@ -17,4 +21,12 @@ export function scopeMatches(credentialScope: TrustScope, actionScope: TrustScop
 
   // Conservative exact-scope stance: org-only credentials do not cover projects.
   return credentialKeys.every((key) => actionKeys.includes(key) && credentialScope[key] === actionScope[key])
+}
+
+export function grantCovers(
+  grant: StandingApprovalGrant,
+  action: RiskActionDescriptor,
+  actionScope: TrustScope,
+): boolean {
+  return grant.actionClass === action.name && scopeMatches(grant.scope, actionScope)
 }
