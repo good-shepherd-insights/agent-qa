@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createProviderRequestMiddleware } from '../../egress/provider-request-middleware'
+import { FIRST_PARTY, FirstPartyHookError } from '../capability'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
-import type { ProviderRequestParams } from '../interfaces'
+import type { AsyncToolCallHook, ProviderRequestParams } from '../interfaces'
 import { createHookRegistry } from '../registry'
 
 interface ToolCallFixture {
@@ -189,5 +190,120 @@ describe('HookRegistry', () => {
         params,
       } as Parameters<NonNullable<typeof middleware.transformParams>>[0]),
     ).resolves.toBe(params)
+  })
+})
+
+describe('HookRegistry async tool_call dispatch', () => {
+  it('stores an async tool_call hook registered with FIRST_PARTY and invokes it via runToolCallAsync', async () => {
+    const registry = createHookRegistry()
+    const hook = vi.fn<AsyncToolCallHook<ToolCallFixture>>(async (call) => ({
+      action: 'allow',
+      call,
+    }))
+
+    registry.registerToolCallAsync(hook as AsyncToolCallHook, FIRST_PARTY)
+
+    const result = await registry.runToolCallAsync<ToolCallFixture>({
+      name: 'click',
+      args: { count: 1 },
+    })
+
+    expect(hook).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ action: 'allow', call: { name: 'click', args: { count: 1 } } })
+  })
+
+  it('rejects registration without a capability token (FirstPartyHookError)', () => {
+    const registry = createHookRegistry()
+    const hook: AsyncToolCallHook = async (call) => ({ action: 'allow', call })
+
+    expect(() => registry.registerToolCallAsync(hook, undefined)).toThrow(FirstPartyHookError)
+  })
+
+  it('rejects a forged token with the same description (identity check, not description check)', () => {
+    const registry = createHookRegistry()
+    const hook: AsyncToolCallHook = async (call) => ({ action: 'allow', call })
+
+    expect(() =>
+      registry.registerToolCallAsync(hook, Symbol('agent-qa-safety-first-party')),
+    ).toThrow(FirstPartyHookError)
+  })
+
+  it('awaits hooks in registration order and threads a mutation into the next hook', async () => {
+    const registry = createHookRegistry()
+    const callsSeenBySecondHook: ToolCallFixture[] = []
+
+    registry.registerToolCallAsync(
+      (async (call) => {
+        const fixture = call as ToolCallFixture
+        return {
+          action: 'mutate',
+          mutated: { ...fixture, args: { count: fixture.args.count + 1 } },
+          reason: 'increment count',
+        }
+      }) as AsyncToolCallHook,
+      FIRST_PARTY,
+    )
+    registry.registerToolCallAsync(
+      (async (call) => {
+        const fixture = call as ToolCallFixture
+        callsSeenBySecondHook.push(fixture)
+        return { action: 'allow', call: fixture }
+      }) as AsyncToolCallHook,
+      FIRST_PARTY,
+    )
+
+    const result = await registry.runToolCallAsync<ToolCallFixture>({
+      name: 'step',
+      args: { count: 1 },
+    })
+
+    expect(callsSeenBySecondHook).toEqual([{ name: 'step', args: { count: 2 } }])
+    expect(result).toEqual({ action: 'allow', call: { name: 'step', args: { count: 2 } } })
+  })
+
+  it('short-circuits on a deny result and never invokes later hooks', async () => {
+    const registry = createHookRegistry()
+    const laterHook = vi.fn<AsyncToolCallHook>(async (call) => ({ action: 'allow', call }))
+
+    registry.registerToolCallAsync(
+      (async () => ({
+        action: 'deny',
+        reason: 'restricted action blocked',
+        policy: {
+          verdict: 'deny',
+          reason: 'restricted action blocked',
+          riskTier: 'restricted',
+        },
+      })) as AsyncToolCallHook,
+      FIRST_PARTY,
+    )
+    registry.registerToolCallAsync(laterHook, FIRST_PARTY)
+
+    const result = await registry.runToolCallAsync<ToolCallFixture>({
+      name: 'deleteAll',
+      args: { count: 1 },
+    })
+
+    expect(result).toEqual({
+      action: 'deny',
+      reason: 'restricted action blocked',
+      policy: {
+        verdict: 'deny',
+        reason: 'restricted action blocked',
+        riskTier: 'restricted',
+      },
+    })
+    expect(laterHook).not.toHaveBeenCalled()
+  })
+
+  it('returns allow with the original call when no async hooks are registered', async () => {
+    const registry = createHookRegistry()
+
+    const result = await registry.runToolCallAsync<ToolCallFixture>({
+      name: 'noop',
+      args: { count: 1 },
+    })
+
+    expect(result).toEqual({ action: 'allow', call: { name: 'noop', args: { count: 1 } } })
   })
 })
