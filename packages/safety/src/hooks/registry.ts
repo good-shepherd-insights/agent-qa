@@ -1,6 +1,5 @@
 import type {
   ContextHookResult,
-  ToolCallHookDenyResult,
   ToolCallHookResult,
   ToolResultHookResult,
 } from '@vostride/agent-qa-schema'
@@ -16,7 +15,6 @@ import type {
   ToolResultHook,
 } from './interfaces'
 import { FIRST_PARTY, FirstPartyHookError } from './capability'
-import { buildExecutionAuditRow } from '../policy/gate'
 
 export class HookRegistry implements SafetyHookRunner {
   private readonly toolCallHooks: ToolCallHook[] = []
@@ -55,7 +53,6 @@ export class HookRegistry implements SafetyHookRunner {
       const result = hook(currentCall)
 
       if (result.action === 'deny') {
-        this.auditToolCallDeny(result)
         return result
       }
 
@@ -119,18 +116,6 @@ export class HookRegistry implements SafetyHookRunner {
     if (capability !== FIRST_PARTY) {
       throw new FirstPartyHookError()
     }
-  }
-
-  private auditToolCallDeny(result: ToolCallHookDenyResult): void {
-    const row = buildExecutionAuditRow({
-      action: 'tool_call',
-      riskTier: result.policy?.riskTier ?? 'restricted',
-      verdict: result.policy?.verdict ?? 'deny',
-      outcome: 'blocked',
-      reason: result.reason,
-    })
-
-    this.options.auditSink?.appendExecutionAudit(row)
   }
 }
 

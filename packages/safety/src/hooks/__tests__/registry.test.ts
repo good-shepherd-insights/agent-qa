@@ -56,7 +56,7 @@ describe('HookRegistry', () => {
     expect(calls).toEqual(['tool_call', 'tool_result', 'context', 'provider_request'])
   })
 
-  it('short-circuits a denied tool call and appends one execution audit row', () => {
+  it('short-circuits a denied sync tool call without writing any audit row', () => {
     const appendExecutionAudit = vi.fn<(row: ExecutionAuditRow) => void>()
     const auditSink: AuditSink = {
       appendExecutionAudit,
@@ -88,14 +88,10 @@ describe('HookRegistry', () => {
       },
     })
     expect(laterHook).not.toHaveBeenCalled()
-    expect(appendExecutionAudit).toHaveBeenCalledTimes(1)
-    expect(appendExecutionAudit).toHaveBeenCalledWith({
-      action: 'tool_call',
-      verdict: 'deny',
-      outcome: 'blocked',
-      reason: 'restricted action blocked',
-      riskTier: 'restricted',
-    })
+    // The registry is a pure dispatcher: the policy gate's evaluate() is the sole
+    // execution-audit author (349 D-02). A registry-side second writer would emit
+    // two rows per deny — assert zero rows here.
+    expect(appendExecutionAudit).not.toHaveBeenCalled()
   })
 
   it('makes a tool-call mutation visible to the next hook', () => {
@@ -261,8 +257,13 @@ describe('HookRegistry async tool_call dispatch', () => {
     expect(result).toEqual({ action: 'allow', call: { name: 'step', args: { count: 2 } } })
   })
 
-  it('short-circuits on a deny result and never invokes later hooks', async () => {
-    const registry = createHookRegistry()
+  it('short-circuits on a deny result, never invokes later hooks, and writes no audit row', async () => {
+    const appendExecutionAudit = vi.fn<(row: ExecutionAuditRow) => void>()
+    const auditSink: AuditSink = {
+      appendExecutionAudit,
+      appendGuardrailAudit: vi.fn<(row: GuardrailAuditRow) => void>(),
+    }
+    const registry = createHookRegistry({ auditSink })
     const laterHook = vi.fn<AsyncToolCallHook>(async (call) => ({ action: 'allow', call }))
 
     registry.registerToolCallAsync(
@@ -294,6 +295,7 @@ describe('HookRegistry async tool_call dispatch', () => {
       },
     })
     expect(laterHook).not.toHaveBeenCalled()
+    expect(appendExecutionAudit).not.toHaveBeenCalled()
   })
 
   it('returns allow with the original call when no async hooks are registered', async () => {
