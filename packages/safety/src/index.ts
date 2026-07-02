@@ -1,4 +1,8 @@
 export { createProviderRequestMiddleware } from './egress/provider-request-middleware'
+export {
+  assertCommittedEgressSafe,
+  CommittedEgressBlockedError,
+} from './guardrail/committed-egress'
 export { createGuardrailProviderRequestHook, GuardrailBlockError } from './guardrail/egress-hook'
 export {
   defaultGuardrailPolicyInput,
@@ -13,6 +17,11 @@ export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
 export { unmaskForHumanOutput } from './masking/human-output'
 export { seedMaskingContext } from './masking/seed'
+export type {
+  BlockedDetection,
+  CommittedEgressOptions,
+  CommittedEgressPart,
+} from './guardrail/committed-egress'
 export type {
   ContextHook,
   HookRegistryOptions,
