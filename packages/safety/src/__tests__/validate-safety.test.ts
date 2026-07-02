@@ -220,3 +220,119 @@ describe('SAFE-03 (b) behavioral fail-closed', () => {
     ).toThrow(GuardrailConfigError)
   })
 })
+
+// ---------------------------------------------------------------------------
+// check (c): audit-into-LLM-context static import firewall (D-04c, T-350-16)
+// ---------------------------------------------------------------------------
+
+// The packages that assemble LLM context today: planner/context assembly under
+// core/src/agent and prompt flow through model. Audit rows must never flow back into
+// any LLM context (spec execution-safety §6). The audit surface is write-only today
+// (Phase 343), so this is a forward-looking firewall against a future audit reader
+// being fed into prompts. EXTENSION POLICY: M1/M4 add new context builders to this list
+// as they land (RESEARCH Open Q3 resolution).
+const CONTEXT_BUILDER_PACKAGES = ['core', 'model'] as const
+
+// The host adapter package that writes audit trails; no context builder may import it.
+const SAFETY_LOCAL_PACKAGE = '@vostride/agent-qa-safety-local'
+// The audit sink symbol and the JSONL trail filenames it writes.
+const AUDIT_SINK_SYMBOL = 'JsonlAuditSink'
+const AUDIT_TRAIL_FILES = ['execution_audit.jsonl', 'guardrail_audit.jsonl'] as const
+
+// Copied locally (validate:tools self-contained house style) — coupling safety's test to
+// arch internals via a cross-package relative import was considered and rejected in RESEARCH.
+const SPECIFIER_RE =
+  /\bfrom\s+['"]([^'"]+)['"]|\bimport\s+['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\.resolve\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g
+
+function findAuditFirewallOffenders(file: string, source: string): string[] {
+  const offenders: string[] = []
+  const lines = source.split('\n')
+
+  lines.forEach((text, index) => {
+    const line = index + 1
+
+    // R1: an import specifier is or starts with the safety-local package name.
+    for (const match of text.matchAll(SPECIFIER_RE)) {
+      const specifier = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5]
+      if (
+        specifier &&
+        (specifier === SAFETY_LOCAL_PACKAGE || specifier.startsWith(`${SAFETY_LOCAL_PACKAGE}/`))
+      ) {
+        offenders.push(
+          `${file}:${line} | ${specifier} | R1 context builder must not import the audit host adapter ${SAFETY_LOCAL_PACKAGE}`,
+        )
+      }
+    }
+
+    // R2: a source line references the audit sink identifier.
+    if (new RegExp(`\\b${AUDIT_SINK_SYMBOL}\\b`).test(text)) {
+      offenders.push(
+        `${file}:${line} | ${AUDIT_SINK_SYMBOL} | R2 context builder must not reference the audit sink symbol`,
+      )
+    }
+
+    // R3: a source line references an audit JSONL trail filename.
+    for (const trail of AUDIT_TRAIL_FILES) {
+      if (text.includes(trail)) {
+        offenders.push(
+          `${file}:${line} | ${trail} | R3 context builder must not reference an audit trail filename`,
+        )
+      }
+    }
+  })
+
+  return offenders
+}
+
+function contextBuilderSourceFiles(): { file: string; source: string }[] {
+  const files: { file: string; source: string }[] = []
+
+  for (const pkg of CONTEXT_BUILDER_PACKAGES) {
+    const packageRoot = join(packagesRoot, pkg)
+    if (!existsSync(join(packageRoot, 'src'))) continue
+
+    for (const relative of globSync('src/**/*.{ts,tsx,mjs,cjs,js}', { cwd: packageRoot })) {
+      if (relative.includes('__tests__')) continue
+      files.push({
+        file: `${pkg}/${relative}`,
+        source: readFileSync(join(packageRoot, relative), 'utf8'),
+      })
+    }
+  }
+
+  return files
+}
+
+const FIXTURE_AUDIT_LEAK = [
+  "import type { AuditSink } from '@vostride/agent-qa-safety-local'",
+  'const sink: JsonlAuditSink = makeSink()',
+].join('\n')
+
+const FIXTURE_CLEAN_CONTEXT = [
+  "import { createModel } from '@vostride/agent-qa-model'",
+  'const model = createModel(profile, auth)',
+].join('\n')
+
+describe('SAFE-03 (c) audit-into-context import firewall', () => {
+  it('reports zero audit-firewall offenders across every context-builder source file', () => {
+    const offenders = contextBuilderSourceFiles().flatMap(({ file, source }) =>
+      findAuditFirewallOffenders(file, source),
+    )
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('rejects a held-out fixture importing safety-local and naming the audit sink', () => {
+    expect(
+      findAuditFirewallOffenders('packages/core/src/agent/context.ts', FIXTURE_AUDIT_LEAK),
+    ).toEqual([
+      'packages/core/src/agent/context.ts:1 | @vostride/agent-qa-safety-local | R1 context builder must not import the audit host adapter @vostride/agent-qa-safety-local',
+      'packages/core/src/agent/context.ts:2 | JsonlAuditSink | R2 context builder must not reference the audit sink symbol',
+    ])
+  })
+
+  it('accepts a clean context builder that composes the model without touching the audit surface', () => {
+    expect(
+      findAuditFirewallOffenders('packages/core/src/agent/context.ts', FIXTURE_CLEAN_CONTEXT),
+    ).toEqual([])
+  })
+})
