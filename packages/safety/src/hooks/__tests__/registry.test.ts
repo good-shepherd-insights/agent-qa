@@ -34,19 +34,19 @@ describe('HookRegistry', () => {
     registry.registerToolCall((call) => {
       calls.push('tool_call')
       return { action: 'allow', call }
-    })
+    }, FIRST_PARTY)
     registry.registerToolResult((result) => {
       calls.push('tool_result')
       return { result }
-    })
+    }, FIRST_PARTY)
     registry.registerContext((context) => {
       calls.push('context')
       return { context }
-    })
+    }, FIRST_PARTY)
     registry.registerProviderRequest((params) => {
       calls.push('provider_request')
       return params
-    })
+    }, FIRST_PARTY)
 
     registry.runToolCall({ name: 'click', args: { count: 1 } })
     registry.runToolResult({ ok: true })
@@ -73,8 +73,8 @@ describe('HookRegistry', () => {
         reason: 'restricted action blocked',
         riskTier: 'restricted',
       },
-    }))
-    registry.registerToolCall(laterHook)
+    }), FIRST_PARTY)
+    registry.registerToolCall(laterHook, FIRST_PARTY)
 
     const result = registry.runToolCall({ name: 'deleteAll', args: { count: 1 } })
 
@@ -110,12 +110,12 @@ describe('HookRegistry', () => {
         },
         reason: 'increment count',
       }
-    })
+    }, FIRST_PARTY)
     registry.registerToolCall((call) => {
       const fixture = call as ToolCallFixture
       callsSeenBySecondHook.push(fixture)
       return { action: 'allow', call: fixture }
-    })
+    }, FIRST_PARTY)
 
     const result = registry.runToolCall<ToolCallFixture>({ name: 'step', args: { count: 1 } })
 
@@ -127,21 +127,21 @@ describe('HookRegistry', () => {
     const registry = createHookRegistry()
     const secondHookInputs: unknown[] = []
 
-    registry.registerToolResult((result) => ({ result: `${String(result)}:first` }))
+    registry.registerToolResult((result) => ({ result: `${String(result)}:first` }), FIRST_PARTY)
     registry.registerToolResult((result) => {
       secondHookInputs.push(result)
       return { result: `${String(result)}:second` }
-    })
+    }, FIRST_PARTY)
 
     registry.registerContext((context) => {
       const items = context as string[]
       return { context: [...items, 'first'] }
-    })
+    }, FIRST_PARTY)
     registry.registerContext((context) => {
       const items = context as string[]
       secondHookInputs.push(items)
       return { context: [...items, 'second'] }
-    })
+    }, FIRST_PARTY)
 
     registry.registerProviderRequest((params) => {
       const request = providerRequestFixture(params)
@@ -149,7 +149,7 @@ describe('HookRegistry', () => {
         prompt: `${request.prompt}:first`,
         markers: [...request.markers, 'first'],
       })
-    })
+    }, FIRST_PARTY)
     registry.registerProviderRequest((params) => {
       const request = providerRequestFixture(params)
       secondHookInputs.push(request)
@@ -157,7 +157,7 @@ describe('HookRegistry', () => {
         prompt: `${request.prompt}:second`,
         markers: [...request.markers, 'second'],
       })
-    })
+    }, FIRST_PARTY)
 
     const toolResult = registry.runToolResult('raw')
     const context = registry.runContext(['raw'])

@@ -25,7 +25,8 @@ export class HookRegistry implements SafetyHookRunner {
 
   constructor(private readonly options: HookRegistryOptions = {}) {}
 
-  registerToolCall(hook: ToolCallHook): void {
+  registerToolCall(hook: ToolCallHook, capability: unknown): void {
+    this.assertFirstParty(capability)
     this.toolCallHooks.push(hook)
   }
 
@@ -34,15 +35,18 @@ export class HookRegistry implements SafetyHookRunner {
     this.asyncToolCallHooks.push(hook)
   }
 
-  registerToolResult(hook: ToolResultHook): void {
+  registerToolResult(hook: ToolResultHook, capability: unknown): void {
+    this.assertFirstParty(capability)
     this.toolResultHooks.push(hook)
   }
 
-  registerContext(hook: ContextHook): void {
+  registerContext(hook: ContextHook, capability: unknown): void {
+    this.assertFirstParty(capability)
     this.contextHooks.push(hook)
   }
 
-  registerProviderRequest(hook: ProviderRequestHook): void {
+  registerProviderRequest(hook: ProviderRequestHook, capability: unknown): void {
+    this.assertFirstParty(capability)
     this.providerRequestHooks.push(hook)
   }
 

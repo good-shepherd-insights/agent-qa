@@ -30,17 +30,53 @@ class InMemoryAuditSink implements AuditSink {
 
 const allowHook: AsyncToolCallHook = async (call) => ({ action: 'allow', call })
 
-describe('first-party safety hook registration (HOOK-03)', () => {
-  it('rejects registration without a capability token (FirstPartyHookError)', () => {
-    const registry = new HookRegistry()
-    expect(() => registry.registerToolCallAsync(allowHook, undefined)).toThrow(FirstPartyHookError)
-  })
+// The complete registration-rejection proof for phase success criterion 2: every
+// register method on the seam hard-rejects a caller that lacks the module-private
+// FIRST_PARTY token. Each case invokes one method with a trivial hook of the right
+// shape; the matrix runs each against undefined and a forged same-description Symbol.
+const registerCases: ReadonlyArray<{
+  method: string
+  register: (registry: HookRegistry, capability: unknown) => void
+}> = [
+  {
+    method: 'registerToolCall',
+    register: (registry, capability) =>
+      registry.registerToolCall((call) => ({ action: 'allow', call }), capability),
+  },
+  {
+    method: 'registerToolCallAsync',
+    register: (registry, capability) => registry.registerToolCallAsync(allowHook, capability),
+  },
+  {
+    method: 'registerToolResult',
+    register: (registry, capability) =>
+      registry.registerToolResult((result) => ({ result }), capability),
+  },
+  {
+    method: 'registerContext',
+    register: (registry, capability) =>
+      registry.registerContext((context) => ({ context }), capability),
+  },
+  {
+    method: 'registerProviderRequest',
+    register: (registry, capability) =>
+      registry.registerProviderRequest((params) => params, capability),
+  },
+]
 
-  it('rejects a forged same-description token (identity check, not description)', () => {
-    const registry = new HookRegistry()
-    const forged = Symbol('agent-qa-safety-first-party')
-    expect(() => registry.registerToolCallAsync(allowHook, forged)).toThrow(FirstPartyHookError)
-  })
+describe('first-party safety hook registration (HOOK-03)', () => {
+  for (const { method, register } of registerCases) {
+    it(`${method} rejects registration without a capability token (FirstPartyHookError)`, () => {
+      const registry = new HookRegistry()
+      expect(() => register(registry, undefined)).toThrow(FirstPartyHookError)
+    })
+
+    it(`${method} rejects a forged same-description token (identity check, not description)`, () => {
+      const registry = new HookRegistry()
+      const forged = Symbol('agent-qa-safety-first-party')
+      expect(() => register(registry, forged)).toThrow(FirstPartyHookError)
+    })
+  }
 })
 
 describe('registerFirstPartySafetyHooks (HOOK-02 attach/block/audit)', () => {

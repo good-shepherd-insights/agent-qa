@@ -48,9 +48,16 @@ export function registerFirstPartySafetyHooks(
   const registry = new HookRegistry({ auditSink: deps.auditSink })
 
   // (3) masking BEFORE guardrail (locked 346 order: guardrail scans an
-  // already-masked request). Sync register methods stay ungated until 350-04.
-  registry.registerProviderRequest(createMaskingProviderRequestHook(getActiveMaskingContext))
-  registry.registerProviderRequest(createGuardrailProviderRequestHook(policy, deps.auditSink))
+  // already-masked request). Every register method is token-gated (D-03), so the
+  // FIRST_PARTY token threads through both provider_request registrations.
+  registry.registerProviderRequest(
+    createMaskingProviderRequestHook(getActiveMaskingContext),
+    FIRST_PARTY,
+  )
+  registry.registerProviderRequest(
+    createGuardrailProviderRequestHook(policy, deps.auditSink),
+    FIRST_PARTY,
+  )
 
   // (4) The policy gate at the async tool_call point, via the FIRST_PARTY token.
   // The gate hook is precise about its RiskActionDescriptor input; the registry
