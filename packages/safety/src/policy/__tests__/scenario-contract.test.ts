@@ -4,10 +4,12 @@ import type {
   ExecutionContext,
   RiskActionDescriptor,
   RiskTier,
+  StandingApprovalGrant,
   TrustCredential,
   TrustScope,
 } from '@vostride/agent-qa-schema'
 import type { ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
+import type { StandingApprovalReader } from '../../ports/policy-ports'
 import { evaluate } from '../gate'
 
 class FakeAuditSink {
@@ -45,6 +47,7 @@ interface ScenarioCase {
     credential?: TrustCredential
     actionScope?: TrustScope
   }
+  reader?: StandingApprovalReader
   expectedRiskTier: RiskTier
   expectedVerdict: 'allow' | 'deny'
   expectedOutcome:
@@ -69,6 +72,7 @@ async function evaluateScenario(testCase: ScenarioCase): Promise<ExecutionAuditR
   const result = await evaluate(testCase.action, testCase.ctx, testCase.trust ?? {}, {
     auditSink: sink,
     confirm,
+    reader: testCase.reader,
   })
 
   expect(result).toMatchObject({
@@ -154,5 +158,112 @@ describe('POLICY-05 scenario contract', () => {
     },
   ] satisfies readonly ScenarioCase[])('$name', async (testCase) => {
     await evaluateScenario(testCase)
+  })
+
+  describe('destructive lexicon coverage', () => {
+    it.each([
+      {
+        name: 'soft lexicon action classifies destructive and fails closed',
+        action: { name: 'delete_record', recognized: true },
+        ctx: 'cloud',
+        expectedRiskTier: 'destructive',
+        expectedVerdict: 'deny',
+        expectedOutcome: 'fail-closed-denied',
+      },
+      {
+        name: 'hard command lexicon action classifies restricted and blocks',
+        action: { name: 'run_shell', recognized: true, command: 'sudo rm -rf /tmp/agent-qa' },
+        ctx: 'local-interactive',
+        trust: {
+          trustMode: true,
+          credential: matchingCredential,
+          actionScope: { project: PROJECT_A },
+        },
+        expectedRiskTier: 'restricted',
+        expectedVerdict: 'deny',
+        expectedOutcome: 'blocked',
+      },
+    ] satisfies readonly ScenarioCase[])('$name', async (testCase) => {
+      await evaluateScenario(testCase)
+    })
+  })
+
+  describe('scoped trust invariant', () => {
+    const scopedAction: RiskActionDescriptor = {
+      name: 'push_to_remote_scope_check',
+      recognized: true,
+      declaredTier: 'mutating-shared',
+    }
+
+    it.each([
+      {
+        name: 'project A credential does not authorize project B action',
+        action: scopedAction,
+        ctx: 'ci',
+        trust: {
+          credential: matchingCredential,
+          actionScope: { project: PROJECT_B },
+        },
+        expectedRiskTier: 'mutating-shared',
+        expectedVerdict: 'deny',
+        expectedOutcome: 'fail-closed-denied',
+      },
+      {
+        name: 'project A credential authorizes project A action',
+        action: scopedAction,
+        ctx: 'ci',
+        trust: {
+          credential: matchingCredential,
+          actionScope: { project: PROJECT_A },
+        },
+        expectedRiskTier: 'mutating-shared',
+        expectedVerdict: 'allow',
+        expectedOutcome: 'proceeded',
+        expectedTrustSource: 'trust-credential',
+      },
+    ] satisfies readonly ScenarioCase[])('$name', async (testCase) => {
+      await evaluateScenario(testCase)
+    })
+  })
+
+  describe('standing approvals and sovereignty', () => {
+    const standingApproval: StandingApprovalGrant = {
+      actionClass: 'file_issue',
+      scope: { project: PROJECT_A },
+    }
+    const reader: StandingApprovalReader = {
+      grantsFor: () => [standingApproval],
+    }
+
+    it('lets a matching standing approval stop prompting for its action class', async () => {
+      await evaluateScenario({
+        name: 'standing approval covers file_issue in project A',
+        action: { name: 'file_issue', recognized: true },
+        ctx: 'ci',
+        trust: { actionScope: { project: PROJECT_A } },
+        reader,
+        expectedRiskTier: 'mutating-local',
+        expectedVerdict: 'allow',
+        expectedOutcome: 'proceeded',
+        expectedTrustSource: 'standing-approval',
+      })
+    })
+
+    it('keeps restricted actions blocked despite grant, credential, and trust mode', async () => {
+      await evaluateScenario({
+        name: 'restricted action is sovereign over all trust sources',
+        action: { name: 'sudo', recognized: true },
+        ctx: 'local-interactive',
+        trust: {
+          trustMode: true,
+          credential: matchingCredential,
+          actionScope: { project: PROJECT_A },
+        },
+        reader,
+        expectedRiskTier: 'restricted',
+        expectedVerdict: 'deny',
+        expectedOutcome: 'blocked',
+      })
+    })
   })
 })
