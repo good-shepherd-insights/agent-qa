@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
-import { createHookRegistry } from '@vostride/agent-qa-safety'
+import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { Planner, Verifier, VerificationResult, AgentLoopConfig, StepContext, HealingConfig } from '../types.js'
 import { createTimeoutAbortReason, executeStep } from '../loop.js'
@@ -111,6 +111,21 @@ function makeConfig(overrides?: Partial<AgentLoopConfig>): AgentLoopConfig {
   }
 }
 
+// Structural SafetyHookRunner stub (RESEARCH Pitfall 2): the concrete HookRegistry
+// is nominally typed (private fields) so it cannot be hand-built here; the run-facing
+// interface is structural, so identity-default stubs plus per-test overrides fully
+// exercise the loop's hook call sites without touching the registration surface.
+function makeSafetyHooks(overrides: Partial<SafetyHookRunner> = {}): SafetyHookRunner {
+  return {
+    runContext: (context) => ({ context }),
+    runToolCall: (call) => ({ action: 'allow', call }),
+    runToolResult: (result) => ({ result }),
+    runProviderRequest: (params) => params,
+    runToolCallAsync: async (call) => ({ action: 'allow', call }),
+    ...overrides,
+  }
+}
+
 describe('executeStep', () => {
   it('happy path: observe → plan → execute → verify → done(passed)', async () => {
     const config = makeConfig()
@@ -124,35 +139,37 @@ describe('executeStep', () => {
   })
 
   it('routes context, tool_call, and tool_result through safety hooks', async () => {
-    const safetyHooks = createHookRegistry()
     const executedActions: Action[] = []
     let plannerContext: string | undefined
 
-    safetyHooks.registerContext((context: StepContext) => ({
-      context: {
-        ...context,
-        testContext: 'rewritten by safety',
-      },
-    }))
-    safetyHooks.registerToolCall((action: Action) => {
-      if (action.type !== 'click') {
-        return { action: 'allow', call: action }
-      }
+    const safetyHooks = makeSafetyHooks({
+      runContext: (context) => ({
+        context: {
+          ...(context as StepContext),
+          testContext: 'rewritten by safety',
+        } as typeof context,
+      }),
+      runToolCall: (call) => {
+        const action = call as Action
+        if (action.type !== 'click') {
+          return { action: 'allow', call }
+        }
 
-      return {
-        action: 'mutate',
-        mutated: {
-          ...action,
-          ref: 'btn-2',
-        },
-      }
-    })
-    safetyHooks.registerToolResult((result: ActionResult) => ({
-      result: {
-        ...result,
-        data: { rewrittenBySafety: true },
+        return {
+          action: 'mutate',
+          mutated: {
+            ...action,
+            ref: 'btn-2',
+          } as typeof call,
+        }
       },
-    }))
+      runToolResult: (result) => ({
+        result: {
+          ...(result as ActionResult),
+          data: { rewrittenBySafety: true },
+        } as typeof result,
+      }),
+    })
 
     const adapter = createMockAdapter({
       observeResults: [makeScreenState({
@@ -184,17 +201,18 @@ describe('executeStep', () => {
     expect(result.status).toBe('passed')
     expect(plannerContext).toBe('rewritten by safety')
     expect(executedActions).toEqual([{ type: 'click', ref: 'btn-2' }])
-    expect(result.trace?.subActions[0]?.data).toEqual({ rewrittenBySafety: true })
+    expect(result.trace?.subActions?.[0]?.data).toEqual({ rewrittenBySafety: true })
   })
 
   it('blocks denied tool_call hooks before adapter execution', async () => {
-    const safetyHooks = createHookRegistry()
-    const execute = vi.fn(async (_action: Action): Promise<ActionResult> => ({ success: true }))
+    const execute = vi.fn((_action: Action): Promise<ActionResult> => Promise.resolve({ success: true }))
 
-    safetyHooks.registerToolCall(() => ({
-      action: 'deny',
-      reason: 'restricted action blocked',
-    }))
+    const safetyHooks = makeSafetyHooks({
+      runToolCall: () => ({
+        action: 'deny',
+        reason: 'restricted action blocked',
+      }),
+    })
 
     const adapter = createMockAdapter()
     adapter.execute = execute
