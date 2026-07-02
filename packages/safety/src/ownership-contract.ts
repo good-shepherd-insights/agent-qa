@@ -14,6 +14,7 @@ export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'buffering streaming egress guardrail scan with block-to-redact promotion',
   'reusable fail-closed committed-egress pre-write checkpoint with audited user-authored override',
   'neutral execution-context resolver seam and fail-closed policy function',
+  'deterministic static risk-tier classifier and destructive lexicon',
 ] as const
 export const AGENT_QA_SAFETY_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
