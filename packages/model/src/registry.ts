@@ -8,17 +8,7 @@ import {
 import type { LanguageModelMiddleware } from 'ai'
 import type { LanguageModelV3, ProviderV3 } from '@ai-sdk/provider'
 import type { ModelProfile } from '@vostride/agent-qa-schema'
-import {
-  createGuardrailProviderRequestHook,
-  createGuardrailStreamScan,
-  createHookRegistry,
-  createMaskingProviderRequestHook,
-  createProviderRequestMiddleware,
-  defaultGuardrailPolicyInput,
-  getActiveMaskingContext,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
-import type { AuditSink } from '@vostride/agent-qa-safety'
+import { registerFirstPartySafetyHooks } from '@vostride/agent-qa-safety'
 
 import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
@@ -35,6 +25,11 @@ import { validateProfile } from './validate.js'
 // D-06 order: retry is outermost on response/errors; repair sees text after SDK
 // extraction; request transforms normalize schema, derive examples, serialize, then
 // the safety egress seam sees fully transformed params closest to the provider wire.
+// The safety entry is registrar-derived (D-01: the first-party registrar is the
+// single composition point — model consumes it, never composes it). It MUST stay the
+// last element of MIDDLEWARE so the mask+guardrail seam remains innermost/closest to
+// the provider wire; this pinned-last placement is structurally enforced by
+// validate:safety (plan 350-05's SAFE-03(a)).
 const MIDDLEWARE: LanguageModelMiddleware[] = [
   retryMiddleware(),
   repairMiddleware(),
@@ -42,20 +37,11 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
-  createSafetyEgressMiddleware(),
+  registerFirstPartySafetyHooks().middleware,
 ]
 
 export interface ModelProviderOverrides {
   languageModels?: Record<string, LanguageModelV3>
-}
-
-function createSafetyEgressMiddleware(auditSink?: AuditSink): LanguageModelMiddleware {
-  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
-  const registry = createHookRegistry({ auditSink })
-  registry.registerProviderRequest(createMaskingProviderRequestHook(getActiveMaskingContext))
-  registry.registerProviderRequest(createGuardrailProviderRequestHook(policy, auditSink))
-
-  return createProviderRequestMiddleware(registry, createGuardrailStreamScan(policy, auditSink))
 }
 
 export function createModel(
