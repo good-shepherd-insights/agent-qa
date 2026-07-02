@@ -113,9 +113,10 @@ describe('JsonlAuditSink', () => {
     expect(row).not.toHaveProperty('redactedFingerprint')
   })
 
-  it('exports only the write-only sink, fingerprint helper, masking scope binding, and execution-context detector', () => {
+  it('exports only the write-only sink, fingerprint helper, masking scope binding, execution-context detector, and readline confirm adapter', () => {
     expect(Object.keys(surface).sort()).toEqual([
       'JsonlAuditSink',
+      'createReadlineConfirm',
       'detectExecutionContext',
       'fingerprint',
       'runMaskingScope',
