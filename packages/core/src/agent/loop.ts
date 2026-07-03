@@ -1,6 +1,8 @@
 import { resolve as resolvePath, isAbsolute, dirname } from 'node:path'
-import type { Action, ActionResult, ScreenState } from '@vostride/agent-qa-runner'
+import type { Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepResult, StepTrace, StepAnnotation, TokenUsage, SubActionTrace } from '@vostride/agent-qa-runner'
+import { stampCaptureMode } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { AgentLoopConfig, StepContext, PlanResult } from './types.js'
 import { hashScreenState, hashStepInstruction } from './observation.js'
@@ -79,6 +81,11 @@ export async function executeStep(
   context: StepContext,
 ): Promise<StepResult> {
   const startTime = performance.now()
+  // D-11: modality is resolved once per run at the composition root and threaded
+  // structurally as `config.visionGate`. Absent = full-capture (the pre-gate
+  // default used by non-CLI callers and tests). The capture step owns modality
+  // branching; adapters stay model-free.
+  const gate = config.visionGate ?? { attachImage: true, captureMode: 'full' as const, promptNote: '' }
   const maxSubActions = config.plannerConfig?.maxSubActions ?? 50
   const deadline = config.stepTimeout ? startTime + config.stepTimeout : 0
   const subActions: SubActionTrace[] = []
@@ -178,8 +185,12 @@ export async function executeStep(
     }
     previousScreenHash = currentScreenHash
 
-    // Compress screenshot for LLM planner (dashboard screenshots stay raw)
-    if (screenshot && (config.vision?.screenshotSize || config.vision?.effectiveResolution)) {
+    // Compress screenshot for LLM planner (dashboard screenshots stay raw).
+    // D-11: LLM-bound image work is skipped entirely for text-only models —
+    // no compression, no image content block — while adapter.screenshot() above
+    // still ran for artifacts/evidence (SCREEN-03). On full-capture, upgrade the
+    // observe-time `textOnly` stamp to `full` via the pure re-stamp helper.
+    if (gate.attachImage && screenshot && (config.vision?.screenshotSize || config.vision?.effectiveResolution)) {
       if (!config.vision?.effectiveResolution) {
         throw new Error('effectiveResolution is required in LLM config when screenshot compression is enabled')
       }
@@ -197,8 +208,11 @@ export async function executeStep(
           config.abortSignal,
         )
         screenshot = result.buffer
-        screenState.metadata.imageWidth = result.imageWidth
-        screenState.metadata.imageHeight = result.imageHeight
+        screenState = stampCaptureMode(screenState, {
+          mode: 'full',
+          imageWidth: result.imageWidth,
+          imageHeight: result.imageHeight,
+        })
       } catch (err) {
         const abortResult = abortResultForCurrentState()
         if (abortResult) return abortResult
@@ -208,7 +222,10 @@ export async function executeStep(
 
     // 2. PLAN: cache-first, then LLM
     phaseStart = performance.now()
-    if (screenshot) context.screenshot = screenshot
+    // Suppress the image content block for text-only models; inject the gate's
+    // prompt note so the planner leans on the tree/DOM context instead.
+    if (gate.attachImage && screenshot) context.screenshot = screenshot
+    context.promptNote = gate.promptNote
 
     let planResult: PlanResult
     let cached = false
@@ -599,7 +616,9 @@ export async function executeStep(
       if (config.adapter.screenshot) {
         try { verifyScreenshot = await withAbort(config.adapter.screenshot(), config.abortSignal) } catch { /* best-effort */ }
       }
-      if (verifyScreenshot && (config.vision?.screenshotSize || config.vision?.effectiveResolution)) {
+      // D-11: skip verifier-bound image work for text-only models; full-capture
+      // re-stamps the state to `full` with the compressor's real dimensions.
+      if (gate.attachImage && verifyScreenshot && (config.vision?.screenshotSize || config.vision?.effectiveResolution)) {
         if (!config.vision?.effectiveResolution) {
           throw new Error('effectiveResolution is required in LLM config when screenshot compression is enabled')
         }
@@ -617,8 +636,11 @@ export async function executeStep(
             config.abortSignal,
           )
           verifyScreenshot = result.buffer
-          screenState.metadata.imageWidth = result.imageWidth
-          screenState.metadata.imageHeight = result.imageHeight
+          screenState = stampCaptureMode(screenState, {
+            mode: 'full',
+            imageWidth: result.imageWidth,
+            imageHeight: result.imageHeight,
+          })
         } catch (err) {
           const abortResult = abortResultForCurrentState()
           if (abortResult) return abortResult
@@ -634,7 +656,9 @@ export async function executeStep(
       try {
         verifyResult = await withAbort(
           config.verifier.verify(
-            stepInstruction, screenState, afterState, action, verifyScreenshot, config.abortSignal,
+            stepInstruction, screenState, afterState, action,
+            gate.attachImage ? verifyScreenshot : undefined,
+            config.abortSignal, gate.promptNote,
           ),
           config.abortSignal,
         )

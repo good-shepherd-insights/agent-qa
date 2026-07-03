@@ -51,6 +51,12 @@ export interface StepContext {
   subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; screenChanged?: boolean; data?: string }[]
   plannerConfig?: PlannerConfig
   screenshot?: Buffer
+  /**
+   * Vision-gate prompt note for this run (D-11). Non-empty only for text-only
+   * models; injected into the planner prompt when present. Threaded from the
+   * loop's `visionGate.promptNote` — a structural value, not a model import.
+   */
+  promptNote?: string
 }
 
 export interface HealingConfig {
@@ -102,7 +108,7 @@ export interface Planner {
 }
 
 export interface Verifier {
-  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal): Promise<VerifyResult>
+  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string): Promise<VerifyResult>
 }
 
 export interface VerificationResult {

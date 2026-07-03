@@ -53,6 +53,8 @@ export interface RunSuiteConfig {
   accessibility?: RunTestConfig['accessibility']
   accessibilityCheck?: RunTestConfig['accessibilityCheck']
   vision?: { screenshotSize?: number; effectiveResolution?: number }
+  /** Vision gate resolved once per run at the composition root (D-11); passed through to each test. */
+  visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
   memoryProvider?: MemoryProvider
   memoryRoot?: string
   memoryConfig?: {
@@ -438,6 +440,7 @@ export async function runSuite(
         accessibilityCheck: config.accessibilityCheck,
         logCapture: config.logCapture,
         vision: config.vision,
+        visionGate: config.visionGate,
         memoryProvider: memoryEnabled ? config.memoryProvider : undefined,
         memoryInitParams,
         circuitBreaker: config.circuitBreaker,

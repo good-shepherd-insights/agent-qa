@@ -34,9 +34,10 @@ export class LLMVerifier implements Verifier {
     action: Action,
     screenshot?: Buffer,
     abortSignal?: AbortSignal,
+    promptNote?: string,
   ): Promise<VerifyResult> {
     try {
-      const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot)
+      const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot, promptNote)
 
       const outputConfig = Output.object({
         schema: VerificationResultSchema,

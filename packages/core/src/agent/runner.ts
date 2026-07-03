@@ -76,6 +76,11 @@ export interface RunTestConfig {
   suiteContext?: string
   logCapture?: { console?: boolean; network?: boolean }
   vision?: { screenshotSize?: number; effectiveResolution?: number }
+  /**
+   * Vision gate resolved once per run at the composition root (D-11). Threaded
+   * structurally into the loop; absent = full-capture default.
+   */
+  visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
   contextWindow?: number
   memoryProvider?: MemoryProvider
   memoryInitParams?: MemoryIndexParams
@@ -481,6 +486,7 @@ export async function runTest(
         cacheState,
         logCapture: config.logCapture,
         vision: config.vision,
+        visionGate: config.visionGate,
         onSetVariable: (name: string, value: string) => {
           variableStore.set(name, value, 'step')
         },

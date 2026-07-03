@@ -1,4 +1,5 @@
-import type { ScreenState, Action } from '@vostride/agent-qa-runner'
+import type { Action } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext, AssertionInput, ExtractorInput } from './types.js'
 import type { ScopedLogger } from '../logging/types.js'
 import { truncateScreenState } from './observation.js'
@@ -228,10 +229,22 @@ function appendFailureContext(parts: string[], context: StepContext): void {
 }
 
 function appendDomContext(parts: string[], screenState: ScreenState): void {
-  if (screenState.metadata?.domContext) {
+  // D-04: domContext is a typed, web-only optional on the v2 metadata (absent on
+  // Android/iOS). Read the discriminated-union optional directly — no cast.
+  const domContext = screenState.metadata.domContext
+  if (domContext) {
     parts.push('')
     parts.push('DOM structure (supplementary context — use ARIA element refs above for all action targeting):')
-    parts.push(screenState.metadata.domContext as string)
+    parts.push(domContext)
+  }
+}
+
+function appendPromptNote(parts: string[], promptNote?: string): void {
+  // D-11: text-only runs carry a non-empty note (visual screenshot unavailable);
+  // full-capture runs pass an empty/absent note and nothing is injected.
+  if (promptNote && promptNote.length > 0) {
+    parts.push('')
+    parts.push(promptNote)
   }
 }
 
@@ -274,6 +287,7 @@ export function buildStepPrompt(
   parts.push(truncateScreenState(screenState))
 
   appendDomContext(parts, screenState)
+  appendPromptNote(parts, context.promptNote)
 
   const fullPrompt = parts.join('\n')
 
@@ -411,6 +425,7 @@ export function buildVerificationPrompt(
   afterState: ScreenState,
   action: Action,
   hasScreenshot = false,
+  promptNote?: string,
 ): string {
   const parts: string[] = []
 
@@ -450,6 +465,8 @@ export function buildVerificationPrompt(
   parts.push('- success (boolean): whether the step goal was accomplished')
   parts.push('- reasoning (string): explanation of your judgment')
   parts.push('- isAppError (boolean): whether the page shows an application error')
+
+  appendPromptNote(parts, promptNote)
 
   return parts.join('\n')
 }
