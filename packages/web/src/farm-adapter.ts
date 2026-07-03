@@ -7,18 +7,39 @@ import type {
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
-  ScreenState,
 } from '@vostride/agent-qa-runner'
-import { assertNever } from '@vostride/agent-qa-runner'
+import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import { getProvider, registerAllProviders } from '@vostride/agent-qa-core'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
 import type { FarmWebConfig } from '@vostride/agent-qa-core'
-import { observePage } from './observer.js'
-import { ElementResolver } from './element-resolver.js'
+import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
+import { extractDom } from './dom-extractor.js'
+import { ElementResolver, buildRefMap } from './element-resolver.js'
 import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
 import { scrollWithRef } from './scroll-helper.js'
 import type { RefMap } from './types.js'
+
+// Browser-context snapshot hygiene: hide framework-injected [data-agent-qa-internal]
+// overlays from the ARIA snapshot (they would otherwise receive ai-mode refs and
+// pollute the observed state), then restore them. `(globalThis as any).document` is
+// used because the Node tsconfig carries no DOM lib — these run in the browser.
+function hideAgentQaElements() {
+  const doc = (globalThis as any).document
+  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
+    el.style.display = 'none'
+    el.setAttribute('aria-hidden', 'true')
+  })
+}
+
+function restoreAgentQaElements() {
+  const doc = (globalThis as any).document
+  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
+    el.style.display = ''
+    el.removeAttribute('aria-hidden')
+  })
+}
 
 interface PageLogBuffers {
   consoleLogs: ConsoleLogEntry[]
@@ -174,12 +195,45 @@ export class FarmWebAdapter implements PlatformAdapter<'web'> {
     if (!this.page) {
       throw new Error('FarmWebAdapter not initialized — call setup() first')
     }
+    const page = this.page
 
-    await waitForPageReady(this.page)
-    const state = await observePage(this.page, {
-      extractDom: options?.extractDom,
+    await waitForPageReady(page)
+
+    await page.evaluate(hideAgentQaElements)
+    let ariaTree: string
+    try {
+      ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai' })
+    } finally {
+      await page.evaluate(restoreAgentQaElements)
+    }
+
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
+    if (nodes.length > 0) {
+      await enrichWebNodes(page, nodes, nativeRefs)
+    }
+    const { viewport, scroll } = await captureWebScroll(page)
+
+    let domContext: string | undefined
+    if (options?.extractDom) {
+      try {
+        domContext = await extractDom(page)
+      } catch {
+        // DOM extraction is best-effort — never block observation.
+      }
+    }
+
+    const { state, binding } = buildScreenState({
+      platform: 'web',
+      nodes,
+      viewport,
+      scroll,
+      coordSpace: 'viewport',
+      timestamp: Date.now(),
+      url: page.url(),
+      ...(domContext !== undefined ? { domContext } : {}),
     })
-    this.lastRefs = (state.metadata.refMap as RefMap) ?? {}
+
+    this.lastRefs = buildRefMap(binding, nodes, nativeRefs)
     return state
   }
 

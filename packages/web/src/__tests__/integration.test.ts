@@ -199,10 +199,18 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     // timestamp is a number
     expect(typeof state.timestamp).toBe('number')
 
-    // metadata.refMap exists
-    expect(state.metadata.refMap).toBeDefined()
-    const refMap = state.metadata.refMap as Record<string, any>
-    expect(Object.keys(refMap).length).toBeGreaterThan(0)
+    // schema v2 refMap lives at state.refMap (geometry only); it is present but empty
+    // here because the mocked snapshot carries no ai-mode refs to enrich into bounds.
+    expect(state.refMap).toBeDefined()
+
+    // Execute-time resolution refs are re-fed from the builder binding — one entry per
+    // observed element, keyed by the minted ref (role/name/nth reconstruct the locator).
+    const lastRefs = adapter['lastRefs']
+    expect(Object.keys(lastRefs).length).toBe(state.elements.length)
+    for (const el of state.elements) {
+      expect(lastRefs[el.ref]).toBeDefined()
+      expect(lastRefs[el.ref].role).toBe(el.role)
+    }
   })
 
   it('execute fill action calls locator.fill()', async () => {
