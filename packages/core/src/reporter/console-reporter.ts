@@ -176,10 +176,6 @@ export class ConsoleReporter implements Reporter {
       console.log(`  ${this.c(pc.red, 'Error:')} ${errMsg}`)
     }
 
-    if (result.healingAttempts && result.healingAttempts.length > 0) {
-      console.log(`  ${this.c(pc.yellow, `Healed after ${result.healingAttempts.length} attempt(s)`)}`)
-    }
-
     if (result.trace?.subActions && result.trace.subActions.length > 0) {
       const subs = result.trace.subActions
       const succeeded = subs.filter(s => s.result === 'success').length

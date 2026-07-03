@@ -1167,29 +1167,6 @@ describe('DashboardReporter', () => {
     expect(path).toMatch(/^[^/\\]+\/0-Step_with_before-before\.png$/)
   })
 
-  it('saves healing screenshot paths as relative in JSON', async () => {
-    reporter.onRunStart([makeTest()])
-    reporter.onTestStart!(makeTest(), 'tests/login.yaml')
-
-    const healBuf = Buffer.from('heal-data')
-    await reporter.onStepEnd!(makeStepResult({
-      name: 'Healed step',
-      status: 'healed',
-      healingScreenshots: [healBuf],
-    }), 'Login Test')
-
-    await reporter.onTestEnd!(makeTestResult({
-      steps: [makeStepResult({ name: 'Healed step', status: 'healed', healingScreenshots: [healBuf] })],
-    }))
-
-    const runs = db.getRuns()
-    const steps = db.getSteps(runs[0].id)
-    const paths = steps[0].healingScreenshotPaths!
-    expect(paths).toHaveLength(1)
-    expect(paths[0]).not.toMatch(/^\//)
-    expect(paths[0]).toMatch(/^[^/\\]+\/0-healing-0\.png$/)
-  })
-
   it('saves sub-action screenshot paths as relative in JSON', async () => {
     reporter.onRunStart([makeTest()])
     reporter.onTestStart!(makeTest(), 'tests/login.yaml')
@@ -1312,16 +1289,13 @@ describe('DashboardReporter', () => {
     })
   })
 
-  it('stores healing attempts and captured variables', async () => {
+  it('stores captured variables and retry count', async () => {
     reporter.onRunStart([makeTest()])
     reporter.onTestStart!(makeTest(), 'tests/login.yaml')
 
     const step = makeStepResult({
-      name: 'Healed step',
-      status: 'healed',
-      healingAttempts: [
-        { action: { type: 'click', ref: '[1]' }, observationBefore: 'before', success: false },
-      ],
+      name: 'Retried step',
+      status: 'passed',
       capturedVariables: { capturedValue: 'abc123' },
       retryCount: 2,
     })
@@ -1330,7 +1304,6 @@ describe('DashboardReporter', () => {
 
     const runs = db.getRuns()
     const steps = db.getSteps(runs[0].id)
-    expect(steps[0].healingAttempts).toHaveLength(1)
     expect(steps[0].capturedVariables).toEqual({ capturedValue: 'abc123' })
     expect(steps[0].retryCount).toBe(2)
   })

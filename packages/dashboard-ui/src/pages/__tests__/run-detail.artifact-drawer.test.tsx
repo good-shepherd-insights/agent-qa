@@ -231,7 +231,6 @@ function makeStep() {
     error: null,
     screenshotPath: null,
     screenshotBeforePath: null,
-    healingAttempts: null,
     retryCount: 0,
     capturedVariables: null,
     stepOrder: 0,

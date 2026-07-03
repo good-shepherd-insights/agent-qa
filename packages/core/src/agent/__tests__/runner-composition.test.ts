@@ -48,7 +48,6 @@ function makeConfig(overrides?: Partial<RunTestConfig>): RunTestConfig {
     adapter: fakeAdapter(makeScreenState()),
     planner: scriptedPlanner(),
     verifier: passingVerifier(),
-    healingConfig: { maxAttempts: 0 },
     plannerModel: {} as never,
     verifierModel: {} as never,
     ...overrides,

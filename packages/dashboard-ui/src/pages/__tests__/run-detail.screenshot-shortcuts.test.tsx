@@ -189,7 +189,6 @@ function makeStep(afterPath: string | null = "screens/run-1/after.png") {
     error: null,
     screenshotPath: null,
     screenshotBeforePath: null,
-    healingAttempts: null,
     retryCount: 0,
     capturedVariables: null,
     stepOrder: 0,

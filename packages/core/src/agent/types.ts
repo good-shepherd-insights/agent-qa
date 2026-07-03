@@ -30,7 +30,6 @@ export interface StepContext {
   contextWindow?: number
   plannerModel: LanguageModel
   verifierModel: LanguageModel
-  healingConfig: HealingConfig
   modelId?: string
   variables?: Record<string, string>
   memoryContext?: string
@@ -45,10 +44,6 @@ export interface StepContext {
    * loop's `visionGate.promptNote` — a structural value, not a model import.
    */
   promptNote?: string
-}
-
-export interface HealingConfig {
-  maxAttempts: number
 }
 
 export interface Planner {

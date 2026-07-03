@@ -74,7 +74,6 @@ function makeStep(): StepResult {
     name: 'Sensitive step text',
     status: 'passed',
     duration: 123,
-    healingAttempts: [{ success: true } as any],
     trace: {
       observation: 'raw observation',
       reasoning: 'raw reasoning',
@@ -219,7 +218,6 @@ describe('AnalyticsRunReporter', () => {
       subaction_count: 2,
       cached_subaction_count: 1,
       failed_subaction_count: 1,
-      healing_attempt_count: 1,
       hook_count: 1,
       failed_hook_count: 1,
       memory_enabled: true,

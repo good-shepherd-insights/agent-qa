@@ -106,7 +106,6 @@ async function renderPanels() {
           stepOrder: 0,
           consoleLogs: null,
           networkLogs: null,
-          healingAttempts: null,
           screenContextBefore: null,
           screenContextAfter: null,
           rawRunId: "run-1",

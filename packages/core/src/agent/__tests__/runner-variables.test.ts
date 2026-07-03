@@ -56,7 +56,6 @@ function makeRunTestConfig(overrides?: Partial<RunTestConfig>): RunTestConfig {
   return {
     adapter: createMockAdapter(),
     planner: { async plan() { return { plan: makeActionPlan() } } },
-    healingConfig: { maxAttempts: 0 },
     plannerModel: {} as any,
     verifierModel: {} as any,
     ...overrides,
@@ -131,7 +130,6 @@ describe('runTest with variable capture', () => {
       adapter: createMockAdapter({
         executeResults: [{ success: false, error: 'Click failed' }],
       }),
-      healingConfig: { maxAttempts: 0 },
     })
 
     const test: TestDefinition = {
@@ -493,7 +491,6 @@ describe('runTest with secret placeholders', () => {
       },
       secretStore,
       secretRedactor: new SecretRedactor(secretStore),
-      healingConfig: { maxAttempts: 0 },
       // 353-05 cutover: the runner loop deletes the v1 consecutive-failure counter
       // (D-10/D-11). A missing-secret resolve-throw is a (non-recoverable) execution
       // failure that now replans up to the maxSubActions cap; cap it to 1 so the step

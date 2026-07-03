@@ -57,7 +57,6 @@ function stepRow(overrides: Partial<StepRow> = {}): StepRow {
     error: null,
     screenshotPath: "after.png",
     screenshotBeforePath: "before.png",
-    healingAttempts: null,
     retryCount: 0,
     capturedVariables: null,
     stepOrder: 0,

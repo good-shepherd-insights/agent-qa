@@ -16,17 +16,6 @@ export interface StepAnnotation {
   pinchScale?: 'in' | 'out'
 }
 
-export interface HealingAttempt {
-  action: Action
-  observationBefore: string
-  observationAfter?: string
-  success: boolean
-  attemptNumber?: number
-  strategy?: string
-  reasoning?: string
-  confidence?: number
-}
-
 export interface TokenUsage {
   promptTokens: number
   completionTokens: number
@@ -78,13 +67,12 @@ export interface StepTrace {
     plan?: number
     execute?: number
     verify?: number
-    heal?: number
   }
   subActions?: SubActionTrace[]
 }
 
 export interface StepPhaseEvent {
-  phase: 'observe' | 'plan' | 'execute' | 'verify' | 'heal'
+  phase: 'observe' | 'plan' | 'execute' | 'verify'
   subActionIndex?: number
   phaseOrdinal?: number
   text?: string
@@ -136,7 +124,6 @@ export interface StepResult {
   error?: string
   screenshot?: Buffer
   screenshotBefore?: Buffer
-  healingAttempts?: HealingAttempt[]
   trace?: StepTrace
   /**
    * The §A8 evidence accumulated by the runner loop, produced by construction (D-14).
@@ -148,7 +135,6 @@ export interface StepResult {
   retryCount?: number
   capturedVariables?: Record<string, string>
   annotation?: StepAnnotation
-  healingScreenshots?: Buffer[]
   accessibilityViolations?: AccessibilityViolation[]
   consoleLogs?: ConsoleLogEntry[]
   networkLogs?: NetworkLogEntry[]

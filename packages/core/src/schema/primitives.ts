@@ -136,10 +136,6 @@ export const NamedLLMConfigSchema = ModelConfigBaseSchema.extend({
   contextWindow: SizeString.optional(),
 }).strict().superRefine(validateModelConfig)
 
-export const HealingConfigSchema = z.object({
-  maxAttempts: z.number(),
-}).strict()
-
 export const TimeoutConfigSchema = z.object({
   step: DurationString,
   test: DurationString,

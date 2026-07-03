@@ -756,21 +756,19 @@ describe('DashboardDatabase', () => {
   })
 
   describe('step details', () => {
-    it('stores healing attempts and captured variables', () => {
+    it('stores captured variables and retry count', () => {
       const runId = insertSampleRun()
       db.insertStep({
         runId,
-        name: 'Healed step',
-        status: 'healed',
+        name: 'Retried step',
+        status: 'passed',
         duration: 3000,
-        healingAttempts: [{ action: { type: 'click', ref: '[1]' }, success: false }],
         capturedVariables: { username: 'admin' },
         retryCount: 2,
         stepOrder: 0,
       })
 
       const steps = db.getSteps(runId)
-      expect(steps[0].healingAttempts).toEqual([{ action: { type: 'click', ref: '[1]' }, success: false }])
       expect(steps[0].capturedVariables).toEqual({ username: 'admin' })
       expect(steps[0].retryCount).toBe(2)
     })

@@ -78,7 +78,6 @@ export interface StepRow {
   error: string | null
   screenshotPath: string | null
   screenshotBeforePath: string | null
-  healingAttempts: unknown[] | null
   retryCount: number
   capturedVariables: Record<string, string> | null
   stepOrder: number
@@ -473,7 +472,6 @@ export class DashboardDatabase {
     error?: string
     screenshotPath?: string
     screenshotBeforePath?: string
-    healingAttempts?: unknown[]
     retryCount?: number
     capturedVariables?: Record<string, string>
     stepOrder: number
@@ -511,7 +509,9 @@ export class DashboardDatabase {
       step.error ?? null,
       step.screenshotPath ?? null,
       step.screenshotBeforePath ?? null,
-      step.healingAttempts ? JSON.stringify(step.healingAttempts) : null,
+      // healing_attempts column retained (dormant) — the v1 healing machinery was
+      // deleted in Phase 353 (D-10); no step ever carries healing attempts now.
+      null,
       step.retryCount ?? 0,
       step.capturedVariables ? JSON.stringify(step.capturedVariables) : null,
       step.stepOrder,
@@ -1759,7 +1759,6 @@ export class DashboardDatabase {
       error: r.error as string | null,
       screenshotPath: r.screenshot_path as string | null,
       screenshotBeforePath: (r.screenshot_before_path as string) ?? null,
-      healingAttempts: r.healing_attempts ? JSON.parse(r.healing_attempts as string) : null,
       retryCount: r.retry_count as number,
       capturedVariables: r.captured_variables ? JSON.parse(r.captured_variables as string) : null,
       stepOrder: r.step_order as number,

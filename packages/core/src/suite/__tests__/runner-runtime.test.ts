@@ -99,7 +99,6 @@ function makeConfig(adapter: PlatformAdapter, overrides: Partial<RunSuiteConfig>
       browser: { name: 'chromium', headless: true },
     },
     planner: {} as any,
-    healingConfig: { maxAttempts: 0 },
     plannerModel: {} as any,
     verifierModel: {} as any,
     ...overrides,

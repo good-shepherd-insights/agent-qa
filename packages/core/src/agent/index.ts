@@ -1,7 +1,6 @@
 export type {
   StepContext,
   PlannerConfig,
-  HealingConfig,
   Planner,
   Verifier,
   VerificationResult,

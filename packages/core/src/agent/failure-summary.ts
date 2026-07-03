@@ -36,10 +36,6 @@ export function generateFailureSummary(steps: StepResult[]): string {
     parts.push(`Attempted action: ${action.type}${ref ? ` on ${ref}` : ''}`)
   }
 
-  if (firstFailed.healingAttempts && firstFailed.healingAttempts.length > 0) {
-    parts.push(`${firstFailed.healingAttempts.length} healing attempt(s) were tried before giving up.`)
-  }
-
   if (failedSteps.length > 1) {
     parts.push(`(${failedSteps.length} steps failed in total)`)
   }

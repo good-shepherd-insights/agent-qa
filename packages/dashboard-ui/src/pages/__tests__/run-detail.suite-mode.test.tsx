@@ -139,7 +139,6 @@ function makeStep(runId: string, id: string, stepOrder: number, name: string) {
     error: null,
     screenshotPath: null,
     screenshotBeforePath: null,
-    healingAttempts: null,
     retryCount: 0,
     capturedVariables: null,
     stepOrder,

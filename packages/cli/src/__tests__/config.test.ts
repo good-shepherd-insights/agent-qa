@@ -33,7 +33,6 @@ function makeValidConfig(overrides: Record<string, unknown> = {}): Record<string
       browser: { name: 'chromium', headless: true },
       mobile: { appState: 'preserve' },
       timeout: { step: '30s', test: '10m', navigation: '10s' },
-      healing: { maxAttempts: 3 },
       planner: { maxSubActions: 10, previousStepCount: 5 },
       llm: 'default',
     },
@@ -212,9 +211,9 @@ describe('mergeWithTestConfig', () => {
 
   it('test YAML overrides global config', () => {
     const global = makeValidConfig()
-    const testYaml = { use: { healing: { strategy: 'two-tier' } } }
+    const testYaml = { use: { planner: { maxSubActions: 42 } } }
     const result = mergeWithTestConfig(global, testYaml, {}) as Record<string, unknown>
-    expect((result.use as any).healing.strategy).toBe('two-tier')
+    expect((result.use as any).planner.maxSubActions).toBe(42)
   })
 
   it('handles null testConfig gracefully', () => {

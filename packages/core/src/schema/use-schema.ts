@@ -3,7 +3,6 @@ import {
   BrowserConfigSchema,
   DurationString,
   TimeoutConfigSchema,
-  HealingConfigSchema,
   PlannerConfigSchema,
   LogCaptureConfigSchema,
 } from './primitives.js'
@@ -59,7 +58,6 @@ export const UseSchema = z.object({
   browser: BrowserConfigSchema.optional(),
   mobile: MobileUseSchema.optional(),
   timeout: TimeoutConfigSchema.optional(),
-  healing: HealingConfigSchema.optional(),
   planner: PlannerConfigSchema.optional(),
   logCapture: LogCaptureConfigSchema.optional(),
   cache: z.boolean().optional(),
@@ -80,9 +78,6 @@ export const UseOverrideSchema = z.object({
     step: DurationString.optional(),
     test: DurationString.optional(),
     navigation: DurationString.optional(),
-  }).strict().optional(),
-  healing: z.object({
-    maxAttempts: z.number().optional(),
   }).strict().optional(),
   planner: z.object({
     maxSubActions: z.number().optional(),

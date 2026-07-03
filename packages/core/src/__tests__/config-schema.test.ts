@@ -4,7 +4,6 @@ import {
   ModelConfigSchema,
   NamedLLMConfigSchema,
   TimeoutConfigSchema,
-  HealingConfigSchema,
   PlannerConfigSchema,
   BrowserConfigSchema,
 } from '../schema/primitives.js'
@@ -105,7 +104,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         browser: { name: 'chromium' as const, headless: true },
         mobile: { appState: 'preserve' as const },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
-        healing: { maxAttempts: 3 },
         planner: { maxSubActions: 10, previousStepCount: 5 },
         logCapture: { console: true, network: false },
         llm: 'claude-main',
@@ -797,15 +795,6 @@ describe('Sub-schemas — primitives', () => {
     expect(TimeoutConfigSchema.safeParse({ step: '1s' }).success).toBe(false)
     expect(
       TimeoutConfigSchema.safeParse({ step: '1s', test: '2s', navigation: '3s' }).success,
-    ).toBe(true)
-  })
-
-  it('HealingConfigSchema requires all fields', () => {
-    expect(HealingConfigSchema.safeParse({}).success).toBe(false)
-    expect(
-      HealingConfigSchema.safeParse({
-        maxAttempts: 3,
-      }).success,
     ).toBe(true)
   })
 

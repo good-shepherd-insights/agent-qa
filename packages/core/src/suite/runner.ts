@@ -8,7 +8,7 @@ import type { Reporter, RunSummary, SuiteSummary } from '../reporter/types.js'
 import { MultiReporter } from '../reporter/types.js'
 import { runTest } from '../agent/runner.js'
 import type { RunTestConfig } from '../agent/runner.js'
-import type { ActionCache, HealingConfig } from '../agent/types.js'
+import type { ActionCache } from '../agent/types.js'
 import type { Planner, Verifier } from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
 import type { LogManager } from '../logging/log-manager.js'
@@ -33,7 +33,6 @@ export interface RunSuiteConfig {
   planner: Planner
   verifier?: Verifier
   cache?: ActionCache
-  healingConfig: HealingConfig
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -411,7 +410,6 @@ export async function runSuite(
         planner: config.planner,
         verifier: config.verifier,
         cache: config.cache,
-        healingConfig: config.healingConfig,
         plannerModel: config.plannerModel,
         verifierModel: config.verifierModel,
         reporters: config.reporters,

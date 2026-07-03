@@ -79,22 +79,6 @@ describe('generateFailureSummary', () => {
     expect(summary).toContain('Attempted action: assert')
   })
 
-  it('prints healing attempt counts', () => {
-    const summary = generateFailureSummary([
-      makeStep({
-        healingAttempts: [
-          {
-            action: { type: 'click', ref: 'learn-more' },
-            observationBefore: 'link visible',
-            success: false,
-          },
-        ],
-      }),
-    ])
-
-    expect(summary).toContain('1 healing attempt(s) were tried before giving up.')
-  })
-
   it('prints total failed step count when multiple steps fail', () => {
     const summary = generateFailureSummary([
       makeStep({ name: 'First failure' }),

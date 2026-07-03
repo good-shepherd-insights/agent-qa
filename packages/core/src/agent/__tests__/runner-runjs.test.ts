@@ -58,7 +58,6 @@ function makeRunTestConfig(overrides?: Partial<RunTestConfig>): RunTestConfig {
   return {
     adapter: createMockAdapter(),
     planner: { async plan() { return { plan: makeActionPlan() } } },
-    healingConfig: { maxAttempts: 0 },
     plannerModel: {} as any,
     verifierModel: {} as any,
     ...overrides,

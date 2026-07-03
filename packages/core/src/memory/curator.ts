@@ -179,10 +179,7 @@ function buildUserMessage(
   for (let i = 0; i < ctx.testResult.steps.length; i++) {
     const step = ctx.testResult.steps[i]
     const subActionCount = step.trace?.subActions?.length ?? 0
-    const healingCount = step.healingAttempts?.length ?? 0
-    let stepHeader = `### Step ${i + 1}: ${step.name} [${step.status}] (${subActionCount} sub-actions`
-    if (healingCount > 0) stepHeader += `, healed: ${healingCount} attempts`
-    stepHeader += ')'
+    let stepHeader = `### Step ${i + 1}: ${step.name} [${step.status}] (${subActionCount} sub-actions)`
     lines.push(stepHeader)
     if (step.observation) lines.push(`Observation: ${step.observation}`)
     if (step.error) lines.push(`Error: ${step.error}`)

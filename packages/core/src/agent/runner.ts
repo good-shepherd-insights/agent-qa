@@ -3,7 +3,7 @@ import type { LanguageModel } from 'ai'
 import type { PlatformAdapter } from '@vostride/agent-qa-runner'
 import type { AccessibilityViolation, StepPhaseEvent, StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../types/test.js'
-import type { ActionCache, HealingConfig } from './types.js'
+import type { ActionCache } from './types.js'
 import type { Planner, Verifier } from '@vostride/agent-qa-runner'
 import type { MemoryProvider } from '../memory/provider.js'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
@@ -48,7 +48,6 @@ export interface RunTestConfig {
   planner: Planner
   verifier?: Verifier
   cache?: ActionCache
-  healingConfig: HealingConfig
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]

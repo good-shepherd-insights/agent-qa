@@ -442,7 +442,6 @@ export function buildDefaultConfig(
       ...(hasWeb(platform) ? { browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } } } : {}),
       mobile: { appState: 'preserve' },
       timeout: { step: '20m', test: '90m', navigation: '2m' },
-      healing: { maxAttempts: 3 },
       planner: { maxSubActions: 10, previousStepCount: 5 },
       logCapture: { console: true, network: true },
       parallel: false,

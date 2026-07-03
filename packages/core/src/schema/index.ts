@@ -15,7 +15,6 @@ export {
   type NormalizedAuthStateUse,
   ModelConfigSchema,
   NamedLLMConfigSchema,
-  HealingConfigSchema,
   TimeoutConfigSchema,
   BrowserConfigSchema,
   PlannerConfigSchema,

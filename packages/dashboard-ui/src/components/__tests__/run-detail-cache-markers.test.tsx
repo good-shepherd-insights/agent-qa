@@ -78,7 +78,6 @@ function makeDisplayStep(subActionsData: SubActionData[]): DisplayStep {
     screenshotPath: null,
     screenshotBeforePath: null,
     annotationData: null,
-    healingAttempts: null,
     retryCount: 0,
     capturedVariables: null,
     variableSnapshot: null,

@@ -14,7 +14,7 @@ import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
@@ -1621,7 +1621,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           verifyReasoning: null,
           verifySuccess: step.result === 'success' ? true : step.result === 'failure' ? false : null,
           verifyDuration: null,
-          healAttempts: step.healingAttempts,
+          healAttempts: null,
           totalDuration: step.duration,
           screenStateBefore: null,
           screenStateAfter: null,
@@ -2911,7 +2911,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           try {
             const sectionValidators: Record<string, { safeParse: (v: unknown) => ConfigSectionValidationResult }> = {
               'use.timeout': TimeoutConfigSchema,
-              'use.healing': HealingConfigSchema,
               'use.planner': PlannerConfigSchema,
               'use.logCapture': LogCaptureConfigSchema,
               'use.browser': BrowserConfigSchema,
@@ -2940,7 +2939,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             }
             const objectSections = [
               'use.timeout',
-              'use.healing',
               'use.planner',
               'use.logCapture',
               'use.browser',

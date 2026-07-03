@@ -1341,10 +1341,6 @@ async function executeSuites(
       })
     }
 
-    const healingConfig = {
-      maxAttempts: config.use?.healing?.maxAttempts ?? 3,
-    }
-
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     let suiteMemoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
@@ -1412,7 +1408,6 @@ async function executeSuites(
       planner,
       verifier,
       cache: suiteEffectiveCacheEnabled ? actionCache : undefined,
-      healingConfig,
       plannerModel,
       verifierModel,
       reporters,
@@ -2236,11 +2231,6 @@ export function createRunCommand(): Command {
               navigation: testMergedConfig.use?.timeout?.navigation,
             }
 
-            // Per-test healing config from merged config
-            const testHealingConfig = {
-              maxAttempts: testMergedConfig.use?.healing?.maxAttempts ?? 3,
-            }
-
             // Per-test recording override: meta.record takes priority over global
             let testRecording: import('@vostride/agent-qa-runner').PlatformConfig['recording'] | undefined
             const testRecordMeta = (testDef.meta as any)?.record
@@ -2402,7 +2392,6 @@ export function createRunCommand(): Command {
               adapter: adapter!,
               planner,
               verifier,
-              healingConfig: testHealingConfig,
               plannerModel,
               verifierModel,
               reporters,

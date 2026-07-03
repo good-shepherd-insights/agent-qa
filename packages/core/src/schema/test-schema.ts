@@ -26,7 +26,6 @@ export const TestStepSchema = z.union([
     retries: z.number().optional(),
     screenshot: z.boolean().optional(),
     capture: CaptureConfigSchema.optional(),
-    maxAttempts: z.number().optional(),
   }).strict(),
 ])
 

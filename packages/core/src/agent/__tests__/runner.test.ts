@@ -3,7 +3,7 @@ import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-r
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import type { ActionPlan } from '../../schema/action-schema.js'
-import type { Planner, StepContext, HealingConfig } from '../types.js'
+import type { Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
 import { runTest, runTestWithRetry } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
@@ -80,7 +80,6 @@ function makeRunTestConfig(overrides?: Partial<RunTestConfig>): RunTestConfig {
   return {
     adapter: createMockAdapter(),
     planner: createMockPlanner(),
-    healingConfig: { maxAttempts: 0 },
     plannerModel: {} as any,
     verifierModel: {} as any,
     ...overrides,
@@ -135,7 +134,6 @@ describe('runTest', () => {
     }
     const config = makeRunTestConfig({
       adapter,
-      healingConfig: { maxAttempts: 3 },
     })
     const test = makeTestDef()
 
@@ -596,7 +594,6 @@ describe('runTestWithRetry', () => {
     }
     const config = makeRunTestConfig({
       adapter,
-      healingConfig: { maxAttempts: 3 },
       plannerConfig: { maxSubActions: 2, previousStepCount: 5 },
     })
     const test = makeTestDef({
@@ -616,7 +613,6 @@ describe('runTestWithRetry', () => {
     })
     const config = makeRunTestConfig({
       adapter,
-      healingConfig: { maxAttempts: 0 },
     })
     const test = makeTestDef({
       steps: ['Step A'],
@@ -635,7 +631,6 @@ describe('runTestWithRetry', () => {
     })
     const config = makeRunTestConfig({
       adapter,
-      healingConfig: { maxAttempts: 0 },
     })
     const test = makeTestDef({ steps: ['Step A'] })
 
@@ -661,7 +656,6 @@ describe('runTestWithRetry', () => {
     }
     const config = makeRunTestConfig({
       adapter,
-      healingConfig: { maxAttempts: 0 },
     })
     const test = makeTestDef({
       steps: ['Step A'],

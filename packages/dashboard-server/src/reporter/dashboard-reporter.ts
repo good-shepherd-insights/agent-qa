@@ -851,15 +851,6 @@ export class DashboardReporter implements Reporter {
       screenshotPath = await this.saveScreenshot(safeStep.screenshot, runId, stepOrder, safeStep.name)
     }
 
-    let healingScreenshotPaths: string[] | undefined
-    if (safeStep.healingScreenshots && safeStep.healingScreenshots.length > 0) {
-      healingScreenshotPaths = []
-      for (let j = 0; j < safeStep.healingScreenshots.length; j++) {
-        const healPath = await this.saveHealingScreenshot(safeStep.healingScreenshots[j], runId, stepOrder, j)
-        healingScreenshotPaths.push(healPath)
-      }
-    }
-
     let subActionsForDb: unknown[] | undefined
     if (safeStep.trace?.subActions && safeStep.trace.subActions.length > 0) {
       subActionsForDb = []
@@ -892,12 +883,10 @@ export class DashboardReporter implements Reporter {
       error: safeStep.error ?? safeStep.trace?.error,
       screenshotPath,
       screenshotBeforePath,
-      healingAttempts: safeStep.healingAttempts,
       retryCount: safeStep.retryCount,
       capturedVariables: safeStep.capturedVariables,
       stepOrder,
       annotationData: safeStep.annotation,
-      healingScreenshotPaths,
       accessibilityViolations: safeStep.accessibilityViolations,
       confidence: safeStep.trace?.confidence,
       promptTokens: safeStep.trace?.tokenUsage?.promptTokens,
@@ -936,7 +925,6 @@ export class DashboardReporter implements Reporter {
         verifyReasoning: safeStep.trace.verifierReasoning,
         verifySuccess: safeStep.trace.result === 'success',
         verifyDuration: safeStep.trace.phaseDurations.verify,
-        healAttempts: safeStep.healingAttempts,
         totalDuration: safeStep.duration,
         screenStateBefore: safeStep.trace.screenStateBefore,
         screenStateAfter: safeStep.trace.screenStateAfter,
@@ -951,14 +939,6 @@ export class DashboardReporter implements Reporter {
     const filename = suffix
       ? `${stepOrder}-${sanitized}-${suffix}.png`
       : `${stepOrder}-${sanitized}.png`
-    await writeFile(join(dir, filename), buffer)
-    return join(runId, filename)
-  }
-
-  private async saveHealingScreenshot(buffer: Buffer, runId: string, stepOrder: number, attemptIndex: number): Promise<string> {
-    const dir = join(this.artifactsDir, 'screenshots', runId)
-    await mkdir(dir, { recursive: true })
-    const filename = `${stepOrder}-healing-${attemptIndex}.png`
     await writeFile(join(dir, filename), buffer)
     return join(runId, filename)
   }

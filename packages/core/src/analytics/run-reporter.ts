@@ -227,7 +227,6 @@ function collectExecutionMetrics(result: TestResult, state?: RunState): Analytic
   let subactions = 0
   let cachedSubactions = 0
   let failedSubactions = 0
-  let healingAttempts = 0
   let verifierCallCount: number | undefined
   const tokenMetrics: {
     inputTokens?: number
@@ -240,7 +239,6 @@ function collectExecutionMetrics(result: TestResult, state?: RunState): Analytic
     if (step.status === 'passed' || step.status === 'healed') passed += 1
     if (step.status === 'failed' || step.status === 'cancelled') failed += 1
     if (step.status === 'skipped') skipped += 1
-    healingAttempts += step.healingAttempts?.length ?? 0
 
     addTokenUsage(tokenMetrics, step.trace?.tokenUsage)
     if (step.trace?.verifierReasoning) verifierCallCount = (verifierCallCount ?? 0) + 1
@@ -260,7 +258,6 @@ function collectExecutionMetrics(result: TestResult, state?: RunState): Analytic
   properties.subaction_count = subactions
   properties.cached_subaction_count = cachedSubactions
   properties.failed_subaction_count = failedSubactions
-  properties.healing_attempt_count = healingAttempts
   if (state?.hookCount !== undefined) properties.hook_count = state.hookCount
   if (state?.failedHookCount !== undefined) properties.failed_hook_count = state.failedHookCount
   if (tokenMetrics.inputTokens !== undefined) properties.input_tokens = tokenMetrics.inputTokens

@@ -31,7 +31,6 @@ export type {
   StepStatus,
   TestStatus,
   StepAnnotation,
-  HealingAttempt,
   TokenUsage,
   SubActionTrace,
   StepTrace,

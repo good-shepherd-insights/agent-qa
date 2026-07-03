@@ -192,7 +192,6 @@ describe('init command', () => {
     expect(content).not.toContain('step: 30s')
     expect(content).not.toContain('test: 10m')
     expect(content).not.toContain('navigation: 10s')
-    expect(content).toContain('healing:')
     expect(content).toContain('chromium')
     expect(content).toContain('viewport:')
     expect(content).toContain('width: 1280')

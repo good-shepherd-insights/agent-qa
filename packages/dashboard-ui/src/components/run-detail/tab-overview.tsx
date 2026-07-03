@@ -3,9 +3,8 @@ import { Camera, Eye, Brain, Play, ShieldCheck, ArrowUpRight, Copy, Check } from
 import { ScreenshotViewer } from "@/components/screenshot-viewer"
 import { ReasoningPipeline } from "@/components/reasoning-pipeline"
 import type { SectionDef, ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { HealingChain } from "@/components/healing-chain"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
-import type { SubActionData, ReasoningTrace } from "@/lib/api"
+import type { SubActionData } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
 
 const SCREENSHOT_SEGMENT_SHELL = "rounded-sm border border-border/60 bg-muted/20 p-1"
@@ -233,9 +232,6 @@ export function TabOverview({
             </div>
           )}
 
-          {step.healingAttempts && step.healingAttempts.length > 0 && (
-            <HealingChain attempts={step.healingAttempts as ReasoningTrace["healAttempts"]} />
-          )}
         </div>
       </div>
     </>

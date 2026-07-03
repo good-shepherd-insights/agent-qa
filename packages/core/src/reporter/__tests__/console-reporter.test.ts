@@ -142,21 +142,6 @@ describe('ConsoleReporter', () => {
     expect(output).toContain('Element not found')
   })
 
-  it('onStepEnd with healed step prints yellow checkmark and healing count', () => {
-    const reporter = new ConsoleReporter({ colorize: false, plain: false })
-    reporter.onStepEnd(makeStepResult({
-      status: 'healed',
-      healingAttempts: [
-        { action: { type: 'click', ref: 'btn-2' }, observationBefore: '', success: true },
-        { action: { type: 'click', ref: 'btn-3' }, observationBefore: '', success: true },
-      ],
-    }), 'Login test')
-
-    const output = logs.join('\n')
-    expect(output).toContain('\u2713')
-    expect(output).toContain('Healed after 2 attempt(s)')
-  })
-
   it('onStepEnd with verbose=true no longer prints trace (LogManager handles verbose display)', () => {
     const reporter = new ConsoleReporter({ verbose: true, colorize: false, plain: false })
     reporter.onStepEnd(makeStepResult({ trace: makeTrace() }), 'Login test')

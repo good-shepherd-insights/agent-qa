@@ -565,7 +565,6 @@ function nodeToDisplayStep(node: LiveStepNode): DisplayStep {
     stepOrder: node.stepIndex ?? 0,
     consoleLogs: null,
     networkLogs: null,
-    healingAttempts: null,
     screenContextBefore: null,
     screenContextAfter: null,
     rawRunId: node.runId ?? null,

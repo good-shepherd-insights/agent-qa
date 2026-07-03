@@ -4,7 +4,6 @@ import {
   AdapterLogDataSchema,
   CacheLogDataSchema,
   PlannerLogDataSchema,
-  HealerLogDataSchema,
   HookLogDataSchema,
   RunnerLogDataSchema,
   LogSourceDataSchemas,
@@ -63,17 +62,6 @@ describe('Per-source Zod data schemas', () => {
     expect(result.success).toBe(true)
   })
 
-  it('HealerLogDataSchema validates correct shape', () => {
-    const result = HealerLogDataSchema.safeParse({
-      strategy: 'two-tier',
-      attempt: 1,
-      maxAttempts: 3,
-      stateDiffDetected: true,
-      success: false,
-    })
-    expect(result.success).toBe(true)
-  })
-
   it('HookLogDataSchema validates correct shape', () => {
     const result = HookLogDataSchema.safeParse({
       hookName: 'setup-db',
@@ -94,8 +82,8 @@ describe('Per-source Zod data schemas', () => {
     expect(result.success).toBe(true)
   })
 
-  it('LogSourceDataSchemas has all 7 sources', () => {
-    const sources = ['agent', 'adapter', 'cache', 'planner', 'healer', 'hook', 'runner']
+  it('LogSourceDataSchemas has all 6 sources', () => {
+    const sources = ['agent', 'adapter', 'cache', 'planner', 'hook', 'runner']
     for (const source of sources) {
       expect(LogSourceDataSchemas).toHaveProperty(source)
     }

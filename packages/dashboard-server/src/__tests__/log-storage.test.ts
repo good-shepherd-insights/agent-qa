@@ -136,7 +136,7 @@ describe('DashboardDatabase.getLogs filtering', () => {
       makeLogEntry({ id: 'log-1', runId: 'run-1', level: 'debug', source: 'agent', stepId, timestamp: '2026-03-17T10:00:01Z' }),
       makeLogEntry({ id: 'log-2', runId: 'run-1', level: 'info', source: 'planner', stepId: null, timestamp: '2026-03-17T10:00:02Z' }),
       makeLogEntry({ id: 'log-3', runId: 'run-1', level: 'warn', source: 'cache', stepId: null, timestamp: '2026-03-17T10:00:03Z' }),
-      makeLogEntry({ id: 'log-4', runId: 'run-2', level: 'error', source: 'healer', stepId: null, timestamp: '2026-03-17T10:00:04Z' }),
+      makeLogEntry({ id: 'log-4', runId: 'run-2', level: 'error', source: 'runner', stepId: null, timestamp: '2026-03-17T10:00:04Z' }),
     ])
   })
 

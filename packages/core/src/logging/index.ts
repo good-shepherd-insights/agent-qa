@@ -9,7 +9,6 @@ export {
   AdapterLogDataSchema,
   CacheLogDataSchema,
   PlannerLogDataSchema,
-  HealerLogDataSchema,
   HookLogDataSchema,
   RunnerLogDataSchema,
   LogSourceDataSchemas,

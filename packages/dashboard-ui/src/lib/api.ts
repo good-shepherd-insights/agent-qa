@@ -93,7 +93,6 @@ export interface StepRow {
   error: string | null
   screenshotPath: string | null
   screenshotBeforePath: string | null
-  healingAttempts: unknown[] | null
   retryCount: number
   capturedVariables: Record<string, string> | null
   stepOrder: number
