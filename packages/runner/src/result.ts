@@ -1,3 +1,4 @@
+import type { StepEvidence } from '@vostride/agent-qa-schema'
 import type { Action } from './platform.js'
 
 export type StepStatus = 'passed' | 'failed' | 'healed' | 'skipped' | 'cancelled'
@@ -137,6 +138,13 @@ export interface StepResult {
   screenshotBefore?: Buffer
   healingAttempts?: HealingAttempt[]
   trace?: StepTrace
+  /**
+   * The §A8 evidence accumulated by the runner loop, produced by construction (D-14).
+   * ADDITIVE (Phase 353): the legacy `trace` is projected FROM this, never the reverse
+   * (Open Q5). Core's transitional orchestration persists it via the run-artifact path
+   * (D-16) until Phase 361 lifts the accumulator into RunSession/CompletedRunHandoff.
+   */
+  evidence?: StepEvidence
   retryCount?: number
   capturedVariables?: Record<string, string>
   annotation?: StepAnnotation

@@ -51,6 +51,17 @@ const CONTEXT_ERROR_PATTERNS = [
 
 const CANCELLED_MESSAGE = 'Step cancelled by user'
 
+// The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
+//   1. planner stepFailed          → failed  (no execution)
+//   2. setVariable + stepComplete  → passed  (short-circuit, no verify)
+//   3. non-visual assert + complete→ passed  (short-circuit, no verify)
+//   4. verify success              → passed  (stateAfter = verifier re-observation, D-15b)
+//   5. verify app-error            → failed  (no further replan)
+//   6. no-verifier + stepComplete  → passed  (trust the planner)
+//   7. cap exhausted (maxSubActions)→ failed (clean terminate, the resource backstop)
+//   8. abort / timeout             → cancelled | failed  (all three getTimeoutAbortReason variants)
+// Execution failure and verifier "not done" are NOT return paths — they inject failure
+// context and continue the loop (self-heal = replan-with-failure-context, D-12).
 export async function executeStep(
   stepInstruction: string,
   ports: LoopPorts,
@@ -103,6 +114,7 @@ export async function executeStep(
       status,
       duration: performance.now() - startTime,
       trace,
+      evidence,
     }
     if (lastPlannedAction) result.action = lastPlannedAction
     if (error) result.error = error
