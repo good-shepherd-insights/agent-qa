@@ -89,9 +89,9 @@ export interface AgentLoopConfig {
     effectiveResolution?: number
   }
   /**
-   * Vision gate for this run. Resolved once per run by the composition root via
-   * `resolveVisionGate` from the model package and threaded here as a structural
-   * value — core never imports the model package (D-11). Absent means full-capture
+   * Vision gate for this run. Resolved once per run by the composition root (the
+   * CLI), which owns the model package, and threaded here as a structural value —
+   * core never imports the model package (D-11). Absent means full-capture
    * behavior (the pre-gate default, used by tests and non-CLI callers).
    */
   visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
