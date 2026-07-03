@@ -72,9 +72,10 @@ describe('LLMPlanner', () => {
     const result = await planner.plan('Click sign in', screen, makeContext({ screenshot: Buffer.from('png') }))
 
     expect(mock).toHaveBeenCalledTimes(2)
-    // first call carried the image, the fallback call used a text-only prompt with the note
-    const fallbackArgs = mock.mock.calls[1][0] as { prompt?: string }
-    expect(fallbackArgs.prompt).toContain('Visual screenshot is unavailable')
+    // first call carried the image; the fallback turn retries with a text-only user
+    // message carrying the note (the planning turn always drives via `messages`).
+    const fallbackArgs = mock.mock.calls[1][0] as { messages?: { content?: unknown }[] }
+    expect(JSON.stringify(fallbackArgs.messages)).toContain('Visual screenshot is unavailable')
     expect(result.plan.action.type).toBe('click')
   })
 

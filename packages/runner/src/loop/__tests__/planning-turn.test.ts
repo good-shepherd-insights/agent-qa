@@ -1,0 +1,199 @@
+// Behavior tests for the bounded planning tool-loop (353-02 Task 2, D-06/D-07/D-08).
+// `ai.generateText` is mocked with a scripted response queue; `tool` stays real so
+// buildTools produces the true v45 slice and the fake non-action tools carry real
+// `ai` definitions. Zero non-action tools ship in production (D-07) — these fakes
+// prove the machinery:
+//   1. immediate action call → plan, zero exchanges (the v1-equivalent one-shot path)
+//   2. two non-action calls then an action → both executed in order, exchanges recorded
+//   3. D-08(a) 3rd non-action call gets the budget-exhausted result; a further
+//      non-action-only response → planning failure, no throw
+//   4. D-08(b) text-only response → exactly one re-prompt, then planning failure
+//   5. D-08(c) [non-action, action, action] → process first, terminate on second,
+//      discard the third with a logged discard
+//   6. K injectable — with budget 0 the first non-action call gets the exhausted error
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { tool } from 'ai'
+import { z } from 'zod'
+import { buildTools, defaultRegistry } from '../../tools/index.js'
+import {
+  executePlanningTurn,
+  DEFAULT_NON_ACTION_TOOL_BUDGET,
+  type ExecutePlanningTurnOptions,
+  type NonActionToolHandler,
+} from '../planning-turn.js'
+
+vi.mock('ai', async (importActual) => {
+  const actual = await importActual<typeof import('ai')>()
+  return { ...actual, generateText: vi.fn() }
+})
+
+const ENVELOPE = { reasoning: 'go', confidence: 0.9, stepComplete: true, doesActionAdvanceUsTowardsGoal: true }
+const USAGE = { inputTokens: 10, outputTokens: 2 }
+
+let toolCallSeq = 0
+function actionCall(toolName: string, input: Record<string, unknown>) {
+  return { type: 'tool-call', toolCallId: `tc-${++toolCallSeq}`, toolName, input }
+}
+function nonActionCall(toolName: string, input: Record<string, unknown>) {
+  return { type: 'tool-call', toolCallId: `tc-${++toolCallSeq}`, toolName, input }
+}
+
+function fakeNonActionTool(): NonActionToolHandler {
+  return {
+    tool: tool({ description: 'fake non-action tool', inputSchema: z.object({ q: z.string().optional() }) }),
+    execute: vi.fn((args: Record<string, unknown>) => ({ echoed: args })),
+  }
+}
+
+async function scriptResponses(responses: unknown[]) {
+  const { generateText } = await import('ai')
+  const queue = [...responses]
+  vi.mocked(generateText).mockImplementation(async () => {
+    const next = queue.shift()
+    if (!next) throw new Error('scripted response queue exhausted')
+    return next as never
+  })
+}
+
+function turnOptions(overrides: Partial<ExecutePlanningTurnOptions> = {}): ExecutePlanningTurnOptions {
+  return {
+    model: {} as never,
+    registry: defaultRegistry,
+    actionTools: buildTools(defaultRegistry, { platform: 'web' }),
+    system: 'system prompt',
+    messages: [{ role: 'user', content: 'do the thing' }],
+    ...overrides,
+  }
+}
+
+async function generateTextCalls() {
+  const { generateText } = await import('ai')
+  return vi.mocked(generateText).mock.calls as { 0: { messages: unknown[] } }[]
+}
+
+describe('executePlanningTurn', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    toolCallSeq = 0
+  })
+
+  it('exposes K as an internal constant defaulting to 2 (D-06)', () => {
+    expect(DEFAULT_NON_ACTION_TOOL_BUDGET).toBe(2)
+  })
+
+  it('Test 1: an immediate action call returns the plan with zero exchanges (v1 one-shot path)', async () => {
+    await scriptResponses([{ toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE }])
+
+    const res = await executePlanningTurn(turnOptions())
+
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected success')
+    expect(res.plan.action.type).toBe('click')
+    expect(res.plan.action.ref).toBe('e1')
+    expect(res.exchanges).toHaveLength(0)
+    expect(res.tokenUsage).toEqual({ promptTokens: 10, completionTokens: 2, totalTokens: 12 })
+  })
+
+  it('Test 2: two non-action calls then an action execute in order with exchanges recorded', async () => {
+    const note = fakeNonActionTool()
+    const search = fakeNonActionTool()
+    await scriptResponses([
+      { toolCalls: [nonActionCall('fake_note', { q: 'a' })], usage: USAGE },
+      { toolCalls: [nonActionCall('fake_search', { q: 'b' })], usage: USAGE },
+      { toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE },
+    ])
+
+    const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note, fake_search: search } }))
+
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected success')
+    expect(res.plan.action.type).toBe('click')
+    expect(res.exchanges).toEqual([
+      { tool: 'fake_note', args: { q: 'a' }, result: { echoed: { q: 'a' } } },
+      { tool: 'fake_search', args: { q: 'b' }, result: { echoed: { q: 'b' } } },
+    ])
+    expect(note.execute).toHaveBeenCalledTimes(1)
+    expect(search.execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('Test 3 (D-08a): the over-budget call gets the exhausted result; a further non-action-only response fails, no throw', async () => {
+    const note = fakeNonActionTool()
+    await scriptResponses([
+      { toolCalls: [nonActionCall('fake_note', { q: '1' })], usage: USAGE },
+      { toolCalls: [nonActionCall('fake_note', { q: '2' })], usage: USAGE },
+      { toolCalls: [nonActionCall('fake_note', { q: '3' })], usage: USAGE }, // over budget → error injected
+      { toolCalls: [nonActionCall('fake_note', { q: '4' })], usage: USAGE }, // still no action → failure
+    ])
+
+    const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note } }))
+
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected failure')
+    expect(res.reason).toBe('non_action_tool_budget_exhausted')
+    expect(res.exchanges).toHaveLength(DEFAULT_NON_ACTION_TOOL_BUDGET) // only the first 2 executed
+    expect(note.execute).toHaveBeenCalledTimes(2)
+    // the 4th generateText call carries the budget-exhausted tool-result from response 3
+    const calls = await generateTextCalls()
+    expect(JSON.stringify(calls[3][0].messages)).toContain('Tool budget exhausted')
+  })
+
+  it('Test 4 (D-08b): a text-only response triggers exactly one re-prompt then a planning failure', async () => {
+    await scriptResponses([
+      { toolCalls: [], usage: USAGE },
+      { toolCalls: [], usage: USAGE },
+    ])
+
+    const res = await executePlanningTurn(turnOptions())
+
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected failure')
+    expect(res.reason).toBe('no_action_tool_called')
+    const { generateText } = await import('ai')
+    expect(generateText).toHaveBeenCalledTimes(2)
+    const calls = await generateTextCalls()
+    expect(JSON.stringify(calls[1][0].messages)).toContain('must call exactly one action tool')
+  })
+
+  it('Test 5 (D-08c): [non-action, action, action] processes the first, terminates on the second, discards the third', async () => {
+    const note = fakeNonActionTool()
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    await scriptResponses([
+      {
+        toolCalls: [
+          nonActionCall('fake_note', { q: 'x' }),
+          actionCall('web_click', { ref: 'e1', ...ENVELOPE }),
+          actionCall('web_click', { ref: 'e2', ...ENVELOPE }),
+        ],
+        usage: USAGE,
+      },
+    ])
+
+    const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note }, logger }))
+
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected success')
+    expect(res.plan.action.ref).toBe('e1') // terminated on the first action
+    expect(res.exchanges).toHaveLength(1) // the leading non-action call ran
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Discarded tool calls'),
+      expect.objectContaining({ discarded: 1 }),
+    )
+  })
+
+  it('Test 6: K is injectable — with budget 0 the first non-action call gets the exhausted error', async () => {
+    const note = fakeNonActionTool()
+    await scriptResponses([
+      { toolCalls: [nonActionCall('fake_note', { q: 'z' })], usage: USAGE }, // over budget immediately
+      { toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })], usage: USAGE },
+    ])
+
+    const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note }, budget: 0 }))
+
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected success')
+    expect(note.execute).not.toHaveBeenCalled() // over budget → never executed
+    expect(res.exchanges).toHaveLength(0)
+    const calls = await generateTextCalls()
+    expect(JSON.stringify(calls[1][0].messages)).toContain('Tool budget exhausted')
+  })
+})
