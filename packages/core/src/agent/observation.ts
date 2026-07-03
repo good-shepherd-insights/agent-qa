@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import { asRef } from '@vostride/agent-qa-schema'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 
 export function truncateScreenState(state: ScreenState): string {
   const parts: string[] = []
@@ -8,14 +9,13 @@ export function truncateScreenState(state: ScreenState): string {
     parts.push(`Current page: ${state.url}`)
   }
 
-  const refMap = state.metadata?.refMap as Record<string, { bounds?: { x: number; y: number; width: number; height: number } }> | undefined
-  const viewportHeight = state.metadata?.viewportHeight as number | undefined
+  const viewportHeight = state.metadata.viewportHeight
 
-  if (refMap && viewportHeight) {
-    const allRefs = Object.values(refMap).filter(r => r.bounds)
-    const visible = allRefs.filter(r => r.bounds!.y + (r.bounds!.height || 0) > 0 && r.bounds!.y < viewportHeight)
-    const above = allRefs.filter(r => r.bounds!.y + (r.bounds!.height || 0) <= 0)
-    const below = allRefs.filter(r => r.bounds!.y >= viewportHeight)
+  if (viewportHeight) {
+    const allRefs = Object.keys(state.refMap).map(key => state.refMap[asRef(key)])
+    const visible = allRefs.filter(r => r.bounds.y + r.bounds.height > 0 && r.bounds.y < viewportHeight)
+    const above = allRefs.filter(r => r.bounds.y + r.bounds.height <= 0)
+    const below = allRefs.filter(r => r.bounds.y >= viewportHeight)
     parts.push(`[viewport: ${visible.length} elements visible, ${above.length} scrolled above, ${below.length} below viewport]`)
   }
 
@@ -29,22 +29,18 @@ export function hashScreenState(state: ScreenState): string {
     .map((el) => `${el.role}:${el.name}`)
     .join('|')
 
-  // Include element positions from mobile refMap to detect scroll/viewport changes.
+  // Include element positions from the refMap to detect scroll/viewport changes.
   // Without this, scrolling on mobile produces identical hashes since the full page
   // source always contains every element regardless of visibility.
   // Sample 20 refs (not 10) for better differentiation on native mobile apps.
-  let posInfo = ''
-  if (state.metadata?.refMap) {
-    const refs = state.metadata.refMap as Record<string, { bounds?: { y: number } }>
-    posInfo = Object.values(refs)
-      .filter(r => r.bounds)
-      .slice(0, 20)
-      .map(r => r.bounds!.y)
-      .join(',')
-  }
+  const posInfo = Object.keys(state.refMap)
+    .map(key => state.refMap[asRef(key)])
+    .slice(0, 20)
+    .map(r => r.bounds.y)
+    .join(',')
 
   // Include viewport height to differentiate device sizes
-  const vh = state.metadata?.viewportHeight ?? ''
+  const vh = state.metadata.viewportHeight ?? ''
 
   return createHash('sha256').update(normalized + '||' + posInfo + '||' + vh).digest('hex').slice(0, 16)
 }

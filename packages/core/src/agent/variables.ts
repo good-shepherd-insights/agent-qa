@@ -1,7 +1,7 @@
 import { generateText, Output } from 'ai'
 import type { LanguageModel } from 'ai'
 import { z } from 'zod'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { ExtractorInput, CaptureResult, VariableExtractor } from './types.js'
 import { buildExtractionPrompt } from './prompts.js'
 
