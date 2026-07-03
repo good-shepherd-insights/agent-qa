@@ -1,8 +1,37 @@
 import type { Page, Locator } from 'playwright-core'
-import type { Action } from '@vostride/agent-qa-runner'
+import type { Action, InterimNode, RefBinding } from '@vostride/agent-qa-runner'
+import type { Ref } from '@vostride/agent-qa-schema'
 import type { RefMap } from './types.js'
 
 const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'waitForUrl', 'assert'])
+
+/**
+ * Re-feed the adapter-private execute-time RefMap from the buildScreenState binding.
+ *
+ * The builder never crosses the port (observe() returns only the ScreenState), so the
+ * adapter reconstructs its ref -> live-locator record here: role/name come from the
+ * interim node at binding[ref].index, nth is the builder's same-screen ordinal, and the
+ * ai-mode native handle (when present) is carried as `ariaRef` so resolve() can prefer
+ * Playwright's own aria-ref locator. bounds pass through when enrichment resolved them.
+ */
+export function buildRefMap(
+  binding: Record<Ref, RefBinding>,
+  nodes: InterimNode[],
+  nativeRefs: (string | undefined)[],
+): RefMap {
+  const refs: RefMap = {}
+  for (const [ref, bind] of Object.entries(binding)) {
+    const node = nodes[bind.index]
+    if (!node) continue
+    const entry: RefMap[string] = { role: node.role, nth: bind.nth }
+    if (node.name !== undefined) entry.name = node.name
+    if (node.bounds !== undefined) entry.bounds = node.bounds
+    const ariaRef = nativeRefs[bind.index]
+    if (ariaRef) entry.ariaRef = ariaRef
+    refs[ref] = entry
+  }
+  return refs
+}
 
 export class ElementResolver {
   constructor(
@@ -14,6 +43,13 @@ export class ElementResolver {
     const data = this.refs[ref]
     if (!data) {
       throw new Error(`Unknown ref "${ref}". Available refs: ${Object.keys(this.refs).join(', ') || 'none'}`)
+    }
+
+    // Prefer Playwright's own aria-ref locator (the engine's ground truth for its last
+    // snapshot) when the ai-mode native handle is available; otherwise fall back to the
+    // surviving getByRole/nth path (default-mode refs, or honest-absence enrichment).
+    if (data.ariaRef) {
+      return this.page.locator('aria-ref=' + data.ariaRef)
     }
 
     let locator: Locator

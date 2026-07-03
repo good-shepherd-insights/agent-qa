@@ -17,6 +17,7 @@ export const AGENT_QA_WEB_EXTERNAL_DEPENDENCIES = [
 export const AGENT_QA_WEB_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-runner',
+  '@vostride/agent-qa-schema',
 ] as const
 
 export const AGENT_QA_WEB_OWNERSHIP_CONTRACT = {

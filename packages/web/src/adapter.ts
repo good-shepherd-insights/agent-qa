@@ -7,17 +7,38 @@ import type {
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
-  ScreenState,
 } from '@vostride/agent-qa-runner'
-import { assertNever } from '@vostride/agent-qa-runner'
+import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
-import { observePage } from './observer.js'
-import { ElementResolver } from './element-resolver.js'
+import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
+import { extractDom } from './dom-extractor.js'
+import { ElementResolver, buildRefMap } from './element-resolver.js'
 import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
 import { scrollWithRef } from './scroll-helper.js'
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
+
+// Browser-context hygiene: hide framework-injected [data-agent-qa-internal] overlays
+// from the ARIA snapshot (they would otherwise get ai-mode refs and pollute the state),
+// then restore them. `(globalThis as any).document` is used because the Node tsconfig
+// carries no DOM lib — these serialize and run in the browser.
+function hideAgentQaElements() {
+  const doc = (globalThis as any).document
+  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
+    el.style.display = 'none'
+    el.setAttribute('aria-hidden', 'true')
+  })
+}
+
+function restoreAgentQaElements() {
+  const doc = (globalThis as any).document
+  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
+    el.style.display = ''
+    el.removeAttribute('aria-hidden')
+  })
+}
 
 interface PageLogBuffers {
   consoleLogs: ConsoleLogEntry[]
@@ -37,6 +58,8 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
+  // Execute-time resolution record, re-fed from the builder binding after each observe.
+  // The binding itself never crosses the port (observe returns only the ScreenState).
   private lastRefs: RefMap = {}
   private pageLogBuffers = new Map<Page, PageLogBuffers>()
   private logCaptureConfig: { console: boolean; network: boolean } = { console: true, network: true }
@@ -121,12 +144,53 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     if (!this.page) {
       throw new Error('WebPlatformAdapter not initialized — call setup() first')
     }
+    const page = this.page
 
-    await waitForPageReady(this.page)
-    const state = await observePage(this.page, {
-      extractDom: options?.extractDom,
+    await waitForPageReady(page)
+
+    // ai-mode snapshot: Playwright annotates each element with a native [ref=eN] handle
+    // (adapter-PRIVATE) that aria-ref locators resolve against — the enrichment ground
+    // truth. Hide framework overlays around the snapshot, always restoring them.
+    await page.evaluate(hideAgentQaElements)
+    let ariaTree: string
+    try {
+      ariaTree = await page.locator(':root').ariaSnapshot({ mode: 'ai' })
+    } finally {
+      await page.evaluate(restoreAgentQaElements)
+    }
+
+    // parse -> enrich -> scroll: the interim-node walker (352-03), exact per-element
+    // enrichment via aria-ref locators, and exact window scroll/viewport capture.
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
+    if (nodes.length > 0) {
+      await enrichWebNodes(page, nodes, nativeRefs)
+    }
+    const { viewport, scroll } = await captureWebScroll(page)
+
+    // domContext is web-only (D-04), captured only when the loop asks for it.
+    let domContext: string | undefined
+    if (options?.extractDom) {
+      try {
+        domContext = await extractDom(page)
+      } catch {
+        // DOM extraction is best-effort — never block observation.
+      }
+    }
+
+    // The shared runner builder mints refs, normalizes names, and assembles the schema
+    // v2 ScreenState. The binding stays adapter-private; only the state crosses the port.
+    const { state, binding } = buildScreenState({
+      platform: 'web',
+      nodes,
+      viewport,
+      scroll,
+      coordSpace: 'viewport',
+      timestamp: Date.now(),
+      url: page.url(),
+      ...(domContext !== undefined ? { domContext } : {}),
     })
-    this.lastRefs = (state.metadata.refMap as RefMap) ?? {}
+
+    this.lastRefs = buildRefMap(binding, nodes, nativeRefs)
     return state
   }
 
