@@ -4,8 +4,7 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { ScopedLogger } from '../logging/types.js'
 import { buildSystemPrompt, buildStepPrompt } from './prompts.js'
-import { buildTools, toolCallToActionPlan } from '../tools/builder.js'
-import { defaultRegistry } from '../tools/index.js'
+import { buildTools, toolCallToActionPlan, defaultRegistry } from '@vostride/agent-qa-runner'
 
 export class LLMPlanner implements Planner {
   private model: LanguageModel

@@ -8,14 +8,17 @@ export const AGENT_QA_RUNNER_ALLOWED_RESPONSIBILITIES = [
   'run-artifact, reporter-event, and trace type contracts for the runner execution boundary',
   'read-only L2 knowledge-hint reader contract with no mutation surface',
   'pure screen-state construction — the shared builder that assembles adapter observe output into schema screen contracts',
+  'the step-execution loop state machine (observe → plan → execute → verify → self-heal) and its neutral loop ports (cache, screenshot compressor, secret) re-derived into runner',
+  'the planned-actions-as-tools registry and planning-turn orchestration over an injected LanguageModel handle via the neutral orchestration SDK',
+  'evidence recording (SubActionEvidence/StepEvidence, §A8) produced by construction as the loop runs',
 ] as const
 export const AGENT_QA_RUNNER_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
-  'provider invocation ownership',
+  'provider resolution or provider-SDK (@ai-sdk/*) ownership — the loop orchestrates an injected LanguageModel handle via the neutral `ai` SDK, but never resolves or binds providers; model remains the sole modelOwner',
   'local runtime persistence',
   'concrete platform-adapter or store implementations',
 ] as const
-export const AGENT_QA_RUNNER_EXTERNAL_DEPENDENCIES = ['ai'] as const
+export const AGENT_QA_RUNNER_EXTERNAL_DEPENDENCIES = ['ai', 'zod'] as const
 export const AGENT_QA_RUNNER_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-safety', '@vostride/agent-qa-schema'] as const
 
 export const AGENT_QA_RUNNER_OWNERSHIP_CONTRACT = {

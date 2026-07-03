@@ -1,4 +1,4 @@
-import type { Action } from '@vostride/agent-qa-runner'
+import type { Action } from '../platform.js'
 
 type PointerAction = Extract<Action, { type: 'doubleClick' | 'rightClick' }>
 

@@ -4,7 +4,7 @@ import type { StepContext, AssertionInput, ExtractorInput } from './types.js'
 import type { ScopedLogger } from '../logging/types.js'
 import { truncateScreenState } from './observation.js'
 import { estimateTokens } from './token-budget.js'
-import { defaultRegistry } from '../tools/index.js'
+import { defaultRegistry } from '@vostride/agent-qa-runner'
 
 type PromptPlatform = 'web' | 'android' | 'ios'
 

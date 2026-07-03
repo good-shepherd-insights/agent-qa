@@ -8,7 +8,7 @@ import type { AgentLoopConfig, StepContext, PlanResult } from './types.js'
 import { hashScreenState, hashStepInstruction } from './observation.js'
 import { formatAction } from './prompts.js'
 import { compressScreenshot } from '../screenshot/compress.js'
-import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
+import { normalizePointerActionForStep } from '@vostride/agent-qa-runner'
 import { findSecretTemplates, redactSecretValue, resolveSecretTemplatesInValue, containsRedactedSecretMarker } from '@vostride/agent-qa-runner'
 import sharp from 'sharp'
 

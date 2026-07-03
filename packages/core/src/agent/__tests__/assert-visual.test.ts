@@ -4,7 +4,7 @@ import { formatAction } from '../prompts.js'
 import type { Action } from '@vostride/agent-qa-runner'
 
 // Get the assert schema from the registry
-import { defaultRegistry } from '../../tools/index.js'
+import { defaultRegistry } from '@vostride/agent-qa-runner'
 
 function getAssertSchema(): z.ZodObject<any> {
   return defaultRegistry.getSchema('common_assertAI') as z.ZodObject<any>

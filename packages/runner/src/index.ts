@@ -83,3 +83,13 @@ export {
   containsRedactedSecretMarker,
 } from './loop/secrets.js'
 export type { SecretTemplate, SecretFileMetadata } from './loop/secrets.js'
+
+// v45 tool registry — the planned-actions-as-tools substrate (moved from core,
+// Phase 353; D-09 frozen envelope). Re-exporting from ./tools/index.js runs its
+// top-level registerAllActions side-effect on defaultRegistry. Always-send-all law:
+// nothing here gates or shrinks the tool slice.
+export { ToolRegistry, defaultRegistry, buildTools, toolCallToActionPlan } from './tools/index.js'
+export type { ToolDefinition, ToolCategory } from './tools/index.js'
+export { EXPOSURE } from './tools/registry.js'
+export { normalizePointerActionForStep } from './tools/pointer-action-normalization.js'
+export { convertKeysForPlatform, isMacPlatform } from './tools/actions/key-conversion.js'

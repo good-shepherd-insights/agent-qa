@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Platform } from '@vostride/agent-qa-schema'
-import { defaultRegistry } from '../../tools/index.js'
-import { EXPOSURE } from '../../tools/registry.js'
+import { defaultRegistry, EXPOSURE } from '@vostride/agent-qa-runner'
 
 function actionLines(docs: string): string[] {
   return docs.split('\n').filter((line: string) => line.startsWith('- '))

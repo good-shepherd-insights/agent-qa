@@ -31,8 +31,10 @@ export { LLMVerifier, VerificationResultSchema } from './verifier.js'
 
 export { buildSystemPrompt, buildStepPrompt, buildVerificationPrompt, buildAssertionPrompt, buildExtractionPrompt } from './prompts.js'
 
-export { defaultRegistry, buildTools, toolCallToActionPlan } from '../tools/index.js'
-export type { ToolRegistry, ToolDefinition, ToolCategory } from '../tools/index.js'
+// v45 tool registry moved to @vostride/agent-qa-runner (Phase 353, D-04/Open Q1);
+// re-exported here transitionally so core's public surface stays stable until 361/363.
+export { defaultRegistry, buildTools, toolCallToActionPlan } from '@vostride/agent-qa-runner'
+export type { ToolRegistry, ToolDefinition, ToolCategory } from '@vostride/agent-qa-runner'
 
 export { AssertionEvaluator, LLMAssertionEvaluator, createAsserter, AssertionResultSchema } from './asserter.js'
 
