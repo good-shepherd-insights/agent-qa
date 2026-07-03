@@ -50,6 +50,7 @@
   "dependencies": {
     "@vostride/agent-qa-core": "workspace:*",
     "@vostride/agent-qa-runner": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*",
     "webdriverio": "9.24.0"
   },
   "devDependencies": {
