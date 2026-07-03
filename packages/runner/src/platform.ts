@@ -7,6 +7,7 @@ import type {
   IosAction,
   MobileAction,
   Platform,
+  ScreenState,
   WebAction,
 } from '@vostride/agent-qa-schema'
 import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
@@ -53,32 +54,6 @@ export interface PlatformAdapter<P extends Platform = Platform> {
   screenshot?(): Promise<Buffer | undefined>
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
-}
-
-export interface ScreenStateMetadata {
-  coordSpace: 'viewport'
-  viewportWidth: number
-  viewportHeight: number
-  refMap?: Record<string, unknown>
-  imageWidth?: number
-  imageHeight?: number
-  domContext?: string
-}
-
-export interface ScreenState {
-  tree: string
-  elements: ElementInfo[]
-  url?: string
-  timestamp: number
-  metadata: ScreenStateMetadata
-}
-
-export interface ElementInfo {
-  ref: string
-  role: string
-  name: string
-  value?: string
-  attributes: Record<string, string>
 }
 
 export type Action =
