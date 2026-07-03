@@ -1,5 +1,5 @@
 import type { Page } from 'playwright-core'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { ScreenState, ElementState, ElementLabels } from '@vostride/agent-qa-schema'
 import { buildScreenState, type InterimNode } from '@vostride/agent-qa-runner'
 import { extractDom } from './dom-extractor.js'
 
@@ -120,11 +120,184 @@ function restoreAgentQaElements() {
   })
 }
 
+/**
+ * Capture exact web scroll state (Pitfall #2 / D-10). Web scroll is precise:
+ * real `window.scrollX/Y` offsets and `document.documentElement.scrollWidth/Height`
+ * content size — never hardcoded zeros. Best-effort: on failure it degrades to the
+ * Playwright viewport size and zero scroll rather than throwing.
+ */
+export async function captureWebScroll(page: Page): Promise<{
+  viewport: { width: number; height: number }
+  scroll: { offsetX: number; offsetY: number; contentWidth: number; contentHeight: number }
+}> {
+  const fallbackViewport = page.viewportSize() ?? { width: 0, height: 0 }
+  try {
+    const raw = await page.evaluate(() => {
+      const w = globalThis as any
+      const docEl = w.document.documentElement
+      return {
+        width: w.innerWidth,
+        height: w.innerHeight,
+        offsetX: w.scrollX,
+        offsetY: w.scrollY,
+        contentWidth: docEl.scrollWidth,
+        contentHeight: docEl.scrollHeight,
+      }
+    })
+    if (raw && typeof raw === 'object') {
+      return {
+        viewport: {
+          width: numberOr(raw.width, fallbackViewport.width),
+          height: numberOr(raw.height, fallbackViewport.height),
+        },
+        scroll: {
+          offsetX: numberOr(raw.offsetX, 0),
+          offsetY: numberOr(raw.offsetY, 0),
+          contentWidth: numberOr(raw.contentWidth, 0),
+          contentHeight: numberOr(raw.contentHeight, 0),
+        },
+      }
+    }
+  } catch {
+    // Scroll capture is best-effort — never block observation.
+  }
+  return {
+    viewport: fallbackViewport,
+    scroll: { offsetX: 0, offsetY: 0, contentWidth: 0, contentHeight: 0 },
+  }
+}
+
+/**
+ * Resolve exact per-element geometry, state, and labels through Playwright
+ * `aria-ref=` locators (the engine's own ground truth) instead of the removed
+ * in-page inferred-role heuristic. The ai-mode native refs stay adapter-private
+ * handles; builder-minted refs remain the only public identity (D-03).
+ *
+ * Enrichment mutates the interim nodes in place and is best-effort: a node whose
+ * ref fails to resolve (or has no ref) keeps `bounds` absent — the builder's
+ * geometry rule turns that into no refMap entry, never zero-geometry fabrication
+ * (D-08, Pitfall #3). Enrichment failure degrades to unenriched nodes; it never
+ * throws out of observation.
+ */
+export async function enrichWebNodes(
+  page: Page,
+  nodes: InterimNode[],
+  nativeRefs: (string | undefined)[],
+): Promise<void> {
+  try {
+    // Resolve element handles for nodes that carry a native ref.
+    const handles: unknown[] = []
+    const targetIndices: number[] = []
+    for (let i = 0; i < nodes.length; i++) {
+      const ref = nativeRefs[i]
+      if (!ref) continue
+      try {
+        const handle = await page.locator('aria-ref=' + ref).elementHandle()
+        if (handle) {
+          handles.push(handle)
+          targetIndices.push(i)
+        }
+      } catch {
+        // Unresolved ref → node keeps bounds absent (honest absence).
+      }
+    }
+    if (handles.length === 0) return
+
+    // One batched page.evaluate reads bounds/state/labels for every resolved handle.
+    const raw = await page.evaluate((els: any[]) => {
+      const w = globalThis as any
+      const active = w.document.activeElement
+      return els.map((el: any) => {
+        if (!el) return null
+        const rect = typeof el.getBoundingClientRect === 'function'
+          ? el.getBoundingClientRect()
+          : null
+        const style = typeof w.getComputedStyle === 'function' ? w.getComputedStyle(el) : null
+        const hidden = style
+          ? style.visibility === 'hidden' || style.display === 'none'
+          : false
+        const hasBox = !!rect && rect.width > 0 && rect.height > 0
+        const disabled =
+          el.disabled === true ||
+          (typeof el.hasAttribute === 'function' && el.hasAttribute('disabled')) ||
+          (typeof el.getAttribute === 'function' && el.getAttribute('aria-disabled') === 'true')
+        const attr = (n: string) =>
+          typeof el.getAttribute === 'function' ? el.getAttribute(n) : null
+        return {
+          bounds: rect
+            ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            : null,
+          enabled: !disabled,
+          focused: el === active,
+          visible: hasBox && !hidden,
+          testId: attr('data-testid'),
+          ariaLabel: attr('aria-label'),
+          placeholder: attr('placeholder'),
+          title: attr('title'),
+        }
+      })
+    }, handles)
+
+    if (!Array.isArray(raw)) return
+
+    // Coerce untrusted evaluate results to expected primitives before writing them
+    // into the interim nodes (T-352-05): numbers for geometry, strings for labels;
+    // malformed entries degrade to absent fields.
+    for (let k = 0; k < targetIndices.length; k++) {
+      const info = raw[k]
+      if (!info || typeof info !== 'object') continue
+      const node = nodes[targetIndices[k]]
+
+      const bounds = coerceBounds((info as any).bounds)
+      if (bounds) node.bounds = bounds
+
+      const state: Partial<ElementState> = { ...(node.state ?? {}) }
+      if (typeof (info as any).enabled === 'boolean') state.enabled = (info as any).enabled
+      if (typeof (info as any).focused === 'boolean') state.focused = (info as any).focused
+      if (typeof (info as any).visible === 'boolean') state.visible = (info as any).visible
+      if (Object.keys(state).length > 0) node.state = state
+
+      const labels: ElementLabels = { ...(node.labels ?? {}) }
+      const testId = coerceString((info as any).testId)
+      if (testId) labels.testId = testId
+      const ariaLabel = coerceString((info as any).ariaLabel)
+      if (ariaLabel) labels.ariaLabel = ariaLabel
+      const placeholder = coerceString((info as any).placeholder)
+      if (placeholder) labels.placeholder = placeholder
+      const title = coerceString((info as any).title)
+      if (title) labels.title = title
+      if (Object.keys(labels).length > 0) node.labels = labels
+    }
+  } catch {
+    // Enrichment is best-effort — degrade to unenriched nodes, never throw.
+  }
+}
+
+function coerceBounds(
+  value: unknown,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const x = v.x, y = v.y, width = v.width, height = v.height
+  if (
+    typeof x === 'number' && Number.isFinite(x) &&
+    typeof y === 'number' && Number.isFinite(y) &&
+    typeof width === 'number' && Number.isFinite(width) &&
+    typeof height === 'number' && Number.isFinite(height)
+  ) {
+    return { x, y, width, height }
+  }
+  return undefined
+}
+
+function coerceString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
 export async function observePage(
   page: Page,
   options?: { filterSelector?: string; extractDom?: boolean },
 ): Promise<ScreenState> {
-  const viewport = page.viewportSize() ?? { width: 0, height: 0 }
   const locator = options?.filterSelector
     ? page.locator(options.filterSelector)
     : page.locator(':root')
@@ -143,38 +316,8 @@ export async function observePage(
   const timestamp = Date.now()
   const url = page.url()
 
-  // Web scroll is EXACT (D-10, Pitfall #2): read real window offsets and document
-  // content size — never hardcoded zeros.
-  let scroll = { offsetX: 0, offsetY: 0, contentWidth: 0, contentHeight: 0 }
-  let capturedViewport = viewport
-  try {
-    const raw = await page.evaluate(() => {
-      const w = globalThis as any
-      const docEl = w.document.documentElement
-      return {
-        width: w.innerWidth,
-        height: w.innerHeight,
-        offsetX: w.scrollX,
-        offsetY: w.scrollY,
-        contentWidth: docEl.scrollWidth,
-        contentHeight: docEl.scrollHeight,
-      }
-    })
-    if (raw && typeof raw === 'object') {
-      capturedViewport = {
-        width: numberOr(raw.width, viewport.width),
-        height: numberOr(raw.height, viewport.height),
-      }
-      scroll = {
-        offsetX: numberOr(raw.offsetX, 0),
-        offsetY: numberOr(raw.offsetY, 0),
-        contentWidth: numberOr(raw.contentWidth, 0),
-        contentHeight: numberOr(raw.contentHeight, 0),
-      }
-    }
-  } catch {
-    // Scroll capture is best-effort — never block observation.
-  }
+  // Web scroll + viewport are EXACT (D-10, Pitfall #2).
+  const { viewport: capturedViewport, scroll } = await captureWebScroll(page)
 
   let domContext: string | undefined
   if (options?.extractDom) {
@@ -185,7 +328,14 @@ export async function observePage(
     }
   }
 
-  const { nodes } = ariaTree ? parseAriaSnapshot(ariaTree) : { nodes: [] as InterimNode[] }
+  const { nodes, nativeRefs } = ariaTree
+    ? parseAriaSnapshot(ariaTree)
+    : { nodes: [] as InterimNode[], nativeRefs: [] as (string | undefined)[] }
+
+  // Exact per-element enrichment via aria-ref locators (honest-absence fallback).
+  if (nodes.length > 0) {
+    await enrichWebNodes(page, nodes, nativeRefs)
+  }
 
   const { state } = buildScreenState({
     platform: 'web',
