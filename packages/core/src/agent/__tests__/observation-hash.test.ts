@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { hashStepInstruction } from '../observation.js'
+import { hashScreenState, hashStepInstruction, truncateScreenState } from '../observation.js'
+import { buildAgentScreenState as makeScreenState } from './screen-fixtures.js'
 
 describe('hashStepInstruction', () => {
   it('returns a 16-char hex string', () => {
@@ -89,5 +90,61 @@ describe('hashStepInstruction', () => {
     const positional = hashStepInstruction('Click', 'web', 'cfg', 'test', 2)
     const object = hashStepInstruction({ step: 'Click', platform: 'web', configContent: 'cfg', testFileContent: 'test', stepIndex: 2 })
     expect(positional).toBe(object)
+  })
+})
+
+// D-06: the hash/truncate recipe is preserved verbatim across the type re-point —
+// role:name join over elements + first-20 refMap bounds.y sample + viewportHeight,
+// sha256 sliced to 16 hex. These pin the recipe against the typed v2 fields.
+describe('hashScreenState (D-06 recipe pinned)', () => {
+  it('returns a 16-char hex hash', () => {
+    const hash = hashScreenState(makeScreenState())
+    expect(hash).toMatch(/^[0-9a-f]{16}$/)
+  })
+
+  it('is deterministic for the same screen', () => {
+    expect(hashScreenState(makeScreenState())).toBe(hashScreenState(makeScreenState()))
+  })
+
+  it('ignores element ref/value — same role:name join hashes equal', () => {
+    const a = makeScreenState({
+      elements: [{ ref: 'a1', role: 'button', name: 'Submit', value: 'x', attributes: {} }],
+    })
+    const b = makeScreenState({
+      elements: [{ ref: 'z9', role: 'button', name: 'Submit', value: 'y', attributes: {} }],
+    })
+    expect(hashScreenState(a)).toBe(hashScreenState(b))
+  })
+
+  it('detects structural change — different role:name join', () => {
+    const a = makeScreenState({ elements: [{ ref: 'e1', role: 'button', name: 'Submit', attributes: {} }] })
+    const b = makeScreenState({ elements: [{ ref: 'e1', role: 'button', name: 'Cancel', attributes: {} }] })
+    expect(hashScreenState(a)).not.toBe(hashScreenState(b))
+  })
+
+  it('refMap bounds.y participates — scroll changes the hash', () => {
+    const a = makeScreenState({ refMap: { e1: { bounds: { x: 0, y: 100, width: 10, height: 10 } } } })
+    const b = makeScreenState({ refMap: { e1: { bounds: { x: 0, y: 400, width: 10, height: 10 } } } })
+    expect(hashScreenState(a)).not.toBe(hashScreenState(b))
+  })
+})
+
+describe('truncateScreenState (D-06 recipe pinned)', () => {
+  it('prefixes with Current page URL and returns the tree', () => {
+    const result = truncateScreenState(makeScreenState({ url: 'https://example.com/dashboard', tree: 'button "Go"' }))
+    expect(result).toMatch(/^Current page: https:\/\/example\.com\/dashboard/)
+    expect(result).toContain('button "Go"')
+  })
+
+  it('emits a viewport summary partitioned by refMap bounds.y and viewportHeight', () => {
+    const result = truncateScreenState(makeScreenState({
+      metadata: { coordSpace: 'viewport', viewportWidth: 1280, viewportHeight: 800 },
+      refMap: {
+        e1: { bounds: { x: 0, y: 100, width: 100, height: 40 } },
+        e2: { bounds: { x: 0, y: -50, width: 100, height: 40 } },
+        e3: { bounds: { x: 0, y: 900, width: 100, height: 40 } },
+      },
+    }))
+    expect(result).toContain('[viewport: 1 elements visible, 1 scrolled above, 1 below viewport]')
   })
 })

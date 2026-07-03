@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import {
   VariableStore,
   interpolateVariables,
@@ -25,8 +26,8 @@ vi.mock('ai', () => ({
   },
 }))
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: 'heading "Order #ORD-456 confirmed"\ntext "Your order ID is ORD-456"\nbutton "Continue" [ref=btn-1]',
     elements: [
       { ref: 'h-1', role: 'heading', name: 'Order #ORD-456 confirmed', attributes: {} },
@@ -34,10 +35,8 @@ function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
       { ref: 'btn-1', role: 'button', name: 'Continue', attributes: {} },
     ],
     url: 'https://example.com/order/confirmed',
-    timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 describe('VariableStore', () => {

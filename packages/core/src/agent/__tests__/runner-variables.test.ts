@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { ActionCache, Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
@@ -7,18 +9,16 @@ import { runTest } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
 import { SecretRedactor, SecretStore } from '../secrets.js'
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: 'heading "Order #ORD-789 confirmed"\ntext "ID-12345 is your reference"',
     elements: [
       { ref: 'h-1', role: 'heading', name: 'Order #ORD-789 confirmed', attributes: {} },
       { ref: 'txt-1', role: 'text', name: 'ID-12345 is your reference', attributes: {} },
     ],
     url: 'https://example.com/order',
-    timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 function makeActionPlan(overrides?: Partial<ActionPlan>): ActionPlan {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import { AssertionEvaluator, LLMAssertionEvaluator, createAsserter } from '../asserter.js'
 import type { AssertionInput } from '../types.js'
 
@@ -10,8 +11,8 @@ vi.mock('ai', () => ({
   },
 }))
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: 'heading "Welcome to Dashboard"\nbutton "Logout" [ref=btn-1]\ntext "You have 3 items in your cart"\nlink "Settings" [ref=link-1]',
     elements: [
       { ref: 'h-1', role: 'heading', name: 'Welcome to Dashboard', attributes: {} },
@@ -20,10 +21,8 @@ function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
       { ref: 'link-1', role: 'link', name: 'Settings', attributes: {} },
     ],
     url: 'https://example.com/dashboard',
-    timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 describe('AssertionEvaluator', () => {

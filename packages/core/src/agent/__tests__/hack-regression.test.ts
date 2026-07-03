@@ -1,16 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { buildVerificationPrompt, buildAssertionPrompt, buildExtractionPrompt } from '../prompts.js'
 import { truncateScreenState } from '../observation.js'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: '- button "Submit" [ref=e1]',
     elements: [{ ref: 'e1', role: 'button', name: 'Submit', attributes: {} }],
-    timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 const LARGE_TREE = Array.from({ length: 200 }, (_, i) =>
@@ -65,15 +64,11 @@ describe('hack-regression', () => {
 
     it('includes viewport summary when refMap and viewportHeight present', () => {
       const state = makeScreenState({
-        metadata: {
-          coordSpace: 'viewport' as const,
-          viewportWidth: 1280,
-          viewportHeight: 800,
-          refMap: {
-            e1: { bounds: { x: 0, y: 100, width: 100, height: 40 } },
-            e2: { bounds: { x: 0, y: -50, width: 100, height: 40 } },
-            e3: { bounds: { x: 0, y: 900, width: 100, height: 40 } },
-          },
+        metadata: { coordSpace: 'viewport' as const, viewportWidth: 1280, viewportHeight: 800 },
+        refMap: {
+          e1: { bounds: { x: 0, y: 100, width: 100, height: 40 } },
+          e2: { bounds: { x: 0, y: -50, width: 100, height: 40 } },
+          e3: { bounds: { x: 0, y: 900, width: 100, height: 40 } },
         },
       })
       const result = truncateScreenState(state)

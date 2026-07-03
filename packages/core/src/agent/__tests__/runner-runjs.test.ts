@@ -1,22 +1,22 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
 import { runTest } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: 'button "OK" [ref=btn-1]',
     elements: [
       { ref: 'btn-1', role: 'button', name: 'OK', attributes: {} },
     ],
     url: 'https://example.com',
-    timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 function makeActionPlan(overrides?: Partial<ActionPlan>): ActionPlan {
