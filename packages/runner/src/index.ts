@@ -42,3 +42,32 @@ export type {
   StepResult,
   TestResult,
 } from './result.js'
+
+// Step-execution loop spine (re-derived into runner, Phase 353).
+export {
+  createTimeoutAbortReason,
+  getTimeoutAbortReason,
+  withAbort,
+} from './loop/abort.js'
+export type { AgentAbortScope, AgentTimeoutAbortReason } from './loop/abort.js'
+export type {
+  ActionPlan,
+  PlannerConfig,
+  PlanResult,
+  VerificationResult,
+  VerifyResult,
+  StepContext,
+  Planner,
+  Verifier,
+} from './loop/types.js'
+export type {
+  StepKeyInput,
+  ActionPlanCache,
+  CompressedScreenshot,
+  ScreenshotCompressor,
+  SecretResolver,
+  SecretRedactorPort,
+  LoopScopedLogger,
+  LoopLogger,
+  LoopPorts,
+} from './loop/ports.js'

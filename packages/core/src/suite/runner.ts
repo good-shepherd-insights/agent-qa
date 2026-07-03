@@ -23,7 +23,7 @@ import type { MemoryIndexParams } from '../memory/memory-index.js'
 import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
 import { VariableStore, findUnresolvedTemplates, interpolateVariables } from '../agent/variables.js'
 import { resolveSecretTemplatesInValue, type SecretRedactor, type SecretStore } from '../agent/secrets.js'
-import { withAbort } from '../agent/loop.js'
+import { withAbort } from '@vostride/agent-qa-runner'
 import { generateRunId } from '../ids/run-id.js'
 import pc from 'picocolors'
 

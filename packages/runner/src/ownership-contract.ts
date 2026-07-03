@@ -15,8 +15,8 @@ export const AGENT_QA_RUNNER_FORBIDDEN_RESPONSIBILITIES = [
   'local runtime persistence',
   'concrete platform-adapter or store implementations',
 ] as const
-export const AGENT_QA_RUNNER_EXTERNAL_DEPENDENCIES = [] as const
-export const AGENT_QA_RUNNER_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
+export const AGENT_QA_RUNNER_EXTERNAL_DEPENDENCIES = ['ai'] as const
+export const AGENT_QA_RUNNER_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-safety', '@vostride/agent-qa-schema'] as const
 
 export const AGENT_QA_RUNNER_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_RUNNER_PACKAGE_NAME,

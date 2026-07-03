@@ -2,7 +2,7 @@ import { resolve as resolvePath, isAbsolute, dirname } from 'node:path'
 import type { Action, ActionResult } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepResult, StepTrace, StepAnnotation, TokenUsage, SubActionTrace } from '@vostride/agent-qa-runner'
-import { stampCaptureMode } from '@vostride/agent-qa-runner'
+import { stampCaptureMode, withAbort } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { AgentLoopConfig, StepContext, PlanResult } from './types.js'
 import { hashScreenState, hashStepInstruction } from './observation.js'
@@ -12,56 +12,8 @@ import { normalizePointerActionForStep } from '../tools/pointer-action-normaliza
 import { findSecretTemplates, redactSecretValue, resolveSecretTemplatesInValue } from './secrets.js'
 import sharp from 'sharp'
 
-export type AgentAbortScope = 'test' | 'step'
-
-export interface AgentTimeoutAbortReason {
-  type: 'agent-qa-timeout'
-  scope: AgentAbortScope
-  timeoutMs: number
-  message: string
-}
-
-export function createTimeoutAbortReason(scope: AgentAbortScope, timeoutMs: number): AgentTimeoutAbortReason {
-  const label = scope === 'test' ? 'Test' : 'Step'
-  return {
-    type: 'agent-qa-timeout',
-    scope,
-    timeoutMs,
-    message: `${label} timed out after ${timeoutMs}ms`,
-  }
-}
-
-export function getTimeoutAbortReason(signal: AbortSignal | undefined): AgentTimeoutAbortReason | undefined {
-  const reason = signal?.reason
-  if (!reason || typeof reason !== 'object') return undefined
-  const maybeReason = reason as Partial<AgentTimeoutAbortReason>
-  return maybeReason.type === 'agent-qa-timeout'
-    && (maybeReason.scope === 'test' || maybeReason.scope === 'step')
-    && typeof maybeReason.timeoutMs === 'number'
-    && typeof maybeReason.message === 'string'
-    ? maybeReason as AgentTimeoutAbortReason
-    : undefined
-}
-
-export async function withAbort<T>(
-  promise: Promise<T>,
-  signal: AbortSignal | undefined,
-): Promise<T> {
-  if (!signal) return await promise
-  if (signal.aborted) throw signal.reason ?? new Error('Operation aborted')
-
-  let onAbort: (() => void) | undefined
-  const abortPromise = new Promise<T>((_, reject) => {
-    onAbort = () => reject(signal.reason ?? new Error('Operation aborted'))
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-
-  try {
-    return await Promise.race([promise, abortPromise])
-  } finally {
-    if (onAbort) signal.removeEventListener('abort', onAbort)
-  }
-}
+// Abort / step-timeout helpers moved to @vostride/agent-qa-runner (Phase 353, D-02).
+// Imported above for internal loop use; core no longer owns their definitions.
 
 const REDACTED_SECRET_MARKER_RE = /\[secret:\w+\]/
 

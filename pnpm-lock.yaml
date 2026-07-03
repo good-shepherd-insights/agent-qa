@@ -615,9 +615,15 @@ importers:
 
   packages/runner:
     dependencies:
+      '@vostride/agent-qa-safety':
+        specifier: workspace:*
+        version: link:../safety
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema
+      ai:
+        specifier: 6.0.174
+        version: 6.0.174(zod@4.4.2)
     devDependencies:
       '@types/node':
         specifier: ~24.12.2
