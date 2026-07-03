@@ -190,7 +190,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       ...(domContext !== undefined ? { domContext } : {}),
     })
 
-    this.lastRefs = buildRefMap(binding, nodes, nativeRefs)
+    this.lastRefs = buildRefMap(binding, nodes)
     return state
   }
 
