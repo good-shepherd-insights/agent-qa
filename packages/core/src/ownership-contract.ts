@@ -42,14 +42,14 @@ export const AGENT_QA_CORE_MIGRATION_LEDGER = [
   {
     rule: 'storageImplementation',
     target: 'better-sqlite3',
-    clearedBy: 'M1 Runner spine / M2 Knowledge store',
-    reason: 'cache/memory subsystems still in core',
+    clearedBy: 'M2 Knowledge store',
+    reason: 'memory/knowledge-store SQLite subsystem still in core',
   },
   {
     rule: 'storageImplementation',
     target: 'sharp',
-    clearedBy: 'M1 Runner spine / M2 Knowledge store',
-    reason: 'screenshot pipeline still in core',
+    clearedBy: 'Phase 356 (cache & screenshot redesign)',
+    reason: 'screenshot compression pipeline still in core until Phase 356',
   },
 ] as const
 
