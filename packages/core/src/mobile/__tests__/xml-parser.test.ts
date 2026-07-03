@@ -32,112 +32,153 @@ const IOS_LOGIN_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </XCUIElementTypeApplication>
 </AppiumAUT>`
 
-describe('parseMobileSource', () => {
-  describe('Android XML parsing', () => {
-    it('parses login screen with correct roles and labels', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+describe('parseMobileSource → InterimNode[]', () => {
+  describe('Android walk', () => {
+    it('emits interactive/content nodes in document order (containers filtered)', () => {
+      const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android')
 
-      const roles = result.elements.map(e => e.role)
-      expect(roles).toContain('text')
-      expect(roles).toContain('textbox')
-      expect(roles).toContain('button')
-      expect(roles).toContain('image')
+      const roles = nodes.map(n => n.role)
+      // FrameLayout/LinearLayout (group) are structural containers — never emitted.
+      expect(roles).not.toContain('group')
+      expect(roles).toEqual(['text', 'textbox', 'textbox', 'button', 'button', 'image'])
 
-      const names = result.elements.map(e => e.name)
-      expect(names).toContain('Welcome Back')
-      expect(names).toContain('Email')
-      expect(names).toContain('Password')
-      expect(names).toContain('Sign In')
-      expect(names).toContain('Sign Up')
-      expect(names).toContain('App Logo')
+      const names = nodes.map(n => n.name)
+      expect(names).toEqual(['Welcome Back', 'Email', 'Password', 'Sign In', 'Sign Up', 'App Logo'])
     })
 
-    it('assigns sequential refs starting at e1', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
-
-      const refs = result.elements.map(e => e.ref)
-      expect(refs[0]).toBe('e1')
-      expect(refs[refs.length - 1]).toBe(`e${refs.length}`)
-
-      // Verify refs are sequential
-      for (let i = 0; i < refs.length; i++) {
-        expect(refs[i]).toBe(`e${i + 1}`)
+    it('carries no ref, tree line, or ordinal on nodes', () => {
+      const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+      for (const node of nodes) {
+        expect(node).not.toHaveProperty('ref')
+        expect(node).not.toHaveProperty('nth')
+        expect(node).not.toHaveProperty('line')
       }
     })
 
     it('parses Android bounds correctly', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
-
-      // First textbox (Email): bounds="[100,300][980,380]"
-      const emailRef = result.elements.find(e => e.name === 'Email')!
-      const emailBounds = result.refs[emailRef.ref].bounds
-      expect(emailBounds).toEqual({ x: 100, y: 300, width: 880, height: 80 })
+      const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+      const email = nodes.find(n => n.name === 'Email')!
+      expect(email.bounds).toEqual({ x: 100, y: 300, width: 880, height: 80 })
     })
 
-    it('preserves native metadata for Android spinner controls', () => {
+    it('maps resource-id → labels.testId and content-desc → labels.ariaLabel', () => {
+      const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+
+      const title = nodes.find(n => n.name === 'Welcome Back')!
+      expect(title.labels?.testId).toBe('title')
+      // content-desc was empty → ariaLabel typed-absent.
+      expect(title.labels?.ariaLabel).toBeUndefined()
+
+      const logo = nodes.find(n => n.name === 'App Logo')!
+      expect(logo.labels?.testId).toBe('logo')
+      expect(logo.labels?.ariaLabel).toBe('App Logo')
+    })
+
+    it('retains the raw platform attribute bag and nativeType', () => {
+      const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+      const signIn = nodes.find(n => n.name === 'Sign In')!
+      expect(signIn.nativeType).toBe('android.widget.Button')
+      expect(signIn.attributes?.['resource-id']).toBe('login')
+      expect(signIn.attributes?.text).toBe('Sign In')
+      expect(signIn.attributes?.enabled).toBe('true')
+    })
+
+    it('lifts the full D-08 Android state signals only when the attribute is present', () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy>
-  <android.widget.Spinner bounds="[10,20][300,80]" text="Priority" content-desc="" enabled="true" />
+  <android.widget.CheckBox bounds="[0,0][100,100]" text="Agree" content-desc="Accept terms" resource-id="agree" checkable="true" checked="true" selected="false" focused="true" scrollable="false" enabled="true" />
 </hierarchy>`
+      const { nodes } = parseMobileSource(xml, 'android')
+      const cb = nodes[0]
 
-      const result = parseMobileSource(xml, 'android')
-      const spinner = result.elements[0]
-
-      expect(spinner.role).toBe('combobox')
-      expect(spinner.name).toBe('Priority')
-      expect(spinner.value).toBe('Priority')
-      expect(spinner.attributes.nativeType).toBe('android.widget.Spinner')
-      expect(spinner.attributes.value).toBe('Priority')
-      expect(result.refs[spinner.ref]).toMatchObject({
-        role: 'combobox',
-        nativeType: 'android.widget.Spinner',
-        value: 'Priority',
-      })
+      expect(cb.role).toBe('checkbox')
+      expect(cb.state?.enabled).toBe(true)
+      expect(cb.state?.checked).toBe(true)
+      expect(cb.state?.selected).toBe(false)
+      expect(cb.state?.focused).toBe(true)
+      // scrollable stays in the raw bag (scroll-derivation input), never on state.
+      expect(cb.attributes?.scrollable).toBe('false')
+      expect('scrollable' in (cb.state ?? {})).toBe(false)
     })
 
-    it('builds tree string with ARIA snapshot format', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
+    it('leaves checked typed-absent when the widget is not checkable', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy>
+  <android.widget.Button bounds="[0,0][100,100]" text="Go" checkable="false" checked="false" enabled="true" />
+</hierarchy>`
+      const { nodes } = parseMobileSource(xml, 'android')
+      // No fabricated checked signal for a non-checkable control.
+      expect('checked' in (nodes[0].state ?? {})).toBe(false)
+    })
 
-      expect(result.tree).toContain('- text "Welcome Back" [ref=')
-      expect(result.tree).toContain('- textbox "Email" [ref=')
-      expect(result.tree).toContain('- button "Sign In" [ref=')
+    it('derives visible=false for bounds fully outside the viewport, absent otherwise', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy>
+  <android.widget.Button bounds="[0,2000][500,2100]" text="Below" enabled="true" />
+  <android.widget.Button bounds="[0,100][500,200]" text="OnScreen" enabled="true" />
+</hierarchy>`
+      const { nodes } = parseMobileSource(xml, 'android', { width: 1080, height: 1920 })
+      const below = nodes.find(n => n.name === 'Below')!
+      const onScreen = nodes.find(n => n.name === 'OnScreen')!
+      expect(below.state?.visible).toBe(false)
+      expect('visible' in (onScreen.state ?? {})).toBe(false)
     })
   })
 
-  describe('iOS XML parsing', () => {
-    it('parses login screen with correct roles and labels', () => {
-      const result = parseMobileSource(IOS_LOGIN_XML, 'ios')
+  describe('parentIndex nesting', () => {
+    it('links children to the nearest surviving ancestor across filtered containers', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy>
+  <android.widget.LinearLayout bounds="[0,0][1080,1920]" text="" enabled="true">
+    <android.widget.Button bounds="[0,0][500,100]" text="Outer" enabled="true">
+      <android.widget.LinearLayout bounds="[0,0][500,100]" text="" enabled="true">
+        <android.widget.TextView bounds="[10,10][100,40]" text="Inner" enabled="true" />
+      </android.widget.LinearLayout>
+    </android.widget.Button>
+  </android.widget.LinearLayout>
+</hierarchy>`
+      const { nodes } = parseMobileSource(xml, 'android')
 
-      const roles = result.elements.map(e => e.role)
-      expect(roles).toContain('text')
-      expect(roles).toContain('textbox')
-      expect(roles).toContain('button')
-      expect(roles).toContain('image')
+      expect(nodes.map(n => n.name)).toEqual(['Outer', 'Inner'])
+      const outer = nodes[0]
+      const inner = nodes[1]
+      // Outer's parent (LinearLayout) filtered → root.
+      expect(outer.parentIndex).toBeUndefined()
+      // Inner collapses through the skipped intermediate LinearLayout to Outer (index 0).
+      expect(inner.parentIndex).toBe(0)
+    })
+  })
 
-      const names = result.elements.map(e => e.name)
-      expect(names).toContain('Welcome Back')
-      expect(names).toContain('Email')
-      expect(names).toContain('Password')
-      expect(names).toContain('Sign In')
-      expect(names).toContain('Sign Up')
-      expect(names).toContain('App Logo')
+  describe('iOS walk', () => {
+    it('emits interactive/content nodes with correct roles and names', () => {
+      const { nodes } = parseMobileSource(IOS_LOGIN_XML, 'ios')
+      const roles = nodes.map(n => n.role)
+      expect(roles).toEqual(['text', 'textbox', 'textbox', 'button', 'button', 'image'])
+
+      const names = nodes.map(n => n.name)
+      expect(names).toEqual(['Welcome Back', 'Email', 'Password', 'Sign In', 'Sign Up', 'App Logo'])
     })
 
     it('parses iOS bounds from individual attributes', () => {
-      const result = parseMobileSource(IOS_LOGIN_XML, 'ios')
-
-      const emailRef = result.elements.find(e => e.name === 'Email')!
-      const emailBounds = result.refs[emailRef.ref].bounds
-      expect(emailBounds).toEqual({ x: 20, y: 150, width: 350, height: 40 })
+      const { nodes } = parseMobileSource(IOS_LOGIN_XML, 'ios')
+      const email = nodes.find(n => n.name === 'Email')!
+      expect(email.bounds).toEqual({ x: 20, y: 150, width: 350, height: 40 })
     })
 
-    it('assigns sequential refs to iOS elements', () => {
-      const result = parseMobileSource(IOS_LOGIN_XML, 'ios')
+    it('maps value/selected/enabled and never fabricates checked from value', () => {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeSwitch label="Wifi" value="1" x="10" y="20" width="100" height="40" selected="true" enabled="false" />
+</AppiumAUT>`
+      const { nodes } = parseMobileSource(xml, 'ios')
+      const sw = nodes[0]
 
-      expect(result.elements.length).toBeGreaterThan(0)
-      for (let i = 0; i < result.elements.length; i++) {
-        expect(result.elements[i].ref).toBe(`e${i + 1}`)
-      }
+      expect(sw.role).toBe('switch')
+      expect(sw.value).toBe('1')
+      expect(sw.state?.selected).toBe(true)
+      expect(sw.state?.enabled).toBe(false)
+      // value="1" must NOT become a checked signal — fabrication banned (D-08).
+      expect('checked' in (sw.state ?? {})).toBe(false)
     })
 
     it('preserves native metadata for iOS picker wheel controls', () => {
@@ -145,18 +186,12 @@ describe('parseMobileSource', () => {
 <AppiumAUT>
   <XCUIElementTypePickerWheel value="March" x="20" y="300" width="350" height="80" enabled="true" />
 </AppiumAUT>`
-
-      const result = parseMobileSource(xml, 'ios')
-      const picker = result.elements[0]
-
+      const { nodes } = parseMobileSource(xml, 'ios')
+      const picker = nodes[0]
       expect(['pickerwheel', 'spinbutton']).toContain(picker.role)
       expect(picker.name).toBe('March')
       expect(picker.value).toBe('March')
-      expect(picker.attributes.nativeType).toBe('XCUIElementTypePickerWheel')
-      expect(result.refs[picker.ref]).toMatchObject({
-        nativeType: 'XCUIElementTypePickerWheel',
-        value: 'March',
-      })
+      expect(picker.nativeType).toBe('XCUIElementTypePickerWheel')
     })
   })
 
@@ -164,21 +199,13 @@ describe('parseMobileSource', () => {
     it('produces the same normalized roles for equivalent screens', () => {
       const android = parseMobileSource(ANDROID_LOGIN_XML, 'android')
       const ios = parseMobileSource(IOS_LOGIN_XML, 'ios')
-
-      const androidRoles = android.elements.map(e => e.role).sort()
-      const iosRoles = ios.elements.map(e => e.role).sort()
-
-      expect(androidRoles).toEqual(iosRoles)
+      expect(android.nodes.map(n => n.role).sort()).toEqual(ios.nodes.map(n => n.role).sort())
     })
 
     it('produces the same labels for equivalent screens', () => {
       const android = parseMobileSource(ANDROID_LOGIN_XML, 'android')
       const ios = parseMobileSource(IOS_LOGIN_XML, 'ios')
-
-      const androidNames = android.elements.map(e => e.name).sort()
-      const iosNames = ios.elements.map(e => e.name).sort()
-
-      expect(androidNames).toEqual(iosNames)
+      expect(android.nodes.map(n => n.name).sort()).toEqual(ios.nodes.map(n => n.name).sort())
     })
   })
 
@@ -188,10 +215,8 @@ describe('parseMobileSource', () => {
 <hierarchy>
   <android.widget.Button bounds="[0,100][500,200]" text="Test" enabled="true" />
 </hierarchy>`
-
-      const result = parseMobileSource(xml, 'android')
-      const bounds = result.refs[result.elements[0].ref].bounds
-      expect(bounds).toEqual({ x: 0, y: 100, width: 500, height: 100 })
+      const { nodes } = parseMobileSource(xml, 'android')
+      expect(nodes[0].bounds).toEqual({ x: 0, y: 100, width: 500, height: 100 })
     })
 
     it('parses iOS x/y/width/height attributes correctly', () => {
@@ -199,109 +224,19 @@ describe('parseMobileSource', () => {
 <AppiumAUT>
   <XCUIElementTypeButton label="Test" x="10" y="20" width="100" height="50" enabled="true" />
 </AppiumAUT>`
-
-      const result = parseMobileSource(xml, 'ios')
-      const bounds = result.refs[result.elements[0].ref].bounds
-      expect(bounds).toEqual({ x: 10, y: 20, width: 100, height: 50 })
+      const { nodes } = parseMobileSource(xml, 'ios')
+      expect(nodes[0].bounds).toEqual({ x: 10, y: 20, width: 100, height: 50 })
     })
   })
 
-  describe('nth disambiguation', () => {
-    it('assigns nth to duplicate role+name pairs', () => {
+  describe('enabled mapping', () => {
+    it('lifts enabled=false onto state', () => {
       const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy>
-  <android.widget.LinearLayout bounds="[0,0][1080,1920]" text="" content-desc="" enabled="true">
-    <android.widget.Button bounds="[0,0][500,100]" text="Submit" content-desc="" enabled="true" />
-    <android.widget.Button bounds="[0,100][500,200]" text="Submit" content-desc="" enabled="true" />
-    <android.widget.Button bounds="[0,200][500,300]" text="Cancel" content-desc="" enabled="true" />
-  </android.widget.LinearLayout>
+  <android.widget.Button bounds="[0,0][500,100]" text="Disabled" enabled="false" />
 </hierarchy>`
-
-      const result = parseMobileSource(xml, 'android')
-
-      const submitButtons = result.elements.filter(e => e.name === 'Submit')
-      expect(submitButtons).toHaveLength(2)
-      expect(result.refs[submitButtons[0].ref].nth).toBe(0)
-      expect(result.refs[submitButtons[1].ref].nth).toBe(1)
-
-      const cancelButton = result.elements.find(e => e.name === 'Cancel')!
-      expect(result.refs[cancelButton.ref].nth).toBeUndefined()
-    })
-  })
-
-  describe('unlabeled container nodes', () => {
-    it('includes container nodes in tree but does not assign refs', () => {
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<hierarchy>
-  <android.widget.FrameLayout bounds="[0,0][1080,1920]" text="" content-desc="" enabled="true">
-    <android.widget.Button bounds="[0,0][500,100]" text="Click Me" content-desc="" enabled="true" />
-  </android.widget.FrameLayout>
-</hierarchy>`
-
-      const result = parseMobileSource(xml, 'android')
-
-      // The group container should be in tree
-      expect(result.tree).toContain('- group')
-      // But only the button gets a ref
-      expect(result.elements).toHaveLength(1)
-      expect(result.elements[0].role).toBe('button')
-    })
-  })
-
-  describe('bounds in tree text', () => {
-    it('includes @(x,y WxH) bounds in Android tree text for ref elements', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
-
-      // "Welcome Back" text: bounds="[100,200][980,280]" → x=100, y=200, w=880, h=80
-      expect(result.tree).toContain('@(100,200 880x80)')
-      // "Email" textbox: bounds="[100,300][980,380]" → x=100, y=300, w=880, h=80
-      expect(result.tree).toContain('@(100,300 880x80)')
-    })
-
-    it('includes @(x,y WxH) bounds in iOS tree text for ref elements', () => {
-      const result = parseMobileSource(IOS_LOGIN_XML, 'ios')
-
-      // "Email" textbox: x=20, y=150, width=350, height=40
-      expect(result.tree).toContain('@(20,150 350x40)')
-      // "Sign In" button: x=20, y=260, width=350, height=44
-      expect(result.tree).toContain('@(20,260 350x44)')
-    })
-
-    it('places bounds after [ref=eN] and before [disabled]/[offscreen]', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
-
-      // Verify bounds appear after [ref=eN] in tree lines
-      const lines = result.tree.split('\n')
-      const refLines = lines.filter(l => l.includes('[ref='))
-      for (const line of refLines) {
-        const refIdx = line.indexOf('[ref=')
-        const boundsIdx = line.indexOf('@(')
-        expect(boundsIdx).toBeGreaterThan(refIdx)
-      }
-    })
-
-    it('does not add bounds annotations to container nodes without refs', () => {
-      const result = parseMobileSource(ANDROID_LOGIN_XML, 'android')
-
-      const lines = result.tree.split('\n')
-      const groupLines = lines.filter(l => l.includes('- group'))
-      for (const line of groupLines) {
-        expect(line).not.toContain('@(')
-      }
-    })
-  })
-
-  describe('disabled elements', () => {
-    it('marks disabled elements in attributes', () => {
-      const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<hierarchy>
-  <android.widget.Button bounds="[0,0][500,100]" text="Disabled" content-desc="" enabled="false" />
-</hierarchy>`
-
-      const result = parseMobileSource(xml, 'android')
-
-      expect(result.elements[0].attributes['disabled']).toBe('true')
-      expect(result.tree).toContain('[disabled]')
+      const { nodes } = parseMobileSource(xml, 'android')
+      expect(nodes[0].state?.enabled).toBe(false)
     })
   })
 })
