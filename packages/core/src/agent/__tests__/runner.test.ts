@@ -577,6 +577,10 @@ describe('runTestWithRetry', () => {
 
   it('test fails, retries entire test, succeeds on retry, retryCount=1', async () => {
     let executeCount = 0
+    // 353-05 cutover: the runner loop deletes the v1 consecutive-failure counter
+    // (D-10/D-11) — the surviving resource bound is the maxSubActions cap. Cap the
+    // first run to 2 sub-actions so both fail and the step exhausts the cap (first
+    // test run fails); the retry then succeeds on its first sub-action (retryCount=1).
     const adapter: PlatformAdapter = {
       platform: 'web',
       async setup() {},
@@ -584,15 +588,14 @@ describe('runTestWithRetry', () => {
       async observe() { return makeScreenState() },
       async execute() {
         executeCount++
-        // First 3 calls fail (step fails in first test run with consecutive failure limit),
-        // then succeed on retry (second test run)
-        if (executeCount <= 3) return { success: false, error: 'Flaky test' }
+        if (executeCount <= 2) return { success: false, error: 'Flaky test' }
         return { success: true }
       },
     }
     const config = makeRunTestConfig({
       adapter,
       healingConfig: { maxAttempts: 3 },
+      plannerConfig: { maxSubActions: 2, previousStepCount: 5 },
     })
     const test = makeTestDef({
       steps: ['Step A'],

@@ -3,7 +3,7 @@ import type { LanguageModel } from 'ai'
 import type { PlatformAdapter } from '@vostride/agent-qa-runner'
 import type { AccessibilityViolation, StepPhaseEvent, StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../types/test.js'
-import type { Planner, Verifier, ActionCache, HealingConfig, StepContext } from './types.js'
+import type { Planner, Verifier, ActionCache, HealingConfig } from './types.js'
 import type { MemoryProvider } from '../memory/provider.js'
 import type { CircuitBreaker } from '../memory/circuit-breaker.js'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
@@ -12,8 +12,12 @@ import { formatAction } from './prompts.js'
 import type { Reporter, StepEventContext } from '../reporter/types.js'
 import { MultiReporter } from '../reporter/types.js'
 import { captureFailureScreenshot } from '../reporter/screenshot.js'
-import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort } from '@vostride/agent-qa-runner'
-import { executeStep } from './loop.js'
+import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort, executeStep } from '@vostride/agent-qa-runner'
+import type { LoopPorts, StepContext as RunnerStepContext } from '@vostride/agent-qa-runner'
+import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
+import { CoreActionPlanCacheAdapter } from '../cache/action-plan-cache-adapter.js'
+import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
+import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { VariableStore, interpolateVariables, findUnresolvedTemplates, createExtractor } from './variables.js'
 import { resolveSecretTemplatesInValue, redactSecretValue, type SecretRedactor, type SecretStore } from '@vostride/agent-qa-runner'
 import { parseAppiumInline } from './appium-inline.js'
@@ -91,6 +95,12 @@ export interface RunTestConfig {
   secretStore?: SecretStore
   secretRedactor?: SecretRedactor
   secretsFileMetadata?: { path: string | null; status: string; count?: number } | null
+  /**
+   * Optional v48 safety-hook seam passthrough into the runner loop (D-05). Left
+   * undefined in all production composition until Phase 362 (HOOK-FUT-01) wires it —
+   * this is 362's registration point, not populated here.
+   */
+  safetyHooks?: SafetyHookRunner
 }
 
 export async function runTest(
@@ -205,7 +215,6 @@ export async function runTest(
     const stepDef = test.steps[stepIndex]
     const rawInstruction = typeof stepDef === 'string' ? stepDef : stepDef.step
     const perStepTimeout = typeof stepDef !== 'string' ? stepDef.timeout : undefined
-    const stepMaxAttempts = typeof stepDef !== 'string' ? stepDef.maxAttempts : undefined
     const stepTimeout = perStepTimeout ?? config.timeouts?.step
     const stepAbortController = new AbortController()
     activeStepController = stepAbortController
@@ -451,7 +460,10 @@ export async function runTest(
 
     await reporter?.onStepStart(instruction, test.name, stepEventContext)
 
-    const context: StepContext = {
+    // Runner StepContext (D-02) — the v1 healingConfig field is a D-10 deletion target
+    // and is intentionally absent; the D-13 re-run fields (isRerun/rerunAttempt/
+    // previousFailureSummary) default absent and are threaded by plan 353-06.
+    const context: RunnerStepContext = {
       stepInstruction: instruction,
       testName: test.name,
       testContext: test.context,
@@ -459,7 +471,6 @@ export async function runTest(
       previousSteps: previousSteps.slice(-(config.plannerConfig?.previousStepCount ?? 5)),
       plannerModel: config.plannerModel,
       verifierModel: config.verifierModel,
-      healingConfig: config.healingConfig,
       modelId: typeof config.plannerModel === 'object' && config.plannerModel && 'modelId' in config.plannerModel ? (config.plannerModel as { modelId: string }).modelId : undefined,
       variables: redactSecretValue(Object.fromEntries(variableStore.getAll()), config.secretRedactor),
       memoryContext,
@@ -468,23 +479,30 @@ export async function runTest(
       contextWindow: config.contextWindow,
     }
 
-    const loopConfig = {
+    // D-01/D-02 LIVE cutover: assemble the runner LoopPorts bundle and delegate to the
+    // runner-owned executeStep. The transitional core adapters keep node:crypto (cache
+    // hashing) and sharp (compression) core-side (D-03, Pitfall 9); the v1 cache-key
+    // constants ride behind the cache port; safetyHooks is the unpopulated 362 slot and
+    // knowledgeReader stays undefined (no M2 impl — the loop tolerates its absence, D-05).
+    const ports: LoopPorts = {
         adapter: config.adapter,
         planner: config.planner,
         verifier: config.verifier,
-        cache: config.cache,
-        healingConfig: config.healingConfig,
+        cache: config.cache
+          ? new CoreActionPlanCacheAdapter(config.cache, {
+              platform: config.adapter.platform,
+              configContent: config.configContent,
+              testFileContent: config.testFileContent,
+              stepIndex,
+              suiteFileContent: config.suiteFileContent,
+              suiteTestIndex: config.suiteTestIndex,
+            })
+          : undefined,
+        compressor: new CoreScreenshotCompressor(config.logger?.createScopedLogger('adapter')),
+        safetyHooks: config.safetyHooks,
         plannerConfig: config.plannerConfig,
         stepTimeout,
-        maxAttempts: stepMaxAttempts,
         logger: config.logger,
-        configContent: config.configContent,
-        testFileContent: config.testFileContent,
-        testFilePath: filePath,
-        stepIndex,
-        suiteFileContent: config.suiteFileContent,
-        suiteTestIndex: config.suiteTestIndex,
-        cacheState,
         logCapture: config.logCapture,
         vision: config.vision,
         visionGate: config.visionGate,
@@ -492,9 +510,13 @@ export async function runTest(
           variableStore.set(name, value, 'step')
         },
         onPhase: (event: StepPhaseEvent) => reporter?.onStepPhase?.(event, instruction, test.name, stepEventContext),
+        // Pitfall 1 — fileUpload path resolution stays core-side (node:path); the loop
+        // never touches paths. Relocated from v1 loop.ts:308-315.
+        resolveUploadPath: (rawPath: string) => isAbsolute(rawPath) ? rawPath : resolvePath(dirname(filePath), rawPath),
         abortSignal: stepAbortController.signal,
         secretStore: config.secretStore,
         secretRedactor: config.secretRedactor,
+        cacheState,
       }
 
     let result: StepResult
@@ -550,7 +572,7 @@ export async function runTest(
           }
         }
       } else {
-        result = await executeStep(instruction, loopConfig, context)
+        result = await executeStep(instruction, ports, context)
       }
 
       result.originalStepName = hasTemplateVars ? originalStepName : undefined
@@ -721,7 +743,10 @@ export async function runTest(
     previousSteps.push({
       instruction,
       outcome: outcomeParts.join(' '),
-      reasoning: result.trace?.reasoning,
+      // The runner loop projects trace.reasoning as `reasoning ?? error ?? ''` (353-04);
+      // preserve v1's "absent when empty" enrichment contract (STEP-CTX-01) so empty
+      // reasoning is not surfaced to the planner prompt.
+      reasoning: result.trace?.reasoning || undefined,
       plannedAction: result.trace?.plannedAction ? formatAction(result.trace.plannedAction as Action) : undefined,
       verifierResponse: result.trace?.verifierReasoning,
     })

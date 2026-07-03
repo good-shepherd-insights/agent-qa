@@ -494,6 +494,13 @@ describe('runTest with secret placeholders', () => {
       secretStore,
       secretRedactor: new SecretRedactor(secretStore),
       healingConfig: { maxAttempts: 0 },
+      // 353-05 cutover: the runner loop deletes the v1 consecutive-failure counter
+      // (D-10/D-11). A missing-secret resolve-throw is a (non-recoverable) execution
+      // failure that now replans up to the maxSubActions cap; cap it to 1 so the step
+      // fails fast. The security guarantees hold: templates resolve only at the execute
+      // boundary, so a missing secret never reaches the adapter, and the secret error
+      // is recorded (redacted) in the step evidence — never a raw value.
+      plannerConfig: { maxSubActions: 1, previousStepCount: 5 },
     })
 
     const test: TestDefinition = {
@@ -507,7 +514,9 @@ describe('runTest with secret placeholders', () => {
 
     expect(executeSpy).not.toHaveBeenCalled()
     expect(result.status).toBe('failed')
-    expect(result.steps[0].error).toContain('Secret not found: loginPassword')
+    // The missing-secret error surfaces in the recorded evidence/trace for the failed
+    // sub-action (the top-level step error is the cap-exhausted message under D-11).
+    expect(JSON.stringify(result)).toContain('Secret not found: loginPassword')
     expect(JSON.stringify(result)).not.toContain('raw-secret-sentinel')
   })
 })
