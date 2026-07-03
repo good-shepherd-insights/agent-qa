@@ -7,16 +7,10 @@ const {
   mockRunTest,
   mockRunHooks,
   mockRunCurator,
-  mockDeprecateOnFailure,
-  mockShouldAblate,
-  mockCollectAllInjectedIds,
 } = vi.hoisted(() => ({
   mockRunTest: vi.fn(),
   mockRunHooks: vi.fn(),
   mockRunCurator: vi.fn(),
-  mockDeprecateOnFailure: vi.fn(),
-  mockShouldAblate: vi.fn(() => false),
-  mockCollectAllInjectedIds: vi.fn(() => new Map()),
 }))
 
 vi.mock('../../agent/runner.js', () => ({
@@ -29,12 +23,6 @@ vi.mock('../../hooks/orchestrator.js', () => ({
 
 vi.mock('../../memory/curator.js', () => ({
   runCurator: mockRunCurator,
-  deprecateOnFailure: mockDeprecateOnFailure,
-}))
-
-vi.mock('../../memory/ablation.js', () => ({
-  shouldAblate: mockShouldAblate,
-  collectAllInjectedIds: mockCollectAllInjectedIds,
 }))
 
 import { runSuite } from '../runner.js'

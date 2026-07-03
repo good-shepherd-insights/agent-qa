@@ -1347,7 +1347,6 @@ async function executeSuites(
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     let suiteMemoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
-    let suiteCircuitBreaker: import('@vostride/agent-qa-core').CircuitBreaker | undefined
     const suiteMemoryConfig = config.services?.memory
     const suiteMemoryRoot = resolveMemoryRoot(config, configDir)
 
@@ -1361,15 +1360,6 @@ async function executeSuites(
         })
       } catch (err) {
         console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
-      }
-
-      if (suiteMemoryConfig?.circuitBreakerEnabled !== false) {
-        const { CircuitBreaker } = await import('@vostride/agent-qa-core')
-        suiteCircuitBreaker = new CircuitBreaker({
-          windowSize: suiteMemoryConfig?.circuitBreakerWindowSize,
-          baselineSize: suiteMemoryConfig?.circuitBreakerBaselineSize,
-          threshold: suiteMemoryConfig?.circuitBreakerThreshold,
-        })
       }
     }
 
@@ -1446,7 +1436,6 @@ async function executeSuites(
       memoryProvider: suiteMemoryProvider,
       memoryConfig: suiteMemoryConfig,
       memoryRoot: suiteMemoryRoot,
-      circuitBreaker: suiteCircuitBreaker,
       product: resolvedTarget?.product,
       authStateCapture: suiteAuthStateCapturePaths
         ? {
@@ -1998,18 +1987,8 @@ export function createRunCommand(): Command {
 
         const results: TestResult[] = []
 
-        let circuitBreaker: import('@vostride/agent-qa-core').CircuitBreaker | undefined
-        let circuitBreakerTripped = false
         const memoryGlobalConfig = config.services?.memory
         const runtimeMemoryRoot = resolveMemoryRoot(config, configDir)
-        if (opts.memory !== false && memoryGlobalConfig?.circuitBreakerEnabled !== false && memoryGlobalConfig?.enabled !== false) {
-          const { CircuitBreaker } = await import('@vostride/agent-qa-core')
-          circuitBreaker = new CircuitBreaker({
-            windowSize: memoryGlobalConfig?.circuitBreakerWindowSize,
-            baselineSize: memoryGlobalConfig?.circuitBreakerBaselineSize,
-            threshold: memoryGlobalConfig?.circuitBreakerThreshold,
-          })
-        }
 
         await multiReporter.onRunStart(filtered)
 
@@ -2451,7 +2430,6 @@ export function createRunCommand(): Command {
               contextWindow: plannerCfg.contextWindow,
               memoryProvider,
               memoryInitParams,
-              circuitBreaker,
               runId,
               skipReporterOnTestStart: true,
               skipReporterOnTestEnd: testAuthStateUse?.capture === true,
@@ -2532,87 +2510,13 @@ export function createRunCommand(): Command {
               }
             }
 
-            // Selective ablation: re-run failed test without memory to confirm memory caused failure (REL-01)
-            let ablationHandledDeprecation = false
+            // D-10: the memory-ablation re-run and the circuit breaker are deleted — no
+            // ablation second-attempt, no runaway-mitigation counters. Failed tests keep
+            // single-attempt semantics; the curator runs unconditionally on the result.
             const authStateCaptureFailed = result.metadata?.phase === 'auth-state-capture'
-            if (memoryProvider && memoryConfig?.ablationEnabled !== false && result.status === 'failed' && !authStateCaptureFailed) {
-              try {
-                const { shouldAblate, collectAllInjectedIds, deprecateOnFailure } = await import('@vostride/agent-qa-core')
-                if (shouldAblate(result, memoryProvider)) {
-                  console.log(`  ${pc.dim('Memory:')} ablation retry -- re-running without memory...`)
-                  const ablationAdapter = await createPlatformAdapter(testPlatform)
-                  const mergedBrowser = (mergedUse as Record<string, unknown>).browser as Record<string, unknown> | undefined
-                  const ablationPlatformConfig = buildPlatformConfig(testPlatform, testResolvedDevice, testTimeoutsForSetup, mergedBrowser ?? config.use?.browser, (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture, testFarmSession, testMobileResolved)
-                  ablationPlatformConfig.authState = activeTestAuthState
-                  ablationPlatformConfig.verbose = effectiveLogLevel === 'debug'
-                  if (opts.headless !== undefined && ablationPlatformConfig.browser) {
-                    ablationPlatformConfig.browser.headless = opts.headless
-                  }
-                  await ablationAdapter.setup(ablationPlatformConfig)
-                  try {
-                    const ablationResult = await runTestWithRetry(testDef, {
-                      adapter: ablationAdapter,
-                      planner,
-                      verifier,
-                      healingConfig: testHealingConfig,
-                      plannerModel,
-                      verifierModel,
-                      reporters: undefined,
-                      captureScreenshots,
-                      screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
-                      cache: effectiveCacheEnabled ? actionCache : undefined,
-                      recording: testRecording,
-                      plannerConfig,
-                      timeouts: testTimeouts,
-                      logger,
-                      configContent,
-                      testFileContent,
-                      envFileVars,
-                      secretStore: runtimeSecrets.secretStore,
-                      secretRedactor: runtimeSecrets.secretRedactor,
-                      secretsFileMetadata: runtimeSecrets.secretsFileMetadata,
-                      inlineVars,
-                      cliVars,
-                      hookSetupVars: perTestSetupVars,
-                      inlineHookDefs: resolvedHooks,
-                      inlineHookSandboxOptions: authAwareSandboxOptions,
-                      logCapture: testLogCapture,
-                      accessibility: config.services?.accessibility,
-                      accessibilityCheck: runWebAccessibilityCheck,
-                      vision: resolveVisionConfig(config.services?.vision),
-                      visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
-                      contextWindow: plannerCfg.contextWindow,
-                    }, filePath)
-
-                    if (circuitBreaker) {
-                      circuitBreaker.record({ withMemory: false, passed: ablationResult.status === 'passed' })
-                    }
-
-                    if (ablationResult.status === 'passed') {
-                      console.log(`  ${pc.dim('Memory:')} ablation confirmed memory caused failure -- penalizing observations`)
-                      const injectedMap = collectAllInjectedIds(result, memoryProvider)
-                      await deprecateOnFailure({
-                        testResult: result,
-                        provider: memoryProvider,
-                        memoryRoot: memoryRoot ?? runtimeMemoryRoot,
-                        injectedObservationIds: injectedMap,
-                        trustContradictDelta: memoryConfig?.trustContradictDelta,
-                      })
-                      ablationHandledDeprecation = true
-                    } else {
-                      console.log(`  ${pc.dim('Memory:')} ablation retry also failed -- memory not the cause`)
-                    }
-                  } finally {
-                    await ablationAdapter.cleanup()
-                  }
-                }
-              } catch (err) {
-                console.warn(`  ${pc.dim('Memory:')} ablation error -- ${(err as Error).message}`)
-              }
-            }
 
             // Memory curator: inline blocking after teardown hooks (D-02)
-            if (memoryProvider && memoryConfig?.curatorEnabled !== false && !ablationHandledDeprecation) {
+            if (memoryProvider && memoryConfig?.curatorEnabled !== false) {
               try {
                 const { runCurator } = await import('@vostride/agent-qa-core')
                 const injectedObservationIds = new Map<number, string[]>()
@@ -2651,15 +2555,6 @@ export function createRunCommand(): Command {
 
             results.push(result)
             printRunAttributes(testAttributes)
-
-            if (circuitBreaker && memoryProvider) {
-              const hadMemory = result.steps.some((_, i) => memoryProvider!.getInjectedObservations(i).length > 0)
-              circuitBreaker.record({ withMemory: hadMemory, passed: result.status === 'passed' })
-            }
-            if (circuitBreaker?.isTripped() && !circuitBreakerTripped) {
-              circuitBreakerTripped = true
-              console.log(`  ${pc.yellow('Memory: circuit breaker tripped -- disabling memory injection for remaining tests')}`)
-            }
 
             // Post-run cache invalidation: delete all step cache entries for failed runs
             if (result.status === 'failed' && !authStateCaptureFailed && actionCache && effectiveCacheEnabled && result.steps.length > 0) {

@@ -5,7 +5,6 @@ import type { AccessibilityViolation, StepPhaseEvent, StepResult, TestResult } f
 import type { TestDefinition } from '../types/test.js'
 import type { Planner, Verifier, ActionCache, HealingConfig } from './types.js'
 import type { MemoryProvider } from '../memory/provider.js'
-import type { CircuitBreaker } from '../memory/circuit-breaker.js'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
 import type { Action } from '@vostride/agent-qa-runner'
 import { formatAction } from './prompts.js'
@@ -89,7 +88,6 @@ export interface RunTestConfig {
   contextWindow?: number
   memoryProvider?: MemoryProvider
   memoryInitParams?: MemoryIndexParams
-  circuitBreaker?: CircuitBreaker
   skipReporterOnTestStart?: boolean
   skipReporterOnTestEnd?: boolean
   secretStore?: SecretStore
@@ -451,7 +449,7 @@ export async function runTest(
     }
 
     let memoryContext: string | undefined
-    if (memoryProvider && !config.circuitBreaker?.isTripped()) {
+    if (memoryProvider) {
       try {
         const memResult = memoryProvider.queryForStep(instruction, stepIndex)
         if (memResult) memoryContext = memResult.formatted

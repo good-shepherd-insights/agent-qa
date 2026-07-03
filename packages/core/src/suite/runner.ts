@@ -15,10 +15,8 @@ import type { HookDefinition } from '../hooks/types.js'
 import type { SandboxRunnerOptions } from '../hooks/sandbox-runner.js'
 import { runHooks } from '../hooks/orchestrator.js'
 import type { MemoryProvider } from '../memory/provider.js'
-import type { CircuitBreaker } from '../memory/circuit-breaker.js'
-import { runCurator, deprecateOnFailure } from '../memory/curator.js'
+import { runCurator } from '../memory/curator.js'
 import type { MemoryLog } from '../memory/curator.js'
-import { shouldAblate, collectAllInjectedIds } from '../memory/ablation.js'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
 import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
 import { VariableStore, findUnresolvedTemplates, interpolateVariables } from '../agent/variables.js'
@@ -64,7 +62,6 @@ export interface RunSuiteConfig {
     trustConfirmDelta?: number
     trustContradictDelta?: number
   }
-  circuitBreaker?: CircuitBreaker
   product?: string
   createAdapter?: () => Promise<PlatformAdapter>
   resolveUrl?: (targetName: string) => string | undefined
@@ -253,7 +250,6 @@ export async function runSuite(
     suiteHookVars = result.variables
   }
 
-  let circuitBreakerTripped = false
   const memoryEnabled = config.memoryConfig?.enabled !== false && !!config.memoryProvider
   const memoryRoot = config.memoryRoot ?? DEFAULT_MEMORY_DIR
   let suiteBootstrapFailure: string | undefined
@@ -443,7 +439,6 @@ export async function runSuite(
         visionGate: config.visionGate,
         memoryProvider: memoryEnabled ? config.memoryProvider : undefined,
         memoryInitParams,
-        circuitBreaker: config.circuitBreaker,
         skipReporterOnTestStart: true,
         runId: childRunId,
         parentRunId: suiteRunId,
@@ -481,60 +476,10 @@ export async function runSuite(
       }
 
       if (memoryEnabled && config.memoryProvider) {
-        let ablationHandledDeprecation = false
-
-        if (config.memoryConfig?.ablationEnabled !== false && result.status === 'failed') {
-          try {
-            if (shouldAblate(result, config.memoryProvider)) {
-              if (config.createAdapter) {
-                console.log(`  ${pc.dim('Memory:')} ablation retry -- re-running without memory...`)
-                const ablationAdapter = await config.createAdapter()
-                await ablationAdapter.setup(config.platformConfig)
-                try {
-                  const ablationResult = await runTest(patched, {
-                    adapter: ablationAdapter,
-                    planner: config.planner,
-                    verifier: config.verifier,
-                    healingConfig: config.healingConfig,
-                    plannerModel: config.plannerModel,
-                    verifierModel: config.verifierModel,
-                    cache: config.cache,
-                    timeouts: config.timeouts,
-                    logger: config.logger,
-                    secretStore: config.secretStore,
-                    secretRedactor: config.secretRedactor,
-                    accessibility: config.accessibility,
-                    accessibilityCheck: config.accessibilityCheck,
-                  }, filePath)
-
-                  if (config.circuitBreaker) {
-                    config.circuitBreaker.record({ withMemory: false, passed: ablationResult.status === 'passed' })
-                  }
-                  if (ablationResult.status === 'passed') {
-                    console.log(`  ${pc.dim('Memory:')} ablation confirmed memory caused failure -- penalizing observations`)
-                    const injectedMap = collectAllInjectedIds(result, config.memoryProvider)
-                    await deprecateOnFailure({
-                      testResult: result,
-                      provider: config.memoryProvider,
-                      memoryRoot,
-                      injectedObservationIds: injectedMap,
-                      trustContradictDelta: config.memoryConfig?.trustContradictDelta,
-                    })
-                    ablationHandledDeprecation = true
-                  } else {
-                    console.log(`  ${pc.dim('Memory:')} ablation retry also failed -- memory not the cause`)
-                  }
-                } finally {
-                  await ablationAdapter.cleanup()
-                }
-              }
-            }
-          } catch (err) {
-            console.warn(`  ${pc.dim('Memory:')} ablation error -- ${(err as Error).message}`)
-          }
-        }
-
-        if (config.memoryConfig?.curatorEnabled !== false && !ablationHandledDeprecation) {
+        // D-10: the memory-ablation re-run and the circuit breaker are deleted — no
+        // ablation second-attempt, no runaway-mitigation counters. The suite path stays
+        // single-attempt (Assumption A3); the curator runs unconditionally on the result.
+        if (config.memoryConfig?.curatorEnabled !== false) {
           try {
             const injectedObservationIds = new Map<number, string[]>()
             for (let si = 0; si < result.steps.length; si++) {
@@ -565,15 +510,6 @@ export async function runSuite(
           } catch (err) {
             console.warn(`  ${pc.dim('Memory:')} curator error -- ${(err as Error).message}`)
           }
-        }
-
-        if (config.circuitBreaker) {
-          const hadMemory = result.steps.some((_, si) => config.memoryProvider!.getInjectedObservations(si).length > 0)
-          config.circuitBreaker.record({ withMemory: hadMemory, passed: result.status === 'passed' })
-        }
-        if (config.circuitBreaker?.isTripped() && !circuitBreakerTripped) {
-          circuitBreakerTripped = true
-          console.log(`  ${pc.yellow('Memory: circuit breaker tripped -- disabling memory injection for remaining tests')}`)
         }
       }
 

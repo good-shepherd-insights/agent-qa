@@ -354,15 +354,6 @@ vi.mock('@vostride/agent-qa-core', () => {
   }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
-  CircuitBreaker: vi.fn(function () {
-    return {
-      record: vi.fn(),
-      isTripped: vi.fn(() => false),
-      evaluate: vi.fn(() => ({ tripped: false, failureRate: 0, baselineRate: 0 })),
-    }
-  }),
-  shouldAblate: vi.fn(() => false),
-  collectAllInjectedIds: vi.fn(() => new Map()),
   createMemoryProvider: mockCreateMemoryProvider,
   resolveMemoryRoot: vi.fn((config: any, configDir: string) => {
     const memoryDir = config?.services?.memory?.dir ?? 'agent-qa-memory'

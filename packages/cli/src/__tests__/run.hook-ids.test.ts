@@ -159,15 +159,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
   JUnitReporter: vi.fn(function () { return {} }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
-  CircuitBreaker: vi.fn(function () {
-    return {
-      record: vi.fn(),
-      isTripped: vi.fn(() => false),
-      evaluate: vi.fn(() => ({ tripped: false, failureRate: 0, baselineRate: 0 })),
-    }
-  }),
-  shouldAblate: vi.fn(() => false),
-  collectAllInjectedIds: vi.fn(() => new Map()),
   createMemoryProvider: vi.fn(),
   resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => `${configDir}/agent-qa-memory`),
   generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
