@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { parseMobileSource } from '../xml-parser.js'
+import { buildScreenState } from '@vostride/agent-qa-runner'
+import { parseMobileSource, buildRefEntries, deriveMobileScroll } from '../xml-parser.js'
 import { normalizeRole, ANDROID_ROLE_MAP, IOS_ROLE_MAP } from '../role-map.js'
 
 const ANDROID_LOGIN_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -238,6 +239,122 @@ describe('parseMobileSource → InterimNode[]', () => {
       const { nodes } = parseMobileSource(xml, 'android')
       expect(nodes[0].state?.enabled).toBe(false)
     })
+  })
+})
+
+const DUP_BUTTONS_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy>
+  <android.widget.LinearLayout bounds="[0,0][1080,1920]" text="" content-desc="" enabled="true">
+    <android.widget.Button bounds="[0,0][500,100]" text="Submit" content-desc="" enabled="true" />
+    <android.widget.Button bounds="[0,100][500,200]" text="Submit" content-desc="" enabled="true" />
+    <android.widget.Button bounds="[0,200][500,300]" text="Cancel" content-desc="" enabled="true" />
+  </android.widget.LinearLayout>
+</hierarchy>`
+
+describe('buildRefEntries (execute-time lastRefs reconstruction)', () => {
+  it('reconstructs role/name/nth/bounds from nodes + the builder binding', () => {
+    const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android', { width: 1080, height: 1920 })
+    const { state, binding } = buildScreenState({
+      platform: 'android',
+      nodes,
+      viewport: { width: 1080, height: 1920 },
+      scroll: deriveMobileScroll(nodes, { width: 1080, height: 1920 }),
+      coordSpace: 'viewport',
+      timestamp: 0,
+    })
+
+    const entries = buildRefEntries(nodes, binding)
+
+    // One entry per minted ref, keys aligned with the builder-minted refs.
+    expect(Object.keys(entries).sort()).toEqual(Object.keys(binding).sort())
+
+    // Resolve the Email textbox through its minted ref and check the v1 lastRefs shape.
+    const emailEl = state.elements.find(e => e.name === 'Email')!
+    const emailEntry = entries[emailEl.ref]
+    expect(emailEntry.role).toBe('textbox')
+    expect(emailEntry.name).toBe('Email')
+    expect(emailEntry.nth).toBe(0)
+    expect(emailEntry.bounds).toEqual({ x: 100, y: 300, width: 880, height: 80 })
+    expect(emailEntry.nativeType).toBe('android.widget.EditText')
+  })
+
+  it('carries the same-screen nth ordinal for duplicate role+name pairs', () => {
+    const { nodes } = parseMobileSource(DUP_BUTTONS_XML, 'android')
+    const { state, binding } = buildScreenState({
+      platform: 'android',
+      nodes,
+      viewport: { width: 1080, height: 1920 },
+      scroll: deriveMobileScroll(nodes, { width: 1080, height: 1920 }),
+      coordSpace: 'viewport',
+      timestamp: 0,
+    })
+
+    const entries = buildRefEntries(nodes, binding)
+    const submitRefs = state.elements.filter(e => e.name === 'Submit').map(e => e.ref)
+    expect(submitRefs).toHaveLength(2)
+    expect(entries[submitRefs[0]].nth).toBe(0)
+    expect(entries[submitRefs[1]].nth).toBe(1)
+
+    const cancelRef = state.elements.find(e => e.name === 'Cancel')!.ref
+    expect(entries[cancelRef].nth).toBe(0)
+  })
+})
+
+describe('deriveMobileScroll (best-effort D-10 approximation)', () => {
+  it('returns max element extent as content size and zero offsets', () => {
+    const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android', { width: 1080, height: 1920 })
+    const scroll = deriveMobileScroll(nodes, { width: 1080, height: 1920 })
+    // Tallest element bottom is the ImageView at y=700 h=200 → 900; viewport is taller.
+    expect(scroll.offsetX).toBe(0)
+    expect(scroll.offsetY).toBe(0)
+    expect(scroll.contentWidth).toBe(1080)
+    expect(scroll.contentHeight).toBe(1920)
+  })
+
+  it('grows content size past the viewport when bounds extend beyond it', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy>
+  <android.widget.Button bounds="[0,0][500,100]" text="Top" enabled="true" />
+  <android.widget.Button bounds="[0,2500][500,2600]" text="Deep" enabled="true" />
+</hierarchy>`
+    const { nodes } = parseMobileSource(xml, 'android', { width: 1080, height: 1920 })
+    const scroll = deriveMobileScroll(nodes, { width: 1080, height: 1920 })
+    expect(scroll.contentHeight).toBe(2600)
+  })
+
+  it('falls back to the viewport dimensions when no node carries bounds', () => {
+    const scroll = deriveMobileScroll([{ role: 'text', name: 'x' }], { width: 390, height: 844 })
+    expect(scroll).toEqual({ offsetX: 0, offsetY: 0, contentWidth: 390, contentHeight: 844 })
+  })
+})
+
+describe('buildScreenState integration (typed-absence survives the builder)', () => {
+  it('derives documented state defaults and preserves real signals from the walk', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy>
+  <android.widget.CheckBox bounds="[0,0][100,100]" text="Agree" content-desc="Accept" resource-id="agree" checkable="true" checked="true" enabled="true" />
+</hierarchy>`
+    const { nodes } = parseMobileSource(xml, 'android', { width: 1080, height: 1920 })
+    const { state } = buildScreenState({
+      platform: 'android',
+      nodes,
+      viewport: { width: 1080, height: 1920 },
+      scroll: deriveMobileScroll(nodes, { width: 1080, height: 1920 }),
+      coordSpace: 'viewport',
+      timestamp: 0,
+    })
+
+    const cb = state.elements[0]
+    // Real signal preserved through the builder.
+    expect(cb.state.checked).toBe(true)
+    expect(cb.state.enabled).toBe(true)
+    // Never-supplied signals: builder defaults, and selected stays typed-absent.
+    expect(cb.state.focused).toBe(false)
+    expect(cb.state.visible).toBe(true)
+    expect('selected' in cb.state).toBe(false)
+    // resource-id/content-desc rode through to schema labels.
+    expect(cb.labels.testId).toBe('agree')
+    expect(cb.labels.ariaLabel).toBe('Accept')
   })
 })
 
