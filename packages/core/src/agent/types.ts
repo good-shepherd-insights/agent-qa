@@ -1,6 +1,7 @@
 import type { LanguageModel } from 'ai'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-runner'
 import type { StepResult, HealingAttempt, TokenUsage, StepPhaseEvent } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { LogManager } from '../logging/log-manager.js'
@@ -81,6 +82,13 @@ export interface AgentLoopConfig {
     /** Max image edge (pixels) to resize screenshots to before sending to LLM. */
     effectiveResolution?: number
   }
+  /**
+   * Vision gate for this run. Resolved once per run by the composition root via
+   * `resolveVisionGate` from the model package and threaded here as a structural
+   * value — core never imports the model package (D-11). Absent means full-capture
+   * behavior (the pre-gate default, used by tests and non-CLI callers).
+   */
+  visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
   onSetVariable?: (name: string, value: string) => void
   onPhase?: (event: StepPhaseEvent) => void | Promise<void>
   safetyHooks?: SafetyHookRunner
