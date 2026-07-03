@@ -292,17 +292,22 @@ describe('AndroidPlatformAdapter', () => {
   })
 
   describe('observe', () => {
-    it('returns ScreenState with parsed tree and elements', async () => {
+    it('returns schema v2 ScreenState with builder tree, elements, and refMap', async () => {
       await adapter.setup({ platform: 'android' })
       const state = await adapter.observe()
 
+      expect(state.platform).toBe('android')
       expect(state.tree).toContain('text "Login"')
       expect(state.tree).toContain('textbox "Username"')
       expect(state.tree).toContain('textbox "Password"')
       expect(state.tree).toContain('button "Sign In"')
       expect(state.elements.length).toBeGreaterThanOrEqual(5)
       expect(state.timestamp).toBeGreaterThan(0)
-      expect(state.metadata.refMap).toBeDefined()
+      // Schema v2: refMap is top-level (not metadata.refMap); every bounded element has one.
+      expect(state.refMap).toBeDefined()
+      expect(Object.keys(state.refMap).length).toBeGreaterThanOrEqual(5)
+      expect(state.metadata.captureMode).toBe('textOnly')
+      expect(state.metadata.coordSpace).toBe('viewport')
     })
 
     it('ignores unrelated Chrome webviews for native app targets', async () => {

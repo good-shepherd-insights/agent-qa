@@ -2,20 +2,22 @@ import type {
   ActionsFor,
   ActionResult,
   ConsoleLogEntry,
-  ElementInfo,
+  InterimNode,
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
-  ScreenState,
 } from '@vostride/agent-qa-runner'
-import { assertNever } from '@vostride/agent-qa-runner'
+import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import type { ElementLabels, ElementState, ScreenState } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
   MobileElementResolver,
   MobileSetupError,
+  buildRefEntries,
   computeFingerPositions,
   computePinch,
   computeSwipe,
+  deriveMobileScroll,
   parseMobileSource,
   warnIfOutOfBounds,
 } from '@vostride/agent-qa-core'
@@ -368,11 +370,22 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     try {
       return await this.observeNative()
     } catch {
+      this.lastRefs = {}
+      // Schema-valid empty state (D-11 honest observe-time modality: textOnly) carrying
+      // the diagnostic tree — no elements resolved, so refMap is empty (geometry rule).
       return {
+        platform: 'android',
         tree: '(native observation unavailable — WebView content not accessible)',
         elements: [],
+        refMap: {},
         timestamp: Date.now(),
-        metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
+        metadata: {
+          captureMode: 'textOnly',
+          coordSpace: 'viewport',
+          viewportWidth: 0,
+          viewportHeight: 0,
+          scroll: { offsetX: 0, offsetY: 0, contentWidth: 0, contentHeight: 0 },
+        },
       }
     }
   }
@@ -552,15 +565,24 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       driver.getPageSource(),
       driver.getWindowSize(),
     ])
-    const parsed = parseMobileSource(xml, 'android', viewport)
-    this.lastRefs = parsed.refs
 
-    return {
-      tree: parsed.tree,
-      elements: parsed.elements,
+    // The shared mobile walk emits platform-neutral interim nodes (352-04); the runner
+    // builder mints refs, normalizes names, and renders the tree (D-01/D-02/D-03). Mobile
+    // scroll is a documented best-effort approximation (D-10). Execute-time resolution
+    // survives via buildRefEntries feeding the adapter-private lastRefs record.
+    const { nodes } = parseMobileSource(xml, 'android', viewport)
+    const scroll = deriveMobileScroll(nodes, viewport)
+    const { state, binding } = buildScreenState({
+      platform: 'android',
+      nodes,
+      viewport,
+      scroll,
+      coordSpace: 'viewport',
       timestamp: Date.now(),
-      metadata: { coordSpace: 'viewport' as const, viewportWidth: viewport.width, viewportHeight: viewport.height, refMap: parsed.refs },
-    }
+    })
+    this.lastRefs = buildRefEntries(nodes, binding)
+
+    return state
   }
 
   // ---------------------------------------------------------------------------
