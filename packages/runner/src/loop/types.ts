@@ -84,3 +84,38 @@ export interface Planner {
 export interface Verifier {
   verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string): Promise<VerifyResult>
 }
+
+// Assertion vocabulary (re-derived from v1 core/src/agent/types.ts). The asserter
+// and buildAssertionPrompt (this plan, 353-03) are the sole consumers; kept in the
+// runner loop vocabulary so asserter.ts imports resolve to runner-local modules only.
+export type AssertionType = 'text-presence' | 'element-visibility' | 'url-match' | 'element-count' | 'ai'
+
+export interface AssertionInput {
+  type: AssertionType
+  value: string
+  expected?: string
+}
+
+export interface AssertionResult {
+  passed: boolean
+  assertionType: AssertionType
+  expected: string
+  actual: string
+  reasoning: string
+}
+
+export interface Asserter {
+  evaluate(assertion: AssertionInput, screenState: ScreenState): Promise<AssertionResult>
+}
+
+// Extraction vocabulary — buildExtractionPrompt (moved with the prompts module) is
+// the only consumer in this plan.
+export type ExtractionMethod = 'regex' | 'selector' | 'ai'
+
+export interface ExtractorInput {
+  method: ExtractionMethod
+  variableName: string
+  pattern?: string
+  selector?: string
+  description?: string
+}
