@@ -7,6 +7,7 @@ export const AGENT_QA_RUNNER_ALLOWED_RESPONSIBILITIES = [
   'provider-neutral and storage-neutral platform-adapter port contracts for runner execution',
   'run-artifact, reporter-event, and trace type contracts for the runner execution boundary',
   'read-only L2 knowledge-hint reader contract with no mutation surface',
+  'pure screen-state construction — the shared builder that assembles adapter observe output into schema screen contracts',
 ] as const
 export const AGENT_QA_RUNNER_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',

@@ -16,6 +16,15 @@ export type {
 export type { KnowledgeHintReader } from './knowledge-hint-reader.js'
 export { assertNever } from './platform.js'
 
+export { buildScreenState, renderScreenTree, stampCaptureMode } from './screen-builder.js'
+export type {
+  InterimNode,
+  BuildScreenStateInput,
+  BuildScreenStateResult,
+  RefBinding,
+  CaptureStamp,
+} from './screen-builder.js'
+
 export type {
   StepStatus,
   TestStatus,
