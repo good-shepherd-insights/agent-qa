@@ -22,6 +22,11 @@ export type {
   CaptureStamp,
 } from './screen-builder.js'
 
+export { makeScreenState, makeInterimNodes } from './testing/screen-fixtures.js'
+export type { InterimFixture, InterimFixtureKind } from './testing/screen-fixtures.js'
+export { screenConformanceCases } from './testing/conformance.js'
+export type { ConformanceInput, ScreenConformanceCase } from './testing/conformance.js'
+
 export type {
   StepStatus,
   TestStatus,
