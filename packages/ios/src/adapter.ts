@@ -5,17 +5,19 @@ import type {
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
-  ScreenState,
 } from '@vostride/agent-qa-runner'
-import { assertNever } from '@vostride/agent-qa-runner'
+import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
   MobileElementResolver,
   MobileSetupError,
   alignToWindow,
+  buildRefEntries,
   computeFingerPositions,
   computePinch,
   computeSwipe,
+  deriveMobileScroll,
   parseMobileSource,
   warnIfOutOfBounds,
 } from '@vostride/agent-qa-core'
@@ -231,8 +233,14 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       this.driver.getPageSource(),
       this.driver.getWindowSize(),
     ])
-    const parsed = parseMobileSource(xml, 'ios', viewport)
-    this.lastRefs = parsed.refs
+
+    // Shared builder pipeline (D-01/D-08/D-10): the parser lifts XCUITest attributes
+    // into platform-neutral interim nodes (value/selected/enabled, XML nesting →
+    // hierarchy, missing signals typed-absent — no fabrication in this adapter), the
+    // one runner-owned builder mints refs and assembles the schema v2 ScreenState, and
+    // buildRefEntries reconstructs the execute-time lastRefs locator record.
+    const { nodes } = parseMobileSource(xml, 'ios', viewport)
+    const scroll = deriveMobileScroll(nodes, viewport)
 
     // Try to get the current URL from web context (if available).
     // This gives the LLM verifier critical evidence about which page we're on.
@@ -248,13 +256,17 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
     }
 
-    return {
-      tree: parsed.tree,
-      elements: parsed.elements,
-      url,
+    const { state, binding } = buildScreenState({
+      platform: 'ios',
+      nodes,
+      viewport,
+      scroll,
+      coordSpace: 'viewport',
       timestamp: Date.now(),
-      metadata: { coordSpace: 'viewport' as const, viewportWidth: viewport.width, viewportHeight: viewport.height, refMap: parsed.refs },
-    }
+      ...(url !== undefined ? { url } : {}),
+    })
+    this.lastRefs = buildRefEntries(nodes, binding)
+    return state
   }
 
   async execute(action: ActionsFor<'ios'>): Promise<ActionResult> {
