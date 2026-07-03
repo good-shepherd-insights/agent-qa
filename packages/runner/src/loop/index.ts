@@ -27,7 +27,7 @@ import type {
   Viewport,
 } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult } from '../platform.js'
-import type { StepAnnotation, StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
+import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
 import type { LoopPorts, StepKeyInput } from './ports.js'
@@ -82,7 +82,6 @@ export async function executeStep(
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
   let lastPlannedAction: Action | undefined
-  let lastLegacyAnnotation: StepAnnotation | undefined
 
   // D-15c self-heal boundary carry: the previous failed sub-action's index +
   // Decision. On the next iteration's observation (which reveals the failure), that
@@ -104,10 +103,9 @@ export async function executeStep(
     error?: string,
   ): StepResult => {
     const evidence = recorder.finalize(verdict, 0, stepInstruction)
+    // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
+    // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
     const subActions = projectLegacyTrace(evidence)
-    if (lastLegacyAnnotation && subActions.length > 0) {
-      subActions[subActions.length - 1].annotation = lastLegacyAnnotation
-    }
     const trace = buildStepTrace(subActions, status === 'passed' ? 'success' : 'failure', error, tokenUsage())
     const result: StepResult = {
       name: stepInstruction,
@@ -118,7 +116,8 @@ export async function executeStep(
     }
     if (lastPlannedAction) result.action = lastPlannedAction
     if (error) result.error = error
-    if (lastLegacyAnnotation) result.annotation = lastLegacyAnnotation
+    const lastSub = subActions.length > 0 ? subActions[subActions.length - 1] : undefined
+    if (lastSub?.annotation) result.annotation = lastSub.annotation
     return result
   }
 
@@ -376,7 +375,6 @@ export async function executeStep(
     }
 
     const annotation = buildAnnotation(action, execResult, viewport, !!execError)
-    lastLegacyAnnotation = toLegacyAnnotation(action, annotation, !!execError)
 
     // Best-effort "after" screenshot for artifacts.
     if (ports.adapter.screenshot) {
@@ -565,38 +563,6 @@ function buildAnnotation(action: Action, execResult: ActionResult, viewport: Vie
     return { ...annotation, failureHighlight: execResult.boundingBox }
   }
   return annotation
-}
-
-const LEGACY_ANNOTATION_TYPES = new Set<StepAnnotation['type']>([
-  'click', 'fill', 'tap', 'hover', 'scroll', 'swipe', 'pinch', 'navigate',
-])
-
-function toLegacyAnnotation(action: Action, annotation: ActionAnnotation | undefined, failed: boolean): StepAnnotation | undefined {
-  if (!annotation) return undefined
-  const type = LEGACY_ANNOTATION_TYPES.has(action.type as StepAnnotation['type'])
-    ? (action.type as StepAnnotation['type'])
-    : 'other'
-  const legacy: StepAnnotation = { type, viewport: annotation.viewport }
-  if (annotation.direction) legacy.direction = annotation.direction
-  switch (annotation.kind) {
-    case 'point':
-      legacy.clickPoint = { x: annotation.point.x, y: annotation.point.y }
-      if (annotation.point.boundingBox) legacy.boundingBox = annotation.point.boundingBox
-      break
-    case 'path':
-      legacy.startPoint = annotation.path.start
-      legacy.endPoint = annotation.path.end
-      break
-    case 'pinch':
-      legacy.startPoint = annotation.pinch.center
-      legacy.pinchScale = annotation.pinch.scale > 1 ? 'out' : 'in'
-      break
-    case 'region':
-      legacy.boundingBox = annotation.region.boundingBox
-      break
-  }
-  if (failed) legacy.failureHighlight = legacy.boundingBox
-  return legacy
 }
 
 function recordSuccess(

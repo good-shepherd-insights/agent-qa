@@ -44,6 +44,7 @@ export type {
 } from './result.js'
 
 // Step-execution loop spine (re-derived into runner, Phase 353).
+export { executeStep } from './loop/index.js'
 export {
   createTimeoutAbortReason,
   getTimeoutAbortReason,
@@ -59,7 +60,47 @@ export type {
   StepContext,
   Planner,
   Verifier,
+  Asserter,
+  AssertionInput,
+  AssertionResult,
+  AssertionType,
+  ExtractionMethod,
+  ExtractorInput,
 } from './loop/types.js'
+export { LLMPlanner } from './loop/planner.js'
+export {
+  executePlanningTurn,
+  DEFAULT_NON_ACTION_TOOL_BUDGET,
+} from './loop/planning-turn.js'
+export type {
+  NonActionToolHandler,
+  NonActionToolMap,
+  ToolExchange,
+  PlanningTurnResult,
+  PlanningTurnSuccess,
+  PlanningTurnFailure,
+  PlanningTurnFailureReason,
+  ExecutePlanningTurnOptions,
+} from './loop/planning-turn.js'
+export { LLMVerifier, VerificationResultSchema } from './loop/verifier.js'
+export { AssertionEvaluator, LLMAssertionEvaluator, createAsserter } from './loop/asserter.js'
+export {
+  buildSystemPrompt,
+  buildStepPrompt,
+  buildVerificationPrompt,
+  buildAssertionPrompt,
+  buildExtractionPrompt,
+  formatAction,
+  estimateTokens,
+} from './loop/prompts.js'
+export {
+  EvidenceRecorder,
+  collapseAnnotation,
+  makeEmptyServedBrief,
+  foldCacheStatus,
+  projectLegacyTrace,
+} from './loop/evidence.js'
+export type { RecordSubActionInput } from './loop/evidence.js'
 export type {
   StepKeyInput,
   ActionPlanCache,
