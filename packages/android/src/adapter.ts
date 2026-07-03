@@ -124,9 +124,13 @@ function parseLogcatLine(message: string, timestamp: number, appPid: string | nu
   }
 }
 
-// Injected into the browser to build an accessibility tree from the live DOM.
-// Defined as a string because this runs in browser context — the Node tsconfig
-// has no DOM lib so a typed function would fail compilation.
+// Injected into the WebView/browser to emit a JSON-serializable array of interim-node
+// records from the live DOM (RESEARCH Pitfall #5). It walks the DOM as before but NO
+// longer mints refs or renders tree text in-page — the shared runner builder owns ref
+// minting, name normalization, and tree rendering (D-01/D-02/D-03). Every record carries
+// only real DOM signals (D-08); the builder derives all defaults. Defined as a string
+// because this runs in browser context — the Node tsconfig has no DOM lib so a typed
+// function would fail compilation.
 const WEB_OBSERVER_SCRIPT = `
 return (function() {
   var TAG_ROLES = {
@@ -135,17 +139,30 @@ return (function() {
     H4: 'heading', H5: 'heading', H6: 'heading', IMG: 'image'
   };
 
-  var vh = window.innerHeight;
+  var doc = document;
   var vw = window.innerWidth;
-  var refCounter = 0;
-  var elements = [];
-  var refs = {};
-  var lines = [];
-  var seen = {};
+  var vh = window.innerHeight;
+  var active = doc.activeElement;
 
-  var all = document.querySelectorAll(
+  var all = doc.querySelectorAll(
     'a, button, input, textarea, select, h1, h2, h3, h4, h5, h6, img[alt], [role]'
   );
+
+  var nodes = [];
+  var includedEls = [];
+  var seen = {};
+
+  // parentIndex is the nearest INCLUDED ancestor (structural/skipped nodes collapse
+  // away, matching the mobile/web walkers' Pitfall #7 handling).
+  function nearestAncestorIndex(el) {
+    var p = el.parentElement;
+    while (p) {
+      var idx = includedEls.indexOf(p);
+      if (idx !== -1) return idx;
+      p = p.parentElement;
+    }
+    return undefined;
+  }
 
   for (var i = 0; i < all.length; i++) {
     var el = all[i];
@@ -157,7 +174,7 @@ return (function() {
 
     var tag = el.tagName;
     var ariaRole = el.getAttribute('role');
-    var role = ariaRole || TAG_ROLES[tag] || null;
+    var role = (ariaRole || TAG_ROLES[tag] || '').toLowerCase();
     if (!role) continue;
 
     var name = '';
@@ -179,9 +196,6 @@ return (function() {
     if (seen[key]) continue;
     seen[key] = true;
 
-    refCounter++;
-    var ref = 'e' + refCounter;
-
     var bounds = {
       x: Math.round(rect.left),
       y: Math.round(rect.top),
@@ -189,41 +203,172 @@ return (function() {
       height: Math.round(rect.height)
     };
 
-    var offscreen = bounds.y + bounds.height < 0 || bounds.y > vh;
+    // Real DOM state signals only — the builder derives every default (D-08).
+    var state = {};
+    var disabled = el.disabled === true
+      || el.hasAttribute('disabled')
+      || el.getAttribute('aria-disabled') === 'true';
+    state.enabled = !disabled;
+    state.focused = el === active;
+    if (bounds.y + bounds.height < 0 || bounds.y > vh) state.visible = false;
+    if (tag === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
+      state.checked = el.checked === true;
+    }
 
-    elements.push({ ref: ref, role: role, name: name, attributes: {} });
-    refs[ref] = { role: role, name: name, bounds: bounds };
+    var labels = {};
+    var testId = el.getAttribute('data-testid');
+    if (testId) labels.testId = testId;
+    if (ariaLabel) labels.ariaLabel = ariaLabel;
+    var placeholder = el.getAttribute('placeholder');
+    if (placeholder) labels.placeholder = placeholder;
+    var title = el.getAttribute('title');
+    if (title) labels.title = title;
 
-    var line = '- ' + role + ' "' + name.replace(/"/g, "'") + '" [ref=' + ref + ']';
-    if (offscreen) line += ' [offscreen]';
-    lines.push(line);
+    var attributes = {};
+    if (el.type) attributes.type = String(el.type);
+
+    var parentIndex = nearestAncestorIndex(el);
+
+    var record = {
+      role: role,
+      name: name,
+      bounds: bounds,
+      state: state,
+      labels: labels,
+      attributes: attributes
+    };
+    if (parentIndex !== undefined) record.parentIndex = parentIndex;
+
+    nodes.push(record);
+    includedEls.push(el);
   }
 
-  var visCount = 0, aboveCount = 0, belowCount = 0;
-  var refKeys = Object.keys(refs);
-  for (var j = 0; j < refKeys.length; j++) {
-    var b = refs[refKeys[j]].bounds;
-    if (b.y + b.height <= 0) aboveCount++;
-    else if (b.y >= vh) belowCount++;
-    else visCount++;
-  }
-
-  var header = 'Current page: ' + location.href + '\\n';
-  header += '[Viewport: ' + vw + 'x' + vh + ']';
-  if (aboveCount > 0 || belowCount > 0) {
-    header += ' [' + visCount + ' visible, ' + aboveCount + ' above, ' + belowCount + ' below]';
-  }
-
+  var docEl = doc.documentElement;
   return {
-    tree: header + '\\n' + lines.join('\\n'),
-    elements: elements,
-    refs: refs,
-    url: location.href,
-    viewportHeight: vh,
-    viewportWidth: vw
+    nodes: nodes,
+    viewport: { width: vw, height: vh },
+    scroll: {
+      offsetX: window.scrollX,
+      offsetY: window.scrollY,
+      contentWidth: docEl.scrollWidth,
+      contentHeight: docEl.scrollHeight
+    },
+    url: location.href
   };
 })();
 `
+
+/**
+ * Coerce one attacker-shaped in-page record into a trusted InterimNode (T-352-11).
+ * `driver.execute` results are untrusted; a record without a usable string role is
+ * dropped to typed-absence, never thrown into the builder loop.
+ */
+function coerceWebInterimNode(value: unknown): InterimNode | null {
+  if (!value || typeof value !== 'object') return null
+  const v = value as Record<string, unknown>
+  const role = coerceString(v.role)
+  if (!role) return null
+
+  const node: InterimNode = { role: role.toLowerCase(), attributes: coerceStringBag(v.attributes) }
+  const name = coerceString(v.name)
+  if (name) node.name = name
+  if (typeof v.parentIndex === 'number' && Number.isInteger(v.parentIndex) && v.parentIndex >= 0) {
+    node.parentIndex = v.parentIndex
+  }
+  const bounds = coerceWebBounds(v.bounds)
+  if (bounds) node.bounds = bounds
+  const state = coerceWebState(v.state)
+  if (state) node.state = state
+  const labels = coerceWebLabels(v.labels)
+  if (labels) node.labels = labels
+  return node
+}
+
+function coerceString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function coerceStringBag(value: unknown): Record<string, string> {
+  const bag: Record<string, string> = {}
+  if (!value || typeof value !== 'object') return bag
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string') bag[k] = v
+    else if (typeof v === 'number' || typeof v === 'boolean') bag[k] = String(v)
+  }
+  return bag
+}
+
+function coerceWebBounds(value: unknown): { x: number; y: number; width: number; height: number } | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const { x, y, width, height } = v
+  if (
+    typeof x === 'number' && Number.isFinite(x) &&
+    typeof y === 'number' && Number.isFinite(y) &&
+    typeof width === 'number' && Number.isFinite(width) &&
+    typeof height === 'number' && Number.isFinite(height)
+  ) {
+    return { x, y, width, height }
+  }
+  return undefined
+}
+
+function coerceWebState(value: unknown): Partial<ElementState> | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const state: Partial<ElementState> = {}
+  if (typeof v.enabled === 'boolean') state.enabled = v.enabled
+  if (typeof v.focused === 'boolean') state.focused = v.focused
+  if (typeof v.visible === 'boolean') state.visible = v.visible
+  if (typeof v.checked === 'boolean') state.checked = v.checked
+  if (typeof v.selected === 'boolean') state.selected = v.selected
+  return Object.keys(state).length > 0 ? state : undefined
+}
+
+function coerceWebLabels(value: unknown): ElementLabels | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const labels: ElementLabels = {}
+  const testId = coerceString(v.testId)
+  if (testId) labels.testId = testId
+  const ariaLabel = coerceString(v.ariaLabel)
+  if (ariaLabel) labels.ariaLabel = ariaLabel
+  const placeholder = coerceString(v.placeholder)
+  if (placeholder) labels.placeholder = placeholder
+  const title = coerceString(v.title)
+  if (title) labels.title = title
+  return Object.keys(labels).length > 0 ? labels : undefined
+}
+
+function coerceViewport(
+  value: unknown,
+  fallback: { width: number; height: number },
+): { width: number; height: number } {
+  if (value && typeof value === 'object') {
+    const v = value as Record<string, unknown>
+    const width = typeof v.width === 'number' && Number.isFinite(v.width) ? v.width : fallback.width
+    const height = typeof v.height === 'number' && Number.isFinite(v.height) ? v.height : fallback.height
+    return { width, height }
+  }
+  return fallback
+}
+
+function coerceWebScroll(
+  value: unknown,
+  viewport: { width: number; height: number },
+): { offsetX: number; offsetY: number; contentWidth: number; contentHeight: number } {
+  const num = (x: unknown, fb: number): number => (typeof x === 'number' && Number.isFinite(x) ? x : fb)
+  if (value && typeof value === 'object') {
+    const v = value as Record<string, unknown>
+    return {
+      offsetX: num(v.offsetX, 0),
+      offsetY: num(v.offsetY, 0),
+      contentWidth: num(v.contentWidth, viewport.width),
+      contentHeight: num(v.contentHeight, viewport.height),
+    }
+  }
+  return { offsetX: 0, offsetY: 0, contentWidth: viewport.width, contentHeight: viewport.height }
+}
 
 export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   readonly platform = 'android' as const
@@ -524,32 +669,43 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
       await this.ensureContext(webCtx)
 
-      const result = await driver.execute(WEB_OBSERVER_SCRIPT) as unknown as {
-        tree: string
-        elements: ElementInfo[]
-        refs: MobileRefMap
-        url: string
-        viewportHeight: number
-        viewportWidth: number
-      } | null
+      // The in-page script returns a JSON-serializable interim-node payload — attacker-
+      // shaped (T-352-11), so it is Array-guarded and every record/field is primitive-
+      // coerced before entering the builder. No refs, no tree text cross the boundary.
+      const raw = await driver.execute(WEB_OBSERVER_SCRIPT) as unknown
+      if (!raw || typeof raw !== 'object') return null
+      const payload = raw as Record<string, unknown>
 
-      if (!result || !result.elements || result.elements.length === 0) return null
+      const rawNodes = payload.nodes
+      if (!Array.isArray(rawNodes) || rawNodes.length === 0) return null
 
-      this.lastRefs = result.refs
+      const nodes: InterimNode[] = []
+      for (const candidate of rawNodes) {
+        const node = coerceWebInterimNode(candidate)
+        if (node) nodes.push(node)
+      }
+      if (nodes.length === 0) return null
+
+      const windowSize = await driver.getWindowSize()
+      const viewport = coerceViewport(payload.viewport, { width: windowSize.width, height: windowSize.height })
+      const scroll = coerceWebScroll(payload.scroll, viewport)
+      const url = typeof payload.url === 'string' ? payload.url : undefined
+
+      // Same builder pipeline as the native path — hybrid-app WebView runs share the one
+      // schema type world. WebView contexts expose exact scroll (window/document reads).
+      const { state, binding } = buildScreenState({
+        platform: 'android',
+        nodes,
+        viewport,
+        scroll,
+        coordSpace: 'viewport',
+        timestamp: Date.now(),
+        ...(url !== undefined ? { url } : {}),
+      })
+      this.lastRefs = buildRefEntries(nodes, binding)
       this.activeWebContext = webCtx
 
-      return {
-        tree: result.tree,
-        elements: result.elements,
-        url: result.url,
-        timestamp: Date.now(),
-        metadata: {
-          coordSpace: 'viewport' as const,
-          viewportWidth: result.viewportWidth,
-          viewportHeight: result.viewportHeight,
-          refMap: result.refs,
-        },
-      }
+      return state
     } catch {
       // Web observation failed — caller will fall back to native
       return null

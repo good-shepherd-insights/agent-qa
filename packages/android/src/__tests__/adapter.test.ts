@@ -331,13 +331,20 @@ describe('AndroidPlatformAdapter', () => {
 
     it('observes a webview when the context belongs to the target app package', async () => {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
+      // Reworked WEB_OBSERVER_SCRIPT emits serializable interim nodes only (Pitfall #5):
+      // no refs, no tree text — the shared builder mints refs and renders the tree.
       mockDriver.execute.mockResolvedValueOnce({
-        tree: 'Current page: https://linear.local\n- button "Create issue" [ref=e1]',
-        elements: [{ ref: 'e1', role: 'button', name: 'Create issue', attributes: {} }],
-        refs: { e1: { role: 'button', name: 'Create issue', bounds: { x: 1, y: 2, width: 3, height: 4 } } },
+        nodes: [{
+          role: 'button',
+          name: 'Create issue',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 200, height: 100 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 200, contentHeight: 800 },
         url: 'https://linear.local',
-        viewportHeight: 100,
-        viewportWidth: 200,
       })
 
       await adapter.setup({
@@ -353,19 +360,29 @@ describe('AndroidPlatformAdapter', () => {
       const state = await adapter.observe()
 
       expect(mockDriver.switchContext).toHaveBeenCalledWith('WEBVIEW_app.linear')
+      expect(state.platform).toBe('android')
       expect(state.url).toBe('https://linear.local')
-      expect(state.tree).toContain('Create issue')
+      expect(state.tree).toContain('button "Create issue"')
+      // Builder-minted ref carries the bounds from the interim node into refMap.
+      const issueEl = state.elements.find(e => e.name === 'Create issue')!
+      expect(state.refMap[issueEl.ref].bounds).toEqual({ x: 1, y: 2, width: 3, height: 4 })
+      expect(state.metadata.captureMode).toBe('textOnly')
     })
 
     it('observes Chrome webviews for explicit Android browser-mode targets', async () => {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_chrome'])
       mockDriver.execute.mockResolvedValueOnce({
-        tree: 'Current page: https://example.com\n- link "Example" [ref=e1]',
-        elements: [{ ref: 'e1', role: 'link', name: 'Example', attributes: {} }],
-        refs: { e1: { role: 'link', name: 'Example', bounds: { x: 1, y: 2, width: 3, height: 4 } } },
+        nodes: [{
+          role: 'link',
+          name: 'Example',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 200, height: 100 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 200, contentHeight: 800 },
         url: 'https://example.com',
-        viewportHeight: 100,
-        viewportWidth: 200,
       })
 
       await adapter.setup({
@@ -381,6 +398,30 @@ describe('AndroidPlatformAdapter', () => {
 
       expect(mockDriver.switchContext).toHaveBeenCalledWith('WEBVIEW_chrome')
       expect(state.url).toBe('https://example.com')
+      expect(state.tree).toContain('link "Example"')
+    })
+
+    it('shape-validates attacker-shaped WEB_OBSERVER_SCRIPT results (T-352-11)', async () => {
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
+      // Non-array nodes + a malformed record must never reach the builder: the whole
+      // payload is rejected (nodes not an array) → falls back to native observation.
+      mockDriver.execute.mockResolvedValueOnce({ nodes: 'not-an-array', viewport: null, scroll: null })
+
+      await adapter.setup({
+        platform: 'android',
+        device: {
+          name: 'android-emu',
+          platform: 'android',
+          transport: 'local',
+          match: { automationName: 'UiAutomator2' },
+        },
+        appPackage: 'app.linear',
+      })
+      const state = await adapter.observe()
+
+      // Rejected web payload → native XML fallback (ANDROID_XML) produced the state.
+      expect(state.platform).toBe('android')
+      expect(state.tree).toContain('button "Sign In"')
     })
 
     it('throws if adapter not initialized', async () => {
