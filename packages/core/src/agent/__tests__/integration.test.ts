@@ -2,14 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { PlatformAdapter, ScreenState, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { ActionPlan } from '../../schema/action-schema.js'
 import type { Planner, Verifier, VerificationResult, AgentLoopConfig, StepContext } from '../types.js'
 import { executeStep } from '../loop.js'
 import { FileActionCache } from '../../cache/file-cache.js'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: 'button "Sign In" [ref=btn-1]\ninput "Email" [ref=input-1]',
     elements: [
       { ref: 'btn-1', role: 'button', name: 'Sign In', attributes: {} },
@@ -17,9 +19,9 @@ function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
     ],
     url: 'https://example.com/login',
     timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
+    metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 function makeActionPlan(overrides?: Partial<ActionPlan>): ActionPlan {
