@@ -16,7 +16,7 @@ import {
   SecretStore,
   findSecretTemplates,
   interpolateSecretTemplates,
-} from '../secrets.js'
+} from '@vostride/agent-qa-runner'
 import type { ExtractorInput } from '../types.js'
 
 vi.mock('ai', () => ({

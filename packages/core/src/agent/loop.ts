@@ -2,30 +2,18 @@ import { resolve as resolvePath, isAbsolute, dirname } from 'node:path'
 import type { Action, ActionResult } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepResult, StepTrace, StepAnnotation, TokenUsage, SubActionTrace } from '@vostride/agent-qa-runner'
-import { stampCaptureMode, withAbort } from '@vostride/agent-qa-runner'
+import { stampCaptureMode, withAbort, getTimeoutAbortReason } from '@vostride/agent-qa-runner'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { AgentLoopConfig, StepContext, PlanResult } from './types.js'
 import { hashScreenState, hashStepInstruction } from './observation.js'
 import { formatAction } from './prompts.js'
 import { compressScreenshot } from '../screenshot/compress.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
-import { findSecretTemplates, redactSecretValue, resolveSecretTemplatesInValue } from './secrets.js'
+import { findSecretTemplates, redactSecretValue, resolveSecretTemplatesInValue, containsRedactedSecretMarker } from '@vostride/agent-qa-runner'
 import sharp from 'sharp'
 
-// Abort / step-timeout helpers moved to @vostride/agent-qa-runner (Phase 353, D-02).
-// Imported above for internal loop use; core no longer owns their definitions.
-
-const REDACTED_SECRET_MARKER_RE = /\[secret:\w+\]/
-
-function containsRedactedSecretMarker(value: unknown): boolean {
-  if (typeof value === 'string') return REDACTED_SECRET_MARKER_RE.test(value)
-  if (Array.isArray(value)) return value.some((item) => containsRedactedSecretMarker(item))
-  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) return false
-  if (typeof value === 'object' && value !== null) {
-    return Object.values(value as Record<string, unknown>).some((item) => containsRedactedSecretMarker(item))
-  }
-  return false
-}
+// Abort / step-timeout helpers and the secret machinery (incl. containsRedactedSecretMarker,
+// the cache-poisoning guard) moved to @vostride/agent-qa-runner (Phase 353, D-02).
 
 export async function executeStep(
   stepInstruction: string,

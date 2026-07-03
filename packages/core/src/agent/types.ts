@@ -5,7 +5,7 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { ActionPlan } from '../schema/action-schema.js'
 import type { LogManager } from '../logging/log-manager.js'
-import type { SecretRedactor, SecretStore } from './secrets.js'
+import type { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 export type { ActionPlan } from '../schema/action-schema.js'
 

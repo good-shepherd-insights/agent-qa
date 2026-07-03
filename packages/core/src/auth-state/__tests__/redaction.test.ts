@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SecretRedactor, SecretStore } from '../../agent/secrets.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import {
   AUTH_STATE_REDACTION_MARKER,
   redactAuthStateString,

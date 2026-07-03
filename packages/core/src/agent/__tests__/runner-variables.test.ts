@@ -7,7 +7,7 @@ import type { ActionCache, Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
 import { runTest } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
-import { SecretRedactor, SecretStore } from '../secrets.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
   return buildAgentScreenState({

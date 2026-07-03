@@ -41,7 +41,7 @@ import { runSuite } from '../runner.js'
 import type { RunSuiteConfig } from '../runner.js'
 import type { SuiteDefinition } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
-import { SecretRedactor, SecretStore } from '../../agent/secrets.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 const VALID_TEST_ID = 't_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
 

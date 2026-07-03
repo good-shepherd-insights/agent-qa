@@ -71,3 +71,15 @@ export type {
   LoopLogger,
   LoopPorts,
 } from './loop/ports.js'
+export {
+  SecretStore,
+  SecretRedactor,
+  SecretConfigError,
+  MissingSecretError,
+  findSecretTemplates,
+  interpolateSecretTemplates,
+  resolveSecretTemplatesInValue,
+  redactSecretValue,
+  containsRedactedSecretMarker,
+} from './loop/secrets.js'
+export type { SecretTemplate, SecretFileMetadata } from './loop/secrets.js'

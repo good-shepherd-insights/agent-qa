@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { runHookInSandbox, checkDockerAvailable } from '../sandbox-runner.js'
 import type { HookDefinition } from '../types.js'
-import { SecretRedactor, SecretStore } from '../../agent/secrets.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),

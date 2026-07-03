@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import type { HookDefinition, HookResult, HookRuntime } from './types.js'
 import { RUNTIME_IMAGE_MAP } from './types.js'
 import { parseEnvFile } from '../agent/variables.js'
-import { type SecretRedactor, type SecretStore } from '../agent/secrets.js'
+import { type SecretRedactor, type SecretStore } from '@vostride/agent-qa-runner'
 import {
   AUTH_STATE_HOOK_CONTAINER_STORAGE_STATE_PATH,
   AUTH_STATE_HOOK_STORAGE_STATE_FILENAME,

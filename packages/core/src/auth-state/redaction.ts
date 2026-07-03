@@ -1,4 +1,4 @@
-import { redactSecretValue, type SecretRedactor } from '../agent/secrets.js'
+import { redactSecretValue, type SecretRedactor } from '@vostride/agent-qa-runner'
 import type { RuntimeAuthStateConfig } from '@vostride/agent-qa-runner'
 import {
   AUTH_STATE_HOOK_CONTAINER_STORAGE_STATE_PATH,

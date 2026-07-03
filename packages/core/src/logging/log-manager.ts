@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { LOG_LEVEL_PRIORITY } from './types.js'
 import type { LogLevel, LogSource, LogEntry, LogStorage, ScopedLogger } from './types.js'
 import { formatLogEntry } from './cli-formatter.js'
-import { type SecretRedactor } from '../agent/secrets.js'
+import { type SecretRedactor } from '@vostride/agent-qa-runner'
 import { redactAuthStateValue } from '../auth-state/redaction.js'
 
 export class LogManager {

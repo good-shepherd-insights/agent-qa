@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { LogManager } from '../logging/log-manager.js'
 import type { LogStorage, LogEntry } from '../logging/types.js'
-import { SecretRedactor, SecretStore } from '../agent/secrets.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 describe('LogManager', () => {
   let stderrSpy: any

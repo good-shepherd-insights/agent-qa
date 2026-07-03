@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { StdoutLiveReporter } from '../stdout-live-reporter.js'
 import type { TestDefinition } from '../../types/test.js'
 import type { TestResult } from '@vostride/agent-qa-runner'
-import { SecretRedactor, SecretStore } from '../../agent/secrets.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 const RUN_ID = 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'
 

@@ -1,4 +1,12 @@
-import { parseEnvFile } from './variables.js'
+// Secret machinery for the runner-owned step-execution loop (Phase 353, D-02).
+// CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp,
+// no model/core/adapter package imports. Moved byte-equivalently from
+// core/src/agent/secrets.ts — this is the cache-poisoning guard (Information-
+// disclosure control): the `[secret:*]` marker regex, redaction, and template
+// resolution must not change behavior. `parseEnvFile` is inlined locally (was the
+// module's only cross-package import) to keep runner self-contained and pure.
+
+import type { SecretRedactorPort, SecretResolver } from './ports.js'
 
 export interface SecretTemplate {
   pattern: string
@@ -25,6 +33,7 @@ export class MissingSecretError extends Error {
 
 const SECRET_NAME_RE = /^\w+$/
 const SECRET_TEMPLATE_RE = /\{\{secret:(\w+)\}\}/g
+const REDACTED_SECRET_MARKER_RE = /\[secret:\w+\]/
 
 function assertSecretName(name: string): void {
   if (!SECRET_NAME_RE.test(name)) {
@@ -36,7 +45,26 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export class SecretStore {
+// Inlined from core variables.ts:parseEnvFile — pure string parsing, kept local so
+// the runner secret store has no cross-package import (storageNeutral).
+function parseSecretEnvFile(content: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#')) continue
+    const eqIndex = line.indexOf('=')
+    if (eqIndex === -1) continue
+    const key = line.slice(0, eqIndex).trim()
+    let value = line.slice(eqIndex + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    result[key] = value
+  }
+  return result
+}
+
+export class SecretStore implements SecretResolver {
   private storage = new Map<string, string>()
 
   constructor(secrets: Record<string, string> = {}) {
@@ -50,7 +78,7 @@ export class SecretStore {
   }
 
   static fromEnvContent(content: string): SecretStore {
-    return new SecretStore(parseEnvFile(content))
+    return new SecretStore(parseSecretEnvFile(content))
   }
 
   private set(name: string, value: string): void {
@@ -104,7 +132,7 @@ export function interpolateSecretTemplates(template: string, store: SecretStore)
   })
 }
 
-export function resolveSecretTemplatesInValue<T>(value: T, store?: SecretStore): T {
+export function resolveSecretTemplatesInValue<T>(value: T, store?: SecretResolver): T {
   if (!store) return value
   if (typeof value === 'string') {
     return value.replace(SECRET_TEMPLATE_RE, (_match, name: string) => store.require(name)) as T
@@ -125,7 +153,7 @@ export function resolveSecretTemplatesInValue<T>(value: T, store?: SecretStore):
   return value
 }
 
-export function redactSecretValue<T>(value: T, redactor?: SecretRedactor): T {
+export function redactSecretValue<T>(value: T, redactor?: SecretRedactorPort): T {
   if (!redactor) return value
   if (typeof value === 'string') {
     return redactor.redactString(value) as T
@@ -152,11 +180,25 @@ export function redactSecretValue<T>(value: T, redactor?: SecretRedactor): T {
   return value
 }
 
+/**
+ * The cached-plan invalidation predicate (loop cache-poisoning guard): returns true
+ * when a value contains a redacted `[secret:*]` marker. Moved from core loop.ts.
+ */
+export function containsRedactedSecretMarker(value: unknown): boolean {
+  if (typeof value === 'string') return REDACTED_SECRET_MARKER_RE.test(value)
+  if (Array.isArray(value)) return value.some((item) => containsRedactedSecretMarker(item))
+  if (isBufferLike(value)) return false
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value as Record<string, unknown>).some((item) => containsRedactedSecretMarker(item))
+  }
+  return false
+}
+
 function isBufferLike(value: unknown): value is Buffer {
   return typeof Buffer !== 'undefined' && Buffer.isBuffer(value)
 }
 
-export class SecretRedactor {
+export class SecretRedactor implements SecretRedactorPort {
   private valuePatterns: Array<{ re: RegExp; marker: string }> = []
 
   constructor(private readonly store: SecretStore, private readonly genericMarker = '[secret]') {

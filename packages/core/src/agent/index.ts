@@ -48,6 +48,9 @@ export { generateFailureSummary } from './failure-summary.js'
 export { VariableStore, interpolateVariables, findBareVariables, findUnresolvedTemplates, ExplicitExtractor, LLMVariableExtractor, createExtractor, ExtractionResultSchema, parseEnvFile, serializeEnvFile } from './variables.js'
 export type { VariableSource } from './variables.js'
 
+// Secret machinery moved to @vostride/agent-qa-runner (Phase 353, D-02); re-exported
+// here transitionally so core's public surface (cli, dashboard-server) stays stable
+// until Phase 361/363.
 export {
   SecretStore,
   SecretRedactor,
@@ -57,5 +60,5 @@ export {
   interpolateSecretTemplates,
   resolveSecretTemplatesInValue,
   redactSecretValue,
-} from './secrets.js'
-export type { SecretTemplate, SecretFileMetadata } from './secrets.js'
+} from '@vostride/agent-qa-runner'
+export type { SecretTemplate, SecretFileMetadata } from '@vostride/agent-qa-runner'
