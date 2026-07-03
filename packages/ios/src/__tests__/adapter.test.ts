@@ -311,13 +311,15 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
 
+      expect(state.platform).toBe('ios')
       expect(state.tree).toContain('text "Welcome"')
       expect(state.tree).toContain('textbox "Email"')
       expect(state.tree).toContain('textbox "Password"')
       expect(state.tree).toContain('button "Log In"')
       expect(state.elements.length).toBeGreaterThanOrEqual(5)
       expect(state.timestamp).toBeGreaterThan(0)
-      expect(state.metadata.refMap).toBeDefined()
+      expect(state.refMap).toBeDefined()
+      expect(state.metadata.captureMode).toBe('textOnly')
     })
 
     it('throws if adapter not initialized', async () => {
@@ -371,7 +373,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_WHEEL_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const pickerWheelEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePickerWheel')
+      const pickerWheelEl = state.elements.find(e => e.role === 'pickerwheel')
       expect(pickerWheelEl).toBeDefined()
 
       const pickerWheel = {
@@ -392,7 +394,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_TWO_PICKER_WHEELS_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const wheelRefs = state.elements.filter(e => e.attributes.nativeType === 'XCUIElementTypePickerWheel')
+      const wheelRefs = state.elements.filter(e => e.role === 'pickerwheel')
       expect(wheelRefs).toHaveLength(2)
 
       const firstWheel = {
@@ -416,7 +418,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_CONTAINER_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const pickerEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePicker')
+      const pickerEl = state.elements.find(e => e.role === 'combobox')
       expect(pickerEl).toBeDefined()
 
       const pickerWheel = {
@@ -436,7 +438,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_CONTAINER_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const pickerEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePicker')
+      const pickerEl = state.elements.find(e => e.role === 'combobox')
 
       mockDriver.$$ = vi.fn().mockResolvedValue([
         { setValue: vi.fn() },
