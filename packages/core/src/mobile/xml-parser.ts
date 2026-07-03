@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser'
-import type { InterimNode } from '@vostride/agent-qa-runner'
+import type { InterimNode, RefBinding } from '@vostride/agent-qa-runner'
 import type { ElementLabels, ElementState } from '@vostride/agent-qa-schema'
-import type { ParsedMobileSource } from './types.js'
+import type { ParsedMobileSource, RefEntry } from './types.js'
 import { normalizeRole } from './role-map.js'
 
 const INTERACTIVE_ROLES = new Set([
@@ -257,4 +257,59 @@ export function parseMobileSource(
   }
 
   return { nodes: ctx.nodes }
+}
+
+/**
+ * Reconstruct the execute-time `lastRefs` record from the interim nodes plus the shared
+ * builder's ref->node binding (D-01/D-03). The mobile adapters store this privately so
+ * planner-ref -> live-node resolution survives the builder taking over ref minting;
+ * `nth` lives ONLY here (never on ElementInfo, per D-03).
+ */
+export function buildRefEntries(
+  nodes: InterimNode[],
+  binding: Record<string, RefBinding>,
+): Record<string, RefEntry> {
+  const entries: Record<string, RefEntry> = {}
+  for (const [ref, { index, nth }] of Object.entries(binding)) {
+    const node = nodes[index]
+    if (!node) continue
+    entries[ref] = {
+      role: node.role,
+      ...(node.name !== undefined ? { name: node.name } : {}),
+      nth,
+      ...(node.bounds !== undefined ? { bounds: node.bounds } : {}),
+      ...(node.nativeType !== undefined ? { nativeType: node.nativeType } : {}),
+      ...(node.value !== undefined ? { value: node.value } : {}),
+    }
+  }
+  return entries
+}
+
+/**
+ * Best-effort mobile scroll metadata (D-10). Unlike web — which reads the exact window
+ * scroll offset and document content size — mobile page source exposes no true scroll
+ * position, so this is a documented approximation, explicit and never silently precise:
+ * contentWidth/contentHeight are the maximum element extent across all node bounds
+ * (falling back to the viewport dimensions when no node carries bounds), and
+ * offsetX/offsetY stay 0 (no reliable scroll-offset signal in the source).
+ */
+export function deriveMobileScroll(
+  nodes: InterimNode[],
+  viewport: { width: number; height: number },
+): { offsetX: number; offsetY: number; contentWidth: number; contentHeight: number } {
+  let maxX = viewport.width
+  let maxY = viewport.height
+  let sawBounds = false
+  for (const node of nodes) {
+    if (!node.bounds) continue
+    sawBounds = true
+    maxX = Math.max(maxX, node.bounds.x + node.bounds.width)
+    maxY = Math.max(maxY, node.bounds.y + node.bounds.height)
+  }
+  return {
+    offsetX: 0,
+    offsetY: 0,
+    contentWidth: sawBounds ? maxX : viewport.width,
+    contentHeight: sawBounds ? maxY : viewport.height,
+  }
 }
