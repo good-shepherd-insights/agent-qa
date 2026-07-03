@@ -103,11 +103,24 @@ export interface RunTestConfig {
   safetyHooks?: SafetyHookRunner
 }
 
+/**
+ * D-13 re-run-after-failure context (LOOP-03). Supplied by runTestWithRetry on
+ * every attempt after the first; a re-run carries everything (full memory/context,
+ * no ablation) plus this explicit run-level signal threaded into every step's
+ * StepContext and surfaced to the planner as prompt context.
+ */
+export interface RerunContext {
+  /** 1-based re-run attempt number (1 = first re-run). */
+  attempt: number
+  /** The prior attempt's failure summary, shown to the planner. */
+  previousFailureSummary?: string
+}
+
 export async function runTest(
   test: TestDefinition,
   config: RunTestConfig,
   filePath: string,
-  failureContext?: string,
+  rerunContext?: RerunContext,
 ): Promise<TestResult> {
   const startTime = performance.now()
   const steps: StepResult[] = []
@@ -461,8 +474,12 @@ export async function runTest(
     await reporter?.onStepStart(instruction, test.name, stepEventContext)
 
     // Runner StepContext (D-02) — the v1 healingConfig field is a D-10 deletion target
-    // and is intentionally absent; the D-13 re-run fields (isRerun/rerunAttempt/
-    // previousFailureSummary) default absent and are threaded by plan 353-06.
+    // and is intentionally absent. D-13 re-run threading (LOOP-03): on a re-run attempt
+    // the typed re-run fields carry the explicit flag, attempt number, and prior failure
+    // summary into every step's context; they supersede v1's bare failureContext string
+    // (exactly one channel — the typed fields). A re-run carries EVERYTHING: full
+    // memory/context, no ablation (memoryContext is not filtered or reset between
+    // attempts).
     const context: RunnerStepContext = {
       stepInstruction: instruction,
       testName: test.name,
@@ -474,7 +491,9 @@ export async function runTest(
       modelId: typeof config.plannerModel === 'object' && config.plannerModel && 'modelId' in config.plannerModel ? (config.plannerModel as { modelId: string }).modelId : undefined,
       variables: redactSecretValue(Object.fromEntries(variableStore.getAll()), config.secretRedactor),
       memoryContext,
-      failureContext,
+      isRerun: rerunContext !== undefined,
+      rerunAttempt: rerunContext?.attempt,
+      previousFailureSummary: rerunContext?.previousFailureSummary,
       plannerConfig: config.plannerConfig,
       contextWindow: config.contextWindow,
     }
@@ -856,12 +875,20 @@ export async function runTestWithRetry(
   filePath: string,
 ): Promise<TestResult> {
   const startTime = performance.now()
+  // D-13: the trigger stays test.meta.retries (user-config surface unchanged). On a
+  // re-run attempt (attempt > 0) the typed re-run context — the explicit flag, the
+  // 1-based attempt number, and the prior attempt's failure summary — is threaded into
+  // runTest and from there into every step's StepContext (LOOP-03). The re-run carries
+  // everything: full memory/context, no ablation (D-10's ablation machinery is deleted).
   const maxRetries = test.meta?.retries ?? 0
   let lastResult: TestResult | undefined
-  let failureContext: string | undefined
+  let previousFailureSummary: string | undefined
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const result = await runTest(test, config, filePath, failureContext)
+    const rerunContext: RerunContext | undefined = attempt > 0
+      ? { attempt, previousFailureSummary }
+      : undefined
+    const result = await runTest(test, config, filePath, rerunContext)
 
     if (result.status === 'passed') {
       return {
@@ -872,9 +899,7 @@ export async function runTestWithRetry(
     }
 
     lastResult = result
-    failureContext = result.failureSummary
-      ? `Attempt ${attempt + 1} failure:\n${result.failureSummary}`
-      : undefined
+    previousFailureSummary = result.failureSummary || undefined
   }
 
   return {

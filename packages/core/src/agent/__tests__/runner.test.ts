@@ -7,6 +7,8 @@ import type { Planner, AgentLoopConfig, StepContext, HealingConfig } from '../ty
 import type { TestDefinition } from '../../types/test.js'
 import { runTest, runTestWithRetry } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
+import { buildStepPrompt } from '@vostride/agent-qa-runner'
+import type { StepContext as RunnerStepContext } from '@vostride/agent-qa-runner'
 
 const { mockRunAccessibilityCheck } = vi.hoisted(() => ({
   mockRunAccessibilityCheck: vi.fn(),
@@ -669,6 +671,86 @@ describe('runTestWithRetry', () => {
     const result = await runTestWithRetry(test, config, '/tests/dur.yaml')
 
     expect(result.duration).toBeGreaterThan(0)
+  })
+})
+
+describe('D-13 re-run threading (LOOP-03)', () => {
+  // A re-run carries everything (full memory/context, no ablation) plus the explicit
+  // run-level flag, attempt number, and prior failure summary the planner sees. The
+  // planner here fails the step on the non-rerun attempt and passes on the re-run,
+  // exercising the isRerun/rerunAttempt/previousFailureSummary threading directly.
+  function makeRerunPlanner(): { planner: Planner; contexts: RunnerStepContext[] } {
+    const contexts: RunnerStepContext[] = []
+    const planner: Planner = {
+      async plan(_step: string, _screen: ScreenState, context: StepContext) {
+        contexts.push(context as unknown as RunnerStepContext)
+        if ((context as unknown as RunnerStepContext).isRerun) {
+          return { plan: makeActionPlan({ stepComplete: true, stepFailed: false }) }
+        }
+        return {
+          plan: makeActionPlan({
+            stepComplete: false,
+            stepFailed: true,
+            reasoning: 'first attempt sentinel failure',
+          }),
+        }
+      },
+    }
+    return { planner, contexts }
+  }
+
+  it('re-run attempt StepContext carries isRerun/rerunAttempt/previousFailureSummary', async () => {
+    const { planner, contexts } = makeRerunPlanner()
+    const config = makeRunTestConfig({ planner })
+    const test = makeTestDef({ steps: ['Step A'], meta: { retries: 1 } })
+
+    const result = await runTestWithRetry(test, config, '/tests/rerun.yaml')
+
+    expect(result.status).toBe('passed')
+    expect(result.retryCount).toBe(1)
+    // Attempt 1 (non-rerun) carries no re-run signal.
+    expect(contexts[0].isRerun).toBeFalsy()
+    expect(contexts[0].rerunAttempt).toBeUndefined()
+    // Attempt 2 (the re-run) carries the explicit flag, the attempt number, and the
+    // prior attempt's failure summary.
+    expect(contexts[1].isRerun).toBe(true)
+    expect(contexts[1].rerunAttempt).toBe(1)
+    expect(contexts[1].previousFailureSummary).toBeDefined()
+    expect(contexts[1].previousFailureSummary).toContain('sentinel')
+  })
+
+  it('the re-run attempt planner prompt contains the re-run block (end-to-end)', async () => {
+    const { planner, contexts } = makeRerunPlanner()
+    const config = makeRunTestConfig({ planner })
+    const test = makeTestDef({ steps: ['Step A'], meta: { retries: 1 } })
+
+    await runTestWithRetry(test, config, '/tests/rerun-prompt.yaml')
+
+    // Build the planner prompt from the captured re-run context (the 353-03 prompt
+    // block) and assert the re-run wording the planner provably sees.
+    const rerunPrompt = buildStepPrompt('Step A', makeScreenState(), contexts[1])
+    expect(rerunPrompt).toContain('RE-RUN CONTEXT')
+    expect(rerunPrompt).toContain('this is re-run attempt 1')
+    expect(rerunPrompt).toContain('sentinel')
+
+    // The non-rerun attempt-1 prompt has no re-run block.
+    const firstPrompt = buildStepPrompt('Step A', makeScreenState(), contexts[0])
+    expect(firstPrompt).not.toContain('RE-RUN CONTEXT')
+  })
+
+  it('retries=0 runs a single attempt with no re-run fields set', async () => {
+    const { planner, contexts } = makeRerunPlanner()
+    const config = makeRunTestConfig({ planner })
+    const test = makeTestDef({ steps: ['Step A'] })
+
+    const result = await runTestWithRetry(test, config, '/tests/no-rerun.yaml')
+
+    expect(result.status).toBe('failed')
+    expect(result.retryCount).toBe(0)
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0].isRerun).toBeFalsy()
+    expect(contexts[0].rerunAttempt).toBeUndefined()
+    expect(contexts[0].previousFailureSummary).toBeUndefined()
   })
 })
 
