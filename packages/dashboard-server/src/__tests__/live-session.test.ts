@@ -92,6 +92,18 @@ const mockVariableStoreInstance = {
   snapshot: vi.fn(() => Object.fromEntries(variableStoreEntries)),
 }
 
+// executeStep/LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07);
+// live-session now imports them from @vostride/agent-qa-runner, so intercept them there.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
+  return {
+    ...actual,
+    executeStep: (...args: unknown[]) => mockExecuteStep(...args),
+    LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
+    LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
+  }
+})
+
 vi.mock('@vostride/agent-qa-core', () => {
   class LocalSecretStore {
     private secrets: Record<string, string>
@@ -205,7 +217,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
 })
 
 import { LiveSession } from '../live-editor/live-session.js'
-import { SecretRedactor, SecretStore } from '@vostride/agent-qa-core'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 const webConfig: LiveSessionConfig = {
   platform: 'web',
@@ -325,7 +337,7 @@ describe('LiveSession', () => {
     expect(mockExecuteStep).toHaveBeenCalledWith(
       'Click the login button',
       expect.objectContaining({
-        healingConfig: expect.objectContaining({ maxAttempts: 3 }),
+        plannerConfig: expect.objectContaining({ maxSubActions: 50 }),
       }),
       expect.objectContaining({
         stepInstruction: 'Click the login button',

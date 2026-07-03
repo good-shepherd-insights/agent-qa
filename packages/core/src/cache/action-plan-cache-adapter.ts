@@ -4,9 +4,9 @@
 // `ActionPlanCache` port: the loop owns only `StepKeyInput` (stepInstruction); the
 // per-test/per-step constants that key the v1 hash live here, closed over by the
 // adapter, so `node:crypto` stays core-side (runner is storageNeutral).
-import { createHash } from 'node:crypto'
 import type { ActionPlan as RunnerActionPlan, ActionPlanCache, StepKeyInput } from '@vostride/agent-qa-runner'
 import type { ActionCache } from '../agent/types.js'
+import { hashStepInstruction } from './step-hash.js'
 
 /**
  * The per-test/per-step cache-key constants formerly carried on AgentLoopConfig
@@ -23,24 +23,13 @@ export interface CacheKeyConstants {
 }
 
 /**
- * The v1 `hashStepInstruction` composition, copied byte-for-byte from
- * core/src/agent/observation.ts so on-disk cache entries stay valid and
- * `CACHE_SCHEMA_VERSION` stays 9 — no migration (D-03, Runtime State Inventory).
- * Copied here (not imported) so observation.ts can be deleted in 353-07.
+ * The v1 sub-action cache-key hash. Delegates to the relocated `hashStepInstruction`
+ * (now in cache/step-hash.ts — observation.ts was deleted in 353-07). The byte
+ * composition is unchanged so on-disk entries stay valid and `CACHE_SCHEMA_VERSION`
+ * stays 9 — no migration (D-03, Runtime State Inventory).
  */
 export function computeSubActionStepHash(step: string, constants: CacheKeyConstants): string {
-  return createHash('sha256')
-    .update(
-      (constants.configContent ?? '') + '||' +
-      (constants.suiteFileContent ?? '') + '||' +
-      String(constants.suiteTestIndex ?? 0) + '||' +
-      (constants.testFileContent ?? '') + '||' +
-      step + '||' +
-      (constants.platform ?? 'web') + '||' +
-      String(constants.stepIndex ?? 0),
-    )
-    .digest('hex')
-    .slice(0, 16)
+  return hashStepInstruction({ step, ...constants })
 }
 
 export class CoreActionPlanCacheAdapter implements ActionPlanCache {

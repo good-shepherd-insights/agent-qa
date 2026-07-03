@@ -1,12 +1,12 @@
 import type {
   HookDefinition,
-  SecretRedactor,
-  SecretStore,
 } from '@vostride/agent-qa-core'
 import type {
   ConsoleLogEntry,
   NetworkLogEntry,
   StepAnnotation,
+  SecretRedactor,
+  SecretStore,
 } from '@vostride/agent-qa-runner'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
 

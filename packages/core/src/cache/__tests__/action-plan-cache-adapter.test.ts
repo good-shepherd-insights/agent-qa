@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ActionPlan } from '@vostride/agent-qa-runner'
-import { hashStepInstruction } from '../../agent/observation.js'
+import { hashStepInstruction } from '../step-hash.js'
 import { FileActionCache } from '../file-cache.js'
 import {
   CoreActionPlanCacheAdapter,

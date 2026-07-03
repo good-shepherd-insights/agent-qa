@@ -3,7 +3,7 @@ import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-r
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import type { ActionPlan } from '../../schema/action-schema.js'
-import type { Planner, AgentLoopConfig, StepContext, HealingConfig } from '../types.js'
+import type { Planner, StepContext, HealingConfig } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
 import { runTest, runTestWithRetry } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'

@@ -11,7 +11,8 @@ import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
-import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions, SecretStore, SecretRedactor } from '@vostride/agent-qa-core'
+import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-core'
+import type { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
@@ -552,7 +553,7 @@ async function loadRuntimeSecrets(input: {
   }
 
   try {
-    const { SecretStore, SecretRedactor } = await import('@vostride/agent-qa-core')
+    const { SecretStore, SecretRedactor } = await import('@vostride/agent-qa-runner')
     const secretStore = SecretStore.fromEnvContent(secretsContent)
     return {
       secretStore,
@@ -847,9 +848,9 @@ async function executeSuites(
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
 ): Promise<boolean> {
   const { parseSuiteFile, parseTestFile, runSuite,
-    LLMPlanner, LLMVerifier,
     ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
   } = await import('@vostride/agent-qa-core')
+  const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
   const path = await import('node:path')
 
@@ -1917,9 +1918,10 @@ export function createRunCommand(): Command {
         // Actual execution
         const startTime = Date.now()
         const {
-          LLMPlanner, LLMVerifier, runTestWithRetry,
+          runTestWithRetry,
           ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
         } = await import('@vostride/agent-qa-core')
+        const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
 
         const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
 

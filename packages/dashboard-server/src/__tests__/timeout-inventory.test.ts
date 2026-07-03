@@ -260,28 +260,12 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'Represents a no-op planned action in failure traces; does not control execution.',
     allowed: true,
   },
-  {
-    id: 'core-step-timeout-disabled-sentinel',
-    file: 'packages/core/src/agent/loop.ts',
-    literal: '0',
-    contextIncludes: 'config.stepTimeout ? startTime + config.stepTimeout : 0',
-    owner: 'core loop',
-    scope: 'step deadline disabled sentinel',
-    lifecycleAffecting: true,
-    rationale: 'Disables the core step deadline only when no effective timeout is configured.',
-    allowed: true,
-  },
-  {
-    id: 'core-step-timeout-artifact-action-sentinel',
-    file: 'packages/core/src/agent/loop.ts',
-    literal: '0',
-    contextIncludes: "timeout: 0",
-    owner: 'core loop',
-    scope: 'timeout/cancelled failure artifact placeholder',
-    lifecycleAffecting: false,
-    rationale: 'Represents a no-op planned action in traces; does not control execution.',
-    allowed: true,
-  },
+  // The v1 core step-execution loop (packages/core/src/agent/loop.ts) was deleted in
+  // Phase 353-07 (D-02) — its step-deadline `: 0` disabled sentinel and the
+  // `timeout: 0` failure-artifact placeholder moved with the loop into
+  // packages/runner/src/loop/index.ts. The runner package is outside this
+  // dashboard-server scanner's curated core-execution scope, so those sentinels are
+  // no longer inventoried here.
 ]
 
 const scannedFiles = [...new Set(timeoutInventory.map(entry => entry.file))]

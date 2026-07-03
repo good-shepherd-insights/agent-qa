@@ -10,7 +10,7 @@ import type {
 } from '@vostride/agent-qa-runner'
 import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
-import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
+import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
 import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
 import { extractDom } from './dom-extractor.js'
 import { ElementResolver, buildRefMap } from './element-resolver.js'

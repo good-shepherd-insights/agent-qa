@@ -63,6 +63,18 @@ const mockVariableStoreInstance = {
   snapshot: vi.fn().mockReturnValue({}),
 }
 
+// executeStep/LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07);
+// live-session now imports them from @vostride/agent-qa-runner, so intercept them there.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
+  return {
+    ...actual,
+    executeStep: (...args: unknown[]) => mockExecuteStep(...args),
+    LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
+    LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
+  }
+})
+
 vi.mock('@vostride/agent-qa-core', () => ({
   MobileSetupError: class MobileSetupError extends Error {
     category: string

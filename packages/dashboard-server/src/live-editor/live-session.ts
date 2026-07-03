@@ -2,9 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { dirname, resolve as resolvePath } from 'node:path'
 import {
   AUTH_STATE_SCHEMA_VERSION,
-  executeStep,
-  LLMPlanner,
-  LLMVerifier,
   VariableStore,
   interpolateVariables,
   findUnresolvedTemplates,
@@ -16,24 +13,29 @@ import {
   readAuthStateMetadata,
   redactAuthStateValue,
   resolveAuthStatePaths,
-  resolveSecretTemplatesInValue,
   writeAuthStateFiles,
 } from '@vostride/agent-qa-core'
+import {
+  executeStep,
+  LLMPlanner,
+  LLMVerifier,
+  resolveSecretTemplatesInValue,
+} from '@vostride/agent-qa-runner'
 import { createModel } from '@vostride/agent-qa-model'
 import type {
-  AgentLoopConfig,
   AuthStateMetadata,
-  StepContext,
   HookDefinition,
   MobilePlatform,
-  SecretRedactor,
-  SecretStore,
 } from '@vostride/agent-qa-core'
 import type {
   PlatformAdapter,
   PlatformConfig,
   StepResult,
   StepPhaseEvent,
+  LoopPorts,
+  StepContext,
+  SecretRedactor,
+  SecretStore,
 } from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
 import { authFromFetch, authFromRuntimeConfig, toModelProfileAndAuth } from '../llm-model-mapping.js'
@@ -877,16 +879,14 @@ export class LiveSession {
         return result
       }
 
-      const loopConfig: AgentLoopConfig = {
+      const ports: LoopPorts = {
         adapter: this.adapter!,
         planner: this.planner!,
         verifier: this.verifier!,
-        healingConfig: { maxAttempts: 3 },
         plannerConfig: { maxSubActions: 50, previousStepCount: 5 },
         vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
         onPhase,
-        stepIndex,
         abortSignal: this.abortController.signal,
         secretStore: this.secretStore,
         secretRedactor: this.secretRedactor,
@@ -903,11 +903,10 @@ export class LiveSession {
         previousSteps: this.previousSteps,
         plannerModel: this.model!,
         verifierModel: this.model!,
-        healingConfig: { maxAttempts: 3 },
         variables: this.redact(variables),
       }
 
-      let result = await executeStep(prepared.instruction, loopConfig, stepContext) as LiveStepExecutionResult
+      let result = await executeStep(prepared.instruction, ports, stepContext) as LiveStepExecutionResult
       result.originalStepName = prepared.originalStepName
       result.variableSnapshot = this.variableStore!.snapshot()
       result.executionLogs = this.redact(prepared.executionLogs)

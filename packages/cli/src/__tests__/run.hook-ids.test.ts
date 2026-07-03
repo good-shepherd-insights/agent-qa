@@ -60,6 +60,13 @@ vi.mock('@vostride/agent-qa-model', async () => {
   }
 })
 
+// LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07); run.ts now
+// imports them from @vostride/agent-qa-runner, so intercept them there.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
+  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier }
+})
+
 vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',

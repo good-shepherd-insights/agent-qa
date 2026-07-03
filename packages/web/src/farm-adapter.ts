@@ -11,7 +11,7 @@ import type {
 import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { getProvider, registerAllProviders } from '@vostride/agent-qa-core'
-import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
+import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
 import type { FarmWebConfig } from '@vostride/agent-qa-core'
 import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
 import { extractDom } from './dom-extractor.js'

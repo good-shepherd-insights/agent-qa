@@ -3,7 +3,7 @@ import type { LanguageModel } from 'ai'
 import { z } from 'zod'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { ExtractorInput, CaptureResult, VariableExtractor } from './types.js'
-import { buildExtractionPrompt } from './prompts.js'
+import { buildExtractionPrompt } from '@vostride/agent-qa-runner'
 
 export const ExtractionResultSchema = z.object({
   value: z.string(),
