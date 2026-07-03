@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { buildSystemPrompt, buildStepPrompt, buildVerificationPrompt } from '../prompts.js'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
+import { buildAgentScreenState } from './screen-fixtures.js'
 
 describe('QA mindset prompt rules', () => {
   const systemPrompt = buildSystemPrompt()
@@ -97,13 +98,13 @@ describe('QA mindset prompt rules', () => {
     })
 
     it('buildVerificationPrompt with screenshot requires visual evidence for quantity claims', () => {
-      const state: ScreenState = {
+      const state: ScreenState = buildAgentScreenState({
         tree: 'button "OK"',
         elements: [],
         url: '',
         timestamp: 0,
-        metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
-      }
+        metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
+      })
       const action = { type: 'click' as const, ref: 'e1' }
       const output = buildVerificationPrompt('verify result', state, state, action, true)
       expect(output).toContain('visual evidence')
@@ -112,13 +113,13 @@ describe('QA mindset prompt rules', () => {
     })
 
     it('buildVerificationPrompt teaches negative evidence approach', () => {
-      const state: ScreenState = {
+      const state: ScreenState = buildAgentScreenState({
         tree: 'button "OK"',
         elements: [],
         url: '',
         timestamp: 0,
-        metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
-      }
+        metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
+      })
       const action = { type: 'click' as const, ref: 'e1' }
       const output = buildVerificationPrompt('click the button', state, state, action, false)
       expect(output).toContain('NEGATIVE evidence')
@@ -128,13 +129,13 @@ describe('QA mindset prompt rules', () => {
     })
 
     it('buildVerificationPrompt enriches action with element context', () => {
-      const state: ScreenState = {
+      const state: ScreenState = buildAgentScreenState({
         tree: 'button "file-pdf"',
         elements: [{ ref: 'e113', role: 'button', name: 'file-pdf', attributes: {} }],
         url: '',
         timestamp: 0,
-        metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
-      }
+        metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
+      })
       const action = { type: 'click' as const, ref: 'e113' }
       const output = buildVerificationPrompt('click the pdf icon', state, state, action, false)
       expect(output).toContain('button "file-pdf"')
@@ -227,13 +228,13 @@ describe('QA mindset prompt rules', () => {
     })
 
     it('buildStepPrompt renders reasoning in sub-action history', () => {
-      const state: ScreenState = {
+      const state: ScreenState = buildAgentScreenState({
         tree: 'button "OK"',
         elements: [],
         url: '',
         timestamp: 0,
-        metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
-      }
+        metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
+      })
       const context: StepContext = {
         stepInstruction: 'tap OK',
         testName: 'test',

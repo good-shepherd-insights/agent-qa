@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { buildStepPrompt, buildSystemPrompt } from '../prompts.js'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 
 function makeContext(overrides: Partial<StepContext> = {}): StepContext {
   return {
@@ -15,14 +16,14 @@ function makeContext(overrides: Partial<StepContext> = {}): StepContext {
   }
 }
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: '- button "Submit" [ref=e1]',
     elements: [{ ref: 'e1', role: 'button', name: 'Submit', attributes: {} }],
     timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
+    metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 const screenState = makeScreenState()

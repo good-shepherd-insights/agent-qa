@@ -1,19 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 import { buildStepPrompt } from '../prompts.js'
+import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 
-function makeScreenState(overrides?: Partial<ScreenState>): ScreenState {
-  return {
+function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
+  return buildAgentScreenState({
     tree: 'button "Sign In" [ref=btn-1]',
     elements: [
       { ref: 'btn-1', role: 'button', name: 'Sign In', attributes: {} },
     ],
     url: 'https://example.com/login',
     timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
+    metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
     ...overrides,
-  }
+  })
 }
 
 function makeStepContext(overrides?: Partial<StepContext>): StepContext {

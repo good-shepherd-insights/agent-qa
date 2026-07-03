@@ -1,15 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import type { ScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 import { buildStepPrompt } from '../prompts.js'
+import { buildAgentScreenState } from './screen-fixtures.js'
 
 function makeScreenState(): ScreenState {
-  return {
+  return buildAgentScreenState({
     tree: '',
     elements: [],
     timestamp: Date.now(),
-    metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 },
-  }
+    metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
+  })
 }
 
 function makeStepContext(overrides?: Partial<StepContext>): StepContext {
