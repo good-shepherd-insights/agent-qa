@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { captureFailureScreenshot } from '../screenshot.js'
-import type { PlatformAdapter } from '@vostride/agent-qa-runner'
+import { makeScreenState, type PlatformAdapter } from '@vostride/agent-qa-runner'
 
 function makeAdapter(overrides?: Partial<PlatformAdapter>): PlatformAdapter {
   return {
@@ -8,7 +8,7 @@ function makeAdapter(overrides?: Partial<PlatformAdapter>): PlatformAdapter {
     async setup() {},
     async cleanup() {},
     async observe() {
-      return { tree: '', elements: [], timestamp: Date.now(), metadata: { coordSpace: 'viewport' as const, viewportWidth: 0, viewportHeight: 0 } }
+      return makeScreenState({ tree: '', elements: [], refMap: {} })
     },
     async execute() {
       return { success: true }

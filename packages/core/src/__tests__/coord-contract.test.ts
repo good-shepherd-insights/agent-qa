@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PlatformAdapter, ScreenStateMetadata } from '@vostride/agent-qa-runner'
+import type { PlatformAdapter } from '@vostride/agent-qa-runner'
+import type { ScreenStateMetadata } from '@vostride/agent-qa-schema'
 import type { CompressResult } from '../screenshot/compress.js'
 import { warnIfOutOfBounds } from '../validation/coord-bounds.js'
 
@@ -37,9 +38,11 @@ describe('viewport-space coordinate contract', () => {
   describe('ScreenStateMetadata', () => {
     it('requires coordSpace to be the literal viewport', () => {
       const metadata: ScreenStateMetadata = {
+        captureMode: 'textOnly',
         coordSpace: 'viewport',
         viewportWidth: 1280,
         viewportHeight: 720,
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 },
       }
       expect(metadata.coordSpace).toBe('viewport')
     })
@@ -52,9 +55,11 @@ describe('viewport-space coordinate contract', () => {
 
     it('requires viewportWidth and viewportHeight', () => {
       const metadata: ScreenStateMetadata = {
+        captureMode: 'textOnly',
         coordSpace: 'viewport',
         viewportWidth: 393,
         viewportHeight: 852,
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 393, contentHeight: 852 },
       }
       expect(metadata.viewportWidth).toBe(393)
       expect(metadata.viewportHeight).toBe(852)

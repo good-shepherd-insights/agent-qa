@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Action, ActionResult, PlatformAdapter, PlatformConfig, ScreenState } from '@vostride/agent-qa-runner'
+import { makeScreenState } from '@vostride/agent-qa-runner'
+import type { Action, ActionResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 
 const {
   mockRunTest,
@@ -64,13 +66,7 @@ function createMockAdapter(executeResults: ActionResult[] = [{ success: true }])
     cleanup,
     execute,
     async observe(): Promise<ScreenState> {
-      return {
-        tree: '',
-        elements: [],
-        url: 'https://example.com',
-        timestamp: Date.now(),
-        metadata: { coordSpace: 'viewport', viewportWidth: 1280, viewportHeight: 720 },
-      }
+      return makeScreenState({ tree: '', elements: [], refMap: {}, url: 'https://example.com' })
     },
   }
 

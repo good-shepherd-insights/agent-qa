@@ -4,10 +4,10 @@ import type { MobileRefMap } from '../types.js'
 import type { Action } from '@vostride/agent-qa-runner'
 
 const sampleRefs: MobileRefMap = {
-  e1: { role: 'textbox', name: 'Email', bounds: { x: 100, y: 200, width: 50, height: 30 } },
-  e2: { role: 'button', name: 'Sign In', bounds: { x: 200, y: 400, width: 100, height: 44 } },
-  e3: { role: 'text', name: 'Title' },
-  e4: { role: 'image', name: 'Logo', bounds: { x: 0, y: 0, width: 200, height: 200 } },
+  e1: { role: 'textbox', name: 'Email', nth: 0, bounds: { x: 100, y: 200, width: 50, height: 30 } },
+  e2: { role: 'button', name: 'Sign In', nth: 0, bounds: { x: 200, y: 400, width: 100, height: 44 } },
+  e3: { role: 'text', name: 'Title', nth: 0 },
+  e4: { role: 'image', name: 'Logo', nth: 0, bounds: { x: 0, y: 0, width: 200, height: 200 } },
 }
 
 describe('MobileElementResolver', () => {
