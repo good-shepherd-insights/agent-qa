@@ -10,6 +10,7 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { StepContext } from '../types.js'
 import { LLMPlanner } from '../planner.js'
+import { makeFakeTokenAccounting } from './loop-harness.js'
 
 vi.mock('ai', async (importActual) => {
   const actual = await importActual<typeof import('ai')>()
@@ -48,7 +49,7 @@ describe('LLMPlanner', () => {
       usage: { inputTokens: 100, outputTokens: 20 },
     } as never)
 
-    const planner = new LLMPlanner({} as never, 'web')
+    const planner = new LLMPlanner({} as never, 'web', undefined, undefined, makeFakeTokenAccounting())
     const result = await planner.plan('Click sign in', screen, makeContext())
 
     expect(result.plan.action.type).toBe('click')
@@ -68,7 +69,7 @@ describe('LLMPlanner', () => {
       usage: { inputTokens: 80, outputTokens: 10 },
     } as never)
 
-    const planner = new LLMPlanner({} as never, 'web')
+    const planner = new LLMPlanner({} as never, 'web', undefined, undefined, makeFakeTokenAccounting())
     const result = await planner.plan('Click sign in', screen, makeContext({ screenshot: Buffer.from('png') }))
 
     expect(mock).toHaveBeenCalledTimes(2)
@@ -86,10 +87,27 @@ describe('LLMPlanner', () => {
       usage: { inputTokens: 50, outputTokens: 5 },
     } as never)
 
-    const planner = new LLMPlanner({} as never, 'web')
+    const planner = new LLMPlanner({} as never, 'web', undefined, undefined, makeFakeTokenAccounting())
     const result = await planner.plan('Click sign in', screen, makeContext())
 
     expect(result.plan.action.type).toBe('click')
     expect(result.plan.action.ref).toBe('e2')
+  })
+
+  // Phase 355-01 (CTXB-04 / D-10) — RED until Plan 05 injects the TokenAccounting port
+  // into LLMPlanner and feeds recordUsage(result.usage, messages) after each response.
+  it('feeds the injected TokenAccounting recordUsage exactly once per response (D-10)', async () => {
+    const { generateText } = await import('ai')
+    vi.mocked(generateText).mockResolvedValueOnce({
+      toolCalls: [{ toolName: 'web_click', input: { ref: 'e1', ...CLICK_ENVELOPE } }],
+      usage: { inputTokens: 100, outputTokens: 20 },
+    } as never)
+
+    const accounting = makeFakeTokenAccounting()
+    const planner = new LLMPlanner({} as never, 'web', undefined, undefined, accounting)
+    await planner.plan('Click sign in', screen, makeContext())
+
+    expect(accounting.recordUsageCalls).toHaveLength(1)
+    expect(accounting.recordUsageCalls[0].messages.length).toBeGreaterThan(0)
   })
 })

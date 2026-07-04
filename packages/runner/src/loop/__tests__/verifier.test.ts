@@ -8,6 +8,7 @@ import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { LLMVerifier } from '../verifier.js'
+import { makeFakeTokenAccounting } from './loop-harness.js'
 
 vi.mock('ai', () => ({
   generateText: vi.fn(),
@@ -33,7 +34,7 @@ describe('LLMVerifier', () => {
       usage: { inputTokens: 120, outputTokens: 30 },
     } as any)
 
-    const verifier = new LLMVerifier({} as any)
+    const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     const result = await verifier.verify('log in', before, after, action)
 
     expect(result.verification.success).toBe(true)
@@ -47,7 +48,7 @@ describe('LLMVerifier', () => {
     const mockGenerateText = vi.mocked(generateText)
     mockGenerateText.mockRejectedValueOnce(new Error('Overloaded'))
 
-    const verifier = new LLMVerifier({} as any)
+    const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     const result = await verifier.verify('log in', before, after, action)
 
     expect(result.verification.success).toBe(false)
@@ -65,7 +66,7 @@ describe('LLMVerifier', () => {
     const controller = new AbortController()
     controller.abort()
 
-    const verifier = new LLMVerifier({} as any)
+    const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     await expect(
       verifier.verify('log in', before, after, action, undefined, controller.signal),
     ).rejects.toThrow('The operation was aborted')
@@ -76,10 +77,28 @@ describe('LLMVerifier', () => {
     const mockGenerateText = vi.mocked(generateText)
     mockGenerateText.mockResolvedValueOnce({ output: undefined } as any)
 
-    const verifier = new LLMVerifier({} as any)
+    const verifier = new LLMVerifier({} as any, makeFakeTokenAccounting())
     const result = await verifier.verify('log in', before, after, action)
 
     expect(result.verification.success).toBe(false)
     expect(result.verification.reasoning).toContain('Verification failed')
+  })
+
+  // Phase 355-01 (CTXB-04 / D-10) — RED until Plan 06 injects the TokenAccounting port
+  // into LLMVerifier and feeds recordUsage(result.usage, messages) after each response.
+  it('feeds the injected TokenAccounting recordUsage exactly once per response (D-10)', async () => {
+    const { generateText } = await import('ai')
+    const mockGenerateText = vi.mocked(generateText)
+    mockGenerateText.mockResolvedValueOnce({
+      output: { success: true, reasoning: 'The dashboard is shown', isAppError: false },
+      usage: { inputTokens: 120, outputTokens: 30 },
+    } as any)
+
+    const accounting = makeFakeTokenAccounting()
+    const verifier = new LLMVerifier({} as any, accounting)
+    await verifier.verify('log in', before, after, action)
+
+    expect(accounting.recordUsageCalls).toHaveLength(1)
+    expect(accounting.recordUsageCalls[0].messages.length).toBeGreaterThan(0)
   })
 })
