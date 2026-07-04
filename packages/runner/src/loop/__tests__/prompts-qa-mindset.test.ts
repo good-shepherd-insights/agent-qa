@@ -1,10 +1,45 @@
 // Ported from core/src/agent/__tests__/prompts-qa-mindset.test.ts (353-03, D-02).
 // Adaptation: D-10 dropped healingConfig from StepContext — removed from fixtures.
+//
+// 355-02 reconciliation (Wave-0, RED pending Plans 03/06): buildSystemPrompt assertions
+// (rules 1-21) are untouched — the planner stable tier is byte-preserving. The retired
+// monolithic step-prompt builder's sub-action assertion is redirected to
+// `composeTurnMessages`. The verifier prompt splits (D-11): the byte-stable verdict-
+// identity preamble + fixed verification-approach/screenshot prose move to
+// `buildVerifierStableTier()` (the Plan-06 verifier stable tier); the per-call before/
+// after states + formatted action stay on `buildVerificationPrompt(...)`. Every asserted
+// string is preserved byte-for-byte — only which producer it is checked against changes.
 import { describe, it, expect } from 'vitest'
-import { buildSystemPrompt, buildStepPrompt, buildVerificationPrompt } from '../prompts.js'
+import type { ModelMessage, SystemModelMessage } from 'ai'
+import {
+  buildSystemPrompt,
+  buildVerificationPrompt,
+  // Plan-03/06 tier/turn API — intentionally unresolved today (the RED reason):
+  buildVerifierStableTier,
+  composeTurnMessages,
+} from '../prompts.js'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
+
+// Render the verifier stable tier's text (string or SystemModelMessage) for `.toContain`.
+function stableText(tier: string | SystemModelMessage): string {
+  if (typeof tier === 'string') return tier
+  return typeof tier.content === 'string' ? tier.content : JSON.stringify(tier.content)
+}
+
+// Concatenate the text parts of the per-turn ModelMessage[] into one rendered string.
+function renderTurn(messages: ModelMessage[]): string {
+  return messages
+    .map((m) =>
+      typeof m.content === 'string'
+        ? m.content
+        : m.content
+            .map((part) => ('text' in part && typeof part.text === 'string' ? part.text : ''))
+            .join(''),
+    )
+    .join('\n')
+}
 
 describe('QA mindset prompt rules', () => {
   const systemPrompt = buildSystemPrompt()
@@ -99,35 +134,22 @@ describe('QA mindset prompt rules', () => {
       expect(systemPrompt).toContain('QA MINDSET')
     })
 
-    it('buildVerificationPrompt with screenshot requires visual evidence for quantity claims', () => {
-      const state: ScreenState = buildAgentScreenState({
-        tree: 'button "OK"',
-        elements: [],
-        url: '',
-        timestamp: 0,
-        metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
-      })
-      const action = { type: 'click' as const, ref: 'e1' }
-      const output = buildVerificationPrompt('verify result', state, state, action, true)
-      expect(output).toContain('visual evidence')
-      expect(output).toContain('takes precedence')
-      expect(output).toContain('only confirm what you can count')
+    it('verifier stable tier requires visual evidence for quantity claims (D-11 byte-stable prose)', () => {
+      // The screenshot-analysis prose is fixed every call → it lives in the verifier
+      // stable tier (D-11), no longer produced per-call by buildVerificationPrompt.
+      const stable = stableText(buildVerifierStableTier())
+      expect(stable).toContain('visual evidence')
+      expect(stable).toContain('takes precedence')
+      expect(stable).toContain('only confirm what you can count')
     })
 
-    it('buildVerificationPrompt teaches negative evidence approach', () => {
-      const state: ScreenState = buildAgentScreenState({
-        tree: 'button "OK"',
-        elements: [],
-        url: '',
-        timestamp: 0,
-        metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
-      })
-      const action = { type: 'click' as const, ref: 'e1' }
-      const output = buildVerificationPrompt('click the button', state, state, action, false)
-      expect(output).toContain('NEGATIVE evidence')
-      expect(output).toContain('Absence of visible screen change is NOT evidence of failure')
-      expect(output).toContain('action steps')
-      expect(output).toContain('verification/assertion steps')
+    it('verifier stable tier teaches negative evidence approach (D-11 byte-stable prose)', () => {
+      // The verification-approach prose is fixed every call → verifier stable tier.
+      const stable = stableText(buildVerifierStableTier())
+      expect(stable).toContain('NEGATIVE evidence')
+      expect(stable).toContain('Absence of visible screen change is NOT evidence of failure')
+      expect(stable).toContain('action steps')
+      expect(stable).toContain('verification/assertion steps')
     })
 
     it('buildVerificationPrompt enriches action with element context', () => {
@@ -229,7 +251,7 @@ describe('QA mindset prompt rules', () => {
       expect(systemPrompt).toContain('set stepComplete: true immediately')
     })
 
-    it('buildStepPrompt renders reasoning in sub-action history', () => {
+    it('composeTurnMessages renders reasoning in sub-action history', () => {
       const state: ScreenState = buildAgentScreenState({
         tree: 'button "OK"',
         elements: [],
@@ -247,7 +269,7 @@ describe('QA mindset prompt rules', () => {
           { action: 'tap on ref="e1"', reasoning: 'Tapped OK to confirm', result: 'success' },
         ],
       }
-      const prompt = buildStepPrompt('tap OK', state, context)
+      const prompt = renderTurn(composeTurnMessages(context, state))
       expect(prompt).toContain('Tapped OK to confirm')
       expect(prompt).toContain('tap on ref="e1"')
     })
