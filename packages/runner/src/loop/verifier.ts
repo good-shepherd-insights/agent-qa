@@ -9,8 +9,10 @@ import { z } from 'zod'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { Verifier, VerifyResult } from './types.js'
+import type { LanguageModelUsage } from 'ai'
 import type { TokenAccounting } from './ports.js'
 import { buildVerificationPrompt, buildVerifierStableTier } from './prompts.js'
+import { executeClampedCall } from './clamp.js'
 
 // Three-outcome verification strategy (multi-action replanning):
 // The planner self-reports goal completion via stepComplete. The verifier
@@ -51,12 +53,6 @@ export class LLMVerifier implements Verifier {
     try {
       const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot, promptNote)
 
-      const outputConfig = Output.object({
-        schema: VerificationResultSchema,
-        name: 'verification_result',
-        description: 'Verification of whether the test step succeeded',
-      })
-
       // Verdict-identity cached stable prefix (D-11): a one-tier SystemModelMessage array
       // carrying the single Anthropic ephemeral cache_control breakpoint. Byte-stable per
       // run (buildVerifierStableTier is arg-less), so it forms the verifier's own cache
@@ -82,7 +78,8 @@ export class LLMVerifier implements Verifier {
           : [{ type: 'text', text: promptText }],
       }
 
-      const result = await this.runVerification(system, turnMessage, outputConfig, abortSignal)
+      const clamped = await this.runVerification(system, turnMessage, abortSignal)
+      const result = clamped.result
 
       if (!result.output) {
         throw new Error('LLM returned empty response — no verification result')
@@ -111,20 +108,45 @@ export class LLMVerifier implements Verifier {
   }
 
   // Single structured verification call over the cached stable tier + the pinned turn
-  // message. Task 2 wraps this in the shared clamp/degrade/retry-once + recordUsage seam.
+  // message, riding the shared clamp/degrade/retry-once + recordUsage seam (CTXB-04,
+  // D-03/D-10). The verifier sends no tool schemas (toolSchema '' ⇒ 0 tokens). The lone
+  // turn message is pinned — it is also the final message, a double hard-floor (T-355-02),
+  // so degrade proceeds with best-effort on a cannot-fit and never crashes (D-17). The
+  // clamp computes maxOutputTokens dynamically and retries exactly once on a live context
+  // overflow; maxRetries:0 on generateText is preserved (the clamp owns retry policy).
   private async runVerification(
     system: SystemModelMessage[],
     turnMessage: ModelMessage,
-    outputConfig: ReturnType<typeof Output.object>,
     abortSignal?: AbortSignal,
   ) {
-    return generateText({
-      model: this.model,
-      maxRetries: 0,
-      output: outputConfig,
-      abortSignal,
+    const messages: ModelMessage[] = [turnMessage]
+    const pinned = new Set<ModelMessage>([turnMessage])
+    // Output.object is constructed inline so its schema generic flows through generateText
+    // into the clamp's inferred result type (result.output typed as VerificationResult).
+    const outputConfig = Output.object({
+      schema: VerificationResultSchema,
+      name: 'verification_result',
+      description: 'Verification of whether the test step succeeded',
+    })
+    return executeClampedCall({
+      accounting: this.accounting,
       system,
-      messages: [turnMessage],
+      messages,
+      pin: (message) => pinned.has(message),
+      call: (maxOutputTokens, fitted) =>
+        generateText({
+          model: this.model,
+          maxRetries: 0,
+          output: outputConfig,
+          abortSignal,
+          system,
+          messages: fitted,
+          maxOutputTokens,
+        }),
+      // recordUsage anchors on the observed input tokens (the port reads inputTokens
+      // only); the `ai` result already carries the usage triad. The nested token-detail
+      // objects the port never consumes are intentionally not fabricated.
+      recordFrom: (r) => (r.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }) as LanguageModelUsage,
     })
   }
 }
