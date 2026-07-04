@@ -85,7 +85,11 @@ export { LLMVerifier, VerificationResultSchema } from './loop/verifier.js'
 export { AssertionEvaluator, LLMAssertionEvaluator, createAsserter } from './loop/asserter.js'
 export {
   buildSystemPrompt,
-  buildStepPrompt,
+  buildContextTier,
+  buildVolatileTier,
+  renderBriefAsHypotheses,
+  composeTurnMessages,
+  buildVerifierStableTier,
   buildVerificationPrompt,
   buildAssertionPrompt,
   buildExtractionPrompt,
