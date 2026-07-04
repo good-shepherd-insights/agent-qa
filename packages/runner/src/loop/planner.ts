@@ -12,9 +12,24 @@ import type { LanguageModel } from 'ai'
 import type { Platform, ScreenState } from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { LoopScopedLogger } from './ports.js'
-import { buildSystemPrompt, buildStepPrompt } from './prompts.js'
+import { buildSystemPrompt, composeTurnMessages } from './prompts.js'
 import { buildTools, defaultRegistry } from '../tools/index.js'
 import { executePlanningTurn, type PlanningTurnResult } from './planning-turn.js'
+
+// Flatten the text parts of the decomposed turn messages into v1's single user-prompt
+// string (355-03 interim). Image parts are dropped here — the planner attaches the
+// screenshot on its own below. Plan 05 drives the decomposed messages directly.
+function flattenTurnText(messages: ReturnType<typeof composeTurnMessages>): string {
+  return messages
+    .map((m) =>
+      typeof m.content === 'string'
+        ? m.content
+        : m.content
+            .map((part) => ('text' in part && typeof part.text === 'string' ? part.text : ''))
+            .join(''),
+    )
+    .join('\n')
+}
 
 export class LLMPlanner implements Planner {
   private model: LanguageModel
@@ -36,10 +51,12 @@ export class LLMPlanner implements Planner {
     abortSignal?: AbortSignal,
   ): Promise<PlanResult> {
     const planStart = performance.now()
-    const prompt = buildStepPrompt(step, screenState, context, this.logger, {
-      platform: this.platform,
-      agentRules: this.agentRules,
-    })
+    // Turn content is now decomposed into pinnable messages (355-03, D-09). This call
+    // site keeps v1's single-user-string shape by flattening the text parts of those
+    // messages; Plan 05 replaces this with the full [stable, context, volatile] system
+    // tiers + the decomposed messages + the degrade/clamp + recordUsage wiring.
+    const turnMessages = composeTurnMessages({ ...context, stepInstruction: step }, screenState)
+    const prompt = flattenTurnText(turnMessages)
     const systemPrompt = buildSystemPrompt(this.platform, this.agentRules)
     const screenshot = context.screenshot
 

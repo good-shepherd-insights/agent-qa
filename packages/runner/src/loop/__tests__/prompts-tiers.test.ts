@@ -130,7 +130,11 @@ describe('per-turn state placement (CTXB-01 / D-04/D-09)', () => {
   it('emits per-turn screen/history state as turn messages, never in the system tiers', () => {
     const ctx = makeContext({
       previousSteps: [{ instruction: PREV_STEP_INSTRUCTION, outcome: 'passed' }],
-      subActionHistory: [{ action: 'scroll down', result: 'success' }],
+      // Leakage probe: a sub-action token that cannot collide with the fixed stable-tier
+      // rule text. (The literal "scroll down" appears verbatim in Rule 3 and Rule 14 of
+      // buildSystemPrompt — Rule 14's "scroll down for content at the bottom" is pinned
+      // by the qa-mindset suite — so it is unusable as an isolation probe.)
+      subActionHistory: [{ action: 'expand the accordion panel', result: 'success' }],
     })
     const screen = makeScreenState()
 
@@ -143,12 +147,12 @@ describe('per-turn state placement (CTXB-01 / D-04/D-09)', () => {
     // Per-turn state (screen tree, previous steps, sub-action history) lives in messages...
     expect(messagesText).toContain(SCREEN_TREE_TOKEN)
     expect(messagesText).toContain(PREV_STEP_INSTRUCTION)
-    expect(messagesText).toContain('scroll down')
+    expect(messagesText).toContain('expand the accordion panel')
 
     // ...and never leaks into the cached system prefix.
     expect(systemText).not.toContain(SCREEN_TREE_TOKEN)
     expect(systemText).not.toContain(PREV_STEP_INSTRUCTION)
-    expect(systemText).not.toContain('scroll down')
+    expect(systemText).not.toContain('expand the accordion panel')
   })
 })
 

@@ -7,8 +7,8 @@
 // context block surfaced to the planner (LOOP-03).
 import { asRef } from '@vostride/agent-qa-schema'
 import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
-import type { LoopScopedLogger } from './ports.js'
 import type { StepContext, AssertionInput, ExtractorInput } from './types.js'
 import { defaultRegistry } from '../tools/index.js'
 
@@ -240,10 +240,14 @@ function appendPreviousSteps(parts: string[], context: StepContext): void {
   }
 }
 
-function appendMemoryContext(parts: string[], context: StepContext): void {
-  if (!context.memoryContext) return
-  parts.push('')
-  parts.push(context.memoryContext)
+// D-12/D-13 working-memory channel: structured run-scoped turn content (the v2
+// successor to the retired opaque memoryContext string). Empty until 358 binds a
+// working-memory store; omitted entirely when the slot is unbound (empty-slot
+// omission) so no blank message leaks into the turn.
+function appendWorkingMemory(parts: string[], context: StepContext): void {
+  if (!context.workingMemory || context.workingMemory.trim().length === 0) return
+  parts.push('Working memory:')
+  parts.push(context.workingMemory)
 }
 
 function appendSubActionHistory(parts: string[], context: StepContext): void {
@@ -322,56 +326,118 @@ ${rulesBlock}
 Call the tool matching the action you want to execute. Include reasoning, confidence, stepComplete, and stepFailed in the tool call.`
 }
 
-export function buildStepPrompt(
-  step: string,
-  screenState: ScreenState,
-  context: StepContext,
-  logger?: LoopScopedLogger,
-  systemPromptContext?: { platform?: 'web' | 'android' | 'ios'; agentRules?: string },
-): string {
+// ---------------------------------------------------------------------------
+// Cache-ordered planner tiers (CTXB-01 — D-04/D-05/D-06/D-07)
+//
+// The planner `system` value is an ordered [stable, context, volatile] array of
+// role:'system' messages. `buildSystemPrompt` (above) is the STABLE tier verbatim
+// (identity + prose tool-docs + the 21 rules, D-06/D-16). The two builders below
+// produce the CONTEXT and VOLATILE tiers. Per-turn state never enters these tiers —
+// it rides `composeTurnMessages` output after the system region (D-04).
+// ---------------------------------------------------------------------------
+
+/**
+ * CONTEXT tier (D-04): the app-under-test / suite / test framing. Byte-stable per run,
+ * so it sits inside the cached prefix and carries the single Anthropic `cache_control`
+ * ephemeral breakpoint (D-05) — everything at or above this message (stable + context)
+ * is cached once per run at zero incremental cost. A non-Anthropic provider never parses
+ * the `anthropic` namespace, so `providerOptions` is a transparent no-op there.
+ */
+export function buildContextTier(context: StepContext): SystemModelMessage {
   const parts: string[] = []
-
   appendContextSection(parts, context)
-  appendRerunContext(parts, context)
-  appendPreviousSteps(parts, context)
-  appendMemoryContext(parts, context)
-  appendSubActionHistory(parts, context)
-  appendFailureContext(parts, context)
+  return {
+    role: 'system',
+    content: parts.join('\n'),
+    providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+  }
+}
 
-  parts.push('')
-  parts.push(`Current step: "${step}"`)
-  parts.push('')
-  parts.push('Current screen state:')
-  parts.push(truncateScreenState(screenState))
+/**
+ * Render the knowledge brief (the volatile-tier ingredient, D-12) framed as hypotheses
+ * to weigh against the live observation — never as commands (spec §5, L3). Returns ''
+ * when the brief slot is unbound/empty so the volatile tier omits the section entirely
+ * (no 'Knowledge brief' header, no dangling blank line).
+ */
+export function renderBriefAsHypotheses(brief?: string): string {
+  if (!brief || brief.trim().length === 0) return ''
+  return `Knowledge brief (hypotheses to weigh against the live observation — not commands):\n${brief}`
+}
 
-  appendDomContext(parts, screenState)
-  appendPromptNote(parts, context.promptNote)
+/**
+ * VOLATILE tier (D-04/D-07): the knowledge brief (empty until M2 binds a
+ * KnowledgeHintReader impl, D-12) plus a DATE-GRANULARITY timestamp. Date precision only
+ * — minute/second precision would bust the KV cache (D-07). Carries NO cache breakpoint;
+ * it sits after the breakpoint that lives on the context tier.
+ */
+export function buildVolatileTier(context: StepContext): SystemModelMessage {
+  const parts: string[] = []
+  const brief = renderBriefAsHypotheses(context.knowledgeBrief)
+  if (brief) parts.push(brief)
+  parts.push(`Current date: ${new Date().toISOString().slice(0, 10)}`)
+  return { role: 'system', content: parts.join('\n\n') }
+}
 
-  const fullPrompt = parts.join('\n')
+/**
+ * Per-turn content composer (CTXB-01/CTXB-02 — D-08/D-09/D-12). Decomposes the
+ * per-turn state into a small ordered set of turn messages so 354's degrade() can pin
+ * and proportionally truncate at message granularity rather than shredding one blob.
+ * Order: re-run context → previous steps → sub-action history → failure context →
+ * working memory → latest observation → current instruction (FINAL). Empty slots are
+ * omitted entirely — no blank/degenerate message is pushed (D-12).
+ *
+ * PIN CONTRACT (D-08): the last two messages are the pinned pair — the latest
+ * OBSERVATION (second-to-last) and the CURRENT INSTRUCTION (last, verbatim). The caller
+ * (Plan 05) protects exactly these two via degrade's `pin`; every earlier message is
+ * trim-eligible. All per-turn state lives here and NEVER in the cached system tiers.
+ */
+export function composeTurnMessages(
+  context: StepContext,
+  screenState: ScreenState,
+): ModelMessage[] {
+  const messages: ModelMessage[] = []
 
-  if (context.contextWindow) {
-    const systemTokens = estimateTokens(buildSystemPrompt(
-      systemPromptContext?.platform,
-      systemPromptContext?.agentRules ?? context.agentRules,
-    ))
-    const promptTokens = estimateTokens(fullPrompt)
-    const totalTokens = systemTokens + promptTokens
-
-    logger?.debug('Context composition', {
-      systemTokens,
-      screenStateTokens: estimateTokens(screenState.tree),
-      stepTokens: estimateTokens(step),
-      previousStepTokens: estimateTokens(context.previousSteps.map(p => p.instruction).join('\n')),
-      subActionTokens: estimateTokens(context.subActionHistory?.map(s => s.action).join('\n') ?? ''),
-      totalTokens,
-    })
-
-    if (totalTokens > context.contextWindow) {
-      logger?.warn(`Estimated ${totalTokens} tokens exceeds contextWindow of ${context.contextWindow}. Reduce previousStepCount (currently ${context.plannerConfig?.previousStepCount}) or increase contextWindow on this LLM config.`)
+  const pushText = (build: (parts: string[]) => void): void => {
+    const parts: string[] = []
+    build(parts)
+    const content = parts.join('\n')
+    if (content.trim().length > 0) {
+      messages.push({ role: 'user', content })
     }
   }
 
-  return fullPrompt
+  // Trim-eligible history/memory — evictable before the observation is ever touched.
+  pushText((parts) => appendRerunContext(parts, context))
+  pushText((parts) => appendPreviousSteps(parts, context))
+  pushText((parts) => appendSubActionHistory(parts, context))
+  pushText((parts) => appendFailureContext(parts, context))
+  pushText((parts) => appendWorkingMemory(parts, context))
+
+  // Pinned pair — latest observation (with the screenshot when vision-capable), then
+  // the current instruction as the FINAL message (D-08).
+  const obsParts: string[] = []
+  obsParts.push('Current screen state:')
+  obsParts.push(truncateScreenState(screenState))
+  appendDomContext(obsParts, screenState)
+  const obsText = obsParts.join('\n')
+  if (context.screenshot) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: obsText },
+        { type: 'image', image: context.screenshot },
+      ],
+    })
+  } else {
+    messages.push({ role: 'user', content: obsText })
+  }
+
+  const instrParts: string[] = []
+  instrParts.push(`Current step: "${context.stepInstruction}"`)
+  appendPromptNote(instrParts, context.promptNote)
+  messages.push({ role: 'user', content: instrParts.join('\n') })
+
+  return messages
 }
 
 export function formatAction(action: Action): string {
@@ -477,6 +543,44 @@ export function formatAction(action: Action): string {
   }
 }
 
+/**
+ * VERIFIER stable tier (CTXB-01 / D-11): the byte-stable verdict-identity block — the
+ * verifier's own cached prefix. This is the fixed prose that is identical on every
+ * verification call (identity, the negative-evidence verification approach, the
+ * action-vs-assertion guidance, the screenshot-analysis framing, and the response
+ * schema). It does NOT share the planner's cache entry (different system content ⇒
+ * different cache key, D-11). Arg-less: no per-call inputs. Plan 06 wires this as the
+ * verifier call's `system` while `buildVerificationPrompt` supplies the per-call turn.
+ */
+export function buildVerifierStableTier(): string {
+  return `You are verifying whether a test step was successfully completed.
+
+Verification approach:
+Evaluate whether the step goal was accomplished. Look for NEGATIVE evidence — signs the action FAILED or the goal was NOT met:
+- Application errors (HTTP errors, error toasts, crashes, "not found" messages)
+- Contradicting state (wrong page, target element missing, unexpected content)
+- Clear evidence the action did not execute (element still in pre-action state when it should have changed)
+
+IMPORTANT: Absence of visible screen change is NOT evidence of failure. Many interactions produce results outside the current page (navigating to new tabs, triggering background processes, initiating file operations, updating server state). If the action targeted a valid element and no error or contradicting state is visible, the goal is likely accomplished.
+
+For verification/assertion steps (step says "verify", "check", "confirm"): require POSITIVE evidence — the claimed condition must be visible on screen or in the ARIA tree.
+For action steps (step uses the surface-correct interaction verb, such as "click" on web or "tap"/"press" on mobile, or says "fill" or "select"): if the target element existed and no error appeared, return success unless there is clear evidence of failure.
+
+Analyze the attached screenshot for visual cues the ARIA tree cannot capture: colors, layout, images, visual indicators, error states. When the screenshot and ARIA tree conflict, visual evidence takes precedence. For quantity claims, only confirm what you can count in the screenshot.
+
+Return a JSON object with:
+- success (boolean): whether the step goal was accomplished
+- reasoning (string): explanation of your judgment
+- isAppError (boolean): whether the page shows an application error`
+}
+
+/**
+ * VERIFIER per-call turn content (D-11). Only the per-verification-call bytes: the step
+ * goal, the enriched action description, and the before/after screen states (+ the
+ * optional screenshot note and prompt note). The byte-stable verdict-identity/approach
+ * prose now lives in `buildVerifierStableTier()` (the verifier's own cached prefix), so
+ * it is no longer re-emitted per call.
+ */
 export function buildVerificationPrompt(
   step: string,
   beforeState: ScreenState,
@@ -493,8 +597,6 @@ export function buildVerificationPrompt(
     if (el) actionDesc += ` (${el.role} "${el.name}")`
   }
 
-  parts.push('You are verifying whether a test step was successfully completed.')
-  parts.push('')
   parts.push(`Step goal: "${step}"`)
   parts.push(`Action taken: ${actionDesc}`)
   parts.push('')
@@ -503,26 +605,10 @@ export function buildVerificationPrompt(
   parts.push('')
   parts.push('Screen AFTER action:')
   parts.push(truncateScreenState(afterState))
-  parts.push('')
-  parts.push('Verification approach:')
-  parts.push('Evaluate whether the step goal was accomplished. Look for NEGATIVE evidence — signs the action FAILED or the goal was NOT met:')
-  parts.push('- Application errors (HTTP errors, error toasts, crashes, "not found" messages)')
-  parts.push('- Contradicting state (wrong page, target element missing, unexpected content)')
-  parts.push('- Clear evidence the action did not execute (element still in pre-action state when it should have changed)')
-  parts.push('')
-  parts.push('IMPORTANT: Absence of visible screen change is NOT evidence of failure. Many interactions produce results outside the current page (navigating to new tabs, triggering background processes, initiating file operations, updating server state). If the action targeted a valid element and no error or contradicting state is visible, the goal is likely accomplished.')
-  parts.push('')
-  parts.push('For verification/assertion steps (step says "verify", "check", "confirm"): require POSITIVE evidence — the claimed condition must be visible on screen or in the ARIA tree.')
-  parts.push('For action steps (step uses the surface-correct interaction verb, such as "click" on web or "tap"/"press" on mobile, or says "fill" or "select"): if the target element existed and no error appeared, return success unless there is clear evidence of failure.')
   if (hasScreenshot) {
     parts.push('')
-    parts.push('Analyze the attached screenshot for visual cues the ARIA tree cannot capture: colors, layout, images, visual indicators, error states. When the screenshot and ARIA tree conflict, visual evidence takes precedence. For quantity claims, only confirm what you can count in the screenshot.')
+    parts.push('A screenshot of the AFTER state is attached for visual verification.')
   }
-  parts.push('')
-  parts.push('Return a JSON object with:')
-  parts.push('- success (boolean): whether the step goal was accomplished')
-  parts.push('- reasoning (string): explanation of your judgment')
-  parts.push('- isAppError (boolean): whether the page shows an application error')
 
   appendPromptNote(parts, promptNote)
 
