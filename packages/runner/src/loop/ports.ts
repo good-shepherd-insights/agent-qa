@@ -5,6 +5,7 @@
 // possibly-absent port is optional and optional-chained by the loop — never
 // throw-on-absent (D-05 degrade-when-absent).
 
+import type { LanguageModelUsage, ModelMessage } from 'ai'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { PlatformAdapter } from '../platform.js'
@@ -88,6 +89,40 @@ export interface LoopLogger {
 }
 
 /**
+ * Runner-local structural copy of model's DegradeOptions (D-05/D-07). Runner cannot
+ * import the model package, so the shape is duplicated here; Plan 05's cli conformance
+ * proof asserts model's `DegradeOptions` structurally matches this. Policy-free: the
+ * caller (Phase 355) supplies the concrete budget + pin predicate.
+ */
+export interface RunnerDegradeOptions {
+  budget: number
+  pin?: (message: ModelMessage, index: number) => boolean
+}
+
+/**
+ * Runner-local structural copy of model's DegradeOutcome (D-09). `ok:true` carries the
+ * fitted messages; `ok:false` is the structured cannot-fit outcome (system + final +
+ * pinned content alone exceed the budget) — degrade never throws and never violates a pin.
+ */
+export type RunnerDegradeOutcome =
+  | { ok: true; messages: ModelMessage[] }
+  | { ok: false; reason: 'pinned-content-exceeds-budget'; messages: ModelMessage[] }
+
+/**
+ * Provider-neutral token-accounting port (D-05/D-07) — the 354↔355 seam. A types-only
+ * structural duplicate of model's `TokenAccounting` (accounting/types.ts): runner cannot
+ * import model, so the shape is mirrored here and message types are imported from `'ai'`
+ * only (never `@ai-sdk/*`, PROVIDER_ORCHESTRATION_ALLOWED). Policy-free — prompt tokens
+ * only. This plan declares the seam; Phase 355 wires estimate/degrade consumption.
+ */
+export interface TokenAccounting {
+  estimate(messages: ModelMessage[]): number
+  recordUsage(usage: LanguageModelUsage, messages: ModelMessage[]): void
+  getCeilings(): { contextWindow: number; maxOutput: number }
+  degrade(messages: ModelMessage[], options: RunnerDegradeOptions): RunnerDegradeOutcome
+}
+
+/**
  * The runner-owned port bundle the loop executes against — successor to v1's
  * AgentLoopConfig (core types.ts:66-104), minus the D-10 healing/attempt-limit
  * fields and minus the v1 cache-key inputs (those move behind the cache port).
@@ -118,4 +153,11 @@ export interface LoopPorts {
   secretStore?: SecretResolver
   secretRedactor?: SecretRedactorPort
   cacheState?: { invalidated: boolean }
+  /**
+   * D-06 optional pre-prompt blob-guard — bounds a single one-shot structured tool-output
+   * value before it lands in the sub-action history / next planning turn. A pure signature
+   * (no `ai`/model types, zero arch risk). Composition roots that depend on model may inject
+   * model's canonical `guardBlob`; the loop degrades to a runner-local fallback when absent.
+   */
+  guardBlob?: (value: unknown) => string | undefined
 }
