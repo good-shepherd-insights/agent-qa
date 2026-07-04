@@ -131,3 +131,169 @@ describe('degrade — determinism (D-08 / T-354-03)', () => {
     expect(JSON.stringify(input)).toEqual(snapshot)
   })
 })
+
+const TRUNCATION_MARKER = '…[truncated to fit context budget]'
+// One token per message — lets a test force N evictions deterministically.
+const perMessage = (messages: ModelMessage[]): number => messages.length
+
+function allCallIds(messages: ModelMessage[]): string[] {
+  const ids: string[] = []
+  for (const message of messages) {
+    if (message.role === 'assistant' && Array.isArray(message.content)) {
+      for (const part of message.content) if (part.type === 'tool-call') ids.push(part.toolCallId)
+    }
+  }
+  return ids
+}
+
+function allResultIds(messages: ModelMessage[]): string[] {
+  const ids: string[] = []
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      for (const part of message.content) if (part.type === 'tool-result') ids.push(part.toolCallId)
+    } else if (message.role === 'assistant' && Array.isArray(message.content)) {
+      for (const part of message.content) if (part.type === 'tool-result') ids.push(part.toolCallId)
+    }
+  }
+  return ids
+}
+
+function mixedExchangeHistory(): ModelMessage[] {
+  return [
+    systemMessage(),
+    userText('start'),
+    ...toolExchange([{ toolCallId: 'ex1', toolName: 'inspect', output: textOutput('r1') }]),
+    ...toolExchange([
+      { toolCallId: 'ex2a', toolName: 'inspect', output: textOutput('r2a') },
+      { toolCallId: 'ex2b', toolName: 'inspect', output: textOutput('r2b') },
+    ]),
+    ...toolExchange([{ toolCallId: 'ex3', toolName: 'inspect', output: textOutput('r3') }]),
+    userText('most recent instruction'),
+  ]
+}
+
+describe('degrade — eviction (D-10)', () => {
+  it('leaves no orphaned tool-call/tool-result after any degrade (single + fan-out)', () => {
+    // Budget forces some but not all exchanges to be evicted.
+    for (const budget of [3, 4, 5, 6, 7]) {
+      const result = degrade(mixedExchangeHistory(), { budget, estimate: perMessage }).messages
+      const calls = new Set(allCallIds(result))
+      const results = new Set(allResultIds(result))
+      // Every remaining tool-result has a matching tool-call and vice versa.
+      for (const id of results) expect(calls.has(id)).toBe(true)
+      for (const id of calls) expect(results.has(id)).toBe(true)
+    }
+  })
+
+  it('evicts the oldest exchange first, keeping newer exchanges', () => {
+    // 9 messages; budget 7 ⇒ evict exactly the oldest exchange (ex1).
+    const result = degrade(mixedExchangeHistory(), { budget: 7, estimate: perMessage }).messages
+    const ids = new Set([...allCallIds(result), ...allResultIds(result)])
+    expect(ids.has('ex1')).toBe(false)
+    // The multi-tool fan-out and the newest exchange survive intact.
+    expect(ids.has('ex2a')).toBe(true)
+    expect(ids.has('ex2b')).toBe(true)
+    expect(ids.has('ex3')).toBe(true)
+  })
+
+  it('evicts a multi-tool fan-out exchange atomically (never half)', () => {
+    // Tight budget forces eviction past the fan-out exchange.
+    const result = degrade(mixedExchangeHistory(), { budget: 3, estimate: perMessage }).messages
+    const ids = new Set([...allCallIds(result), ...allResultIds(result)])
+    // ex2a and ex2b always travel together.
+    expect(ids.has('ex2a')).toBe(ids.has('ex2b'))
+  })
+})
+
+describe('degrade — truncation + pins (D-09/D-10)', () => {
+  const bigText = 'X'.repeat(2000)
+
+  it('truncates the largest unpinned message with the spec marker, leaving system/final byte-identical', () => {
+    const system = systemMessage()
+    const final = userText('final instruction stays whole')
+    const messages: ModelMessage[] = [system, userText(bigText), final]
+
+    // No tool exchanges ⇒ eviction cannot help ⇒ truncation fires. Default chars/4 estimator.
+    const outcome = degrade(messages, { budget: 40 })
+    expect(outcome.ok).toBe(true)
+
+    const result = outcome.messages
+    const truncated = result[1]
+    const text = Array.isArray(truncated.content)
+      ? truncated.content.map(p => (p.type === 'text' ? p.text : '')).join('')
+      : String(truncated.content)
+    expect(text.endsWith(TRUNCATION_MARKER)).toBe(true)
+    expect(text.length).toBeLessThan(bigText.length)
+
+    // Protected messages untouched.
+    expect(result[0]).toEqual(system)
+    expect(result[result.length - 1]).toEqual(final)
+  })
+
+  it('never truncates or evicts a caller-pinned message', () => {
+    const pinnedText = 'PINNED-KEEP-VERBATIM'
+    const messages: ModelMessage[] = [
+      systemMessage(),
+      { role: 'user', content: [{ type: 'text', text: pinnedText }] },
+      userText(bigText),
+      userText('final'),
+    ]
+    const pin = (message: ModelMessage): boolean =>
+      Array.isArray(message.content) && message.content.some(p => p.type === 'text' && p.text === pinnedText)
+
+    const result = degrade(messages, { budget: 40, pin }).messages
+    const pinnedStill = result.find(
+      m => Array.isArray(m.content) && m.content.some(p => p.type === 'text' && p.text === pinnedText),
+    )
+    expect(pinnedStill).toBeDefined()
+    // The big unpinned message got the marker; the pinned one is verbatim.
+    expect(JSON.stringify(result)).toContain(TRUNCATION_MARKER)
+    expect(JSON.stringify(pinnedStill)).not.toContain(TRUNCATION_MARKER)
+  })
+
+  it('does not evict a pinned tool exchange', () => {
+    const messages: ModelMessage[] = [
+      systemMessage(),
+      userText('start'),
+      ...toolExchange([{ toolCallId: 'pinned-ex', toolName: 'inspect', output: textOutput('keep') }]),
+      ...toolExchange([{ toolCallId: 'free-ex', toolName: 'inspect', output: textOutput('drop') }]),
+      userText('final'),
+    ]
+    // Pin the assistant message holding the 'pinned-ex' tool call.
+    const pin = (message: ModelMessage): boolean =>
+      message.role === 'assistant' &&
+      Array.isArray(message.content) &&
+      message.content.some(p => p.type === 'tool-call' && p.toolCallId === 'pinned-ex')
+
+    const result = degrade(messages, { budget: 5, estimate: perMessage, pin }).messages
+    const ids = new Set([...allCallIds(result), ...allResultIds(result)])
+    expect(ids.has('pinned-ex')).toBe(true)
+    expect(ids.has('free-ex')).toBe(false)
+  })
+})
+
+describe('degrade — cannot-fit (D-09)', () => {
+  it('returns a structured cannot-fit when pinned content alone exceeds budget (never throws)', () => {
+    const pinnedMarker = 'PINNED-HUGE-'
+    const pinnedBig: ModelMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: pinnedMarker + 'P'.repeat(4000) }],
+    }
+    const messages: ModelMessage[] = [systemMessage(), pinnedBig, userText('final')]
+    // Content-based pin: object identity does not survive the hygiene pass.
+    const pin = (message: ModelMessage): boolean =>
+      Array.isArray(message.content) &&
+      message.content.some(p => p.type === 'text' && p.text.startsWith(pinnedMarker))
+
+    let outcome!: ReturnType<typeof degrade>
+    expect(() => {
+      outcome = degrade(messages, { budget: 5, pin })
+    }).not.toThrow()
+
+    expect(outcome.ok).toBe(false)
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('pinned-content-exceeds-budget')
+      expect(Array.isArray(outcome.messages)).toBe(true)
+    }
+  })
+})
