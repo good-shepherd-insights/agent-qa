@@ -157,3 +157,125 @@ export function isContextLengthOverflow(err: unknown): boolean {
   const lower = message.toLowerCase()
   return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(lower))
 }
+
+// ---------------------------------------------------------------------------
+// The generic clamp → pre-degrade → call → overflow-retry-once → recordUsage
+// wrapper (D-10/D-17). Provider-neutral and result-generic so both the planner
+// (result = PlanningTurnResult) and verifier (result = generateText result)
+// consume it identically (D-03). The tool-loop (planning-turn.ts) stays pure —
+// this module owns all clamp/degrade/retry policy (D-15).
+// ---------------------------------------------------------------------------
+
+export interface ClampedCallOptions<T> {
+  accounting: TokenAccounting
+  /** System tier — pinned by construction (never trimmed); counted into `I`. */
+  system: SystemModelMessage[]
+  /** Turn messages — the degrade-eligible set. */
+  messages: ModelMessage[]
+  /** Serialized action-slice JSON (computed once at the call site); '' when none. */
+  toolSchema?: string
+  /** Pin predicate protecting the observation + current instruction (D-08). */
+  pin: (message: ModelMessage, index: number) => boolean
+  /** Provider call: receives the output cap and the fitted message set. */
+  call: (maxOutputTokens: number, messages: ModelMessage[]) => Promise<T>
+  /** Overflow predicate; defaults to the runner-local isContextLengthOverflow. */
+  isOverflow?: (err: unknown) => boolean
+  /** Per-call safety policy override (D-14). */
+  safetyOverride?: SafetyOverrides
+  /** Extract the usage anchor from a successful result; defaults to `result.usage`. */
+  recordFrom?: (result: T) => LanguageModelUsage
+}
+
+export interface ClampedCallResult<T> {
+  result: T
+  /**
+   * The structured degrade outcome, present only when a (proactive or reactive)
+   * degrade ran. Widened over RunnerDegradeOutcome so callers may read `.reason`
+   * directly (the `ok:true` fit carries no reason) without discriminating on `.ok`.
+   */
+  degrade?: { ok: boolean; reason?: 'pinned-content-exceeds-budget'; messages: ModelMessage[] }
+}
+
+interface FittedTurn {
+  maxOut: number
+  messages: ModelMessage[]
+  degrade?: RunnerDegradeOutcome
+}
+
+/**
+ * Compute the clamp for the current ceilings and fit the turn messages to the input
+ * budget. Degrades (proactively) when the input estimate exceeds the budget, or when
+ * `force` is set (the reactive backstop after a live overflow). On a cannot-fit
+ * (`ok:false`) outcome it keeps the best-effort pinned floor and surfaces the reason —
+ * never throws (D-17).
+ */
+function fitTurn(
+  opts: ClampedCallOptions<unknown>,
+  toolSchemaTokens: number,
+  force: boolean,
+): FittedTurn {
+  const { accounting, system, messages, pin } = opts
+  const inputEstimate = accounting.estimate([...system, ...messages]) + toolSchemaTokens
+  const { maxOut, budget } = computeClamp(accounting, inputEstimate, opts.safetyOverride)
+
+  if (!force && inputEstimate <= budget) {
+    return { maxOut, messages }
+  }
+
+  // Degrade only the turn messages: carve the system + tool-schema tokens out of the
+  // input budget so the port trims the message stream against the remaining headroom.
+  const messageBudget = budget - accounting.estimate(system) - toolSchemaTokens
+  const outcome = accounting.degrade(messages, { budget: messageBudget, pin })
+  return { maxOut, messages: outcome.messages, degrade: outcome }
+}
+
+/**
+ * Run one clamped, degrade-fitted provider call with a single reactive overflow retry.
+ *
+ * 1. Compute the clamp and proactively degrade the turn messages when the input
+ *    estimate exceeds the budget (pinning observation + instruction).
+ * 2. Invoke `call(maxOut, fittedMessages)`.
+ * 3. On a runner-local context overflow, recompute the clamp against the now-shrunk
+ *    window (the 354 lazy capabilities thunk has learned it), re-degrade, and retry
+ *    the call EXACTLY once. A non-overflow error rethrows unchanged.
+ * 4. After a successful response, feed `recordUsage` once with the full sent set.
+ *
+ * Never throws for the cannot-fit case — it proceeds with the pinned floor and returns
+ * the structured degrade outcome (D-17).
+ */
+export async function executeClampedCall<T>(
+  opts: ClampedCallOptions<T>,
+): Promise<ClampedCallResult<T>> {
+  const isOverflow = opts.isOverflow ?? isContextLengthOverflow
+  const recordFrom =
+    opts.recordFrom ?? ((result: T) => (result as { usage: LanguageModelUsage }).usage)
+  const toolSchema = opts.toolSchema ?? ''
+  const toolSchemaTokens = toolSchema ? estimateTokens(toolSchema) : 0
+
+  const record = (result: T, sent: ModelMessage[], degrade?: RunnerDegradeOutcome) => {
+    accountingRecord(opts.accounting, recordFrom(result), opts.system, sent)
+    return { result, degrade }
+  }
+
+  const proactive = fitTurn(opts as ClampedCallOptions<unknown>, toolSchemaTokens, false)
+
+  try {
+    const result = await opts.call(proactive.maxOut, proactive.messages)
+    return record(result, proactive.messages, proactive.degrade)
+  } catch (err) {
+    if (!isOverflow(err)) throw err
+    // Reactive backstop: recompute + re-degrade against the shrunk window, retry once.
+    const reactive = fitTurn(opts as ClampedCallOptions<unknown>, toolSchemaTokens, true)
+    const result = await opts.call(reactive.maxOut, reactive.messages)
+    return record(result, reactive.messages, reactive.degrade ?? proactive.degrade)
+  }
+}
+
+function accountingRecord(
+  accounting: TokenAccounting,
+  usage: LanguageModelUsage,
+  system: SystemModelMessage[],
+  sent: ModelMessage[],
+): void {
+  accounting.recordUsage(usage, [...system, ...sent])
+}
