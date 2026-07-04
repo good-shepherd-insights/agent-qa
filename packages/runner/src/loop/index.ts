@@ -52,6 +52,11 @@ const CONTEXT_ERROR_PATTERNS = [
 
 const CANCELLED_MESSAGE = 'Step cancelled by user'
 
+// D-12 knowledge-brief seam: the token budget the volatile-tier brief may consume when a
+// KnowledgeHintReader is bound. Small by design (the brief is L3 hypotheses, not commands);
+// inert in M1 while the port is unbound, at which point no brief is sourced at all.
+const KNOWLEDGE_BRIEF_BUDGET = 512
+
 // The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
 //   1. planner stepFailed          → failed  (no execution)
 //   2. setVariable + stepComplete  → passed  (short-circuit, no verify)
@@ -245,6 +250,17 @@ export async function executeStep(
       }
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
+      // Knowledge-brief sourcing seam (D-12): source the volatile-tier brief through the
+      // optional KnowledgeHintReader port, mirroring the safetyHooks optional-chain idiom
+      // above. In M1 `ports.knowledgeReader` is unbound, so this yields undefined and the
+      // slot stays empty — the volatile tier renders no brief and NEVER throws. When M2
+      // binds a reader, the served BriefBlock's assembled tier lands here with no assembly
+      // rework. `scope` is a test-tier ScopeKey (D-15 discretion; inert while unbound).
+      const brief = ports.knowledgeReader?.getRunBrief(
+        { tier: 'test', key: context.testName },
+        KNOWLEDGE_BRIEF_BUDGET,
+      )
+      context.knowledgeBrief = brief?.tiers.L2 ?? context.knowledgeBrief
       try {
         planResult = await withAbort(
           ports.planner.plan(stepInstruction, screenState, context, ports.abortSignal),

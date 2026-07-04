@@ -448,16 +448,6 @@ export async function runTest(
       break
     }
 
-    let memoryContext: string | undefined
-    if (memoryProvider) {
-      try {
-        const memResult = memoryProvider.queryForStep(instruction, stepIndex)
-        if (memResult) memoryContext = memResult.formatted
-      } catch {
-        // Memory query failure is non-fatal
-      }
-    }
-
     runnerLog?.info('Step started', { stepIndex, totalSteps: test.steps.length, testName: test.name })
 
     const stepEventContext: StepEventContext = {
@@ -475,9 +465,9 @@ export async function runTest(
     // and is intentionally absent. D-13 re-run threading (LOOP-03): on a re-run attempt
     // the typed re-run fields carry the explicit flag, attempt number, and prior failure
     // summary into every step's context; they supersede v1's bare failureContext string
-    // (exactly one channel — the typed fields). A re-run carries EVERYTHING: full
-    // memory/context, no ablation (memoryContext is not filtered or reset between
-    // attempts).
+    // (exactly one channel — the typed fields). The opaque memory-context string is retired
+    // (355 D-13); the two v2 channels (knowledgeBrief/workingMemory) stay unset here — the
+    // loop sources the volatile-tier brief via the KnowledgeHintReader port, empty until M2.
     const context: RunnerStepContext = {
       stepInstruction: instruction,
       testName: test.name,
@@ -488,7 +478,6 @@ export async function runTest(
       verifierModel: config.verifierModel,
       modelId: typeof config.plannerModel === 'object' && config.plannerModel && 'modelId' in config.plannerModel ? (config.plannerModel as { modelId: string }).modelId : undefined,
       variables: redactSecretValue(Object.fromEntries(variableStore.getAll()), config.secretRedactor),
-      memoryContext,
       isRerun: rerunContext !== undefined,
       rerunAttempt: rerunContext?.attempt,
       previousFailureSummary: rerunContext?.previousFailureSummary,

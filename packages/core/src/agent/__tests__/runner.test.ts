@@ -7,7 +7,15 @@ import type { Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
 import { runTest, runTestWithRetry } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
-import { buildStepPrompt } from '@vostride/agent-qa-runner'
+import { composeTurnMessages } from '@vostride/agent-qa-runner'
+
+// The 355-03 tier split retired the single-string buildStepPrompt; the turn content is now
+// a ModelMessage[] from composeTurnMessages. Flatten the string-content messages so the
+// re-run wording the planner provably sees can still be asserted end-to-end.
+const flattenTurnText = (context: RunnerStepContext): string =>
+  composeTurnMessages(context, makeScreenState())
+    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .join('\n')
 import type { StepContext as RunnerStepContext } from '@vostride/agent-qa-runner'
 
 const { mockRunAccessibilityCheck } = vi.hoisted(() => ({
@@ -722,13 +730,13 @@ describe('D-13 re-run threading (LOOP-03)', () => {
 
     // Build the planner prompt from the captured re-run context (the 353-03 prompt
     // block) and assert the re-run wording the planner provably sees.
-    const rerunPrompt = buildStepPrompt('Step A', makeScreenState(), contexts[1])
+    const rerunPrompt = flattenTurnText(contexts[1])
     expect(rerunPrompt).toContain('RE-RUN CONTEXT')
     expect(rerunPrompt).toContain('this is re-run attempt 1')
     expect(rerunPrompt).toContain('sentinel')
 
     // The non-rerun attempt-1 prompt has no re-run block.
-    const firstPrompt = buildStepPrompt('Step A', makeScreenState(), contexts[0])
+    const firstPrompt = flattenTurnText(contexts[0])
     expect(firstPrompt).not.toContain('RE-RUN CONTEXT')
   })
 
