@@ -1000,10 +1000,29 @@ describe('run command — reduced flag surface and target resolution', () => {
       }),
       { kind: 'api-key', apiKey: 'test-key' },
     )
-    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(4)
+    // 355-07: the planner ctor now takes a 5th injected TokenAccounting arg (D-15) and the
+    // verifier a 2nd — role-separated instances built via createTokenAccounting at the
+    // composition root. The accounting factory is unmocked, so a structural port check.
+    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(5)
     expect(mockLLMPlanner.mock.calls[0][0]).toBe(mockCreateModel.mock.results[0].value)
     expect(mockLLMPlanner.mock.calls[0][1]).toBe('web')
-    expect(mockLLMVerifier.mock.calls[0]).toEqual([mockCreateModel.mock.results[1].value])
+    const plannerAccounting = mockLLMPlanner.mock.calls[0][4]
+    expect(plannerAccounting).toEqual(expect.objectContaining({
+      estimate: expect.any(Function),
+      degrade: expect.any(Function),
+      recordUsage: expect.any(Function),
+      getCeilings: expect.any(Function),
+    }))
+    expect(mockLLMVerifier.mock.calls[0]).toHaveLength(2)
+    expect(mockLLMVerifier.mock.calls[0][0]).toBe(mockCreateModel.mock.results[1].value)
+    const verifierAccounting = mockLLMVerifier.mock.calls[0][1]
+    expect(verifierAccounting).toEqual(expect.objectContaining({
+      estimate: expect.any(Function),
+      recordUsage: expect.any(Function),
+      getCeilings: expect.any(Function),
+    }))
+    // Role-separated instances — the planner and verifier must not share one accounting.
+    expect(plannerAccounting).not.toBe(verifierAccounting)
   })
 })
 
