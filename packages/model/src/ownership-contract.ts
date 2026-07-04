@@ -6,6 +6,7 @@ export const AGENT_QA_MODEL_PACKAGE_CLASSES = ['modelOwner', 'storageNeutral'] a
 export const AGENT_QA_MODEL_ALLOWED_RESPONSIBILITIES = [
   'provider SDK adapters, provider registry ownership, and profile-to-LanguageModel adapters',
   'central language-model middleware for model-owner package boundaries',
+  'provider-neutral token-accounting, deterministic message-degrade, and log-compaction substrate over AI SDK ModelMessage[]',
 ] as const
 export const AGENT_QA_MODEL_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',

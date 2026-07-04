@@ -3,6 +3,17 @@ export { getProviderOptions } from './adapters/index'
 export type { AdapterBody } from './adapters/index'
 export { gemini } from './adapters/gemini'
 export { openaiCompatible, openaiSubscription } from './adapters/openai'
+export { compactLogs } from './accounting/compact'
+export { guardBlob } from './accounting/compact'
+export type { LogEntry } from './accounting/compact'
+export { isContextLengthOverflow } from './accounting/overflow'
+export { createTokenAccounting } from './accounting/token-accounting'
+export type {
+  DegradeOptions,
+  DegradeOutcome,
+  TokenAccounting,
+  TokenAccountingOptions,
+} from './accounting/types'
 export { deriveTransport } from './auth'
 export type { ResolvedModelAuth, Transport } from './auth'
 export { FAMILIES, UNKNOWN_FLOOR, matchFamily } from './capability/family-table'
