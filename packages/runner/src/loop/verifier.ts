@@ -4,12 +4,13 @@
 // (the loop's abort path depends on it, T-353-07 mitigation). §12.2 structured-assert
 // semantics are Phase 360; no semantic changes here.
 import { generateText, Output } from 'ai'
-import type { LanguageModel } from 'ai'
+import type { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
 import { z } from 'zod'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { Verifier, VerifyResult } from './types.js'
-import { buildVerificationPrompt } from './prompts.js'
+import type { TokenAccounting } from './ports.js'
+import { buildVerificationPrompt, buildVerifierStableTier } from './prompts.js'
 
 // Three-outcome verification strategy (multi-action replanning):
 // The planner self-reports goal completion via stepComplete. The verifier
@@ -27,9 +28,15 @@ export const VerificationResultSchema = z.object({
 
 export class LLMVerifier implements Verifier {
   private model: LanguageModel
+  private accounting: TokenAccounting
 
-  constructor(model: LanguageModel) {
+  // TokenAccounting is a required constructor dependency (D-15 constructor-injection):
+  // the verifier holds its OWN instance (not the planner's — distinct cache entry, D-11)
+  // and rides the same clamp/degrade/recordUsage seam every verifier call goes through
+  // (CTXB-04). Plan 07 constructs a distinct verifierAccounting at the composition root.
+  constructor(model: LanguageModel, accounting: TokenAccounting) {
     this.model = model
+    this.accounting = accounting
   }
 
   async verify(
@@ -50,27 +57,32 @@ export class LLMVerifier implements Verifier {
         description: 'Verification of whether the test step succeeded',
       })
 
-      const result = screenshot
-        ? await generateText({
-            model: this.model,
-            maxRetries: 0,
-            output: outputConfig,
-            abortSignal,
-            messages: [{
-              role: 'user' as const,
-              content: [
-                { type: 'text' as const, text: promptText },
-                { type: 'image' as const, image: screenshot },
-              ],
-            }],
-          })
-        : await generateText({
-            model: this.model,
-            maxRetries: 0,
-            output: outputConfig,
-            abortSignal,
-            prompt: promptText,
-          })
+      // Verdict-identity cached stable prefix (D-11): a one-tier SystemModelMessage array
+      // carrying the single Anthropic ephemeral cache_control breakpoint. Byte-stable per
+      // run (buildVerifierStableTier is arg-less), so it forms the verifier's own cache
+      // entry — distinct system content from the planner ⇒ a distinct cache key. The
+      // `anthropic` providerOptions namespace is a transparent no-op on other providers.
+      // No planner-ingredient parity (previous-steps / working-memory framing) is added.
+      const system: SystemModelMessage[] = [{
+        role: 'system',
+        content: buildVerifierStableTier(),
+        providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+      }]
+
+      // The single per-call turn message: before/after states + action as text, plus the
+      // screenshot image part when present. It is the only turn message (and the final
+      // message) — pinned by construction so the clamp never evicts the states/action.
+      const turnMessage: ModelMessage = {
+        role: 'user',
+        content: screenshot
+          ? [
+              { type: 'text', text: promptText },
+              { type: 'image', image: screenshot },
+            ]
+          : [{ type: 'text', text: promptText }],
+      }
+
+      const result = await this.runVerification(system, turnMessage, outputConfig, abortSignal)
 
       if (!result.output) {
         throw new Error('LLM returned empty response — no verification result')
@@ -96,5 +108,23 @@ export class LLMVerifier implements Verifier {
         },
       }
     }
+  }
+
+  // Single structured verification call over the cached stable tier + the pinned turn
+  // message. Task 2 wraps this in the shared clamp/degrade/retry-once + recordUsage seam.
+  private async runVerification(
+    system: SystemModelMessage[],
+    turnMessage: ModelMessage,
+    outputConfig: ReturnType<typeof Output.object>,
+    abortSignal?: AbortSignal,
+  ) {
+    return generateText({
+      model: this.model,
+      maxRetries: 0,
+      output: outputConfig,
+      abortSignal,
+      system,
+      messages: [turnMessage],
+    })
   }
 }
