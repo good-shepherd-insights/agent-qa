@@ -5,43 +5,63 @@
 // slice), the screenshot-failure fallback (retry once without the image), defensive
 // tool-call arg extraction across SDK key variants, and token-usage accumulation.
 //
-// In 353-02 Task 2 the LLM exchange is delegated to executePlanningTurn (the bounded
-// planning tool-loop); this file keeps the one-shot behavior byte-identical when zero
-// non-action tools are bound (D-07).
-import type { LanguageModel } from 'ai'
+// Phase 355 (CTXB-01/CTXB-02/CTXB-04) rewires the call site off v1's single crammed
+// user-string onto: (a) the cache-ordered [stable, context, volatile] system tier array
+// carrying the single Anthropic ephemeral cache_control breakpoint (on the context tier),
+// (b) the decomposed pinnable turn messages from composeTurnMessages, and (c) the shared
+// clamp/degrade/retry-once wrapper (executeClampedCall) fed by an injected TokenAccounting
+// port. Zero non-action tools are bound (D-07), so executePlanningTurn behaves as v1's
+// one-shot per turn; the screenshot fallback and maxRetries:0 semantics are preserved.
+import type { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
 import type { Platform, ScreenState } from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
-import type { LoopScopedLogger } from './ports.js'
-import { buildSystemPrompt, composeTurnMessages } from './prompts.js'
+import type { LoopScopedLogger, TokenAccounting } from './ports.js'
+import { buildSystemPrompt, buildContextTier, buildVolatileTier, composeTurnMessages } from './prompts.js'
 import { buildTools, defaultRegistry } from '../tools/index.js'
 import { executePlanningTurn, type PlanningTurnResult } from './planning-turn.js'
 
-// Flatten the text parts of the decomposed turn messages into v1's single user-prompt
-// string (355-03 interim). Image parts are dropped here — the planner attaches the
-// screenshot on its own below. Plan 05 drives the decomposed messages directly.
-function flattenTurnText(messages: ReturnType<typeof composeTurnMessages>): string {
-  return messages
-    .map((m) =>
-      typeof m.content === 'string'
-        ? m.content
-        : m.content
-            .map((part) => ('text' in part && typeof part.text === 'string' ? part.text : ''))
-            .join(''),
-    )
-    .join('\n')
-}
+// The text-only fallback note appended to the current-instruction message when the
+// screenshot send fails (D-11). Byte-identical to v1's note so the fallback turn matches.
+const SCREENSHOT_UNAVAILABLE_NOTE =
+  '[Note: Visual screenshot is unavailable for this step. Rely on the accessibility tree and DOM context for element identification.]'
 
 export class LLMPlanner implements Planner {
   private model: LanguageModel
   private platform: Platform
   private logger?: LoopScopedLogger
   private agentRules?: string
+  private accounting: TokenAccounting
 
-  constructor(model: LanguageModel, platform: Platform = 'web', logger?: LoopScopedLogger, agentRules?: string) {
+  // TokenAccounting is a required constructor dependency (D-15 constructor-injection):
+  // it is the clamp/degrade/recordUsage seam every planning call rides. The composition
+  // roots (CLI/dashboard) inject it in Plan 07. Positional order is preserved so existing
+  // call sites keep model/platform/logger/agentRules; `accounting` is the new final arg.
+  constructor(
+    model: LanguageModel,
+    platform: Platform | undefined,
+    logger: LoopScopedLogger | undefined,
+    agentRules: string | undefined,
+    accounting: TokenAccounting,
+  ) {
     this.model = model
-    this.platform = platform
+    this.platform = platform ?? 'web'
     this.logger = logger
     this.agentRules = agentRules
+    this.accounting = accounting
+  }
+
+  // Cache-ordered [stable, context, volatile] system tiers (D-04/D-05/D-07). The single
+  // Anthropic ephemeral cache_control breakpoint rides the context tier (buildContextTier
+  // sets it at message-level providerOptions); the stable tier sits above it and the
+  // volatile tier (knowledge brief + date-granularity stamp) below it. Per-turn state never
+  // enters these tiers — it rides composeTurnMessages after the system region. Non-Anthropic
+  // providers never parse the `anthropic` namespace, so the breakpoint is a transparent no-op.
+  private buildSystemTiers(context: StepContext): SystemModelMessage[] {
+    return [
+      { role: 'system', content: buildSystemPrompt(this.platform, this.agentRules) },
+      buildContextTier(context),
+      buildVolatileTier(context),
+    ]
   }
 
   async plan(
@@ -51,65 +71,43 @@ export class LLMPlanner implements Planner {
     abortSignal?: AbortSignal,
   ): Promise<PlanResult> {
     const planStart = performance.now()
-    // Turn content is now decomposed into pinnable messages (355-03, D-09). This call
-    // site keeps v1's single-user-string shape by flattening the text parts of those
-    // messages; Plan 05 replaces this with the full [stable, context, volatile] system
-    // tiers + the decomposed messages + the degrade/clamp + recordUsage wiring.
-    const turnMessages = composeTurnMessages({ ...context, stepInstruction: step }, screenState)
-    const prompt = flattenTurnText(turnMessages)
-    const systemPrompt = buildSystemPrompt(this.platform, this.agentRules)
-    const screenshot = context.screenshot
-
+    const turnContext: StepContext = { ...context, stepInstruction: step }
+    const system = this.buildSystemTiers(turnContext)
     const actionTools = buildTools(defaultRegistry, { platform: this.platform })
 
-    // Delegate the LLM exchange to the bounded planning tool-loop (D-06). Zero
-    // non-action tools are bound (D-07), so the turn behaves as a one-shot: exactly
-    // one generateText call, terminating on the first (action) tool call — provably
-    // identical to v1's one-shot planner. The screenshot-failure fallback stays here:
-    // it retries the whole turn without the image, matching v1's single-call fallback
-    // (with no non-action tools there is only one call per turn).
+    // One clamped/degraded planning call over the decomposed turn messages. Task 1 wires
+    // the tier array + decomposed messages; Task 2 wraps this in executeClampedCall.
+    const runTurn = (messages: ModelMessage[]): Promise<PlanningTurnResult> =>
+      executePlanningTurn({
+        model: this.model,
+        registry: defaultRegistry,
+        actionTools,
+        system,
+        messages,
+        abortSignal,
+        logger: this.logger,
+      })
+
+    // Zero non-action tools are bound (D-07): the turn is a one-shot, provably identical
+    // to v1's single-call planner. The screenshot-failure fallback retries the whole turn
+    // without the image (v1 parity), re-composing the turn messages with the text-only note.
     let turnResult: PlanningTurnResult
     try {
-      if (screenshot) {
+      if (context.screenshot) {
         try {
-          turnResult = await executePlanningTurn({
-            model: this.model,
-            registry: defaultRegistry,
-            actionTools,
-            system: systemPrompt,
-            messages: [{
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                { type: 'image', image: screenshot },
-              ],
-            }],
-            abortSignal,
-            logger: this.logger,
-          })
+          turnResult = await runTurn(composeTurnMessages(turnContext, screenState))
         } catch (err) {
-          this.logger?.warn('Screenshot send failed, retrying without image', { error: err instanceof Error ? err.message : String(err) })
-          const fallbackPrompt = prompt + '\n\n[Note: Visual screenshot is unavailable for this step. Rely on the accessibility tree and DOM context for element identification.]'
-          turnResult = await executePlanningTurn({
-            model: this.model,
-            registry: defaultRegistry,
-            actionTools,
-            system: systemPrompt,
-            messages: [{ role: 'user', content: fallbackPrompt }],
-            abortSignal,
-            logger: this.logger,
+          this.logger?.warn('Screenshot send failed, retrying without image', {
+            error: err instanceof Error ? err.message : String(err),
           })
+          const fallbackNote = turnContext.promptNote
+            ? `${turnContext.promptNote}\n${SCREENSHOT_UNAVAILABLE_NOTE}`
+            : SCREENSHOT_UNAVAILABLE_NOTE
+          const fallbackContext: StepContext = { ...turnContext, screenshot: undefined, promptNote: fallbackNote }
+          turnResult = await runTurn(composeTurnMessages(fallbackContext, screenState))
         }
       } else {
-        turnResult = await executePlanningTurn({
-          model: this.model,
-          registry: defaultRegistry,
-          actionTools,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: prompt }],
-          abortSignal,
-          logger: this.logger,
-        })
+        turnResult = await runTurn(composeTurnMessages(turnContext, screenState))
       }
     } catch (err) {
       if (abortSignal?.aborted) throw err
