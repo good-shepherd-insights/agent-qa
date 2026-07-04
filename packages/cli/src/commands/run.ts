@@ -6,7 +6,7 @@ import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, 
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveMemoryRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
-import { createModel, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
+import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
 import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
@@ -1272,6 +1272,11 @@ async function executeSuites(
 
     const plannerModel = createModel(plannerProfile, plannerAuth)
     const verifierModel = createModel(verifierProfile, verifierAuth)
+    // D-04 lazy thunk: resolveCapabilities re-reads the profile per call so a mid-run
+    // overflow-driven window shrink is picked up on the next turn. Separate instances per
+    // role (planner vs verifier) so each owns its own cache anchor (D-11).
+    const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
+    const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })
 
     const { LogManager } = await import('@vostride/agent-qa-core')
 
@@ -1299,8 +1304,8 @@ async function executeSuites(
     if (suiteLogCapture?.network === false) {
       suiteEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
     }
-    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined)
-    const verifier = new LLMVerifier(verifierModel)
+    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined, plannerAccounting)
+    const verifier = new LLMVerifier(verifierModel, verifierAccounting)
 
     const reporters: import('@vostride/agent-qa-core').Reporter[] = []
     if (reporterSelection.console) {
@@ -2208,6 +2213,9 @@ export function createRunCommand(): Command {
             }
             const plannerModel = createModel(plannerProfile, plannerAuth)
             const verifierModel = createModel(verifierProfile, verifierAuth)
+            // D-04 lazy thunk + role-separated accounting instances (see suite-level site).
+            const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
+            const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })
             const plannerConfig = {
               maxSubActions: testMergedConfig.use?.planner?.maxSubActions ?? 10,
               previousStepCount: testMergedConfig.use?.planner?.previousStepCount ?? 3,
@@ -2221,8 +2229,8 @@ export function createRunCommand(): Command {
             if (testLogCapture?.network === false) {
               testEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
             }
-            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testEffectiveRules || undefined)
-            const verifier = new LLMVerifier(verifierModel)
+            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testEffectiveRules || undefined, plannerAccounting)
+            const verifier = new LLMVerifier(verifierModel, verifierAccounting)
 
             // Per-test timeouts from merged config
             const testTimeouts = {

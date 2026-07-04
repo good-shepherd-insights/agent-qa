@@ -21,7 +21,7 @@ import {
   LLMVerifier,
   resolveSecretTemplatesInValue,
 } from '@vostride/agent-qa-runner'
-import { createModel } from '@vostride/agent-qa-model'
+import { createModel, createTokenAccounting, resolveCapabilities } from '@vostride/agent-qa-model'
 import type {
   AuthStateMetadata,
   HookDefinition,
@@ -622,8 +622,12 @@ export class LiveSession {
     )
     const { profile, auth } = toModelProfileAndAuth(modelIdentity, runtimeAuth)
     this.model = createModel(profile, auth)
-    this.planner = new LLMPlanner(this.model, config.platform, undefined, config.agentRules)
-    this.verifier = new LLMVerifier(this.model)
+    // Both roles share this.model here, but hold separate accounting instances per role so
+    // each owns its own cache anchor (D-11); the D-04 lazy thunk re-reads `profile` per call.
+    const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
+    const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
+    this.planner = new LLMPlanner(this.model, config.platform, undefined, config.agentRules, plannerAccounting)
+    this.verifier = new LLMVerifier(this.model, verifierAccounting)
 
     this.status = 'idle'
     this.createdAt = Date.now()
