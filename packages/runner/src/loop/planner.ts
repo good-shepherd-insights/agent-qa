@@ -12,13 +12,14 @@
 // clamp/degrade/retry-once wrapper (executeClampedCall) fed by an injected TokenAccounting
 // port. Zero non-action tools are bound (D-07), so executePlanningTurn behaves as v1's
 // one-shot per turn; the screenshot fallback and maxRetries:0 semantics are preserved.
-import type { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
+import type { LanguageModel, LanguageModelUsage, ModelMessage, SystemModelMessage } from 'ai'
 import type { Platform, ScreenState } from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { LoopScopedLogger, TokenAccounting } from './ports.js'
 import { buildSystemPrompt, buildContextTier, buildVolatileTier, composeTurnMessages } from './prompts.js'
 import { buildTools, defaultRegistry } from '../tools/index.js'
 import { executePlanningTurn, type PlanningTurnResult } from './planning-turn.js'
+import { executeClampedCall, type ClampedCallResult } from './clamp.js'
 
 // The text-only fallback note appended to the current-instruction message when the
 // screenshot send fails (D-11). Byte-identical to v1's note so the fallback turn matches.
@@ -74,28 +75,61 @@ export class LLMPlanner implements Planner {
     const turnContext: StepContext = { ...context, stepInstruction: step }
     const system = this.buildSystemTiers(turnContext)
     const actionTools = buildTools(defaultRegistry, { platform: this.platform })
+    // Tool-schema tokens are counted into the input estimate `I` explicitly — the port's
+    // estimate() sees the message stream only, never the always-send-all action slice
+    // (clamp Pitfall 4). Serialized once here and handed to the clamp helper as bytes.
+    const toolSchema = JSON.stringify(actionTools)
 
-    // One clamped/degraded planning call over the decomposed turn messages. Task 1 wires
-    // the tier array + decomposed messages; Task 2 wraps this in executeClampedCall.
-    const runTurn = (messages: ModelMessage[]): Promise<PlanningTurnResult> =>
-      executePlanningTurn({
-        model: this.model,
-        registry: defaultRegistry,
-        actionTools,
+    // One clamped/degraded planning call over the decomposed turn messages. The clamp helper
+    // (Plan 04) computes the dynamic output cap, proactively degrades when the input estimate
+    // exceeds the budget (pinning the observation + instruction so the live screen/goal are
+    // never evicted, D-08), retries exactly once on a live context overflow, and feeds
+    // recordUsage once per successful response (CTXB-04, D-10/D-17). The pin set is a
+    // reference-identity Set over the last two composeTurnMessages entries — the latest
+    // OBSERVATION (second-to-last) and the CURRENT INSTRUCTION (last) per the D-08 contract.
+    const runTurn = (messages: ModelMessage[]): Promise<ClampedCallResult<PlanningTurnResult>> => {
+      const observation = messages[messages.length - 2]
+      const instruction = messages[messages.length - 1]
+      const pinned = new Set<ModelMessage>([observation, instruction])
+      return executeClampedCall<PlanningTurnResult>({
+        accounting: this.accounting,
         system,
         messages,
-        abortSignal,
-        logger: this.logger,
+        toolSchema,
+        pin: (message) => pinned.has(message),
+        call: (maxOutputTokens, fitted) =>
+          executePlanningTurn({
+            model: this.model,
+            registry: defaultRegistry,
+            actionTools,
+            system,
+            messages: fitted,
+            maxOutputTokens,
+            abortSignal,
+            logger: this.logger,
+          }),
+        // recordUsage anchors on the observed input tokens (prompt only, per the clamp
+        // contract); the turn result's accumulated TokenUsage supplies the triad. The `ai`
+        // LanguageModelUsage also carries nested token-detail objects the port never reads —
+        // asserting the minimal anchor is honest here (fabricating detail zeros would not be).
+        recordFrom: (tr) =>
+          ({
+            inputTokens: tr.tokenUsage?.promptTokens ?? 0,
+            outputTokens: tr.tokenUsage?.completionTokens ?? 0,
+            totalTokens: tr.tokenUsage?.totalTokens ?? 0,
+          }) as LanguageModelUsage,
       })
+    }
 
     // Zero non-action tools are bound (D-07): the turn is a one-shot, provably identical
     // to v1's single-call planner. The screenshot-failure fallback retries the whole turn
-    // without the image (v1 parity), re-composing the turn messages with the text-only note.
-    let turnResult: PlanningTurnResult
+    // without the image (v1 parity), re-composing the turn messages with the text-only note;
+    // the retry rides the same clamp helper so it too is clamped/degraded (D-08).
+    let clamped: ClampedCallResult<PlanningTurnResult>
     try {
       if (context.screenshot) {
         try {
-          turnResult = await runTurn(composeTurnMessages(turnContext, screenState))
+          clamped = await runTurn(composeTurnMessages(turnContext, screenState))
         } catch (err) {
           this.logger?.warn('Screenshot send failed, retrying without image', {
             error: err instanceof Error ? err.message : String(err),
@@ -104,10 +138,10 @@ export class LLMPlanner implements Planner {
             ? `${turnContext.promptNote}\n${SCREENSHOT_UNAVAILABLE_NOTE}`
             : SCREENSHOT_UNAVAILABLE_NOTE
           const fallbackContext: StepContext = { ...turnContext, screenshot: undefined, promptNote: fallbackNote }
-          turnResult = await runTurn(composeTurnMessages(fallbackContext, screenState))
+          clamped = await runTurn(composeTurnMessages(fallbackContext, screenState))
         }
       } else {
-        turnResult = await runTurn(composeTurnMessages(turnContext, screenState))
+        clamped = await runTurn(composeTurnMessages(turnContext, screenState))
       }
     } catch (err) {
       if (abortSignal?.aborted) throw err
@@ -123,6 +157,17 @@ export class LLMPlanner implements Planner {
         throw new Error(`LLM provided invalid tool input: ${errorMsg}`)
       }
       throw err
+    }
+
+    const turnResult = clamped.result
+
+    // A cannot-fit degrade (system + tool schema + pinned observation/instruction alone
+    // exceed the budget) never throws — the clamp helper proceeds with the pinned floor and
+    // surfaces the structured reason. Log it and continue (D-17); the turn still ran.
+    if (clamped.degrade && clamped.degrade.ok === false) {
+      this.logger?.warn('Planning turn degraded to the pinned floor (input exceeds budget)', {
+        reason: clamped.degrade.reason,
+      })
     }
 
     if (!turnResult.ok) {
