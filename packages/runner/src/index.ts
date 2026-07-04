@@ -110,6 +110,9 @@ export type {
   LoopScopedLogger,
   LoopLogger,
   LoopPorts,
+  TokenAccounting,
+  RunnerDegradeOptions,
+  RunnerDegradeOutcome,
 } from './loop/ports.js'
 export {
   SecretStore,
