@@ -24,7 +24,7 @@
 // throws that surface are the abort propagation from generateText and the untouched
 // zod schemaInvalid grounding error from toolCallToActionPlan (D-09 / T-353-05).
 import { generateText } from 'ai'
-import type { LanguageModel, ModelMessage, Tool, ToolCallPart, ToolResultPart, ToolSet } from 'ai'
+import type { LanguageModel, ModelMessage, SystemModelMessage, Tool, ToolCallPart, ToolResultPart, ToolSet } from 'ai'
 import type { ActionPlan } from './types.js'
 import type { TokenUsage } from '../result.js'
 import type { LoopScopedLogger } from './ports.js'
@@ -92,13 +92,24 @@ export interface ExecutePlanningTurnOptions {
   registry: ToolRegistry
   /** The full v45 action slice (buildTools output) — always sent (always-send-all). */
   actionTools: ToolSet
-  system: string
+  /**
+   * System prompt — a single string, or the Phase 355 [stable, context, volatile]
+   * tier array the caller assembles (D-15). Passed through to generateText untouched;
+   * the tool-loop applies no clamp/degrade policy of its own.
+   */
+  system: string | Array<SystemModelMessage>
   /** The initial user message(s): text and optional image, built by the caller. */
   messages: ModelMessage[]
   /** Caller-registered non-action tools. Empty in production (D-07). */
   nonActionTools?: NonActionToolMap
   /** K override for tests (D-06). Defaults to DEFAULT_NON_ACTION_TOOL_BUDGET. */
   budget?: number
+  /**
+   * Dynamic output cap (CTXB-04) computed by the caller's clamp helper and passed
+   * through to generateText. `undefined` is a valid no-op passthrough — the tool-loop
+   * computes no clamp of its own (D-15/Pitfall 5).
+   */
+  maxOutputTokens?: number
   abortSignal?: AbortSignal
   logger?: LoopScopedLogger
 }
@@ -182,6 +193,7 @@ export async function executePlanningTurn(
     const result = await generateText({
       model: options.model,
       maxRetries: 0,
+      maxOutputTokens: options.maxOutputTokens,
       tools: combinedTools,
       toolChoice: 'required',
       system: options.system,
