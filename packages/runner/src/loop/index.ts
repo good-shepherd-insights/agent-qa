@@ -31,6 +31,7 @@ import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../resul
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
 import type { LoopPorts, StepKeyInput } from './ports.js'
+import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext } from './types.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
@@ -399,7 +400,7 @@ export async function executeStep(
         reasoning,
         result: 'failure',
         error: execError,
-        data: execResult.data !== undefined ? JSON.stringify(execResult.data).slice(0, 2000) : undefined,
+        data: guardActionData(execResult.data, ports.guardBlob),
       })
 
       // A failed cached action invalidates the cache and re-plans.
@@ -500,7 +501,7 @@ export async function executeStep(
         reasoning,
         result: 'success',
         verifierRejection: verifierReasoning,
-        data: execResult.data !== undefined ? JSON.stringify(execResult.data).slice(0, 2000) : undefined,
+        data: guardActionData(execResult.data, ports.guardBlob),
       })
       context.failureContext = `Sub-action ${actionIndex + 1} did not accomplish the goal: ${verifierReasoning}\n` +
         `Adapt your approach — try a different element or strategy.`
@@ -532,7 +533,7 @@ export async function executeStep(
       reasoning,
       result: 'success',
       verifierRejection: rawPlan.stepComplete ? verifierReasoning : undefined,
-      data: execResult.data !== undefined ? JSON.stringify(execResult.data).slice(0, 2000) : undefined,
+      data: guardActionData(execResult.data, ports.guardBlob),
     })
     if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
   }
