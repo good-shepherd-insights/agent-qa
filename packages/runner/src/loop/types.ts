@@ -56,7 +56,21 @@ export interface StepContext {
   verifierModel: LanguageModel
   modelId?: string
   variables?: Record<string, string>
-  memoryContext?: string
+  /**
+   * D-12/D-13 knowledge-brief channel (volatile tier). The pre-rendered L2 brief text,
+   * framed as hypotheses by `buildVolatileTier` — one of the two v2 channels that replace
+   * the retired opaque single memory-context string. Sourced via the `KnowledgeHintReader`
+   * port (rendered upstream from its `BriefBlock`); empty/undefined until M2 binds an impl,
+   * at which point the volatile tier omits the brief section and degrades to no-brief.
+   */
+  knowledgeBrief?: string
+  /**
+   * D-12/D-13 working-memory channel (structured turn content). Run-scoped memory injected
+   * as its own turn message by `composeTurnMessages` — the second v2 channel replacing the
+   * retired single memory-context string. Empty/undefined until 358 binds the working-memory
+   * store; omitted from the turn entirely when absent (empty-slot omission).
+   */
+  workingMemory?: string
   failureContext?: string
   /** Sub-actions already attempted in this step (multi-action mode). */
   subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; screenChanged?: boolean; data?: string }[]
