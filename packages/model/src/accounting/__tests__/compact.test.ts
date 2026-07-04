@@ -11,20 +11,26 @@ function sampleLines(rendered: string): string[] {
     .map(line => line.slice('  · '.length))
 }
 
+function headerLines(rendered: string): string[] {
+  return rendered.split('\n').filter(line => !line.startsWith('  · '))
+}
+
 describe('compactLogs — normalization', () => {
-  it('maps each variable-token kind to <*>', () => {
+  it('maps each variable-token kind to <*> in the grouped class header', () => {
     const entries: LogEntry[] = [
       { source: 'console', level: 'error', message: 'user 550e8400-e29b-41d4-a716-446655440000 failed' },
       { source: 'console', level: 'error', message: 'at 2026-07-04T12:34:56.789Z the host 192.168.1.24 replied' },
       { source: 'console', level: 'error', message: 'token 0xDEADBEEF hash a1b2c3d4e5f6a7b8 count 4217' },
     ]
-    const rendered = compactLogs(entries)
-    expect(rendered).toContain('user <*> failed')
-    expect(rendered).toContain('at <*> the host <*> replied')
-    expect(rendered).toContain('token <*> hash <*> count <*>')
-    expect(rendered).not.toContain('550e8400')
-    expect(rendered).not.toContain('192.168.1.24')
-    expect(rendered).not.toContain('0xDEADBEEF')
+    // Normalization is asserted on the grouped class headers; raw samples (D-13)
+    // legitimately preserve the original tokens for diagnostic value.
+    const headers = headerLines(compactLogs(entries)).join('\n')
+    expect(headers).toContain('user <*> failed')
+    expect(headers).toContain('at <*> the host <*> replied')
+    expect(headers).toContain('token <*> hash <*> count <*>')
+    expect(headers).not.toContain('550e8400')
+    expect(headers).not.toContain('192.168.1.24')
+    expect(headers).not.toContain('0xDEADBEEF')
   })
 })
 
