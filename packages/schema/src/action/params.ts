@@ -19,7 +19,7 @@ export type Scroll =
     }
   | {
       mode: 'untilVisible'
-      target: string
+      text: string
       ref?: Ref
       direction: 'up' | 'down' | 'left' | 'right'
       maxSwipes: number

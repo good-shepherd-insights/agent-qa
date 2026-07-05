@@ -694,7 +694,7 @@ describe('surface + id integrity', () => {
     registerAllActions(registry)
     const scrollSchema = registry.getSchema('common_scroll') as z.ZodType
     expect(scrollSchema.safeParse({ mode: 'direction', direction: 'down' }).success).toBe(true)
-    expect(scrollSchema.safeParse({ mode: 'untilVisible', target: 'Submit' }).success).toBe(true)
+    expect(scrollSchema.safeParse({ mode: 'untilVisible', text: 'Submit' }).success).toBe(true)
     expect(scrollSchema.safeParse({ scrollType: 'vertical', value: 500 }).success).toBe(false)
   })
 

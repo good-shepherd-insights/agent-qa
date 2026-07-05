@@ -61,7 +61,7 @@ export const scrollSchema = z.discriminatedUnion('mode', [
   }).strict(),
   z.object({
     mode: z.literal('untilVisible'),
-    target: z.string().describe('Visible text or accessible name to reveal'),
+    text: z.string().describe('Visible text or accessible name to reveal'),
     ref: refSchema(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when searching the whole page or screen.`).optional(),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     direction: z.enum(['up', 'down', 'left', 'right']).default('down')
