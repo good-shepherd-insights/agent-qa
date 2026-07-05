@@ -241,14 +241,23 @@ function appendPreviousSteps(parts: string[], context: StepContext): void {
   }
 }
 
-// D-12/D-13 working-memory channel: structured run-scoped turn content (the v2
-// successor to the retired opaque memoryContext string). Empty until 358 binds a
-// working-memory store; omitted entirely when the slot is unbound (empty-slot
-// omission) so no blank message leaks into the turn.
+// D-12/D-13 working-memory channel: structured run-scoped turn content (the v2 successor to
+// the retired opaque memoryContext string). Each entry is rendered VERBATIM (Pitfall 7 boundary
+// 2 — the planner needs the real OTP/filename untransformed) as opaque display text: the entry's
+// key, value, kind, provenance, and capture location when present. Values are never interpolated
+// into instructions/control flow (renderDescriptor precedent, T-358-05b). An empty array or unset
+// slot ⇒ no working-memory message at all (empty-slot omission), so no blank message leaks.
 function appendWorkingMemory(parts: string[], context: StepContext): void {
-  if (!context.workingMemory || context.workingMemory.trim().length === 0) return
-  parts.push('Working memory:')
-  parts.push(context.workingMemory)
+  const entries = context.workingMemory
+  if (!entries || entries.length === 0) return
+  parts.push('Working memory (facts captured earlier this run — verbatim):')
+  for (const entry of entries) {
+    const locBits: string[] = []
+    if (entry.testIndex !== undefined) locBits.push(`test ${entry.testIndex}`)
+    if (entry.stepIndex !== undefined) locBits.push(`step ${entry.stepIndex}`)
+    const loc = locBits.length > 0 ? ` · ${locBits.join(' ')}` : ''
+    parts.push(`- ${entry.key} = ${entry.value} [${entry.kind} · ${entry.provenance}${loc}]`)
+  }
 }
 
 function appendSubActionHistory(parts: string[], context: StepContext): void {

@@ -16,10 +16,11 @@ import type { StepContext } from '../types.js'
 import { buildVolatileTier, composeTurnMessages } from '../prompts.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
 
-// Plan-03 adds the two v2 slots to StepContext (retiring the single memory string, D-13). Typed
-// locally so the fixture reads cleanly before the production type lands (the retired
-// single opaque memory string is gone; these two slots replace it).
-type MemoryContext = Partial<StepContext> & { knowledgeBrief?: string; workingMemory?: string }
+// The two v2 memory slots on StepContext (D-12/D-13): knowledgeBrief (volatile tier) and
+// workingMemory (structured turn content). Phase 358 broke workingMemory from the plain-string
+// slot to the structured `WorkingMemoryEntry[]` set (sanctioned, no shim) — the fixtures below
+// construct entry arrays and assert the value reaches the planner turn verbatim.
+type MemoryContext = Partial<StepContext>
 
 function makeScreenState(): ScreenState {
   return buildAgentScreenState({
@@ -80,11 +81,15 @@ describe('knowledge brief channel — volatile tier (D-12/D-13)', () => {
 
 describe('working memory channel — structured turn content (D-12/D-13)', () => {
   it('emits a working-memory turn message from composeTurnMessages when the slot is set', () => {
-    const workingMemory = 'Stored email: test@example.com'
-    const context = makeStepContext({ workingMemory })
+    const emailValue = 'test@example.com'
+    const context = makeStepContext({
+      workingMemory: [{ key: 'email', value: emailValue, kind: 'extracted-value', provenance: 'observation' }],
+    })
     const messages = composeTurnMessages(context, makeScreenState())
 
-    expect(renderTurn(messages)).toContain(workingMemory)
+    // The verbatim captured value reaches the planner turn (structured entry rendering).
+    expect(renderTurn(messages)).toContain(emailValue)
+    expect(renderTurn(messages)).toContain('email')
   })
 
   it('omits the working-memory message entirely when the slot is empty (D-12 empty-slot omission)', () => {
@@ -100,8 +105,11 @@ describe('working memory channel — structured turn content (D-12/D-13)', () =>
 describe('the two channels are distinct (D-04/D-13)', () => {
   it('keeps the brief above the breakpoint (volatile tier) and working memory in turn content', () => {
     const brief = 'Login modal appears after clicking Sign In (trust: 0.80)'
-    const workingMemory = 'Stored email: test@example.com'
-    const context = makeStepContext({ knowledgeBrief: brief, workingMemory })
+    const emailValue = 'test@example.com'
+    const context = makeStepContext({
+      knowledgeBrief: brief,
+      workingMemory: [{ key: 'email', value: emailValue, kind: 'extracted-value', provenance: 'observation' }],
+    })
 
     const volatile = volatileText(context)
     const turn = renderTurn(composeTurnMessages(context, makeScreenState()))
@@ -110,7 +118,7 @@ describe('the two channels are distinct (D-04/D-13)', () => {
     expect(volatile).toContain(brief)
     expect(turn).not.toContain(brief)
     // Working memory lives in turn content (below the system region), never in the tier.
-    expect(turn).toContain(workingMemory)
-    expect(volatile).not.toContain(workingMemory)
+    expect(turn).toContain(emailValue)
+    expect(volatile).not.toContain(emailValue)
   })
 })

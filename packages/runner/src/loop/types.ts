@@ -85,12 +85,14 @@ export interface StepContext {
    */
   knowledgeBrief?: string
   /**
-   * D-12/D-13 working-memory channel (structured turn content). Run-scoped memory injected
-   * as its own turn message by `composeTurnMessages` — the second v2 channel replacing the
-   * retired single memory-context string. Empty/undefined until 358 binds the working-memory
-   * store; omitted from the turn entirely when absent (empty-slot omission).
+   * D-12/D-13 working-memory channel (structured turn content). The run-scoped
+   * `WorkingMemoryStore` set, injected verbatim as its own turn message by `composeTurnMessages`
+   * — the second v2 channel replacing the retired single memory-context string. Phase 358
+   * SANCTIONED BREAK (D-12/D-13): this was a plain `string` slot; it is now `WorkingMemoryEntry[]`
+   * (no shim, no string overload) so the planner receives the structured verbatim set. Empty
+   * array/undefined ⇒ omitted from the turn entirely (empty-slot omission).
    */
-  workingMemory?: string
+  workingMemory?: WorkingMemoryEntry[]
   failureContext?: string
   /** Sub-actions already attempted in this step (multi-action mode). */
   subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; screenChanged?: boolean; data?: string }[]

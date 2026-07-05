@@ -10,7 +10,7 @@
 //     .capture(entries, provenanceCtx?); .entries(): WorkingMemoryEntry[]; .dispose()
 import { describe, it, expect } from 'vitest'
 import type { ModelMessage } from 'ai'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 import type { SecretRedactorPort } from '../ports.js'
 import { composeTurnMessages } from '../prompts.js'
@@ -18,7 +18,7 @@ import { buildAgentScreenState } from './screen-fixtures.js'
 // Plan-05 working-memory module — intentionally unresolved today (the RED reason for this suite):
 import { WorkingMemoryStore } from '../working-memory/store.js'
 
-const OTP = { key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'observation' }
+const OTP = { key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'observation' } satisfies WorkingMemoryEntry
 
 function screen(): ScreenState {
   return buildAgentScreenState({ tree: '- button "Submit" [ref=e1]', elements: [{ ref: 'e1', role: 'button', name: 'Submit', attributes: {} }], metadata: { coordSpace: 'viewport', viewportWidth: 390, viewportHeight: 844 } })
