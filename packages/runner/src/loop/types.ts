@@ -7,7 +7,7 @@
 // absent here.
 
 import type { LanguageModel } from 'ai'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { GroundingAttempt, ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { TokenUsage } from '../result.js'
 
@@ -21,6 +21,14 @@ export interface ActionPlan {
   confidence: number
   stepComplete: boolean
   stepFailed?: boolean
+  /**
+   * D-09/GROUND-01 grounding-attempts carriage. When the planning turn grounds the
+   * action in-turn (via the injected groundability callback), the gate's §A8
+   * GroundingAttempt trail rides here so the resolved-descriptor evidence reaches
+   * executeStep (threaded onto StepEvidence in Plan 07). Absent when no grounding
+   * callback is injected or the gate recorded no attempts.
+   */
+  groundingAttempts?: GroundingAttempt[]
 }
 
 export interface PlannerConfig {

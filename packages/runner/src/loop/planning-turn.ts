@@ -25,6 +25,7 @@
 // zod schemaInvalid grounding error from toolCallToActionPlan (D-09 / T-353-05).
 import { generateText } from 'ai'
 import type { LanguageModel, ModelMessage, SystemModelMessage, Tool, ToolCallPart, ToolResultPart, ToolSet } from 'ai'
+import type { GroundingAttempt } from '@vostride/agent-qa-schema'
 import type { ActionPlan } from './types.js'
 import type { TokenUsage } from '../result.js'
 import type { LoopScopedLogger } from './ports.js'
@@ -68,6 +69,27 @@ export interface ToolExchange {
 export type PlanningTurnFailureReason =
   | 'no_action_tool_called'
   | 'non_action_tool_budget_exhausted'
+  | 'ungroundable_action'
+
+/**
+ * The in-turn groundability verdict for a parsed action (D-09). Returned by the
+ * injected `groundability` callback the caller (LLMPlanner) builds from the Plan-04
+ * grounding gate + the in-scope screenState — the tool-loop stays gate-agnostic and
+ * NEVER imports `grounding/` itself.
+ *
+ * `ok: true` may optionally carry the gate's fully-grounded execution-shape `action`
+ * (ref, never a descriptor) and its §A8 `attempts` trail; when present the turn swaps
+ * them onto the returned plan so the resolved action + evidence ride to executeStep.
+ * When omitted (e.g. a test seam that only signals groundability) the parsed plan is
+ * returned unchanged. `ok: false` carries the §7.1 error text injected back into the
+ * SAME conversation as an error-text tool result for the model's one-shot correction.
+ */
+export type GroundabilityResult =
+  | { ok: true; action?: Record<string, unknown>; attempts?: GroundingAttempt[] }
+  | { ok: false; message: string }
+
+/** The injected groundability callback: parsed action → groundability verdict (D-09). */
+export type GroundabilityCallback = (plan: ActionPlan) => GroundabilityResult
 
 export interface PlanningTurnSuccess {
   ok: true
@@ -104,6 +126,16 @@ export interface ExecutePlanningTurnOptions {
   nonActionTools?: NonActionToolMap
   /** K override for tests (D-06). Defaults to DEFAULT_NON_ACTION_TOOL_BUDGET. */
   budget?: number
+  /**
+   * D-09 in-turn grounding feedback. When present, a parsed action call is grounded by
+   * this injected callback after `toolCallToActionPlan` succeeds. A failure appends the
+   * §7.1 error text as an error-text tool result in the SAME conversation with EXACTLY
+   * ONE retry (a turn-local one-shot flag, never a counter — LOOP-02); a second
+   * consecutive grounding failure returns a structured `'ungroundable_action'` failure.
+   * The retry neither consumes nor bypasses the ≤K non-action budget (Pitfall 8). When
+   * absent the turn behaves exactly as the 353 bounded loop (back-compat within phase).
+   */
+  groundability?: GroundabilityCallback
   /**
    * Dynamic output cap (CTXB-04) computed by the caller's clamp helper and passed
    * through to generateText. `undefined` is a valid no-op passthrough — the tool-loop
@@ -178,6 +210,10 @@ export async function executePlanningTurn(
   let usageSeen = false
   let rePromptedForNoTool = false
   let budgetErrorInjected = false
+  // D-09 turn-local one-shot: a boolean, never a counter (LOOP-02). Once a grounding
+  // failure has injected its §7.1 error text and continued, a second consecutive
+  // grounding failure becomes a structured 'ungroundable_action' failure.
+  let groundingErrorInjected = false
 
   const tokenUsage = (): TokenUsage | undefined =>
     usageSeen
@@ -185,8 +221,10 @@ export async function executePlanningTurn(
       : undefined
 
   // Iteration backstop: at most K executed non-action calls, plus the exhaustion
-  // re-prompt, the no-tool re-prompt, and the terminating action response.
-  const maxIterations = budgetLimit + 4
+  // re-prompt, the no-tool re-prompt, the terminating action response, and the one
+  // extra grounding round-trip the D-09 one-shot retry may add (Pitfall 8). The budget
+  // arithmetic itself is untouched — this backstop is raised by exactly one.
+  const maxIterations = budgetLimit + 5
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     // generateText errors (including abort) propagate to the caller untouched.
@@ -230,7 +268,9 @@ export async function executePlanningTurn(
 
     // Scan tool calls in order until the first action call (D-08c).
     const toolResultParts: ToolResultPart[] = []
-    let actionCall: { name: string; args: Record<string, unknown> } | undefined
+    let actionCall:
+      | { name: string; args: Record<string, unknown>; tc: (typeof toolCalls)[number]; index: number }
+      | undefined
     let discardedAfterAction = 0
     let sawOverBudgetNonAction = false
 
@@ -242,7 +282,7 @@ export async function executePlanningTurn(
       // Action tool → terminate. Membership in the non-action map is the classifier;
       // everything else (the always-sent v45 slice) is an action.
       if (!(name in nonActionTools)) {
-        actionCall = { name, args }
+        actionCall = { name, args, tc, index: i }
         discardedAfterAction = toolCalls.length - i - 1
         break
       }
@@ -268,8 +308,46 @@ export async function executePlanningTurn(
         })
       }
       // toolCallToActionPlan validates via zod; the schemaInvalid grounding error is
-      // preserved untouched (D-09 / T-353-05) and propagates if the args are malformed.
+      // preserved untouched (D-09 / T-353-05 / Q2) and propagates if the args are
+      // malformed — malformed-args stay a throw this phase, never in-turn feedback.
       const plan = toolCallToActionPlan(actionCall.name, actionCall.args, options.registry) as ActionPlan
+
+      // D-09 in-turn grounding feedback: ground the parsed action via the injected
+      // callback. On failure, mirror the budget-exhausted flow exactly — append the
+      // assistant tool call(s) plus a tool message carrying the §7.1 error text — and
+      // continue the SAME conversation for exactly one retry (one-shot flag, never a
+      // counter). A second consecutive failure is a structured 'ungroundable_action'
+      // failure. The non-action budget is never read or written on this path.
+      if (options.groundability) {
+        const grounded = options.groundability(plan)
+        if (!grounded.ok) {
+          if (groundingErrorInjected) {
+            return {
+              ok: false,
+              reason: 'ungroundable_action',
+              message: grounded.message,
+              exchanges,
+              tokenUsage: tokenUsage(),
+            }
+          }
+          groundingErrorInjected = true
+          // Respond only to the calls we processed (non-actions before the action, plus
+          // the action itself); anything after the action is discarded and left out so no
+          // tool-call is dangling without a result.
+          const processed = toolCalls.slice(0, actionCall.index + 1)
+          messages.push(assistantToolCallMessage(processed))
+          messages.push({
+            role: 'tool',
+            content: [...toolResultParts, errorResultPart(actionCall.tc, grounded.message)],
+          })
+          continue
+        }
+        // ok: adopt the gate's fully-grounded execution-shape action + §A8 attempts trail
+        // when the callback supplies them (LLMPlanner does; test seams may not).
+        if (grounded.action) plan.action = grounded.action as ActionPlan['action']
+        if (grounded.attempts) plan.groundingAttempts = grounded.attempts
+      }
+
       return { ok: true, plan, exchanges, tokenUsage: tokenUsage() }
     }
 
