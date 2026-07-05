@@ -7,7 +7,7 @@
 // absent here.
 
 import type { LanguageModel } from 'ai'
-import type { GroundingAttempt, ScreenState } from '@vostride/agent-qa-schema'
+import type { GroundingAttempt, ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { TokenUsage } from '../result.js'
 
@@ -29,6 +29,18 @@ export interface ActionPlan {
    * callback is injected or the gate recorded no attempts.
    */
   groundingAttempts?: GroundingAttempt[]
+  /**
+   * WM-01 write channel (spec §12.15, ratified 2026-07-05). Verbatim facts the planner captured
+   * this turn via the `remember[]` plan-field; the loop hands them to the run-scoped
+   * `WorkingMemoryStore` (Plan 08 wiring). Absent when the planner captured nothing this turn.
+   */
+  remember?: WorkingMemoryEntry[]
+  /**
+   * D-09 bulk-loop completion predicate. On a "do X to all" step the planner declares the positive
+   * completion predicate here and re-states it each turn; the verifier backstops. Absent for
+   * non-bulk steps.
+   */
+  bulkCompletionPredicate?: string
 }
 
 export interface PlannerConfig {
