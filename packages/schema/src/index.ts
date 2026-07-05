@@ -91,10 +91,18 @@ export type { DeltaEnvelope, CompareAndSet, BundleDraft, Delta, IssueDelta } fro
 export type { ServedBrief, BriefLine, ReadTrace, CautionLine } from './brief/index'
 export type {
   CompletedRunHandoff,
+  CycleEvidence,
+  LocalEffectEvidence,
   PerTestOutcome,
+  StagnationClass,
+  StagnationEvidence,
   StepEvidence,
   SubActionEvidence,
 } from './handoff/index'
+
+// 358 working-memory vocabulary (WM-01)
+export type { WorkingMemoryEntry } from './memory/index'
+export { workingMemoryEntrySchema } from './memory/index'
 
 // 315 run+agent DTOs
 export type { RunSession } from './run/index'

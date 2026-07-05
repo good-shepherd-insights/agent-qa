@@ -4,3 +4,9 @@ export type { PerTestOutcome } from './per-test-outcome'
 export type { StepEvidence } from './step-evidence'
 export type { VerifierVerdict, Decision } from './step-evidence'
 export type { SubActionEvidence } from './sub-action-evidence'
+export type {
+  CycleEvidence,
+  LocalEffectEvidence,
+  StagnationClass,
+  StagnationEvidence,
+} from './progress-evidence'

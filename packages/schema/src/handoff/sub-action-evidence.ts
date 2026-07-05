@@ -3,6 +3,7 @@ import type { ArtifactRef } from '../ids/artifact-ref'
 import type { RecordedActionResult } from '../result/index'
 import type { ScreenState } from '../screen/screen-state'
 import type { GroundingEvidence } from '../screen/target-descriptor'
+import type { LocalEffectEvidence } from './progress-evidence'
 
 export interface SubActionEvidence {
   plan: string
@@ -19,4 +20,10 @@ export interface SubActionEvidence {
    * and `resolvedRef` is present only on a 'resolved' rung.
    */
   grounding?: GroundingEvidence
+  /**
+   * The §A8 differential-observation oracle outcome (CYCLE-01, D-07). Present only when
+   * the per-verb intended-effect oracle ran for this sub-action: which oracle row keyed
+   * on the verb class and whether the action's local intended effect was achieved.
+   */
+  localEffect?: LocalEffectEvidence
 }
