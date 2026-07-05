@@ -11,6 +11,31 @@ const ELEMENT_DESCRIPTION_SCHEMA = z.string().optional()
 export const refSchema = (description: string) =>
   z.string().transform((v): Ref => asRef(v)).describe(description)
 
+// D-04/D-05/D-06: the LLM-facing target descriptor — role/name/ordinal ONLY. No `near`
+// (D-06, reserved off the M1 surface) and no selector-like field (grounding-surface
+// rule); `.strict()` rejects both. The exactly-one-of ref/target contract is stated in
+// prose on each sibling because zod refinements are invisible in the provider JSON schema
+// (Pitfall 4) — enforcement is the Plan-04 grounding gate, not zod.
+export const targetSchema = z.object({
+  role: z.string().optional()
+    .describe('Accessibility role of the target element, e.g. button or textbox. Omit when the accessible name alone is unambiguous.'),
+  name: z.string()
+    .describe('Accessible name / visible label of the target element. Always provide it — a name-less descriptor cannot be grounded and is rejected by the matcher.'),
+  ordinal: z.number().int().optional()
+    .describe('0-based tiebreak among same-screen elements that share this role and name, in observation order. Omit when the role/name pair is unique on the current screen.'),
+}).strict()
+
+// An optional target-descriptor sibling for a ref-bearing param (D-05). `noun` names the
+// element the descriptor points at (e.g. "element to click", "container to scroll within").
+const targetSibling = (noun: string) =>
+  targetSchema.optional()
+    .describe(`Descriptor naming the ${noun} for grounding when you have no confident ref from the current observation. Provide exactly one of ref or target, never both. Omit when a ref is provided.`)
+
+// A ref that is now optional because a target descriptor may replace it (D-05).
+const optionalRef = (description: string) =>
+  refSchema(description).optional()
+    .describe(`${description}. Omit when target is provided instead.`)
+
 type ActionMeta = Pick<ToolDefinition, 'destructive' | 'readOnly'>
 
 function actionWithSurface(
@@ -39,7 +64,8 @@ function action(verb: string, description: string, schema: z.ZodType, meta: Acti
 }
 
 export const fillSchema = z.object({
-  ref: refSchema(`Input field ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+  ref: optionalRef(`Input field ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+  target: targetSibling('input field to fill'),
   text: z.string().describe('Text to enter into the field'),
   elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   clearMode: z.enum(['replace', 'append']).default('replace')
@@ -52,7 +78,9 @@ export const scrollSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Direction to scroll'),
-    ref: refSchema(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when scrolling the whole page or screen.`).optional(),
+    ref: refSchema(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}.`).optional()
+      .describe(`Element to scroll within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when scrolling the whole page or screen, or when a target descriptor is provided instead.`),
+    target: targetSibling('container to scroll within'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     amount: z.enum(['page', 'halfPage', 'toEnd']).default('page')
       .describe('How far to scroll in the selected direction. Omit when a normal page-sized scroll is appropriate.'),
@@ -62,7 +90,9 @@ export const scrollSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('untilVisible'),
     text: z.string().describe('Visible text or accessible name to reveal'),
-    ref: refSchema(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when searching the whole page or screen.`).optional(),
+    ref: refSchema(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}.`).optional()
+      .describe(`Element or list to search within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when searching the whole page or screen, or when a target descriptor is provided instead.`),
+    target: targetSibling('container to search within'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     direction: z.enum(['up', 'down', 'left', 'right']).default('down')
       .describe('Initial direction to search for the target. Omit when scrolling down is the natural direction.'),
@@ -174,7 +204,9 @@ export const swipeSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('direction'),
     direction: z.enum(['up', 'down', 'left', 'right']).describe('Swipe direction'),
-    ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen.`).optional(),
+    ref: refSchema(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}.`).optional()
+      .describe(`Element to swipe within; ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when swiping the whole screen, or when a target descriptor is provided instead.`),
+    target: targetSibling('container to swipe within'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     durationMs: z.number().int().min(50).max(5000).default(300)
       .describe('Swipe duration in milliseconds. Omit when the default 300ms gesture duration is acceptable.'),
@@ -277,7 +309,8 @@ export const uniqueValueSchema = z.object({
 }).strict()
 
 export const focusSchema = z.object({
-  ref: refSchema(`Element to focus; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+  ref: optionalRef(`Element to focus; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+  target: targetSibling('element to focus'),
   elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
 }).strict()
 
@@ -314,12 +347,14 @@ export const pressButtonSchema = z.object({
 
 export const pickerSelectSchema = z.union([
   z.object({
-    ref: refSchema(`iOS picker wheel ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`iOS picker wheel ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('iOS picker wheel'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Visible value to select'),
   }).strict(),
   z.object({
-    ref: refSchema(`iOS picker wheel ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`iOS picker wheel ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('iOS picker wheel'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     order: z.number().int().describe('0-based wheel index'),
   }).strict(),
@@ -338,7 +373,8 @@ export const openUniversalLinkSchema = z.object({
 export const pinchSchema = z.union([
   z.object({
     scale: z.number().describe('Scale factor: >1 to zoom in (spread fingers), <1 to zoom out (pinch fingers)'),
-    ref: refSchema(`Element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to center the pinch on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to center the pinch on'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict(),
   z.object({
@@ -354,7 +390,8 @@ export const pinchSchema = z.union([
 export const multiTapSchema = z.union([
   z.object({
     fingers: z.union([z.literal(2), z.literal(3)]).describe('Number of fingers'),
-    ref: refSchema(`Element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to center the tap on; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to center the tap on'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict(),
   z.object({
@@ -387,7 +424,8 @@ if (mobileFillDefinition.id !== 'mobile_fill') {
 
 const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('click', 'Click an element', z.object({
-    ref: refSchema(`Element to click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to click'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
   }).strict()),
@@ -397,13 +435,15 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   mobileFillDefinition,
 
   action('select', 'Select an option from a dropdown', z.object({
-    ref: refSchema(`Select/dropdown control ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Select/dropdown control ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('select/dropdown control'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Option value to select'),
   }).strict()),
 
   action('nativeSelect', 'Select a value from a native mobile picker, picker wheel, spinner, or dropdown/list control', z.object({
-    ref: refSchema(`Native picker/dropdown control ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Native picker/dropdown control ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('native picker/dropdown control'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Visible text/value to select'),
   }).strict()),
@@ -436,12 +476,14 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   })),
 
   action('hover', 'Hover over an element', z.object({
-    ref: refSchema(`Element to hover over; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to hover over; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to hover over'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict()),
 
   action('paste', 'Paste text into an element via clipboard paste event', z.object({
-    ref: refSchema(`Paste target ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Paste target ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('paste target'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     value: z.string().describe('Text value to paste'),
   }).strict(), { destructive: true }),
@@ -505,14 +547,16 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   }), { destructive: true }),
 
   action('tap', 'Tap an element on a mobile device', z.object({
-    ref: refSchema(`Element to tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to tap'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict()),
 
   action('swipe', 'Swipe gesture on a mobile device', swipeSchema),
 
   action('longpress', 'Long-press an element on a mobile device', z.object({
-    ref: refSchema(`Element to long-press; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to long-press; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to long-press'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     duration: z.number().optional().describe('Long-press duration in ms. Omit to use the platform default press duration.'),
   }).strict()),
@@ -520,13 +564,18 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('hideKeyboard', 'Dismiss the on-screen keyboard (mobile only, no-op on web)', z.object({})),
 
   action('clearText', 'Clear all text from an input field without typing new text', z.object({
-    ref: refSchema(`Input field to clear; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Input field to clear; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('input field to clear'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict()),
 
   action('drag', 'Drag an element to another element (reorder lists, sliders)', z.object({
-    fromRef: refSchema(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}`),
-    toRef: refSchema(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    fromRef: refSchema(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional()
+      .describe(`Drag source ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when fromTarget is provided instead.`),
+    toRef: refSchema(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}`).optional()
+      .describe(`Drop target ${CURRENT_SCREEN_REF_DESCRIPTION}. Omit when toTarget is provided instead.`),
+    fromTarget: targetSibling('drag source').describe('Descriptor naming the drag source for grounding when you have no confident fromRef. Provide exactly one of fromRef or fromTarget, never both. Omit when fromRef is provided.'),
+    toTarget: targetSibling('drop target').describe('Descriptor naming the drop target for grounding when you have no confident toRef. Provide exactly one of toRef or toTarget, never both. Omit when toRef is provided.'),
     fromDescription: z.string().optional()
       .describe('Human-readable label of the drag source. Omit when fromRef is unambiguous.'),
     toDescription: z.string().optional()
@@ -534,7 +583,8 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   }).strict()),
 
   action('doubleTap', 'Double-tap an element (text selection, zoom)', z.object({
-    ref: refSchema(`Element to double-tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to double-tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to double-tap'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict()),
 
@@ -562,7 +612,8 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('tab', 'Open a new browser tab or switch to an existing tab', tabSchema),
 
   action('doubleClick', 'Double-click an element (text selection, expand, web-only)', z.object({
-    ref: refSchema(`Element to double-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to double-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to double-click'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     relativePosition: z.object({
       x: z.number().describe('X offset in pixels from element top-left'),
@@ -572,7 +623,8 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   }).strict()),
 
   action('rightClick', 'Right-click an element to open context menu (web-only)', z.object({
-    ref: refSchema(`Element to right-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element to right-click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element to right-click'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     relativePosition: z.object({
       x: z.number().describe('X offset in pixels from element top-left'),
@@ -586,13 +638,15 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
   })),
 
   action('fileUpload', 'Upload one or more files to a file input element (web only)', z.object({
-    ref: refSchema(`File input ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`File input ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('file input'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     files: z.array(z.string()).min(1).describe('Paths to files — relative to the test YAML file, or absolute paths. Missing files fail the action.'),
   }).strict(), { destructive: true }),
 
   action('copy', 'Copy the text content of an element to the system clipboard (web only, chromium only)', z.object({
-    ref: refSchema(`Element whose text content to copy; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    ref: optionalRef(`Element whose text content to copy; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
+    target: targetSibling('element whose text content to copy'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
   }).strict(), { destructive: true }),
 ]
