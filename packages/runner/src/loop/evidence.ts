@@ -174,6 +174,15 @@ export interface RecordSubActionInput {
   result: SchemaActionResult
   /** v1 per-sub-action cache flag; folded per step by foldCacheStatus at finalize. */
   cached?: boolean
+  /**
+   * The §A8 grounding evidence for this sub-action (GROUND-02): the resolved descriptor
+   * plus the per-rung attempt trail (turn gate on the live path, replay resolution on the
+   * cache path, re-ground heal entries on the D-10 path). Present only when the action
+   * carried an element field; the loop redacts the descriptor BEFORE passing it here so a
+   * pre-redaction descriptor never reaches evidence (T-357-02a, the redact-before-record
+   * ordering). Typed via the schema DTO — no runner-local mirror (353 evidence-by-construction).
+   */
+  grounding?: SubActionEvidence['grounding']
 }
 
 export class EvidenceRecorder {
@@ -197,6 +206,7 @@ export class EvidenceRecorder {
       result,
     }
     if (input.stateAfter) evidence.stateAfter = input.stateAfter
+    if (input.grounding) evidence.grounding = input.grounding
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
     return this.subActions.length - 1
