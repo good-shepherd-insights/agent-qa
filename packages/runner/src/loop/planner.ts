@@ -18,8 +18,9 @@ import type { Planner, PlanResult, StepContext } from './types.js'
 import type { LoopScopedLogger, TokenAccounting } from './ports.js'
 import { buildSystemPrompt, buildContextTier, buildVolatileTier, composeTurnMessages } from './prompts.js'
 import { buildTools, defaultRegistry } from '../tools/index.js'
-import { executePlanningTurn, type PlanningTurnResult } from './planning-turn.js'
+import { executePlanningTurn, type PlanningTurnResult, type GroundabilityCallback } from './planning-turn.js'
 import { executeClampedCall, type ClampedCallResult } from './clamp.js'
+import { groundActionPlan } from '../grounding/gate.js'
 
 // The text-only fallback note appended to the current-instruction message when the
 // screenshot send fails (D-11). Byte-identical to v1's note so the fallback turn matches.
@@ -80,6 +81,27 @@ export class LLMPlanner implements Planner {
     // (clamp Pitfall 4). Serialized once here and handed to the clamp helper as bytes.
     const toolSchema = JSON.stringify(actionTools)
 
+    // D-09 groundability callback: close over the in-scope fresh observation and ground
+    // the parsed action through the Plan-04 gate. The gate resolves an emission-shape
+    // action (ref OR target descriptor) to a fully-grounded execution-shape action (a
+    // ref) before adapter execution (GROUND-01), returning the §A8 attempts trail. No
+    // vision capability signal is in scope in M1, so the gate's default ladder
+    // [refValidate, treeSearch] applies (no visual rung, D-01). A gate failure is adapted
+    // to the turn's structured groundability verdict — the turn injects the §7.1 error
+    // text for one in-conversation correction, never a throw (schema_invalid stays a
+    // throw upstream in toolCallToActionPlan, Q2).
+    const groundability: GroundabilityCallback = (parsed) => {
+      const gate = groundActionPlan({
+        toolName: typeof parsed.action.type === 'string' ? parsed.action.type : 'action',
+        action: parsed.action,
+        screenState,
+      })
+      if (gate.ok) {
+        return { ok: true, action: gate.action, attempts: gate.attempts }
+      }
+      return { ok: false, message: `${gate.error.message} ${gate.error.hint}` }
+    }
+
     // One clamped/degraded planning call over the decomposed turn messages. The clamp helper
     // (Plan 04) computes the dynamic output cap, proactively degrades when the input estimate
     // exceeds the budget (pinning the observation + instruction so the live screen/goal are
@@ -107,6 +129,7 @@ export class LLMPlanner implements Planner {
             maxOutputTokens,
             abortSignal,
             logger: this.logger,
+            groundability,
           }),
         // recordUsage anchors on the observed input tokens (prompt only, per the clamp
         // contract); the turn result's accumulated TokenUsage supplies the triad. The `ai`
