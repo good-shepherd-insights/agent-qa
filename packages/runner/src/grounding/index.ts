@@ -18,3 +18,6 @@ export type {
   RungOutcome,
   RungRequest,
 } from './rungs.js'
+
+export { groundActionPlan } from './gate.js'
+export type { GateOptions, GateResult, GateVisualRung, GroundActionPlanInput } from './gate.js'
