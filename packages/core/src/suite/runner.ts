@@ -8,8 +8,8 @@ import type { Reporter, RunSummary, SuiteSummary } from '../reporter/types.js'
 import { MultiReporter } from '../reporter/types.js'
 import { runTest } from '../agent/runner.js'
 import type { RunTestConfig } from '../agent/runner.js'
-import type { ActionCache } from '../agent/types.js'
-import type { Planner, Verifier } from '@vostride/agent-qa-runner'
+import type { ActionPlanCache, Planner, Verifier } from '@vostride/agent-qa-runner'
+import type { MaskingContext } from '@vostride/agent-qa-schema'
 import type { LanguageModel } from 'ai'
 import type { LogManager } from '../logging/log-manager.js'
 import type { HookDefinition } from '../hooks/types.js'
@@ -32,7 +32,9 @@ export interface RunSuiteConfig {
   platformConfig: PlatformConfig
   planner: Planner
   verifier?: Verifier
-  cache?: ActionCache
+  cache?: ActionPlanCache
+  /** D-05 masking seam threaded through to each test's runner loop (identity pre-362). */
+  masking?: MaskingContext
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -410,6 +412,7 @@ export async function runSuite(
         planner: config.planner,
         verifier: config.verifier,
         cache: config.cache,
+        masking: config.masking,
         plannerModel: config.plannerModel,
         verifierModel: config.verifierModel,
         reporters: config.reporters,

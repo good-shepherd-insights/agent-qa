@@ -60,15 +60,6 @@ export interface VerificationResult {
   isAppError: boolean
 }
 
-export interface ActionCache {
-  get(stepHash: string, screenHash: string): Promise<ActionPlan | null>
-  set(stepHash: string, screenHash: string, plan: ActionPlan): Promise<void>
-  invalidate(stepHash: string, screenHash: string): Promise<void>
-  getSubAction(stepHash: string, index: number): Promise<ActionPlan | null>
-  setSubAction(stepHash: string, index: number, plan: ActionPlan): Promise<void>
-  invalidateSubActionsFrom(stepHash: string, fromIndex: number): Promise<void>
-}
-
 export type ExtractionMethod = 'regex' | 'selector' | 'ai'
 
 export interface ExtractorInput {

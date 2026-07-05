@@ -6,7 +6,6 @@ export type {
   VerificationResult,
   PlanResult,
   VerifyResult,
-  ActionCache,
   ActionPlan,
   ExtractionMethod,
   ExtractorInput,

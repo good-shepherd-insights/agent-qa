@@ -3,8 +3,8 @@ import type { LanguageModel } from 'ai'
 import type { PlatformAdapter } from '@vostride/agent-qa-runner'
 import type { AccessibilityViolation, StepPhaseEvent, StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../types/test.js'
-import type { ActionCache } from './types.js'
-import type { Planner, Verifier } from '@vostride/agent-qa-runner'
+import type { ActionPlanCache, Planner, Verifier } from '@vostride/agent-qa-runner'
+import type { MaskingContext } from '@vostride/agent-qa-schema'
 import type { MemoryProvider } from '../memory/provider.js'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
 import type { Action } from '@vostride/agent-qa-runner'
@@ -15,7 +15,6 @@ import { captureFailureScreenshot } from '../reporter/screenshot.js'
 import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort, executeStep } from '@vostride/agent-qa-runner'
 import type { LoopPorts, StepContext as RunnerStepContext } from '@vostride/agent-qa-runner'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
-import { CoreActionPlanCacheAdapter } from '../cache/action-plan-cache-adapter.js'
 import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { VariableStore, interpolateVariables, findUnresolvedTemplates, createExtractor } from './variables.js'
@@ -47,7 +46,18 @@ export interface RunTestConfig {
   adapter: PlatformAdapter
   planner: Planner
   verifier?: Verifier
-  cache?: ActionCache
+  /**
+   * Redesigned per-key action-plan cache (Phase 356, D-03). The runner-local
+   * `FsActionCache` (a runner `ActionPlanCache`) is constructed + injected at the CLI
+   * composition root; core no longer builds a cache adapter. Absent ⇒ no caching.
+   */
+  cache?: ActionPlanCache
+  /**
+   * D-05 masking seam for the cache key. Applied to stepText before it enters key
+   * material (the MASK-FUT-01 floor). The CLI injects an identity context pre-362;
+   * Phase 362 seeds the live run-scope secrets. Browser-safe schema type only.
+   */
+  masking?: MaskingContext
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -206,8 +216,6 @@ export async function runTest(
   } else if (shouldRunSteps && memoryProvider && !config.memoryInitParams) {
     memoryProvider = null
   }
-
-  const cacheState = config.cache ? { invalidated: false } : undefined
 
   try {
 
@@ -485,25 +493,18 @@ export async function runTest(
       contextWindow: config.contextWindow,
     }
 
-    // D-01/D-02 LIVE cutover: assemble the runner LoopPorts bundle and delegate to the
-    // runner-owned executeStep. The transitional core adapters keep node:crypto (cache
-    // hashing) and sharp (compression) core-side (D-03, Pitfall 9); the v1 cache-key
-    // constants ride behind the cache port; safetyHooks is the unpopulated 362 slot and
-    // knowledgeReader stays undefined (no M2 impl — the loop tolerates its absence, D-05).
+    // D-01/D-02/D-03 LIVE cutover: assemble the runner LoopPorts bundle and delegate to
+    // the runner-owned executeStep. The redesigned per-key cache (runner-local FsActionCache)
+    // and the masking seam are constructed + injected at the CLI composition root and flow
+    // straight through here — core no longer builds a cache adapter. The compressor keeps
+    // sharp core-side (Pitfall 9); safetyHooks is the unpopulated 362 slot and knowledgeReader
+    // stays undefined (no M2 impl — the loop tolerates its absence, D-05).
     const ports: LoopPorts = {
         adapter: config.adapter,
         planner: config.planner,
         verifier: config.verifier,
-        cache: config.cache
-          ? new CoreActionPlanCacheAdapter(config.cache, {
-              platform: config.adapter.platform,
-              configContent: config.configContent,
-              testFileContent: config.testFileContent,
-              stepIndex,
-              suiteFileContent: config.suiteFileContent,
-              suiteTestIndex: config.suiteTestIndex,
-            })
-          : undefined,
+        cache: config.cache,
+        masking: config.masking,
         compressor: new CoreScreenshotCompressor(config.logger?.createScopedLogger('adapter')),
         safetyHooks: config.safetyHooks,
         plannerConfig: config.plannerConfig,
@@ -522,7 +523,6 @@ export async function runTest(
         abortSignal: stepAbortController.signal,
         secretStore: config.secretStore,
         secretRedactor: config.secretRedactor,
-        cacheState,
       }
 
     let result: StepResult

@@ -3,7 +3,7 @@ import type { PlatformAdapter, Action, ActionResult } from '@vostride/agent-qa-r
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import type { ActionPlan } from '../../schema/action-schema.js'
-import type { ActionCache, Planner, StepContext } from '../types.js'
+import type { Planner, StepContext } from '../types.js'
 import type { TestDefinition } from '../../types/test.js'
 import { runTest } from '../runner.js'
 import type { RunTestConfig } from '../runner.js'
@@ -347,126 +347,10 @@ describe('runTest with secret placeholders', () => {
     })
   })
 
-  it('stores runtime secret templates in cache instead of redacted markers', async () => {
-    const executeSpy = vi.fn().mockResolvedValue({ success: true })
-    const adapter: PlatformAdapter = {
-      platform: 'web',
-      async setup() {},
-      async cleanup() {},
-      async observe() { return makeScreenState() },
-      execute: executeSpy,
-    }
-    const plannerSpy = vi.fn().mockResolvedValue({
-      plan: makeActionPlan({
-        reasoning: 'Fill the password field with {{secret:loginPassword}}',
-        action: { type: 'fill', ref: 'password-input', value: '{{secret:loginPassword}}' },
-      }),
-    })
-    const storedPlans: ActionPlan[] = []
-    const cache: ActionCache = {
-      async get() { return null },
-      async set() {},
-      async invalidate() {},
-      async getSubAction() { return null },
-      async setSubAction(_stepHash, _index, plan) {
-        storedPlans.push(structuredClone(plan) as ActionPlan)
-      },
-      async invalidateSubActionsFrom() {},
-    }
-    const secretStore = new SecretStore({ loginPassword: 'raw-secret-sentinel' })
-    const config = makeRunTestConfig({
-      adapter,
-      planner: { plan: plannerSpy },
-      cache,
-      secretStore,
-      secretRedactor: new SecretRedactor(secretStore),
-    })
-
-    const test: TestDefinition = {
-      'test-id': 't_secret-cache-store',
-      name: 'secret cache store test',
-      target: 'default',
-      steps: [{ step: 'Fill password with {{secret:loginPassword}}' }],
-    }
-
-    const result = await runTest(test, config, '/tests/secrets.yaml')
-
-    expect(result.status).toBe('passed')
-    expect(executeSpy).toHaveBeenCalledWith({
-      type: 'fill',
-      ref: 'password-input',
-      value: 'raw-secret-sentinel',
-    })
-    expect(storedPlans).toHaveLength(1)
-    const cachedPlan = storedPlans[0]!
-    expect(cachedPlan.action).toEqual({
-      type: 'fill',
-      ref: 'password-input',
-      value: '{{secret:loginPassword}}',
-    })
-    expect(JSON.stringify(cachedPlan)).not.toContain('[secret:loginPassword]')
-    expect(JSON.stringify(cachedPlan)).not.toContain('raw-secret-sentinel')
-  })
-
-  it('invalidates stale cached redacted secret markers before execution', async () => {
-    const executeSpy = vi.fn().mockResolvedValue({ success: true })
-    const adapter: PlatformAdapter = {
-      platform: 'web',
-      async setup() {},
-      async cleanup() {},
-      async observe() { return makeScreenState() },
-      execute: executeSpy,
-    }
-    const plannerSpy = vi.fn().mockResolvedValue({
-      plan: makeActionPlan({
-        reasoning: 'Fill the password field with {{secret:loginPassword}}',
-        action: { type: 'fill', ref: 'password-input', value: '{{secret:loginPassword}}' },
-      }),
-    })
-    const invalidateSpy = vi.fn()
-    const cache: ActionCache = {
-      async get() { return null },
-      async set() {},
-      async invalidate() {},
-      async getSubAction() {
-        return makeActionPlan({
-          reasoning: 'Fill the password field with [secret:loginPassword]',
-          action: { type: 'fill', ref: 'password-input', value: '[secret:loginPassword]' },
-        })
-      },
-      async setSubAction() {},
-      async invalidateSubActionsFrom(stepHash, index) {
-        invalidateSpy(stepHash, index)
-      },
-    }
-    const secretStore = new SecretStore({ loginPassword: 'raw-secret-sentinel' })
-    const config = makeRunTestConfig({
-      adapter,
-      planner: { plan: plannerSpy },
-      cache,
-      secretStore,
-      secretRedactor: new SecretRedactor(secretStore),
-    })
-
-    const test: TestDefinition = {
-      'test-id': 't_secret-cache-stale',
-      name: 'secret stale cache test',
-      target: 'default',
-      steps: [{ step: 'Fill password with {{secret:loginPassword}}' }],
-    }
-
-    const result = await runTest(test, config, '/tests/secrets.yaml')
-
-    expect(result.status).toBe('passed')
-    expect(invalidateSpy).toHaveBeenCalledWith(expect.any(String), 0)
-    expect(plannerSpy).toHaveBeenCalled()
-    expect(executeSpy).toHaveBeenCalledWith({
-      type: 'fill',
-      ref: 'password-input',
-      value: 'raw-secret-sentinel',
-    })
-    expect(executeSpy).not.toHaveBeenCalledWith(expect.objectContaining({ value: '[secret:loginPassword]' }))
-  })
+  // The v1 sub-action cache-port secret tests (store-runtime-template / invalidate-stale-marker)
+  // were retired with the v1 core cache stack (Phase 356 D-03). The redesigned per-key
+  // ActionPlanCache stores a descriptor-only value and masks stepText before the key — the
+  // masked-key floor + descriptor sanitization are proven in the runner package's cache tests.
 
   it('fails missing secrets without sending an action to the adapter', async () => {
     const executeSpy = vi.fn().mockResolvedValue({ success: true })
