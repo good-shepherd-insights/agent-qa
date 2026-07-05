@@ -24,7 +24,11 @@ import type {
   CacheKey,
   Decision,
   ElementInfo,
+  GroundingAttempt,
+  GroundingEvidence,
+  Ref,
   ScreenState,
+  TargetDescriptor,
   VerifierVerdict,
   Viewport,
 } from '@vostride/agent-qa-schema'
@@ -34,10 +38,12 @@ import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
 import { classifyStep } from '../cache/classify.js'
 import { buildCacheableStepInput } from '../cache/key.js'
-import { buildCachedPlanValue } from '../cache/value.js'
+import { buildCachedPlanValue, toGroundedLocator } from '../cache/value.js'
 import { deterministicDescriptorMatcher } from '../cache/reground.js'
-import type { CachedPlanValue } from '../cache/port.js'
-import type { LoopPorts } from './ports.js'
+import { matchDescriptor } from '../grounding/matcher.js'
+import { groundActionPlan } from '../grounding/gate.js'
+import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
+import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext } from './types.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
@@ -55,6 +61,23 @@ const CONTEXT_ERROR_PATTERNS = [
   'context length', 'maximum context', 'token limit',
   'too many tokens', 'exceeds.*max', 'input.*too long',
 ]
+
+// D-10/LOOP-04 · Pitfall 7 — the DELIBERATELY CONSERVATIVE ref-resolution classifier.
+// A matched adapter error string is a stale-ref/wrong-element failure the re-ground heal
+// can rescue by re-observing + re-grounding (NOT a replan). Exactly two classes:
+//   (a) the shared resolver prefix — 'Unknown ref "…"' (both the web and mobile
+//       element-resolvers throw this verbatim), and
+//   (b) the Playwright strict-mode violation — '…resolved to N elements'.
+// Bare timeouts and every other failure are INTENTIONALLY excluded — they stay on the
+// replan path (Phase 358's stagnation-tree domain, the D-10 boundary). Do not broaden it.
+const REF_RESOLUTION_FAILURE_PATTERNS: RegExp[] = [
+  /^\s*Unknown ref\s+["']/i,
+  /resolved to \d+ element/i,
+]
+
+function isRefResolutionFailure(errorMsg: string): boolean {
+  return REF_RESOLUTION_FAILURE_PATTERNS.some((pattern) => pattern.test(errorMsg))
+}
 
 const CANCELLED_MESSAGE = 'Step cancelled by user'
 
@@ -170,6 +193,59 @@ export async function executeStep(
   let screenshotBefore: Buffer | undefined
   if (ports.adapter.screenshot) {
     try { screenshotBefore = await withAbort(ports.adapter.screenshot(), ports.abortSignal) } catch { /* best-effort */ }
+  }
+
+  // The single execute step: resolve secret templates, gate through the tool_call hook,
+  // dispatch to the adapter (or the setVariable callback), then the tool_result hook. Shared
+  // by the primary dispatch AND the D-10 heal's patched re-execute so the security ordering
+  // (redact-before-record, hook mediation) is single-sourced and cannot drift between them.
+  // `mutated` is present ONLY when a hook rewrote the action (the sole case the recorded
+  // action must be swapped — the redact-without-template-resolution rule is unchanged).
+  const executeResolvedAction = async (
+    toExecute: Action,
+  ): Promise<{ result: ActionResult; error?: string; mutated?: Action }> => {
+    let mutated: Action | undefined
+    let result: ActionResult
+    try {
+      // Template resolution stays INSIDE the try (T-353-08): a MissingSecretError is caught
+      // and surfaced as a redacted execError — the action never reaches the adapter.
+      let actionForExecution = resolveSecretTemplatesInValue(toExecute, ports.secretStore)
+      const hookResult = ports.safetyHooks?.runToolCall(actionForExecution)
+      if (hookResult?.action === 'deny') {
+        result = { success: false, error: hookResult.reason }
+      } else {
+        if (hookResult?.action === 'mutate') {
+          actionForExecution = hookResult.mutated
+          mutated = redactSecretValue(actionForExecution, ports.secretRedactor)
+        } else if (hookResult?.action === 'allow') {
+          actionForExecution = hookResult.call
+        }
+
+        if (actionForExecution.type === 'setVariable') {
+          // Pitfall 8 — setVariable runs via the callback, NOT the adapter.
+          const sv = actionForExecution as Extract<Action, { type: 'setVariable' }>
+          ports.onSetVariable?.(sv.name, sv.value)
+          result = { success: true }
+        } else {
+          let actionToExecute = actionForExecution
+          if (actionForExecution.type === 'fileUpload' && ports.resolveUploadPath) {
+            // Pitfall 1 — path resolution is injected core-side; the loop never touches paths.
+            const resolveUpload = ports.resolveUploadPath
+            actionToExecute = { ...actionForExecution, files: actionForExecution.files.map(f => resolveUpload(f)) }
+          }
+          result = redactSecretValue(
+            await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal),
+            ports.secretRedactor,
+          )
+        }
+      }
+      result = ports.safetyHooks?.runToolResult(result).result ?? result
+    } catch (err) {
+      const error = redactSecretValue(err instanceof Error ? err.message : String(err), ports.secretRedactor)
+      return { result: { success: false, error }, error, mutated }
+    }
+    const error = !result.success ? (result.error ?? 'Action failed') : undefined
+    return { result, error, mutated }
   }
 
   for (let actionIndex = 0; actionIndex < maxSubActions; actionIndex++) {
@@ -340,6 +416,35 @@ export async function executeStep(
     const reasoning = redactSecretValue(rawPlan.reasoning, ports.secretRedactor)
     lastPlannedAction = action
 
+    // The grounding gate is the ONE chokepoint between plan and adapter.execute (D-08).
+    // Live turn-produced plans arrive gate-resolved from the Plan-06 turn — their §A8 trail
+    // rides on rawPlan.groundingAttempts, and re-running the gate here would double-ground
+    // against the same observation. Only the cache-replay path (and any residual out-of-turn
+    // plan) is (re-)validated here: replayFromCache already resolved every stored descriptor
+    // to a fresh ref, so the gate confirms the ref is in the fresh snapshot and yields the
+    // §A8 attempt trail for the replay's evidence. A gate failure maps: ref_not_in_snapshot ⇒
+    // the D-10 heal; any other failure ⇒ the failure-context flow.
+    let gateAttempts: GroundingAttempt[] | undefined = rawPlan.groundingAttempts
+    let gateForcedError: string | undefined
+    let gateForcedRefMiss = false
+    if (cached) {
+      const gateResult = groundActionPlan({
+        toolName: normalizedAction.type,
+        action: normalizedAction as unknown as Record<string, unknown>,
+        screenState,
+      })
+      if (gateResult.ok) {
+        gateAttempts = gateResult.attempts
+      } else {
+        gateForcedError = gateResult.error.message
+        gateForcedRefMiss = gateResult.error.code === 'ref_not_in_snapshot'
+      }
+    }
+
+    // The §A8 grounding block for this sub-action's evidence (GROUND-02), redacted before
+    // record (T-357-02a). Recomputed to the heal trail below if the D-10 heal fires.
+    let grounding = buildGroundingEvidence(action, screenState.elements, gateAttempts, ports.secretRedactor)
+
     // Persist the completing decision's plan into the per-key cache as a descriptor-only
     // value (D-12 overfit guard: buildCachedPlanValue strips ref/coords/data and derives
     // role+nameNormalized+ordinal locators). setVariable actions are never cached (env
@@ -365,54 +470,63 @@ export async function executeStep(
         stateBefore: screenState,
         result: toSchemaResult({ success: false, error: `Planner signaled step failure: ${reasoning}` }),
         cached: false,
+        grounding,
       })
       return failure(`Step failed: ${reasoning}`)
     }
 
-    // 3. EXECUTE — resolve templates only here; gate through the tool_call hook.
+    // 3. EXECUTE — resolve templates only here; gate through the tool_call hook. The
+    // replay gate may have already rejected the action (D-08), in which case it never
+    // reaches the adapter and the failure routes into the heal / failure-context flow.
     let execResult: ActionResult
     let execError: string | undefined
-    try {
-      let actionForExecution = resolveSecretTemplatesInValue(normalizedAction, ports.secretStore)
-      const hookResult = ports.safetyHooks?.runToolCall(actionForExecution)
-      if (hookResult?.action === 'deny') {
-        execResult = { success: false, error: hookResult.reason }
-      } else {
-        if (hookResult?.action === 'mutate') {
-          actionForExecution = hookResult.mutated
-          action = redactSecretValue(actionForExecution, ports.secretRedactor)
-          lastPlannedAction = action
-        } else if (hookResult?.action === 'allow') {
-          actionForExecution = hookResult.call
-        }
-
-        if (actionForExecution.type === 'setVariable') {
-          // Pitfall 8 — setVariable runs via the callback, NOT the adapter.
-          const sv = actionForExecution as Extract<Action, { type: 'setVariable' }>
-          ports.onSetVariable?.(sv.name, sv.value)
-          execResult = { success: true }
-        } else {
-          let actionToExecute = actionForExecution
-          if (actionForExecution.type === 'fileUpload' && ports.resolveUploadPath) {
-            // Pitfall 1 — path resolution is injected core-side; the loop never touches paths.
-            const resolveUpload = ports.resolveUploadPath
-            actionToExecute = { ...actionForExecution, files: actionForExecution.files.map(f => resolveUpload(f)) }
-          }
-          execResult = redactSecretValue(
-            await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal),
-            ports.secretRedactor,
-          )
-        }
+    if (gateForcedError !== undefined) {
+      execResult = { success: false, error: gateForcedError }
+      execError = gateForcedError
+    } else {
+      const outcome = await executeResolvedAction(normalizedAction)
+      execResult = outcome.result
+      execError = outcome.error
+      if (outcome.mutated !== undefined) {
+        action = outcome.mutated
+        lastPlannedAction = action
+        grounding = buildGroundingEvidence(action, screenState.elements, gateAttempts, ports.secretRedactor)
       }
-      execResult = ports.safetyHooks?.runToolResult(execResult).result ?? execResult
-      if (!execResult.success) execError = execResult.error ?? 'Action failed'
-    } catch (err) {
-      execError = redactSecretValue(err instanceof Error ? err.message : String(err), ports.secretRedactor)
-      execResult = { success: false, error: execError }
     }
 
     const abortAfterExecute = checkAbort()
     if (abortAfterExecute) return abortAfterExecute
+
+    // 3b. D-10 RE-GROUND-FIRST HEAL (LOOP-04, Pitfall 7). On a CONSERVATIVELY-classified
+    // ref-resolution failure (or the replay gate's ref_not_in_snapshot), re-observe and
+    // re-ground the failed action's descriptor on nameNormalized + hierarchy (the prior
+    // ElementInfo as disambiguator), then re-execute the patched ref — NO planning turn.
+    // Exactly ONE heal per planned action (a per-iteration one-shot boolean, never a counter
+    // — LOOP-02), bounded by the loop's existing maxSubActions/stepTimeout. The heal trail is
+    // recorded in the sub-action's grounding block only; StepEvidence.selfHeal stays reserved
+    // for replan-based heals (D-11). On no-match/ambiguous it falls through to the replan path.
+    if (execError !== undefined && (gateForcedRefMiss || isRefResolutionFailure(execError))) {
+      let freshElements: readonly ElementInfo[] | undefined
+      try {
+        freshElements = (await withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal)).elements
+      } catch (err) {
+        const abortDuringHeal = checkAbort()
+        if (abortDuringHeal) return abortDuringHeal
+        throw err
+      }
+      const heal = regroundFailedRef(action, screenState.elements, freshElements, ports.secretRedactor)
+      if (heal !== null) {
+        grounding = heal.grounding
+        const patched = patchRef(normalizedAction, heal.field, heal.ref)
+        const outcome = await executeResolvedAction(patched)
+        execResult = outcome.result
+        execError = outcome.error
+        action = outcome.mutated ?? redactSecretValue(patched, ports.secretRedactor)
+        lastPlannedAction = action
+        const abortAfterHeal = checkAbort()
+        if (abortAfterHeal) return abortAfterHeal
+      }
+    }
 
     const viewport: Viewport = {
       width: (screenState.metadata.viewportWidth as number | undefined) ?? 0,
@@ -427,6 +541,7 @@ export async function executeStep(
         stateBefore: screenState,
         result: toSchemaResult(execResult),
         cached,
+        grounding,
       })
       context.failureContext = undefined
       pendingSelfHeal = undefined
@@ -444,6 +559,7 @@ export async function executeStep(
         stateBefore: screenState,
         result: toSchemaResult(execResult),
         cached,
+        grounding,
       })
       recorder.attachStateAfter(idx, screenState)
       context.failureContext = undefined
@@ -470,6 +586,7 @@ export async function executeStep(
         stateBefore: screenState,
         result: toSchemaResult(execResult, annotation),
         cached,
+        grounding,
       })
 
       context.subActionHistory!.push({
@@ -549,7 +666,7 @@ export async function executeStep(
       if (abortAfterVerify) return abortAfterVerify
 
       if (verifyResult.verification.success) {
-        const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached)
+        const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
         recorder.attachStateAfter(idx, afterState)
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
         pendingSelfHeal = undefined
@@ -564,6 +681,7 @@ export async function executeStep(
           stateBefore: screenState,
           result: toSchemaResult(execResult, annotation),
           cached,
+          grounding,
         })
         return failure(`Application error: ${verifyResult.verification.reasoning}`)
       }
@@ -571,7 +689,7 @@ export async function executeStep(
       // Verifier says not done — planner was wrong about stepComplete. Treat as a
       // self-heal boundary: replan with the verifier's reasoning as failure context
       // (D-12), and let the next observation land as this sub-action's stateAfter (D-15c).
-      const failedIdx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached)
+      const failedIdx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
       recorder.attachStateAfter(failedIdx, afterState)
       context.subActionHistory!.push({
         action: JSON.stringify(action),
@@ -592,7 +710,7 @@ export async function executeStep(
 
     // No verifier but the planner claims completion — trust the planner.
     if (rawPlan.stepComplete && !ports.verifier) {
-      const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached)
+      const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
       maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
       pendingSelfHeal = undefined
       void idx
@@ -602,7 +720,7 @@ export async function executeStep(
 
     // Sub-action succeeded but the goal is not yet met — record and continue (no
     // stateAfter: this is not a D-15 boundary).
-    recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached)
+    recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
     maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
     pendingSelfHeal = undefined
     context.subActionHistory!.push({
@@ -634,26 +752,151 @@ function deriveEnvSetNames(stepText: string): string[] {
   return stepText.match(ENV_NAME_TOKEN) ?? []
 }
 
+// Raw-coordinate keys whose presence makes a cached action non-replayable (Pitfall 5b):
+// a coordinate binding cannot be re-grounded against a fresh observation, so the value is
+// invalidated → replanned rather than replayed at a possibly-shifted position.
+const COORDINATE_KEYS = ['x', 'y', 'coordinates', 'coords', 'startX', 'startY', 'endX', 'endY']
+// Action types that are inherently coordinate-driven — never replayable even once their
+// raw coordinates have been sanitized out of the stored value.
+const COORDINATE_ACTION_TYPES = new Set<string>(['tapCoordinate'])
+
+function carriesRawCoordinates(action: Record<string, unknown>): boolean {
+  if (typeof action.type === 'string' && COORDINATE_ACTION_TYPES.has(action.type)) return true
+  return COORDINATE_KEYS.some((key) => action[key] !== undefined)
+}
+
+// The ordered ref-field lanes replay must re-resolve for an action (Pitfall 5a): a drag
+// maps its two per-field locators onto fromRef/toRef; every other element action maps its
+// single locator onto ref. A locator-less action (navigate/waitFor/…) has no lane.
+function replayLanes(action: Record<string, unknown>, locatorCount: number): string[] {
+  if (action.type === 'drag') return ['fromRef', 'toRef']
+  return locatorCount >= 1 ? ['ref'] : []
+}
+
 // Replay rung of the hit ladder (D-13): reconstruct an ActionPlan from a descriptor-only
-// cached value by re-grounding each locator against the FRESH observation. Returns null
-// when any descriptor no longer resolves — the signal to invalidate and fall through to a
-// full replan (a stale ref never drives a blind click, T-356-04a).
+// cached value by re-grounding EVERY stored per-field locator against the FRESH
+// observation (Pitfall 5 — multi-ref drags re-resolve both fromRef and toRef). Returns
+// null — the invalidate-and-replan signal — when the action is non-replayable (carries raw
+// coordinates or lacks a locator for a ref lane) or any descriptor no longer resolves
+// uniquely (a stale/ambiguous descriptor never drives a blind action, T-356-04a / T-357-03a).
 function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[]): ActionPlan | null {
   const action = value.plannedActions[0]
   if (!action) return null
-  const locator = value.groundedLocator[0]
   const replayAction: Record<string, unknown> = { ...action }
-  if (locator) {
-    const freshRef = deterministicDescriptorMatcher.reground(locator, elements)
+
+  // Coordinate-bearing actions are non-replayable ⇒ invalidate ⇒ replan (Pitfall 5b).
+  if (carriesRawCoordinates(replayAction)) return null
+
+  const lanes = replayLanes(replayAction, value.groundedLocator.length)
+  // A ref lane with no stored locator is an unreplayable value ⇒ invalidate ⇒ replan.
+  if (value.groundedLocator.length < lanes.length) return null
+
+  for (let lane = 0; lane < lanes.length; lane++) {
+    const freshRef = deterministicDescriptorMatcher.reground(value.groundedLocator[lane], elements)
     if (freshRef === null) return null
-    replayAction.ref = freshRef
+    replayAction[lanes[lane]] = freshRef
   }
+
   return {
     reasoning: 'Replayed from cache',
     action: replayAction as ActionPlan['action'],
     confidence: 1,
     stepComplete: value.verificationOutcome === 'passed',
   }
+}
+
+// The ref-field lanes an action may carry — checked in a stable order for evidence
+// descriptor derivation and the synthesized ref-resolved attempt trail.
+const REF_EVIDENCE_FIELDS = ['ref', 'fromRef', 'toRef'] as const
+
+function firstRefField(action: Action): string | undefined {
+  return firstRefFieldEntry(action)?.ref
+}
+
+function firstRefFieldEntry(action: Action): { field: string; ref: string } | undefined {
+  for (const field of REF_EVIDENCE_FIELDS) {
+    const value = (action as Record<string, unknown>)[field]
+    if (typeof value === 'string') return { field, ref: value }
+  }
+  return undefined
+}
+
+function patchRef(action: Action, field: string, ref: Ref): Action {
+  return { ...(action as Record<string, unknown>), [field]: ref } as unknown as Action
+}
+
+// A ref-resolved §A8 attempt trail synthesized when the planner/turn supplied none — one
+// 'ref' entry per committed ref field (drag ⇒ fromRef + toRef). The committed refs were
+// validated against the fresh snapshot (gate/replay), so 'resolved' is the honest outcome.
+function synthesizeRefAttempts(action: Action): GroundingAttempt[] {
+  const trail: GroundingAttempt[] = []
+  for (const field of REF_EVIDENCE_FIELDS) {
+    const value = (action as Record<string, unknown>)[field]
+    if (typeof value === 'string') trail.push({ stage: 'ref', outcome: 'resolved', resolvedRef: value as Ref })
+  }
+  return trail
+}
+
+// Build the §A8 grounding block for a grounded sub-action (GROUND-02, Pitfall 9). Present
+// ONLY when the action carries an element field; the descriptor is redacted BEFORE it lands
+// in evidence (T-357-02a redact-before-record). Attempts come from the turn gate / heal when
+// supplied, else a synthesized ref-resolved trail for the committed ref(s).
+function buildGroundingEvidence(
+  action: Action,
+  elements: readonly ElementInfo[],
+  attempts: GroundingAttempt[] | undefined,
+  redactor: SecretRedactorPort | undefined,
+): GroundingEvidence | undefined {
+  const ref = firstRefField(action)
+  if (ref === undefined) return undefined
+  const locator = toGroundedLocator({ ...(action as Record<string, unknown>), ref } as unknown as Action, elements)
+  if (locator === null) return undefined
+  const descriptor: TargetDescriptor = {}
+  if (locator.role) descriptor.role = locator.role
+  descriptor.name = redactSecretValue(locator.nameNormalized, redactor)
+  if (locator.ordinal !== undefined) descriptor.ordinal = locator.ordinal
+  const trail = attempts !== undefined && attempts.length > 0 ? attempts : synthesizeRefAttempts(action)
+  return { descriptor, attempts: trail }
+}
+
+// D-10 re-ground heal (LOOP-04). Re-derive the failed action's descriptor from the PRIOR
+// observation's ElementInfo, then re-match it against the FRESH observation (with the prior
+// element as a hierarchy disambiguator). On a unique resolve, returns the fresh ref plus the
+// §A8 attempt trail (ref no-match → tree-search resolved); on no-match/ambiguous returns null
+// so the caller falls through to the replan-with-failure-context path. Never replans.
+function regroundFailedRef(
+  action: Action,
+  priorElements: readonly ElementInfo[],
+  freshElements: readonly ElementInfo[],
+  redactor: SecretRedactorPort | undefined,
+): { field: string; ref: Ref; grounding: GroundingEvidence } | null {
+  const entry = firstRefFieldEntry(action)
+  if (entry === undefined) return null
+  const priorTarget = priorElements.find((element) => element.ref === entry.ref)
+  if (priorTarget === undefined) return null
+  const locator: GroundedLocator | null = toGroundedLocator(
+    { ...(action as Record<string, unknown>), ref: entry.ref } as unknown as Action,
+    priorElements,
+  )
+  if (locator === null) return null
+
+  const match = matchDescriptor({
+    descriptor: { role: locator.role, nameNormalized: locator.nameNormalized, ordinal: locator.ordinal },
+    elements: freshElements,
+    prior: { target: priorTarget, elements: priorElements },
+  })
+  if (match.kind !== 'resolved') return null
+
+  const descriptor: TargetDescriptor = { role: locator.role, name: redactSecretValue(locator.nameNormalized, redactor) }
+  if (locator.ordinal !== undefined) descriptor.ordinal = locator.ordinal
+  const grounding: GroundingEvidence = {
+    descriptor,
+    attempts: [
+      { stage: 'ref', outcome: 'no-match' },
+      { stage: 'tree-search', outcome: 'resolved', resolvedRef: match.ref },
+    ],
+  }
+  return { field: entry.field, ref: match.ref, grounding }
 }
 
 function toSchemaResult(execResult: ActionResult, annotation?: ActionAnnotation): SchemaActionResult {
@@ -686,6 +929,7 @@ function recordSuccess(
   execResult: ActionResult,
   annotation: ActionAnnotation | undefined,
   cached: boolean,
+  grounding: GroundingEvidence | undefined,
 ): number {
   return recorder.recordSubAction({
     plan: reasoning,
@@ -693,6 +937,7 @@ function recordSuccess(
     stateBefore,
     result: toSchemaResult(execResult, annotation),
     cached,
+    grounding,
   })
 }
 
