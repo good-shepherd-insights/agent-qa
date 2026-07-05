@@ -33,9 +33,12 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
   it('(3) a verified sub-action gets the verifier re-observation as stateAfter (D-15b)', async () => {
     const before = makeScreenState({ url: 'https://example.test/before' })
     const after = makeScreenState({ url: 'https://example.test/after' })
+    // The settle gate consumes two consecutive observations (identical screenIdentityHash —
+    // url is not part of screen identity) before proceeding, so `before` is fed twice; the
+    // verifier's own re-observation then yields `after` as stateAfter (D-15b).
     const result = await executeStep(
       'Click Log in',
-      ports({ adapter: makeAdapter({ observeResults: [before, after] }), planner: makePlanner(), verifier: makeVerifier() }),
+      ports({ adapter: makeAdapter({ observeResults: [before, before, after] }), planner: makePlanner(), verifier: makeVerifier() }),
       makeStepContext(),
     )
     const sub = result.evidence!.subActions[0]

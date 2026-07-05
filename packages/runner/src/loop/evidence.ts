@@ -219,12 +219,22 @@ export class EvidenceRecorder {
   }
 
   /** Finalize the accumulated evidence into a §A8 StepEvidence. cacheStatus is the
-   * per-step fold; servedBrief is always present (empty when no reader bound). */
-  finalize(verdict: VerifierVerdict, stepIndex: number, stepText: string): StepEvidence {
+   * per-step fold; servedBrief is always present (empty when no reader bound).
+   *
+   * `options.nonCacheable` threads the D-08 bypass signal (Pitfall 7): when a step was
+   * classified NonCacheableStepInput the loop never touched the cache, so cacheStatus is
+   * `'bypass'` DIRECTLY — orthogonal to the boolean hit/miss fold (a cached sub-action's
+   * flag must not fold to `'hit'` for a bypassed step). */
+  finalize(
+    verdict: VerifierVerdict,
+    stepIndex: number,
+    stepText: string,
+    options?: { nonCacheable?: boolean },
+  ): StepEvidence {
     const evidence: StepEvidence = {
       stepIndex,
       stepText,
-      cacheStatus: foldCacheStatus(this.cacheFlags),
+      cacheStatus: options?.nonCacheable ? 'bypass' : foldCacheStatus(this.cacheFlags),
       servedBrief: this.servedBrief,
       subActions: this.subActions,
       verifierVerdict: verdict,

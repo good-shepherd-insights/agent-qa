@@ -41,6 +41,7 @@ import {
   resolveSecretTemplatesInValue,
 } from './secrets.js'
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
+import { settle } from './settle.js'
 
 // v1's context-window overflow classification (loop.ts:277-286) — kept byte-equivalent
 // (D-04, Pitfall 10): a planning error matching one of these is surfaced with the
@@ -56,6 +57,14 @@ const CANCELLED_MESSAGE = 'Step cancelled by user'
 // KnowledgeHintReader is bound. Small by design (the brief is L3 hypotheses, not commands);
 // inert in M1 while the port is unbound, at which point no brief is sourced at all.
 const KNOWLEDGE_BRIEF_BUDGET = 512
+
+// D-09/D-16 settle-gate bounds. The poll is deliberately small (Pitfall 4/5): the first
+// observation doubles as stateBefore (no extra capture), so only the extra poll iterations
+// before two consecutive matching screenIdentityHash values cost anything. The inter-poll
+// wait defaults to 0 (deterministic, back-to-back) — the composition root injects a real
+// animation-settling interval; the step deadline is the hard proceed-on-latest backstop.
+const DEFAULT_SETTLE_MAX_POLLS = 3
+const DEFAULT_SETTLE_INTERVAL_MS = 0
 
 // The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
 //   1. planner stepFailed          → failed  (no execution)
@@ -155,16 +164,31 @@ export async function executeStep(
       return failure(`Step timed out after ${ports.stepTimeout}ms`)
     }
 
-    // 1. OBSERVE — always re-observe. This observation is the next sub-action's
-    // stateBefore by construction (D-15).
+    // 1. SETTLE + OBSERVE — the bounded settle gate polls screenIdentityHash and proceeds
+    // only on two consecutive matching hashes (or the maxPolls/deadline bound, D-16). The
+    // settled observation IS the next sub-action's stateBefore by construction (D-15, no
+    // extra capture — Pitfall 5). The settled hash triples as settle-stability, the 8th
+    // cache-key component (Task 2), and the Phase-358 progress signal (one hash, D-09).
     let screenState: ScreenState
+    let settledHash: string
     try {
-      screenState = await withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal)
+      const settled = await settle(
+        () => withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal),
+        {
+          maxPolls: DEFAULT_SETTLE_MAX_POLLS,
+          intervalMs: DEFAULT_SETTLE_INTERVAL_MS,
+          deadline,
+          signal: ports.abortSignal,
+        },
+      )
+      screenState = settled.state
+      settledHash = settled.hash
     } catch (err) {
       const abortResult = checkAbort()
       if (abortResult) return abortResult
       throw err
     }
+    void settledHash // consumed by the cache-key builder in Task 2
 
     // D-15c: the observation that reveals a prior failure is the failed sub-action's
     // stateAfter (and this iteration's planning stateBefore — the same object).
