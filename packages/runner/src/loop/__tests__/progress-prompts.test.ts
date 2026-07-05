@@ -123,8 +123,8 @@ describe('v1 anti-repetition warning is deleted (§12.16 replaces it)', () => {
   it('produces NO "Do NOT repeat" warning for two identical sub-actions with no screen change', () => {
     const context = makeContext({
       subActionHistory: [
-        { action: 'tap on ref="e1"', result: 'success', screenChanged: false },
-        { action: 'tap on ref="e1"', result: 'success', screenChanged: false },
+        { action: 'tap on ref="e1"', result: 'success' },
+        { action: 'tap on ref="e1"', result: 'success' },
       ],
     })
     const turn = renderTurn(composeTurnMessages(context, makeScreen()))

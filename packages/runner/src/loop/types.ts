@@ -127,8 +127,12 @@ export interface StepContext {
    */
   bulkCompletionPredicate?: string
   failureContext?: string
-  /** Sub-actions already attempted in this step (multi-action mode). */
-  subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; screenChanged?: boolean; data?: string }[]
+  /**
+   * Sub-actions already attempted in this step (multi-action mode). Phase 358 retired the v1
+   * per-entry screen-change heuristic flag — the differential-observation oracle's `localEffect`
+   * block (SubActionEvidence) is the sanctioned progress signal now (§12.16 replacement).
+   */
+  subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; data?: string }[]
   plannerConfig?: PlannerConfig
   screenshot?: Buffer
   /**
@@ -151,7 +155,7 @@ export interface Planner {
 }
 
 export interface Verifier {
-  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string): Promise<VerifyResult>
+  verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string, bulkCompletionPredicate?: string): Promise<VerifyResult>
 }
 
 // Assertion vocabulary (re-derived from v1 core/src/agent/types.ts). The asserter

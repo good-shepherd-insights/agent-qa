@@ -310,7 +310,6 @@ function appendSubActionHistory(parts: string[], context: StepContext): void {
     let suffix = ''
     if (sub.result === 'failure') suffix = ` — FAILED: ${sub.error?.slice(0, 120)}`
     else if (sub.verifierRejection) suffix = ` — step NOT complete: ${sub.verifierRejection?.slice(0, 120)}`
-    else if (sub.screenChanged === false) suffix = ` — screen did NOT change (action had no visible effect)`
     const reason = sub.reasoning ? ` (${sub.reasoning})` : ''
     subHistoryParts.push(`  ${sub.result === 'success' ? '✓' : '✗'} ${sub.action}${reason}${suffix}`)
     if (sub.data) subHistoryParts.push(`    Returned data: ${sub.data}`)
@@ -642,6 +641,7 @@ export function buildVerificationPrompt(
   action: Action,
   hasScreenshot = false,
   promptNote?: string,
+  bulkCompletionPredicate?: string,
 ): string {
   const parts: string[] = []
 
@@ -653,6 +653,11 @@ export function buildVerificationPrompt(
 
   parts.push(`Step goal: "${step}"`)
   parts.push(`Action taken: ${actionDesc}`)
+  // D-09 backstop: when a bulk "do X to all" predicate was declared, the verifier weighs it
+  // as positive-evidence context (opaque display text, per-call volatile — never the stable tier).
+  if (bulkCompletionPredicate) {
+    parts.push(`Declared bulk-completion predicate: "${bulkCompletionPredicate}". Confirm this predicate holds against the AFTER state before agreeing the step is complete.`)
+  }
   parts.push('')
   parts.push('Screen BEFORE action:')
   parts.push(truncateScreenState(beforeState))

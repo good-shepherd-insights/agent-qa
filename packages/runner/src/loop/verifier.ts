@@ -49,9 +49,13 @@ export class LLMVerifier implements Verifier {
     screenshot?: Buffer,
     abortSignal?: AbortSignal,
     promptNote?: string,
+    bulkCompletionPredicate?: string,
   ): Promise<VerifyResult> {
     try {
-      const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot, promptNote)
+      // D-09 backstop: the declared bulk-completion predicate rides the per-call VOLATILE turn
+      // content (never buildVerifierStableTier — the 355 verifier cache contract keeps the
+      // stable tier byte-stable). The verifier weighs the predicate alongside the states.
+      const promptText = buildVerificationPrompt(step, before, after, action, !!screenshot, promptNote, bulkCompletionPredicate)
 
       // Verdict-identity cached stable prefix (D-11): a one-tier SystemModelMessage array
       // carrying the single Anthropic ephemeral cache_control breakpoint. Byte-stable per
