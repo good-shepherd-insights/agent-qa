@@ -14,6 +14,8 @@ import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from 
 import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-core'
 import type { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
+import { WorkingMemoryStore } from '@vostride/agent-qa-runner'
+import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
 
@@ -1401,6 +1403,10 @@ async function executeSuites(
       actionMasking = ctx.masking
     }
 
+    // WM-01/WM-02: ONE run-scoped working-memory store spans all suite member tests; threaded
+    // into each test's runner loop and flushed redacted once at suite end (finally below).
+    const suiteWorkingMemory = new WorkingMemoryStore(variableContext?.secretRedactor)
+
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     let suiteMemoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
@@ -1469,6 +1475,7 @@ async function executeSuites(
       verifier,
       cache: suiteEffectiveCacheEnabled ? actionCache : undefined,
       masking: suiteEffectiveCacheEnabled ? actionMasking : undefined,
+      workingMemory: suiteWorkingMemory,
       plannerModel,
       verifierModel,
       reporters,
@@ -1519,6 +1526,12 @@ async function executeSuites(
 
     const suiteResult = await runSuite(suite, testEntries, suiteConfig)
       .finally(async () => {
+        // WM-02 (D-13): redacted flush + disposal on every run outcome (pass/fail/error).
+        // The helper never throws, so the run exit code is untouched (Pitfall 5).
+        await flushWorkingMemory(suiteWorkingMemory, {
+          artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
+          mask: actionMasking ? (value: string) => actionMasking!.mask(value) : undefined,
+        })
         closeSuiteDashboardDb(dashboardDb)
         await flushAnalyticsRunReporter(analyticsReporter)
       })
@@ -1985,6 +1998,11 @@ export function createRunCommand(): Command {
         // Wire action cache from config (logger wired after LogManager creation below)
         let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
         let actionMasking: IdentityMaskingContext | undefined
+
+        // WM-01/WM-02: one run-scoped working-memory store per run, constructed with the run's
+        // SecretRedactor (capture-time redaction live); threaded into the loop and flushed
+        // redacted at run end (finally-positioned below).
+        const singleWorkingMemory = new WorkingMemoryStore(runtimeSecrets.secretRedactor)
 
         const reporters: import('@vostride/agent-qa-core').Reporter[] = []
         if (reporterSelection.console) {
@@ -2467,6 +2485,7 @@ export function createRunCommand(): Command {
               screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
               cache: effectiveCacheEnabled ? actionCache : undefined,
               masking: effectiveCacheEnabled ? actionMasking : undefined,
+              workingMemory: singleWorkingMemory,
               recording: testRecording,
               plannerConfig,
               timeouts: testTimeouts,
@@ -2626,6 +2645,12 @@ export function createRunCommand(): Command {
             return { failed: result.status === 'failed' }
           } finally {
             if (adapter) await adapter.cleanup()
+            // WM-02 (D-13): redacted flush + disposal on every run outcome (pass/fail/error).
+            // The helper never throws, so the run exit code is untouched (Pitfall 5).
+            await flushWorkingMemory(singleWorkingMemory, {
+              artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
+              mask: actionMasking ? (value: string) => actionMasking!.mask(value) : undefined,
+            })
           }
           } catch (err) {
             if ((analyticsPlatform === 'android' || analyticsPlatform === 'ios') && analyticsRunId) {

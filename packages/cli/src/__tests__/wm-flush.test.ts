@@ -15,6 +15,7 @@ import { mkdir, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { loadGuardrailPolicy, defaultGuardrailPolicyInput } from '@vostride/agent-qa-safety'
+import type { GuardrailAuditRow } from '@vostride/agent-qa-safety'
 // Plan-07 flush helper — intentionally unresolved today (the RED reason for this suite):
 import { flushWorkingMemory } from '../wm-flush.js'
 
@@ -61,7 +62,7 @@ describe('flushWorkingMemory — happy path (D-13)', () => {
 
 describe('flushWorkingMemory — guardrail composition + blocked-entry placeholder (Open Q2)', () => {
   it('invokes assertCommittedEgressSafe on channel working-memory-flush and fingerprints a blocked entry', async () => {
-    const auditRows: { channel?: string; detector: string; action: string }[] = []
+    const auditRows: GuardrailAuditRow[] = []
     const store = fakeStore([
       { key: 'safe', value: 'ordinary note', kind: 'progress-marker', provenance: 'plannerInference' },
       { key: 'leak', value: PEM, kind: 'extracted-value', provenance: 'toolResult' }, // trips pemKey (block)
@@ -71,7 +72,7 @@ describe('flushWorkingMemory — guardrail composition + blocked-entry placehold
       artifactsDir: TMP_DIR,
       mask: (v: string) => v,
       policy,
-      auditSink: { appendGuardrailAudit: (row: { channel?: string; detector: string; action: string }) => auditRows.push(row), appendExecutionAudit: () => {} },
+      auditSink: { appendGuardrailAudit: (row: GuardrailAuditRow) => { auditRows.push(row) }, appendExecutionAudit: () => {} },
     })
 
     const raw = await readFile(result.path, 'utf8')

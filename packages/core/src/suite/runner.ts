@@ -35,6 +35,12 @@ export interface RunSuiteConfig {
   cache?: ActionPlanCache
   /** D-05 masking seam threaded through to each test's runner loop (identity pre-362). */
   masking?: MaskingContext
+  /**
+   * WM-01 run-scoped working-memory store (Phase 358). ONE store spans all suite member tests
+   * (run-scoped, not test-scoped) and is threaded into each test's runner loop; the CLI flushes
+   * it once at suite end.
+   */
+  workingMemory?: RunTestConfig['workingMemory']
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -412,6 +418,7 @@ export async function runSuite(
         verifier: config.verifier,
         cache: config.cache,
         masking: config.masking,
+        workingMemory: config.workingMemory,
         plannerModel: config.plannerModel,
         verifierModel: config.verifierModel,
         reporters: config.reporters,

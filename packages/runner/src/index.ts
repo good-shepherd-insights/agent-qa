@@ -44,6 +44,10 @@ export type {
 
 // Step-execution loop spine (re-derived into runner, Phase 353).
 export { executeStep } from './loop/index.js'
+// Run-scoped working-memory store (Phase 358 · WM-01/WM-02). Exported so the CLI composition
+// root constructs one per run and threads it into LoopPorts.workingMemory (the 361 rebind seam).
+export { WorkingMemoryStore } from './loop/working-memory/index.js'
+export type { WorkingMemoryProvenanceContext } from './loop/working-memory/index.js'
 export {
   createTimeoutAbortReason,
   getTimeoutAbortReason,
@@ -116,6 +120,7 @@ export type {
   LoopScopedLogger,
   LoopLogger,
   LoopPorts,
+  WorkingMemoryPort,
   TokenAccounting,
   RunnerDegradeOptions,
   RunnerDegradeOutcome,

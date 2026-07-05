@@ -13,7 +13,7 @@ import type { Reporter, StepEventContext } from '../reporter/types.js'
 import { MultiReporter } from '../reporter/types.js'
 import { captureFailureScreenshot } from '../reporter/screenshot.js'
 import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort, executeStep } from '@vostride/agent-qa-runner'
-import type { LoopPorts, StepContext as RunnerStepContext } from '@vostride/agent-qa-runner'
+import type { LoopPorts, StepContext as RunnerStepContext, WorkingMemoryPort } from '@vostride/agent-qa-runner'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
@@ -58,6 +58,13 @@ export interface RunTestConfig {
    * Phase 362 seeds the live run-scope secrets. Browser-safe schema type only.
    */
   masking?: MaskingContext
+  /**
+   * WM-01 run-scoped working-memory store (Phase 358, D-11/D-12). Constructed once per run at
+   * the CLI composition root and threaded straight through into `LoopPorts.workingMemory` — core
+   * stays storage-neutral and never builds it. Absent ⇒ memory-less loop (never throws, D-05).
+   * Phase 361 rebinds this seam onto `RunSession` without touching core.
+   */
+  workingMemory?: WorkingMemoryPort
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -505,6 +512,8 @@ export async function runTest(
         verifier: config.verifier,
         cache: config.cache,
         masking: config.masking,
+        // WM-01: the run-scoped store rides through as a structural port (361 rebind seam).
+        workingMemory: config.workingMemory,
         compressor: new CoreScreenshotCompressor(config.logger?.createScopedLogger('adapter')),
         safetyHooks: config.safetyHooks,
         plannerConfig: config.plannerConfig,
