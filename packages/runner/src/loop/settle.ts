@@ -6,6 +6,14 @@
 // it proceeds on the LATEST observation's hash rather than spinning. The returned hash
 // is the single value downstream consumes — settle-stability, the 8th cache-key
 // component, and the Phase-358 progress/no-change signal (one hash, three jobs, D-09).
+//
+// SettleResult additionally exposes `settled` (Phase 358, CYCLE-02): true when the gate
+// exited on two consecutive matching hashes (the acting condition), false when the
+// maxPolls/deadline bound forced a proceed-on-latest. A third consumer — the Phase-358
+// transient-load stagnation classifier — reads this instability signal (settled === false
+// ⇒ the screen never quiesced ⇒ transient-load), keeping the classification honest without
+// re-deriving poll state. Purely additive: existing call sites and settle.test.ts are
+// unaffected because they only read `state`/`hash`.
 
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 import type { ScreenState } from '@vostride/agent-qa-schema'
@@ -24,6 +32,13 @@ export interface SettleOptions {
 export interface SettleResult {
   state: ScreenState
   hash: string
+  /**
+   * True ⇒ the gate exited on two consecutive matching hashes (the screen quiesced,
+   * the acting condition). False ⇒ maxPolls/deadline forced a proceed-on-latest exit
+   * (the screen never stabilized). The Phase-358 transient-load classifier consumes
+   * this as its instability signal. Additive; existing readers ignore it.
+   */
+  settled: boolean
 }
 
 async function abortAwareSleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -56,10 +71,14 @@ export async function settle(
   let prevHash: string | undefined
   let state = await observe()
   let hash = screenIdentityHash(state)
+  let settled = false
 
   for (let i = 0; i < opts.maxPolls; i++) {
     // Two consecutive matching hashes → settled (the acting condition).
-    if (hash === prevHash) break
+    if (hash === prevHash) {
+      settled = true
+      break
+    }
     // Bounded: proceed on the latest hash rather than hanging (D-16).
     if (opts.deadline && performance.now() > opts.deadline) break
     prevHash = hash
@@ -68,5 +87,5 @@ export async function settle(
     hash = screenIdentityHash(state)
   }
 
-  return { state, hash }
+  return { state, hash, settled }
 }
