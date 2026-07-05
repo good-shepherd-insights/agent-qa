@@ -117,17 +117,6 @@ const SCHEMA_MAP: SchemaField = {
             { label: 'navigation', kind: 'string', detail: 'string', documentation: 'Navigation timeout (e.g., "10s", "30s")' },
           ],
         },
-        {
-          label: 'healing',
-          kind: 'object',
-          detail: 'object',
-          documentation: 'Self-healing configuration',
-          children: [
-            { label: 'strategy', kind: 'enum', detail: 'enum', enumValues: ['full-replan', 'selector-resolution', 'two-tier'], documentation: 'Healing strategy' },
-            { label: 'maxAttempts', kind: 'number', detail: 'number', documentation: 'Max healing attempts (default: 3)' },
-            { label: 'requireStateDiff', kind: 'boolean', detail: 'boolean', documentation: 'Require state change between attempts (default: true)' },
-          ],
-        },
       ],
     },
     {

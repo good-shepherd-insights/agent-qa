@@ -129,8 +129,6 @@ const CONFIG_ITEMS = [
       'services.memory.curatorEnabled',
       'services.memory.minTrust',
       'services.memory.maxInjections',
-      'services.memory.ablationEnabled',
-      'services.memory.circuitBreakerEnabled',
     ],
     aliases: ['memory', 'memory dir', 'memory directory', 'memory path', 'curator', 'trust'],
   },

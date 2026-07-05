@@ -40,7 +40,7 @@ export const AGENT_QA_SCHEMA_REFERENCES = {
     optionalKeys: ['context', 'use', 'meta', 'setup', 'teardown'],
     idType: 'test' as EntityIdType,
     hookReferences: 'setup and teardown arrays must contain canonical h_ hook IDs.',
-    stepFormats: ['string', 'object with step/timeout/retries/screenshot/capture/maxAttempts'],
+    stepFormats: ['string', 'object with step/timeout/retries/screenshot/capture'],
   },
   suite: {
     name: 'agent-qa suite YAML',
