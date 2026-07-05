@@ -62,11 +62,6 @@ export const MemoryConfigSchema = z.object({
   curatorLockTimeout: z.number().int().min(1000).optional().default(120_000),
   trustConfirmDelta: z.number().min(0).max(1).optional().default(0.05),
   trustContradictDelta: z.number().min(0).max(1).optional().default(0.10),
-  ablationEnabled: z.boolean().optional().default(true),
-  circuitBreakerEnabled: z.boolean().optional().default(true),
-  circuitBreakerWindowSize: z.number().int().min(5).optional().default(20),
-  circuitBreakerBaselineSize: z.number().int().min(2).optional().default(3),
-  circuitBreakerThreshold: z.number().min(0).max(1).optional().default(0.15),
 }).strict()
 
 export const ServicesSchema = z.object({

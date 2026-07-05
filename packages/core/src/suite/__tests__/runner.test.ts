@@ -140,7 +140,7 @@ describe('suite runner member ordering', () => {
           verifierModel: {},
           memoryProvider: { getInjectedObservations: vi.fn(() => []) },
           memoryRoot: '/tmp/custom-agent-qa-memory',
-          memoryConfig: { enabled: true, curatorEnabled: false, ablationEnabled: false },
+          memoryConfig: { enabled: true, curatorEnabled: false },
           product: 'custom-product',
         } as any,
       )

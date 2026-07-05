@@ -64,11 +64,6 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
         curatorLockTimeout: 120_000,
         trustConfirmDelta: 0.05,
         trustContradictDelta: 0.10,
-        ablationEnabled: true,
-        circuitBreakerEnabled: true,
-        circuitBreakerWindowSize: 20,
-        circuitBreakerBaselineSize: 3,
-        circuitBreakerThreshold: 0.15,
       },
     },
   }

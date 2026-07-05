@@ -60,7 +60,6 @@ export interface RunSuiteConfig {
   memoryConfig?: {
     enabled?: boolean
     curatorEnabled?: boolean
-    ablationEnabled?: boolean
     trustConfirmDelta?: number
     trustContradictDelta?: number
   }

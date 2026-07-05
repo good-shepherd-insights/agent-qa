@@ -16,11 +16,6 @@ describe('MemoryConfigSchema', () => {
       curatorLockTimeout: 120_000,
       trustConfirmDelta: 0.05,
       trustContradictDelta: 0.10,
-      ablationEnabled: true,
-      circuitBreakerEnabled: true,
-      circuitBreakerWindowSize: 20,
-      circuitBreakerBaselineSize: 3,
-      circuitBreakerThreshold: 0.15,
     })
   })
 
@@ -36,12 +31,12 @@ describe('MemoryConfigSchema', () => {
       curatorLockTimeout: 120_000,
       trustConfirmDelta: 0.05,
       trustContradictDelta: 0.10,
-      ablationEnabled: true,
-      circuitBreakerEnabled: true,
-      circuitBreakerWindowSize: 20,
-      circuitBreakerBaselineSize: 3,
-      circuitBreakerThreshold: 0.15,
     })
+  })
+
+  it('rejects a config carrying a removed v1 healing-config key (strict)', () => {
+    const result = MemoryConfigSchema.safeParse({ ablationEnabled: true })
+    expect(result.success).toBe(false)
   })
 
   it('rejects minTrust above 1', () => {
