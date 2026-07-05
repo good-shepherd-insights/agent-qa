@@ -31,6 +31,7 @@ const expectedPackageDirs = [
   'packages/runner',
   'packages/safety',
   'packages/safety-local',
+  'packages/runner-local',
   'packages/knowledge-local',
   'packages/core',
   'packages/ids',

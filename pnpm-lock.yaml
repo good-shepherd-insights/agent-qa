@@ -644,6 +644,31 @@ importers:
         specifier: ~4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@29.1.1)(vite@8.0.10(@types/node@24.12.2)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.8.4))
 
+  packages/runner-local:
+    dependencies:
+      '@vostride/agent-qa-runner':
+        specifier: workspace:*
+        version: link:../runner
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
+    devDependencies:
+      '@types/node':
+        specifier: ~24.12.2
+        version: 24.12.2
+      '@vostride/agent-qa-arch':
+        specifier: workspace:*
+        version: link:../arch
+      tsup:
+        specifier: ~8.5.1
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.13)(typescript@6.0.3)(yaml@2.8.4)
+      typescript:
+        specifier: ~6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ~4.1.5
+        version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@24.12.2)(jsdom@29.1.1)(vite@8.0.10(@types/node@24.12.2)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.8.4))
+
   packages/safety:
     dependencies:
       '@vostride/agent-qa-schema':

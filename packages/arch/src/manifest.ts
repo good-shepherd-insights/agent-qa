@@ -11,6 +11,7 @@ import { AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT } from '../../knowledge-loc
 import { AGENT_QA_MCP_OWNERSHIP_CONTRACT } from '../../mcp/src/ownership-contract.js'
 import { AGENT_QA_MODEL_OWNERSHIP_CONTRACT } from '../../model/src/ownership-contract.js'
 import { AGENT_QA_RUNNER_OWNERSHIP_CONTRACT } from '../../runner/src/ownership-contract.js'
+import { AGENT_QA_RUNNER_LOCAL_OWNERSHIP_CONTRACT } from '../../runner-local/src/ownership-contract.js'
 import { AGENT_QA_SAFETY_OWNERSHIP_CONTRACT } from '../../safety/src/ownership-contract.js'
 import { AGENT_QA_SAFETY_LOCAL_OWNERSHIP_CONTRACT } from '../../safety-local/src/ownership-contract.js'
 import { AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT } from '../../schema/src/ownership-contract.js'
@@ -30,6 +31,7 @@ export const ARCH_MANIFEST = {
     AGENT_QA_RUNNER_OWNERSHIP_CONTRACT,
     AGENT_QA_SAFETY_OWNERSHIP_CONTRACT,
     AGENT_QA_SAFETY_LOCAL_OWNERSHIP_CONTRACT,
+    AGENT_QA_RUNNER_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_CORE_OWNERSHIP_CONTRACT,
     AGENT_QA_IDS_OWNERSHIP_CONTRACT,
