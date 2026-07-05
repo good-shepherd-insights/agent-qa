@@ -100,15 +100,17 @@ export interface StepContext {
    * classification, the stagnating control's anchor (`role + nameNormalized + ordinal` — the
    * wandering ban's positive half: the exact control it MUST remediate), and the raw diff facts
    * (rendered injection-inert as opaque display text, renderDescriptor precedent). For the
-   * `unresponsive` class the block renders facts only, no suggested remediation (D-02).
-   * `bannedSubstitutions` carries the D-04 deterministic gate bans (a `longpress` standing in for
-   * the required `tap` on the stagnating anchor) the planner's groundability closure enforces
-   * pre-gate. Absent when no anchor is stagnating this turn (empty-slot omission).
+   * `unresponsive` class the block renders facts only, no suggested remediation (D-02). The
+   * classification/anchor/diff render triplet and the D-04 `bannedSubstitutions` gate-ban list are
+   * INDEPENDENTLY optional: a turn may carry only the render block (a planner-routed rung with no
+   * ban), only the ban list (a banned anchor with nothing to render), or both. The ban list drives
+   * the deterministic longpress-for-tap gate rejection the planner's groundability closure enforces
+   * pre-gate. Absent entirely when no anchor is stagnating this turn (empty-slot omission).
    */
   stagnation?: {
-    classification: string
-    anchor: { role: string; nameNormalized: string; ordinal: number }
-    diff: string
+    classification?: string
+    anchor?: { role: string; nameNormalized: string; ordinal: number }
+    diff?: string
     bannedSubstitutions?: Array<{ anchorKey: string; banned: string; required: string }>
   }
   /**

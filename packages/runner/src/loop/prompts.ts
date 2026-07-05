@@ -269,7 +269,10 @@ function appendWorkingMemory(parts: string[], context: StepContext): void {
 // suggested — facts only (D-02). Omitted entirely when the slot is unset (empty-slot omission).
 function appendStagnationBlock(parts: string[], context: StepContext): void {
   const s = context.stagnation
-  if (!s) return
+  // The classification/anchor/diff render triplet is independently optional from the D-04
+  // bannedSubstitutions list (a ban-only slot carries no render block). Render only when the
+  // full triplet is present; otherwise omit entirely (empty-slot omission).
+  if (!s || s.classification === undefined || s.anchor === undefined || s.diff === undefined) return
   parts.push(`Stagnation detected (classification: ${s.classification}) on control ${s.anchor.role} "${s.anchor.nameNormalized}" (ordinal ${s.anchor.ordinal}).`)
   parts.push(`Observed diff: ${s.diff}`)
   if (s.classification !== 'unresponsive') {

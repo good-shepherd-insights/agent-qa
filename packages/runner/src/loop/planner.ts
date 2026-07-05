@@ -13,7 +13,7 @@
 // port. Zero non-action tools are bound (D-07), so executePlanningTurn behaves as v1's
 // one-shot per turn; the screenshot fallback and maxRetries:0 semantics are preserved.
 import type { LanguageModel, LanguageModelUsage, ModelMessage, SystemModelMessage } from 'ai'
-import type { Platform, ScreenState } from '@vostride/agent-qa-schema'
+import type { ElementInfo, Platform, ScreenState } from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { LoopScopedLogger, TokenAccounting } from './ports.js'
 import { buildSystemPrompt, buildContextTier, buildVolatileTier, composeTurnMessages } from './prompts.js'
@@ -21,11 +21,67 @@ import { buildTools, defaultRegistry } from '../tools/index.js'
 import { executePlanningTurn, type PlanningTurnResult, type GroundabilityCallback } from './planning-turn.js'
 import { executeClampedCall, type ClampedCallResult } from './clamp.js'
 import { groundActionPlan } from '../grounding/gate.js'
+import { matchDescriptor } from '../grounding/matcher.js'
+import { buildAnchorKey } from './progress/stagnation-tree.js'
 
 // The text-only fallback note appended to the current-instruction message when the
 // screenshot send fails (D-11). Byte-identical to v1's note so the fallback turn matches.
 const SCREENSHOT_UNAVAILABLE_NOTE =
   '[Note: Visual screenshot is unavailable for this step. Rely on the accessibility tree and DOM context for element identification.]'
+
+// D-04 longpress-for-tap ban resolution. Resolve the emitted action's target to the STABLE
+// element anchor (role + nameNormalized + same-screen ordinal) — never the volatile ref string —
+// so the ban keys on the exact identity the stagnation tree does (buildAnchorKey, reused). Reads a
+// `ref` against the fresh observation, or resolves a `target` descriptor via the shared matcher.
+// Returns undefined when the target does not resolve on this observation (⇒ no ban fires).
+function resolveActionAnchorKey(
+  action: { [key: string]: unknown },
+  screenState: ScreenState,
+): string | undefined {
+  let element: ElementInfo | undefined
+  const ref = typeof action.ref === 'string' ? action.ref : undefined
+  if (ref !== undefined) {
+    element = screenState.elements.find((e) => e.ref === ref)
+  } else if (action.target !== null && typeof action.target === 'object') {
+    const match = matchDescriptor({ descriptor: action.target as never, elements: screenState.elements })
+    if (match.kind === 'resolved') {
+      element = screenState.elements.find((e) => e.ref === match.ref)
+    }
+  }
+  if (element === undefined) return undefined
+  const resolved = element
+  const ordinal = screenState.elements
+    .filter((e) => e.role === resolved.role && e.nameNormalized === resolved.nameNormalized)
+    .findIndex((e) => e.ref === resolved.ref)
+  if (ordinal < 0) return undefined
+  return buildAnchorKey({ role: resolved.role, nameNormalized: resolved.nameNormalized, ordinal })
+}
+
+// D-04 deterministic longpress-for-tap ban (gate-agnostic pre-check, no model judgment). When the
+// emitted action's verb + resolved anchor match a banned substitution on a stagnating control,
+// returns the §7.1 self-correcting error text naming the required control + verb; the planning-turn
+// one-shot injects it in-conversation for a single retry, and a second banned emission surfaces the
+// structured 'ungroundable_action' turn failure (357 D-09 machinery, unmodified). Any other verb, or
+// an action on a DIFFERENT element, returns undefined — D-04's explicit negative: no wandering
+// heuristic here; genuine loops are caught by CYCLE-03 revisitation.
+function bannedSubstitutionMessage(
+  action: { type: string; [key: string]: unknown },
+  screenState: ScreenState,
+  context: StepContext,
+): string | undefined {
+  const banned = context.stagnation?.bannedSubstitutions
+  if (banned === undefined || banned.length === 0) return undefined
+  const verb = typeof action.type === 'string' ? action.type : undefined
+  if (verb === undefined) return undefined
+  const anchorKey = resolveActionAnchorKey(action, screenState)
+  if (anchorKey === undefined) return undefined
+  for (const entry of banned) {
+    if (entry.anchorKey === anchorKey && entry.banned === verb) {
+      return `A ${entry.banned} is not a valid substitute for the required ${entry.required} on the stagnating control (${anchorKey}). Emit a ${entry.required} on that same control instead of a ${entry.banned}.`
+    }
+  }
+  return undefined
+}
 
 export class LLMPlanner implements Planner {
   private model: LanguageModel
@@ -91,6 +147,13 @@ export class LLMPlanner implements Planner {
     // text for one in-conversation correction, never a throw (schema_invalid stays a
     // throw upstream in toolCallToActionPlan, Q2).
     const groundability: GroundabilityCallback = (parsed) => {
+      // D-04 deterministic longpress-for-tap ban — checked BEFORE grounding. A banned
+      // substitution on a stagnating anchor returns the §7.1 bounce through the existing
+      // one-shot machinery (planning-turn.ts unchanged); grounding/gate.ts stays pure and
+      // stagnation-agnostic.
+      const banMessage = bannedSubstitutionMessage(parsed.action, screenState, context)
+      if (banMessage !== undefined) return { ok: false, message: banMessage }
+
       const gate = groundActionPlan({
         toolName: typeof parsed.action.type === 'string' ? parsed.action.type : 'action',
         action: parsed.action,
