@@ -93,6 +93,37 @@ export interface StepContext {
    * array/undefined ⇒ omitted from the turn entirely (empty-slot omission).
    */
   workingMemory?: WorkingMemoryEntry[]
+  /**
+   * D-01/D-07 stagnation classification block (per-turn VOLATILE turn content — it rides
+   * `composeTurnMessages` ONLY, NEVER the cached system tiers, Pitfall 3). Populated by Plan 08
+   * when the deterministic classifier flags a stagnating anchor. The block hands the planner the
+   * classification, the stagnating control's anchor (`role + nameNormalized + ordinal` — the
+   * wandering ban's positive half: the exact control it MUST remediate), and the raw diff facts
+   * (rendered injection-inert as opaque display text, renderDescriptor precedent). For the
+   * `unresponsive` class the block renders facts only, no suggested remediation (D-02).
+   * `bannedSubstitutions` carries the D-04 deterministic gate bans (a `longpress` standing in for
+   * the required `tap` on the stagnating anchor) the planner's groundability closure enforces
+   * pre-gate. Absent when no anchor is stagnating this turn (empty-slot omission).
+   */
+  stagnation?: {
+    classification: string
+    anchor: { role: string; nameNormalized: string; ordinal: number }
+    diff: string
+    bannedSubstitutions?: Array<{ anchorKey: string; banned: string; required: string }>
+  }
+  /**
+   * D-08 cycle-break block (per-turn VOLATILE turn content). One-shot per step: the first
+   * confirmed cycle flag surfaces this block (the revisited key + the W-window summary + the
+   * §7.1 change-approach-or-stepFailed instruction) in the next planning turn; a following window
+   * with zero progress ends the step. Absent otherwise.
+   */
+  cycleBreak?: { revisitedKey: string; windowSummary: string }
+  /**
+   * D-09 active bulk-completion predicate (per-turn VOLATILE turn content). While a bulk
+   * "do X to all" loop is running, the planner's declared positive predicate is re-stated each
+   * turn with the re-evaluate/cite-positive-evidence instruction. Absent for non-bulk steps.
+   */
+  bulkCompletionPredicate?: string
   failureContext?: string
   /** Sub-actions already attempted in this step (multi-action mode). */
   subActionHistory?: { action: string; reasoning?: string; result: 'success' | 'failure'; error?: string; verifierRejection?: string; screenChanged?: boolean; data?: string }[]

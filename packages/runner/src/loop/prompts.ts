@@ -174,7 +174,8 @@ function completionRules(platform?: PromptPlatform): string {
       : '"click X and then verify Y" on web, or "tap X and then verify Y" on mobile'
   return `19. ACTION STEP COMPLETION: When the step instruction is a pure action — a single verb like ${actionExamples} targeting a specific element — and you found the target element and executed the action successfully, set stepComplete: true immediately. Do NOT retry expecting a visible screen change. Many successful actions produce no visible change on the current page: file downloads save to disk silently, external links open in new tabs, buttons trigger background processes, PDF links open in the browser's PDF viewer. This rule applies to SINGLE-ACTION steps only. If the step has multiple sub-goals (${multiGoalExample}), complete the action sub-goal and move to the next per Rule 13 — do not set stepComplete until ALL sub-goals are done.
 20. TRUST LOG READ RESULTS: When web_inspect (console/network) returns data, that data is the complete set of logs captured since the last step. Do NOT re-trigger user interactions or navigation to "regenerate" logs — the logs from prior steps are already captured. If web_inspect (console) returns an empty array, it means no matching console output was captured during this step's execution. If the step requires verifying log content and web_inspect (console) returns empty, either the expected log was not emitted or it was captured in a prior step — check the step instruction and set stepFailed if the expected log output is absent after one read attempt.
-21. The setVariable action stores a runtime variable accessible via {{env:varName}} in later steps. ONLY use setVariable when the step instruction explicitly asks to set, store, save, or remember a variable (e.g., "Set env X to Y", "Store the value as env.token"). NEVER use setVariable as a substitute for page interactions, assertions, or any other action. If the step does not explicitly mention setting a variable, do not call setVariable.`
+21. The setVariable action stores a runtime variable accessible via {{env:varName}} in later steps. ONLY use setVariable when the step instruction explicitly asks to set, store, save, or remember a variable (e.g., "Set env X to Y", "Store the value as env.token"). NEVER use setVariable as a substitute for page interactions, assertions, or any other action. If the step does not explicitly mention setting a variable, do not call setVariable.
+22. STAGNATION FOCUS — DO NOT WANDER: When a specific named control fails to make progress, you will be shown a stagnation block naming that exact control and how it stalled. Remediate THAT control as the classification directs — wait for a transient load, dismiss an obstruction, scroll it into view, or re-enter the input. Do NOT wander off to an alternate path or a different control to sidestep the named target, and never substitute a longpress for a required tap on it. Genuine loops across revisited screen states are caught separately and surfaced as a cycle-break block.`
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +261,41 @@ function appendWorkingMemory(parts: string[], context: StepContext): void {
   }
 }
 
+// D-01/D-07 stagnation block (per-turn VOLATILE turn content — composeTurnMessages ONLY,
+// never a tier builder, Pitfall 3). Renders the classification, the stagnating control's
+// anchor (naming the control the planner MUST remediate — the wandering ban's positive half),
+// and the raw diff facts as opaque display text (injection-inert, renderDescriptor precedent —
+// app-observed text never steers control flow). For the `unresponsive` class no remediation is
+// suggested — facts only (D-02). Omitted entirely when the slot is unset (empty-slot omission).
+function appendStagnationBlock(parts: string[], context: StepContext): void {
+  const s = context.stagnation
+  if (!s) return
+  parts.push(`Stagnation detected (classification: ${s.classification}) on control ${s.anchor.role} "${s.anchor.nameNormalized}" (ordinal ${s.anchor.ordinal}).`)
+  parts.push(`Observed diff: ${s.diff}`)
+  if (s.classification !== 'unresponsive') {
+    parts.push('Remediate THAT control as this classification directs — do not wander to an alternate path or substitute a different gesture for the required interaction.')
+  }
+}
+
+// D-08 cycle-break block (per-turn VOLATILE turn content). Renders the revisited key, the
+// W-window summary, and the §7.1 self-correcting instruction. Omitted when the slot is unset.
+function appendCycleBreakBlock(parts: string[], context: StepContext): void {
+  const c = context.cycleBreak
+  if (!c) return
+  parts.push(`Cycle detected — you have revisited state ${c.revisitedKey}: ${c.windowSummary}.`)
+  parts.push('Change your approach or declare stepFailed — repeating the same path will not make progress.')
+}
+
+// D-09 active bulk-completion predicate (per-turn VOLATILE turn content). Re-states the
+// planner's declared positive predicate with the re-evaluate/cite-evidence instruction.
+// Omitted when the slot is unset.
+function appendBulkCompletionPredicate(parts: string[], context: StepContext): void {
+  const p = context.bulkCompletionPredicate
+  if (!p) return
+  parts.push(`Active bulk-completion predicate: "${p}".`)
+  parts.push('Re-evaluate this predicate against the current observation each turn, and cite the positive evidence that it holds before setting stepComplete.')
+}
+
 function appendSubActionHistory(parts: string[], context: StepContext): void {
   if (!context.subActionHistory || context.subActionHistory.length === 0) return
 
@@ -277,14 +313,12 @@ function appendSubActionHistory(parts: string[], context: StepContext): void {
     if (sub.data) subHistoryParts.push(`    Returned data: ${sub.data}`)
   }
 
-  if (history.length >= 2) {
-    const last = history[history.length - 1]
-    const prev = history[history.length - 2]
-    if (last.action === prev.action && last.screenChanged === false) {
-      subHistoryParts.push('')
-      subHistoryParts.push('WARNING: Your previous action produced no visible change on screen. The element may be non-interactive or your action had no effect. You MUST try a completely different approach — a different element, a different action type, or a different strategy entirely. Do NOT repeat the same action again.')
-    }
-  }
+  // §12.16 replacement: the v1 byte-identity anti-repetition warning is DELETED here.
+  // It is actively wrong when repetition IS the task (a bulk "do X to all" loop
+  // legitimately re-issues an identical action per unit). Progress vs. stagnation is now decided
+  // by the differential-observation oracle + identity-keyed stagnation tree (CYCLE-01/02); when a
+  // named control genuinely stagnates the planner is told via the structured stagnation block
+  // (appendStagnationBlock), not a blanket byte-identity warning here.
 
   parts.push('')
   parts.push(subHistoryParts.join('\n'))
@@ -422,6 +456,13 @@ export function composeTurnMessages(
   pushText((parts) => appendSubActionHistory(parts, context))
   pushText((parts) => appendFailureContext(parts, context))
   pushText((parts) => appendWorkingMemory(parts, context))
+
+  // D-01/D-08/D-09 progress-remediation blocks — per-turn VOLATILE turn content (never the
+  // cached system tiers, Pitfall 3). Trim-eligible; sit before the pinned observation/instruction
+  // pair so the live screen/goal are never evicted for them.
+  pushText((parts) => appendStagnationBlock(parts, context))
+  pushText((parts) => appendCycleBreakBlock(parts, context))
+  pushText((parts) => appendBulkCompletionPredicate(parts, context))
 
   // Pinned pair — latest observation (with the screenshot when vision-capable), then
   // the current instruction as the FINAL message (D-08).
