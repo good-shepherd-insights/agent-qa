@@ -1,8 +1,11 @@
 import { expectTypeOf } from 'vitest'
 import { z } from 'zod'
 import type {
+  EmittedTargetDescriptor,
   Fill,
   MobileAction,
+  PlannedFill,
+  PlannedScroll,
   Ref,
   Scroll,
   SwipeByDirection,
@@ -10,6 +13,7 @@ import type {
   TabSelector,
   WaitFor,
   WebAction,
+  WithEmittedRef,
 } from '@vostride/agent-qa-schema'
 import {
   fillSchema,
@@ -41,8 +45,10 @@ type WithSchemaInspectTab<T> = T extends { tab?: unknown }
 
 type ScrollParams = z.infer<typeof scrollSchema>
 type SwipeParams = z.infer<typeof swipeSchema>
+// The swipe direction branch now carries an emission `target` descriptor (D-05); the path
+// branch (coordinate gesture) does not.
 type WithSwipeCompanions<T> = T extends unknown
-  ? Omit<T, 'type'> & { elementDescription?: string | undefined }
+  ? Omit<T, 'type'> & { elementDescription?: string | undefined } & (T extends { mode: 'direction' } ? { target?: EmittedTargetDescriptor } : unknown)
   : never
 type SwipeParamsWithKnownCompanions = WithSwipeCompanions<SwipeByDirection | SwipeByPath>
 type DirectionSwipeParams = Extract<SwipeParams, { mode: 'direction' }>
@@ -51,20 +57,34 @@ type RegistryMultiTapAction = WithActionType<'multiTap', WithoutElementDescripti
 type RegistryNavigateAction = WithActionType<'navigate', z.infer<typeof navigateSchema>>
 type RegistryTabAction = WithActionType<'tab', WithSchemaTabSelector<z.infer<typeof tabSchema>>>
 type RegistryWebInspectAction = WithActionType<'inspect', WithSchemaInspectTab<z.infer<typeof webInspectSchema>>>
+// Emission projections for the union ref-branch tools: ref-branch widened (ref optional +
+// target), coord-branch untouched.
+type PlannedPinchAction = WithActionType<'pinch', WithEmittedRef<Extract<MobileAction, { type: 'pinch' }>>>
+type PlannedMultiTapAction = WithActionType<'multiTap', WithEmittedRef<Extract<MobileAction, { type: 'multiTap' }>>>
 
-expectTypeOf<z.infer<typeof fillSchema>['ref']>().toEqualTypeOf<Ref>()
+// --- EMISSION world: tool inference now widens ref + adds target (D-05) ---
+expectTypeOf<z.infer<typeof fillSchema>['ref']>().toEqualTypeOf<Ref | undefined>()
+expectTypeOf<z.infer<typeof fillSchema>['target']>().toEqualTypeOf<EmittedTargetDescriptor | undefined>()
 expectTypeOf<ScrollParams['ref']>().toEqualTypeOf<Ref | undefined>()
 expectTypeOf<DirectionSwipeParams['ref']>().toEqualTypeOf<Ref | undefined>()
 
-expectTypeOf<WithoutElementDescription<z.infer<typeof fillSchema>>>().toEqualTypeOf<Fill>()
-expectTypeOf<WithoutElementDescription<z.infer<typeof scrollSchema>>>().toEqualTypeOf<Scroll>()
+expectTypeOf<WithoutElementDescription<z.infer<typeof fillSchema>>>().toEqualTypeOf<PlannedFill>()
+expectTypeOf<WithoutElementDescription<z.infer<typeof scrollSchema>>>().toEqualTypeOf<PlannedScroll>()
 expectTypeOf<z.infer<typeof waitForSchema>>().toEqualTypeOf<WaitFor>()
 expectTypeOf<SwipeParams>().toMatchTypeOf<SwipeParamsWithKnownCompanions>()
 expectTypeOf<SwipeParamsWithKnownCompanions>().toMatchTypeOf<SwipeParams>()
-expectTypeOf<RegistryPinchAction>().toMatchTypeOf<Extract<MobileAction, { type: 'pinch' }>>()
-expectTypeOf<Extract<MobileAction, { type: 'pinch' }>>().toMatchTypeOf<RegistryPinchAction>()
-expectTypeOf<RegistryMultiTapAction>().toMatchTypeOf<Extract<MobileAction, { type: 'multiTap' }>>()
-expectTypeOf<Extract<MobileAction, { type: 'multiTap' }>>().toMatchTypeOf<RegistryMultiTapAction>()
+expectTypeOf<RegistryPinchAction>().toMatchTypeOf<PlannedPinchAction>()
+expectTypeOf<PlannedPinchAction>().toMatchTypeOf<RegistryPinchAction>()
+expectTypeOf<RegistryMultiTapAction>().toMatchTypeOf<PlannedMultiTapAction>()
+expectTypeOf<PlannedMultiTapAction>().toMatchTypeOf<RegistryMultiTapAction>()
+
+// --- EXECUTION world: adapter-facing shapes stay ref-REQUIRED, target-free (Pitfall 2) ---
+expectTypeOf<Fill['ref']>().toEqualTypeOf<Ref>()
+expectTypeOf<PlannedFill['ref']>().toEqualTypeOf<Ref | undefined>()
+expectTypeOf<Extract<MobileAction, { type: 'tap' }>>().not.toHaveProperty('target')
+expectTypeOf<Extract<WebAction, { type: 'click' }>>().not.toHaveProperty('target')
+expectTypeOf<Extract<MobileAction, { type: 'pinch' }>>().not.toHaveProperty('target')
+
 expectTypeOf<RegistryNavigateAction>().toMatchTypeOf<Extract<WebAction, { type: 'navigate' }>>()
 expectTypeOf<Extract<WebAction, { type: 'navigate' }>>().toMatchTypeOf<RegistryNavigateAction>()
 expectTypeOf<RegistryTabAction>().toMatchTypeOf<Extract<WebAction, { type: 'tab' }>>()

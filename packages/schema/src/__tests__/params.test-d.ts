@@ -40,7 +40,7 @@ const directionScroll: Scroll = {
 
 const untilVisibleScroll: Scroll = {
   mode: 'untilVisible',
-  target: 'Submit',
+  text: 'Submit',
   direction: 'down',
   maxSwipes: 10,
   retryOpposite: true,
@@ -50,8 +50,8 @@ const invalidDirectionScroll: Scroll = {
   mode: 'direction',
   direction: 'down',
   amount: 'page',
-  // @ts-expect-error direction scrolls do not accept untilVisible-only target fields.
-  target: 'Submit',
+  // @ts-expect-error direction scrolls do not accept the untilVisible-only reveal text field.
+  text: 'Submit',
   retryOpposite: true,
 }
 

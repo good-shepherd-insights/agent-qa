@@ -13,7 +13,18 @@ export type {
   WebAction,
 } from './action/index'
 export type { ActionExecutor, ActionsFor } from './action/adapter'
-export type { Fill, Scroll, SwipeByDirection, SwipeByPath, WaitFor } from './action/params'
+export type {
+  EmittedTargetDescriptor,
+  Fill,
+  PlannedFill,
+  PlannedScroll,
+  Scroll,
+  SwipeByDirection,
+  SwipeByPath,
+  WaitFor,
+  WithEmittedRef,
+  WithEmittedTarget,
+} from './action/params'
 export type { ActionAnnotation, ActionResult } from './result/index'
 export { normalizeAccessibleName } from './screen/index'
 export type { ElementBounds, ScrollContext } from './screen/index'
