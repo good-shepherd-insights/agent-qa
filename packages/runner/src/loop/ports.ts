@@ -6,7 +6,7 @@
 // throw-on-absent (D-05 degrade-when-absent).
 
 import type { LanguageModelUsage, ModelMessage } from 'ai'
-import type { MaskingContext, ScreenState } from '@vostride/agent-qa-schema'
+import type { MaskingContext, ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { PlatformAdapter } from '../platform.js'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
@@ -50,6 +50,19 @@ export interface SecretResolver {
 /** Structural secret-redactor port — the concrete `SecretRedactor` satisfies it. */
 export interface SecretRedactorPort {
   redactString(value: string): string
+}
+
+/**
+ * Structural run-scoped working-memory port (WM-01 · D-11/D-12). The concrete
+ * `WorkingMemoryStore` (working-memory/store.ts) satisfies it by construction; declared
+ * structurally here (the SecretResolver naming precedent) so the ports module never imports the
+ * concrete class. `capture` writes verbatim entries (registered secrets redacted at capture);
+ * `entries` returns the whole set in capture order; `dispose` empties it at run end.
+ */
+export interface WorkingMemoryPort {
+  capture(entries: readonly WorkingMemoryEntry[], ctx?: { test?: number; step?: number }): void
+  entries(): WorkingMemoryEntry[]
+  dispose(): void
 }
 
 /** Minimal scoped-logger surface the loop uses; core's LogManager satisfies it. */
@@ -140,6 +153,13 @@ export interface LoopPorts {
   abortSignal?: AbortSignal
   secretStore?: SecretResolver
   secretRedactor?: SecretRedactorPort
+  /**
+   * WM-01 run-scoped working-memory seam (D-11/D-12). The concrete `WorkingMemoryStore` is
+   * created at the CLI composition root and injected here; Phase 361 rebinds this exact seam onto
+   * `RunSession` (the knowledgeReader idiom). Unbound ⇒ the loop runs memory-less: no capture, an
+   * empty served set — it never throws (D-05 degrade-when-absent).
+   */
+  workingMemory?: WorkingMemoryPort
   /**
    * D-06 optional pre-prompt blob-guard — bounds a single one-shot structured tool-output
    * value before it lands in the sub-action history / next planning turn. A pure signature
