@@ -104,9 +104,11 @@ export {
   projectLegacyTrace,
 } from './loop/evidence.js'
 export type { RecordSubActionInput } from './loop/evidence.js'
+// Phase 356 redesigned cache port (D-03): the new per-key ActionPlanCache is the
+// single public cache surface. The v1 StepKeyInput / v1 sub-action ActionPlanCache
+// are intentionally no longer exported here — they survive internally in
+// loop/ports.ts until Plan 04 rewires the loop and Plan 06 retires the v1 adapter.
 export type {
-  StepKeyInput,
-  ActionPlanCache,
   CompressedScreenshot,
   ScreenshotCompressor,
   SecretResolver,
@@ -118,6 +120,26 @@ export type {
   RunnerDegradeOptions,
   RunnerDegradeOutcome,
 } from './loop/ports.js'
+
+// Redesigned pure cache core (Phase 356, CACHE-01/02/03).
+export type {
+  ActionPlanCache,
+  CachedPlanValue,
+  GroundedLocator,
+  GroundingStrategy,
+  CacheableClassification,
+  ClassifyStepInput,
+  BuildCacheableStepInputArgs,
+  BuildCachedPlanValueInput,
+} from './cache/index.js'
+export {
+  buildCacheableStepInput,
+  CACHE_ENV_DIGEST_SALT,
+  classifyStep,
+  toGroundedLocator,
+  buildCachedPlanValue,
+  deterministicDescriptorMatcher,
+} from './cache/index.js'
 export {
   SecretStore,
   SecretRedactor,
