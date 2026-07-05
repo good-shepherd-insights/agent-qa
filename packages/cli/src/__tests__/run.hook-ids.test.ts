@@ -153,7 +153,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
     redactString(value: string) { return value }
     redactValue(value: unknown) { return value }
   },
-  FileActionCache: vi.fn(function () { return {} }),
   LogManager: vi.fn(function () {
     return {
       setRunId: vi.fn(),

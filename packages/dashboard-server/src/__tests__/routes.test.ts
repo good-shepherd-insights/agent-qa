@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   AUTH_STATE_SCHEMA_VERSION,
-  hashStepInstruction,
   resolveAuthStatePaths,
   resolveWorkspacePaths,
   writeAuthStateFiles,
@@ -2161,7 +2160,7 @@ describe('API Routes', () => {
         metadata: expect.objectContaining({
           args: [
             join(testsDir, 'web/15-github-trending.yaml'),
-            '--no-cache',
+            '--disable-cache',
             '--no-memory',
           ],
         }),
@@ -2445,7 +2444,7 @@ describe('API Routes', () => {
   })
 
   describe('POST /api/cache/purge', () => {
-    it('reads services.cache.dir and purges target-driven mobile cache entries with the effective platform', async () => {
+    it('purges the branch-namespaced cache entries for a file request (Phase 356 layout)', async () => {
       const testsDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-tests-'))
       const cacheDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-cache-'))
       tempDirs.push(testsDir, cacheDir)
@@ -2472,9 +2471,12 @@ describe('API Routes', () => {
       ].join('\n')
       await writeFile(join(testsDir, 'android-only.yaml'), testContent, 'utf-8')
 
-      const stepHash = hashStepInstruction('Open Google Maps', 'android', configContent, testContent)
-      await mkdir(join(cacheDir, stepHash), { recursive: true })
-      await writeFile(join(cacheDir, stepHash, 'plan.json'), '{"ok":true}', 'utf-8')
+      // Redesigned layout: <cacheRoot>/<branch-slug>/<cacheKey>.json (opaque, D-06). Seed two
+      // entries across two branch namespaces; a file purge clears the whole cache.
+      await mkdir(join(cacheDir, 'main'), { recursive: true })
+      await writeFile(join(cacheDir, 'main', 'a1b2c3d4e5f60718.json'), '{"schemaVersion":10}', 'utf-8')
+      await mkdir(join(cacheDir, 'feature-x'), { recursive: true })
+      await writeFile(join(cacheDir, 'feature-x', 'f0e1d2c3b4a59687.json'), '{"schemaVersion":10}', 'utf-8')
 
       router = createRouter({
         db: db as any,
@@ -2491,7 +2493,7 @@ describe('API Routes', () => {
 
       expect(res.status).toBe(200)
       const data = JSON.parse(res.body) as { purged: number }
-      expect(data.purged).toBe(1)
+      expect(data.purged).toBe(2)
     })
 
     it('resolves relative services.cache.dir from the config file directory', async () => {
@@ -2522,10 +2524,10 @@ describe('API Routes', () => {
       ].join('\n')
       await writeFile(join(testsDir, 'web-flow.yaml'), testContent, 'utf-8')
 
-      const stepHash = hashStepInstruction('Open the homepage', 'web', configContent, testContent)
-      const cacheEntryDir = join(cacheDir, stepHash)
-      await mkdir(cacheEntryDir, { recursive: true })
-      await writeFile(join(cacheEntryDir, 'plan.json'), '{"ok":true}', 'utf-8')
+      const branchDir = join(cacheDir, 'main')
+      const cacheEntryPath = join(branchDir, 'a1b2c3d4e5f60718.json')
+      await mkdir(branchDir, { recursive: true })
+      await writeFile(cacheEntryPath, '{"schemaVersion":10}', 'utf-8')
 
       router = createRouter({
         db: db as any,
@@ -2543,7 +2545,7 @@ describe('API Routes', () => {
       expect(res.status).toBe(200)
       const data = JSON.parse(res.body) as { purged: number }
       expect(data.purged).toBe(1)
-      await expect(stat(cacheEntryDir)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(cacheEntryPath)).rejects.toMatchObject({ code: 'ENOENT' })
     })
   })
 

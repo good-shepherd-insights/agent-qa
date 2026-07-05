@@ -14,7 +14,7 @@ import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
@@ -2076,7 +2076,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             ? normalizedFileTarget
             : null
           if (body.noCache) {
-            args.push('--no-cache')
+            args.push('--disable-cache')
           }
           if (body.noMemory) {
             args.push('--no-memory')
@@ -3562,7 +3562,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           }
           try {
             const cfg = await configManager.read()
-            const targetPlatforms = getTargetPlatformMap(cfg)
             const cacheDir = (cfg as {
               services?: { cache?: { dir?: string } }
               cache?: { dir?: string }
@@ -3572,58 +3571,51 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               json(res, { error: 'Cache directory not configured' }, 400)
               return
             }
-            if (body.file) {
-              // Read raw config file content for cache key scoping
-              let configContent = ''
-              if (deps.configPath) {
-                try { configContent = await readFile(deps.configPath, 'utf-8') } catch { /* best-effort */ }
+            // Redesigned cache layout (Phase 356): <cacheRoot>/<branch-slug>/<cacheKey>.json.
+            // The 16-hex cacheKey is opaque and content-addressed over masked step text + a
+            // runtime screenIdentityHash, carrying no raw step text on disk (D-06). Per-test
+            // targeting can no longer be recomputed statically, so a `file` purge clears the
+            // whole branch-namespaced cache — the requested test's stale plans are guaranteed
+            // gone. Both `file` and `all` therefore remove all `<branch-slug>/*.json` entries.
+            const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
+            const resolvedCacheDir = resolve(configDir, cacheDir)
+            let branchDirs: string[]
+            try {
+              branchDirs = await readdir(resolvedCacheDir)
+            } catch (err: unknown) {
+              if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                json(res, { purged: 0 })
+                return
               }
-              const resolvedPath = (await normalizeDashboardWorkspacePath(body.file, workspacePaths, 'test')).executionPath
-              const content = await readFile(resolvedPath, 'utf-8')
-              const doc = parseYaml(content)
-              const metadata = extractTestFileMetadata(content)
-              const platform = resolveEffectivePlatform(
-                metadata.platform,
-                metadata.targetName,
-                targetPlatforms,
-                'web',
-              ) ?? 'web'
-              const steps: string[] = (doc.steps ?? []).map((s: unknown) =>
-                typeof s === 'string' ? s : (s as Record<string, string>).step,
-              )
-              const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-              const resolvedCacheDir = resolve(configDir, cacheDir)
-              let purged = 0
-              for (const step of steps) {
-                const stepHash = hashStepInstruction(step, platform, configContent, content)
-                const dirPath = join(resolvedCacheDir, stepHash)
-                try {
-                  await stat(dirPath)
-                  await rm(dirPath, { recursive: true, force: true })
-                  purged++
-                } catch {
-                  // directory doesn't exist — skip
-                }
-              }
-              json(res, { purged })
-            } else {
-              const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-              const resolvedDir = resolve(configDir, cacheDir)
-              let entries: string[]
-              try {
-                entries = await readdir(resolvedDir)
-              } catch (err: unknown) {
-                if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-                  json(res, { purged: 0 })
-                  return
-                }
-                throw err
-              }
-              for (const entry of entries) {
-                await rm(join(resolvedDir, entry), { recursive: true, force: true })
-              }
-              json(res, { purged: entries.length })
+              throw err
             }
+            let purged = 0
+            for (const branch of branchDirs) {
+              const branchPath = join(resolvedCacheDir, branch)
+              let entryStat
+              try {
+                entryStat = await stat(branchPath)
+              } catch {
+                continue
+              }
+              if (!entryStat.isDirectory()) {
+                await rm(branchPath, { force: true })
+                continue
+              }
+              let files: string[]
+              try {
+                files = await readdir(branchPath)
+              } catch {
+                continue
+              }
+              for (const file of files) {
+                if (!file.endsWith('.json')) continue
+                await rm(join(branchPath, file), { force: true })
+                purged++
+              }
+              await rm(branchPath, { recursive: true, force: true }).catch(() => {})
+            }
+            json(res, { purged })
           } catch (err: unknown) {
             json(res, { error: err instanceof Error ? err.message : 'Cache purge failed' }, 500)
           }

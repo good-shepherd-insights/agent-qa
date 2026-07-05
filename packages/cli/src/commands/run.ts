@@ -21,6 +21,57 @@ const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artif
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const RUNTIME_VIDEOS_DIR = DEFAULT_AGENT_QA_VIDEOS_DIR || '.agent-qa/artifacts/videos'
 
+// CI vendor-var set reused for the CachePolicy.isCI resolution at the composition root
+// (mirrors safety-local's execution-context-detector set — D-14). Kept inline so the CLI
+// does not take a new cross-package dependency purely to read env markers.
+const CI_VENDOR_VARS = [
+  'CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'CIRCLECI', 'TRAVIS', 'APPVEYOR', 'BUILDKITE',
+  'DRONE', 'JENKINS_URL', 'HUDSON_URL', 'BITBUCKET_BUILD_NUMBER', 'TEAMCITY_VERSION',
+] as const
+
+function resolveIsCI(env: NodeJS.ProcessEnv = process.env): boolean {
+  return CI_VENDOR_VARS.some((name) => {
+    const value = env[name]
+    return value !== undefined && value !== '' && value.toLowerCase() !== 'false' && value !== '0'
+  })
+}
+
+/**
+ * Composition-root construction of the redesigned action cache (Phase 356, D-01/D-05/D-14).
+ * Builds the runner-local `FsActionCache` behind a resolved branch `CachePolicy` and the
+ * identity `MaskingContext` (Phase 362 seeds the live run-scope secrets). Returned pair is
+ * injected into the runner loop's cache + masking ports via RunTest/RunSuite config.
+ */
+// Structural copy of schema's browser-safe MaskingContext (identity pre-362). Kept local
+// so the CLI does not take a schema dependency purely to name the injected seam type; it
+// structurally satisfies RunTestConfig/RunSuiteConfig `masking?: MaskingContext`.
+type IdentityMaskingContext = { mask(text: string): string; unmask(text: string): string }
+
+async function buildActionCacheContext(params: {
+  cacheDir: string
+  disableCache: boolean
+  saveCache: boolean
+  protectedBranches?: string[]
+}): Promise<{ cache: import('@vostride/agent-qa-runner').ActionPlanCache; masking: IdentityMaskingContext }> {
+  const { FsActionCache, resolveBranch } = await import('@vostride/agent-qa-runner-local')
+  const branch = resolveBranch({ cwd: process.cwd() })
+  const cache = new FsActionCache({
+    root: params.cacheDir,
+    policy: {
+      currentBranch: branch.currentBranch,
+      defaultBranch: branch.defaultBranch,
+      protectedBranches: [branch.defaultBranch, ...(params.protectedBranches ?? [])],
+      isCI: resolveIsCI(),
+      saveCache: params.saveCache,
+      disableCache: params.disableCache,
+    },
+  })
+  // Identity masking pre-362 (D-05): the mask-before-key routing structure is permanent;
+  // live secret seeding lands in Phase 362 (SEAM-01/MASK-FUT-04).
+  const masking = { mask: (t: string) => t, unmask: (t: string) => t }
+  return { cache, masking }
+}
+
 let _appiumManager: InstanceType<typeof import('@vostride/agent-qa-dashboard').AppiumManager> | null = null
 
 async function acquireAppium(logLevel: string): Promise<string | undefined> {
@@ -202,7 +253,8 @@ interface RunOptions {
   browser?: string
   platform?: string
   headless?: boolean
-  cache?: boolean
+  disableCache?: boolean
+  saveCache?: boolean
   memory?: boolean
   bail?: boolean
   dryRun?: boolean
@@ -1149,7 +1201,7 @@ async function executeSuites(
       resolvedTarget: suiteResolvedTarget,
       authState: suiteAuthStateUse,
     })
-    const suiteEffectiveCacheEnabled = opts.cache !== false && (mergedUse as Record<string, unknown>).cache !== false
+    const suiteEffectiveCacheEnabled = !opts.disableCache && (mergedUse as Record<string, unknown>).cache !== false
     let suiteDeviceName = opts.device ?? (mergedUse.device as string | undefined)
 
     if ((suitePlatform === 'android' || suitePlatform === 'ios') && !suiteDeviceName) {
@@ -1334,16 +1386,19 @@ async function executeSuites(
     const analyticsReporter = createAnalyticsRunReporter({ config, surface: 'cli' })
     reporters.push(analyticsReporter)
 
-    // Wire action cache
-    let actionCache: import('@vostride/agent-qa-core').ActionCache | undefined
-    if (opts.cache !== false) {
-      const { FileActionCache } = await import('@vostride/agent-qa-core')
+    // Wire the redesigned action cache (runner-local FsActionCache + branch policy) and
+    // the identity masking seam, injected into the runner loop's cache/masking ports.
+    let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
+    let actionMasking: IdentityMaskingContext | undefined
+    if (suiteEffectiveCacheEnabled) {
       const { resolve } = await import('node:path')
-      actionCache = new FileActionCache({
-        dir: resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR),
-        ttl: config.services?.cache?.ttl ?? '7d',
-        logger: logger.createScopedLogger('cache'),
+      const ctx = await buildActionCacheContext({
+        cacheDir: resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR),
+        disableCache: false,
+        saveCache: opts.saveCache === true,
       })
+      actionCache = ctx.cache
+      actionMasking = ctx.masking
     }
 
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
@@ -1413,6 +1468,7 @@ async function executeSuites(
       planner,
       verifier,
       cache: suiteEffectiveCacheEnabled ? actionCache : undefined,
+      masking: suiteEffectiveCacheEnabled ? actionMasking : undefined,
       plannerModel,
       verifierModel,
       reporters,
@@ -1537,7 +1593,8 @@ export function createRunCommand(): Command {
     .option('--platform <name>', 'filter by platform (web, android, ios)')
     .option('--headless', 'run in headless mode')
     .option('--no-headless', 'run in headed mode')
-    .option('--no-cache', 'bypass action cache for this run')
+    .option('--disable-cache', 'bypass action cache for this run')
+    .option('--save-cache', 'write cache even on the default/protected branch')
     .option('--no-memory', 'disable runtime memory injection for this run')
     .option('--bail', 'stop on first test failure')
     .option('--dry-run', 'parse and list tests without executing')
@@ -1926,7 +1983,8 @@ export function createRunCommand(): Command {
         const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
 
         // Wire action cache from config (logger wired after LogManager creation below)
-        let actionCache: import('@vostride/agent-qa-core').ActionCache | undefined
+        let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
+        let actionMasking: IdentityMaskingContext | undefined
 
         const reporters: import('@vostride/agent-qa-core').Reporter[] = []
         if (reporterSelection.console) {
@@ -1971,18 +2029,20 @@ export function createRunCommand(): Command {
           redactor: runtimeSecrets.secretRedactor,
         })
 
-        // Wire action cache with logger (skip when --no-cache)
-        if (opts.cache !== false) {
-          const { FileActionCache } = await import('@vostride/agent-qa-core')
+        // Wire the redesigned action cache (runner-local FsActionCache + branch policy)
+        // and the identity masking seam; skip when --disable-cache.
+        if (opts.disableCache !== true) {
           const { resolve } = await import('node:path')
-          actionCache = new FileActionCache({
-            dir: resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR),
-            ttl: config.services?.cache?.ttl ?? '7d',
-            logger: logger.createScopedLogger('cache'),
+          const ctx = await buildActionCacheContext({
+            cacheDir: resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR),
+            disableCache: false,
+            saveCache: opts.saveCache === true,
           })
+          actionCache = ctx.cache
+          actionMasking = ctx.masking
         } else {
           const cacheLog = logger.createScopedLogger('cache')
-          cacheLog.info('Cache disabled via --no-cache', { operation: 'bypass' })
+          cacheLog.info('Cache disabled via --disable-cache', { operation: 'bypass' })
         }
 
         const multiReporter = new MultiReporter(reporters)
@@ -2055,7 +2115,7 @@ export function createRunCommand(): Command {
             testFlagOverrides,
           )
           const testMergedConfig = { ...config, use: mergedUse } as AgentQaConfig
-          const effectiveCacheEnabled = opts.cache !== false && (mergedUse as Record<string, unknown>).cache !== false
+          const effectiveCacheEnabled = !opts.disableCache && (mergedUse as Record<string, unknown>).cache !== false
 
           if (opts.configDebug) {
             console.log(pc.bold(`\nConfig for: ${test.name}`))
@@ -2406,6 +2466,7 @@ export function createRunCommand(): Command {
               captureScreenshots,
               screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
               cache: effectiveCacheEnabled ? actionCache : undefined,
+              masking: effectiveCacheEnabled ? actionMasking : undefined,
               recording: testRecording,
               plannerConfig,
               timeouts: testTimeouts,
@@ -2555,32 +2616,12 @@ export function createRunCommand(): Command {
             results.push(result)
             printRunAttributes(testAttributes)
 
-            // Post-run cache invalidation: delete all step cache entries for failed runs
-            if (result.status === 'failed' && !authStateCaptureFailed && actionCache && effectiveCacheEnabled && result.steps.length > 0) {
-              const { hashStepInstruction } = await import('@vostride/agent-qa-core')
-              const { rm } = await import('node:fs/promises')
-              const { resolve, join } = await import('node:path')
-              const cacheDir = resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR)
-              const cacheLog = logger.createScopedLogger('cache')
-
-              let purged = 0
-              for (let i = 0; i < result.steps.length; i++) {
-                const step = result.steps[i]
-                const stepHash = hashStepInstruction(step.name, testPlatform, configContent, testFileContent, i)
-                try {
-                  await rm(join(cacheDir, stepHash), { recursive: true, force: true })
-                  purged++
-                } catch { /* ignore — directory may not exist */ }
-              }
-
-              if (purged > 0) {
-                cacheLog.info('Failed run cache invalidation', {
-                  operation: 'batch-purge',
-                  stepHash: 'batch',
-                  entriesDeleted: purged,
-                })
-              }
-            }
+            // Post-run cache invalidation is no longer done here (Phase 356, D-03/D-13):
+            // the redesigned per-key ActionPlanCache invalidates the exact failed decision
+            // point inside the runner loop (loop/index.ts on a failed step). The retired v1
+            // batch recompute cannot reproduce the new opaque masked keys (they fold a runtime
+            // screenIdentityHash and carry no raw step text on disk, D-06), so the loop owns
+            // invalidation and no CLI-side key recompute remains.
 
             return { failed: result.status === 'failed' }
           } finally {

@@ -2,15 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, writeFile, rm, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createHash } from 'node:crypto'
 import { Command } from 'commander'
 
-function hashStepInstruction(step: string, platform = 'web', configContent = '', testFileContent = '', stepIndex = 0): string {
-  return createHash('sha256').update(configContent + '||' + '' + '||' + '0' + '||' + testFileContent + '||' + step + '||' + platform + '||' + String(stepIndex)).digest('hex').slice(0, 16)
-}
+// Phase 356 cache layout: <cacheRoot>/<branch-slug>/<cacheKey>.json. The 16-hex cacheKey
+// is opaque + content-addressed over masked step text and a runtime screenIdentityHash, so
+// entries cannot be recomputed from a test file (no raw step text on disk, D-06). Purge
+// therefore operates over the on-disk branch namespaces directly.
 
 const TMP_DIR = join(tmpdir(), 'agent-qa-cache-purge-test-' + process.pid)
-const CONFIG_CONTENT = 'cache:\n  dir: .agent-qa/cache\n'
+
+async function seedEntry(cacheDir: string, branch: string, key: string): Promise<void> {
+  await mkdir(join(cacheDir, branch), { recursive: true })
+  await writeFile(join(cacheDir, branch, `${key}.json`), '{"schemaVersion":10,"value":{}}')
+}
 
 beforeEach(async () => {
   await mkdir(TMP_DIR, { recursive: true })
@@ -21,112 +25,52 @@ afterEach(async () => {
 })
 
 describe('purgeTest', () => {
-  it('deletes cache directories matching step hashes from test YAML', async () => {
+  it('clears all branch-namespaced cache entries (per-test targeting is not recomputable)', async () => {
     const { purgeTest } = await import('../commands/cache.js')
     const cacheDir = join(TMP_DIR, 'cache')
-    await mkdir(cacheDir, { recursive: true })
+    await seedEntry(cacheDir, 'main', 'a1b2c3d4e5f60718')
+    await seedEntry(cacheDir, 'main', 'f0e1d2c3b4a59687')
+    await seedEntry(cacheDir, 'feature-x', '1122334455667788')
 
-    const steps = ['Click the login button', 'Enter username']
-    const testYaml = `url: https://example.com\nsteps:\n  - ${steps[0]}\n  - ${steps[1]}\n`
     const testPath = join(TMP_DIR, 'login.yaml')
-    await writeFile(testPath, testYaml)
+    await writeFile(testPath, 'url: https://example.com\nsteps:\n  - Click login\n')
 
-    for (let i = 0; i < steps.length; i++) {
-      const hash = hashStepInstruction(steps[i], 'web', CONFIG_CONTENT, testYaml, i)
-      await mkdir(join(cacheDir, hash), { recursive: true })
-      await writeFile(join(cacheDir, hash, 'abc123.json'), '{}')
-    }
-    // Add an unrelated cache entry that should NOT be deleted
-    await mkdir(join(cacheDir, 'unrelated123456'), { recursive: true })
-
-    const count = await purgeTest(testPath, cacheDir, CONFIG_CONTENT)
-    expect(count).toBe(2)
-
-    const remaining = await readdir(cacheDir)
-    expect(remaining).toEqual(['unrelated123456'])
+    const count = await purgeTest(testPath, cacheDir)
+    expect(count).toBe(3)
+    expect(await readdir(cacheDir)).toEqual([])
   })
 
-  it('returns 0 for test YAML with no steps', async () => {
+  it('returns 0 for a non-existent cache dir', async () => {
     const { purgeTest } = await import('../commands/cache.js')
-    const cacheDir = join(TMP_DIR, 'cache')
-    await mkdir(cacheDir, { recursive: true })
-
-    const testPath = join(TMP_DIR, 'empty.yaml')
+    const testPath = join(TMP_DIR, 'nope.yaml')
     await writeFile(testPath, 'url: https://example.com\nsteps: []\n')
-
-    const count = await purgeTest(testPath, cacheDir, CONFIG_CONTENT)
+    const count = await purgeTest(testPath, join(TMP_DIR, 'nonexistent'))
     expect(count).toBe(0)
   })
 
-  it('throws for non-existent test file', async () => {
+  it('ignores non-json files and stray top-level files', async () => {
     const { purgeTest } = await import('../commands/cache.js')
     const cacheDir = join(TMP_DIR, 'cache')
-    await mkdir(cacheDir, { recursive: true })
+    await seedEntry(cacheDir, 'main', 'a1b2c3d4e5f60718')
+    await mkdir(join(cacheDir, 'main'), { recursive: true })
+    await writeFile(join(cacheDir, 'main', 'README.txt'), 'not a cache entry')
+    await writeFile(join(cacheDir, 'stray.tmp'), 'top-level junk')
 
-    await expect(purgeTest(join(TMP_DIR, 'nope.yaml'), cacheDir)).rejects.toThrow()
-  })
-
-  it('hashes with declared platform from YAML', async () => {
-    const { purgeTest } = await import('../commands/cache.js')
-    const cacheDir = join(TMP_DIR, 'cache')
-    await mkdir(cacheDir, { recursive: true })
-
-    const step = 'Tap the submit button'
-    const testYaml = `url: https://example.com\nplatform: android\nsteps:\n  - ${step}\n`
-    const androidHash = hashStepInstruction(step, 'android', CONFIG_CONTENT, testYaml, 0)
-    const webHash = hashStepInstruction(step, 'web', '', '', 0)
-
-    // Create android cache entry
-    await mkdir(join(cacheDir, androidHash), { recursive: true })
-    // Create web cache entry — should NOT be deleted since test declares android
-    await mkdir(join(cacheDir, webHash), { recursive: true })
-
-    const testPath = join(TMP_DIR, 'mobile.yaml')
-    await writeFile(testPath, testYaml)
-
-    const count = await purgeTest(testPath, cacheDir, CONFIG_CONTENT)
-    expect(count).toBe(1)
-
-    const remaining = await readdir(cacheDir)
-    expect(remaining).toContain(webHash)
-    expect(remaining).not.toContain(androidHash)
-  })
-
-  it('handles step objects with step field', async () => {
-    const { purgeTest } = await import('../commands/cache.js')
-    const cacheDir = join(TMP_DIR, 'cache')
-    await mkdir(cacheDir, { recursive: true })
-
-    const step = 'Click the button'
-    const testYaml = `url: https://example.com\nsteps:\n  - step: ${step}\n    assertion: Button clicked\n`
-    const hash = hashStepInstruction(step, 'web', CONFIG_CONTENT, testYaml, 0)
-    await mkdir(join(cacheDir, hash), { recursive: true })
-
-    const testPath = join(TMP_DIR, 'object-steps.yaml')
-    await writeFile(testPath, testYaml)
-
-    const count = await purgeTest(testPath, cacheDir, CONFIG_CONTENT)
+    const count = await purgeTest(join(TMP_DIR, 'x.yaml'), cacheDir)
     expect(count).toBe(1)
   })
 })
 
 describe('purgeAll', () => {
-  it('deletes all entries in cache dir with force=true', async () => {
+  it('deletes all cache-key entries across branch namespaces with force=true', async () => {
     const { purgeAll } = await import('../commands/cache.js')
     const cacheDir = join(TMP_DIR, 'cache')
-    await mkdir(cacheDir, { recursive: true })
-
-    // Create some cache entries
-    for (let i = 0; i < 5; i++) {
-      await mkdir(join(cacheDir, `entry${i}`), { recursive: true })
-      await writeFile(join(cacheDir, `entry${i}`, 'data.json'), '{}')
-    }
+    for (let i = 0; i < 3; i++) await seedEntry(cacheDir, 'main', `key${i}0000000000000`)
+    for (let i = 0; i < 2; i++) await seedEntry(cacheDir, 'feature-y', `keyf${i}000000000000`)
 
     const count = await purgeAll(cacheDir, true)
     expect(count).toBe(5)
-
-    const remaining = await readdir(cacheDir)
-    expect(remaining).toEqual([])
+    expect(await readdir(cacheDir)).toEqual([])
   })
 
   it('returns 0 for non-existent cache dir', async () => {
@@ -147,8 +91,7 @@ describe('purgeAll', () => {
   it('uses .agent-qa/cache as the command fallback cache directory', async () => {
     const { createCacheCommand } = await import('../commands/cache.js')
     const cacheDir = join(TMP_DIR, '.agent-qa', 'cache')
-    await mkdir(join(cacheDir, 'entry'), { recursive: true })
-    await writeFile(join(cacheDir, 'entry', 'data.json'), '{}')
+    await seedEntry(cacheDir, 'main', 'abcabcabcabcabca')
     await writeFile(join(TMP_DIR, 'agent-qa.config.yaml'), `
 workspace:
   testMatch:

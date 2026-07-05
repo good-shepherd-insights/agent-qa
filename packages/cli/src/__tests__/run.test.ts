@@ -38,7 +38,8 @@ const {
   mockDashboardReporter,
   mockResolveDashboardDbPath,
   mockGenerateRunId,
-  mockFileActionCache,
+  mockFsActionCache,
+  mockResolveBranch,
   mockAnalyticsRunReporterInstance,
   mockCreateAnalyticsRunReporter,
   mockShouldPrintAgentQaUpdateNotice,
@@ -91,7 +92,8 @@ const {
     mockDashboardReporter: vi.fn(function () { return {} }),
     mockResolveDashboardDbPath: vi.fn(),
     mockGenerateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
-    mockFileActionCache: vi.fn(function () { return {} }),
+    mockFsActionCache: vi.fn(function () { return { get: vi.fn(), set: vi.fn(), invalidate: vi.fn() } }),
+    mockResolveBranch: vi.fn(() => ({ currentBranch: 'main', defaultBranch: 'main' })),
     mockAnalyticsRunReporterInstance: analyticsRunReporter,
     mockCreateAnalyticsRunReporter: vi.fn(function () { return analyticsRunReporter }),
     mockShouldPrintAgentQaUpdateNotice: vi.fn(() => true),
@@ -115,6 +117,11 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
   return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier }
 })
+
+vi.mock('@vostride/agent-qa-runner-local', () => ({
+  FsActionCache: mockFsActionCache,
+  resolveBranch: mockResolveBranch,
+}))
 
 vi.mock('@vostride/agent-qa-core', () => {
   class MockMobileSetupError extends Error {
@@ -163,7 +170,6 @@ vi.mock('@vostride/agent-qa-core', () => {
   })),
   LLMPlanner: mockLLMPlanner,
   LLMVerifier: mockLLMVerifier,
-  FileActionCache: mockFileActionCache,
   ATTR_TRIGGER: 'agent-qa.trigger',
   ATTR_RUNNER: 'agent-qa.runner',
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
@@ -335,7 +341,6 @@ vi.mock('@vostride/agent-qa-core', () => {
     redactString(value: string) { return value }
     redactValue(value: unknown) { return value }
   },
-  hashStepInstruction: vi.fn(() => 'mock-hash'),
   LogManager: vi.fn(function () {
     return {
       log: vi.fn(),
@@ -651,7 +656,8 @@ beforeEach(() => {
   mockShouldPrintAgentQaUpdateNotice.mockReturnValue(true)
   mockPrintAgentQaUpdateNoticeIfNeeded.mockReset()
   mockPrintAgentQaUpdateNoticeIfNeeded.mockResolvedValue(undefined)
-  mockFileActionCache.mockClear()
+  mockFsActionCache.mockClear()
+  mockResolveBranch.mockClear()
   mockResolveTarget.mockReturnValue({
     name: 'test-app',
     product: 'test-app',
@@ -3615,7 +3621,7 @@ describe('run command — runtime memory override', () => {
 })
 
 describe('run command — runtime cache paths', () => {
-  it('resolves services.cache.dir and ttl from the config directory', async () => {
+  it('resolves services.cache.dir into the FsActionCache root from the config directory', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-cache-config-'))
     tempDirs.push(configDir)
     const cfg = defaultConfig()
@@ -3636,9 +3642,16 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
 
-    expect(mockFileActionCache).toHaveBeenCalledWith(expect.objectContaining({
-      dir: join(configDir, '.agent-qa/custom-cache'),
-      ttl: '7d',
+    // Phase 356: the composition root constructs the runner-local FsActionCache with a
+    // resolved branch CachePolicy over the config-relative cache root (no ttl — the v1
+    // core file store is retired).
+    expect(mockFsActionCache).toHaveBeenCalledWith(expect.objectContaining({
+      root: join(configDir, '.agent-qa/custom-cache'),
+      policy: expect.objectContaining({
+        currentBranch: 'main',
+        defaultBranch: 'main',
+        disableCache: false,
+      }),
     }))
   })
 
@@ -3725,12 +3738,16 @@ describe('run command — runtime cache paths', () => {
     expect(suiteConfig.artifactContext.config.cache.enabled).toBe(true)
   })
 
-  it('invalidates failed-run cache entries under the configured cache directory', async () => {
+  it('does not recompute/purge cache entries post-run — the loop owns per-key invalidation (Phase 356)', async () => {
+    // The v1 CLI post-run batch purge (recompute a step hash -> rm dir) is retired
+    // (D-03/D-13): the redesigned per-key ActionPlanCache invalidates the exact failed
+    // decision point inside the runner loop. The CLI never recomputes an opaque masked key,
+    // so it must not touch the on-disk cache after a failed run.
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-cache-invalidate-'))
     tempDirs.push(configDir)
-    const cacheEntry = join(configDir, '.agent-qa/custom-cache/mock-hash')
+    const cacheEntry = join(configDir, '.agent-qa/custom-cache/main')
     mkdirSync(cacheEntry, { recursive: true })
-    writeFileSync(join(cacheEntry, 'entry.json'), '{}')
+    writeFileSync(join(cacheEntry, 'a1b2c3d4e5f60718.json'), '{"schemaVersion":10}')
 
     const cfg = defaultConfig()
     cfg.services.cache = { dir: '.agent-qa/custom-cache', ttl: '7d' } as any
@@ -3750,7 +3767,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
 
-    expect(existsSync(cacheEntry)).toBe(false)
+    // The CLI leaves the cache untouched; invalidation is the loop's responsibility.
+    expect(existsSync(join(cacheEntry, 'a1b2c3d4e5f60718.json'))).toBe(true)
   })
 })
 
