@@ -32,19 +32,25 @@ function listScreen(count: number): ScreenState {
   return buildAgentScreenState({ url: 'https://x.test/list', elements: rows, metadata: { coordSpace: 'viewport', viewportWidth: 390, viewportHeight: 844 } })
 }
 
+// A screen is STABLE across the settle gate's polls within one iteration and only changes
+// after an action lands (Plan 08 reconciliation): the observation index advances on EXECUTE,
+// not per observe, so the bounded settle gate (which polls screenIdentityHash until two
+// consecutive observations match) quiesces on the current screen and one confirmed local
+// effect (one row gone) is visible per iteration — the realistic model the binding-sanity
+// contract asserts. (The prior per-observe advance made settle consume the whole sequence in
+// ~2 polls, which no shipped settle gate does.)
 function countingAdapter(observeResults: ScreenState[], onExecute: () => void): PlatformAdapter {
-  let observeCall = 0
+  let step = 0
   return {
     platform: 'web',
     async setup() {},
     async cleanup() {},
     async observe() {
-      const idx = Math.min(observeCall, observeResults.length - 1)
-      observeCall++
-      return observeResults[idx]
+      return observeResults[Math.min(step, observeResults.length - 1)]
     },
     async execute(_action: Action): Promise<ActionResult> {
       onExecute()
+      step++
       return { success: true }
     },
   }

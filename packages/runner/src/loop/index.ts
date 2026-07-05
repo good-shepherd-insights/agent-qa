@@ -7,6 +7,16 @@
 // There is NO consecutive-failure / attempt counter anywhere in this loop — LOOP-02's
 // deletion target (Pitfall 5: do not sneak one back in under any name).
 //
+// Phase 358 (CYCLE-01..03): the maxSubActions cap becomes a D-10 remaining-budget that
+// RESETS TO FULL on every confirmed unit of local progress, so a legitimate bulk "do X to
+// all" loop is never starved; the wall-clock deadline stays the sole absolute ceiling. The
+// stagnation tree's bounded per-(anchor,class) counters are the SANCTIONED LOOP-02-compatible
+// replacement for the deleted blanket attempt cap: they are IDENTITY-KEYED (per element
+// anchor role+nameNormalized+ordinal), RESET-ON-PROGRESS, and spec-derived — never a
+// per-step counter under any name. Cycle detection (revisited state AND no task progress) and
+// the per-element tree are the only new terminate-early paths; both record their D-07 evidence
+// by construction at the terminal event, never per iteration.
+//
 // Modality neutrality (352): adapters stay model-free. Vision-gate branching lives
 // here — the loop compresses via the injected ScreenshotCompressor port (sharp stays
 // core-side, Pitfall 9) and applies stampCaptureMode itself (runner-owned since 352).
@@ -28,9 +38,11 @@ import type {
   GroundingEvidence,
   Ref,
   ScreenState,
+  StagnationEvidence,
   TargetDescriptor,
   VerifierVerdict,
   Viewport,
+  WorkingMemoryEntry,
 } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
@@ -53,6 +65,17 @@ import {
 } from './secrets.js'
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
 import { settle } from './settle.js'
+import {
+  evaluateLocalEffect,
+  toLocalEffectEvidence,
+  classifyStagnation,
+  StagnationTree,
+  buildAnchorKey,
+  RevisitationWindow,
+  buildRevisitationKey,
+  DEFAULT_REVISITATION_WINDOW,
+  type EffectAnchor,
+} from './progress/index.js'
 
 // v1's context-window overflow classification (loop.ts:277-286) — kept byte-equivalent
 // (D-04, Pitfall 10): a planning error matching one of these is surfaced with the
@@ -122,6 +145,30 @@ export async function executeStep(
   const recorder = new EvidenceRecorder()
   context.subActionHistory = []
 
+  // Phase 358 progress subsystem (CYCLE-01..03). Fresh per-step instances (the Plan 04
+  // documented scope): the revisitation window is per-step bookkeeping, the stagnation tree
+  // keys per-element within this step. The prev-iteration carry feeds the effect oracle at the
+  // next settled top (D-05, Pitfall 1). cycleBreakServed is a one-shot boolean (never a
+  // counter — LOOP-02); activePredicate persists the declared D-09 bulk predicate for the run.
+  const revisitation = new RevisitationWindow()
+  const stagnationTree = new StagnationTree()
+  let progressCarry: {
+    action: Action
+    anchor?: EffectAnchor
+    anchorKey?: string
+    stateBefore: ScreenState
+    prevHash: string
+    actionResult?: ActionResult
+    evidenceIndex: number
+  } | undefined
+  let cycleBreakServed = false
+  let cycleBreakAt = 0
+  let activePredicate: string | undefined
+
+  // D-10 remaining-budget: initialized to the resource cap, decremented per iteration, RESET
+  // TO FULL on each confirmed unit of progress. The deadline is the sole absolute ceiling.
+  let remaining = maxSubActions
+
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
   let lastPlannedAction: Action | undefined
@@ -156,6 +203,15 @@ export async function executeStep(
     verdict: VerifierVerdict,
     error?: string,
   ): StepResult => {
+    // WM-01 masked snapshot (Pitfall 7 boundary 3): the whole served set snapshots into
+    // StepEvidence.workingMemory with values masked (ports.masking.mask — identity pre-362),
+    // BESIDE the brief. Unbound port ⇒ no snapshot (optional-port idiom).
+    if (ports.workingMemory) {
+      const maskValue = ports.masking?.mask ?? ((value: string) => value)
+      recorder.recordWorkingMemory(
+        ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
+      )
+    }
     const evidence = recorder.finalize(verdict, 0, stepInstruction, { nonCacheable })
     // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
     // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
@@ -248,13 +304,21 @@ export async function executeStep(
     return { result, error, mutated }
   }
 
-  for (let actionIndex = 0; actionIndex < maxSubActions; actionIndex++) {
+  for (let actionIndex = 0; ; actionIndex++) {
     const abortBeforeObserve = checkAbort()
     if (abortBeforeObserve) return abortBeforeObserve
 
     if (deadline && performance.now() > deadline) {
       return failure(`Step timed out after ${ports.stepTimeout}ms`)
     }
+
+    // D-10 remaining-budget cap (the LOOP-02-compatible resource backstop — NOT an attempt
+    // counter; it refreshes to full on confirmed progress below). Exhausted only when
+    // maxSubActions consecutive iterations ran without a confirmed unit of progress.
+    if (remaining <= 0) {
+      return failure(`Sub-action limit reached (${maxSubActions} actions). Step did not complete.`)
+    }
+    remaining--
 
     // 1. SETTLE + OBSERVE — the bounded settle gate polls screenIdentityHash and proceeds
     // only on two consecutive matching hashes (or the maxPolls/deadline bound, D-16). The
@@ -263,6 +327,7 @@ export async function executeStep(
     // cache-key component (Task 2), and the Phase-358 progress signal (one hash, D-09).
     let screenState: ScreenState
     let settledHash: string
+    let settledStable: boolean
     try {
       const settled = await settle(
         () => withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal),
@@ -275,6 +340,7 @@ export async function executeStep(
       )
       screenState = settled.state
       settledHash = settled.hash
+      settledStable = settled.settled
     } catch (err) {
       const abortResult = checkAbort()
       if (abortResult) return abortResult
@@ -285,6 +351,112 @@ export async function executeStep(
     // stateAfter (and this iteration's planning stateBefore — the same object).
     if (pendingSelfHeal) {
       recorder.attachStateAfter(pendingSelfHeal.index, screenState)
+    }
+
+    // 1b. DIFFERENTIAL EFFECT CHECK (CYCLE-01/02/03, D-05, Pitfall 1). Evaluate the PREVIOUS
+    // iteration's executed action against THIS fresh settled observation — action N's
+    // post-state by construction, zero extra observes. The carry is the post-heal action set
+    // at the bottom of iteration N (a D-10-healed patched action is what gets checked).
+    // Execution-failed actions never set a carry (they route to the replan/failure-context
+    // flow instead — no oracle, no double-count). Per-turn volatile blocks are cleared here
+    // and repopulated only for this iteration's planning turn.
+    context.stagnation = undefined
+    context.cycleBreak = undefined
+    if (progressCarry) {
+      const carry = progressCarry
+      progressCarry = undefined
+      const localEffect = evaluateLocalEffect({
+        action: carry.action as { type: string; [key: string]: unknown },
+        anchor: carry.anchor,
+        stateBefore: carry.stateBefore,
+        stateAfter: screenState,
+        prevHash: carry.prevHash,
+        currentHash: settledHash,
+        actionResult: carry.actionResult,
+      })
+      // Evidence-by-construction (D-07): the localEffect block lands on action N's already-
+      // recorded sub-action by its carried index (one iteration late — D-05).
+      recorder.attachLocalEffect(carry.evidenceIndex, toLocalEffectEvidence(localEffect))
+
+      const revisitKey = buildRevisitationKey(settledHash, screenState)
+      const flagged = revisitation.record({ key: revisitKey, progress: localEffect.achieved }).flagged
+
+      if (localEffect.achieved) {
+        // Confirmed progress ⇒ reset the anchor's ladder (reset-on-progress) + refresh the
+        // budget to full (D-10). Never flagged — even a byte-identical repeat that IS the task.
+        if (carry.anchorKey) stagnationTree.reset(carry.anchorKey)
+        remaining = maxSubActions
+      } else if (flagged) {
+        // CYCLE-03 owns a revisited-with-no-progress state (D-08); the per-element tree defers.
+        if (!cycleBreakServed) {
+          // First confirmed cycle flag ⇒ ONE cycle-break turn (one-shot boolean, LOOP-02).
+          cycleBreakServed = true
+          cycleBreakAt = actionIndex
+          context.cycleBreak = {
+            revisitedKey: revisitKey,
+            windowSummary: `The state ${revisitKey} was revisited with no confirmed task progress across the last ${DEFAULT_REVISITATION_WINDOW} steps. Change approach or declare stepFailed.`,
+          }
+        } else if (actionIndex - cycleBreakAt >= DEFAULT_REVISITATION_WINDOW) {
+          // The following window again showed zero task progress ⇒ terminal cycle fail (D-08),
+          // recording the event-scoped CycleEvidence block (D-07).
+          recorder.recordCycle({
+            revisitedKey: revisitKey,
+            windowSummary: [revisitKey],
+            reason: `State revisited with no confirmed task progress across the ${DEFAULT_REVISITATION_WINDOW}-step window after a cycle-break turn.`,
+          })
+          return failure(`Cycle detected: ${revisitKey} revisited with no task progress after a cycle-break turn.`)
+        }
+      } else if (carry.anchor && carry.anchorKey) {
+        // No local effect, no cycle ⇒ the per-element bounded stagnation ladder (D-01/D-02).
+        // No-anchor actions (navigate/waitFor/coordinates) skip the tree entirely (Open Q5);
+        // their no-effect outcomes fed only the revisitation window above.
+        const stagnationClass = classifyStagnation({
+          stateBefore: carry.stateBefore,
+          stateAfter: screenState,
+          anchor: carry.anchor,
+          settleResult: { settled: settledStable },
+          actionResult: carry.actionResult,
+        })
+        if (stagnationClass === 'transient-load') {
+          // D-01 mechanical rung: absorb wait into a bounded settle re-arm (once per iteration
+          // — this whole block runs once per iteration — deadline-bounded, no budget charge,
+          // Open Q4). A permanently-busy screen still terminates via the loop-top deadline.
+          try {
+            const rearmed = await settle(
+              () => withAbort(ports.adapter.observe({ extractDom: true }), ports.abortSignal),
+              { maxPolls: DEFAULT_SETTLE_MAX_POLLS, intervalMs: DEFAULT_SETTLE_INTERVAL_MS, deadline, signal: ports.abortSignal },
+            )
+            screenState = rearmed.state
+            settledHash = rearmed.hash
+            settledStable = rearmed.settled
+          } catch (err) {
+            const abortResult = checkAbort()
+            if (abortResult) return abortResult
+            throw err
+          }
+        } else {
+          const rec = stagnationTree.recordNoEffect(carry.anchorKey, stagnationClass)
+          // Judgment rungs route to the planner (D-01); unresponsive gets raw facts, no
+          // recommended remedy (D-02). All app text is rendered injection-inert downstream.
+          const stagnationBlock: NonNullable<StepContext['stagnation']> = {
+            classification: stagnationClass,
+            anchor: carry.anchor,
+            diff: `No local intended effect after "${carry.action.type}" on the anchored control ${carry.anchorKey}.`,
+          }
+          // Populate the longpress-for-tap ban for a stagnating tap-class anchor (D-04) —
+          // Plan 06's groundability closure enforces it deterministically pre-gate.
+          if (TAP_CLASS_VERBS.has(carry.action.type)) {
+            stagnationBlock.bannedSubstitutions = [{ anchorKey: carry.anchorKey, banned: 'longpress', required: 'tap' }]
+          }
+          context.stagnation = stagnationBlock
+          if (rec.terminal) {
+            // Terminal anchor bound (D-03) ⇒ structured stepFailed carrying the StagnationEvidence
+            // trail (runner-enforced, D-01), recorded event-scoped at the terminal (D-07).
+            recorder.recordStagnation(toStagnationEvidence(carry.anchorKey, stagnationTree))
+            return failure(`Stagnation: no local effect on ${carry.anchorKey} after the bounded remediation ladder (${rec.totalCount} attempts).`)
+          }
+        }
+      }
     }
 
     let screenshot: Buffer | undefined
@@ -385,6 +557,13 @@ export async function executeStep(
         KNOWLEDGE_BRIEF_BUDGET,
       )
       context.knowledgeBrief = brief?.tiers.L2 ?? context.knowledgeBrief
+      // WM-01 serve (D-11): the whole run-scoped set is served verbatim to every planning turn
+      // via the optional workingMemory port (the knowledgeReader idiom). Unbound ⇒ left as-is,
+      // the loop runs memory-less. The served set is what finalize snapshots masked.
+      if (ports.workingMemory) context.workingMemory = ports.workingMemory.entries()
+      // D-09 active bulk-completion predicate — re-stated as volatile turn content each turn
+      // (persisted once declared); the planner re-evaluates + cites, the verifier backstops.
+      context.bulkCompletionPredicate = activePredicate
       try {
         planResult = await withAbort(
           ports.planner.plan(stepInstruction, screenState, context, ports.abortSignal),
@@ -408,6 +587,17 @@ export async function executeStep(
     }
 
     const rawPlan = planResult!.plan
+
+    // WM-01 CAPTURE-BEFORE-NAVIGATE (Pattern 6): the planner authored remember[] against the
+    // pre-action observation this turn — write it to the run-scoped store BEFORE the action
+    // dispatches, so the entries record atomically with the navigating action. The store
+    // redacts registered secrets at capture (Pitfall 7 boundary 1); values stay verbatim.
+    if (rawPlan.remember && rawPlan.remember.length > 0) {
+      ports.workingMemory?.capture(rawPlan.remember, { step: actionIndex })
+    }
+    // D-09 persist the declared bulk-completion predicate for the rest of the run.
+    if (rawPlan.bulkCompletionPredicate) activePredicate = rawPlan.bulkCompletionPredicate
+
     const normalizedAction = normalizePointerActionForStep(rawPlan.action as Action, stepInstruction)
     // Redact BEFORE recording (Information-disclosure control, T-353-08): every value
     // that reaches evidence/display is pre-redacted; secret templates are resolved only
@@ -647,7 +837,7 @@ export async function executeStep(
           ports.verifier.verify(
             stepInstruction, screenState, afterState, action,
             gate.attachImage ? verifyScreenshot : undefined,
-            ports.abortSignal, gate.promptNote,
+            ports.abortSignal, gate.promptNote, activePredicate,
           ),
           ports.abortSignal,
         )
@@ -720,7 +910,7 @@ export async function executeStep(
 
     // Sub-action succeeded but the goal is not yet met — record and continue (no
     // stateAfter: this is not a D-15 boundary).
-    recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+    const continuingIdx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
     maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
     pendingSelfHeal = undefined
     context.subActionHistory!.push({
@@ -730,11 +920,23 @@ export async function executeStep(
       verifierRejection: rawPlan.stepComplete ? verifierReasoning : undefined,
       data: guardActionData(execResult.data, ports.guardBlob),
     })
+    // CYCLE-01 prev-iteration carry (Pitfall 1): the successfully-executed action (post-heal)
+    // plus its stateBefore/hash/anchor is checked by the effect oracle at the NEXT settled top
+    // (D-05). Its already-recorded sub-action index lets the localEffect block land by
+    // construction. Execution failures never reach here — they route to the failure-context
+    // flow above and set no carry (no oracle, no double-count).
+    const carryAnchor = deriveEffectAnchor(action, screenState.elements)
+    progressCarry = {
+      action,
+      anchor: carryAnchor,
+      anchorKey: carryAnchor ? buildAnchorKey(carryAnchor) : undefined,
+      stateBefore: screenState,
+      prevHash: settledHash,
+      actionResult: execResult,
+      evidenceIndex: continuingIdx,
+    }
     // Non-completing decision — not cached (only the step-completing plan is persisted).
   }
-
-  // Cap exhausted (maxSubActions) — terminate cleanly with a failed StepResult.
-  return failure(`Sub-action limit reached (${maxSubActions} actions). Step did not complete.`)
 }
 
 // ---- helpers -----------------------------------------------------------------
@@ -857,6 +1059,32 @@ function buildGroundingEvidence(
   if (locator.ordinal !== undefined) descriptor.ordinal = locator.ordinal
   const trail = attempts !== undefined && attempts.length > 0 ? attempts : synthesizeRefAttempts(action)
   return { descriptor, attempts: trail }
+}
+
+// The tap-class verbs whose stagnating anchor arms the D-04 longpress-for-tap ban.
+const TAP_CLASS_VERBS: ReadonlySet<string> = new Set(['tap', 'click', 'longpress'])
+
+// Derive the CYCLE-01/02 element anchor (357 vocabulary: role + nameNormalized + ordinal,
+// never ref) for the effect oracle + stagnation tree. Reuses the grounded-locator derivation
+// the evidence path already uses. A locator-less action (navigate/waitFor/coordinates) yields
+// undefined — it skips the tree entirely and feeds only the revisitation window (Open Q5).
+function deriveEffectAnchor(action: Action, elements: readonly ElementInfo[]): EffectAnchor | undefined {
+  const ref = firstRefField(action)
+  if (ref === undefined) return undefined
+  const locator = toGroundedLocator({ ...(action as Record<string, unknown>), ref } as unknown as Action, elements)
+  if (locator === null) return undefined
+  return { role: locator.role, nameNormalized: locator.nameNormalized, ordinal: locator.ordinal ?? 0 }
+}
+
+// Project the terminal anchor's bounded-tree state into the §A8 StagnationEvidence DTO
+// (D-07, event-scoped at the terminal fail). The snapshot's per-class map becomes the DTO's
+// counts array; the recording type IS the schema DTO (353 D-14).
+function toStagnationEvidence(anchorKey: string, tree: StagnationTree): StagnationEvidence {
+  const entry = tree.snapshot().find((e) => e.anchorKey === anchorKey)
+  const counts: StagnationEvidence['counts'] = entry
+    ? Object.entries(entry.perClass).map(([cls, count]) => ({ class: cls as StagnationEvidence['counts'][number]['class'], count }))
+    : []
+  return { anchorKey, counts, total: entry?.total ?? 0 }
 }
 
 // D-10 re-ground heal (LOOP-04). Re-derive the failed action's descriptor from the PRIOR

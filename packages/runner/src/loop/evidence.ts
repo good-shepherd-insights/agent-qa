@@ -17,16 +17,20 @@ import type {
   ActionAnnotation,
   ActionResult as SchemaActionResult,
   BoundingBox,
+  CycleEvidence,
   Decision,
+  LocalEffectEvidence,
   Point,
   RecordedActionResult,
   ScopeKey,
   ScreenState,
   ServedBrief,
+  StagnationEvidence,
   StepEvidence,
   SubActionEvidence,
   VerifierVerdict,
   Viewport,
+  WorkingMemoryEntry,
 } from '@vostride/agent-qa-schema'
 import type { Action as PlatformAction, ActionResult as PlatformActionResult } from '../platform.js'
 import type { StepAnnotation, SubActionTrace } from '../result.js'
@@ -183,6 +187,14 @@ export interface RecordSubActionInput {
    * ordering). Typed via the schema DTO — no runner-local mirror (353 evidence-by-construction).
    */
   grounding?: SubActionEvidence['grounding']
+  /**
+   * The §A8 differential-observation oracle outcome (CYCLE-01, D-07). Recorded by
+   * construction for every oracle-checked sub-action — usually attached one iteration late
+   * (the oracle evaluates action N at the settled top of iteration N+1) via
+   * {@link EvidenceRecorder.attachLocalEffect}, but accepted here for the step-final path
+   * where the oracle runs against the verifier's observation in the same iteration (D-05).
+   */
+  localEffect?: LocalEffectEvidence
 }
 
 export class EvidenceRecorder {
@@ -190,6 +202,9 @@ export class EvidenceRecorder {
   private readonly cacheFlags: boolean[] = []
   private servedBrief: ServedBrief
   private selfHeal?: StepEvidence['selfHeal']
+  private stagnation?: StagnationEvidence
+  private cycle?: CycleEvidence
+  private workingMemory?: WorkingMemoryEntry[]
 
   constructor(options?: { servedBrief?: ServedBrief; scope?: ScopeKey; asOfBuild?: number }) {
     this.servedBrief = options?.servedBrief
@@ -207,9 +222,46 @@ export class EvidenceRecorder {
     }
     if (input.stateAfter) evidence.stateAfter = input.stateAfter
     if (input.grounding) evidence.grounding = input.grounding
+    if (input.localEffect) evidence.localEffect = input.localEffect
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
     return this.subActions.length - 1
+  }
+
+  /**
+   * Attach the CYCLE-01 differential-observation oracle outcome to an already-recorded
+   * sub-action (D-05/D-07). The oracle evaluates action N's local intended effect at the
+   * settled top of iteration N+1 — one iteration after the sub-action was recorded — so the
+   * loop reuses the recorded index to land the block on the right sub-action by construction.
+   */
+  attachLocalEffect(index: number, localEffect: LocalEffectEvidence): void {
+    const evidence = this.subActions[index]
+    if (evidence) evidence.localEffect = localEffect
+  }
+
+  /**
+   * Record the CYCLE-02 stagnation-tree state at a terminal `stepFailed` (D-07). Event-scoped
+   * — recorded ONCE at the anchor's bounded-ladder exhaustion, never per iteration.
+   */
+  recordStagnation(stagnation: StagnationEvidence): void {
+    this.stagnation = stagnation
+  }
+
+  /**
+   * Record the CYCLE-03 cycle-flag terminal block (D-07/D-08). Event-scoped — recorded ONCE
+   * at the terminal cycle fail (state revisitation AND no task progress across the window).
+   */
+  recordCycle(cycle: CycleEvidence): void {
+    this.cycle = cycle
+  }
+
+  /**
+   * Snapshot the run-scoped working-memory set served to this step's planning turns
+   * (WM-01, §12.15). The loop passes the values ALREADY masked (`ports.masking.mask`, Pitfall
+   * 7 boundary 3) — recorded BESIDE the brief, never inside `servedBrief`.
+   */
+  recordWorkingMemory(entries: WorkingMemoryEntry[]): void {
+    this.workingMemory = entries
   }
 
   /**
@@ -250,6 +302,9 @@ export class EvidenceRecorder {
       verifierVerdict: verdict,
     }
     if (this.selfHeal) evidence.selfHeal = this.selfHeal
+    if (this.stagnation) evidence.stagnation = this.stagnation
+    if (this.cycle) evidence.cycle = this.cycle
+    if (this.workingMemory) evidence.workingMemory = this.workingMemory
     return evidence
   }
 }
