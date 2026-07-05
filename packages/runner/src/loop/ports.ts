@@ -6,37 +6,13 @@
 // throw-on-absent (D-05 degrade-when-absent).
 
 import type { LanguageModelUsage, ModelMessage } from 'ai'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { MaskingContext, ScreenState } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { PlatformAdapter } from '../platform.js'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
 import type { StepPhaseEvent } from '../result.js'
-import type { ActionPlan, Planner, Verifier, PlannerConfig } from './types.js'
-
-/**
- * Per-step cache-key input — only what the loop owns per step. The v1 hash inputs
- * (configContent/testFileContent/testFilePath/suiteFileContent/suiteTestIndex) do
- * NOT appear here: they live behind the cache port, where the core adapter closes
- * over them and does all hashing (core owns node:crypto; storageNeutral forbids it
- * in runner). D-03.
- */
-export interface StepKeyInput {
-  stepInstruction: string
-  stepIndex?: number
-}
-
-/**
- * v1-shaped transitional cache port — Phase 356 redesigns both the shape (branded
- * computeCacheKey 8-tuple, replay→re-ground→replan hit ladder, env-step bypass) and
- * the implementation; the v1 FileActionCache stays in core behind the adapter (D-03).
- * The loop consumes only this sub-action trio; v1's step-level get/set/invalidate are
- * dropped (verified against core types.ts:120-127).
- */
-export interface ActionPlanCache {
-  getSubAction(key: StepKeyInput, index: number): Promise<ActionPlan | null>
-  setSubAction(key: StepKeyInput, index: number, plan: ActionPlan): Promise<void>
-  invalidateSubActionsFrom(key: StepKeyInput, fromIndex: number): Promise<void>
-}
+import type { ActionPlanCache } from '../cache/port.js'
+import type { Planner, Verifier, PlannerConfig } from './types.js'
 
 /** Compression output — v1's CompressResult shape (Pitfall 9). */
 export interface CompressedScreenshot {
@@ -131,7 +107,19 @@ export interface LoopPorts {
   adapter: PlatformAdapter
   planner: Planner
   verifier?: Verifier
+  /**
+   * Redesigned per-key cache port (D-11): get/set/invalidate over a branded CacheKey,
+   * descriptor-only value. Plan 05's FsActionCache implements it; injected at the Plan 06
+   * CLI composition root. Absent ⇒ every step misses (no cache), never throws (D-05).
+   */
   cache?: ActionPlanCache
+  /**
+   * D-05 masking seam for the cache key. `mask()` is applied to stepText BEFORE it enters
+   * key material (the MASK-FUT-01 floor). Identity when unbound (pre-362); Phase 362 seeds
+   * the live run-scope context. Never a `safety`/`safety-local` import — the browser-safe
+   * schema `{ mask, unmask }` type only.
+   */
+  masking?: MaskingContext
   compressor?: ScreenshotCompressor
   /** D-05 optional L2 reader — the loop degrades gracefully when absent. */
   knowledgeReader?: KnowledgeHintReader
@@ -152,7 +140,6 @@ export interface LoopPorts {
   abortSignal?: AbortSignal
   secretStore?: SecretResolver
   secretRedactor?: SecretRedactorPort
-  cacheState?: { invalidated: boolean }
   /**
    * D-06 optional pre-prompt blob-guard — bounds a single one-shot structured tool-output
    * value before it lands in the sub-action history / next planning turn. A pure signature

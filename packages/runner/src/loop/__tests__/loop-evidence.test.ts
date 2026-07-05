@@ -3,7 +3,9 @@
 // spec-locked boundaries (assert, verifier, self-heal) by reuse of an observation the
 // loop already takes. Plus the redact-before-record security lock and the cache fold.
 import { describe, it, expect } from 'vitest'
-import type { ActionPlanCache, LoopPorts } from '../ports.js'
+import type { LoopPorts } from '../ports.js'
+import type { ActionPlanCache, CachedPlanValue } from '../../cache/port.js'
+import type { Action } from '../../platform.js'
 import type { Planner } from '../types.js'
 import { executeStep } from '../index.js'
 import { SecretRedactor, SecretStore } from '../secrets.js'
@@ -98,34 +100,37 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(JSON.stringify(result.evidence)).not.toContain('hunter2')
   })
 
-  it('(7) cacheStatus folds correctly over a mixed hit/miss run', async () => {
+  it('(7) a cache miss (the planner ran) folds to cacheStatus miss', async () => {
     const cache: ActionPlanCache = {
-      async getSubAction(_key, index) {
-        // index 0 is a hit (incomplete → loop continues); index 1 is a miss.
-        return index === 0 ? makeActionPlan({ action: { type: 'click', ref: 'e1' }, stepComplete: false }) : null
-      },
-      async setSubAction() {},
-      async invalidateSubActionsFrom() {},
+      async get() { return null },
+      async set() {},
+      async invalidate() {},
     }
     const planner = makePlanner([makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true })])
     const result = await executeStep(
-      'Two sub-actions',
-      ports({ adapter: makeAdapter({ observeResults: [makeScreenState(), makeScreenState()], executeResults: [{ success: true }, { success: true }] }), planner, cache }),
+      'One sub-action',
+      ports({ adapter: makeAdapter(), planner, cache }),
       makeStepContext(),
     )
     expect(result.status).toBe('passed')
-    expect(result.evidence!.subActions).toHaveLength(2)
     expect(result.evidence!.cacheStatus).toBe('miss')
   })
 
-  it('(7b) an all-hit run folds to cacheStatus hit', async () => {
-    const cache: ActionPlanCache = {
-      async getSubAction() { return makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }) },
-      async setSubAction() {},
-      async invalidateSubActionsFrom() {},
+  it('(7b) an exact-key hit re-grounds and replays — folds to cacheStatus hit, no planner', async () => {
+    const cachedLogin: CachedPlanValue = {
+      // Descriptor-only value: ref/coords stripped; grounding rides on the locator, which
+      // re-grounds to the fresh `log in` button (e2) in the observation.
+      plannedActions: [{ type: 'click' } as unknown as Action],
+      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      verificationOutcome: 'passed',
     }
-    const plannerSpy: Planner = { async plan() { throw new Error('planner must not be called on an all-hit run') } }
-    const result = await executeStep('One sub-action', ports({ adapter: makeAdapter(), planner: plannerSpy, cache }), makeStepContext())
+    const cache: ActionPlanCache = {
+      async get() { return cachedLogin },
+      async set() {},
+      async invalidate() {},
+    }
+    const plannerSpy: Planner = { async plan() { throw new Error('planner must not be called on a hit run') } }
+    const result = await executeStep('Click Log in', ports({ adapter: makeAdapter(), planner: plannerSpy, cache }), makeStepContext())
     expect(result.status).toBe('passed')
     expect(result.evidence!.cacheStatus).toBe('hit')
   })

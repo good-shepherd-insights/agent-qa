@@ -28,20 +28,21 @@ function element(overrides: Partial<ElementInfo> = {}): ElementInfo {
 
 describe('toGroundedLocator — descriptor-only projection (CACHE-03, D-12)', () => {
   it('projects an action + elements to a role+nameNormalized descriptor with no ref', () => {
-    const elements = [element({ ref: SENTINEL_REF, role: 'button', name: 'Checkout', nameNormalized: 'checkout' })]
+    const elements = [element({ ref: asRef(SENTINEL_REF), role: 'button', name: 'Checkout', nameNormalized: 'checkout' })]
     const action = { type: 'click', ref: SENTINEL_REF } as unknown as Action
 
     const locator = toGroundedLocator(action, elements)
 
+    expect(locator).not.toBeNull()
     expect(locator).toMatchObject({ role: 'button', nameNormalized: 'checkout' })
-    expect(Object.hasOwn(locator, 'ref')).toBe(false)
+    expect(Object.hasOwn(locator as object, 'ref')).toBe(false)
     expect(JSON.stringify(locator)).not.toContain(SENTINEL_REF)
   })
 })
 
 describe('buildCachedPlanValue — no ref/selector/coordinates/data in the value (D-12 overfit guard)', () => {
   it('assembles a descriptor-only CachedPlanValue that omits the raw ref and step data', () => {
-    const elements = [element({ ref: SENTINEL_REF, role: 'button', name: 'Checkout', nameNormalized: 'checkout' })]
+    const elements = [element({ ref: asRef(SENTINEL_REF), role: 'button', name: 'Checkout', nameNormalized: 'checkout' })]
     const action = { type: 'click', ref: SENTINEL_REF, data: SENTINEL_DATA } as unknown as Action
 
     const value = buildCachedPlanValue({

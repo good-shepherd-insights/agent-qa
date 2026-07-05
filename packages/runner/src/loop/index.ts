@@ -16,12 +16,14 @@
 // was planned against; stateAfter is attached only at the three D-15 boundaries by
 // reuse of an observation the loop already takes — never an extra capture.
 
-import { toRecordedActionResult } from '@vostride/agent-qa-schema'
+import { computeCacheKey, toRecordedActionResult } from '@vostride/agent-qa-schema'
 import type {
   Action as SchemaAction,
   ActionAnnotation,
   ActionResult as SchemaActionResult,
+  CacheKey,
   Decision,
+  ElementInfo,
   ScreenState,
   VerifierVerdict,
   Viewport,
@@ -30,13 +32,16 @@ import type { Action, ActionResult } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
-import type { LoopPorts, StepKeyInput } from './ports.js'
+import { classifyStep } from '../cache/classify.js'
+import { buildCacheableStepInput } from '../cache/key.js'
+import { buildCachedPlanValue } from '../cache/value.js'
+import { deterministicDescriptorMatcher } from '../cache/reground.js'
+import type { CachedPlanValue } from '../cache/port.js'
+import type { LoopPorts } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext } from './types.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
-  containsRedactedSecretMarker,
-  findSecretTemplates,
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
@@ -104,7 +109,18 @@ export async function executeStep(
   // recovering sub-action's stateBefore (identical-state sharing, one capture).
   let pendingSelfHeal: { index: number; failed: Decision } | undefined
 
-  const stepKey: StepKeyInput = { stepInstruction }
+  // CACHE-02 (D-07/D-08): classify the step by resolution provenance ONCE. A step that
+  // reads a live secret ({{secret:X}} / [secret:*] marker) or sets an env/secret variable
+  // is NonCacheableStepInput — the loop bypasses the cache entirely (no get, no set) and
+  // finalize emits cacheStatus='bypass' (Pitfall 7). The read path reuses the shipped
+  // findSecretTemplates/marker provenance; the set path reuses the setVariable verb
+  // vocabulary until the live resolver-reported provenance is wired (Phase 362).
+  const classification = classifyStep({
+    stepText: stepInstruction,
+    envSets: deriveEnvSetNames(stepInstruction),
+  })
+  const nonCacheable = classification.cacheable === false
+  const cacheEnvVars = classification.cacheable === true ? classification.envVars : []
 
   // ---- terminal result builders ------------------------------------------------
   const tokenUsage = (): TokenUsage | undefined =>
@@ -117,7 +133,7 @@ export async function executeStep(
     verdict: VerifierVerdict,
     error?: string,
   ): StepResult => {
-    const evidence = recorder.finalize(verdict, 0, stepInstruction)
+    const evidence = recorder.finalize(verdict, 0, stepInstruction, { nonCacheable })
     // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
     // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
     const subActions = projectLegacyTrace(evidence)
@@ -188,7 +204,6 @@ export async function executeStep(
       if (abortResult) return abortResult
       throw err
     }
-    void settledHash // consumed by the cache-key builder in Task 2
 
     // D-15c: the observation that reveals a prior failure is the failed sub-action's
     // stateAfter (and this iteration's planning stateBefore — the same object).
@@ -241,37 +256,46 @@ export async function executeStep(
     context.screenshot = gate.attachImage && screenshot ? screenshot : undefined
     context.promptNote = gate.promptNote
 
-    // 2. PLAN — cache-first, then the planning turn (via the injected Planner port).
+    // 2. PLAN — the replay → re-ground → replan hit ladder (D-13), then the planning turn.
     let planResult: PlanResult
     let cached = false
-    const prefixValid = !ports.cacheState?.invalidated
+    // The per-decision-point cache key: masked stepText + value-free env digest + the
+    // settled screenIdentityHash as the 8th component (D-05/D-09). Branch never enters key
+    // material. Undefined for non-cacheable (bypassed) steps or when no cache is bound.
+    let cacheKey: CacheKey | undefined
+    const cacheActive = !nonCacheable && !!ports.cache
 
-    if (prefixValid && ports.cache?.getSubAction) {
-      const cachedPlan = await ports.cache.getSubAction(stepKey, actionIndex)
-      if (cachedPlan) {
-        // Cache-poisoning guard (loop.ts:66-76/238-244, byte-equivalent): a cached
-        // plan carrying a redacted [secret:*] marker for a runtime-templated step is
-        // invalidated and re-planned rather than replayed.
-        const secretStepUsesRuntimeTemplate = findSecretTemplates(stepInstruction).length > 0
-        if (secretStepUsesRuntimeTemplate && containsRedactedSecretMarker(cachedPlan.action)) {
-          await ports.cache.invalidateSubActionsFrom?.(stepKey, actionIndex)
-          ports.logger?.createScopedLogger('cache')?.debug(
-            'Ignoring cached sub-action with redacted secret marker', { actionIndex },
-          )
-        } else {
-          planResult = { plan: cachedPlan }
+    if (cacheActive) {
+      cacheKey = computeCacheKey(buildCacheableStepInput({
+        masking: ports.masking,
+        platform: screenState.platform,
+        suiteConfigDigest: '',
+        testConfigDigest: '',
+        stepText: stepInstruction,
+        stepIndex: actionIndex,
+        testIndex: 0,
+        envVars: cacheEnvVars,
+        screenIdentityHash: settledHash,
+      }))
+      const hit = await ports.cache!.get(cacheKey)
+      if (hit) {
+        // Exact-key hit: re-ground each stored descriptor against the FRESH observation
+        // (a stored descriptor never drives a blind click, T-356-04a). All resolve ⇒
+        // replay with NO LLM call. Any unmatched ⇒ invalidate and fall through to replan.
+        const replay = replayFromCache(hit, screenState.elements)
+        if (replay) {
+          planResult = { plan: replay }
           cached = true
+        } else {
+          await ports.cache!.invalidate(cacheKey)
+          ports.logger?.createScopedLogger('cache')?.debug(
+            'Cached descriptor no longer resolves — re-planning', { actionIndex },
+          )
         }
       }
     }
 
     if (!cached) {
-      if (ports.cache?.invalidateSubActionsFrom) {
-        await ports.cache.invalidateSubActionsFrom(stepKey, actionIndex)
-      }
-      if (ports.cacheState && !ports.cacheState.invalidated) {
-        ports.cacheState.invalidated = true
-      }
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
       // Knowledge-brief sourcing seam (D-12): source the volatile-tier brief through the
@@ -315,7 +339,20 @@ export async function executeStep(
     let action = redactSecretValue(normalizedAction, ports.secretRedactor)
     const reasoning = redactSecretValue(rawPlan.reasoning, ports.secretRedactor)
     lastPlannedAction = action
-    const cachePlan: ActionPlan = { ...rawPlan, action: normalizedAction }
+
+    // Persist the completing decision's plan into the per-key cache as a descriptor-only
+    // value (D-12 overfit guard: buildCachedPlanValue strips ref/coords/data and derives
+    // role+nameNormalized+ordinal locators). setVariable actions are never cached (env
+    // provenance). No-op for bypassed steps, cache hits, or when no cache is bound.
+    const cacheCompletingPlan = async (): Promise<void> => {
+      if (!cacheActive || cached || !cacheKey || !ports.cache) return
+      if (normalizedAction.type === 'setVariable') return
+      await ports.cache.set(cacheKey, buildCachedPlanValue({
+        plannedActions: [normalizedAction],
+        elements: screenState.elements,
+        verificationOutcome: 'passed',
+      }))
+    }
 
     const abortAfterPlan = checkAbort()
     if (abortAfterPlan) return abortAfterPlan
@@ -393,7 +430,7 @@ export async function executeStep(
       })
       context.failureContext = undefined
       pendingSelfHeal = undefined
-      if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
+      // setVariable is inherently non-cacheable — no cache write here (Pitfall 6).
       return success()
     }
 
@@ -411,7 +448,7 @@ export async function executeStep(
       recorder.attachStateAfter(idx, screenState)
       context.failureContext = undefined
       pendingSelfHeal = undefined
-      if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
+      await cacheCompletingPlan()
       return success()
     }
 
@@ -443,9 +480,9 @@ export async function executeStep(
         data: guardActionData(execResult.data, ports.guardBlob),
       })
 
-      // A failed cached action invalidates the cache and re-plans.
-      if (cached && ports.cache?.invalidateSubActionsFrom) {
-        await ports.cache.invalidateSubActionsFrom(stepKey, actionIndex)
+      // A failed replay of a cached plan invalidates that key and re-plans (D-13).
+      if (cached && cacheKey && ports.cache) {
+        await ports.cache.invalidate(cacheKey)
       }
 
       // Failure context injected for the next planning turn (the surviving mitigation).
@@ -516,7 +553,7 @@ export async function executeStep(
         recorder.attachStateAfter(idx, afterState)
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
         pendingSelfHeal = undefined
-        if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
+        await cacheCompletingPlan()
         return finish('passed', { pass: true, reasoning: verifierReasoning ?? 'Step completed' })
       }
 
@@ -549,7 +586,7 @@ export async function executeStep(
         index: failedIdx,
         failed: { plan: reasoning, plannedAction: action as unknown as SchemaAction, result: toRecordedActionResult(toSchemaResult(execResult, annotation)) },
       }
-      if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
+      // Non-completing decision — not cached (only the step-completing plan is persisted).
       continue
     }
 
@@ -559,7 +596,7 @@ export async function executeStep(
       maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
       pendingSelfHeal = undefined
       void idx
-      if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
+      await cacheCompletingPlan()
       return success()
     }
 
@@ -575,7 +612,7 @@ export async function executeStep(
       verifierRejection: rawPlan.stepComplete ? verifierReasoning : undefined,
       data: guardActionData(execResult.data, ports.guardBlob),
     })
-    if (!cached && ports.cache?.setSubAction) await ports.cache.setSubAction(stepKey, actionIndex, cachePlan)
+    // Non-completing decision — not cached (only the step-completing plan is persisted).
   }
 
   // Cap exhausted (maxSubActions) — terminate cleanly with a failed StepResult.
@@ -583,6 +620,41 @@ export async function executeStep(
 }
 
 // ---- helpers -----------------------------------------------------------------
+
+// Env-set provenance (D-07, set path). Pre-plan, the live resolver isn't available (its
+// onSetVariable callback fires only at execute time), so an explicit set/store/save verb
+// paired with an env-shaped token (UPPER_SNAKE identifier) is the provenance signal. The
+// read path (secret templates / [secret:*] marker) is classified inside classifyStep.
+// Phase 362 replaces this with the live resolver-reported provenance.
+const ENV_SET_VERB = /\b(set|store|save|remember)\b/i
+const ENV_NAME_TOKEN = /\b[A-Z][A-Z0-9_]+\b/g
+
+function deriveEnvSetNames(stepText: string): string[] {
+  if (!ENV_SET_VERB.test(stepText)) return []
+  return stepText.match(ENV_NAME_TOKEN) ?? []
+}
+
+// Replay rung of the hit ladder (D-13): reconstruct an ActionPlan from a descriptor-only
+// cached value by re-grounding each locator against the FRESH observation. Returns null
+// when any descriptor no longer resolves — the signal to invalidate and fall through to a
+// full replan (a stale ref never drives a blind click, T-356-04a).
+function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[]): ActionPlan | null {
+  const action = value.plannedActions[0]
+  if (!action) return null
+  const locator = value.groundedLocator[0]
+  const replayAction: Record<string, unknown> = { ...action }
+  if (locator) {
+    const freshRef = deterministicDescriptorMatcher.reground(locator, elements)
+    if (freshRef === null) return null
+    replayAction.ref = freshRef
+  }
+  return {
+    reasoning: 'Replayed from cache',
+    action: replayAction as ActionPlan['action'],
+    confidence: 1,
+    stepComplete: value.verificationOutcome === 'passed',
+  }
+}
 
 function toSchemaResult(execResult: ActionResult, annotation?: ActionAnnotation): SchemaActionResult {
   const result: SchemaActionResult = { success: execResult.success }

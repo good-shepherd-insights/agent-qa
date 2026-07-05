@@ -5,7 +5,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
-import type { ActionPlanCache, LoopPorts, ScreenshotCompressor } from '../ports.js'
+import type { LoopPorts, ScreenshotCompressor } from '../ports.js'
+import type { ActionPlanCache, CachedPlanValue } from '../../cache/port.js'
 import type { Planner, StepContext, Verifier } from '../types.js'
 import { executeStep } from '../index.js'
 import { projectLegacyTrace } from '../evidence.js'
@@ -234,16 +235,54 @@ describe('executeStep — trace projection', () => {
   })
 })
 
-describe('executeStep — cache', () => {
-  it('cached-plan-with-redacted-marker invalidates and replans (cache-poisoning guard)', async () => {
-    const invalidated: number[] = []
+describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
+  const cachedLogin: CachedPlanValue = {
+    // Descriptor-only value (D-12): ref/coords stripped; the locator re-grounds to the
+    // fresh `log in` button (e2) against the observation at replay time.
+    plannedActions: [{ type: 'click' } as unknown as Action],
+    groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+    verificationOutcome: 'passed',
+  }
+
+  it('exact-key hit re-grounds the descriptor and replays without calling the planner', async () => {
+    const plannerSpy = vi.fn()
     const cache: ActionPlanCache = {
-      async getSubAction() {
-        // A cached plan carrying a redacted [secret:*] marker for a runtime-templated step.
-        return { reasoning: 'cached', action: { type: 'fill', ref: 'e1', value: '[secret:TOKEN]' }, confidence: 1, stepComplete: true }
-      },
-      async setSubAction() {},
-      async invalidateSubActionsFrom(_key, from) { invalidated.push(from) },
+      async get() { return cachedLogin },
+      async set() {},
+      async invalidate() {},
+    }
+    const result = await executeStep('Click Log in', ports({ adapter: makeAdapter(), planner: { plan: plannerSpy } as unknown as Planner, cache }), makeStepContext())
+    expect(result.status).toBe('passed')
+    expect(plannerSpy).not.toHaveBeenCalled()
+    expect(result.evidence?.cacheStatus).toBe('hit')
+  })
+
+  it('a hit whose descriptor no longer resolves invalidates the key and replans (D-13)', async () => {
+    let invalidateCalls = 0
+    const staleHit: CachedPlanValue = {
+      plannedActions: [{ type: 'click' } as unknown as Action],
+      groundedLocator: [{ role: 'button', nameNormalized: 'gone', ordinal: 0 }],
+      verificationOutcome: 'passed',
+    }
+    const cache: ActionPlanCache = {
+      async get() { return staleHit },
+      async set() {},
+      async invalidate() { invalidateCalls++ },
+    }
+    const plannerSpy = vi.fn().mockResolvedValue({ plan: makeActionPlan() })
+    const result = await executeStep('Click Log in', ports({ adapter: makeAdapter(), planner: { plan: plannerSpy }, cache }), makeStepContext())
+    expect(result.status).toBe('passed')
+    expect(invalidateCalls).toBe(1)
+    expect(plannerSpy).toHaveBeenCalledTimes(1) // unmatched descriptor → replan
+  })
+
+  it('a secret-templated step bypasses the cache entirely — no get/set, cacheStatus bypass', async () => {
+    let gets = 0
+    let sets = 0
+    const cache: ActionPlanCache = {
+      async get() { gets++; return null },
+      async set() { sets++ },
+      async invalidate() {},
     }
     const plannerSpy = vi.fn().mockResolvedValue({ plan: makeActionPlan() })
     const result = await executeStep(
@@ -252,20 +291,9 @@ describe('executeStep — cache', () => {
       makeStepContext(),
     )
     expect(result.status).toBe('passed')
-    expect(plannerSpy).toHaveBeenCalledTimes(1) // marker invalidated → planner ran
-    expect(invalidated).toContain(0)
-  })
-
-  it('cache hit replays without calling the planner', async () => {
-    const plannerSpy = vi.fn()
-    const cache: ActionPlanCache = {
-      async getSubAction() { return makeActionPlan() },
-      async setSubAction() {},
-      async invalidateSubActionsFrom() {},
-    }
-    const result = await executeStep('Click Log in', ports({ adapter: makeAdapter(), planner: { plan: plannerSpy } as unknown as Planner, cache }), makeStepContext())
-    expect(result.status).toBe('passed')
-    expect(plannerSpy).not.toHaveBeenCalled()
+    expect(result.evidence?.cacheStatus).toBe('bypass')
+    expect(gets).toBe(0)
+    expect(sets).toBe(0)
   })
 })
 
