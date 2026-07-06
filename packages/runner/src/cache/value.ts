@@ -6,9 +6,9 @@
 
 import type { ElementInfo } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
-import type { CachedPlanValue, GroundedLocator } from './port.js'
+import type { CacheablePlannedAction, CachedPlanValue, GroundedLocator } from './port.js'
 
-export type { CachedPlanValue, GroundedLocator } from './port.js'
+export type { CacheablePlannedAction, CachedPlanValue, GroundedLocator } from './port.js'
 
 // Fields that would overfit a cached plan to one run: locator bindings (single- AND
 // multi-ref lanes + emission-side target descriptors) and the raw step data value.
@@ -58,13 +58,16 @@ function locatorForRef(ref: string, elements: readonly ElementInfo[]): GroundedL
   return { role: target.role, nameNormalized: target.nameNormalized, ordinal }
 }
 
-function sanitizeAction(action: Action): Action {
+// The sanitized, stored form statically excludes the AI-assertion verbs (D-08): a completing
+// plan carrying assertAI/extractAI is bypassed at the write site (Plan 10 runtime guard), so
+// the stored value only ever holds cacheable verbs. The cast asserts that boundary at the type.
+function sanitizeAction(action: Action): CacheablePlannedAction {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(action)) {
     if (OVERFIT_KEYS.has(key)) continue
     out[key] = value
   }
-  return out as unknown as Action
+  return out as unknown as CacheablePlannedAction
 }
 
 /**

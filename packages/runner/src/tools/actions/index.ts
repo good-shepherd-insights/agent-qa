@@ -463,7 +463,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ms: z.number().describe('Duration in milliseconds'),
   })),
 
-  action('waitFor', 'Wait for text, selector presence, or text disappearance', waitForSchema),
+  action('waitFor', 'Wait for text, selector presence, or text disappearance', waitForSchema, { readOnly: true }),
 
   action('assertAI', 'Ask AI to judge a perceptual claim about the current screen state', assertAISchema, { readOnly: true }),
 
@@ -495,7 +495,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     value: z.string().describe('Text value to paste'),
   }).strict(), { destructive: true }),
 
-  action('focus', 'Focus an element without typing text', focusSchema),
+  action('focus', 'Focus an element without typing text', focusSchema, { readOnly: true }),
 
   action('inspect', 'Read browser console, network, cookie, or localStorage data', webInspectSchema, { readOnly: true }),
 
@@ -507,19 +507,19 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
 
   action('storageState', 'Save or restore a named web auth/storage state', storageStateSchema, { destructive: true }),
 
-  action('handleDialog', 'Accept or dismiss a native web alert/confirm/prompt dialog', handleDialogSchema),
+  action('handleDialog', 'Accept or dismiss a native web alert/confirm/prompt dialog', handleDialogSchema, { destructive: true }),
 
   action('uniqueValue', 'Generate a unique test value with a stable prefix', uniqueValueSchema, { readOnly: true }),
 
-  action('pressBack', 'Press the Android system Back button', pressBackSchema),
+  action('pressBack', 'Press the Android system Back button', pressBackSchema, { destructive: true }),
 
-  action('pressHome', 'Press the Android system Home button', pressHomeSchema),
+  action('pressHome', 'Press the Android system Home button', pressHomeSchema, { destructive: true }),
 
-  action('pressRecent', 'Open the Android recent-apps overview', pressRecentSchema),
+  action('pressRecent', 'Open the Android recent-apps overview', pressRecentSchema, { destructive: true }),
 
-  action('openNotifications', 'Open the Android notification shade', openNotificationsSchema),
+  action('openNotifications', 'Open the Android notification shade', openNotificationsSchema, { destructive: true }),
 
-  action('openQuickSettings', 'Open Android quick settings', openQuickSettingsSchema),
+  action('openQuickSettings', 'Open Android quick settings', openQuickSettingsSchema, { destructive: true }),
 
   action('intent', 'Start an Android intent with typed action/data/package/extras fields', intentSchema, { destructive: true }),
 

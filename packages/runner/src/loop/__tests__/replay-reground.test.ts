@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { ElementInfo, ScreenState } from '@vostride/agent-qa-schema'
 import type { LoopPorts } from '../ports.js'
-import type { ActionPlanCache, CachedPlanValue, GroundedLocator } from '../../cache/port.js'
+import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue, GroundedLocator } from '../../cache/port.js'
 import type { Action } from '../../platform.js'
 import type { Planner } from '../types.js'
 import { executeStep } from '../index.js'
@@ -53,7 +53,7 @@ function cacheOf(value: CachedPlanValue | null, spy?: { invalidate: () => void }
 describe('replay re-ground mapping (Q4)', () => {
   it('exact replay: a resolving locator replays with NO planner call (preserved contract)', async () => {
     const cached: CachedPlanValue = {
-      plannedActions: [{ type: 'click' } as unknown as Action],
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
       verificationOutcome: 'passed',
     }
@@ -72,7 +72,7 @@ describe('replay re-ground mapping (Q4)', () => {
     // (Plan 03) rescues it. Under the shipped exact-only matcher this invalidates → replans.
     const fresh = screenWith([el('e7', 'button', 'log in now')])
     const cached: CachedPlanValue = {
-      plannedActions: [{ type: 'click' } as unknown as Action],
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
       verificationOutcome: 'passed',
     }
@@ -90,7 +90,7 @@ describe('replay re-ground mapping (Q4)', () => {
   it('ambiguous match on the replay path ⇒ invalidate ⇒ replan, never a pick', async () => {
     const fresh = screenWith([el('e1', 'button', 'add'), el('e2', 'button', 'add')])
     const ambiguous: CachedPlanValue = {
-      plannedActions: [{ type: 'click' } as unknown as Action],
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       // No ordinal — two survivors ⇒ ambiguous ⇒ null on the cache path (D-12).
       groundedLocator: [{ role: 'button', nameNormalized: 'add' } as GroundedLocator],
       verificationOutcome: 'passed',
@@ -110,7 +110,7 @@ describe('replay re-ground mapping (Q4)', () => {
   it('a cached drag replays with BOTH fromRef and toRef re-resolved from per-field locators (Pitfall 5a)', async () => {
     const fresh = screenWith([el('e5', 'listitem', 'row one'), el('e6', 'listitem', 'row two')])
     const cachedDrag: CachedPlanValue = {
-      plannedActions: [{ type: 'drag', fromRef: 'stale-from', toRef: 'stale-to' } as unknown as Action],
+      plannedActions: [{ type: 'drag', fromRef: 'stale-from', toRef: 'stale-to' } as unknown as CacheablePlannedAction],
       groundedLocator: [
         { role: 'listitem', nameNormalized: 'row one', ordinal: 0 },
         { role: 'listitem', nameNormalized: 'row two', ordinal: 0 },
@@ -131,7 +131,7 @@ describe('replay re-ground mapping (Q4)', () => {
 
   it('a cached coordinate action (tapCoordinate) is non-replayable ⇒ invalidate ⇒ replan', async () => {
     const cachedCoord: CachedPlanValue = {
-      plannedActions: [{ type: 'tapCoordinate', coordSpace: 'viewport' } as unknown as Action],
+      plannedActions: [{ type: 'tapCoordinate', coordSpace: 'viewport' } as unknown as CacheablePlannedAction],
       groundedLocator: [],
       verificationOutcome: 'passed',
     }

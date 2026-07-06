@@ -94,7 +94,7 @@ export type {
   PlanningTurnFailureReason,
   ExecutePlanningTurnOptions,
 } from './loop/planning-turn.js'
-export { LLMVerifier, VerificationResultSchema } from './loop/verifier.js'
+export { LLMVerifier, VerificationResultSchema, AiJudgmentResultSchema } from './loop/verifier.js'
 export { AssertionEvaluator, LLMAssertionEvaluator, createAsserter } from './loop/asserter.js'
 export {
   buildSystemPrompt,
@@ -138,6 +138,7 @@ export type {
 // Redesigned pure cache core (Phase 356, CACHE-01/02/03).
 export type {
   ActionPlanCache,
+  CacheablePlannedAction,
   CachedPlanValue,
   GroundedLocator,
   GroundingStrategy,
@@ -146,6 +147,14 @@ export type {
   BuildCacheableStepInputArgs,
   BuildCachedPlanValueInput,
 } from './cache/index.js'
+
+// Storage-state persistence port (Phase 360, D-14). Runner stays storage-neutral — the
+// runner-local FsStorageStateStore implements this; the loop records only the reference.
+export type {
+  StorageStatePort,
+  StorageStateReference,
+  StorageStateBlob,
+} from './storage-state/port.js'
 export {
   buildCacheableStepInput,
   CACHE_ENV_DIGEST_SALT,

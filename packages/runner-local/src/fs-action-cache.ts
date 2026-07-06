@@ -24,8 +24,12 @@ import { shouldWrite, type CachePolicy } from './write-policy.js'
 /**
  * Bumped above the retired v1 core cache (CACHE_SCHEMA_VERSION 9, D-03). A v1
  * on-disk entry can never satisfy this gate, so it is never read as valid.
+ *
+ * Phase 360 (D-08/T-360-07): bumped 10 -> 11 for the catalog flip (D-15 platform.ts
+ * action-shape re-key). No migration — a legacy-shaped entry serialized under version 10
+ * fails the version gate and reads as a MISS, closing the stale-replay hazard from the flip.
  */
-export const CACHE_SCHEMA_VERSION = 10
+export const CACHE_SCHEMA_VERSION = 11
 
 interface CacheEnvelope {
   schemaVersion: number

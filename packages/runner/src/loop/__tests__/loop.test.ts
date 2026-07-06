@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts, ScreenshotCompressor } from '../ports.js'
-import type { ActionPlanCache, CachedPlanValue } from '../../cache/port.js'
+import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
 import type { Planner, StepContext, Verifier } from '../types.js'
 import { executeStep } from '../index.js'
 import { projectLegacyTrace } from '../evidence.js'
@@ -235,7 +235,7 @@ describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
   const cachedLogin: CachedPlanValue = {
     // Descriptor-only value (D-12): ref/coords stripped; the locator re-grounds to the
     // fresh `log in` button (e2) against the observation at replay time.
-    plannedActions: [{ type: 'click' } as unknown as Action],
+    plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
     groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
     verificationOutcome: 'passed',
   }
@@ -256,7 +256,7 @@ describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
   it('a hit whose descriptor no longer resolves invalidates the key and replans (D-13)', async () => {
     let invalidateCalls = 0
     const staleHit: CachedPlanValue = {
-      plannedActions: [{ type: 'click' } as unknown as Action],
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', nameNormalized: 'gone', ordinal: 0 }],
       verificationOutcome: 'passed',
     }

@@ -4,7 +4,7 @@
 // loop already takes. Plus the redact-before-record security lock and the cache fold.
 import { describe, it, expect } from 'vitest'
 import type { LoopPorts } from '../ports.js'
-import type { ActionPlanCache, CachedPlanValue } from '../../cache/port.js'
+import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
 import type { Action } from '../../platform.js'
 import type { Planner } from '../types.js'
 import { executeStep } from '../index.js'
@@ -118,7 +118,7 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     const cachedLogin: CachedPlanValue = {
       // Descriptor-only value: ref/coords stripped; grounding rides on the locator, which
       // re-grounds to the fresh `log in` button (e2) in the observation.
-      plannedActions: [{ type: 'click' } as unknown as Action],
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
       verificationOutcome: 'passed',
     }
