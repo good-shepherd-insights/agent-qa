@@ -20,7 +20,7 @@ import {
   runDirectionScrollWithRetry,
   runUntilVisibleLoop,
 } from '@vostride/agent-qa-runner'
-import type { ElementLabels, ElementState, ScreenState } from '@vostride/agent-qa-schema'
+import type { ElementLabels, ElementState, Ref, ScreenState } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
   MobileElementResolver,
@@ -919,6 +919,82 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
   }
 
+  /**
+   * EXEC-02 platform primitives injected into the shared runner scroll loop (D-02/D-03). The
+   * swipe is a page-sized directional gesture (inverted to the finger direction); nativeSearchScroll
+   * drives the UiAutomator `UiScrollable.scrollIntoView` rung over an injection-escaped selector;
+   * readInterimTree is a light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
+   */
+  private async buildAndroidScrollPrimitives(
+    scrollDirection: Direction,
+    maxSwipes: number,
+    factor = 1,
+  ): Promise<ScrollPrimitives> {
+    const driver = this.driver!
+    const viewport = await driver.getWindowSize()
+    const axisLength = scrollDirection === 'left' || scrollDirection === 'right' ? viewport.width : viewport.height
+    const distance = Math.max(1, Math.round(axisLength * 0.6 * factor))
+
+    return {
+      swipeOnce: async (direction: Direction, ref?: Ref): Promise<void> => {
+        let sx = Math.round(viewport.width / 2)
+        let sy = Math.round(viewport.height / 2)
+        if (ref) {
+          const { center } = new MobileElementResolver(this.lastRefs).resolve(ref)
+          sx = Math.round(center.x)
+          sy = Math.round(center.y)
+        }
+        const pts = computeSwipe(sx, sy, fingerDirectionFor(direction), distance)
+        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
+          .move({ x: pts.startX, y: pts.startY })
+          .down({ button: 0 })
+          .move({ x: pts.endX, y: pts.endY, duration: 300 })
+          .up({ button: 0 })
+          )
+      },
+      nativeSearchScroll: async (target: string): Promise<boolean> => {
+        // escapeUiSelectorText re-validates + escapes; a control char here throws and the loop
+        // surfaces it (the case already rejected control chars up front, so this is escaping only).
+        const escaped = escapeUiSelectorText(target)
+        const selector =
+          `new UiScrollable(new UiSelector().scrollable(true))`
+          + `.scrollIntoView(new UiSelector().textContains("${escaped}"))`
+        try {
+          await driver.execute('mobile: scroll', { strategy: '-android uiautomator', selector, maxSwipes })
+          return true
+        } catch {
+          return false
+        }
+      },
+      readInterimTree: async (): Promise<InterimNode[]> => {
+        const xml = await driver.getPageSource()
+        const { nodes } = parseMobileSource(xml, 'android', viewport)
+        return nodes
+      },
+    }
+  }
+
+  /** direction+toEnd: swipe until the interim tree stops changing (or a hard cap). */
+  private async scrollToEnd(
+    primitives: ScrollPrimitives,
+    direction: Direction,
+    ref?: Ref,
+  ): Promise<ScrollUntilVisibleMeta> {
+    const MAX_TO_END_SWIPES = 20
+    let swipes = 0
+    let anyProgress = false
+    let prev = interimTreeIdentity(await primitives.readInterimTree())
+    while (swipes < MAX_TO_END_SWIPES) {
+      await primitives.swipeOnce(direction, ref)
+      swipes += 1
+      const current = interimTreeIdentity(await primitives.readInterimTree())
+      if (current === prev) break
+      anyProgress = true
+      prev = current
+    }
+    return { swipes, reversedOnce: false, outcome: anyProgress ? 'cap' : 'no-change' }
+  }
+
   // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
@@ -1051,31 +1127,42 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'scroll': {
-        if (inWeb) {
-          const dx = action.scrollType === 'horizontal' ? action.value : 0
-          const dy = action.scrollType === 'vertical' ? action.value : 0
-          await driver.execute(
-            'window.scrollBy(arguments[0], arguments[1]);',
-            dx, dy,
-          )
-          return { success: true }
+        // EXEC-02 scroll (D-02/D-03): ONE ActionResult carrying scrollUntilVisible metadata.
+        // untilVisible prefers the native UiScrollable rung (injection-escaped), then bounded
+        // swipes with light page-source probes; direction rides the shared self-heal loop.
+        // Progress is judged ONLY by interim-tree identity — never by mobile scroll offsets
+        // (documented zeros, Pitfall 3) — and lastRefs is untouched (D-03).
+        if (action.mode === 'untilVisible') {
+          // Reject a hostile/control-char target up front — never interpolate it (Pitfall 9).
+          try {
+            escapeUiSelectorText(action.text)
+          } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : String(err) }
+          }
+          const primitives = await this.buildAndroidScrollPrimitives(action.direction, action.maxSwipes)
+          const { meta } = await runUntilVisibleLoop(primitives, {
+            target: action.text,
+            direction: action.direction,
+            maxSwipes: action.maxSwipes,
+            retryOpposite: action.retryOpposite,
+            ...(action.ref ? { ref: action.ref } : {}),
+          })
+          return { success: true, metadata: { scrollUntilVisible: meta } }
         }
-        const { width, height } = await driver.getWindowSize()
-        const centerX = Math.round(width / 2)
-        const centerY = Math.round(height / 2)
-        // Invert value for native touch: positive value = scroll down = finger swipes UP
-        const scrollStartX = centerX
-        const scrollStartY = centerY
-        const scrollEndX = action.scrollType === 'horizontal' ? centerX - action.value : centerX
-        const scrollEndY = action.scrollType === 'vertical' ? centerY - action.value : centerY
-        const scrollDuration = action.duration ?? 300
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x: scrollStartX, y: scrollStartY })
-          .down({ button: 0 })
-          .move({ x: scrollEndX, y: scrollEndY, duration: scrollDuration })
-          .up({ button: 0 })
-          )
-        return { success: true }
+
+        // direction mode: page / halfPage / toEnd.
+        const factor = action.amount === 'halfPage' ? 0.5 : 1
+        const primitives = await this.buildAndroidScrollPrimitives(action.direction, 0, factor)
+        if (action.amount === 'toEnd') {
+          const meta = await this.scrollToEnd(primitives, action.direction, action.ref)
+          return { success: true, metadata: { scrollUntilVisible: meta } }
+        }
+        const { meta } = await runDirectionScrollWithRetry(primitives, {
+          direction: action.direction,
+          retryOpposite: action.retryOpposite,
+          ...(action.ref ? { ref: action.ref } : {}),
+        })
+        return { success: true, metadata: { scrollUntilVisible: meta } }
       }
 
       case 'swipe': {
