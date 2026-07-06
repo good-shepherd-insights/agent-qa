@@ -294,7 +294,7 @@ describe('runTest with layered variable loading', () => {
     await runTest(test, config, '/tests/url.yaml')
 
     const navigateCall = executeSpy.mock.calls[0]
-    expect(navigateCall[0]).toEqual({ type: 'navigate', url: 'https://staging.example.com/login' })
+    expect(navigateCall[0]).toEqual({ type: 'navigate', to: 'url', url: 'https://staging.example.com/login' })
   })
 })
 

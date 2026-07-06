@@ -1,37 +1,21 @@
 import { expectTypeOf } from 'vitest'
 import { assertNever } from '@vostride/agent-qa-runner'
 import type {
-  AndroidAction,
-  CommonAction,
-  IosAction,
-  MobileAction,
+  Action as SchemaAction,
+  ActionsFor as SchemaActionsFor,
   Platform,
-  WebAction,
 } from '@vostride/agent-qa-schema'
 import type { Action, ActionsFor, PlatformAdapter } from '@vostride/agent-qa-runner'
 
-type WebVerbs = (WebAction | CommonAction)['type']
-type LegacyFoldedWebVerbs =
-  | 'keyDown'
-  | 'keyUp'
-  | 'refresh'
-  | 'navigateHistory'
-  | 'readConsoleLogs'
-  | 'readNetworkLogs'
-  | 'readCookies'
-  | 'readLocalStorage'
-  | 'newTab'
-  | 'switchTab'
-// Runtime-only verbs remain in platform.ts until M1 adapter reconciliation.
-type RuntimeOnlyCommonVerbs = 'assert' | 'openLink'
-type RuntimeOnlyMobileVerbs = 'launchApp'
-type WebRuntimeVerbs = WebVerbs | LegacyFoldedWebVerbs | RuntimeOnlyCommonVerbs
-type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs | RuntimeOnlyMobileVerbs
-type IosVerbs = (MobileAction | IosAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs | RuntimeOnlyMobileVerbs
-
-expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<Extract<Action, { type: WebRuntimeVerbs }>>()
-expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<Extract<Action, { type: MobileVerbs }>>()
-expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<Extract<Action, { type: IosVerbs }>>()
+// D-15 (Phase 360): the runner's action world IS the schema projection. The legacy runner union
+// (LegacyFoldedWebVerbs / RuntimeOnlyCommonVerbs / RuntimeOnlyMobileVerbs and the local shape
+// declarations) was demolished — runner `Action` = schema `Action`, and runner `ActionsFor<P>` =
+// schema `ActionsFor<P>`. This pin now proves that equality cross-package (core → runner → schema)
+// so a future re-introduction of a runner-side parallel union is a compile error here.
+expectTypeOf<Action>().toEqualTypeOf<SchemaAction>()
+expectTypeOf<ActionsFor<'web'>>().toEqualTypeOf<SchemaActionsFor<'web'>>()
+expectTypeOf<ActionsFor<'android'>>().toEqualTypeOf<SchemaActionsFor<'android'>>()
+expectTypeOf<ActionsFor<'ios'>>().toEqualTypeOf<SchemaActionsFor<'ios'>>()
 expectTypeOf<ActionsFor<Platform>>().toEqualTypeOf<Action>()
 
 expectTypeOf<PlatformAdapter<'web'>['platform']>().toEqualTypeOf<'web'>()

@@ -38,7 +38,7 @@ function makeResult(): TestResult {
         trace: {
           observation: 'homepage visible',
           reasoning: 'navigation succeeded',
-          plannedAction: { type: 'navigate', url: 'https://news.ycombinator.com' },
+          plannedAction: { type: 'navigate', to: 'url', url: 'https://news.ycombinator.com' },
           result: 'success',
           screenStateBefore: 'homepage visible',
           subActions: [],

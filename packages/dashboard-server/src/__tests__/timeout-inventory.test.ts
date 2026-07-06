@@ -253,11 +253,11 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     id: 'core-test-timeout-artifact-action-sentinel',
     file: 'packages/core/src/agent/runner.ts',
     literal: '0',
-    contextIncludes: "timeout: 0",
+    contextIncludes: "timeoutMs: 0",
     owner: 'core runner',
     scope: 'timeout failure artifact placeholder',
     lifecycleAffecting: false,
-    rationale: 'Represents a no-op planned action in failure traces; does not control execution.',
+    rationale: 'Represents a no-op planned action (schema waitFor placeholder) in failure traces; does not control execution.',
     allowed: true,
   },
   // The v1 core step-execution loop (packages/core/src/agent/loop.ts) was deleted in

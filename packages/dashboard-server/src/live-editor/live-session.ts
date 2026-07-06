@@ -607,7 +607,7 @@ export class LiveSession {
 
       if (config.url) {
         const resolvedUrl = this.resolveSecrets(config.url)
-        await adapter.execute({ type: 'navigate', url: resolvedUrl })
+        await adapter.execute({ type: 'navigate', to: 'url', url: resolvedUrl })
         this.currentUrl = resolvedUrl
       } else {
         this.currentUrl = 'about:blank'
@@ -835,7 +835,7 @@ export class LiveSession {
       trace: {
         observation: '',
         reasoning: error,
-        plannedAction: { type: 'waitFor', condition: 'none', timeout: 0 },
+        plannedAction: { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 },
         result: 'failure',
         error,
         screenStateBefore: '',
@@ -1235,7 +1235,7 @@ export class LiveSession {
       throw new Error(this.terminalError ?? 'Live session is not ready')
     }
     const resolvedUrl = this.resolveSecrets(url)
-    await this.adapter!.execute({ type: 'navigate', url: resolvedUrl })
+    await this.adapter!.execute({ type: 'navigate', to: 'url', url: resolvedUrl })
     if (this.platform === 'web') {
       this.currentUrl = resolvedUrl
     } else {
@@ -1249,7 +1249,7 @@ export class LiveSession {
       throw new Error(this.terminalError ?? 'Live session is not ready')
     }
     if (this.platform !== 'web') return this.currentUrl
-    await this.adapter!.execute({ type: 'refresh' })
+    await this.adapter!.execute({ type: 'navigate', to: 'reload' })
     const page = (this.adapter as any).getPage?.()
     if (page) this.currentUrl = page.url()
     return this.currentUrl ?? 'about:blank'
@@ -1260,7 +1260,7 @@ export class LiveSession {
       throw new Error(this.terminalError ?? 'Live session is not ready')
     }
     if (this.platform !== 'web') return this.currentUrl
-    await this.adapter!.execute({ type: 'navigateHistory', direction: 'back' })
+    await this.adapter!.execute({ type: 'navigate', to: 'back' })
     const page = (this.adapter as any).getPage?.()
     if (page) this.currentUrl = page.url()
     return this.currentUrl ?? 'about:blank'
@@ -1271,7 +1271,7 @@ export class LiveSession {
       throw new Error(this.terminalError ?? 'Live session is not ready')
     }
     if (this.platform !== 'web') return this.currentUrl
-    await this.adapter!.execute({ type: 'navigateHistory', direction: 'forward' })
+    await this.adapter!.execute({ type: 'navigate', to: 'forward' })
     const page = (this.adapter as any).getPage?.()
     if (page) this.currentUrl = page.url()
     return this.currentUrl ?? 'about:blank'

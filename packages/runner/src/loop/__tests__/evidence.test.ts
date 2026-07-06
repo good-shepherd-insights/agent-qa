@@ -16,7 +16,7 @@ import {
 // Schema Action (branded Ref) for the stored §A8 evidence; the runner-platform Action
 // (plain-string ref) for collapseAnnotation, which consumes the adapter's legacy shape.
 const clickAction: Action = { type: 'click', ref: asRef('e2') }
-const clickPlatform: PlatformAction = { type: 'click', ref: 'e2' }
+const clickPlatform: PlatformAction = { type: 'click', ref: asRef('e2') }
 const passVerdict: VerifierVerdict = { pass: true, reasoning: 'goal met' }
 
 describe('EvidenceRecorder.recordSubAction', () => {
@@ -177,7 +177,7 @@ describe('collapseAnnotation', () => {
   })
 
   it('maps a swipe execResult onto the schema path annotation', () => {
-    const swipe: PlatformAction = { type: 'swipe', direction: 'up' }
+    const swipe: PlatformAction = { type: 'swipe', mode: 'direction', direction: 'up', durationMs: 300 }
     const exec: PlatformActionResult = { success: true, startCoordinates: { x: 10, y: 200 }, endCoordinates: { x: 10, y: 40 } }
     const annotation = collapseAnnotation(swipe, exec, { width: 390, height: 844 })
     expect(annotation.kind).toBe('path')

@@ -22,6 +22,7 @@ import { registerAllActions } from '../../tools/actions/index.js'
 import { toolCallToActionPlan } from '../../tools/builder.js'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
+import type { ActionPlan } from '../types.js'
 import { executeStep } from '../index.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
 import { makePlanner, makeVerifier, makeStepContext, makeActionPlan } from './loop-harness.js'
@@ -160,7 +161,7 @@ async function dispatchReachesAdapter(action: Action, platform: Platform): Promi
       'roll-call dispatch probe',
       ports({
         adapter,
-        planner: makePlanner([makeActionPlan({ action, stepComplete: false })]),
+        planner: makePlanner([makeActionPlan({ action: action as ActionPlan['action'], stepComplete: false })]),
         verifier: makeVerifier(),
         plannerConfig: { maxSubActions: 1, previousStepCount: 0 },
         onSetVariable: () => { setVariableRouted = true },

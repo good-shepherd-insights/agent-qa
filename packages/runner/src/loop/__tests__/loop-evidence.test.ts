@@ -24,13 +24,11 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(Object.keys(sub.stateBefore.refMap).length).toBeGreaterThan(0)
   })
 
-  it('(2) an assert sub-action gets stateAfter === its stateBefore (D-15a)', async () => {
-    const planner = makePlanner([makeActionPlan({ action: { type: 'assert', condition: 'x', visual: false }, stepComplete: true })])
-    const result = await executeStep('Assert x', ports({ adapter: makeAdapter(), planner }), makeStepContext())
-    const sub = result.evidence!.subActions[0]
-    expect(sub.stateAfter).toBeDefined()
-    expect(sub.stateAfter).toEqual(sub.stateBefore)
-  })
+  // (2) REMOVED (Phase 360, D-19): this pinned the retired non-visual-`assert` afterState-reuse
+  // special-case (D-15a) — stateAfter === stateBefore. Both the verb and the reuse branch were
+  // deleted this plan; a no-verifier completion no longer reuses stateBefore. The deterministic
+  // assertion-outcome behavior that replaces it is pinned in assert-value.test.ts (Plan 10), so
+  // it is NOT duplicated here. The surviving stateAfter paths are covered by (3) and (4) below.
 
   it('(3) a verified sub-action gets the verifier re-observation as stateAfter (D-15b)', async () => {
     const before = makeScreenState({ url: 'https://example.test/before' })

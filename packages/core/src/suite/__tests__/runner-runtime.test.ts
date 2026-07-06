@@ -146,7 +146,7 @@ describe('runSuite startup navigation', () => {
     )
 
     expect(setup).toHaveBeenCalled()
-    expect(execute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://staging.example.com/login' })
+    expect(execute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://staging.example.com/login' })
     expect(mockRunTest).toHaveBeenCalledOnce()
     expect(cleanup).toHaveBeenCalled()
     expect(result.status).toBe('passed')
@@ -166,7 +166,7 @@ describe('runSuite startup navigation', () => {
       }),
     )
 
-    expect(execute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://example.com/runtime-url-token' })
+    expect(execute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com/runtime-url-token' })
   })
 
   it('fails the suite when startup navigation fails', async () => {
@@ -180,7 +180,7 @@ describe('runSuite startup navigation', () => {
       }),
     )
 
-    expect(execute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://example.com/login' })
+    expect(execute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com/login' })
     expect(mockRunTest).not.toHaveBeenCalled()
     expect(result.status).toBe('failed')
     expect(result.tests).toHaveLength(1)

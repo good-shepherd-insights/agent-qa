@@ -71,7 +71,7 @@ describe('generateFailureSummary', () => {
         error: 'Expected page title to match',
         trace: makeTrace({
           reasoning: 'The title assertion failed',
-          plannedAction: { type: 'assert', condition: 'title is Example Domain' },
+          plannedAction: { type: 'assertAI', claim: 'title is Example Domain', mode: 'visual', effort: 'low', consensus: 1 },
         }),
       }),
     ])

@@ -284,7 +284,7 @@ export async function runSuite(
 
           try {
             const navigateResult = await withAbort(
-              config.adapter.execute({ type: 'navigate', url: resolvedSuiteUrl.url! }),
+              config.adapter.execute({ type: 'navigate', to: 'url', url: resolvedSuiteUrl.url! }),
               navigationAbortController?.signal,
             )
             if (!navigateResult.success) {

@@ -268,7 +268,7 @@ describe('LiveSession', () => {
 
   it('initialize navigates to URL when provided', async () => {
     await session.initialize({ ...webConfig, url: 'https://example.com' })
-    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://example.com' })
+    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com' })
   })
 
   it('initialize resolves secret placeholders only for adapter navigation', async () => {
@@ -280,7 +280,7 @@ describe('LiveSession', () => {
       secretRedactor: new SecretRedactor(secretStore),
     })
 
-    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://example.com/runtime-url-token' })
+    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com/runtime-url-token' })
   })
 
   it('initialize remains interactive when hookRegistryError is present but no missing setup hooks are requested', async () => {

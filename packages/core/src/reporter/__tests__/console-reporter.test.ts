@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ConsoleReporter, humanDuration } from '../console-reporter.js'
 import { generateFailureSummary } from '../../agent/failure-summary.js'
 import type { StepResult, TestResult, StepTrace, SubActionTrace } from '@vostride/agent-qa-runner'
+import { asRef } from '@vostride/agent-qa-schema'
 import type { RunSummary, SuiteSummary } from '../types.js'
 
 describe('humanDuration', () => {
@@ -51,7 +52,7 @@ function makeTrace(overrides?: Partial<StepTrace>): StepTrace {
   return {
     observation: 'button "Login" [ref=btn-1]',
     reasoning: 'User wants to log in, clicking the Login button',
-    plannedAction: { type: 'click', ref: 'btn-1' },
+    plannedAction: { type: 'click', ref: asRef('btn-1') },
     result: 'success',
     screenStateBefore: 'button "Login"',
     ...overrides,
@@ -63,7 +64,7 @@ function makeSubAction(overrides?: Partial<SubActionTrace>): SubActionTrace {
     index: 0,
     observation: 'button visible',
     reasoning: 'click it',
-    plannedAction: { type: 'click', ref: 'btn-1' },
+    plannedAction: { type: 'click', ref: asRef('btn-1') },
     result: 'success',
     screenStateBefore: 'button',
     cached: false,
@@ -234,7 +235,7 @@ describe('ConsoleReporter', () => {
         error: `Step failed: ${assertionReason}`,
         trace: makeTrace({
           reasoning: assertionReason,
-          plannedAction: { type: 'assert', condition: 'URL equals expected value' },
+          plannedAction: { type: 'assertValue', source: 'url', op: 'equals', expected: 'expected value' },
           result: 'failure',
           error: `Step failed: ${assertionReason}`,
         }),

@@ -192,6 +192,7 @@ export async function runTest(
     const interpolatedUrl = interpolateVariables((test as any).url, variableStore)
     const navigateAction: Action = {
       type: 'navigate',
+      to: 'url',
       url: resolveSecretTemplatesInValue(interpolatedUrl, config.secretStore),
     }
     try {
@@ -352,7 +353,7 @@ export async function runTest(
         trace: {
           observation: '',
           reasoning: 'Inline hook execution failed before step could run',
-          plannedAction: { type: 'waitFor', condition: 'none', timeout: 0 },
+          plannedAction: { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 },
           result: 'failure',
           error: 'Inline hook execution failed',
           screenStateBefore: '',
@@ -452,7 +453,7 @@ export async function runTest(
         trace: {
           observation: '',
           reasoning: errorMsg,
-          plannedAction: { type: 'waitFor', condition: 'none', timeout: 0 },
+          plannedAction: { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 },
           result: 'failure',
           error: errorMsg,
           screenStateBefore: '',
@@ -820,7 +821,7 @@ function createTimeoutStepResult(name: string, scopeLabel: 'Test' | 'Step', time
     trace: {
       observation: '',
       reasoning: error,
-      plannedAction: { type: 'waitFor', condition: 'none', timeout: 0 },
+      plannedAction: { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 },
       result: 'failure',
       error,
       screenStateBefore: '',
@@ -845,7 +846,7 @@ function createAbortedStepResult(
   reasoning?: string,
 ): StepResult | undefined {
   if (!signal.aborted) return undefined
-  const plannedAction = action ?? { type: 'waitFor', condition: 'none', timeout: 0 }
+  const plannedAction = action ?? { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 }
   const timeoutReason = getTimeoutAbortReason(signal)
   const error = timeoutReason?.message ?? 'Step cancelled by user'
   return {

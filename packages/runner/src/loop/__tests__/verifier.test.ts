@@ -5,6 +5,7 @@
 // fallback, and abort rethrow (T-353-07 — abort is the only rethrow).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 import type { Action } from '../../platform.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { LLMVerifier } from '../verifier.js'
@@ -19,7 +20,7 @@ vi.mock('ai', () => ({
 
 const before: ScreenState = makeScreenState()
 const after: ScreenState = makeScreenState({ url: 'https://example.test/after' })
-const action: Action = { type: 'click', ref: 'e2' }
+const action: Action = { type: 'click', ref: asRef('e2') }
 
 describe('LLMVerifier', () => {
   beforeEach(() => {

@@ -44,19 +44,21 @@ describe('assert evidence field', () => {
   })
 
   describe('formatAction', () => {
-    it('includes [non-visual] suffix when visual is false', () => {
-      const action: Action = { type: 'assert', condition: '42 equals 42', visual: false }
-      expect(formatAction(action)).toBe('assert "42 equals 42" [non-visual]')
+    // Phase 360 D-19: the retired `assert` verb rendering is gone; formatAction now renders the
+    // §12.2 assertion split verbs (assertValue / assertAI) and the reportValue answer channel.
+    it('renders assertValue with its source, op and expected', () => {
+      const action: Action = { type: 'assertValue', source: 'url', op: 'equals', expected: '42' }
+      expect(formatAction(action)).toBe('assertValue url equals "42"')
     })
 
-    it('has no suffix when visual is true', () => {
-      const action: Action = { type: 'assert', condition: 'button says Submit', visual: true }
-      expect(formatAction(action)).toBe('assert "button says Submit"')
+    it('renders assertAI with its claim and mode', () => {
+      const action: Action = { type: 'assertAI', claim: 'button says Submit', mode: 'visual', effort: 'low', consensus: 1 }
+      expect(formatAction(action)).toBe('assertAI "button says Submit" (visual)')
     })
 
-    it('has no suffix when visual is undefined', () => {
-      const action: Action = { type: 'assert', condition: 'title is Dashboard' }
-      expect(formatAction(action)).toBe('assert "title is Dashboard"')
+    it('renders reportValue with its value', () => {
+      const action: Action = { type: 'reportValue', value: 'title is Dashboard' }
+      expect(formatAction(action)).toBe('reportValue "title is Dashboard"')
     })
   })
 })

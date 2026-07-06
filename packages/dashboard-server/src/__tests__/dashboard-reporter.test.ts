@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
+import { asRef } from '@vostride/agent-qa-runner'
 import { join } from 'node:path'
 import { DashboardReporter } from '../reporter/dashboard-reporter.js'
 import { DashboardDatabase } from '../db/database.js'
@@ -46,7 +47,7 @@ function makeStepResult(overrides: Partial<StepResult> = {}): StepResult {
     name: 'Click login button',
     status: 'passed',
     duration: 1200,
-    action: { type: 'click', ref: '[1]' },
+    action: { type: 'click', ref: asRef('[1]') },
     ...overrides,
   }
 }
@@ -687,7 +688,7 @@ describe('DashboardReporter', () => {
       trace: {
         observation: 'Login button visible',
         reasoning: 'Need to click login to proceed',
-        plannedAction: { type: 'click', ref: '[1]' },
+        plannedAction: { type: 'click', ref: asRef('[1]') },
         result: 'success',
         screenStateBefore: 'landing page',
         screenStateAfter: 'login form',
@@ -700,7 +701,7 @@ describe('DashboardReporter', () => {
     const steps = db.getSteps(runs[0].id)
     expect(steps[0].observation).toBe('Login button visible')
     expect(steps[0].reasoning).toBe('Need to click login to proceed')
-    expect(steps[0].plannedAction).toEqual({ type: 'click', ref: '[1]' })
+    expect(steps[0].plannedAction).toEqual({ type: 'click', ref: asRef('[1]') })
     expect(steps[0].result).toBe('success')
   })
 
@@ -894,7 +895,7 @@ describe('DashboardReporter', () => {
         trace: {
           observation: 'Example Domain page',
           reasoning: assertionReason,
-          plannedAction: { type: 'assert', condition: 'URL equals expected value' },
+          plannedAction: { type: 'assertValue', source: 'url', op: 'equals', expected: 'expected value' },
           result: 'failure',
           error: `Step failed: ${assertionReason}`,
           screenStateBefore: 'Example Domain page',
@@ -954,12 +955,12 @@ describe('DashboardReporter', () => {
 
       await reporter.onStepEnd!(makeStepResult({
         name: 'Fill password with {{secret:loginPassword}}',
-        action: { type: 'fill', ref: '[password]', value: PHASE_222_RAW_SECRET } as any,
+        action: { type: 'fill', ref: asRef('[password]'), value: PHASE_222_RAW_SECRET } as any,
         error: `step error ${PHASE_222_RAW_SECRET}`,
         trace: {
           observation: `observed ${PHASE_222_RAW_SECRET}`,
           reasoning: 'use {{secret:loginPassword}}',
-          plannedAction: { type: 'fill', ref: '[password]', text: PHASE_222_RAW_SECRET, clearMode: 'replace', submit: false } as any,
+          plannedAction: { type: 'fill', ref: asRef('[password]'), text: PHASE_222_RAW_SECRET, clearMode: 'replace', submit: false } as any,
           result: 'success',
           error: `trace error ${PHASE_222_RAW_SECRET}`,
           screenStateBefore: `before ${PHASE_222_RAW_SECRET}`,
@@ -968,7 +969,7 @@ describe('DashboardReporter', () => {
             index: 0,
             observation: `sub ${PHASE_222_RAW_SECRET}`,
             reasoning: 'subaction',
-            plannedAction: { type: 'fill', ref: '[password]', text: PHASE_222_RAW_SECRET, clearMode: 'replace', submit: false } as any,
+            plannedAction: { type: 'fill', ref: asRef('[password]'), text: PHASE_222_RAW_SECRET, clearMode: 'replace', submit: false } as any,
             result: 'success',
             screenStateBefore: `sub before ${PHASE_222_RAW_SECRET}`,
             cached: false,
@@ -1178,14 +1179,14 @@ describe('DashboardReporter', () => {
       trace: {
         observation: 'page loaded',
         reasoning: 'need to click',
-        plannedAction: { type: 'click', ref: '[1]' },
+        plannedAction: { type: 'click', ref: asRef('[1]') },
         result: 'success',
         screenStateBefore: 'before',
         subActions: [{
           index: 0,
           observation: 'sub obs',
           reasoning: 'sub reason',
-          plannedAction: { type: 'click', ref: '[2]' },
+          plannedAction: { type: 'click', ref: asRef('[2]') },
           result: 'success',
           screenStateBefore: 'sub before',
           cached: false,

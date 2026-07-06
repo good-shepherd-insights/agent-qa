@@ -19,6 +19,7 @@ import {
   composeTurnMessages,
 } from '../prompts.js'
 import type { ScreenState } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
 
@@ -60,43 +61,49 @@ describe('QA mindset prompt rules', () => {
     })
   })
 
-  // ASSERT-LOOP-01: assert action is a no-op, verdict must be in same tool call
-  describe('ASSERT-LOOP-01 — assert no-op and same-call verdict', () => {
-    it('Rule 12 states assert is a no-op', () => {
-      expect(systemPrompt).toContain('Assert is a no-op')
+  // ASSERT-ROUTE-01 (Phase 360 §12.2 reconciliation): Rule 12 now teaches the assertValue /
+  // assertAI split and the reportValue answer channel + same-call verdict (was: the retired
+  // assert-verb no-op coaching). Assertions preserved in spirit, re-targeted to the shipped
+  // vocabulary — never weakened.
+  describe('ASSERT-ROUTE-01 — §12.2 assertValue/assertAI split and same-call verdict', () => {
+    it('Rule 12 routes deterministic value checks to assertValue', () => {
+      expect(systemPrompt).toContain('DETERMINISTIC VALUE CHECKS')
+      expect(systemPrompt).toContain('assertValue')
     })
 
     it('Rule 12 requires verdict in the SAME tool call', () => {
       expect(systemPrompt).toContain('SAME tool call')
     })
 
-    it('Rule 12 prohibits assert with stepComplete: false', () => {
-      expect(systemPrompt).toContain('NEVER output assert with stepComplete: false')
+    it('Rule 12 routes claim-shaped or visual judgments to assertAI', () => {
+      expect(systemPrompt).toContain('CLAIM-SHAPED OR VISUAL JUDGMENTS')
+      expect(systemPrompt).toContain('assertAI')
     })
 
-    it('Rule 12 handles multi-part steps where assert is a precondition', () => {
+    it('Rule 12 handles multi-part steps where more sub-goals remain', () => {
       expect(systemPrompt).toContain('more sub-goals remain')
     })
 
-    it('Rule 12 explains infinite loop consequence', () => {
-      expect(systemPrompt).toContain('infinite loop with no new information')
+    it('Rule 12 exposes the reportValue answer channel distinct from stepComplete', () => {
+      expect(systemPrompt).toContain('reportValue')
+      expect(systemPrompt).toContain('DISTINCT from stepComplete')
     })
   })
 
-  // ASSERT-FAIL-01: assertion failure handling for non-visual conditions
+  // ASSERT-FAIL-01: assertion failure handling — infeasible terminal + strict literal + report-truth
   describe('ASSERT-FAIL-01 -- assertion failure handling', () => {
-    it('Rule 12 contains assertion failure section for non-visual conditions', () => {
-      expect(systemPrompt).toContain('ASSERTION FAILURE FOR NON-VISUAL CONDITIONS')
+    it('Rule 12 declares infeasible as a typed terminal outcome (per D-04)', () => {
+      expect(systemPrompt).toContain('IMPOSSIBLE OBJECTIVE')
+      expect(systemPrompt).toContain('failureKind "infeasible"')
     })
 
-    it('Rule 12 blocks setVariable/scroll/navigate for assertion failures (per D-04)', () => {
-      expect(systemPrompt).toContain('Do NOT use setVariable, scroll, navigate, or any other action')
-      expect(systemPrompt).toContain('stepFailed is the ONLY correct response')
+    it('Rule 12 blocks a setVariable sidestep for assertion failures (per D-04)', () => {
+      expect(systemPrompt).toContain('do NOT store a value via setVariable to sidestep it')
     })
 
     it('Rule 12 contains strict literal assertion section (per D-05)', () => {
       expect(systemPrompt).toContain('STRICT LITERAL ASSERTION')
-      expect(systemPrompt).toContain('Assert the EXACT condition from the step text')
+      expect(systemPrompt).toContain('check the EXACT condition from the step text')
     })
 
     it('Rule 12 enforces QA mindset on assertions -- report truth not make tests pass (per D-06)', () => {
@@ -160,7 +167,7 @@ describe('QA mindset prompt rules', () => {
         timestamp: 0,
         metadata: { coordSpace: 'viewport', viewportWidth: 0, viewportHeight: 0 },
       })
-      const action = { type: 'click' as const, ref: 'e113' }
+      const action = { type: 'click' as const, ref: asRef('e113') }
       const output = buildVerificationPrompt('click the pdf icon', state, state, action, false)
       expect(output).toContain('button "file-pdf"')
     })

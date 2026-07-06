@@ -221,7 +221,7 @@ describe('EXEC-04 — a satisfied desiredState no-ops at the dispatch seam witho
     })
     const calls: Action[] = []
     const adapter = recordingAdapter(observation, calls)
-    const plans = [makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' } as unknown as Action, stepComplete: true })]
+    const plans = [makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' }, stepComplete: true })]
 
     const result = await executeStep(
       'Ensure Wi-Fi is on',

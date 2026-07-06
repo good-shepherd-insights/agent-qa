@@ -142,7 +142,7 @@ describe('Block B — the seam suppresses a satisfied desiredState (D-14/D-16)',
     })
     const calls: Action[] = []
     const adapter = recordingAdapter(observation, calls)
-    const plans = [makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' } as unknown as Action, stepComplete: true })]
+    const plans = [makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' }, stepComplete: true })]
 
     const result = await executeStep(
       'Ensure Wi-Fi is on',
@@ -169,7 +169,7 @@ describe('Block B — the seam suppresses a satisfied desiredState (D-14/D-16)',
     })
     const calls: Action[] = []
     const adapter = recordingAdapter(observation, calls)
-    const plans = [makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' } as unknown as Action, stepComplete: true })]
+    const plans = [makeActionPlan({ action: { type: 'tap', ref: 'e1', desiredState: 'checked' }, stepComplete: true })]
 
     await executeStep(
       'Turn Wi-Fi on',

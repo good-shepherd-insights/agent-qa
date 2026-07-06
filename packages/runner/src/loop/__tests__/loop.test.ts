@@ -161,7 +161,7 @@ describe('executeStep — ported v1 scenarios', () => {
       const executeSpy = vi.fn().mockResolvedValue({ success: true })
       const adapter = makeAdapter()
       adapter.execute = executeSpy
-      const planner = makePlanner([makeActionPlan({ action: { type: 'assert', condition: 'button is blue' }, stepComplete: false, stepFailed: true })])
+      const planner = makePlanner([makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: false, stepFailed: true })])
       const result = await executeStep('Verify button is blue', ports({ adapter, planner }), makeStepContext())
       expect(result.status).toBe('failed')
       expect(executeSpy).not.toHaveBeenCalled()
@@ -182,27 +182,23 @@ describe('executeStep — ported v1 scenarios', () => {
     })
 
     it('stepFailed message includes the planner reasoning', async () => {
-      const planner = makePlanner([makeActionPlan({ reasoning: 'The checkout button does not exist on this page', action: { type: 'assert', condition: 'checkout exists' }, stepComplete: false, stepFailed: true })])
+      const planner = makePlanner([makeActionPlan({ reasoning: 'The checkout button does not exist on this page', action: { type: 'click', ref: 'e2' }, stepComplete: false, stepFailed: true })])
       const result = await executeStep('Click checkout', ports({ adapter: makeAdapter(), planner }), makeStepContext())
       expect(result.status).toBe('failed')
       expect(result.error).toContain('The checkout button does not exist on this page')
     })
   })
 
-  describe('non-visual assert bypass', () => {
-    it('non-visual assert + stepComplete bypasses the verifier', async () => {
-      const verifySpy = vi.fn().mockResolvedValue({ verification: { success: true, reasoning: 'ok', isAppError: false } })
-      const verifier: Verifier = { verify: verifySpy }
-      const planner = makePlanner([makeActionPlan({ action: { type: 'assert', condition: '42 equals 42', visual: false }, stepComplete: true })])
-      const result = await executeStep('Verify 42 equals 42', ports({ adapter: makeAdapter(), planner, verifier }), makeStepContext())
-      expect(result.status).toBe('passed')
-      expect(verifySpy).not.toHaveBeenCalled()
-    })
-
-    it('visual assert + stepComplete still calls the verifier', async () => {
+  describe('completion calls the verifier', () => {
+    // D-19 (Phase 360): the retired non-visual-`assert` verifier-bypass short-circuit was
+    // deleted. Its deterministic-verdict replacement (an assertValue outcome short-circuiting
+    // the per-step verifier, D-11) is pinned RED in assert-value.test.ts (Plan 10) — NOT
+    // duplicated here. This suite now only holds the neutral completion invariant: a normal
+    // completing action reaches the verifier.
+    it('a completing action + stepComplete calls the verifier', async () => {
       const verifySpy = vi.fn().mockResolvedValue({ verification: { success: true, reasoning: 'confirmed', isAppError: false } })
       const verifier: Verifier = { verify: verifySpy }
-      const planner = makePlanner([makeActionPlan({ action: { type: 'assert', condition: 'button says Log in', visual: true }, stepComplete: true })])
+      const planner = makePlanner([makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true })])
       const result = await executeStep('Verify button', ports({ adapter: makeAdapter({ observeResults: [makeScreenState(), makeScreenState()] }), planner, verifier }), makeStepContext())
       expect(result.status).toBe('passed')
       expect(verifySpy).toHaveBeenCalled()
