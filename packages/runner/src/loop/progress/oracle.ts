@@ -21,6 +21,7 @@
 
 import type { ScreenState, ElementInfo, LocalEffectEvidence } from '@vostride/agent-qa-schema'
 import type { ActionResult } from '../../platform.js'
+import { readIdempotentNoopMeta } from '../../compound/metadata.js'
 
 const UNIT = ''
 const REC = ''
@@ -181,6 +182,13 @@ export function evaluateLocalEffect(input: EvaluateLocalEffectInput): LocalEffec
     }
 
     case 'tap': {
+      // D-16 signal-presence (mirrors the fill row): a flagged idempotent no-op is authoritative
+      // effect-achieved BEFORE any anchor/checkable-state diff — the control was already in the
+      // desired state, so nothing was gestured and no stagnation must accrue. Absence ⇒ the
+      // existing anchor/hash-fallback behavior is unchanged (unflagged taps never touch this row).
+      if (readIdempotentNoopMeta(actionResult)) {
+        return { verbClass: 'tap', oracle: 'tap', achieved: true }
+      }
       if (anchor) {
         const before = resolveAnchor(stateBefore, anchor)
         const after = resolveAnchor(stateAfter, anchor)
