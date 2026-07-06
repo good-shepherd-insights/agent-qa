@@ -1309,24 +1309,31 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           await this.ensureContext('NATIVE_APP')
         }
         const { width, height } = await driver.getWindowSize()
-        let sx = Math.round(width / 2)
-        let sy = Math.round(height / 2)
 
-        if (action.ref) {
-          const { center } = resolver.resolve(action.ref)
-          sx = Math.round(center.x)
-          sy = Math.round(center.y)
+        // Schema shapes: SwipeByPath drives explicit from/to points; SwipeByDirection computes a
+        // page-sized gesture from the (optional ref) center (legacy startX..endY reads retired).
+        let pts: { startX: number; startY: number; endX: number; endY: number }
+        if (action.mode === 'path') {
+          pts = {
+            startX: Math.round(action.from.x),
+            startY: Math.round(action.from.y),
+            endX: Math.round(action.to.x),
+            endY: Math.round(action.to.y),
+          }
+        } else {
+          let sx = Math.round(width / 2)
+          let sy = Math.round(height / 2)
+          if (action.ref) {
+            const { center } = resolver.resolve(action.ref)
+            sx = Math.round(center.x)
+            sy = Math.round(center.y)
+          }
+          const distance = Math.round(height * 0.6)
+          pts = computeSwipe(sx, sy, action.direction, distance)
         }
-
-        const distance = Math.round(height * 0.6)
-        const pts = (action.startX !== undefined && action.startY !== undefined &&
-                     action.endX !== undefined && action.endY !== undefined)
-          ? { startX: action.startX, startY: action.startY,
-              endX: action.endX, endY: action.endY }
-          : computeSwipe(sx, sy, action.direction, distance)
         warnIfOutOfBounds({ x: pts.startX, y: pts.startY }, { width, height }, 'swipe')
         warnIfOutOfBounds({ x: pts.endX, y: pts.endY }, { width, height }, 'swipe')
-        const swipeDuration = action.duration ?? 300
+        const swipeDuration = action.durationMs
 
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: pts.startX, y: pts.startY })
@@ -1349,13 +1356,14 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         let pcx = Math.round(pinchW / 2)
         let pcy = Math.round(pinchH / 2)
 
-        if (action.ref) {
+        if ('ref' in action) {
           const { center } = resolver.resolve(action.ref)
           pcx = Math.round(center.x)
           pcy = Math.round(center.y)
+        } else {
+          pcx = action.x
+          pcy = action.y
         }
-        if (action.x !== undefined) pcx = action.x
-        if (action.y !== undefined) pcy = action.y
         warnIfOutOfBounds({ x: pcx, y: pcy }, { width: pinchW, height: pinchH }, 'pinch')
 
         const { finger1Start, finger1End, finger2Start, finger2End } = computePinch(pcx, pcy, action.scale)
@@ -1381,13 +1389,14 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         let mtcx = Math.round(mtW / 2)
         let mtcy = Math.round(mtH / 2)
 
-        if (action.ref) {
+        if ('ref' in action) {
           const { center } = resolver.resolve(action.ref)
           mtcx = Math.round(center.x)
           mtcy = Math.round(center.y)
+        } else {
+          mtcx = action.x
+          mtcy = action.y
         }
-        if (action.x !== undefined) mtcx = action.x
-        if (action.y !== undefined) mtcy = action.y
         warnIfOutOfBounds({ x: mtcx, y: mtcy }, { width: mtW, height: mtH }, 'multiTap')
 
         const positions = computeFingerPositions(mtcx, mtcy, action.fingers)
@@ -1415,8 +1424,34 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'waitFor': {
-        await driver.pause(action.timeout ?? 2000)
-        return { success: true }
+        // Schema on-modes replace the legacy {condition,timeout} blind pause. text/gone poll the
+        // native accessibility tree; selector-mode is a web-only capability (§7.1, catalog pin).
+        if (action.on === 'selector') {
+          return {
+            success: false,
+            error: 'waitFor {on:"selector"} (CSS/XPath) is a web-only mode. On native Android, wait on visible text with waitFor {on:"text"} or {on:"gone"}.',
+          }
+        }
+        const wantPresent = action.on === 'text'
+        const needle = action.text
+        const deadline = Date.now() + action.timeoutMs
+        for (;;) {
+          let source = ''
+          try {
+            source = await driver.getPageSource()
+          } catch {
+            source = ''
+          }
+          if (source.includes(needle) === wantPresent) return { success: true }
+          if (Date.now() >= deadline) break
+          await driver.pause(Math.min(250, Math.max(1, deadline - Date.now())))
+        }
+        return {
+          success: false,
+          error: wantPresent
+            ? `waitFor: text "${needle}" did not appear within ${action.timeoutMs}ms.`
+            : `waitFor: text "${needle}" was still present after ${action.timeoutMs}ms.`,
+        }
       }
 
       case 'delay': {
@@ -1425,15 +1460,19 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'keypress': {
-        // convertPlatformKeys is a no-op on mobile (no Meta/Control distinction in Appium key codes per D-13)
+        // Schema adds mode:'press'|'down'|'up'. Only 'press' is meaningful on mobile — key
+        // hold/release is a web-only lane (§7.1, catalog pin). convertPlatformKeys is a no-op on
+        // mobile (no Meta/Control distinction in Appium key codes per D-13).
+        if (action.mode !== 'press') {
+          return {
+            success: false,
+            error: `keypress {mode:"${action.mode}"} (key hold/release) is web-only. On mobile, emit keypress {mode:"press"} to send the key.`,
+          }
+        }
         for (const rawKey of action.keys) {
           const mapped = KEY_MAP[rawKey] ?? rawKey
           await driver.keys([mapped])
         }
-        return { success: true }
-      }
-
-      case 'assert': {
         return { success: true }
       }
 
@@ -1474,29 +1513,108 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         return { success: true, coordinates: center, boundingBox: bounds }
       }
 
-      case 'openLink': {
-        const appPackage = firstNonEmpty(action.appId, action.appPackage, this.appPackage)
-        const isWebUrl = /^https?:\/\//i.test(action.url)
-        if (!appPackage && !isWebUrl) {
-          return { success: false, error: `Missing Android app package for native deep link: ${action.url}` }
+      // --- Android hardware / system verbs (numeric keycodes / typed driver args only) ---
+
+      case 'pressBack':
+        await driver.execute('mobile: pressKey', { keycode: 4 })
+        return { success: true }
+
+      case 'pressHome':
+        await driver.execute('mobile: pressKey', { keycode: 3 })
+        return { success: true }
+
+      case 'pressRecent':
+        await driver.execute('mobile: pressKey', { keycode: 187 })
+        return { success: true }
+
+      case 'openNotifications':
+        await driver.execute('mobile: openNotifications')
+        return { success: true }
+
+      case 'openQuickSettings':
+        // args-array shell (A1) — never a concatenated command string (Pitfall 6).
+        await driver.execute('mobile: shell', { command: 'cmd', args: ['statusbar', 'expand-settings'] })
+        return { success: true }
+
+      case 'intent': {
+        // T-360-02 / Pitfall 6: map the schema fields onto TYPED mobile: startActivity args. Extras
+        // become [[typeTag, key, value]] triples (string→s / int→i / long→l / float→f / bool→z);
+        // planner-supplied values pass through byte-identical as typed args — NEVER interpolated
+        // into an am-start shell string.
+        const TYPE_TAG: Record<'string' | 'int' | 'long' | 'float' | 'bool', string> = {
+          string: 's', int: 'i', long: 'l', float: 'f', bool: 'z',
         }
-        try {
-          if (appPackage) {
-            await driver.execute('mobile: deepLink', { url: action.url, package: appPackage })
-          } else {
-            await driver.url(action.url)
+        const intentArgs: Record<string, unknown> = { action: action.action }
+        if (action.data !== undefined) intentArgs.uri = action.data
+        if (action.packageName !== undefined) intentArgs.package = action.packageName
+        if (action.extras && action.extras.length > 0) {
+          intentArgs.extras = action.extras.map(
+            (e): [string, string, string] => [TYPE_TAG[e.type], e.key, e.value],
+          )
+        }
+        await driver.execute('mobile: startActivity', intentArgs)
+        return { success: true }
+      }
+
+      case 'keyevent': {
+        // T-360-02: allow-list the symbolic code BEFORE any driver call (the 359 escapeUiSelectorText
+        // posture). A non-matching (hostile) string is rejected with a §7.1 error — never reaches a
+        // driver.execute. A matching code runs through an args-array shell lane (no interpolation).
+        if (!/^KEYCODE_[A-Z0-9_]+$/.test(action.keycode)) {
+          return {
+            success: false,
+            error: `keyevent: "${action.keycode}" is not a valid Android key code. Provide a symbolic code matching ^KEYCODE_[A-Z0-9_]+$ (e.g. KEYCODE_ENTER, KEYCODE_TAB).`,
           }
-          return { success: true }
-        } catch (err) {
-          if (!isWebUrl) {
-            return { success: false, error: `Failed to open link ${action.url} in Android app ${appPackage}: ${err instanceof Error ? err.message : String(err)}` }
+        }
+        await driver.execute('mobile: shell', { command: 'input', args: ['keyevent', action.keycode] })
+        return { success: true }
+      }
+
+      case 'assertValue': {
+        // D-10: the adapter RESOLVES the requested source to a raw value on ActionResult.data; the
+        // runner-side comparator applies the op and judges. The adapter never compares. url/storage/
+        // expr read the live WebView (web-context) machinery; sources with no native lane return a
+        // §7.1 error naming the platform limitation.
+        if ('expr' in action) {
+          if (!inWeb) {
+            return {
+              success: false,
+              error: 'assertValue {expr} evaluates JavaScript and is only available in an Android WebView/browser context. Assert on a native signal, or run against a web target.',
+            }
           }
-          try {
-            await driver.url(action.url)
-            return { success: true }
-          } catch (fallbackErr) {
-            return { success: false, error: `Failed to open link: ${action.url}: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}` }
+          const value = await driver.execute(`return (${action.expr});`)
+          return { success: true, data: { value } }
+        }
+        switch (action.source) {
+          case 'url': {
+            if (!inWeb) {
+              return {
+                success: false,
+                error: 'assertValue {source:"url"} reads the browser URL and is only available in an Android WebView/browser context; native screens have no URL.',
+              }
+            }
+            const value = await driver.execute('return window.location.href;')
+            return { success: true, data: { value } }
           }
+          case 'storage': {
+            if (!inWeb) {
+              return {
+                success: false,
+                error: 'assertValue {source:"storage"} reads Web Storage and is only available in an Android WebView/browser context.',
+              }
+            }
+            const value = await driver.execute(
+              'return Object.fromEntries(Object.keys(localStorage).map(function(k){return [k, localStorage.getItem(k)];}));',
+            )
+            return { success: true, data: { value } }
+          }
+          case 'network':
+            return {
+              success: false,
+              error: 'assertValue {source:"network"} (HTTP log inspection) is not available on the Android adapter. Use a web target for network assertions, or assert on visible UI text.',
+            }
+          case 'expr-result':
+            return { success: true, data: { value: undefined } }
         }
       }
 
@@ -1535,12 +1653,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         // session-cached registry, then launch via activateApp. Never a best-guess launch.
         return await this.openApp(action)
 
-      case 'launchApp': {
-        // KEPT as the raw launch primitive (360 retires it as a planner verb).
-        await driver.activateApp(action.bundleId)
-        return { success: true }
-      }
-
       case 'stopApp': {
         await driver.terminateApp(action.bundleId)
         return { success: true }
@@ -1576,8 +1688,19 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         return { success: true, coordinates: { x, y } }
       }
 
+      // Runner-minted / author-channel verbs (D-01/D-15): reportValue, assertAI, extractAI, and
+      // setVariable are intercepted at the runner dispatch seam and never reach the adapter. A
+      // grouped §7.1 defensive case surfaces a dispatch-routing error if one arrives here;
+      // assertNever remains the backstop for a genuinely unknown schema verb. (uniqueValue is
+      // web-only and is not part of ActionsFor<'android'>.)
+      case 'reportValue':
+      case 'assertAI':
+      case 'extractAI':
       case 'setVariable':
-        return { success: true }
+        return {
+          success: false,
+          error: `Action "${action.type}" is handled by the runner dispatch seam and must not reach the Android adapter (runner-minted/author-channel verb). This indicates a dispatch routing error.`,
+        }
 
       default:
         return assertNever(action)
