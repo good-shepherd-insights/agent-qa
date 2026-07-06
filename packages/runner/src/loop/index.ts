@@ -754,24 +754,9 @@ export async function executeStep(
       return success()
     }
 
-    // Non-visual assert + stepComplete: the planner judged the condition without screen
-    // evidence — trust it, skip verification (Pitfall 8, loop.ts:428). D-15a: an assert
-    // sub-action's stateAfter === stateBefore (reuse).
-    if (action.type === 'assert' && (action as Extract<Action, { type: 'assert' }>).visual === false && rawPlan.stepComplete) {
-      const idx = recorder.recordSubAction({
-        plan: reasoning,
-        plannedAction: action as unknown as SchemaAction,
-        stateBefore: screenState,
-        result: toSchemaResult(execResult),
-        cached,
-        grounding,
-      })
-      recorder.attachStateAfter(idx, screenState)
-      context.failureContext = undefined
-      pendingSelfHeal = undefined
-      await cacheCompletingPlan()
-      return success()
-    }
+    // D-19 (Phase 360): the legacy non-visual-`assert` short-circuit was deleted here. The
+    // retired `assert` verb is gone; its deterministic-verdict replacement is D-11's
+    // assertValue/assertAI outcome short-circuit (Plan 10), already pinned by the Wave-0 suites.
 
     const annotation = buildAnnotation(action, execResult, viewport, !!execError)
 
@@ -825,14 +810,11 @@ export async function executeStep(
     // 5. VERIFY — only when the planner signals stepComplete (three-outcome strategy).
     let verifierReasoning: string | undefined
     if (rawPlan.stepComplete && ports.verifier) {
-      // D-15b: the verifier's own re-observation IS stateAfter. Pitfall 7 / D-15a: for
-      // assert actions the planner's observation is passed as afterState (re-observing
-      // may lose scrolled content) — so assert stateAfter === stateBefore by reuse.
+      // D-15b: the verifier's own re-observation IS stateAfter. (The retired-`assert`
+      // afterState reuse special-case was deleted with the verb — D-19, Phase 360.)
       let afterState: ScreenState
       try {
-        afterState = action.type === 'assert'
-          ? screenState
-          : await withAbort(ports.adapter.observe(), ports.abortSignal)
+        afterState = await withAbort(ports.adapter.observe(), ports.abortSignal)
       } catch (err) {
         const abortResult = checkAbort()
         if (abortResult) return abortResult
@@ -1032,14 +1014,14 @@ function firstRefField(action: Action): string | undefined {
 
 function firstRefFieldEntry(action: Action): { field: string; ref: string } | undefined {
   for (const field of REF_EVIDENCE_FIELDS) {
-    const value = (action as Record<string, unknown>)[field]
+    const value = (action as unknown as Record<string, unknown>)[field]
     if (typeof value === 'string') return { field, ref: value }
   }
   return undefined
 }
 
 function patchRef(action: Action, field: string, ref: Ref): Action {
-  return { ...(action as Record<string, unknown>), [field]: ref } as unknown as Action
+  return { ...(action as unknown as Record<string, unknown>), [field]: ref } as unknown as Action
 }
 
 // A ref-resolved §A8 attempt trail synthesized when the planner/turn supplied none — one
@@ -1048,7 +1030,7 @@ function patchRef(action: Action, field: string, ref: Ref): Action {
 function synthesizeRefAttempts(action: Action): GroundingAttempt[] {
   const trail: GroundingAttempt[] = []
   for (const field of REF_EVIDENCE_FIELDS) {
-    const value = (action as Record<string, unknown>)[field]
+    const value = (action as unknown as Record<string, unknown>)[field]
     if (typeof value === 'string') trail.push({ stage: 'ref', outcome: 'resolved', resolvedRef: value as Ref })
   }
   return trail
@@ -1066,7 +1048,7 @@ function buildGroundingEvidence(
 ): GroundingEvidence | undefined {
   const ref = firstRefField(action)
   if (ref === undefined) return undefined
-  const locator = toGroundedLocator({ ...(action as Record<string, unknown>), ref } as unknown as Action, elements)
+  const locator = toGroundedLocator({ ...(action as unknown as Record<string, unknown>), ref } as unknown as Action, elements)
   if (locator === null) return undefined
   const descriptor: TargetDescriptor = {}
   if (locator.role) descriptor.role = locator.role
@@ -1086,7 +1068,7 @@ const TAP_CLASS_VERBS: ReadonlySet<string> = new Set(['tap', 'click', 'longpress
 function deriveEffectAnchor(action: Action, elements: readonly ElementInfo[]): EffectAnchor | undefined {
   const ref = firstRefField(action)
   if (ref === undefined) return undefined
-  const locator = toGroundedLocator({ ...(action as Record<string, unknown>), ref } as unknown as Action, elements)
+  const locator = toGroundedLocator({ ...(action as unknown as Record<string, unknown>), ref } as unknown as Action, elements)
   if (locator === null) return undefined
   return { role: locator.role, nameNormalized: locator.nameNormalized, ordinal: locator.ordinal ?? 0 }
 }
@@ -1118,7 +1100,7 @@ function regroundFailedRef(
   const priorTarget = priorElements.find((element) => element.ref === entry.ref)
   if (priorTarget === undefined) return null
   const locator: GroundedLocator | null = toGroundedLocator(
-    { ...(action as Record<string, unknown>), ref: entry.ref } as unknown as Action,
+    { ...(action as unknown as Record<string, unknown>), ref: entry.ref } as unknown as Action,
     priorElements,
   )
   if (locator === null) return null
@@ -1231,7 +1213,7 @@ function buildStepTrace(
   const trace: StepTrace = {
     observation: last?.observation ?? '',
     reasoning: last?.reasoning ?? error ?? '',
-    plannedAction: last?.plannedAction ?? { type: 'waitFor', condition: 'none', timeout: 0 },
+    plannedAction: last?.plannedAction ?? { type: 'waitFor', on: 'text', text: '', timeoutMs: 0 },
     result,
     screenStateBefore: first?.screenStateBefore ?? '',
     subActions,

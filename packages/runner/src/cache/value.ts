@@ -41,7 +41,7 @@ function actionRef(action: Action): string | undefined {
 }
 
 function fieldRef(action: Action, field: string): string | undefined {
-  const ref = (action as Record<string, unknown>)[field]
+  const ref = (action as unknown as Record<string, unknown>)[field]
   return typeof ref === 'string' ? ref : undefined
 }
 
@@ -64,7 +64,7 @@ function sanitizeAction(action: Action): Action {
     if (OVERFIT_KEYS.has(key)) continue
     out[key] = value
   }
-  return out as Action
+  return out as unknown as Action
 }
 
 /**

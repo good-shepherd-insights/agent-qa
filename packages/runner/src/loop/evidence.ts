@@ -97,23 +97,20 @@ export function collapseAnnotation(
   execResult: PlatformActionResult,
   viewport: Viewport,
 ): ActionAnnotation {
+  // Schema swipe (D-15 flip): SwipeByDirection carries `direction`; SwipeByPath carries from/to.
   const direction = action.type === 'swipe'
-    ? (action as Extract<PlatformAction, { type: 'swipe' }>).direction
+    ? (action.mode === 'direction' ? action.direction : undefined)
     : scrollDirection(action)
 
   const base = { viewport, ...(direction ? { direction } : {}) }
 
   // path — swipe/drag map to a start→end segment (execResult coords first, then the
-  // action's own coordinates as the v1 fallback).
+  // action's own path points as the fallback — schema SwipeByPath `from`/`to`).
   if (action.type === 'swipe' || action.type === 'drag') {
     const start = execResult.startCoordinates
-      ?? (action.type === 'swipe' && action.startX !== undefined && action.startY !== undefined
-        ? { x: action.startX, y: action.startY }
-        : undefined)
+      ?? (action.type === 'swipe' && action.mode === 'path' ? action.from : undefined)
     const end = execResult.endCoordinates
-      ?? (action.type === 'swipe' && action.endX !== undefined && action.endY !== undefined
-        ? { x: action.endX, y: action.endY }
-        : undefined)
+      ?? (action.type === 'swipe' && action.mode === 'path' ? action.to : undefined)
     return {
       ...base,
       kind: 'path',
@@ -121,11 +118,11 @@ export function collapseAnnotation(
     }
   }
 
-  // pinch — center + scale.
+  // pinch — center + scale (schema: coordinate form carries x/y; ref form has no center).
   if (action.type === 'pinch') {
     const a = action as Extract<PlatformAction, { type: 'pinch' }>
     const center = execResult.coordinates
-      ?? (a.x !== undefined && a.y !== undefined ? { x: a.x, y: a.y } : { x: 0, y: 0 })
+      ?? ('x' in a && 'y' in a ? { x: a.x, y: a.y } : { x: 0, y: 0 })
     return { ...base, kind: 'pinch', pinch: { center, scale: a.scale } }
   }
 

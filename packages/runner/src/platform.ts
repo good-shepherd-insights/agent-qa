@@ -2,15 +2,10 @@
 // CRITICAL: No imports from playwright-core, webdriverio, or any platform package.
 
 import type {
-  AndroidAction,
-  CommonAction,
-  Fill,
-  IosAction,
-  MobileAction,
+  Action as SchemaAction,
+  ActionsFor as SchemaActionsFor,
   Platform,
-  Scroll,
   ScreenState,
-  WebAction,
 } from '@vostride/agent-qa-schema'
 import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
 
@@ -18,38 +13,30 @@ export interface ObserveOptions {
   extractDom?: boolean
 }
 
-// Toggle/picker idempotency intent (D-13): the state a tap/click should ensure. Absent ⇒ a
-// plain gesture with no idempotency claim; the dispatch seam compares it against the persisted
-// element state (Plan 08). Mirrors the four values of compound/idempotency.ts DesiredState.
-type DesiredState = 'checked' | 'unchecked' | 'selected' | 'unselected'
+// D-15 (Phase 360): the runner's action world IS the schema `ActionsFor<P>` projection. The
+// legacy runner-owned union (LegacyFoldedWebVerbs / RuntimeOnlyCommonVerbs / RuntimeOnlyMobileVerbs
+// and the local shape declarations) was demolished here — `Extract` keyed on the `type` string
+// only, so the legacy member shapes silently won over the schema shapes (RESEARCH §Type-Level Flip).
+// The planner-reachable surface is now the single schema truth; adapters read schema execution shapes.
+//
+// `RunnerRuntimeVerbs` is a documented named alias re-exporting the three author-channel verbs that
+// already exist as schema members — NOT new union members. It marks the surviving runner-runtime
+// surface so a future reader knows these three are runtime-owned, not planner catalog verbs:
+//   - executeScript → Phase 363 author-facing variable resolution + lifecycle-hook plumbing
+//   - setVariable   → Phase 363 author-facing variable resolution + lifecycle-hook plumbing
+//   - stopApp       → author channel (test lifecycle app teardown)
+export type RunnerRuntimeVerbs =
+  | Extract<SchemaAction, { type: 'executeScript' }>
+  | Extract<SchemaAction, { type: 'setVariable' }>
+  | Extract<SchemaAction, { type: 'stopApp' }>
 
-type WebVerbs = (WebAction | CommonAction)['type']
-type LegacyFoldedWebVerbs =
-  | 'keyDown'
-  | 'keyUp'
-  | 'refresh'
-  | 'navigateHistory'
-  | 'readConsoleLogs'
-  | 'readNetworkLogs'
-  | 'readCookies'
-  | 'readLocalStorage'
-  | 'newTab'
-  | 'switchTab'
-// Runtime-only verbs remain in platform.ts until M1 adapter reconciliation.
-type RuntimeOnlyCommonVerbs = 'assert' | 'openLink'
-type RuntimeOnlyMobileVerbs = 'launchApp'
-type WebRuntimeVerbs = WebVerbs | LegacyFoldedWebVerbs | RuntimeOnlyCommonVerbs
-type MobileVerbs = (MobileAction | AndroidAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs | RuntimeOnlyMobileVerbs
-type IosVerbs = (MobileAction | IosAction | CommonAction)['type'] | RuntimeOnlyCommonVerbs | RuntimeOnlyMobileVerbs
+// The runner action world = the schema union (D-15). Re-exported under the runner's historical
+// `Action` name so the ~40 runner-internal structural consumers keep importing from `./platform.js`.
+export type Action = SchemaAction
 
-export type ActionsFor<P extends Platform = Platform> =
-  [Platform] extends [P]
-    ? Action
-    : P extends 'web'
-    ? Extract<Action, { type: WebRuntimeVerbs }>
-    : P extends 'android'
-      ? Extract<Action, { type: MobileVerbs }>
-      : Extract<Action, { type: IosVerbs }>
+// Platform-projected action surface = the schema projection verbatim (D-15). `desiredState` on
+// click/tap is now schema-owned (Plan 03), so no runner-side intersection widening is needed.
+export type ActionsFor<P extends Platform = Platform> = SchemaActionsFor<P>
 
 export interface PlatformAdapter<P extends Platform = Platform> {
   readonly platform: P
@@ -62,58 +49,6 @@ export interface PlatformAdapter<P extends Platform = Platform> {
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
 }
-
-export type Action =
-  // Web actions
-  | { type: 'click'; ref: string; clickDelay?: number; desiredState?: DesiredState }
-  | ({ type: 'fill' } & Fill)
-  | { type: 'select'; ref: string; value: string }
-  | { type: 'nativeSelect'; ref: string; value: string }
-  | { type: 'navigate'; url: string }
-  | ({ type: 'scroll' } & Scroll)
-  | { type: 'waitFor'; condition: string; timeout?: number }
-  | { type: 'delay'; ms: number }
-  | { type: 'assert'; condition: string; expected?: string; visual?: boolean }
-  | { type: 'keypress'; keys: string[]; convertPlatformKeys?: boolean }
-  | { type: 'hover'; ref: string }
-  | { type: 'paste'; ref: string; value: string }
-  | { type: 'keyDown'; key: string }
-  | { type: 'keyUp'; key: string }
-  | { type: 'refresh' }
-  | { type: 'navigateHistory'; direction: 'back' | 'forward' }
-  | { type: 'readConsoleLogs'; level?: 'log' | 'info' | 'warn' | 'error'; tab?: { index?: number; title?: string; url?: string } }
-  | { type: 'readNetworkLogs'; urlPattern?: string; tab?: { index?: number; title?: string; url?: string } }
-  | { type: 'readCookies'; name?: string }
-  | { type: 'setCookies'; cookies: Array<{ name: string; value: string; domain?: string; path?: string; httpOnly?: boolean; secure?: boolean; sameSite?: 'Strict' | 'Lax' | 'None'; expires?: number }> }
-  | { type: 'readLocalStorage'; key?: string }
-  | { type: 'setLocalStorage'; entries: Array<{ key: string; value: string }> }
-  | { type: 'newTab'; url: string }
-  | { type: 'switchTab'; index?: number; title?: string; url?: string }
-  | { type: 'doubleClick'; ref: string; relativePosition?: { x: number; y: number }; clickDelay?: number }
-  | { type: 'rightClick'; ref: string; relativePosition?: { x: number; y: number }; clickDelay?: number }
-  | { type: 'waitForUrl'; pattern: string }
-  | { type: 'fileUpload'; ref: string; files: string[] }
-  | { type: 'copy'; ref: string }
-  // Mobile actions
-  | { type: 'tap'; ref: string; desiredState?: DesiredState }
-  | { type: 'swipe'; direction: 'up' | 'down' | 'left' | 'right'; ref?: string; startX?: number; startY?: number; endX?: number; endY?: number; duration?: number }
-  | { type: 'longpress'; ref: string; duration?: number }
-  // Cross-platform actions
-  | { type: 'hideKeyboard' }
-  | { type: 'clearText'; ref: string }
-  | { type: 'openLink'; url: string; appId?: string; bundleId?: string; appPackage?: string; waitForLaunch?: boolean }
-  | { type: 'drag'; fromRef: string; toRef: string }
-  | { type: 'doubleTap'; ref: string }
-  | { type: 'openApp'; appName: string }
-  | { type: 'openApp'; bundleId: string }
-  | { type: 'launchApp'; bundleId: string }
-  | { type: 'stopApp'; bundleId: string }
-  | { type: 'setOrientation'; orientation: 'portrait' | 'landscape' }
-  | { type: 'pinch'; scale: number; x?: number; y?: number; ref?: string }
-  | { type: 'multiTap'; fingers: number; x?: number; y?: number; ref?: string }
-  | { type: 'tapCoordinate'; x: number; y: number }
-  | { type: 'executeScript'; command: string; args?: unknown }
-  | { type: 'setVariable'; name: string; value: string }
 
 export function assertNever(value: never): never {
   const type = (value as { type?: string }).type
