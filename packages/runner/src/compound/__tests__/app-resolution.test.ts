@@ -17,9 +17,18 @@
 //   DEFAULT_FUZZY_THRESHOLD / DEFAULT_FUZZY_MARGIN / DEFAULT_EDIT_DISTANCE_BOUND /
 //   DEFAULT_CANDIDATE_COUNT are exported injectable constants (candidate count === 3).
 import { describe, it, expect } from 'vitest'
-// Plan-03 openApp scorer — intentionally unresolved today (the RED reason for this suite):
-// @ts-expect-error module lands in Plan 03 (remove this directive then)
-import { resolveAppName, DEFAULT_CANDIDATE_COUNT } from '../app-resolution.js'
+import { resolveAppName as resolveAppNameImpl, DEFAULT_CANDIDATE_COUNT } from '../app-resolution.js'
+
+// Plan 01 pinned the loose runtime shape (id + candidates read directly); the shipped
+// resolveAppName returns a discriminated union. This flat view lets the pinned assertions read
+// id/candidates off the runtime object without per-branch narrowing — assertions unchanged.
+type ResolveView = {
+  kind: 'exact' | 'fuzzy' | 'ambiguous' | 'unknown'
+  id?: string
+  candidates: { id: string; label?: string }[]
+}
+const resolveAppName = (...args: Parameters<typeof resolveAppNameImpl>): ResolveView =>
+  resolveAppNameImpl(...args) as unknown as ResolveView
 
 // A small fixture registry modeling the D-10 corpus: full ids everywhere, labels only where a
 // single enumeration call yields them.

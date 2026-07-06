@@ -22,9 +22,8 @@
 //   runDirectionScrollWithRetry(p, { direction, ref? }) — direction-mode self-heal (retry opposite once)
 import { describe, it, expect } from 'vitest'
 import type { InterimNode } from '@vostride/agent-qa-runner'
-// Plan-03 scroll loop — intentionally unresolved today (the RED reason for this suite):
-// @ts-expect-error module lands in Plan 03 (remove this directive then)
 import { runUntilVisibleLoop, runDirectionScrollWithRetry } from '../scroll-until-visible.js'
+import type { ScrollPrimitives } from '../scroll-until-visible.js'
 
 // A recording fake primitive set. Scripted interim trees are consumed one per readInterimTree
 // call; the last entry repeats once exhausted.
@@ -37,7 +36,7 @@ interface FakeCalls {
 function makeFakePrimitives(opts: {
   trees: InterimNode[][]
   native?: (target: string) => boolean
-}): { p: unknown; calls: FakeCalls } {
+}): { p: ScrollPrimitives; calls: FakeCalls } {
   const calls: FakeCalls = { swipes: [], natives: [], reads: 0 }
   const p = {
     async swipeOnce(direction: string, ref?: string): Promise<void> {
@@ -57,7 +56,7 @@ function makeFakePrimitives(opts: {
       return opts.trees[idx]
     },
   }
-  return { p, calls }
+  return { p: p as ScrollPrimitives, calls }
 }
 
 const node = (role: string, name: string, extra: Partial<InterimNode> = {}): InterimNode => ({
@@ -223,7 +222,7 @@ describe('runUntilVisibleLoop — the scrollUntilVisible meta byte-pin (D-04)', 
       maxSwipes: 4,
       retryOpposite: false,
     })
-    const meta = r.meta as Record<string, unknown>
+    const meta = r.meta as unknown as Record<string, unknown>
     expect(Object.keys(meta).sort()).toEqual(['outcome', 'reversedOnce', 'swipes'])
     expect(['found', 'no-change', 'cap']).toContain(meta['outcome'])
     expect(typeof meta['swipes']).toBe('number')
