@@ -1,13 +1,25 @@
 import type {
   ActionsFor,
   ActionResult,
+  AppRegistryEntry,
   ConsoleLogEntry,
+  Direction,
   InterimNode,
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
+  ScrollPrimitives,
+  ScrollUntilVisibleMeta,
 } from '@vostride/agent-qa-runner'
-import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import {
+  assertNever,
+  buildScreenState,
+  compareFillReread,
+  interimTreeIdentity,
+  resolveAppName,
+  runDirectionScrollWithRetry,
+  runUntilVisibleLoop,
+} from '@vostride/agent-qa-runner'
 import type { ElementLabels, ElementState, ScreenState } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
@@ -82,6 +94,37 @@ function isAndroidNativeSelectTarget(refData: MobileRefMap[string] | undefined):
     (role && ANDROID_NATIVE_SELECT_ROLES.has(role))
     || (refData?.nativeType && ANDROID_NATIVE_SELECT_TYPES.has(refData.nativeType))
   )
+}
+
+/**
+ * Escape untrusted target text for interpolation into a UiAutomator `UiSelector` source string
+ * (T-359-01 · Pitfall 9). Backslash-escape backslashes FIRST, then double quotes, so the raw
+ * text can never break out of the `textContains("…")` literal. Control characters cannot be
+ * represented safely in the selector language, so a target carrying any is rejected with a
+ * structured error rather than being interpolated verbatim (T-352-11 posture).
+ */
+const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/
+function escapeUiSelectorText(value: string): string {
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new Error(
+      `scroll target contains a control character and cannot be used as a UiAutomator selector — provide a plain-text target for untilVisible.`,
+    )
+  }
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+/** Scroll intent (reveal content toward `direction`) maps to the OPPOSITE finger swipe. */
+function fingerDirectionFor(scroll: Direction): 'up' | 'down' | 'left' | 'right' {
+  switch (scroll) {
+    case 'up':
+      return 'down'
+    case 'down':
+      return 'up'
+    case 'left':
+      return 'right'
+    case 'right':
+      return 'left'
+  }
 }
 
 function androidUiSelectorText(value: string): string {
@@ -773,6 +816,110 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   }
 
   // ---------------------------------------------------------------------------
+  // Compound behaviors (EXEC-01/02/03)
+  // ---------------------------------------------------------------------------
+
+  /** Read the live text of a focused element handle; undefined when nothing is readable. */
+  private async readElementText(el: { getText: () => Promise<string> }): Promise<string | undefined> {
+    try {
+      const value = await el.getText()
+      return typeof value === 'string' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * EXEC-01 native fill compound (D-05..D-08). From the SAME focused-element handle: (append)
+   * capture the prior text FIRST then addValue, or (replace) setValue; RE-READ via getText() on
+   * that same handle; verdict via compareFillReread; Enter (keycode 66) only AFTER a passing
+   * re-read and only when submit. Password fields (getAttribute('password')==='true') take the
+   * secure lane — the comparator yields length sentinels, so no raw value enters the result
+   * (T-359-02). Single typing attempt; a mismatch is success:false with the §7.1 error.
+   */
+  private async fillNativeCompound(
+    el: {
+      getText: () => Promise<string>
+      getAttribute: (name: string) => Promise<string | null>
+      setValue: (value: string) => Promise<void>
+      addValue: (value: string) => Promise<void>
+    },
+    action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
+    box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
+  ): Promise<ActionResult> {
+    const driver = this.driver!
+    const isAppend = action.clearMode === 'append'
+    // Prior value FIRST for append (expected = prior + typed, D-07) — before any typing.
+    const prior = isAppend ? (await this.readElementText(el)) ?? '' : ''
+    const secure = (await el.getAttribute('password')) === 'true'
+
+    if (isAppend) {
+      await el.addValue(action.text)
+    } else {
+      await el.setValue(action.text)
+    }
+
+    const expected = isAppend ? prior + action.text : action.text
+    const actual = await this.readElementText(el)
+    // Unreadable re-read ⇒ honest success with NO fillReread block (never fabricate).
+    if (actual === undefined) {
+      return { success: true, ...box }
+    }
+
+    const verdict = compareFillReread({ expected, actual, secure })
+    // Enter AFTER the re-read, only when the text landed (D-07, A4).
+    if (verdict.ok && action.submit) {
+      await driver.execute('mobile: pressKey', { keycode: 66 })
+    }
+    return verdict.ok
+      ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
+      : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+  }
+
+  /**
+   * EXEC-01 WebView fill compound. One JS eval focuses the active element, applies
+   * replace/append, and reads the value back in the SAME evaluation (RESEARCH Open Q3). The
+   * verdict is computed in TS and Enter is dispatched only after a passing re-read (D-07),
+   * mirroring the native lane rather than firing submit blindly inside the eval.
+   */
+  private async fillWebViewCompound(
+    action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
+    box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
+  ): Promise<ActionResult> {
+    const driver = this.driver!
+    const isAppend = action.clearMode === 'append'
+    const raw = await driver.execute(
+      'var el = document.activeElement;'
+      + 'if (!el) { return { readable: false }; }'
+      + 'var append = arguments[0]; var text = arguments[1];'
+      + 'var secure = (el.type === "password");'
+      + 'var prior = append ? (el.value || "") : "";'
+      + 'if (append) { el.value = prior + text; } else { el.value = text; }'
+      + 'el.dispatchEvent(new Event("input", {bubbles:true}));'
+      + 'return { readable: true, prior: prior, actual: el.value, secure: secure };',
+      isAppend, action.text,
+    ) as { readable?: boolean; prior?: unknown; actual?: unknown; secure?: unknown } | null
+
+    if (!raw || raw.readable !== true || typeof raw.actual !== 'string') {
+      return { success: true, ...box }
+    }
+    const prior = typeof raw.prior === 'string' ? raw.prior : ''
+    const secure = raw.secure === true
+    const expected = isAppend ? prior + action.text : action.text
+    const verdict = compareFillReread({ expected, actual: raw.actual, secure })
+    if (verdict.ok && action.submit) {
+      await driver.execute(
+        'var el = document.activeElement;'
+        + 'if (el) { el.dispatchEvent(new KeyboardEvent("keydown", {key:"Enter", bubbles:true}));'
+        + 'el.dispatchEvent(new KeyboardEvent("keyup", {key:"Enter", bubbles:true})); }',
+      )
+    }
+    return verdict.ok
+      ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
+      : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+  }
+
+  // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
 
@@ -800,6 +947,9 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'fill': {
+        // EXEC-01 fill compound (D-05..D-08): tap-focus → clear/append → type → RE-READ the SAME
+        // handle → (Enter keycode 66 if submit). ONE ActionResult carrying fillReread metadata;
+        // a mismatch is an honest single-shot failure (no internal retry — the 358 ladder mediates).
         const { center, bounds } = resolver.resolve(action.ref)
         const refData = this.lastRefs[action.ref]
         const role = refData?.role?.toLowerCase()
@@ -809,21 +959,11 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
             error: `Element ${action.ref} is not fillable (role: ${role}). Use a textbox or input element instead.`,
           }
         }
+        const box = { coordinates: center, boundingBox: bounds }
         if (inWeb) {
-          await driver.execute(
-            'var el = document.elementFromPoint(arguments[0], arguments[1]);'
-            + 'if (el) { el.focus(); el.click(); }',
-            center.x, center.y,
-          )
-          await driver.execute(
-            'var el = document.activeElement;'
-            + 'if (el) { el.value = ""; el.value = arguments[0];'
-            + 'el.dispatchEvent(new Event("input", {bubbles:true})); }',
-            action.value,
-          )
-          return { success: true, coordinates: center, boundingBox: bounds }
+          return await this.fillWebViewCompound(action, box)
         }
-        // Native fill — tap to focus, then clear + type
+        // Native fill — tap to focus, then run the compound from the focused-element handle.
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: Math.round(center.x), y: Math.round(center.y) })
           .down({ button: 0 })
@@ -832,15 +972,31 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         try {
           const el = await driver.$('//*[@focused="true"]')
           if (await el.isExisting()) {
-            await el.setValue(action.value)
-            return { success: true, coordinates: center, boundingBox: bounds }
+            return await this.fillNativeCompound(el, action, box)
           }
         } catch {
           // fall through to last resort
         }
-        // Last resort — type via keyboard (pass whole string, not split chars)
-        await driver.keys([action.value])
-        return { success: true, coordinates: center, boundingBox: bounds }
+        // Last resort — type via keyboard (pass whole string, not split chars). Attempt a focused
+        // re-read; when no element value is readable, return success with NO fillReread block —
+        // signal-presence law: never fabricate a re-read pair.
+        await driver.keys([action.text])
+        try {
+          const el = await driver.$('//*[@focused="true"]')
+          if (await el.isExisting()) {
+            const secure = (await el.getAttribute('password')) === 'true'
+            const actual = await this.readElementText(el)
+            if (actual !== undefined) {
+              const verdict = compareFillReread({ expected: action.text, actual, secure })
+              return verdict.ok
+                ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
+                : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+            }
+          }
+        } catch {
+          // no readable handle — degrade honestly below
+        }
+        return { success: true, ...box }
       }
 
       case 'nativeSelect': {
