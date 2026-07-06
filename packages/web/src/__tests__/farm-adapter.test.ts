@@ -91,3 +91,88 @@ describe('FarmWebAdapter', () => {
     await adapter.cleanup()
   })
 })
+
+// Compound-behavior parity (Phase 359 Plan 05, Task 3): the farm execute surface speaks the
+// same fill re-read / openApp / untilVisible contracts as the primary adapter. These drive
+// execute() directly against injected private fields to avoid the farm-connect lifecycle.
+function makeFarmLocator(opts: { inputValue?: string; type?: string }) {
+  return {
+    fill: vi.fn().mockResolvedValue(undefined),
+    click: vi.fn().mockResolvedValue(undefined),
+    press: vi.fn().mockResolvedValue(undefined),
+    pressSequentially: vi.fn().mockResolvedValue(undefined),
+    inputValue: vi.fn().mockResolvedValue(opts.inputValue ?? ''),
+    getAttribute: vi.fn().mockResolvedValue(opts.type ?? 'text'),
+    boundingBox: vi.fn().mockResolvedValue({ x: 0, y: 0, width: 10, height: 10 }),
+    nth: vi.fn().mockReturnThis(),
+    first: vi.fn().mockReturnThis(),
+    scrollIntoViewIfNeeded: vi.fn().mockResolvedValue(undefined),
+    evaluate: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
+function makeFarmPage(locator: ReturnType<typeof makeFarmLocator>) {
+  return {
+    getByRole: vi.fn().mockReturnValue(locator),
+    getByText: vi.fn().mockReturnValue(locator),
+    goto: vi.fn().mockResolvedValue(undefined),
+    mouse: { wheel: vi.fn().mockResolvedValue(undefined) },
+    viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+    locator: vi.fn().mockReturnValue({ ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email"') }),
+    evaluate: vi.fn().mockResolvedValue(undefined),
+    screenshot: vi.fn().mockResolvedValue(Buffer.from('x')),
+  }
+}
+
+function primeAdapter(adapter: FarmWebAdapter, locator: ReturnType<typeof makeFarmLocator>) {
+  const page = makeFarmPage(locator)
+  ;(adapter as unknown as { page: unknown }).page = page
+  ;(adapter as unknown as { lastRefs: unknown }).lastRefs = { e1: { role: 'textbox', name: 'Email' } }
+  return page
+}
+
+describe('FarmWebAdapter compound behaviors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('fill re-read mismatch returns success:false with fillReread metadata (D-08, no internal retry)', async () => {
+    const adapter = new FarmWebAdapter()
+    const locator = makeFarmLocator({ inputValue: 'wrong' })
+    primeAdapter(adapter, locator)
+
+    const result = await adapter.execute({ type: 'fill', ref: 'e1', text: 'intended', clearMode: 'replace', submit: false } as never)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/reads .* after typing .* re-observe and retry/i)
+    expect(result.metadata?.fillReread).toEqual({ expected: 'intended', actual: 'wrong' })
+    expect(locator.fill).toHaveBeenCalledTimes(1)
+  })
+
+  it('openApp returns the D-09 navigate-directing structured error and never navigates', async () => {
+    const adapter = new FarmWebAdapter()
+    const locator = makeFarmLocator({})
+    const page = primeAdapter(adapter, locator)
+
+    const result = await adapter.execute({ type: 'openApp', appName: 'Gmail' } as never)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/navigate/i)
+    expect(page.goto).not.toHaveBeenCalled()
+  })
+
+  it('untilVisible scroll rides scrollUntilVisible metadata bounded by maxSwipes', async () => {
+    const adapter = new FarmWebAdapter()
+    const locator = makeFarmLocator({})
+    primeAdapter(adapter, locator)
+
+    const result = await adapter.execute({
+      type: 'scroll', mode: 'untilVisible', text: 'Nonexistent', direction: 'down', maxSwipes: 2, retryOpposite: false,
+    } as never)
+
+    expect(result.success).toBe(true)
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number; outcome: string } | undefined
+    expect(meta).toBeDefined()
+    expect(meta!.swipes).toBeLessThanOrEqual(2)
+  })
+})

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 
 // The fill compound (Phase 359) re-reads via inputValue() after typing — the mock echoes the
@@ -273,7 +274,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     mockPageEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
     adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1', nth: 0 }
 
-    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: 'e1' })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: asRef('e1') })
 
     expect(result.success).toBe(true)
     // container scroll runs through scrollWithRef (function-argument page.evaluate), never mouse.wheel/move

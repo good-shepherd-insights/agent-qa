@@ -32,7 +32,10 @@ export async function safeInputValue(locator: Locator): Promise<string | undefin
     return await locator.inputValue()
   } catch {
     try {
-      const value = await locator.evaluate((el) => (el as HTMLInputElement).value ?? el.textContent)
+      const value = await locator.evaluate((el) => {
+        const node = el as unknown as { value?: unknown; textContent?: unknown }
+        return (node.value ?? node.textContent) as unknown
+      })
       return typeof value === 'string' ? value : undefined
     } catch {
       return undefined
