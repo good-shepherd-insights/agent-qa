@@ -16,7 +16,7 @@ import { extractDom } from './dom-extractor.js'
 import { ElementResolver, buildRefMap } from './element-resolver.js'
 import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
-import { scrollWithRef } from './scroll-helper.js'
+import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
 
@@ -393,8 +393,11 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       case 'fill': {
         const locator = resolver.resolve(action.ref)
         const box = await resolver.getBoundingBox(action.ref)
-        await locator.fill(action.value)
-        return { success: true, boundingBox: box ?? undefined }
+        return runWebFillCompound(locator, box ?? undefined, action)
+      }
+
+      case 'openApp': {
+        return webOpenAppError()
       }
 
       case 'select': {
@@ -411,38 +414,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       }
 
       case 'scroll': {
-        const deltaX = action.scrollType === 'horizontal' ? action.value : 0
-        const deltaY = action.scrollType === 'vertical' ? action.value : 0
-        let coordinates: { x: number; y: number } | undefined
-        let boundingBox: { x: number; y: number; width: number; height: number } | undefined
-        let scrollData: { scrolled: boolean; scrolledContainer: string } | undefined
-
-        if (action.ref) {
-          const refData = this.lastRefs[action.ref]
-          if (refData) {
-            const scrollAxis = action.scrollType === 'horizontal' ? 'horizontal' : 'vertical'
-            const result = await scrollWithRef(page, refData, deltaX, deltaY, scrollAxis)
-            if (result.bounds) {
-              coordinates = { x: result.bounds.x + result.bounds.width / 2, y: result.bounds.y + result.bounds.height / 2 }
-              boundingBox = result.bounds
-            }
-            scrollData = { scrolled: result.scrolled, scrolledContainer: result.scrolledContainer }
-          } else {
-            await page.mouse.wheel(deltaX, deltaY)
-          }
-        } else {
-          await page.mouse.wheel(deltaX, deltaY)
-        }
-
-        await page.evaluate(`new Promise(resolve => {
-          const t = setTimeout(() => resolve('timeout'), 500);
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            clearTimeout(t);
-            resolve('raf');
-          }));
-        })`)
-
-        return { success: true, coordinates, boundingBox, data: scrollData }
+        return runWebScrollCompound(page, this.lastRefs, action)
       }
 
       case 'waitFor': {
