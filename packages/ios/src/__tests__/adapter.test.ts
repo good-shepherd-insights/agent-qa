@@ -511,12 +511,12 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('execute — openLink', () => {
+  describe('execute — openUniversalLink (re-key of openLink, D-19)', () => {
     it('passes explicit iOS bundle id to the deep-link helper', async () => {
       await adapter.setup({ platform: 'ios' })
 
       const result = await adapter.execute({
-        type: 'openLink',
+        type: 'openUniversalLink',
         url: 'wdio://forms',
         bundleId: 'org.reactjs.native.example.wdiodemoapp',
       })
@@ -529,13 +529,12 @@ describe('IOSPlatformAdapter', () => {
       )
     })
 
-    it('ignores empty appId and uses explicit iOS bundle id for deep links', async () => {
+    it('uses the explicit iOS bundle id for deep links', async () => {
       await adapter.setup({ platform: 'ios' })
 
       const result = await adapter.execute({
-        type: 'openLink',
+        type: 'openUniversalLink',
         url: 'wdio://swipe',
-        appId: '',
         bundleId: 'org.wdiodemoapp',
       })
 
@@ -551,7 +550,7 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios', bundleId: 'org.reactjs.native.example.wdiodemoapp' })
       mockDriver.deepLink.mockClear()
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wdio://drag' })
+      const result = await adapter.execute({ type: 'openUniversalLink', url: 'wdio://drag' })
 
       expect(result.success).toBe(true)
       expect(mockDriver.deepLink).toHaveBeenCalledWith(
@@ -564,19 +563,34 @@ describe('IOSPlatformAdapter', () => {
     it('fails native-scheme links when no iOS bundle id is available', async () => {
       await adapter.setup({ platform: 'ios' })
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wdio://forms' })
+      const result = await adapter.execute({ type: 'openUniversalLink', url: 'wdio://forms' })
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('Missing iOS bundle id')
     })
   })
 
-  describe('execute — waitFor', () => {
-    it('pauses for specified timeout', async () => {
+  describe('execute — waitFor (schema on-modes replace legacy condition/timeout)', () => {
+    it('on:"selector" returns a §7.1 web-only error on native iOS', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'waitFor', condition: 'loading', timeout: 2000 })
+      const result = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 })
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/web|selector/i)
+    })
+
+    it('on:"text" succeeds immediately when the text is already in the page source', async () => {
+      await adapter.setup({ platform: 'ios' })
+      mockDriver.getPageSource.mockResolvedValue('<XCUIElementTypeStaticText value="Ready" />')
+      const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Ready', timeoutMs: 2000 })
       expect(result.success).toBe(true)
-      expect(mockDriver.pause).toHaveBeenCalledWith(2000)
+    })
+
+    it('on:"text" times out with a §7.1 error when the text never appears', async () => {
+      await adapter.setup({ platform: 'ios' })
+      mockDriver.getPageSource.mockResolvedValue('<XCUIElementTypeOther />')
+      const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Never', timeoutMs: 20 })
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/did not appear/i)
     })
   })
 
@@ -589,10 +603,10 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('execute — keypress', () => {
+  describe('execute — keypress (schema mode gate: press-only on mobile)', () => {
     it('sends mapped key code for single key', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(1)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE003'])
@@ -600,7 +614,7 @@ describe('IOSPlatformAdapter', () => {
 
     it('iterates multiple keys in order with KEY_MAP lookup', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace', 'Space', 'ArrowLeft'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace', 'Space', 'ArrowLeft'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(3)
       expect(mockDriver.keys).toHaveBeenNthCalledWith(1, ['\uE003'])
@@ -610,24 +624,25 @@ describe('IOSPlatformAdapter', () => {
 
     it('falls back to raw string when key is not in KEY_MAP', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['x'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['x'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['x'])
     })
 
     it('ignores convertPlatformKeys flag (no-op on mobile)', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'], convertPlatformKeys: false })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'], mode: 'press', convertPlatformKeys: false })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE003'])
     })
   })
 
-  describe('execute — assert', () => {
-    it('returns success (handled by agent core)', async () => {
+  describe('execute — keypress hold/release gate', () => {
+    it('mode:"down"/"up" (key hold/release) returns a §7.1 press-only error', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'assert', condition: 'element visible' })
-      expect(result.success).toBe(true)
+      const up = await adapter.execute({ type: 'keypress', keys: ['Shift'], mode: 'up' })
+      expect(up.success).toBe(false)
+      expect(up.error).toMatch(/press|web-only|hold/i)
     })
   })
 
@@ -669,7 +684,7 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'swipe', direction: 'right' })
+      const result = await adapter.execute({ type: 'swipe', mode: 'direction', direction: 'right', durationMs: 300 })
       expect(result.success).toBe(true)
 
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
@@ -724,7 +739,7 @@ describe('IOSPlatformAdapter', () => {
   describe('execute — coordinate passthrough (tapCoordinate, swipe, pinch, multiTap)', () => {
     it('tapCoordinate passes LLM coords directly to driver', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 100, y: 200 })
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
@@ -732,7 +747,7 @@ describe('IOSPlatformAdapter', () => {
 
     it('tapCoordinate passes arbitrary coords unchanged', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 200, y: 400 })
       expect(result.coordinates).toEqual({ x: 200, y: 400 })
@@ -742,8 +757,9 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       const result = await adapter.execute({
         type: 'swipe',
-        direction: 'up',
-        startX: 100, startY: 200, endX: 300, endY: 400,
+        mode: 'path',
+        from: { x: 100, y: 200 }, to: { x: 300, y: 400 },
+        coordSpace: 'viewport', durationMs: 300,
       })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenNthCalledWith(1, { x: 100, y: 200 })
@@ -754,20 +770,20 @@ describe('IOSPlatformAdapter', () => {
 
     it('pinch center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
     })
 
     it('multiTap center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
     })
 
     it('large coords pass through unchanged (viewport-space contract)', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 800, y: 400 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 800, y: 400, coordSpace: 'viewport' })
       expect(result.coordinates).toEqual({ x: 800, y: 400 })
     })
   })
