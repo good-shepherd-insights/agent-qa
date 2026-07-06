@@ -10,3 +10,11 @@ export type {
   StagnationClass,
   StagnationEvidence,
 } from './progress-evidence'
+export type {
+  AiJudgmentEvidence,
+  AssertValueEvidence,
+  AssertValueOp,
+  ReportedValueEvidence,
+  TerminationEvidence,
+  VerdictSource,
+} from './verb-evidence'

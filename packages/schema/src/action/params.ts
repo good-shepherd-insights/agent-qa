@@ -7,6 +7,16 @@ import type { Ref } from '../primitives/ref'
 // this file widen `ref` to optional and add a `target` descriptor sibling — that is what the
 // planner may SAY. The Plan-04 grounding gate is the converting boundary between the two
 // worlds; adapter contracts must never be loosened to the emission shape (Pitfall 2).
+//
+// EMISSION↔EXECUTION divergence map (Phase 360 alignments — Open Question 1, Pitfall 4):
+//   - `click`/`tap` carry an optional `desiredState?: DesiredState` post-condition on BOTH the
+//     execution shape (web.ts/mobile.ts) and the emission schema — schema `ActionsFor<P>` is
+//     now the single planner-reachable truth (no runner-side intersection widening; no default,
+//     359 D-13). No divergence: the field passes through the gate unchanged.
+//   - `tapCoordinate` execution shape is `{ x, y, coordSpace }` — byte-identical to the emission
+//     zod (index.ts `tapCoordinate`) minus `elementDescription`, which stays EMISSION-ONLY (a
+//     descriptor the grounding gate strips; never reaches the adapter). The prior `{ point: Point }`
+//     execution form is deleted (breaking is sanctioned; no parallel shape).
 export type Fill = {
   ref: Ref
   text: string

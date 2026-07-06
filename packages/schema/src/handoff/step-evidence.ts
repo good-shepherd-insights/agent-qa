@@ -4,6 +4,13 @@ import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
 import type { RecordedActionResult } from '../result/index'
 import type { CycleEvidence, StagnationEvidence } from './progress-evidence'
 import type { SubActionEvidence } from './sub-action-evidence'
+import type {
+  AiJudgmentEvidence,
+  AssertValueEvidence,
+  ReportedValueEvidence,
+  TerminationEvidence,
+  VerdictSource,
+} from './verb-evidence'
 
 export interface VerifierVerdict {
   pass: boolean
@@ -44,4 +51,31 @@ export interface StepEvidence {
     failedDecision: Decision
     recoveringDecision: Decision
   }
+  /**
+   * The `common_reportValue` answer block (D-03). Present when the step reported a value;
+   * masked-before-record. Additive optional — every existing consumer keeps compiling (358-02
+   * `workingMemory` idiom).
+   */
+  reportedValue?: ReportedValueEvidence
+  /**
+   * The typed infeasible termination block (D-04). Present only when a turn declared the step
+   * infeasible via `failureKind`/`failureReason` — distinct from a plain `stepFailed`.
+   */
+  termination?: TerminationEvidence
+  /**
+   * The `assertAI`/`extractAI` judge block (D-05/D-06/D-07/D-09). Present when the step ran an
+   * AI verb through the verifier model lane; carries verdict, rationale, deferred knobs, and the
+   * extractAI global-scope degradation marker.
+   */
+  aiJudgment?: AiJudgmentEvidence
+  /**
+   * The structured `common_assertValue` outcome block (D-10/D-11). Present when the step ran a
+   * deterministic assertValue comparison; masked-before-record.
+   */
+  assertOutcome?: AssertValueEvidence
+  /**
+   * Which path produced this step's verification verdict (D-11): the deterministic assertValue
+   * comparator, the assertAI judge, or the verifier's own model call.
+   */
+  verdictSource?: VerdictSource
 }

@@ -156,6 +156,26 @@ expectTypeOf<Extract<CommonAction, { type: 'executeScript' }>>().not.toEqualType
 expectTypeOf<Extract<MobileAction, { type: 'launchApp' }>>().toEqualTypeOf<never>()
 expectTypeOf<Extract<MobileAction, { type: 'stopApp' }>>().not.toEqualTypeOf<never>()
 
+// Phase 360 (Open Question 1): schema click/tap own the optional `desiredState` post-condition
+// so `ActionsFor<P>` is the single planner-reachable truth — enum replicated from the 359 field.
+expectTypeOf<Extract<WebAction, { type: 'click' }>>().toMatchTypeOf<{
+  type: 'click'
+  desiredState?: 'checked' | 'unchecked' | 'selected' | 'unselected'
+}>()
+expectTypeOf<Extract<MobileAction, { type: 'tap' }>>().toMatchTypeOf<{
+  type: 'tap'
+  desiredState?: 'checked' | 'unchecked' | 'selected' | 'unselected'
+}>()
+// Phase 360 (Pitfall 4): tapCoordinate execution shape is { x, y, coordSpace } — the { point }
+// form is deleted (breaking sanctioned; no parallel shape).
+expectTypeOf<Extract<MobileAction, { type: 'tapCoordinate' }>>().toMatchTypeOf<{
+  type: 'tapCoordinate'
+  x: number
+  y: number
+  coordSpace: 'viewport' | 'content' | 'screen'
+}>()
+expectTypeOf<Extract<MobileAction, { type: 'tapCoordinate' }>>().not.toEqualTypeOf<never>()
+
 const webExec = (((_: never) => {}) as unknown) as ActionExecutor<'web'>
 webExec({ type: 'click', ref: asRef('e1') })
 webExec({ type: 'delay', ms: 10 })
@@ -192,6 +212,14 @@ const emptyTab: Action = { type: 'tab', action: 'switch' }
 const twoFingerTap: Action = { type: 'multiTap', fingers: 2, ref: asRef('e3') }
 const threeFingerTap: Action = { type: 'multiTap', fingers: 3, x: 10, y: 20, coordSpace: 'viewport' }
 
+const coordTap: Action = { type: 'tapCoordinate', x: 10, y: 20, coordSpace: 'viewport' }
+
+// @ts-expect-error tapCoordinate no longer accepts the legacy { point } execution shape.
+const legacyCoordTap: Action = { type: 'tapCoordinate', point: { x: 10, y: 20 } }
+
+const checkedClick: Action = { type: 'click', ref: asRef('e4'), desiredState: 'checked' }
+const selectedTap: Action = { type: 'tap', ref: asRef('e5'), desiredState: 'selected' }
+
 // @ts-expect-error unsupported finger counts are rejected.
 const zeroFingerTap: Action = { type: 'multiTap', fingers: 0, ref: asRef('e3') }
 
@@ -226,6 +254,10 @@ void tabByIndex
 void emptyTab
 void twoFingerTap
 void threeFingerTap
+void coordTap
+void legacyCoordTap
+void checkedClick
+void selectedTap
 void zeroFingerTap
 void oneFingerTap
 void manyFingerTap

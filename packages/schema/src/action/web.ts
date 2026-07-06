@@ -1,7 +1,7 @@
 import type { Point } from '../primitives/point'
 import type { Ref } from '../primitives/ref'
 import type { Fill } from './params'
-import type { NoPlatform, RefTargeted, TabSelector } from './shared'
+import type { DesiredState, NoPlatform, RefTargeted, TabSelector } from './shared'
 
 type WebRefTargeted = RefTargeted & { ref: Ref }
 
@@ -11,7 +11,7 @@ export type WebAction = NoPlatform & (
   | { type: 'navigate'; to: 'forward' }
   | { type: 'navigate'; to: 'reload' }
   | { type: 'waitForUrl'; pattern: string }
-  | ({ type: 'click'; clickDelay?: number } & WebRefTargeted)
+  | ({ type: 'click'; clickDelay?: number; desiredState?: DesiredState } & WebRefTargeted)
   | ({ type: 'doubleClick'; relativePosition?: Point; clickDelay?: number } & WebRefTargeted)
   | ({ type: 'rightClick'; relativePosition?: Point; clickDelay?: number } & WebRefTargeted)
   | ({ type: 'fill' } & Fill)

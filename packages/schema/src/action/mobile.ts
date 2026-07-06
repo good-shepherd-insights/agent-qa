@@ -1,16 +1,15 @@
-import type { Point } from '../primitives/point'
 import type { Ref } from '../primitives/ref'
 import type { Fill, SwipeByDirection, SwipeByPath } from './params'
-import type { NoPlatform, RefTargeted } from './shared'
+import type { DesiredState, NoPlatform, RefTargeted } from './shared'
 
 type MobileRefTargeted = RefTargeted & { ref: Ref }
 
 export type MobileAction = NoPlatform & (
-  | ({ type: 'tap' } & MobileRefTargeted)
+  | ({ type: 'tap'; desiredState?: DesiredState } & MobileRefTargeted)
   | ({ type: 'doubleTap' } & MobileRefTargeted)
   | { type: 'multiTap'; fingers: 2 | 3; ref: Ref }
   | { type: 'multiTap'; fingers: 2 | 3; x: number; y: number; coordSpace: 'viewport' | 'content' | 'screen' }
-  | { type: 'tapCoordinate'; point: Point }
+  | { type: 'tapCoordinate'; x: number; y: number; coordSpace: 'viewport' | 'content' | 'screen' }
   | SwipeByDirection
   | SwipeByPath
   | ({ type: 'longpress'; duration?: number } & MobileRefTargeted)
