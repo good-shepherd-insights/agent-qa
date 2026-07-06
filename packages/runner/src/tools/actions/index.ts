@@ -63,6 +63,12 @@ function action(verb: string, description: string, schema: z.ZodType, meta: Acti
   return actionWithSurface(verb, surface, description, schema, meta)
 }
 
+// Toggle/picker idempotency intent (D-13). Optional with NO default: absence means "no
+// idempotency claim" (a plain gesture). The executor compares it against the element's
+// persisted state at the dispatch seam and skips the gesture when already satisfied (Plan 08).
+const desiredStateSchema = z.enum(['checked', 'unchecked', 'selected', 'unselected']).optional()
+  .describe('For toggles/checkboxes/pickers — the state this tap should ensure; the executor skips the gesture when the element already persists this state. Omit for plain taps.')
+
 export const fillSchema = z.object({
   ref: optionalRef(`Input field ${CURRENT_SCREEN_REF_DESCRIPTION}`),
   target: targetSibling('input field to fill'),
@@ -428,6 +434,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     target: targetSibling('element to click'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
     clickDelay: z.number().optional().describe('Omit when there is no requested delay. Only provide a positive value when the user explicitly asks for a delay.'),
+    desiredState: desiredStateSchema,
   }).strict()),
 
   action('fill', 'Fill text into an input field', fillSchema, { destructive: true }),
@@ -550,6 +557,7 @@ const ACTION_DEFINITIONS: ToolDefinition[] = [
     ref: optionalRef(`Element to tap; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     target: targetSibling('element to tap'),
     elementDescription: ELEMENT_DESCRIPTION_SCHEMA,
+    desiredState: desiredStateSchema,
   }).strict()),
 
   action('swipe', 'Swipe gesture on a mobile device', swipeSchema),
