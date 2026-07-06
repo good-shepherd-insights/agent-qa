@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { WebPlatformAdapter } from '../adapter.js'
 
+// The fill compound (Phase 359) re-reads via inputValue() after typing — the mock echoes the
+// last filled value back so replace-mode fills verify green.
+let lastFilledValue = ''
 const mockClickFn = vi.fn().mockResolvedValue(undefined)
-const mockFillFn = vi.fn().mockResolvedValue(undefined)
+const mockFillFn = vi.fn().mockImplementation((v: string) => { lastFilledValue = v; return Promise.resolve() })
+const mockInputValueFn = vi.fn().mockImplementation(() => Promise.resolve(lastFilledValue))
+const mockGetAttributeFn = vi.fn().mockResolvedValue(null)
+const mockPressFn = vi.fn().mockResolvedValue(undefined)
+const mockPressSequentiallyFn = vi.fn().mockImplementation((v: string) => { lastFilledValue += v; return Promise.resolve() })
 const mockSelectOptionFn = vi.fn().mockResolvedValue(undefined)
 const mockHoverFn = vi.fn().mockResolvedValue(undefined)
 const mockLocatorEvaluateFn = vi.fn().mockResolvedValue(undefined)
@@ -30,6 +37,10 @@ function createMockLocator() {
   return {
     click: mockClickFn,
     fill: mockFillFn,
+    inputValue: mockInputValueFn,
+    getAttribute: mockGetAttributeFn,
+    press: mockPressFn,
+    pressSequentially: mockPressSequentiallyFn,
     selectOption: mockSelectOptionFn,
     hover: mockHoverFn,
     evaluate: mockLocatorEvaluateFn,
@@ -70,6 +81,9 @@ const mockPage = {
   url: vi.fn().mockReturnValue('https://example.com'),
   viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
   getByRole: mockGetByRoleFn,
+  getByText: vi.fn().mockReturnValue({
+    first: () => ({ scrollIntoViewIfNeeded: vi.fn().mockResolvedValue(undefined) }),
+  }),
 }
 
 const mockContext = {
@@ -118,7 +132,12 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     mockGotoFn.mockResolvedValue(undefined)
     mockKeyPressFn.mockResolvedValue(undefined)
     mockClickFn.mockResolvedValue(undefined)
-    mockFillFn.mockResolvedValue(undefined)
+    lastFilledValue = ''
+    mockFillFn.mockImplementation((v: string) => { lastFilledValue = v; return Promise.resolve() })
+    mockInputValueFn.mockImplementation(() => Promise.resolve(lastFilledValue))
+    mockGetAttributeFn.mockResolvedValue(null)
+    mockPressFn.mockResolvedValue(undefined)
+    mockPressSequentiallyFn.mockImplementation((v: string) => { lastFilledValue += v; return Promise.resolve() })
     mockSelectOptionFn.mockResolvedValue(undefined)
     mockHoverFn.mockResolvedValue(undefined)
     mockScreenshotFn.mockResolvedValue(Buffer.from('fake-screenshot'))
@@ -221,7 +240,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     const textbox = state.elements.find(e => e.role === 'textbox')
     expect(textbox).toBeDefined()
 
-    const result = await adapter.execute({ type: 'fill', ref: textbox!.ref, value: 'test@example.com' })
+    const result = await adapter.execute({ type: 'fill', ref: textbox!.ref, text: 'test@example.com', clearMode: 'replace', submit: false })
     expect(result.success).toBe(true)
     expect(mockFillFn).toHaveBeenCalledWith('test@example.com')
   })
@@ -234,179 +253,75 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     expect(mockGotoFn).toHaveBeenCalledWith('https://other.com', { waitUntil: 'domcontentloaded' })
   })
 
-  it('execute scroll action without ref calls page.mouse.wheel()', async () => {
+  it('direction scroll without ref wheel-scrolls a page-sized step and rides scrollUntilVisible metadata', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300 })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
     expect(result.success).toBe(true)
-    expect(mockMouseWheelFn).toHaveBeenCalledWith(0, 300)
-    expect(result.coordinates).toBeUndefined()
-    expect(result.boundingBox).toBeUndefined()
+    // page-sized vertical step = viewport height (720 in the mock); down = positive dy
+    expect(mockMouseWheelFn).toHaveBeenCalledWith(0, 720)
+    expect(result.metadata?.scrollUntilVisible).toBeDefined()
   })
 
-  it('scroll with ref uses page.evaluate with ancestor walking', async () => {
+  it('direction scroll with a container ref uses the scrollWithRef page.evaluate primitive, not mouse.wheel', async () => {
     await adapter.setup({ platform: 'web' })
     await adapter.observe()
 
     mockPageEvaluateFn.mockClear()
     mockMouseMoveFn.mockClear()
     mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-
-    const firstRef = Object.keys(adapter['lastRefs'])[0]
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: firstRef })
-
-    expect(result.success).toBe(true)
-    expect(mockPageEvaluateFn).toHaveBeenCalled()
-    expect(mockMouseMoveFn).not.toHaveBeenCalled()
-    expect(mockMouseWheelFn).not.toHaveBeenCalled()
-  })
-
-  it('scroll with ref always uses page.evaluate regardless of cached bounds', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockLocatorBoundingBoxFn.mockResolvedValue(null)
-    adapter['lastRefs']['e1'] = { role: 'region', name: 'Content', bounds: { x: 10, y: 20, width: 100, height: 200 } }
-    mockMouseMoveFn.mockClear()
-    mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300, ref: 'e1' })
-
-    expect(result.success).toBe(true)
-    expect(mockPageEvaluateFn).toHaveBeenCalled()
-    expect(mockMouseMoveFn).not.toHaveBeenCalled()
-    expect(mockMouseWheelFn).not.toHaveBeenCalled()
-  })
-
-  it('scroll with ref when refData has no bounds still uses page.evaluate', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockLocatorBoundingBoxFn.mockResolvedValue(null)
-    adapter['lastRefs']['e1'] = { role: 'region', name: 'Content' }
-    mockMouseMoveFn.mockClear()
-    mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 400, ref: 'e1' })
-
-    expect(result.success).toBe(true)
-    expect(mockPageEvaluateFn).toHaveBeenCalled()
-    expect(mockMouseWheelFn).not.toHaveBeenCalled()
-    expect(result.coordinates).toBeUndefined()
-  })
-
-  it('scroll with ref passes correct arguments to page.evaluate for ancestor walking', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
+    mockPageEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
     adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1', nth: 0 }
 
-    await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 600, ref: 'e1' })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: 'e1' })
 
-    const evaluateCall = mockPageEvaluateFn.mock.calls.find(
+    expect(result.success).toBe(true)
+    // container scroll runs through scrollWithRef (function-argument page.evaluate), never mouse.wheel/move
+    const scrollCall = mockPageEvaluateFn.mock.calls.find(
       (call: unknown[]) => typeof call[0] === 'function' && Array.isArray(call[1])
     )
-    expect(evaluateCall).toBeDefined()
-    const args = evaluateCall![1] as unknown[]
+    expect(scrollCall).toBeDefined()
+    const args = scrollCall![1] as unknown[]
     expect(args[0]).toBe('listitem')
     expect(args[1]).toBe('Item 1')
-    expect(args[2]).toBe(0)
-    expect(args[3]).toBe(0)
-    expect(args[4]).toBe(600)
     expect(args[5]).toBe('vertical')
+    expect(mockMouseMoveFn).not.toHaveBeenCalled()
+    expect(mockMouseWheelFn).not.toHaveBeenCalled()
   })
 
-  it('scroll with ref returns bounds from page.evaluate result', async () => {
+  it('halfPage direction scroll wheel-scrolls a half-viewport step', async () => {
+    await adapter.setup({ platform: 'web' })
+    mockMouseWheelFn.mockClear()
+
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'up', amount: 'halfPage', retryOpposite: false })
+    expect(result.success).toBe(true)
+    // up = negative dy; half of viewport height 720 = 360
+    expect(mockMouseWheelFn).toHaveBeenCalledWith(0, -360)
+  })
+
+  it('untilVisible scroll rides scrollUntilVisible metadata with the D-04 key set and leaves lastRefs untouched', async () => {
     await adapter.setup({ platform: 'web' })
     await adapter.observe()
+    const refsBefore = { ...adapter['lastRefs'] }
 
-    const fakeBounds = { x: 50, y: 100, width: 200, height: 40 }
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: fakeBounds, scrolledContainer: 'ancestor', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: 'e1' })
+    const result = await adapter.execute({
+      type: 'scroll', mode: 'untilVisible', text: 'Nonexistent Target', direction: 'down', maxSwipes: 2, retryOpposite: true,
+    })
 
     expect(result.success).toBe(true)
-    expect(result.coordinates).toEqual({ x: 150, y: 120 })
-    expect(result.boundingBox).toEqual(fakeBounds)
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number; reversedOnce: boolean; outcome: string } | undefined
+    expect(meta).toBeDefined()
+    expect(typeof meta!.swipes).toBe('number')
+    expect(typeof meta!.reversedOnce).toBe('boolean')
+    expect(['found', 'no-change', 'cap']).toContain(meta!.outcome)
+    // the light probe never re-mints refs (D-03)
+    expect(adapter['lastRefs']).toEqual(refsBefore)
   })
 
-  it('scroll with ref returns diagnostic scrolledContainer field', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Nonexistent' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300, ref: 'e1' })
-
-    expect(result.success).toBe(true)
-    expect(result.coordinates).toBeUndefined()
-    expect(result.boundingBox).toBeUndefined()
-  })
-
-  it('scroll with ref uses function-argument evaluate, not string template', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'button', name: 'Submit' }
-
-    await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 200, ref: 'e1' })
-
-    const scrollCall = mockPageEvaluateFn.mock.calls.find(
-      (call: unknown[]) => Array.isArray(call[1])
-    )
-    expect(scrollCall).toBeDefined()
-    expect(typeof scrollCall![0]).toBe('function')
-  })
-
-  it('scroll with ref surfaces scrolled and scrolledContainer in ActionResult.data', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    const fakeBounds = { x: 50, y: 100, width: 200, height: 40 }
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: fakeBounds, scrolledContainer: 'ancestor', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: 'e1' })
-
-    expect(result.data).toEqual({ scrolled: true, scrolledContainer: 'ancestor' })
-  })
-
-  it('scroll with ref at boundary returns scrolled false in ActionResult.data', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: { x: 10, y: -50, width: 100, height: 30 }, scrolledContainer: 'ancestor', scrolled: false })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: 'e1' })
-
-    expect(result.data).toEqual({ scrolled: false, scrolledContainer: 'ancestor' })
-  })
-
-  it('scroll without ref does not include scroll data in ActionResult', async () => {
+  it('direction scroll without ref does not surface a legacy data block', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300 })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
     expect(result.data).toBeUndefined()
   })
 
@@ -432,7 +347,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     const button = (await adapter.observe()).elements.find(e => e.role === 'button')
     expect(button).toBeDefined()
 
-    const result = await adapter.execute({ type: 'fill', ref: button!.ref, value: 'text' })
+    const result = await adapter.execute({ type: 'fill', ref: button!.ref, text: 'text', clearMode: 'replace', submit: false })
     expect(result.success).toBe(false)
     expect(result.error).toContain('not fillable')
   })
@@ -446,7 +361,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     expect(textbox1).toBeDefined()
 
     // Execute fill on first observation's ref
-    const fillResult = await adapter.execute({ type: 'fill', ref: textbox1!.ref, value: 'hello' })
+    const fillResult = await adapter.execute({ type: 'fill', ref: textbox1!.ref, text: 'hello', clearMode: 'replace', submit: false })
     expect(fillResult.success).toBe(true)
 
     // Change ARIA tree for second observation

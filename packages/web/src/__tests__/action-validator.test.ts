@@ -1,29 +1,30 @@
 import { describe, it, expect } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
 import { validateAction, ActionValidationError } from '../action-validator.js'
 
 describe('validateAction', () => {
   it('fill on textbox → valid', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: 'hello' }, 'textbox')
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: 'hello', clearMode: 'replace', submit: false }, 'textbox')
     expect(result.valid).toBe(true)
   })
 
   it('fill on searchbox → valid', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: 'query' }, 'searchbox')
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: 'query', clearMode: 'replace', submit: false }, 'searchbox')
     expect(result.valid).toBe(true)
   })
 
   it('fill on spinbutton → valid', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: '42' }, 'spinbutton')
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: '42', clearMode: 'replace', submit: false }, 'spinbutton')
     expect(result.valid).toBe(true)
   })
 
   it('fill on combobox → valid (combobox accepts fill for typing)', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: 'option' }, 'combobox')
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: 'option', clearMode: 'replace', submit: false }, 'combobox')
     expect(result.valid).toBe(true)
   })
 
   it('fill on button → invalid with click suggestion', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: 'text' }, 'button')
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: 'text', clearMode: 'replace', submit: false }, 'button')
     expect(result.valid).toBe(false)
     if (!result.valid) {
       expect(result.error).toContain("not fillable")
@@ -33,7 +34,7 @@ describe('validateAction', () => {
   })
 
   it('fill on listbox → invalid, suggests select', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: 'text' }, 'listbox')
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: 'text', clearMode: 'replace', submit: false }, 'listbox')
     expect(result.valid).toBe(false)
     if (!result.valid) {
       expect(result.error).toContain("Cannot fill()")
@@ -85,7 +86,7 @@ describe('validateAction', () => {
   })
 
   it('scroll (no ref) → valid', () => {
-    const result = validateAction({ type: 'scroll', scrollType: 'vertical', value: -500 }, undefined)
+    const result = validateAction({ type: 'scroll', mode: 'direction', direction: 'up', amount: 'page', retryOpposite: false }, undefined)
     expect(result.valid).toBe(true)
   })
 
@@ -100,7 +101,7 @@ describe('validateAction', () => {
   })
 
   it('action on unknown/missing role → valid (permissive)', () => {
-    const result = validateAction({ type: 'fill', ref: 'e1', value: 'test' }, undefined)
+    const result = validateAction({ type: 'fill', ref: asRef('e1'), text: 'test', clearMode: 'replace', submit: false }, undefined)
     expect(result.valid).toBe(true)
   })
 
