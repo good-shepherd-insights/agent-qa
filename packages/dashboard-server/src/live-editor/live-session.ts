@@ -36,6 +36,7 @@ import type {
   StepContext,
   SecretRedactor,
   SecretStore,
+  StorageStatePort,
 } from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
 import { authFromFetch, authFromRuntimeConfig, toModelProfileAndAuth } from '../llm-model-mapping.js'
@@ -237,6 +238,9 @@ export class LiveSession {
   private adapter: PlatformAdapter | null = null
   private planner: LLMPlanner | null = null
   private verifier: LLMVerifier | null = null
+  // D-14 (Phase 360): the run-scoped storage-state store, constructed lazily on first use and
+  // rooted at the session's `.agent-qa` runtime dir (the FsStorageStateStore rooting idiom).
+  private storageStateStore: StorageStatePort | null = null
   private model: LanguageModel | null = null
   private variableStore: VariableStore | null = null
   private previousSteps: { instruction: string; outcome: string; reasoning?: string; plannedAction?: string; verifierResponse?: string }[] = []
@@ -850,6 +854,20 @@ export class LiveSession {
   // Inner step execution — no gating. Callers must own the executing/status
   // lifecycle (executeStepCommand for single steps, executeTestCommand for
   // the per-test loop that runs many steps under one outer gate).
+  // D-14 (Phase 360): lazily construct the run-scoped storage-state store, rooted at the session's
+  // `.agent-qa` runtime dir. All fs writes live in runner-local (validate:arch storageNeutral);
+  // the loop records only { name, fingerprint }. Absent configPath falls back to the cwd root.
+  private async getStorageStateStore(): Promise<StorageStatePort> {
+    let store = this.storageStateStore
+    if (!store) {
+      const { FsStorageStateStore } = await import('@vostride/agent-qa-runner-local')
+      const root = resolvePath(this.deps.configPath ? dirname(this.deps.configPath) : process.cwd(), '.agent-qa')
+      store = new FsStorageStateStore({ root })
+      this.storageStateStore = store
+    }
+    return store
+  }
+
   private async executeStepInternal(
     stepInstruction: string,
     stepIndex: number | undefined,
@@ -894,6 +912,7 @@ export class LiveSession {
         abortSignal: this.abortController.signal,
         secretStore: this.secretStore,
         secretRedactor: this.secretRedactor,
+        storageState: await this.getStorageStateStore(),
       }
 
       const allVars = this.variableStore!.getAll()

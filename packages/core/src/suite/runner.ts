@@ -41,6 +41,11 @@ export interface RunSuiteConfig {
    * it once at suite end.
    */
   workingMemory?: RunTestConfig['workingMemory']
+  /**
+   * D-14 storage-state store (Phase 360). ONE run-scoped store spans all suite member tests and is
+   * threaded into each test's runner loop; the CLI constructs it at the composition root.
+   */
+  storageState?: RunTestConfig['storageState']
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -419,6 +424,7 @@ export async function runSuite(
         cache: config.cache,
         masking: config.masking,
         workingMemory: config.workingMemory,
+        storageState: config.storageState,
         plannerModel: config.plannerModel,
         verifierModel: config.verifierModel,
         reporters: config.reporters,

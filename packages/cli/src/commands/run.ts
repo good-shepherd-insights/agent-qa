@@ -74,6 +74,19 @@ async function buildActionCacheContext(params: {
   return { cache, masking }
 }
 
+/**
+ * Composition-root construction of the run-scoped storage-state store (Phase 360, D-14). Builds
+ * the runner-local `FsStorageStateStore` rooted at the run's `.agent-qa` runtime dir (the
+ * FsActionCache rooting idiom) — the raw-but-local auth-persistence home under
+ * `.agent-qa/storage-states/`. Injected into the runner loop's `storageState` port; all fs writes
+ * stay in runner-local (validate:arch storageNeutral).
+ */
+async function buildStorageStateStore(configDir: string): Promise<import('@vostride/agent-qa-runner').StorageStatePort> {
+  const { FsStorageStateStore } = await import('@vostride/agent-qa-runner-local')
+  const { resolve } = await import('node:path')
+  return new FsStorageStateStore({ root: resolve(configDir, '.agent-qa') })
+}
+
 let _appiumManager: InstanceType<typeof import('@vostride/agent-qa-dashboard').AppiumManager> | null = null
 
 async function acquireAppium(logLevel: string): Promise<string | undefined> {
@@ -1407,6 +1420,11 @@ async function executeSuites(
     // into each test's runner loop and flushed redacted once at suite end (finally below).
     const suiteWorkingMemory = new WorkingMemoryStore(variableContext?.secretRedactor)
 
+    // D-14 (Phase 360): ONE run-scoped storage-state store (raw-but-local auth persistence) rooted
+    // at the run's `.agent-qa` dir, mirroring the FsActionCache rooting idiom. All fs writes live in
+    // runner-local (validate:arch storageNeutral); the runner loop records only { name, fingerprint }.
+    const suiteStorageState = await buildStorageStateStore(configDir)
+
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     let suiteMemoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
@@ -1476,6 +1494,7 @@ async function executeSuites(
       cache: suiteEffectiveCacheEnabled ? actionCache : undefined,
       masking: suiteEffectiveCacheEnabled ? actionMasking : undefined,
       workingMemory: suiteWorkingMemory,
+      storageState: suiteStorageState,
       plannerModel,
       verifierModel,
       reporters,
@@ -2004,6 +2023,10 @@ export function createRunCommand(): Command {
         // redacted at run end (finally-positioned below).
         const singleWorkingMemory = new WorkingMemoryStore(runtimeSecrets.secretRedactor)
 
+        // D-14 (Phase 360): one run-scoped storage-state store per run, rooted at the run's
+        // `.agent-qa` dir (the FsActionCache rooting idiom); threaded into the loop's storageState port.
+        const singleStorageState = await buildStorageStateStore(configDir)
+
         const reporters: import('@vostride/agent-qa-core').Reporter[] = []
         if (reporterSelection.console) {
           reporters.push(new ConsoleReporter({ verbose: false, logLevel: effectiveLogLevel }))
@@ -2486,6 +2509,7 @@ export function createRunCommand(): Command {
               cache: effectiveCacheEnabled ? actionCache : undefined,
               masking: effectiveCacheEnabled ? actionMasking : undefined,
               workingMemory: singleWorkingMemory,
+              storageState: singleStorageState,
               recording: testRecording,
               plannerConfig,
               timeouts: testTimeouts,

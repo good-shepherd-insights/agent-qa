@@ -31,6 +31,7 @@ import type {
   Action as SchemaAction,
   ActionAnnotation,
   ActionResult as SchemaActionResult,
+  AssertValueOp,
   CacheKey,
   Decision,
   ElementInfo,
@@ -40,6 +41,7 @@ import type {
   ScreenState,
   StagnationEvidence,
   TargetDescriptor,
+  VerdictSource,
   VerifierVerdict,
   Viewport,
   WorkingMemoryEntry,
@@ -66,7 +68,15 @@ import {
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
 import { settle } from './settle.js'
 import { desiredStateSatisfied } from '../compound/idempotency.js'
-import { readIdempotentNoopMeta } from '../compound/metadata.js'
+import {
+  readIdempotentNoopMeta,
+  readReportedValueMeta,
+  readUniqueValueMeta,
+  readAiJudgmentMeta,
+  readAssertValueOutcomeMeta,
+} from '../compound/metadata.js'
+import { mintReportedValue, mintUniqueValue, defaultUniqueValueGenerator } from '../compound/dispatch-mint.js'
+import { compareAssertValue } from '../compound/assert-value.js'
 import {
   evaluateLocalEffect,
   toLocalEffectEvidence,
@@ -175,6 +185,12 @@ export async function executeStep(
   let totalCompletionTokens = 0
   let lastPlannedAction: Action | undefined
 
+  // D-08 (Phase 360): a completing plan that dispatched an assertAI/extractAI step never
+  // writes the cache (the runtime half of the CacheablePlannedAction type exclusion). This
+  // one-shot latch threads the bypass stamp into finalize so cacheStatus emits 'bypass' —
+  // orthogonal to the classifyStep NonCacheableStepInput signal above.
+  let cacheBypass = false
+
   // D-15c self-heal boundary carry: the previous failed sub-action's index +
   // Decision. On the next iteration's observation (which reveals the failure), that
   // observation is attached as the failed sub-action's stateAfter AND is naturally the
@@ -214,7 +230,7 @@ export async function executeStep(
         ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
       )
     }
-    const evidence = recorder.finalize(verdict, 0, stepInstruction, { nonCacheable })
+    const evidence = recorder.finalize(verdict, 0, stepInstruction, { nonCacheable: nonCacheable || cacheBypass })
     // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
     // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
     const subActions = projectLegacyTrace(evidence)
@@ -644,6 +660,11 @@ export async function executeStep(
     const cacheCompletingPlan = async (): Promise<void> => {
       if (!cacheActive || cached || !cacheKey || !ports.cache) return
       if (normalizedAction.type === 'setVariable') return
+      // D-08 write guard (Phase 360): an AI-assertion plan is never persisted. Narrowing the
+      // action away from the assertAI/extractAI members IS the CacheablePlannedAction typecheck
+      // proof (Plan 09's Exclude type) — buildCachedPlanValue below receives only cacheable
+      // members without a cast, and the bypass stamp threads through finalize.
+      if (normalizedAction.type === 'assertAI' || normalizedAction.type === 'extractAI') return
       await ports.cache.set(cacheKey, buildCachedPlanValue({
         plannedActions: [normalizedAction],
         elements: screenState.elements,
@@ -664,6 +685,14 @@ export async function executeStep(
         cached: false,
         grounding,
       })
+      // D-04 fork (Phase 360): a `failureKind:'infeasible'` turn is a machine-distinguishable
+      // terminal outcome — record the typed StepEvidence.termination block ({kind,reason}) and
+      // return a distinct failure verdict. A plain stepFailed (no failureKind) stays byte-unchanged.
+      if (rawPlan.failureKind === 'infeasible') {
+        const reason = redactSecretValue(rawPlan.failureReason ?? '', ports.secretRedactor)
+        recorder.recordTermination({ kind: 'infeasible', reason })
+        return failure(`Step declared infeasible: ${reason}`)
+      }
       return failure(`Step failed: ${reasoning}`)
     }
 
@@ -676,9 +705,172 @@ export async function executeStep(
     const idempotentNoop = gateForcedError === undefined
       ? desiredStateSatisfied(normalizedAction, screenState)
       : undefined
+    // Phase 360 dispatch verbs siblinged at the ONE chokepoint (357 D-08 law): the runner-mint
+    // termination verbs (reportValue/uniqueValue), the AI judge lane (assertAI/extractAI), the
+    // structured assertValue read→compare lane, and the storage-state strip/inject seam all
+    // decide here — no second pre-adapter decision site. Helper logic lives in the Plan 08/09
+    // compound + verifier modules; only the branch decisions live here.
+    const dispatchVerb = normalizedAction.type
+    // MASK-FUT-01 boundary (identity pre-362): value-bearing evidence is masked BEFORE record,
+    // the recordWorkingMemory idiom. `action` is already secret-redacted at this point, so this
+    // is the additional masking layer, not the secret guard.
+    const maskValue = ports.masking?.mask ?? ((value: string) => value)
     if (gateForcedError !== undefined) {
       execResult = { success: false, error: gateForcedError }
       execError = gateForcedError
+    } else if (dispatchVerb === 'reportValue') {
+      // D-01/D-02/D-03: a platform-less answer verb mints a success ActionResult here — never
+      // adapter.execute. The answer surfaces on metadata.reportedValue and lands masked-before-
+      // record in StepEvidence.reportedValue. reportValue is NON-terminal (D-02): the plan-field
+      // envelope (stepComplete/stepFailed) stays the sole termination mechanism.
+      const reportedValue = maskValue(String((action as { value?: unknown }).value ?? ''))
+      execResult = mintReportedValue({ value: reportedValue })
+      execError = undefined
+      recorder.recordReportedValue({ value: reportedValue })
+    } else if (dispatchVerb === 'uniqueValue') {
+      // D-16: mint prefix + injectable-generator suffix here (zero adapter.execute), then auto-write
+      // the minted value into run-scoped working memory keyed by the prefix (kind extracted-value /
+      // provenance toolResult). Cache replay re-enters this branch and re-mints fresh (uniqueness
+      // is the semantic) — no special-casing.
+      const prefix = String((action as { prefix?: unknown }).prefix ?? '')
+      const minted = mintUniqueValue({ prefix }, ports.uniqueValueGenerator ?? defaultUniqueValueGenerator)
+      execResult = minted
+      execError = undefined
+      const uv = readUniqueValueMeta(minted)
+      if (uv) {
+        ports.workingMemory?.capture(
+          [{ key: prefix, value: maskValue(uv.value), kind: 'extracted-value', provenance: 'toolResult', stepIndex: actionIndex }],
+          { step: actionIndex },
+        )
+      }
+    } else if (dispatchVerb === 'assertAI' && ports.verifier?.judgeClaim) {
+      // D-05/D-06/D-09: route the claim through the verifier's injected model lane exactly once —
+      // never adapter.execute, never a second judgment. A true verdict is a success result carrying
+      // metadata.aiJudgment; a false verdict is an honest §7.1 self-correcting error the planner
+      // mediates (no internal retry). Requested-but-deferred M3/M4 knobs ride the judgment evidence.
+      cacheBypass = true
+      const av = action as { claim?: unknown; consensus?: unknown; video?: unknown; effort?: unknown }
+      const claim = String(av.claim ?? '')
+      const judgment = await withAbort(
+        ports.verifier.judgeClaim(claim, screenState, { abortSignal: ports.abortSignal, screenshot: context.screenshot }),
+        ports.abortSignal,
+      )
+      const rationale = redactSecretValue(judgment.rationale, ports.secretRedactor)
+      const requested: { consensus?: number; video?: boolean; effort?: 'low' | 'medium' | 'high' } = {}
+      if (typeof av.consensus === 'number') requested.consensus = av.consensus
+      if (typeof av.video === 'boolean') requested.video = av.video
+      if (av.effort === 'low' || av.effort === 'medium' || av.effort === 'high') requested.effort = av.effort
+      recorder.recordAiJudgment({ verb: 'assertAI', verdict: judgment.verdict, rationale: maskValue(rationale), requested })
+      if (judgment.verdict) {
+        execResult = { success: true, metadata: { aiJudgment: { verb: 'assertAI', verdict: true } } }
+        execError = undefined
+      } else {
+        const selfCorrecting = `Claim "${claim}" judged false: ${rationale} — re-observe the screen or declare the step failed via stepFailed.`
+        execResult = { success: false, error: selfCorrecting, metadata: { aiJudgment: { verb: 'assertAI', verdict: false } } }
+        execError = selfCorrecting
+      }
+    } else if (dispatchVerb === 'extractAI' && ports.verifier?.extractData) {
+      // D-07: extract through the same judge lane; write extracted fields into run-scoped working
+      // memory. scope 'global' degrades to the SAME run-scoped write with a degradedScope marker
+      // (durable memory is M2's curator, no write port exists in M1) — never an error.
+      cacheBypass = true
+      const av = action as { query?: unknown; scope?: unknown }
+      const query = String(av.query ?? '')
+      const schema = (normalizedAction as { schema?: unknown }).schema
+      const extracted = await withAbort(
+        ports.verifier.extractData(query, screenState, { schema, abortSignal: ports.abortSignal, screenshot: context.screenshot }),
+        ports.abortSignal,
+      )
+      const entries: WorkingMemoryEntry[] = Object.entries(extracted).map(([key, value]) => ({
+        key,
+        value: maskValue(redactSecretValue(String(value), ports.secretRedactor)),
+        kind: 'extracted-value',
+        provenance: 'toolResult',
+        stepIndex: actionIndex,
+      }))
+      if (entries.length > 0) ports.workingMemory?.capture(entries, { step: actionIndex })
+      const degradedScope = av.scope === 'global'
+      recorder.recordAiJudgment({ verb: 'extractAI', ...(degradedScope ? { degradedScope: true } : {}) })
+      execResult = { success: true, metadata: { aiJudgment: { verb: 'extractAI' }, extracted } }
+      execError = undefined
+    } else if (dispatchVerb === 'assertValue') {
+      // D-10 "adapter reads, runner judges": dispatch the source read to the adapter ONCE (it
+      // returns the raw source value in data, or a §7.1 source-unavailable error), then apply the
+      // pure comparator and mint the outcome. A failing comparison is an honest §7.1 failure the
+      // planner mediates — a passing outcome feeds the D-11 verifier short-circuit below.
+      const read = await executeResolvedAction(normalizedAction)
+      if (!read.result.success) {
+        execResult = read.result
+        execError = read.error
+      } else {
+        const av = action as { source?: unknown; expr?: unknown; op?: unknown; expected?: unknown }
+        const source = typeof av.source === 'string' ? av.source : (av.expr !== undefined ? 'expr-result' : 'unknown')
+        const rawActual = read.result.data
+        const actual = rawActual === null || rawActual === undefined ? (rawActual as null | undefined) : String(rawActual)
+        const expected = typeof av.expected === 'string' ? av.expected : undefined
+        const outcome = compareAssertValue({ source, op: av.op as AssertValueOp, expected, actual })
+        recorder.recordAssertOutcome({
+          source: outcome.source,
+          op: outcome.op,
+          passed: outcome.passed,
+          ...(outcome.expected !== undefined ? { expected: outcome.expected } : {}),
+          ...(outcome.actual !== undefined ? { actual: outcome.actual } : {}),
+        })
+        if (outcome.passed) {
+          execResult = { success: true, metadata: { assertValueOutcome: outcome } }
+          execError = undefined
+        } else {
+          const failMsg = `assertValue on source "${source}" (${outcome.op}) did not hold — re-observe or declare the step failed via stepFailed.`
+          execResult = { success: false, error: failMsg, metadata: { assertValueOutcome: outcome } }
+          execError = failMsg
+        }
+      }
+    } else if (dispatchVerb === 'storageState') {
+      // D-14 secret-template idiom (Pitfall 2): the RECORDED and EXECUTED objects DIFFER. save →
+      // the adapter returns the raw blob; strip it from the recorded result and hand it to the
+      // storageState port, recording only { name, fingerprint }. restore → load the blob from the
+      // port and inject it into the EXECUTED action only; the recorded action carries just the name.
+      const ss = action as { op?: unknown; name?: unknown }
+      const op = ss.op
+      const name = String(ss.name ?? '')
+      if (op === 'save') {
+        const read = await executeResolvedAction(normalizedAction)
+        if (!read.result.success) {
+          execResult = read.result
+          execError = read.error
+        } else if (!ports.storageState) {
+          const unavailable = `storageState persistence unavailable: no storage-state store is bound to this run.`
+          execResult = { success: false, error: unavailable }
+          execError = unavailable
+        } else {
+          // Strip-before-record: the raw blob in read.result.data NEVER reaches evidence.
+          const ref = await ports.storageState.save(name, read.result.data)
+          execResult = { success: true, metadata: { storageState: { name: ref.name, fingerprint: ref.fingerprint } } }
+          execError = undefined
+        }
+      } else {
+        // restore
+        if (!ports.storageState) {
+          const unavailable = `storageState persistence unavailable: no storage-state store is bound to this run.`
+          execResult = { success: false, error: unavailable }
+          execError = unavailable
+        } else {
+          const blob = await ports.storageState.load(name)
+          if (blob === undefined) {
+            const missing = `storageState "${name}" not found under the run's .agent-qa/storage-states directory.`
+            execResult = { success: false, error: missing }
+            execError = missing
+          } else {
+            // Inject the blob into the EXECUTED action only; the recorded action carries just the name.
+            const executed = { ...(normalizedAction as unknown as Record<string, unknown>), state: blob } as unknown as Action
+            const read = await executeResolvedAction(executed)
+            execResult = read.result.success
+              ? { success: true, metadata: { storageState: { name } } }
+              : { success: false, ...(read.result.error !== undefined ? { error: read.result.error } : {}) }
+            execError = read.error
+          }
+        }
+      }
     } else if (idempotentNoop !== undefined) {
       // D-14 pre-dispatch idempotency short-circuit at the ONE chokepoint before adapter.execute.
       // Judged ONLY on `screenState` — the SAME settled observation the gate grounded against
@@ -810,6 +1002,30 @@ export async function executeStep(
     // 5. VERIFY — only when the planner signals stepComplete (three-outcome strategy).
     let verifierReasoning: string | undefined
     if (rawPlan.stepComplete && ports.verifier) {
+      // D-11 deterministic short-circuit BEFORE any verifier model call. A step concluded by an
+      // assertValue outcome takes a deterministic verdict from the comparator (zero model call,
+      // verdictSource 'assert-value'); a step concluded by an assertAI judgment adopts the judge
+      // verdict (no second judgment, verdictSource 'assert-ai'). Every other step falls through to
+      // the verifier's own model call (verdictSource 'verifier-model'). The source is recorded so
+      // adopted verdicts are auditable (T-360-09). A FAILING assertValue never reaches here — it
+      // set execError above and routed into the execution-failure branch.
+      const assertOutcome = readAssertValueOutcomeMeta(execResult)
+      const aiJudgment = readAiJudgmentMeta(execResult)
+      if (assertOutcome || aiJudgment) {
+        const verdictSource: VerdictSource = assertOutcome ? 'assert-value' : 'assert-ai'
+        const pass = assertOutcome ? assertOutcome.passed : (aiJudgment?.verdict ?? true)
+        recorder.recordVerdictSource(verdictSource)
+        const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+        void idx
+        maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
+        pendingSelfHeal = undefined
+        await cacheCompletingPlan()
+        return pass
+          ? finish('passed', { pass: true, reasoning: 'Step verified deterministically from the assertion outcome' })
+          : finish('failed', { pass: false, reasoning: 'The assertion outcome did not hold' }, 'Assertion did not hold')
+      }
+      // No assertion outcome — the verifier's own model call produces the verdict.
+      recorder.recordVerdictSource('verifier-model')
       // D-15b: the verifier's own re-observation IS stateAfter. (The retired-`assert`
       // afterState reuse special-case was deleted with the verb — D-19, Phase 360.)
       let afterState: ScreenState
@@ -922,15 +1138,21 @@ export async function executeStep(
     // (D-05). Its already-recorded sub-action index lets the localEffect block land by
     // construction. Execution failures never reach here — they route to the failure-context
     // flow above and set no carry (no oracle, no double-count).
-    const carryAnchor = deriveEffectAnchor(action, screenState.elements)
-    progressCarry = {
-      action,
-      anchor: carryAnchor,
-      anchorKey: carryAnchor ? buildAnchorKey(carryAnchor) : undefined,
-      stateBefore: screenState,
-      prevHash: settledHash,
-      actionResult: execResult,
-      evidenceIndex: continuingIdx,
+    // Pitfall 5: a screen-neutral mint/assertion already got its eager effect-achieved verdict in
+    // recordSuccess; it must NOT set a progressCarry (the oracle would overwrite that verdict with
+    // a false hash-fallback no-progress next iteration, feeding the stagnation ladder/revisitation
+    // window). Gesturing verbs carry as before.
+    if (!carriesMintOrAssertionMeta(execResult)) {
+      const carryAnchor = deriveEffectAnchor(action, screenState.elements)
+      progressCarry = {
+        action,
+        anchor: carryAnchor,
+        anchorKey: carryAnchor ? buildAnchorKey(carryAnchor) : undefined,
+        stateBefore: screenState,
+        prevHash: settledHash,
+        actionResult: execResult,
+        evidenceIndex: continuingIdx,
+      }
     }
     // Non-completing decision — not cached (only the step-completing plan is persisted).
   }
@@ -1181,8 +1403,27 @@ function recordSuccess(
       actionResult: execResult,
     })
     recorder.attachLocalEffect(index, toLocalEffectEvidence(localEffect))
+  } else if (carriesMintOrAssertionMeta(execResult)) {
+    // Pitfall 5: a screen-neutral mint/assertion (reportValue/uniqueValue/assertAI/extractAI/
+    // assertValue) gestures nothing on the screen, so the differential oracle's hash-fallback
+    // row would read it as no-progress and feed the 358 stagnation ladder as a false stall. It
+    // is effect-achieved BY CONSTRUCTION — attach the verdict eagerly (the idempotentNoop
+    // precedent) so it never accrues stagnation, and skip the progressCarry entirely below.
+    recorder.attachLocalEffect(index, toLocalEffectEvidence({ verbClass: action.type, oracle: 'hash-fallback', achieved: true }))
   }
   return index
+}
+
+// A screen-neutral mint/assertion result carries one of the Phase-360 dispatch metadata blocks
+// (Pitfall 5). Such an action never gestured the screen, so it must NOT feed the 358 progress
+// oracle / revisitation window — its effect is achieved by construction.
+function carriesMintOrAssertionMeta(execResult: ActionResult): boolean {
+  return (
+    readReportedValueMeta(execResult) !== undefined ||
+    readUniqueValueMeta(execResult) !== undefined ||
+    readAiJudgmentMeta(execResult) !== undefined ||
+    readAssertValueOutcomeMeta(execResult) !== undefined
+  )
 }
 
 function maybeRecordSelfHeal(

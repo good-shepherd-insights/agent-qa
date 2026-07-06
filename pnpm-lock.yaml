@@ -314,6 +314,9 @@ importers:
       '@vostride/agent-qa-runner':
         specifier: workspace:*
         version: link:../runner
+      '@vostride/agent-qa-runner-local':
+        specifier: workspace:*
+        version: link:../runner-local
       '@vostride/agent-qa-web':
         specifier: workspace:*
         version: link:../web

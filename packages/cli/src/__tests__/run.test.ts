@@ -39,6 +39,7 @@ const {
   mockResolveDashboardDbPath,
   mockGenerateRunId,
   mockFsActionCache,
+  mockFsStorageStateStore,
   mockResolveBranch,
   mockAnalyticsRunReporterInstance,
   mockCreateAnalyticsRunReporter,
@@ -93,6 +94,7 @@ const {
     mockResolveDashboardDbPath: vi.fn(),
     mockGenerateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
     mockFsActionCache: vi.fn(function () { return { get: vi.fn(), set: vi.fn(), invalidate: vi.fn() } }),
+    mockFsStorageStateStore: vi.fn(function () { return { save: vi.fn(), load: vi.fn() } }),
     mockResolveBranch: vi.fn(() => ({ currentBranch: 'main', defaultBranch: 'main' })),
     mockAnalyticsRunReporterInstance: analyticsRunReporter,
     mockCreateAnalyticsRunReporter: vi.fn(function () { return analyticsRunReporter }),
@@ -120,6 +122,7 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
 
 vi.mock('@vostride/agent-qa-runner-local', () => ({
   FsActionCache: mockFsActionCache,
+  FsStorageStateStore: mockFsStorageStateStore,
   resolveBranch: mockResolveBranch,
 }))
 
@@ -657,6 +660,7 @@ beforeEach(() => {
   mockPrintAgentQaUpdateNoticeIfNeeded.mockReset()
   mockPrintAgentQaUpdateNoticeIfNeeded.mockResolvedValue(undefined)
   mockFsActionCache.mockClear()
+  mockFsStorageStateStore.mockClear()
   mockResolveBranch.mockClear()
   mockResolveTarget.mockReturnValue({
     name: 'test-app',

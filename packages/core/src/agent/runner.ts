@@ -13,7 +13,7 @@ import type { Reporter, StepEventContext } from '../reporter/types.js'
 import { MultiReporter } from '../reporter/types.js'
 import { captureFailureScreenshot } from '../reporter/screenshot.js'
 import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort, executeStep } from '@vostride/agent-qa-runner'
-import type { LoopPorts, StepContext as RunnerStepContext, WorkingMemoryPort } from '@vostride/agent-qa-runner'
+import type { LoopPorts, StepContext as RunnerStepContext, WorkingMemoryPort, StorageStatePort } from '@vostride/agent-qa-runner'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
@@ -65,6 +65,13 @@ export interface RunTestConfig {
    * Phase 361 rebinds this seam onto `RunSession` without touching core.
    */
   workingMemory?: WorkingMemoryPort
+  /**
+   * D-14 storage-state persistence store (Phase 360). The runner-local `FsStorageStateStore` is
+   * constructed run-scoped at the CLI composition root (rooted at the run's `.agent-qa` dir) and
+   * threaded straight through into `LoopPorts.storageState` — core stays storage-neutral and never
+   * builds it. Absent ⇒ a `storageState` action degrades to a §7.1 error (never throws, D-05).
+   */
+  storageState?: StorageStatePort
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -515,6 +522,8 @@ export async function runTest(
         masking: config.masking,
         // WM-01: the run-scoped store rides through as a structural port (361 rebind seam).
         workingMemory: config.workingMemory,
+        // D-14: the run-scoped storage-state store threads straight through (core storage-neutral).
+        storageState: config.storageState,
         compressor: new CoreScreenshotCompressor(config.logger?.createScopedLogger('adapter')),
         safetyHooks: config.safetyHooks,
         plannerConfig: config.plannerConfig,

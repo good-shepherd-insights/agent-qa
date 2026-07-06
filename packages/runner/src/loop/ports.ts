@@ -12,6 +12,8 @@ import type { PlatformAdapter } from '../platform.js'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
 import type { StepPhaseEvent } from '../result.js'
 import type { ActionPlanCache } from '../cache/port.js'
+import type { StorageStatePort } from '../storage-state/port.js'
+import type { UniqueValueGenerator } from '../compound/dispatch-mint.js'
 import type { Planner, Verifier, PlannerConfig } from './types.js'
 
 /** Compression output — v1's CompressResult shape (Pitfall 9). */
@@ -160,6 +162,19 @@ export interface LoopPorts {
    * empty served set — it never throws (D-05 degrade-when-absent).
    */
   workingMemory?: WorkingMemoryPort
+  /**
+   * D-14 storage-state persistence seam (Phase 360). The runner-local `FsStorageStateStore` is
+   * constructed run-scoped at the CLI/dashboard composition roots and injected here; the seam
+   * strips the raw blob from the recorded result and records only `{ name, fingerprint }`. Unbound
+   * ⇒ a `storageState` action degrades to a §7.1 persistence-unavailable error (never throws, D-05).
+   */
+  storageState?: StorageStatePort
+  /**
+   * D-16 injectable unique-value suffix generator (353 K=2 determinism). Absent ⇒ the seam uses
+   * `defaultUniqueValueGenerator` (timestamp + entropy). Tests inject a fixed generator for
+   * deterministic minted values; production leaves it unbound.
+   */
+  uniqueValueGenerator?: UniqueValueGenerator
   /**
    * D-06 optional pre-prompt blob-guard — bounds a single one-shot structured tool-output
    * value before it lands in the sub-action history / next planning turn. A pure signature
