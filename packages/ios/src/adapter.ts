@@ -48,6 +48,18 @@ const IOS_NATIVE_SELECT_TYPES = new Set([
 ])
 const IOS_NATIVE_SELECT_ROLES = new Set(['pickerwheel', 'spinbutton', 'combobox'])
 
+// pressButton: schema button → XCUITest hardware name. Volume buttons are real-devices-only.
+const IOS_BUTTON_NAME: Record<'home' | 'volumeUp' | 'action', string> = {
+  home: 'home',
+  volumeUp: 'volumeup',
+  action: 'action',
+}
+const VOLUME_BUTTONS = new Set<string>(['volumeUp'])
+
+// pickerSelect index lane: bounded relative-stepping cap (OQ2). An index beyond this is a §7.1
+// range error; reaching a valid index resets to the top with this many `previous` steps first.
+const MAX_PICKER_INDEX = 20
+
 // WebDriverIO's action().perform() calls DELETE /session/{id}/actions (releaseActions)
 // after performing. BrowserStack iOS doesn't support this endpoint and throws
 // "resource not found" errors. This wrapper swallows that specific error.
@@ -927,24 +939,31 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
       case 'swipe': {
         const { width, height } = await driver.getWindowSize()
-        let sx = Math.round(width / 2)
-        let sy = Math.round(height / 2)
 
-        if (action.ref) {
-          const { center } = resolver.resolve(action.ref)
-          sx = Math.round(center.x)
-          sy = Math.round(center.y)
+        // Schema shapes: SwipeByPath drives explicit from/to points; SwipeByDirection computes a
+        // page-sized gesture from the (optional ref) center (legacy startX..endY reads retired).
+        let pts: { startX: number; startY: number; endX: number; endY: number }
+        if (action.mode === 'path') {
+          pts = {
+            startX: Math.round(action.from.x),
+            startY: Math.round(action.from.y),
+            endX: Math.round(action.to.x),
+            endY: Math.round(action.to.y),
+          }
+        } else {
+          let sx = Math.round(width / 2)
+          let sy = Math.round(height / 2)
+          if (action.ref) {
+            const { center } = resolver.resolve(action.ref)
+            sx = Math.round(center.x)
+            sy = Math.round(center.y)
+          }
+          const distance = Math.round(height * 0.6)
+          pts = computeSwipe(sx, sy, action.direction, distance)
         }
-
-        const distance = Math.round(height * 0.6)
-        const pts = (action.startX !== undefined && action.startY !== undefined &&
-                     action.endX !== undefined && action.endY !== undefined)
-          ? { startX: action.startX, startY: action.startY,
-              endX: action.endX, endY: action.endY }
-          : computeSwipe(sx, sy, action.direction, distance)
         warnIfOutOfBounds({ x: pts.startX, y: pts.startY }, { width, height }, 'swipe')
         warnIfOutOfBounds({ x: pts.endX, y: pts.endY }, { width, height }, 'swipe')
-        const swipeDuration = action.duration ?? 300
+        const swipeDuration = action.durationMs
 
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: pts.startX, y: pts.startY })
@@ -964,13 +983,14 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         let pcx = Math.round(pinchW / 2)
         let pcy = Math.round(pinchH / 2)
 
-        if (action.ref) {
+        if ('ref' in action) {
           const { center } = resolver.resolve(action.ref)
           pcx = Math.round(center.x)
           pcy = Math.round(center.y)
+        } else {
+          pcx = action.x
+          pcy = action.y
         }
-        if (action.x !== undefined) pcx = action.x
-        if (action.y !== undefined) pcy = action.y
         warnIfOutOfBounds({ x: pcx, y: pcy }, { width: pinchW, height: pinchH }, 'pinch')
 
         const { finger1Start, finger1End, finger2Start, finger2End } = computePinch(pcx, pcy, action.scale)
@@ -996,13 +1016,14 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         let mtcx = Math.round(mtW / 2)
         let mtcy = Math.round(mtH / 2)
 
-        if (action.ref) {
+        if ('ref' in action) {
           const { center } = resolver.resolve(action.ref)
           mtcx = Math.round(center.x)
           mtcy = Math.round(center.y)
+        } else {
+          mtcx = action.x
+          mtcy = action.y
         }
-        if (action.x !== undefined) mtcx = action.x
-        if (action.y !== undefined) mtcy = action.y
         warnIfOutOfBounds({ x: mtcx, y: mtcy }, { width: mtW, height: mtH }, 'multiTap')
 
         const positions = computeFingerPositions(mtcx, mtcy, action.fingers)
@@ -1030,10 +1051,34 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'waitFor': {
-        // Use timeout as a deadline, not a blind sleep — the agent loop will
-        // re-observe after this returns and check the condition at a higher level.
-        await driver.pause(action.timeout ?? 2000)
-        return { success: true }
+        // Schema on-modes replace the legacy {condition,timeout} blind pause. text/gone poll the
+        // native accessibility tree; selector-mode is a web-only capability (§7.1, catalog pin).
+        if (action.on === 'selector') {
+          return {
+            success: false,
+            error: 'waitFor {on:"selector"} (CSS/XPath) is a web-only mode. On native iOS, wait on visible text with waitFor {on:"text"} or {on:"gone"}.',
+          }
+        }
+        const wantPresent = action.on === 'text'
+        const needle = action.text
+        const deadline = Date.now() + action.timeoutMs
+        for (;;) {
+          let source = ''
+          try {
+            source = await driver.getPageSource()
+          } catch {
+            source = ''
+          }
+          if (source.includes(needle) === wantPresent) return { success: true }
+          if (Date.now() >= deadline) break
+          await driver.pause(Math.min(250, Math.max(1, deadline - Date.now())))
+        }
+        return {
+          success: false,
+          error: wantPresent
+            ? `waitFor: text "${needle}" did not appear within ${action.timeoutMs}ms.`
+            : `waitFor: text "${needle}" was still present after ${action.timeoutMs}ms.`,
+        }
       }
 
       case 'delay': {
@@ -1042,15 +1087,19 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'keypress': {
-        // convertPlatformKeys is a no-op on mobile (no Meta/Control distinction in Appium key codes per D-13)
+        // Schema adds mode:'press'|'down'|'up'. Only 'press' is meaningful on mobile — key
+        // hold/release is a web-only lane (§7.1, catalog pin). convertPlatformKeys is a no-op on
+        // mobile (no Meta/Control distinction in Appium key codes per D-13).
+        if (action.mode !== 'press') {
+          return {
+            success: false,
+            error: `keypress {mode:"${action.mode}"} (key hold/release) is web-only. On mobile, emit keypress {mode:"press"} to send the key.`,
+          }
+        }
         for (const rawKey of action.keys) {
           const mapped = KEY_MAP[rawKey] ?? rawKey
           await driver.keys([mapped])
         }
-        return { success: true }
-      }
-
-      case 'assert': {
         return { success: true }
       }
 
@@ -1100,17 +1149,20 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         return { success: true, coordinates: center, boundingBox: bounds }
       }
 
-      case 'openLink': {
-        const bundleId = firstNonEmpty(action.appId, action.bundleId, this.bundleId)
+      case 'openUniversalLink': {
+        // Re-key of the proven openLink body (D-19): mobile: deepLink with url + bundleId, with a
+        // driver.url() fallback for a plain web URL when no bundle id is available. Working logic,
+        // new schema key; the legacy openLink verb is retired.
+        const bundleId = firstNonEmpty(action.bundleId, this.bundleId)
         const isWebUrl = /^https?:\/\//i.test(action.url)
         if (!bundleId && !isWebUrl) {
           return { success: false, error: `Missing iOS bundle id for native deep link: ${action.url}` }
         }
         try {
           if (bundleId) {
-            const deepLink = (driver as any).deepLink as undefined | ((url: string, appId: string, waitForLaunch?: boolean) => Promise<void>)
+            const deepLink = (driver as { deepLink?: (url: string, appId: string, waitForLaunch?: boolean) => Promise<void> }).deepLink
             if (typeof deepLink === 'function') {
-              await deepLink.call(driver, action.url, bundleId, action.waitForLaunch ?? true)
+              await deepLink.call(driver, action.url, bundleId, true)
             } else {
               await driver.execute('mobile: deepLink', { url: action.url, bundleId })
             }
@@ -1120,7 +1172,60 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           this.invalidateWebContext()
           return { success: true }
         } catch (err) {
-          return { success: false, error: `Failed to open link ${action.url}${bundleId ? ` in iOS app ${bundleId}` : ''}: ${err instanceof Error ? err.message : String(err)}` }
+          return { success: false, error: `Failed to open universal link ${action.url}${bundleId ? ` in iOS app ${bundleId}` : ''}: ${err instanceof Error ? err.message : String(err)}` }
+        }
+      }
+
+      case 'assertValue': {
+        // D-10: the adapter RESOLVES the requested source to a raw value on ActionResult.data; the
+        // runner-side comparator applies the op and judges. The adapter never compares. url/storage/
+        // expr require a live WebView context; sources with no native lane return a §7.1 error
+        // naming the platform limitation.
+        const webCtx = await this.getWebContext()
+        const inWeb = webCtx !== null
+        if ('expr' in action) {
+          if (!inWeb) {
+            return {
+              success: false,
+              error: 'assertValue {expr} evaluates JavaScript and is only available in an iOS WebView/browser context. Assert on a native signal, or run against a web target.',
+            }
+          }
+          await this.ensureContext(webCtx!)
+          const value = await driver.execute(`return (${action.expr});`)
+          return { success: true, data: { value } }
+        }
+        switch (action.source) {
+          case 'url': {
+            if (!inWeb) {
+              return {
+                success: false,
+                error: 'assertValue {source:"url"} reads the browser URL and is only available in an iOS WebView/browser context; native screens have no URL.',
+              }
+            }
+            await this.ensureContext(webCtx!)
+            const value = await driver.execute('return window.location.href;')
+            return { success: true, data: { value } }
+          }
+          case 'storage': {
+            if (!inWeb) {
+              return {
+                success: false,
+                error: 'assertValue {source:"storage"} reads Web Storage and is only available in an iOS WebView/browser context.',
+              }
+            }
+            await this.ensureContext(webCtx!)
+            const value = await driver.execute(
+              'return Object.fromEntries(Object.keys(localStorage).map(function(k){return [k, localStorage.getItem(k)];}));',
+            )
+            return { success: true, data: { value } }
+          }
+          case 'network':
+            return {
+              success: false,
+              error: 'assertValue {source:"network"} (HTTP log inspection) is not available on the iOS adapter. Use a web target for network assertions, or assert on visible UI text.',
+            }
+          case 'expr-result':
+            return { success: true, data: { value: undefined } }
         }
       }
 
@@ -1158,12 +1263,6 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         // best-guess launch; an invalid bundle never returns success.
         return await this.openApp(action)
 
-      case 'launchApp': {
-        // KEPT as the raw launch primitive (360 retires it as a planner verb).
-        await driver.activateApp(action.bundleId)
-        return { success: true }
-      }
-
       case 'stopApp': {
         await driver.terminateApp(action.bundleId)
         return { success: true }
@@ -1192,8 +1291,106 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         return { success: true, coordinates: { x, y } }
       }
 
-      case 'setVariable':
+      // --- iOS hardware / native verbs ---
+
+      case 'pressButton': {
+        // mobile: pressButton maps the schema button to the XCUITest hardware name. Volume buttons
+        // are real-devices-only; on a simulator session `mobile: listApps` is unavailable (the 359
+        // listApps precedent) — probe it and mint a §7.1 degradation error rather than crash.
+        const name = IOS_BUTTON_NAME[action.button]
+        if (VOLUME_BUTTONS.has(action.button)) {
+          const registry = await this.enumerateApps()
+          if (registry === null) {
+            return {
+              success: false,
+              error:
+                `pressButton "${action.button}" (a volume hardware button) is only supported on real devices; `
+                + `this appears to be an iOS simulator session, where volume buttons are unavailable. Run against a real device to use volume controls.`,
+            }
+          }
+        }
+        await driver.execute('mobile: pressButton', { name })
         return { success: true }
+      }
+
+      case 'pickerSelect': {
+        // Locate the picker wheel element (elementId feeds the native driver loop).
+        const wheel = await driver.$('-ios class chain:**/XCUIElementTypePickerWheel')
+        if (!(await wheel.isExisting())) {
+          return { success: false, error: 'pickerSelect: no picker wheel is present on screen.' }
+        }
+        const elementId = (wheel as unknown as { elementId?: string }).elementId
+        if ('value' in action) {
+          // Value lane — mobile: selectPickerWheelValue scrolls natively until the target value is
+          // reached (never a hand-rolled next/next loop, Don't-Hand-Roll row 3).
+          await driver.execute('mobile: selectPickerWheelValue', {
+            elementId,
+            order: 'next',
+            value: action.value,
+            maxAttempts: 25,
+          })
+          return { success: true }
+        }
+        // Index lane — the schema's 0-based wheel index has no absolute-index driver API (OQ2), so
+        // reset to the top with bounded `previous` steps then step down `order` `next` positions.
+        // An index beyond the bounded cap is a §7.1 range error rather than a silent wrong selection.
+        if (!Number.isInteger(action.order) || action.order < 0 || action.order > MAX_PICKER_INDEX) {
+          return {
+            success: false,
+            error:
+              `pickerSelect: order ${action.order} is out of range (expected a 0-based wheel index in [0, ${MAX_PICKER_INDEX}]). `
+              + `Prefer pickerSelect {value} to select by the visible option text.`,
+          }
+        }
+        for (let i = 0; i < MAX_PICKER_INDEX; i++) {
+          await driver.execute('mobile: selectPickerWheelValue', { elementId, order: 'previous', offset: 0.15 })
+        }
+        for (let i = 0; i < action.order; i++) {
+          await driver.execute('mobile: selectPickerWheelValue', { elementId, order: 'next', offset: 0.15 })
+        }
+        return { success: true }
+      }
+
+      case 'swipeFromEdge': {
+        // W3C pointer sequence from the named screen-edge boundary moving inward. Coordinates are
+        // derived from the live window rect (never hardcoded screen sizes).
+        const { width, height } = await driver.getWindowSize()
+        const midX = Math.round(width / 2)
+        const midY = Math.round(height / 2)
+        let start: { x: number; y: number }
+        let end: { x: number; y: number }
+        switch (action.edge) {
+          case 'left':
+            start = { x: 0, y: midY }; end = { x: Math.round(width * 0.6), y: midY }; break
+          case 'right':
+            start = { x: width - 1, y: midY }; end = { x: Math.round(width * 0.4), y: midY }; break
+          case 'top':
+            start = { x: midX, y: 0 }; end = { x: midX, y: Math.round(height * 0.6) }; break
+          case 'bottom':
+            start = { x: midX, y: height - 1 }; end = { x: midX, y: Math.round(height * 0.4) }; break
+        }
+        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
+          .move({ x: start.x, y: start.y })
+          .down({ button: 0 })
+          .move({ x: end.x, y: end.y, duration: 300 })
+          .up({ button: 0 })
+          )
+        return { success: true, startCoordinates: start, endCoordinates: end }
+      }
+
+      // Runner-minted / author-channel verbs (D-01/D-15): reportValue, assertAI, extractAI, and
+      // setVariable are intercepted at the runner dispatch seam and never reach the adapter. A
+      // grouped §7.1 defensive case surfaces a dispatch-routing error if one arrives here;
+      // assertNever remains the backstop for a genuinely unknown schema verb. (uniqueValue is
+      // web-only and is not part of ActionsFor<'ios'>.)
+      case 'reportValue':
+      case 'assertAI':
+      case 'extractAI':
+      case 'setVariable':
+        return {
+          success: false,
+          error: `Action "${action.type}" is handled by the runner dispatch seam and must not reach the iOS adapter (runner-minted/author-channel verb). This indicates a dispatch routing error.`,
+        }
 
       default:
         return assertNever(action)
