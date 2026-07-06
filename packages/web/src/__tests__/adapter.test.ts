@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 
 // Track browser event listeners so tests can simulate disconnect
@@ -135,7 +136,7 @@ describe('WebPlatformAdapter', () => {
   })
 
   it('throws on execute() before setup()', async () => {
-    await expect(adapter.execute({ type: 'click', ref: 'e1' })).rejects.toThrow(
+    await expect(adapter.execute({ type: 'click', ref: asRef('e1') })).rejects.toThrow(
       'WebPlatformAdapter not initialized'
     )
   })
@@ -214,7 +215,7 @@ describe('WebPlatformAdapter', () => {
   it('execute() handles navigate action', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'navigate', url: 'https://example.com' })
+    const result = await adapter.execute({ type: 'navigate', to: 'url', url: 'https://example.com' })
     expect(result.success).toBe(true)
 
     const page = adapter.getPage()!
@@ -227,7 +228,7 @@ describe('WebPlatformAdapter', () => {
     // First observe to populate refs
     await adapter.observe()
 
-    const result = await adapter.execute({ type: 'click', ref: 'e1' })
+    const result = await adapter.execute({ type: 'click', ref: asRef('e1') })
     // The adapter delegates to ElementResolver which calls page.getByRole
     // Since refs are populated from observe, this should succeed
     expect(result.success).toBe(true)
@@ -245,7 +246,7 @@ describe('WebPlatformAdapter', () => {
     mockPage.getByRole.mockClear()
     locator.selectOption.mockClear()
 
-    const result = await adapter.execute({ type: 'select', ref: 'e1', value: 'CA' })
+    const result = await adapter.execute({ type: 'select', ref: asRef('e1'), value: 'CA' })
 
     expect(result.success).toBe(true)
     expect(mockPage.getByRole).toHaveBeenCalledWith('combobox', { name: 'State', exact: true })
@@ -256,7 +257,7 @@ describe('WebPlatformAdapter', () => {
     await adapter.setup({ platform: 'web' })
 
     // Try to click a ref that doesn't exist (no observe() called, lastRefs is empty)
-    const result = await adapter.execute({ type: 'click', ref: 'nonexistent' })
+    const result = await adapter.execute({ type: 'click', ref: asRef('nonexistent') })
     expect(result.success).toBe(false)
     expect(result.error).toContain('Unknown ref')
   })
@@ -302,14 +303,14 @@ describe('WebPlatformAdapter', () => {
   describe('newTab action', () => {
     it('creates a new page and navigates to URL', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'newTab', url: 'https://new-page.com' })
+      const result = await adapter.execute({ type: 'tab', action: 'new', url: 'https://new-page.com' })
       expect(result.success).toBe(true)
       expect(mockPage2.goto).toHaveBeenCalledWith('https://new-page.com', { waitUntil: 'domcontentloaded' })
     })
 
     it('switches active page to the new tab', async () => {
       await adapter.setup({ platform: 'web' })
-      await adapter.execute({ type: 'newTab', url: 'https://new-page.com' })
+      await adapter.execute({ type: 'tab', action: 'new', url: 'https://new-page.com' })
       expect(adapter.getPage()).toBe(mockPage2)
     })
   })
@@ -317,51 +318,51 @@ describe('WebPlatformAdapter', () => {
   describe('switchTab action', () => {
     it('switches to tab by index', async () => {
       await adapter.setup({ platform: 'web' })
-      await adapter.execute({ type: 'newTab', url: 'https://other.com' })
-      const result = await adapter.execute({ type: 'switchTab', index: 0 })
+      await adapter.execute({ type: 'tab', action: 'new', url: 'https://other.com' })
+      const result = await adapter.execute({ type: 'tab', action: 'switch', index: 0 })
       expect(result.success).toBe(true)
       expect(adapter.getPage()).toBe(mockPage)
     })
 
     it('returns error for out-of-range index', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'switchTab', index: 99 })
+      const result = await adapter.execute({ type: 'tab', action: 'switch', index: 99 })
       expect(result.success).toBe(false)
       expect(result.error).toContain('out of range')
     })
 
     it('switches to tab by title substring', async () => {
       await adapter.setup({ platform: 'web' })
-      await adapter.execute({ type: 'newTab', url: 'https://other.com' })
+      await adapter.execute({ type: 'tab', action: 'new', url: 'https://other.com' })
       // Switch back to first tab
-      await adapter.execute({ type: 'switchTab', index: 0 })
+      await adapter.execute({ type: 'tab', action: 'switch', index: 0 })
       // Now switch by title
-      const result = await adapter.execute({ type: 'switchTab', title: 'Other' })
+      const result = await adapter.execute({ type: 'tab', action: 'switch', title: 'Other' })
       expect(result.success).toBe(true)
       expect(adapter.getPage()).toBe(mockPage2)
     })
 
     it('switches to tab by URL substring', async () => {
       await adapter.setup({ platform: 'web' })
-      await adapter.execute({ type: 'newTab', url: 'https://other.com' })
-      await adapter.execute({ type: 'switchTab', index: 0 })
-      const result = await adapter.execute({ type: 'switchTab', url: 'other.com' })
+      await adapter.execute({ type: 'tab', action: 'new', url: 'https://other.com' })
+      await adapter.execute({ type: 'tab', action: 'switch', index: 0 })
+      const result = await adapter.execute({ type: 'tab', action: 'switch', url: 'other.com' })
       expect(result.success).toBe(true)
       expect(adapter.getPage()).toBe(mockPage2)
     })
 
     it('returns error when no tab matches', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'switchTab', title: 'Nonexistent' })
+      const result = await adapter.execute({ type: 'tab', action: 'switch', title: 'Nonexistent' })
       expect(result.success).toBe(false)
       expect(result.error).toContain('No tab found')
     })
 
-    it('returns error when no params provided', async () => {
+    it('returns error when no params provided (unreachable for a well-typed TabSelector — via as any)', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'switchTab' } as any)
+      const result = await adapter.execute({ type: 'tab', action: 'switch' } as any)
       expect(result.success).toBe(false)
-      expect(result.error).toContain('requires at least one')
+      expect(result.error).toContain('No tab found')
     })
   })
 
@@ -373,7 +374,7 @@ describe('WebPlatformAdapter', () => {
 
     async function setupTwoTabs() {
       await adapter.setup({ platform: 'web' })
-      await adapter.execute({ type: 'newTab', url: 'https://other.com' })
+      await adapter.execute({ type: 'tab', action: 'new', url: 'https://other.com' })
     }
 
     it('drainConsoleLogs collects from all tabs', async () => {
@@ -435,7 +436,7 @@ describe('WebPlatformAdapter', () => {
       simulateConsole(mockPageListeners, 'tab1 msg')
       simulateConsole(mockPage2Listeners, 'tab2 msg')
 
-      const result = await adapter.execute({ type: 'readConsoleLogs', tab: { index: 1 } } as any)
+      const result = await adapter.execute({ type: 'inspect', what: 'console', tab: { index: 1 } })
       expect(result.success).toBe(true)
       const entries = result.data as any[]
       expect(entries.length).toBe(1)
@@ -447,7 +448,7 @@ describe('WebPlatformAdapter', () => {
       simulateConsole(mockPageListeners, 'tab1 msg')
       simulateConsole(mockPage2Listeners, 'tab2 msg')
 
-      const result = await adapter.execute({ type: 'readConsoleLogs' })
+      const result = await adapter.execute({ type: 'inspect', what: 'console' })
       expect(result.success).toBe(true)
       const entries = result.data as any[]
       expect(entries.length).toBe(2)
@@ -455,7 +456,7 @@ describe('WebPlatformAdapter', () => {
 
     it('readConsoleLogs with non-matching tab returns error', async () => {
       await setupTwoTabs()
-      const result = await adapter.execute({ type: 'readConsoleLogs', tab: { title: 'Nonexistent' } } as any)
+      const result = await adapter.execute({ type: 'inspect', what: 'console', tab: { title: 'Nonexistent' } })
       expect(result.success).toBe(false)
       expect(result.error).toContain('No tab found')
     })
@@ -482,7 +483,7 @@ describe('WebPlatformAdapter', () => {
 
       await new Promise(r => setTimeout(r, 50))
 
-      const result = await adapter.execute({ type: 'readNetworkLogs', tab: { url: 'other.com' } } as any)
+      const result = await adapter.execute({ type: 'inspect', what: 'network', tab: { url: 'other.com' } })
       expect(result.success).toBe(true)
       const entries = result.data as any[]
       expect(entries.length).toBe(1)
@@ -510,7 +511,7 @@ describe('WebPlatformAdapter', () => {
 
       await new Promise(r => setTimeout(r, 50))
 
-      const result = await adapter.execute({ type: 'readNetworkLogs' })
+      const result = await adapter.execute({ type: 'inspect', what: 'network' })
       expect(result.success).toBe(true)
       const entries = result.data as any[]
       expect(entries.length).toBe(2)
@@ -521,7 +522,7 @@ describe('WebPlatformAdapter', () => {
     it('doubleClick executes dblclick on the resolved locator', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'doubleClick', ref: 'e1' })
+      const result = await adapter.execute({ type: 'doubleClick', ref: asRef('e1') })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().dblclick).toHaveBeenCalled()
       expect(lastCallArg(mockPage.getByRole().dblclick)).not.toHaveProperty('position')
@@ -531,7 +532,7 @@ describe('WebPlatformAdapter', () => {
     it('doubleClick passes relativePosition as Playwright position option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'doubleClick', ref: 'e1', relativePosition: { x: 10, y: 20 } })
+      const result = await adapter.execute({ type: 'doubleClick', ref: asRef('e1'), relativePosition: { x: 10, y: 20 } })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().dblclick).toHaveBeenCalledWith(expect.objectContaining({ position: { x: 10, y: 20 } }))
     })
@@ -539,7 +540,7 @@ describe('WebPlatformAdapter', () => {
     it('doubleClick passes clickDelay as Playwright delay option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'doubleClick', ref: 'e1', clickDelay: 500 })
+      const result = await adapter.execute({ type: 'doubleClick', ref: asRef('e1'), clickDelay: 500 })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().dblclick).toHaveBeenCalledWith(expect.objectContaining({ delay: 500 }))
     })
@@ -547,7 +548,7 @@ describe('WebPlatformAdapter', () => {
     it('doubleClick does not pass zero clickDelay as Playwright delay option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'doubleClick', ref: 'e1', clickDelay: 0 })
+      const result = await adapter.execute({ type: 'doubleClick', ref: asRef('e1'), clickDelay: 0 })
       expect(result.success).toBe(true)
       expect(lastCallArg(mockPage.getByRole().dblclick)).not.toHaveProperty('delay')
     })
@@ -555,7 +556,7 @@ describe('WebPlatformAdapter', () => {
     it('rightClick executes click with button right on the resolved locator', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'rightClick', ref: 'e1' })
+      const result = await adapter.execute({ type: 'rightClick', ref: asRef('e1') })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().click).toHaveBeenCalledWith(expect.objectContaining({ button: 'right' }))
       expect(lastCallArg(mockPage.getByRole().click)).not.toHaveProperty('position')
@@ -565,7 +566,7 @@ describe('WebPlatformAdapter', () => {
     it('rightClick passes relativePosition as Playwright position option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'rightClick', ref: 'e1', relativePosition: { x: 5, y: 15 } })
+      const result = await adapter.execute({ type: 'rightClick', ref: asRef('e1'), relativePosition: { x: 5, y: 15 } })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().click).toHaveBeenCalledWith(expect.objectContaining({ button: 'right', position: { x: 5, y: 15 } }))
     })
@@ -573,7 +574,7 @@ describe('WebPlatformAdapter', () => {
     it('click passes clickDelay as Playwright delay option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'click', ref: 'e1', clickDelay: 200 })
+      const result = await adapter.execute({ type: 'click', ref: asRef('e1'), clickDelay: 200 })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().click).toHaveBeenCalledWith(expect.objectContaining({ delay: 200 }))
     })
@@ -581,7 +582,7 @@ describe('WebPlatformAdapter', () => {
     it('rightClick passes non-zero clickDelay as Playwright delay option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'rightClick', ref: 'e1', clickDelay: 300 })
+      const result = await adapter.execute({ type: 'rightClick', ref: asRef('e1'), clickDelay: 300 })
       expect(result.success).toBe(true)
       expect(mockPage.getByRole().click).toHaveBeenCalledWith(expect.objectContaining({ button: 'right', delay: 300 }))
     })
@@ -589,7 +590,7 @@ describe('WebPlatformAdapter', () => {
     it('rightClick does not pass zero clickDelay as Playwright delay option', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'rightClick', ref: 'e1', clickDelay: 0 })
+      const result = await adapter.execute({ type: 'rightClick', ref: asRef('e1'), clickDelay: 0 })
       expect(result.success).toBe(true)
       expect(lastCallArg(mockPage.getByRole().click)).not.toHaveProperty('delay')
     })
@@ -599,11 +600,11 @@ describe('WebPlatformAdapter', () => {
       await adapter.observe()
       const locator = mockPage.getByRole()
 
-      await adapter.execute({ type: 'click', ref: 'e1' })
+      await adapter.execute({ type: 'click', ref: asRef('e1') })
       expect(lastCallArg(locator.click)).not.toHaveProperty('delay')
 
       locator.click.mockClear()
-      const result = await adapter.execute({ type: 'click', ref: 'e1', clickDelay: 0 })
+      const result = await adapter.execute({ type: 'click', ref: asRef('e1'), clickDelay: 0 })
       expect(result.success).toBe(true)
       expect(lastCallArg(locator.click)).not.toHaveProperty('delay')
     })
@@ -611,7 +612,7 @@ describe('WebPlatformAdapter', () => {
     it('doubleClick returns coordinates at relativePosition offset', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'doubleClick', ref: 'e1', relativePosition: { x: 10, y: 20 } })
+      const result = await adapter.execute({ type: 'doubleClick', ref: asRef('e1'), relativePosition: { x: 10, y: 20 } })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 60, y: 120 })
     })
@@ -619,7 +620,7 @@ describe('WebPlatformAdapter', () => {
     it('doubleClick returns center coordinates when no relativePosition', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'doubleClick', ref: 'e1' })
+      const result = await adapter.execute({ type: 'doubleClick', ref: asRef('e1') })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 150, y: 120 })
     })
@@ -627,7 +628,7 @@ describe('WebPlatformAdapter', () => {
     it('rightClick returns coordinates at relativePosition offset', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'rightClick', ref: 'e1', relativePosition: { x: 5, y: 15 } })
+      const result = await adapter.execute({ type: 'rightClick', ref: asRef('e1'), relativePosition: { x: 5, y: 15 } })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 55, y: 115 })
     })
@@ -635,7 +636,7 @@ describe('WebPlatformAdapter', () => {
     it('rightClick returns center coordinates when no relativePosition', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'rightClick', ref: 'e1' })
+      const result = await adapter.execute({ type: 'rightClick', ref: asRef('e1') })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 150, y: 120 })
     })
@@ -673,7 +674,7 @@ describe('WebPlatformAdapter', () => {
       vi.doMock('node:fs', () => ({ existsSync: vi.fn().mockReturnValue(true) }))
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'fileUpload', ref: 'e1', files: ['/tmp/test.pdf'] })
+      const result = await adapter.execute({ type: 'fileUpload', ref: asRef('e1'), files: ['/tmp/test.pdf'] })
       expect(result.success).toBe(true)
       const locator = mockPage.getByRole()
       expect(locator.setInputFiles).toHaveBeenCalledWith(['/tmp/test.pdf'])
@@ -683,7 +684,7 @@ describe('WebPlatformAdapter', () => {
       vi.doMock('node:fs', () => ({ existsSync: vi.fn().mockReturnValue(false) }))
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'fileUpload', ref: 'e1', files: ['/missing/file.pdf'] })
+      const result = await adapter.execute({ type: 'fileUpload', ref: asRef('e1'), files: ['/missing/file.pdf'] })
       expect(result.success).toBe(false)
       expect(result.error).toContain('File not found')
       expect(result.error).toContain('/missing/file.pdf')
@@ -694,7 +695,7 @@ describe('WebPlatformAdapter', () => {
     it('reads textContent, calls page.evaluate with clipboard.writeText, returns copied data', async () => {
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'copy', ref: 'e1' })
+      const result = await adapter.execute({ type: 'copy', ref: asRef('e1') })
       expect(result.success).toBe(true)
       expect(result.data).toEqual({ copied: 'hello world' })
       expect(mockPage.evaluate).toHaveBeenCalledWith(expect.stringContaining('navigator.clipboard.writeText'))
@@ -705,7 +706,7 @@ describe('WebPlatformAdapter', () => {
       locator.textContent.mockResolvedValueOnce(null)
       await adapter.setup({ platform: 'web' })
       await adapter.observe()
-      const result = await adapter.execute({ type: 'copy', ref: 'e1' })
+      const result = await adapter.execute({ type: 'copy', ref: asRef('e1') })
       expect(result.success).toBe(true)
       expect(result.data).toEqual({ copied: '' })
     })

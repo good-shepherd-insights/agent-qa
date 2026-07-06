@@ -249,7 +249,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
   it('execute navigate action calls page.goto()', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'navigate', url: 'https://other.com' })
+    const result = await adapter.execute({ type: 'navigate', to: 'url', url: 'https://other.com' })
     expect(result.success).toBe(true)
     expect(mockGotoFn).toHaveBeenCalledWith('https://other.com', { waitUntil: 'domcontentloaded' })
   })
@@ -335,7 +335,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     const signIn = adapter['lastRefs']
     const firstRef = Object.keys(signIn)[0]
-    const result = await adapter.execute({ type: 'click', ref: firstRef })
+    const result = await adapter.execute({ type: 'click', ref: asRef(firstRef) })
     expect(result.success).toBe(false)
     expect(result.error).toContain('Element detached')
   })
@@ -423,7 +423,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     it('presses a single key from keys array', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledTimes(1)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Enter')
@@ -431,7 +431,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     it('iterates multiple keys in order', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledTimes(2)
       expect(mockKeyPressFn).toHaveBeenNthCalledWith(1, 'Tab')
@@ -441,7 +441,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('converts Meta → Control on non-Mac when convertPlatformKeys is default (undefined/true)', async () => {
       Object.defineProperty(process, 'platform', { value: 'linux' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Control+k')
     })
@@ -449,7 +449,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('leaves Meta alone on Mac', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Meta+k')
     })
@@ -457,7 +457,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('leaves Meta alone on non-Mac when convertPlatformKeys=false', async () => {
       Object.defineProperty(process, 'platform', { value: 'linux' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], convertPlatformKeys: false })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], mode: 'press', convertPlatformKeys: false })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Meta+k')
     })
@@ -465,7 +465,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('applies conversion to each entry in a multi-key array', async () => {
       Object.defineProperty(process, 'platform', { value: 'win32' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k', 'Enter', 'Shift+Meta+T'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k', 'Enter', 'Shift+Meta+T'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledTimes(3)
       expect(mockKeyPressFn).toHaveBeenNthCalledWith(1, 'Control+k')
