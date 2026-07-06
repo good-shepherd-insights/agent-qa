@@ -459,11 +459,18 @@ describe('AndroidPlatformAdapter', () => {
       const usernameEl = state.elements.find(e => e.name === 'Username')
       expect(usernameEl).toBeDefined()
 
-      // Mock the focused element finder
-      const mockElement = { isExisting: vi.fn().mockResolvedValue(true), setValue: vi.fn().mockResolvedValue(undefined) }
+      // Mock the focused element finder — the compound re-reads via getText() and probes
+      // getAttribute('password') for the secure lane.
+      const mockElement = {
+        isExisting: vi.fn().mockResolvedValue(true),
+        setValue: vi.fn().mockResolvedValue(undefined),
+        addValue: vi.fn().mockResolvedValue(undefined),
+        getText: vi.fn().mockResolvedValue('test'),
+        getAttribute: vi.fn().mockResolvedValue(null),
+      }
       mockDriver.$ = vi.fn().mockResolvedValue(mockElement)
 
-      const result = await adapter.execute({ type: 'fill', ref: usernameEl!.ref, value: 'test' })
+      const result = await adapter.execute({ type: 'fill', ref: usernameEl!.ref, text: 'test', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)
 
       // Verify tap to focus
@@ -541,15 +548,15 @@ describe('AndroidPlatformAdapter', () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500 })
+      const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
       expect(result.success).toBe(true)
+      expect(result.metadata?.scrollUntilVisible).toBeDefined()
 
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      // viewport: 1080x1920, center: 540,960
-      // scroll down (value=500): startY=center=960, endY=center-500=460
-      // finger swipes up (960→460) which scrolls content down
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 960 })
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 460, duration: 300 })
+      // viewport: 1080x1920, center: 540,960; page swipe distance = round(1920*0.6) = 1152.
+      // scroll DOWN reveals content below => finger swipes UP (960+576=1536 -> 960-576=384).
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 1536 })
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 384, duration: 300 })
     })
   })
 

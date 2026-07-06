@@ -433,6 +433,9 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   private captureConsole = true
   private appPackage: string | null = null
   private appPid: string | null = null
+  // EXEC-03 session-cached app registry (D-10/D-12): enumerated once per session; null = not yet
+  // enumerated (or enumeration failed and may be retried). Reset in cleanup().
+  private appRegistry: AppRegistryEntry[] | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     this.config = config as AndroidAdapterConfig
@@ -518,6 +521,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     this.consoleLogs = []
     this.appPackage = null
     this.appPid = null
+    this.appRegistry = null
     this.activeWebContext = null
     this.currentContext = null
     this.recordingEnabled = false
@@ -995,6 +999,141 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return { swipes, reversedOnce: false, outcome: anyProgress ? 'cap' : 'no-change' }
   }
 
+  /**
+   * EXEC-03 openApp (D-10/D-11/D-12). Resolve a human name to a package id (or validate an
+   * explicit bundleId) over the session-cached registry, then launch via activateApp. On a
+   * resolution MISS the registry is re-enumerated exactly once (catches mid-run installs) before
+   * erroring with the resolver's candidate ids. Never a best-guess launch (T-359-04).
+   */
+  private async openApp(
+    action: { appName: string } | { bundleId: string },
+  ): Promise<ActionResult> {
+    const driver = this.driver!
+    let registry = await this.ensureAppRegistry()
+    if (registry === null) {
+      return {
+        success: false,
+        error:
+          'openApp could not enumerate installed apps: "mobile: listApps" failed and the '
+          + 'shell fallback is disabled. Retry with an explicit openApp {bundleId}, or set '
+          + 'AGENT_QA_ANDROID_USE_MOBILE_SHELL=1 to allow the pm-list fallback.',
+      }
+    }
+
+    if ('bundleId' in action) {
+      // Explicit variant: skip matching, validate membership against the cached registry.
+      if (!registry.some((entry) => entry.id === action.bundleId)) {
+        return {
+          success: false,
+          error: `openApp: bundleId "${action.bundleId}" is not installed (not in the app registry). Verify the package id or use openApp {appName}.`,
+        }
+      }
+      await driver.activateApp(action.bundleId)
+      return { success: true, metadata: { openApp: { resolvedId: action.bundleId, matchKind: 'explicit' } } }
+    }
+
+    let resolution = resolveAppName(action.appName, registry)
+    if (resolution.kind === 'unknown' || resolution.kind === 'ambiguous') {
+      // Re-enumerate exactly once on a MISS before erroring (D-12).
+      const fresh = await this.enumerateApps()
+      if (fresh !== null) {
+        this.appRegistry = fresh
+        registry = fresh
+        resolution = resolveAppName(action.appName, registry)
+      }
+    }
+
+    switch (resolution.kind) {
+      case 'exact':
+      case 'fuzzy':
+        await driver.activateApp(resolution.id)
+        return { success: true, metadata: { openApp: { resolvedId: resolution.id, matchKind: resolution.kind } } }
+      case 'ambiguous':
+      case 'unknown': {
+        const ids = resolution.candidates.map((c) => c.id).join(', ')
+        const lead =
+          resolution.kind === 'ambiguous' ? 'is ambiguous between installed apps' : 'did not match an installed app'
+        return {
+          success: false,
+          error: `openApp: "${action.appName}" ${lead}. Closest candidates: ${ids || '(none)'}. Retry openApp {bundleId} with the exact package id.`,
+        }
+      }
+    }
+  }
+
+  /** Return the cached registry, enumerating once on first use. Failed enumeration returns null (uncached). */
+  private async ensureAppRegistry(): Promise<AppRegistryEntry[] | null> {
+    if (this.appRegistry !== null) return this.appRegistry
+    const enumerated = await this.enumerateApps()
+    if (enumerated !== null) this.appRegistry = enumerated
+    return enumerated
+  }
+
+  /**
+   * Enumerate installed apps through the driver only (ownership contract — no adb/child_process).
+   * `mobile: listApps` maps package ids → AppRegistryEntry (labels only when the same call carries
+   * them, D-10 — no per-package round-trips). On failure, fall back to `mobile: shell` pm-list ONLY
+   * when the AGENT_QA_ANDROID_USE_MOBILE_SHELL gate is '1' (Pitfall 4). Null = enumeration unavailable.
+   */
+  private async enumerateApps(): Promise<AppRegistryEntry[] | null> {
+    const driver = this.driver!
+    try {
+      const raw = await driver.execute('mobile: listApps')
+      return this.mapListApps(raw)
+    } catch {
+      if (process.env.AGENT_QA_ANDROID_USE_MOBILE_SHELL === '1') {
+        try {
+          const out = String(await driver.execute('mobile: shell', { command: 'pm', args: ['list', 'packages'] }))
+          return this.parsePmListPackages(out)
+        } catch {
+          return null
+        }
+      }
+      return null
+    }
+  }
+
+  /** Coerce a `mobile: listApps` result (package-id-keyed map, or an array of entries) into the registry. */
+  private mapListApps(raw: unknown): AppRegistryEntry[] {
+    const labelOf = (value: unknown): string | undefined => {
+      if (!value || typeof value !== 'object') return undefined
+      const v = value as Record<string, unknown>
+      for (const key of ['label', 'name', 'appName']) {
+        const candidate = v[key]
+        if (typeof candidate === 'string' && candidate.length > 0) return candidate
+      }
+      return undefined
+    }
+    const entries: AppRegistryEntry[] = []
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (!item || typeof item !== 'object') continue
+        const v = item as Record<string, unknown>
+        const id = v.packageName ?? v.bundleId ?? v.id
+        if (typeof id !== 'string' || id.length === 0) continue
+        const label = labelOf(item)
+        entries.push(label !== undefined ? { id, label } : { id })
+      }
+    } else if (raw && typeof raw === 'object') {
+      for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (!id) continue
+        const label = labelOf(value)
+        entries.push(label !== undefined ? { id, label } : { id })
+      }
+    }
+    return entries
+  }
+
+  /** Parse `pm list packages` output ("package:com.foo\n…") into id-only registry entries. */
+  private parsePmListPackages(output: string): AppRegistryEntry[] {
+    const entries: AppRegistryEntry[] = []
+    for (const line of output.split('\n')) {
+      const id = line.trim().replace(/^package:/, '')
+      if (id) entries.push({ id })
+    }
+    return entries
+  }
+
   // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
@@ -1391,7 +1530,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         return { success: true, coordinates: center, boundingBox: bounds }
       }
 
+      case 'openApp':
+        // EXEC-03 (D-10/D-12): resolve a human app name (or validate an explicit bundleId) over a
+        // session-cached registry, then launch via activateApp. Never a best-guess launch.
+        return await this.openApp(action)
+
       case 'launchApp': {
+        // KEPT as the raw launch primitive (360 retires it as a planner verb).
         await driver.activateApp(action.bundleId)
         return { success: true }
       }
