@@ -68,7 +68,7 @@ function actionSelectionRules(platform?: PromptPlatform): string {
 }
 
 function scrollRules(): string {
-  return `3. If the target element is not visible in the screen state, use a "scroll" action with scrollType "vertical" and a positive value (e.g., 500) to scroll down, or negative value to scroll up. Use scrollType "horizontal" for left/right scrolling. When scrolling within a specific container (a list, card, panel, or any element that has its own scrollbar), always include the "ref" field pointing to that container element — without ref, the scroll targets the page viewport and will miss the container. When no container ref is available, use any child element's ref — the adapter automatically walks up to the nearest scrollable container. Prefer a ref near the target content over scrolling the page viewport. If you have already scrolled and the screen did not change (you reached the boundary), the element is not on this page — set stepFailed with an explanation of what you searched. For ref-based container scrolls, check the scroll action's Returned data: if it shows "scrolled": false, the container has reached its scroll boundary in that direction — the content you are looking for is not in this container. Do not retry with smaller scroll values, different refs targeting the same container, or tapCoordinate-based approaches. Set stepFailed explaining that you scrolled the container to its boundary and the target content was not found. EXCEPTION: When the step goal IS to reach the scroll boundary (e.g., 'scroll to the end', 'scroll to the bottom', 'scroll all the way down', 'scroll to the top'), receiving scrolled: false confirms you have reached that boundary — set stepComplete: true because reaching the boundary IS the goal.`
+  return `3. If the target element is not visible in the screen state, use a "scroll" action. To reveal a known label, use mode "untilVisible" with its "text" and a "direction" — the executor re-observes between swipes and stops as soon as it appears. To move the view generally, use mode "direction" with a "direction" ("up"/"down"/"left"/"right") and an "amount" ("page", "halfPage", or "toEnd"). When scrolling within a specific container (a list, card, panel, or any element that has its own scrollbar), always include the "ref" field pointing to that container element — without ref, the scroll targets the page viewport and will miss the container. When no container ref is available, use any child element's ref — the adapter automatically walks up to the nearest scrollable container. Prefer a ref near the target content over scrolling the page viewport. If you have already scrolled and the screen did not change (you reached the boundary), the element is not on this page — set stepFailed with an explanation of what you searched. EXCEPTION: When the step goal IS to reach the scroll boundary (e.g., 'scroll to the end', 'scroll to the bottom', 'scroll all the way down', 'scroll to the top'), use mode "direction" with amount "toEnd" — reaching the boundary IS the goal, so set stepComplete: true.`
 }
 
 function generalRules(): string {
@@ -505,7 +505,7 @@ export function formatAction(action: Action): string {
     case 'rightClick':
       return `${action.type} on ref="${action.ref}"`
     case 'fill':
-      return `fill ref="${action.ref}" with value="${action.value}"`
+      return `fill ref="${action.ref}" with text="${action.text}"${action.clearMode === 'append' ? ' (append)' : ''}${action.submit ? ' + submit' : ''}`
     case 'select':
       return `select ref="${action.ref}" value="${action.value}"`
     case 'nativeSelect':
@@ -514,7 +514,9 @@ export function formatAction(action: Action): string {
     case 'openLink':
       return `${action.type} to "${action.url}"`
     case 'scroll':
-      return `scroll ${action.scrollType} ${action.value}px${action.ref ? ` on ref="${action.ref}"` : ''}`
+      return action.mode === 'untilVisible'
+        ? `scroll ${action.direction} until "${action.text}" visible (maxSwipes=${action.maxSwipes})${action.ref ? ` in ref="${action.ref}"` : ''}`
+        : `scroll ${action.direction} ${action.amount}${action.ref ? ` on ref="${action.ref}"` : ''}`
     case 'swipe':
       if (action.startX !== undefined && action.startY !== undefined && action.endX !== undefined && action.endY !== undefined) {
         return `swipe from (${action.startX},${action.startY}) to (${action.endX},${action.endY})${action.ref ? ` on ref="${action.ref}"` : ''}`
@@ -552,6 +554,8 @@ export function formatAction(action: Action): string {
       return 'hide keyboard'
     case 'drag':
       return `drag from ref="${action.fromRef}" to ref="${action.toRef}"`
+    case 'openApp':
+      return 'appName' in action ? `openApp "${action.appName}"` : `openApp bundleId="${action.bundleId}"`
     case 'launchApp':
     case 'stopApp':
       return `${action.type} "${action.bundleId}"`

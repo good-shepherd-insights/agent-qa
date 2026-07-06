@@ -217,10 +217,11 @@ describe('QA mindset prompt rules', () => {
 
   // SCROLL-01: system prompt uses new scroll terminology
   describe('SCROLL-01 — scroll terminology', () => {
-    it('buildSystemPrompt Rule 3 references scrollType and signed value', () => {
-      expect(systemPrompt).toContain('scrollType')
-      expect(systemPrompt).toContain('positive value')
-      expect(systemPrompt).toContain('negative value')
+    it('buildSystemPrompt Rule 3 references intent-first scroll modes (untilVisible / direction+amount)', () => {
+      expect(systemPrompt).toContain('untilVisible')
+      expect(systemPrompt).toContain('direction')
+      expect(systemPrompt).toContain('amount')
+      expect(systemPrompt).not.toContain('scrollType')
     })
 
     it('Rule 3 contains boundary-is-goal exception for scroll-to-end steps', () => {
@@ -233,7 +234,7 @@ describe('QA mindset prompt rules', () => {
 
     it('Rule 3 preserves stepFailed for search-not-found case', () => {
       expect(systemPrompt).toContain('stepFailed')
-      expect(systemPrompt).toContain('target content was not found')
+      expect(systemPrompt).toContain('the element is not on this page')
     })
 
     it('boundary-is-goal exception present in web platform prompt', () => {

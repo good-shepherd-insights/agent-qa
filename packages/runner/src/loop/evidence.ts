@@ -86,9 +86,10 @@ function clampPointToViewport(point: Point, viewport: Viewport): Point {
 
 function scrollDirection(action: PlatformAction): 'up' | 'down' | 'left' | 'right' | undefined {
   if (action.type !== 'scroll') return undefined
+  // Schema v2 Scroll carries an explicit direction on both modes (direction / untilVisible) —
+  // no pixel sign to decode (D-01).
   const a = action as Extract<PlatformAction, { type: 'scroll' }>
-  if (a.scrollType === 'vertical') return a.value > 0 ? 'down' : 'up'
-  return a.value > 0 ? 'right' : 'left'
+  return a.direction
 }
 
 export function collapseAnnotation(
