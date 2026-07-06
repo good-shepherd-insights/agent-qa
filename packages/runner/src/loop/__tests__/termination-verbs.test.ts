@@ -1,0 +1,282 @@
+// RED scaffold (Wave 1, Phase 360 · EXEC-05 · D-01/D-02/D-03/D-04/D-16 · spec §9.1/§12.10).
+// Pins the runner-side termination-verb contracts BEFORE Plan 08 wires them:
+//   Block A — reportValue mint (D-01/D-02/D-03): a platform-less answer verb mints a success
+//     ActionResult at the ONE dispatch chokepoint (never adapter.execute), carrying a typed
+//     metadata.reportedValue block; the answer lands masked-before-record in
+//     StepEvidence.reportedValue; reportValue is NON-terminal (stepComplete stays the sole
+//     termination mechanism) and its screen-neutral mint gets the eager effect-achieved attach
+//     so it never feeds the 358 stagnation ladder (Pitfall 5).
+//   Block B — uniqueValue mint (D-16): prefix + injectable generator (353 K=2), minted at the
+//     chokepoint with a typed metadata.uniqueValue block and a run-scoped working-memory
+//     auto-write (kind extracted-value / provenance toolResult), zero adapter.execute.
+//   Block C — infeasible envelope (D-04): an additive `failureKind`/`failureReason` plan-field
+//     (the 358 remember[] precedent) survives toolCallToActionPlan and routes into a typed
+//     StepEvidence.termination block ({kind,reason}) machine-distinguishable from a plain
+//     stepFailed — which stays byte-unchanged (green control).
+//
+// RED BY DESIGN (typecheck stays green via @ts-expect-error until Plans 08 lands the symbols;
+// action shapes not yet in the runner union are structural literals on the loose ActionPlan.action):
+//   - Block A/B metadata readers (`readReportedValueMeta`/`readUniqueValueMeta`) are added to
+//     compound/metadata.ts by Plan 08 — currently missing exports (undefined at runtime ⇒ the
+//     calling tests are RED; the file still collects so Block C's control stays green).
+//   - Block B unit pins import the not-yet-existing compound/dispatch-mint.js dynamically so only
+//     those tests are RED (module-resolution failure) — the file keeps collecting.
+//   - The seam/envelope pins are un-wired-behavior failures (zero adapter mint, typed blocks,
+//     failureKind plumbing) that flip green when Plan 08 lands.
+import { describe, it, expect } from 'vitest'
+import type { ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
+import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
+import type { LoopPorts, WorkingMemoryPort } from '../ports.js'
+import type { ActionPlan } from '../types.js'
+import { executeStep } from '../index.js'
+import { makeScreenState } from '../../testing/screen-fixtures.js'
+import { makeStepContext, makePlanner, makeActionPlan } from './loop-harness.js'
+import { ToolRegistry } from '../../tools/registry.js'
+import { registerAllActions } from '../../tools/actions/index.js'
+import { toolCallToActionPlan } from '../../tools/builder.js'
+import { SecretStore, SecretRedactor } from '../secrets.js'
+// @ts-expect-error — readReportedValueMeta/readUniqueValueMeta are added to compound/metadata.ts by Plan 08 (RED: missing exports)
+import { readReportedValueMeta, readUniqueValueMeta } from '../../compound/metadata.js'
+
+// ---------------------------------------------------------------------------
+// Local harness helpers (per-file convention, mirrors idempotency.test.ts)
+// ---------------------------------------------------------------------------
+function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
+  return overrides
+}
+
+function recordingAdapter(observation: ScreenState, calls: Action[]): PlatformAdapter {
+  return {
+    platform: 'web',
+    async setup() {},
+    async cleanup() {},
+    async observe() {
+      return observation
+    },
+    async execute(action: Action): Promise<ActionResult> {
+      calls.push(action)
+      return { success: true }
+    },
+  }
+}
+
+interface LooseSub {
+  result?: { success?: boolean; error?: string; metadata?: Record<string, unknown> }
+  localEffect?: { achieved?: boolean }
+}
+
+function subs(result: Awaited<ReturnType<typeof executeStep>>): LooseSub[] {
+  return (result.evidence as { subActions?: LooseSub[] } | undefined)?.subActions ?? []
+}
+
+interface CaptureCall {
+  entries: readonly WorkingMemoryEntry[]
+  ctx?: { test?: number; step?: number }
+}
+
+function recordingWorkingMemory(): WorkingMemoryPort & { calls: CaptureCall[] } {
+  const calls: CaptureCall[] = []
+  return {
+    calls,
+    capture(entries, ctx) {
+      calls.push({ entries, ctx })
+    },
+    entries() {
+      return []
+    },
+    dispose() {},
+  }
+}
+
+async function importDispatchMint(): Promise<Record<string, unknown>> {
+  return import(
+    // @ts-expect-error — compound/dispatch-mint.js lands in Plan 08 (RED: module missing)
+    '../../compound/dispatch-mint.js'
+  )
+}
+
+const cfg = { maxSubActions: 4, previousStepCount: 0 }
+
+// ---------------------------------------------------------------------------
+// Block A — reportValue mint (D-01/D-02/D-03)
+// ---------------------------------------------------------------------------
+describe('Block A — reportValue is a runner mint recorded as first-class evidence (D-01/D-03)', () => {
+  it('mints at the ONE chokepoint — zero adapter.execute — and metadata.reportedValue mirrors the emission value', async () => {
+    const calls: Action[] = []
+    const adapter = recordingAdapter(makeScreenState(), calls)
+    const plan = makeActionPlan({ action: { type: 'reportValue', value: 'ORD-12345' }, stepComplete: true })
+
+    const result = await executeStep(
+      'Report the order id',
+      ports({ adapter, planner: makePlanner([plan]), plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    // D-01: a platform-less verb never reaches adapter.execute.
+    expect(calls.length).toBe(0)
+    const sub = subs(result)[0]
+    expect(sub?.result?.success).toBe(true)
+    // D-03: typed metadata block via the 359 defensive-reader idiom.
+    const meta = readReportedValueMeta(sub?.result) as { value?: string } | undefined
+    expect(meta).toBeDefined()
+    expect(meta?.value).toBe('ORD-12345')
+  })
+
+  it('the answer lands in StepEvidence.reportedValue masked-before-record — a registered secret never appears raw in serialized evidence (D-03, T-360-01)', async () => {
+    const store = new SecretStore({ TOKEN: 'sk-live-supersecret' })
+    const redactor = new SecretRedactor(store)
+    const calls: Action[] = []
+    const adapter = recordingAdapter(makeScreenState(), calls)
+    const plan = makeActionPlan({ action: { type: 'reportValue', value: '{{secret:TOKEN}}' }, stepComplete: true })
+
+    const result = await executeStep(
+      'Report the api token',
+      ports({ adapter, planner: makePlanner([plan]), secretStore: store, secretRedactor: redactor, plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    const reportedValue = (result.evidence as { reportedValue?: { value?: string } }).reportedValue
+    expect(reportedValue).toBeDefined()
+    // masked-before-record: the raw secret must never transit evidence.
+    expect(JSON.stringify(result.evidence)).not.toContain('supersecret')
+    expect(reportedValue?.value ?? '').not.toContain('supersecret')
+  })
+
+  it('reportValue is non-terminal (D-02): stepComplete:false reports then continues, and the screen-neutral mint reads as effect-achieved — no stagnation (Pitfall 5)', async () => {
+    const calls: Action[] = []
+    const adapter = recordingAdapter(makeScreenState(), calls)
+    const reportThenContinue = makeActionPlan({ action: { type: 'reportValue', value: 'partial answer' }, stepComplete: false })
+    const finish = makeActionPlan({ action: { type: 'reportValue', value: 'final answer' }, stepComplete: true })
+
+    const result = await executeStep(
+      'Report a partial value then finish',
+      ports({ adapter, planner: makePlanner([reportThenContinue, finish]), plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('passed')
+    // The non-completing reportValue must be given the eager effect-achieved attach so the 358
+    // oracle never counts the screen-neutral mint as no-progress.
+    expect(subs(result)[0]?.localEffect?.achieved).toBe(true)
+    // And neither mint touched the adapter.
+    expect(calls.length).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Block B — uniqueValue mint + WM auto-write (D-16)
+// ---------------------------------------------------------------------------
+describe('Block B — uniqueValue mints a prefixed value from an injectable generator (D-16)', () => {
+  it('mintUniqueValue prefixes the value and takes an injectable generator (353 K=2 determinism)', async () => {
+    const mod = await importDispatchMint()
+    const mintUniqueValue = mod.mintUniqueValue as (input: { prefix: string }, gen: () => string) => ActionResult
+    const res = mintUniqueValue({ prefix: 'user_' }, () => 'ZZZ')
+    expect(res.success).toBe(true)
+    const meta = res.metadata?.['uniqueValue'] as { value?: string; prefix?: string } | undefined
+    expect(meta?.value).toBe('user_ZZZ')
+    expect(meta?.value?.startsWith('user_')).toBe(true)
+    expect(meta?.prefix).toBe('user_')
+  })
+
+  it('defaultUniqueValueGenerator yields distinct non-empty suffixes (uniqueness is the semantic — cache replay re-mints)', async () => {
+    const mod = await importDispatchMint()
+    const gen = mod.defaultUniqueValueGenerator as () => string
+    const a = gen()
+    const b = gen()
+    expect(typeof a).toBe('string')
+    expect(a.length).toBeGreaterThan(0)
+    expect(a).not.toBe(b)
+  })
+
+  it('a uniqueValue action mints at the seam: zero adapter.execute, metadata.uniqueValue, and a run-scoped WM auto-write keyed by the prefix', async () => {
+    const calls: Action[] = []
+    const adapter = recordingAdapter(makeScreenState(), calls)
+    const wm = recordingWorkingMemory()
+    const plan = makeActionPlan({ action: { type: 'uniqueValue', prefix: 'user_' }, stepComplete: true })
+
+    const result = await executeStep(
+      'Generate a unique username',
+      ports({ adapter, planner: makePlanner([plan]), workingMemory: wm, plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    // D-16 mint at the ONE chokepoint ⇒ zero adapter calls.
+    expect(calls.length).toBe(0)
+    const meta = readUniqueValueMeta(subs(result)[0]?.result) as { value?: string; prefix?: string } | undefined
+    expect(meta).toBeDefined()
+    // D-16 WM auto-write: exactly one capture keyed by prefix, kind extracted-value, provenance toolResult.
+    expect(wm.calls.length).toBe(1)
+    const entry = wm.calls[0]?.entries[0]
+    expect(entry?.kind).toBe('extracted-value')
+    expect(entry?.provenance).toBe('toolResult')
+    expect(entry?.key ?? '').toContain('user_')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Block C — infeasible envelope (D-04)
+// ---------------------------------------------------------------------------
+describe('Block C — infeasible is a typed terminal outcome on the plan-field envelope (D-04)', () => {
+  it('toolCallToActionPlan surfaces failureKind + failureReason on the plan envelope (Pitfall 2 destructure, 358 remember[] precedent)', () => {
+    const registry = new ToolRegistry()
+    registerAllActions(registry)
+    // RED: failureKind/failureReason are not destructured in builder.ts yet ⇒ they fall into the
+    // strict action schema and throw schemaInvalid. Plan 08 applies the five-step remember[] treatment.
+    const plan = toolCallToActionPlan(
+      'common_reportValue',
+      {
+        reasoning: 'The requested screen is absent in this build',
+        confidence: 0.9,
+        stepComplete: false,
+        doesActionAdvanceUsTowardsGoal: false,
+        stepFailed: true,
+        failureKind: 'infeasible',
+        failureReason: 'Settings > Privacy is not present',
+        value: 'n/a',
+      },
+      registry,
+    ) as { failureKind?: string; failureReason?: string }
+    expect(plan.failureKind).toBe('infeasible')
+    expect(plan.failureReason).toBe('Settings > Privacy is not present')
+  })
+
+  it('a stepFailed + failureKind turn produces a machine-distinguishable infeasible termination block with sorted keys ["kind","reason"]', async () => {
+    const calls: Action[] = []
+    const adapter = recordingAdapter(makeScreenState(), calls)
+    const infeasible = {
+      reasoning: 'The requested screen does not exist in this app',
+      action: { type: 'reportValue', value: 'n/a' },
+      confidence: 0.9,
+      stepComplete: false,
+      stepFailed: true,
+      failureKind: 'infeasible',
+      failureReason: 'Settings > Privacy is not present',
+    } as unknown as ActionPlan
+
+    const result = await executeStep(
+      'Open Settings > Privacy',
+      ports({ adapter, planner: makePlanner([infeasible]), plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    const termination = (result.evidence as { termination?: { kind?: string; reason?: string } }).termination
+    expect(termination?.kind).toBe('infeasible')
+    expect(termination?.reason).toBe('Settings > Privacy is not present')
+    expect(Object.keys(termination ?? {}).sort()).toEqual(['kind', 'reason'])
+  })
+
+  it('control: a plain stepFailed with no failureKind keeps today behavior — status failed, no termination block (D-04 byte-unchanged)', async () => {
+    const calls: Action[] = []
+    const adapter = recordingAdapter(makeScreenState(), calls)
+    const plainFail = makeActionPlan({ action: { type: 'reportValue', value: 'n/a' }, stepComplete: false, stepFailed: true })
+
+    const result = await executeStep(
+      'Attempt an impossible action',
+      ports({ adapter, planner: makePlanner([plainFail]), plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('failed')
+    expect((result.evidence as { termination?: unknown }).termination).toBeUndefined()
+  })
+})
