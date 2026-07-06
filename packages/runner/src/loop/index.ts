@@ -65,6 +65,8 @@ import {
 } from './secrets.js'
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
 import { settle } from './settle.js'
+import { desiredStateSatisfied } from '../compound/idempotency.js'
+import { readIdempotentNoopMeta } from '../compound/metadata.js'
 import {
   evaluateLocalEffect,
   toLocalEffectEvidence,
@@ -670,9 +672,22 @@ export async function executeStep(
     // reaches the adapter and the failure routes into the heal / failure-context flow.
     let execResult: ActionResult
     let execError: string | undefined
+    // D-14: judged pre-dispatch on the settled `screenState` only (never a live probe, Pitfall 10).
+    const idempotentNoop = gateForcedError === undefined
+      ? desiredStateSatisfied(normalizedAction, screenState)
+      : undefined
     if (gateForcedError !== undefined) {
       execResult = { success: false, error: gateForcedError }
       execError = gateForcedError
+    } else if (idempotentNoop !== undefined) {
+      // D-14 pre-dispatch idempotency short-circuit at the ONE chokepoint before adapter.execute.
+      // Judged ONLY on `screenState` — the SAME settled observation the gate grounded against
+      // (Pitfall 10; no live probe). When the resolved control is already in the planner-declared
+      // desiredState (or a picker already sits on the requested value, D-15), mint a success no-op
+      // carrying metadata.idempotentNoop { currentState } (D-16) and SKIP adapter.execute entirely.
+      // Positive-evidence only: an undefined/missing persisted state never suppresses (D-15). One
+      // implementation serves web/android/ios — the field rides the action; adapters ignore it.
+      execResult = { success: true, metadata: { idempotentNoop } }
     } else {
       const outcome = await executeResolvedAction(normalizedAction)
       execResult = outcome.result
@@ -1159,7 +1174,7 @@ function recordSuccess(
   cached: boolean,
   grounding: GroundingEvidence | undefined,
 ): number {
-  return recorder.recordSubAction({
+  const index = recorder.recordSubAction({
     plan: reasoning,
     plannedAction: action as unknown as SchemaAction,
     stateBefore,
@@ -1167,6 +1182,25 @@ function recordSuccess(
     cached,
     grounding,
   })
+  // D-16: a pre-dispatch idempotent no-op (D-14) never reaches the deferred effect oracle when it
+  // is the step's completing sub-action — the step returns here. Its effect-achieved verdict is
+  // therefore attached eagerly: nothing was gestured (stateAfter === stateBefore), and the tap
+  // oracle row reads metadata.idempotentNoop as authoritative effect-achieved, so the no-op costs
+  // zero stagnation and burns no planner turn. Absent the flag this is a no-op (unflagged actions
+  // still land their verdict one iteration late via the normal progressCarry path).
+  if (readIdempotentNoopMeta(execResult)) {
+    const localEffect = evaluateLocalEffect({
+      action: action as { type: string; [key: string]: unknown },
+      anchor: deriveEffectAnchor(action, stateBefore.elements),
+      stateBefore,
+      stateAfter: stateBefore,
+      prevHash: '',
+      currentHash: '',
+      actionResult: execResult,
+    })
+    recorder.attachLocalEffect(index, toLocalEffectEvidence(localEffect))
+  }
+  return index
 }
 
 function maybeRecordSelfHeal(
