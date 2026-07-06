@@ -41,6 +41,21 @@ export interface ActionPlan {
    * non-bulk steps.
    */
   bulkCompletionPredicate?: string
+  /**
+   * D-04 infeasible terminal outcome (EXEC-05, spec §12.10). The additive plan-field envelope
+   * (358 remember[] precedent) by which a turn declares the step terminally infeasible — the
+   * requested capability/screen does not exist in this build. Closed literal union ('infeasible'
+   * today, extensible later); machine-distinguishable from a plain `stepFailed`. When set, the
+   * loop routes it into a typed StepEvidence.termination block and a distinct verdict outcome
+   * (Plan 10 seam). Absent for an ordinary failure.
+   */
+  failureKind?: 'infeasible'
+  /**
+   * D-04 infeasible reason — required whenever `failureKind` is set (enforced at the
+   * toolCallToActionPlan parse boundary). The human-readable why, recorded verbatim in the
+   * termination evidence block. Absent unless `failureKind` is present.
+   */
+  failureReason?: string
 }
 
 export interface PlannerConfig {
@@ -156,6 +171,22 @@ export interface Planner {
 
 export interface Verifier {
   verify(step: string, before: ScreenState, after: ScreenState, action: Action, screenshot?: Buffer, abortSignal?: AbortSignal, promptNote?: string, bulkCompletionPredicate?: string): Promise<VerifyResult>
+  /**
+   * D-05 AI judge lane (EXEC-07, spec §9.6/§12.2) — OPTIONAL so every existing Verifier
+   * implementor keeps compiling (D-05: no new port). Plan 09 implements this on LLMVerifier
+   * against the injected model handle; the loop (Plan 10 seam) routes `assertAI` through it
+   * exactly once per attempt (single-model law). A single-shot judgment over the current
+   * observation returning the verdict + rationale. `opts` carries the requested-but-deferred
+   * M3/M4 knobs (consensus/video/effort) so demand is recorded (D-09).
+   */
+  judgeClaim?(claim: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<{ verdict: boolean; rationale: string }>
+  /**
+   * D-07 AI extraction lane (EXEC-07, spec §9.6) — OPTIONAL, same no-new-port rationale as
+   * `judgeClaim`. Plan 09 implements it on LLMVerifier; the loop routes `extractAI` through it,
+   * writes the extracted fields into run-scoped working memory (`scope:'run'`), and degrades
+   * `scope:'global'` to the same run-scoped write (D-07). Returns the extracted field map.
+   */
+  extractData?(query: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<Record<string, unknown>>
 }
 
 // Assertion vocabulary (re-derived from v1 core/src/agent/types.ts). The asserter

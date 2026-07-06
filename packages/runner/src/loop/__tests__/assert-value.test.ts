@@ -26,9 +26,9 @@ import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeStepContext, makePlanner, makeActionPlan } from './loop-harness.js'
 import { SecretStore, SecretRedactor } from '../secrets.js'
-// @ts-expect-error — compound/assert-value.js (compareAssertValue) lands in Plan 10 (RED: module missing)
+// compareAssertValue landed in Plan 08 (compound/assert-value.js) — Block A goes green here.
 import { compareAssertValue } from '../../compound/assert-value.js'
-// @ts-expect-error — readAssertValueOutcomeMeta is added to compound/metadata.ts by Plan 10 (RED: missing export)
+// readAssertValueOutcomeMeta landed in Plan 08 (compound/metadata.ts); the seam it reads is Plan 10.
 import { readAssertValueOutcomeMeta } from '../../compound/metadata.js'
 
 // ---------------------------------------------------------------------------

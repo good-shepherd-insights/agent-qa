@@ -99,6 +99,15 @@ export type {
   StepEvidence,
   SubActionEvidence,
 } from './handoff/index'
+// 360 termination-verb & AI-assertion evidence vocabulary (EXEC-05/EXEC-07)
+export type {
+  AiJudgmentEvidence,
+  AssertValueEvidence,
+  AssertValueOp,
+  ReportedValueEvidence,
+  TerminationEvidence,
+  VerdictSource,
+} from './handoff/index'
 
 // 358 working-memory vocabulary (WM-01)
 export type { WorkingMemoryEntry } from './memory/index'

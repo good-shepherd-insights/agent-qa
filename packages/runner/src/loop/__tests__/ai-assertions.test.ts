@@ -28,7 +28,7 @@ import type { ActionPlanCache } from '../../cache/port.js'
 import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeStepContext, makePlanner, makeActionPlan } from './loop-harness.js'
-// @ts-expect-error — readAiJudgmentMeta is added to compound/metadata.ts by Plan 09 (RED: missing export)
+// readAiJudgmentMeta landed in Plan 08 (compound/metadata.ts); the seam wiring it reads is Plan 09/10.
 import { readAiJudgmentMeta } from '../../compound/metadata.js'
 
 // ---------------------------------------------------------------------------

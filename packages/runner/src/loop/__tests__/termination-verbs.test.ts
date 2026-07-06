@@ -35,7 +35,7 @@ import { ToolRegistry } from '../../tools/registry.js'
 import { registerAllActions } from '../../tools/actions/index.js'
 import { toolCallToActionPlan } from '../../tools/builder.js'
 import { SecretStore, SecretRedactor } from '../secrets.js'
-// @ts-expect-error — readReportedValueMeta/readUniqueValueMeta are added to compound/metadata.ts by Plan 08 (RED: missing exports)
+// readReportedValueMeta/readUniqueValueMeta landed in Plan 08 (compound/metadata.ts).
 import { readReportedValueMeta, readUniqueValueMeta } from '../../compound/metadata.js'
 
 // ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ function recordingWorkingMemory(): WorkingMemoryPort & { calls: CaptureCall[] } 
 
 async function importDispatchMint(): Promise<Record<string, unknown>> {
   return import(
-    // @ts-expect-error — compound/dispatch-mint.js lands in Plan 08 (RED: module missing)
+    // compound/dispatch-mint.js landed in Plan 08.
     '../../compound/dispatch-mint.js'
   )
 }

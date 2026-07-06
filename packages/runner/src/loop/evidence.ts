@@ -16,18 +16,23 @@ import type {
   Action,
   ActionAnnotation,
   ActionResult as SchemaActionResult,
+  AiJudgmentEvidence,
+  AssertValueEvidence,
   BoundingBox,
   CycleEvidence,
   Decision,
   LocalEffectEvidence,
   Point,
   RecordedActionResult,
+  ReportedValueEvidence,
   ScopeKey,
   ScreenState,
   ServedBrief,
   StagnationEvidence,
   StepEvidence,
   SubActionEvidence,
+  TerminationEvidence,
+  VerdictSource,
   VerifierVerdict,
   Viewport,
   WorkingMemoryEntry,
@@ -203,6 +208,11 @@ export class EvidenceRecorder {
   private stagnation?: StagnationEvidence
   private cycle?: CycleEvidence
   private workingMemory?: WorkingMemoryEntry[]
+  private reportedValue?: ReportedValueEvidence
+  private termination?: TerminationEvidence
+  private aiJudgment?: AiJudgmentEvidence
+  private assertOutcome?: AssertValueEvidence
+  private verdictSource?: VerdictSource
 
   constructor(options?: { servedBrief?: ServedBrief; scope?: ScopeKey; asOfBuild?: number }) {
     this.servedBrief = options?.servedBrief
@@ -262,6 +272,60 @@ export class EvidenceRecorder {
     this.workingMemory = entries
   }
 
+  // -------------------------------------------------------------------------
+  // Phase 360 termination-verb & AI-assertion evidence blocks (EXEC-05/EXEC-07 ·
+  // D-03/D-04/D-05/D-10/D-11). Sibling record* methods on the recorder; recording types ARE
+  // the schema §A8 DTOs (353 D-14 law — no runner-local mirror). MASKED-BEFORE-RECORD: as with
+  // recordWorkingMemory, the caller (the Plan 10 dispatch seam) masks every value-bearing field
+  // via `ports.masking.mask` BEFORE handing the DTO here — the recorder never sees a raw secret
+  // and never store-raw-then-masks (T-360-01).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Record the D-03 `common_reportValue` answer block. `value` arrives already masked. Surfaced
+   * on StepEvidence.reportedValue so the verdict layer (and Phase 361's handoff) carries the
+   * retrieved answer first-class. reportValue is non-terminal (D-02) — this only records.
+   */
+  recordReportedValue(evidence: ReportedValueEvidence): void {
+    this.reportedValue = evidence
+  }
+
+  /**
+   * Record the D-04 infeasible termination block — present only when a turn declared the step
+   * infeasible via the `failureKind`/`failureReason` envelope (machine-distinguishable from a
+   * plain `stepFailed`). Sorted keys `["kind","reason"]` are fixed by the DTO.
+   */
+  recordTermination(evidence: TerminationEvidence): void {
+    this.termination = evidence
+  }
+
+  /**
+   * Record the D-05/D-06/D-07/D-09 AI judge block (`assertAI`/`extractAI`): verdict, rationale
+   * (masked), the requested-but-deferred M3/M4 knobs, and the extractAI global-scope degradation
+   * marker. One judgment per attempt (single-model law).
+   */
+  recordAiJudgment(evidence: AiJudgmentEvidence): void {
+    this.aiJudgment = evidence
+  }
+
+  /**
+   * Record the D-10/D-11 structured `common_assertValue` outcome block: the comparator's
+   * deterministic result with `expected`/`actual` already masked. A passing outcome drives the
+   * verifier short-circuit (Plan 10 seam), recorded via {@link recordVerdictSource}.
+   */
+  recordAssertOutcome(evidence: AssertValueEvidence): void {
+    this.assertOutcome = evidence
+  }
+
+  /**
+   * Record which path produced this step's verification verdict (D-11): the deterministic
+   * assertValue comparator (`'assert-value'`), the assertAI judge (`'assert-ai'`), or the
+   * verifier's own model call (`'verifier-model'`). Set by the Plan 10 seam at the verdict fork.
+   */
+  recordVerdictSource(source: VerdictSource): void {
+    this.verdictSource = source
+  }
+
   /**
    * Attach the D-15 stateAfter at the spec-locked boundaries (assert sub-actions, the
    * verifier boundary, the self-heal boundary) by reuse of an observation the loop
@@ -303,6 +367,11 @@ export class EvidenceRecorder {
     if (this.stagnation) evidence.stagnation = this.stagnation
     if (this.cycle) evidence.cycle = this.cycle
     if (this.workingMemory) evidence.workingMemory = this.workingMemory
+    if (this.reportedValue) evidence.reportedValue = this.reportedValue
+    if (this.termination) evidence.termination = this.termination
+    if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment
+    if (this.assertOutcome) evidence.assertOutcome = this.assertOutcome
+    if (this.verdictSource) evidence.verdictSource = this.verdictSource
     return evidence
   }
 }

@@ -204,8 +204,7 @@ describe('D-20 catalog roll-call', () => {
   })
 
   it('every registered id on every legal platform either mints or dispatches (RED until Plans 04-07/10)', async () => {
-    // RED anchor: MINT_VERBS lands with the dispatch-mint module in Plans 08/10.
-    // @ts-expect-error dispatch-mint.js is a Plan 08/10 deliverable (missing today → RED on import)
+    // MINT_VERBS landed with the dispatch-mint module in Plan 08 (import now resolves).
     const { MINT_VERBS } = await import('../../compound/dispatch-mint.js')
     const mintSet = new Set<string>(MINT_VERBS as readonly string[])
 
