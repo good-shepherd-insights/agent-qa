@@ -586,69 +586,76 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('execute — openLink', () => {
-    it('passes explicit Android app package to the deep-link command', async () => {
+  // openLink retired (D-19) — the deep-link-open behavior re-keys onto the typed `intent` verb
+  // (mobile: startActivity). Exhaustive hostile-input pins live in catalog.test.ts.
+  describe('execute — intent', () => {
+    it('maps action + data + package to typed mobile: startActivity args (uri, never a shell string)', async () => {
       await adapter.setup({ platform: 'android' })
-
-      const result = await adapter.execute({
-        type: 'openLink',
-        url: 'wikipedia://wiki/Grace_Hopper',
-        appPackage: 'org.wikipedia.alpha',
-      })
-
-      expect(result.success).toBe(true)
-      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
-        url: 'wikipedia://wiki/Grace_Hopper',
-        package: 'org.wikipedia.alpha',
-      })
-    })
-
-    it('ignores empty appId and uses explicit Android app package for deep links', async () => {
-      await adapter.setup({ platform: 'android' })
-
-      const result = await adapter.execute({
-        type: 'openLink',
-        url: 'wikipedia://wiki/Grace_Hopper',
-        appId: '',
-        appPackage: 'org.wikipedia.alpha',
-      })
-
-      expect(result.success).toBe(true)
-      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
-        url: 'wikipedia://wiki/Grace_Hopper',
-        package: 'org.wikipedia.alpha',
-      })
-    })
-
-    it('falls back to setup app package for deep links', async () => {
-      await adapter.setup({ platform: 'android', appPackage: 'org.wikipedia.alpha' })
       mockDriver.execute.mockClear()
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wikipedia://wiki/Alan_Turing' })
+      const result = await adapter.execute({
+        type: 'intent',
+        action: 'android.intent.action.VIEW',
+        data: 'wikipedia://wiki/Grace_Hopper',
+        packageName: 'org.wikipedia.alpha',
+      })
 
       expect(result.success).toBe(true)
-      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
-        url: 'wikipedia://wiki/Alan_Turing',
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: startActivity', {
+        action: 'android.intent.action.VIEW',
+        uri: 'wikipedia://wiki/Grace_Hopper',
         package: 'org.wikipedia.alpha',
       })
     })
 
-    it('fails native-scheme links when no Android app package is available', async () => {
+    it('maps typed extras to [typeTag,key,value] triples (string→s, int→i, bool→z)', async () => {
       await adapter.setup({ platform: 'android' })
+      mockDriver.execute.mockClear()
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wikipedia://wiki/Grace_Hopper' })
+      const result = await adapter.execute({
+        type: 'intent',
+        action: 'android.intent.action.VIEW',
+        extras: [
+          { key: 'name', type: 'string', value: 'Ada' },
+          { key: 'count', type: 'int', value: '3' },
+          { key: 'flag', type: 'bool', value: 'true' },
+        ],
+      })
 
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Missing Android app package')
+      expect(result.success).toBe(true)
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: startActivity', {
+        action: 'android.intent.action.VIEW',
+        extras: [['s', 'name', 'Ada'], ['i', 'count', '3'], ['z', 'flag', 'true']],
+      })
+    })
+
+    it('omits uri/package/extras when only an action is provided', async () => {
+      await adapter.setup({ platform: 'android' })
+      mockDriver.execute.mockClear()
+
+      const result = await adapter.execute({ type: 'intent', action: 'android.intent.action.MAIN' })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: startActivity', {
+        action: 'android.intent.action.MAIN',
+      })
     })
   })
 
   describe('execute — waitFor', () => {
-    it('pauses for specified timeout', async () => {
+    it('polls the accessibility tree for on:text (not a blind pause)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'waitFor', condition: 'loading', timeout: 3000 })
+      mockDriver.getPageSource.mockClear()
+      const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Sign In', timeoutMs: 500 })
       expect(result.success).toBe(true)
-      expect(mockDriver.pause).toHaveBeenCalledWith(3000)
+      expect(mockDriver.getPageSource).toHaveBeenCalled()
+    })
+
+    it('returns a §7.1 web-only error for on:selector (no selector waiting on native)', async () => {
+      await adapter.setup({ platform: 'android' })
+      const result = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 })
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/web|selector/i)
     })
   })
 
@@ -664,7 +671,7 @@ describe('AndroidPlatformAdapter', () => {
   describe('execute — keypress', () => {
     it('sends mapped key code for single key', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(1)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE007'])
@@ -672,7 +679,7 @@ describe('AndroidPlatformAdapter', () => {
 
     it('iterates multiple keys in order with KEY_MAP lookup', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter', 'Escape'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter', 'Escape'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(3)
       expect(mockDriver.keys).toHaveBeenNthCalledWith(1, ['\uE004'])
@@ -682,26 +689,31 @@ describe('AndroidPlatformAdapter', () => {
 
     it('falls back to raw string when key is not in KEY_MAP', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['a'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['a'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['a'])
     })
 
     it('ignores convertPlatformKeys flag (no-op on mobile)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], convertPlatformKeys: false })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press', convertPlatformKeys: false })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE007'])
     })
   })
 
-  describe('execute — assert', () => {
-    it('returns success (handled by agent core)', async () => {
+  describe('execute — keypress mode gating', () => {
+    it('returns a §7.1 press-only error for mode:down (web-only key hold/release)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'assert', condition: 'text visible' })
-      expect(result.success).toBe(true)
+      const down = await adapter.execute({ type: 'keypress', keys: ['Shift'], mode: 'down' })
+      expect(down.success).toBe(false)
+      expect(down.error).toMatch(/press|mobile|down|up/i)
+      expect(mockDriver.keys).not.toHaveBeenCalled()
     })
   })
+
+  // assert retired (D-19) — deterministic checks now route through the runner-side assertValue
+  // comparator and claim-shaped checks through assertAI; there is no adapter assert case.
 
   describe('screenshot', () => {
     it('returns PNG buffer from base64', async () => {
@@ -740,7 +752,7 @@ describe('AndroidPlatformAdapter', () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'swipe', direction: 'left' })
+      const result = await adapter.execute({ type: 'swipe', mode: 'direction', direction: 'left', durationMs: 300 })
       expect(result.success).toBe(true)
 
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
@@ -751,7 +763,7 @@ describe('AndroidPlatformAdapter', () => {
   describe('execute — coordinate passthrough (tapCoordinate, swipe, pinch, multiTap)', () => {
     it('tapCoordinate passes LLM coords directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 100, y: 200 })
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
@@ -759,18 +771,21 @@ describe('AndroidPlatformAdapter', () => {
 
     it('tapCoordinate passes arbitrary coords unchanged', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 200, y: 400 })
       expect(result.coordinates).toEqual({ x: 200, y: 400 })
     })
 
-    it('swipe passes 4 coords directly to driver', async () => {
+    it('swipe (mode:path) drives from/to points directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
       const result = await adapter.execute({
         type: 'swipe',
-        direction: 'up',
-        startX: 100, startY: 200, endX: 300, endY: 400,
+        mode: 'path',
+        from: { x: 100, y: 200 },
+        to: { x: 300, y: 400 },
+        coordSpace: 'viewport',
+        durationMs: 300,
       })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenNthCalledWith(1, { x: 100, y: 200 })
@@ -781,20 +796,20 @@ describe('AndroidPlatformAdapter', () => {
 
     it('pinch center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
     })
 
     it('multiTap center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
     })
 
     it('coords pass through unchanged (viewport-space contract)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
     })
   })

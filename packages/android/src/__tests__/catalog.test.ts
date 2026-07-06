@@ -160,8 +160,12 @@ describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
       } as unknown as ExecAction)
       const startCall = mockDriver.execute.mock.calls.find(c => c[0] === 'mobile: startActivity')
       expect(startCall).toBeDefined()
-      // Byte-identical, carried as a typed arg (not concatenated into any command string).
-      expect(JSON.stringify(startCall?.[1])).toContain(hostile)
+      // Byte-identical, carried as a typed extras-triple value (never concatenated into any command
+      // string). Exact triple equality is the true byte-identity check: a JSON-substring match is
+      // unsatisfiable here because JSON.stringify escapes the quotes inside the hostile value.
+      const startArgs = startCall?.[1] as { extras?: Array<[string, string, string]> }
+      const carriedByteIdentical = (startArgs?.extras ?? []).some(triple => triple[2] === hostile)
+      expect(carriedByteIdentical).toBe(true)
       const anyShellCarriedHostile = mockDriver.execute.mock.calls.some(
         c => c[0] === 'mobile: shell' && JSON.stringify(c[1]).includes(hostile),
       )
