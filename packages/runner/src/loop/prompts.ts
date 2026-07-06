@@ -110,22 +110,13 @@ function elementTargetingRules(): string {
 }
 
 function assertionRules(): string {
-  return `12. The "assert" action is a SIGNAL — it tells the system what condition you are verifying, but the adapter does NOT evaluate it. Assert is a no-op: it always succeeds, and the screen does not change. YOU must read the current screen observation BEFORE outputting assert, and include your verdict in the SAME tool call:
-   - Condition IS satisfied AND this completes the step goal → output assert with stepComplete: true
-   - Condition is NOT satisfied → do NOT assert. Instead, take an action to make the information visible (scroll, navigate), or set stepFailed if the screen contradicts the expected condition
-   - Condition IS satisfied BUT more sub-goals remain (e.g., "verify X then click Y") → do NOT assert yet. Proceed to the next sub-goal action per Rule 13. Only set stepComplete after ALL sub-goals are done.
-   NEVER output assert with stepComplete: false — assert does not change the screen, so repeating it produces an infinite loop with no new information.
-   ASSERTION FAILURE FOR NON-VISUAL CONDITIONS: When a step says "verify X equals Y" or "check that A matches B" and the condition is NOT met (X ≠ Y, A ≠ B), you MUST set stepFailed: true with a reason explaining the mismatch. Do NOT use setVariable, scroll, navigate, or any other action — stepFailed is the ONLY correct response to a failed assertion.
-   STRICT LITERAL ASSERTION: Assert the EXACT condition from the step text. If the step says "verify 42 equals 30", you assert whether 42 equals 30 — it does not, so stepFailed. You do NOT rewrite it as "42 does not equal 30" and pass. You do NOT store "42 ≠ 30" via setVariable and pass. The step text is the test spec. If reality contradicts the spec, the test FAILS. This is QA — your job is to report truth, not make tests pass.
-   When asserting about something NOT visible on screen — tautologies ("42 equals 42"),
-   hook/env variable checks ("hook set env MY_VAR to abc"), runJS output comparisons
-   ("runJS returned 42"), or computed value checks — set evidence: 'none' on the assert action.
-   The system will trust your judgment without requiring screen evidence.
-   When asserting about something visible on screen ("button says Submit", "title is Dashboard",
-   "error message appears") — omit evidence or set evidence: 'screen'.
-   The system will verify your claim against the screenshot.
-   When a claim should be checked from DOM or accessibility-tree state rather than pixels,
-   set evidence: 'dom'.`
+  return `12. ASSERTIONS — route the check to the right verb (§12.2). There are two assertion verbs plus a report channel; pick by the KIND of claim:
+   - DETERMINISTIC VALUE CHECKS → assertValue. Use it when the claim is a machine-readable value: the current URL, a cookie/localStorage/network value, or an element/JS-expression result. Supply a source (url/storage/network/expr-result) or an expr, one op from the closed set (isNull, isDefined, equals, notEquals, gt, lt, contains), and the expected value. assertValue is evaluated deterministically and feeds the verdict directly — no screenshot round-trip. Use it for tautologies, env/hook variable checks, and computed comparisons ("42 equals 42", "token is defined", "count gt 5").
+   - CLAIM-SHAPED OR VISUAL JUDGMENTS → assertAI. Use it when the truth requires looking: "the error banner is red", "the layout is not broken", "the page shows a success message". Provide the claim; a fresh model judgment decides. A false claim comes back as a self-correcting error with the rationale — re-observe, act to fix, or terminate; do NOT repeat the identical assertAI.
+   - AN ASSERTION THAT CONCLUDES THE STEP rides the SAME tool call as stepComplete: true. If the assertion holds but more sub-goals remain, proceed to the next sub-goal per Rule 13 and only set stepComplete when ALL are done.
+   - INFORMATION-RETRIEVAL ANSWERS → reportValue. When the step asks you to find/read/report a value (not verify it), emit reportValue with the answer. reportValue is DISTINCT from stepComplete — it records the answer and you MAY report-then-continue; set stepComplete separately when the step goal is met.
+   - AN IMPOSSIBLE OBJECTIVE → stepFailed with failureKind "infeasible" and a reason. Declaring infeasibility is a first-class terminal outcome, machine-distinct from an ordinary failure to complete the step; never silently abandon it.
+   STRICT LITERAL ASSERTION: check the EXACT condition from the step text. If the step says "verify 42 equals 30", you assert whether 42 equals 30 — it does not, so the assertion fails (assertValue with op equals returns false → the step fails). Do NOT rewrite it as "42 does not equal 30" to pass, and do NOT store a value via setVariable to sidestep it. The step text is the test spec: if reality contradicts the spec, the test FAILS. This is QA — your job is to report truth, not make tests pass.`
 }
 
 function qaMindsetExample(platform?: PromptPlatform): string {
@@ -503,6 +494,7 @@ export function formatAction(action: Action): string {
     case 'clearText':
     case 'doubleClick':
     case 'rightClick':
+    case 'focus':
       return `${action.type} on ref="${action.ref}"`
     case 'fill':
       return `fill ref="${action.ref}" with text="${action.text}"${action.clearMode === 'append' ? ' (append)' : ''}${action.submit ? ' + submit' : ''}`
@@ -511,23 +503,26 @@ export function formatAction(action: Action): string {
     case 'nativeSelect':
       return `nativeSelect ref="${action.ref}" value="${action.value}"`
     case 'navigate':
-    case 'openLink':
-      return `${action.type} to "${action.url}"`
+      // Schema navigate discriminant (D-19: absorbed the retired refresh/navigateHistory verbs).
+      return action.to === 'url' ? `navigate to "${action.url}"` : `navigate ${action.to}`
     case 'scroll':
       return action.mode === 'untilVisible'
         ? `scroll ${action.direction} until "${action.text}" visible (maxSwipes=${action.maxSwipes})${action.ref ? ` in ref="${action.ref}"` : ''}`
         : `scroll ${action.direction} ${action.amount}${action.ref ? ` on ref="${action.ref}"` : ''}`
     case 'swipe':
-      if (action.startX !== undefined && action.startY !== undefined && action.endX !== undefined && action.endY !== undefined) {
-        return `swipe from (${action.startX},${action.startY}) to (${action.endX},${action.endY})${action.ref ? ` on ref="${action.ref}"` : ''}`
-      }
-      return `swipe ${action.direction}${action.ref ? ` on ref="${action.ref}"` : ''}`
+      // Schema swipe: SwipeByPath carries from/to points; SwipeByDirection carries direction.
+      return action.mode === 'path'
+        ? `swipe from (${action.from.x},${action.from.y}) to (${action.to.x},${action.to.y})`
+        : `swipe ${action.direction}${action.ref ? ` on ref="${action.ref}"` : ''}`
     case 'pinch':
-      return `pinch scale=${action.scale}${action.ref ? ` on ref="${action.ref}"` : ''}`
+      return `pinch scale=${action.scale}${'ref' in action ? ` on ref="${action.ref}"` : ` at (${action.x},${action.y})`}`
     case 'multiTap':
-      return `${action.fingers}-finger tap${action.ref ? ` on ref="${action.ref}"` : ''}`
+      return `${action.fingers}-finger tap${'ref' in action ? ` on ref="${action.ref}"` : ` at (${action.x},${action.y})`}`
     case 'waitFor':
-      return `waitFor "${action.condition}"`
+      // Schema WaitFor: {on:'text'|'gone', text, timeoutMs} | {on:'selector', selector, timeoutMs}.
+      return action.on === 'selector'
+        ? `waitFor selector "${action.selector}" (${action.timeoutMs}ms)`
+        : `waitFor ${action.on} "${action.text}" (${action.timeoutMs}ms)`
     case 'delay':
       return `delay ${action.ms}ms`
     case 'waitForUrl':
@@ -536,67 +531,80 @@ export function formatAction(action: Action): string {
       return `fileUpload ref="${action.ref}" files=[${action.files.join(', ')}]`
     case 'copy':
       return `copy ref="${action.ref}"`
-    case 'assert':
-      return `assert "${action.condition}"${action.expected ? ` equals "${action.expected}"` : ''}${action.visual === false ? ' [non-visual]' : ''}`
     case 'keypress':
-      return `keypress [${action.keys.join(', ')}]`
+      return `keypress [${action.keys.join(', ')}]${action.mode !== 'press' ? ` (${action.mode})` : ''}`
     case 'paste':
       return `paste ref="${action.ref}" value="${action.value}"`
-    case 'keyDown':
-      return `keyDown "${action.key}"`
-    case 'keyUp':
-      return `keyUp "${action.key}"`
-    case 'refresh':
-      return 'refresh page'
-    case 'navigateHistory':
-      return `navigate ${action.direction}`
     case 'hideKeyboard':
       return 'hide keyboard'
     case 'drag':
       return `drag from ref="${action.fromRef}" to ref="${action.toRef}"`
     case 'openApp':
       return 'appName' in action ? `openApp "${action.appName}"` : `openApp bundleId="${action.bundleId}"`
-    case 'launchApp':
     case 'stopApp':
-      return `${action.type} "${action.bundleId}"`
+      return `stopApp "${action.bundleId}"`
     case 'setOrientation':
       return `set orientation to ${action.orientation}`
     case 'tapCoordinate':
       return `tap at coordinates (${action.x}, ${action.y})`
-    case 'readConsoleLogs': {
-      const parts: string[] = []
-      if (action.level) parts.push(`level: ${action.level}`)
-      if (action.tab) parts.push(`tab: ${JSON.stringify(action.tab)}`)
-      return `read console logs${parts.length ? ` (${parts.join(', ')})` : ''}`
-    }
-    case 'readNetworkLogs': {
-      const parts: string[] = []
-      if (action.urlPattern) parts.push(`filter: ${action.urlPattern}`)
-      if (action.tab) parts.push(`tab: ${JSON.stringify(action.tab)}`)
-      return `read network logs${parts.length ? ` (${parts.join(', ')})` : ''}`
-    }
-    case 'readCookies':
-      return `read cookies${action.name ? ` (name: ${action.name})` : ''}`
     case 'setCookies':
       return `set ${action.cookies.length} cookie(s)`
-    case 'readLocalStorage':
-      return `read local storage${action.key ? ` (key: ${action.key})` : ''}`
     case 'setLocalStorage':
       return `set ${action.entries.length} local storage entry(ies)`
     case 'executeScript':
       return `executeScript "${action.command}"${action.args ? ` with ${JSON.stringify(action.args)}` : ''}`
-    case 'setVariable': {
-      const sv = action as Extract<Action, { type: 'setVariable' }>
-      return `setVariable "${sv.name}" = "${sv.value}"`
-    }
-    case 'newTab':
-      return `open new tab "${action.url}"`
-    case 'switchTab': {
-      if (action.index !== undefined) return `switch to tab index ${action.index}`
-      if (action.title) return `switch to tab with title "${action.title}"`
-      if (action.url) return `switch to tab with URL "${action.url}"`
-      return 'switch tab'
-    }
+    case 'setVariable':
+      return `setVariable "${action.name}" = "${action.value}"`
+    // Inspect fold (D-19: absorbed the retired read{Console,Network}Logs/Cookies/LocalStorage).
+    case 'inspect':
+      return `inspect ${action.what}`
+    // Tab fold (D-19: absorbed the retired newTab/switchTab).
+    case 'tab':
+      return action.action === 'new'
+        ? `open new tab "${action.url}"`
+        : `switch tab${action.index !== undefined ? ` index ${action.index}` : action.title ? ` title "${action.title}"` : action.url ? ` URL "${action.url}"` : ''}`
+    // §12.2 assertion split + termination verbs.
+    case 'assertValue':
+      return `assertValue ${'expr' in action ? `expr "${action.expr}"` : action.source} ${action.op}${action.expected !== undefined ? ` "${action.expected}"` : ''}`
+    case 'assertAI':
+      return `assertAI "${action.claim}" (${action.mode})`
+    case 'extractAI':
+      return `extractAI "${action.query}" (scope: ${action.scope})`
+    case 'reportValue':
+      return `reportValue "${action.value}"`
+    case 'uniqueValue':
+      return `uniqueValue prefix="${action.prefix}"`
+    // Web network / storage / dialog verbs.
+    case 'route':
+      return `route "${action.urlPattern}"`
+    case 'unroute':
+      return `unroute${action.urlPattern ? ` "${action.urlPattern}"` : ' (all)'}`
+    case 'networkState':
+      return action.mode === 'offline'
+        ? 'network offline'
+        : `network throttle (${action.latencyMs}ms, down ${action.downloadKbps}kbps, up ${action.uploadKbps}kbps)`
+    case 'storageState':
+      return `storageState ${action.op} "${action.name}"`
+    case 'handleDialog':
+      return `handleDialog ${action.accept ? 'accept' : 'dismiss'}${action.promptText ? ` "${action.promptText}"` : ''}`
+    // Android hardware / intent verbs.
+    case 'intent':
+      return `intent ${action.action}${action.data ? ` data="${action.data}"` : ''}`
+    case 'keyevent':
+      return `keyevent ${action.keycode}`
+    // iOS verbs.
+    case 'pressButton':
+      return `pressButton ${action.button}`
+    case 'pickerSelect':
+      return `pickerSelect ref="${action.ref}" ${'value' in action ? `value="${action.value}"` : `order=${action.order}`}`
+    case 'swipeFromEdge':
+      return `swipeFromEdge ${action.edge}`
+    case 'openUniversalLink':
+      return `openUniversalLink "${action.url}"`
+    default:
+      // Compact generic fallback for the no-arg hardware verbs
+      // (pressBack / pressHome / pressRecent / openNotifications / openQuickSettings).
+      return (action as { type: string }).type
   }
 }
 
