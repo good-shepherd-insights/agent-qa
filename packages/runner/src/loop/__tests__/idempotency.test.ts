@@ -28,8 +28,6 @@ import { makeActionPlan, makeStepContext, makeVerifier, makePlanner } from './lo
 import { ToolRegistry } from '../../tools/registry.js'
 import { registerAllActions } from '../../tools/actions/index.js'
 import { toolCallToActionPlan } from '../../tools/builder.js'
-// Idempotency comparator — intentionally unresolved today (the RED reason for Block A):
-// @ts-expect-error module lands in the Phase-359 compound plan (remove this directive then)
 import { desiredStateSatisfied } from '../../compound/idempotency.js'
 
 // ---------------------------------------------------------------------------
@@ -54,7 +52,7 @@ describe('Block A — desiredStateSatisfied: checkable toggles (D-15)', () => {
   it('tap desiredState=checked ⇒ {currentState} hit when persisted state.checked is true', () => {
     const hit = desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'checked' }, checkable({ checked: true }))
     expect(hit).toBeDefined()
-    expect(hit.currentState).toBeDefined()
+    expect(hit!.currentState).toBeDefined()
   })
 
   it('tap desiredState=checked ⇒ act (undefined) when state.checked is false', () => {
@@ -97,8 +95,8 @@ describe('Block A — desiredStateSatisfied: pickers act on the persisted value 
 
   it('byte-pin: the hit object sorted keys are exactly ["currentState"] with a string value (D-04)', () => {
     const hit = desiredStateSatisfied({ type: 'tap', ref: 'e1', desiredState: 'checked' }, checkable({ checked: true }))
-    expect(Object.keys(hit).sort()).toEqual(['currentState'])
-    expect(typeof hit.currentState).toBe('string')
+    expect(Object.keys(hit!).sort()).toEqual(['currentState'])
+    expect(typeof hit!.currentState).toBe('string')
   })
 })
 

@@ -16,8 +16,6 @@
 //   - meta.expected/meta.actual are sentinel forms for secure fields (NEVER the raw value).
 //   - meta sorted keys are EXACTLY ["actual","expected"] (the 358 oracle byte-pin, D-04).
 import { describe, it, expect } from 'vitest'
-// Plan-03 fill comparator — intentionally unresolved today (the RED reason for this suite):
-// @ts-expect-error module lands in Plan 03 (remove this directive then)
 import { compareFillReread } from '../fill-verify.js'
 
 describe('compareFillReread — exact and normalized matches (D-06)', () => {
@@ -75,7 +73,7 @@ describe('compareFillReread — secure fields verify length only, never leak the
 describe('compareFillReread — the fillReread meta byte-pin (D-04, 358 oracle seam)', () => {
   it('(7) meta sorted keys are exactly ["actual","expected"] with string values', () => {
     const r = compareFillReread({ expected: 'abc', actual: 'abc', secure: false })
-    const meta = r.meta as Record<string, unknown>
+    const meta = r.meta as unknown as Record<string, unknown>
     expect(Object.keys(meta).sort()).toEqual(['actual', 'expected'])
     expect(typeof meta['expected']).toBe('string')
     expect(typeof meta['actual']).toBe('string')
@@ -83,7 +81,7 @@ describe('compareFillReread — the fillReread meta byte-pin (D-04, 358 oracle s
 
   it('(7b) the secure meta keeps the same two-key shape (sentinels, not raw values)', () => {
     const r = compareFillReread({ expected: SECRET_LEN8, actual: SECRET_LEN8, secure: true })
-    const meta = r.meta as Record<string, unknown>
+    const meta = r.meta as unknown as Record<string, unknown>
     expect(Object.keys(meta).sort()).toEqual(['actual', 'expected'])
     expect(typeof meta['expected']).toBe('string')
     expect(typeof meta['actual']).toBe('string')

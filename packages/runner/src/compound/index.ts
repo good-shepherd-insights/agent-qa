@@ -4,3 +4,5 @@
 // Node builtins; keep validate:arch green.
 
 export * from './metadata.js'
+export * from './fill-verify.js'
+export * from './idempotency.js'
