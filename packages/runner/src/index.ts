@@ -22,6 +22,10 @@ export type {
   CaptureStamp,
 } from './screen-builder.js'
 
+// Pure, provider-neutral compound helpers the three adapters ride (Phase 359 · D-02).
+// Adapter packages import these via the runner barrel (352 buildScreenState precedent).
+export * from './compound/index.js'
+
 export { makeScreenState, makeInterimNodes } from './testing/screen-fixtures.js'
 export type { InterimFixture, InterimFixtureKind } from './testing/screen-fixtures.js'
 export { screenConformanceCases } from './testing/conformance.js'
