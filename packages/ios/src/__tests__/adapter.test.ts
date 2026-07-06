@@ -349,19 +349,21 @@ describe('IOSPlatformAdapter', () => {
   })
 
   describe('execute — fill', () => {
-    it('taps to focus then types via element setValue', async () => {
+    it('taps to focus then types the schema Fill compound via element setValue', async () => {
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
 
       const emailEl = state.elements.find(e => e.name === 'Email')
       expect(emailEl).toBeDefined()
 
-      // Mock the $() element finder that fill uses after tap-to-focus
-      const mockElement = { clearValue: vi.fn(), setValue: vi.fn() }
+      // Mock the $() element finder that the fill compound uses after tap-to-focus. It has no
+      // getAttribute, so the re-read degrades to undefined ⇒ honest success with no fillReread.
+      const mockElement = { isExisting: vi.fn().mockResolvedValue(true), clearValue: vi.fn(), setValue: vi.fn() }
       mockDriver.$ = vi.fn().mockResolvedValue(mockElement)
 
-      const result = await adapter.execute({ type: 'fill', ref: emailEl!.ref, value: 'user@test.com' })
+      const result = await adapter.execute({ type: 'fill', ref: emailEl!.ref, text: 'user@test.com', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)
+      expect(mockElement.setValue).toHaveBeenCalledWith('user@test.com')
 
       // Tap to focus fires a pointer action
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
@@ -467,19 +469,19 @@ describe('IOSPlatformAdapter', () => {
   })
 
   describe('execute — scroll', () => {
-    it('performs swipe gesture in the specified direction', async () => {
+    it('performs a schema-Scroll direction gesture and carries scrollUntilVisible metadata', async () => {
       await adapter.setup({ platform: 'ios' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: -500 })
+      const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
       expect(result.success).toBe(true)
 
+      // ONE ActionResult carries the compound outcome on metadata (the gesture ran; the found/
+      // no-change verdict rides metadata.scrollUntilVisible for the 358 oracle's signal-presence read).
+      expect(result.metadata?.scrollUntilVisible).toBeDefined()
+      // A page-sized inverted-finger swipe fired via the pointer action.
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      // viewport: 390x844, center: 195,422
-      // scroll up (value=-500): startY=center=422, endY=center-(-500)=922
-      // finger swipes down (422→922) which scrolls content up
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 195, y: 422 })
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 195, y: 922, duration: 300 })
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
     })
   })
 

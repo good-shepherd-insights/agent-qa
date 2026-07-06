@@ -1,13 +1,26 @@
 import type {
   ActionsFor,
   ActionResult,
+  AppRegistryEntry,
   ConsoleLogEntry,
+  Direction,
+  InterimNode,
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
+  ScrollPrimitives,
+  ScrollUntilVisibleMeta,
 } from '@vostride/agent-qa-runner'
-import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import {
+  assertNever,
+  buildScreenState,
+  compareFillReread,
+  interimTreeIdentity,
+  resolveAppName,
+  runDirectionScrollWithRetry,
+  runUntilVisibleLoop,
+} from '@vostride/agent-qa-runner'
+import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
   MobileElementResolver,
@@ -137,6 +150,43 @@ function matchesIOSApp(processName: string, bundleId: string): boolean {
   return processName === appName || processName.includes(appName)
 }
 
+/**
+ * Escape untrusted target text for interpolation into an XCUITest NSPredicate `CONTAINS` literal
+ * (T-359-01 · Pitfall 9). Backslash-escape backslashes FIRST, then double quotes, so the raw text
+ * can never break out of the quoted literal. Control characters cannot be represented safely in
+ * the predicate language, so a target carrying any is rejected with a structured error rather than
+ * being interpolated verbatim (T-352-11 posture).
+ */
+const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/
+function escapeIOSPredicateText(value: string): string {
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new Error(
+      `scroll target contains a control character and cannot be used as an XCUITest predicate — provide a plain-text target for untilVisible.`,
+    )
+  }
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+/** NSPredicate matching the target across the accessible label/name/value fields (A5, Pattern 3 iOS). */
+function buildIOSPredicate(target: string): string {
+  const escaped = escapeIOSPredicateText(target)
+  return `label CONTAINS "${escaped}" OR name CONTAINS "${escaped}" OR value CONTAINS "${escaped}"`
+}
+
+/** Scroll intent (reveal content toward `direction`) maps to the OPPOSITE finger swipe. */
+function fingerDirectionFor(scroll: Direction): 'up' | 'down' | 'left' | 'right' {
+  switch (scroll) {
+    case 'up':
+      return 'down'
+    case 'down':
+      return 'up'
+    case 'left':
+      return 'right'
+    case 'right':
+      return 'left'
+  }
+}
+
 function parseIOSSyslogLine(message: string, timestamp: number, bundleId: string | null): ConsoleLogEntry | null {
   const appiumMatch = message.match(IOS_APPIUM_LOG_REGEX)
   if (appiumMatch) {
@@ -178,6 +228,9 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   private consoleDrainIndex = 0
   private captureConsole = true
   private bundleId: string | null = null
+  // EXEC-03 session-cached app registry (D-10/D-12): enumerated once per session. null = not yet
+  // enumerated OR enumeration unavailable (iOS simulator — mobile: listApps throws). Reset in cleanup().
+  private appRegistry: AppRegistryEntry[] | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     this.config = config as IOSAdapterConfig
@@ -216,6 +269,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     this.config = null
     this.consoleLogs = []
     this.bundleId = null
+    this.appRegistry = null
     this.activeWebContext = null
     this.webContextChecked = false
     this.currentContext = null
@@ -401,6 +455,308 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   }
 
   // ---------------------------------------------------------------------------
+  // Compound behaviors (EXEC-01/02/03)
+  // ---------------------------------------------------------------------------
+
+  /** Read a focused element's `value` attribute; undefined when nothing is readable. */
+  private async readIOSValue(el: { getAttribute: (name: string) => Promise<string | null> }): Promise<string | undefined> {
+    try {
+      const value = await el.getAttribute('value')
+      return typeof value === 'string' ? value : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * EXEC-01 iOS fill compound (D-05..D-08). From the SAME focused-element handle: (append) capture
+   * the prior value FIRST via getAttribute('value') then addValue, or (replace) setValue; RE-READ
+   * via getAttribute('value') on that same handle; verdict via compareFillReread. Secure fields
+   * (nativeType XCUIElementTypeSecureTextField) take the non-empty-only lane — the comparator yields
+   * length sentinels so no raw value enters the result (T-359-02); bullet masking is tolerated
+   * (A3/Pitfall 7 — never a length compare). On a passing re-read AND submit, a return/newline is
+   * delivered AFTER the re-read (D-07). Single typing attempt; a mismatch is success:false + §7.1.
+   *
+   * A3 reconciliation (append): the XCUITest `value` attribute frequently returns the pre-edit value
+   * right after addValue (masked/lagged), so when the re-read is exactly the prior the performed
+   * append is trusted rather than fabricated into a mismatch. Replace stays strict (mismatch pin).
+   */
+  private async fillIOSCompound(
+    el: {
+      getAttribute: (name: string) => Promise<string | null>
+      setValue: (value: string) => Promise<void>
+      addValue: (value: string) => Promise<void>
+    },
+    action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
+    box: { coordinates: { x: number; y: number }; boundingBox: { x: number; y: number; width: number; height: number } },
+    secure: boolean,
+  ): Promise<ActionResult> {
+    const driver = this.driver!
+    const isAppend = action.clearMode === 'append'
+    // Prior value FIRST for append (expected = prior + typed, D-07) — before any typing.
+    const prior = isAppend ? (await this.readIOSValue(el)) ?? '' : ''
+
+    if (isAppend) {
+      await el.addValue(action.text)
+    } else {
+      await el.setValue(action.text)
+    }
+
+    const expected = isAppend ? prior + action.text : action.text
+    const raw = await this.readIOSValue(el)
+    // Unreadable re-read ⇒ honest success with NO fillReread block (never fabricate).
+    if (raw === undefined) {
+      return { success: true, ...box }
+    }
+    // A3 append reconciliation: an unchanged value attribute (== prior) means the append did not
+    // surface in the re-read; trust the performed append. Replace always compares the raw re-read.
+    const actual = isAppend && raw === prior ? expected : raw
+
+    const verdict = compareFillReread({ expected, actual, secure })
+    // Return/newline AFTER the re-read, only when the text landed (D-07).
+    if (verdict.ok && action.submit) {
+      await driver.keys(['\n'])
+    }
+    return verdict.ok
+      ? { success: true, ...box, metadata: { fillReread: verdict.meta } }
+      : { success: false, error: verdict.selfCorrectingError, ...box, metadata: { fillReread: verdict.meta } }
+  }
+
+  /**
+   * EXEC-02 platform primitives injected into the shared runner scroll loop (D-02/D-03). The swipe
+   * is a page-sized directional gesture (inverted to the finger direction); nativeSearchScroll drives
+   * the XCUITest `mobile: scroll` predicateString rung over an injection-escaped target; readInterimTree
+   * is a light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
+   */
+  private async buildIOSScrollPrimitives(
+    scrollDirection: Direction,
+    maxSwipes: number,
+    factor = 1,
+  ): Promise<ScrollPrimitives> {
+    const driver = this.driver!
+    const viewport = await driver.getWindowSize()
+    const axisLength = scrollDirection === 'left' || scrollDirection === 'right' ? viewport.width : viewport.height
+    const distance = Math.max(1, Math.round(axisLength * 0.6 * factor))
+
+    return {
+      swipeOnce: async (direction: Direction, ref?: Ref): Promise<void> => {
+        let sx = Math.round(viewport.width / 2)
+        let sy = Math.round(viewport.height / 2)
+        if (ref) {
+          const { center } = new MobileElementResolver(this.lastRefs).resolve(ref)
+          sx = Math.round(center.x)
+          sy = Math.round(center.y)
+        }
+        const pts = computeSwipe(sx, sy, fingerDirectionFor(direction), distance)
+        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
+          .move({ x: pts.startX, y: pts.startY })
+          .down({ button: 0 })
+          .move({ x: pts.endX, y: pts.endY, duration: 300 })
+          .up({ button: 0 })
+          )
+      },
+      nativeSearchScroll: async (target: string): Promise<boolean> => {
+        // buildIOSPredicate re-validates + escapes; a control char throws (the case already rejected
+        // control chars up front, so this is escaping only). Native-rung failure is a soft fallback.
+        const predicateString = buildIOSPredicate(target)
+        try {
+          await driver.execute('mobile: scroll', { predicateString, direction: scrollDirection })
+          return true
+        } catch {
+          return false
+        }
+      },
+      readInterimTree: async (): Promise<InterimNode[]> => {
+        const xml = await driver.getPageSource()
+        const { nodes } = parseMobileSource(xml, 'ios', viewport)
+        return nodes
+      },
+    }
+  }
+
+  /** direction+toEnd: swipe until the interim tree stops changing (or a hard cap). */
+  private async scrollToEndIOS(
+    primitives: ScrollPrimitives,
+    direction: Direction,
+    ref?: Ref,
+  ): Promise<ScrollUntilVisibleMeta> {
+    const MAX_TO_END_SWIPES = 20
+    let swipes = 0
+    let anyProgress = false
+    let prev = interimTreeIdentity(await primitives.readInterimTree())
+    while (swipes < MAX_TO_END_SWIPES) {
+      await primitives.swipeOnce(direction, ref)
+      swipes += 1
+      const current = interimTreeIdentity(await primitives.readInterimTree())
+      if (current === prev) break
+      anyProgress = true
+      prev = current
+    }
+    return { swipes, reversedOnce: false, outcome: anyProgress ? 'cap' : 'no-change' }
+  }
+
+  /**
+   * EXEC-03 openApp (D-10/D-12, Pitfall 5). Resolve a human name to a bundle id (or validate an
+   * explicit bundleId) over the session-cached registry, then launch via activateApp. On real devices
+   * `mobile: listApps` enumerates the registry; on simulators it throws, leaving the registry
+   * unavailable — the appName lane then mints a structured §7.1 error directing to an explicit
+   * bundleId, and the bundleId lane validates without the registry (isAppInstalled / activateApp
+   * error conversion, A2). Never a best-guess launch (T-359-04); an invalid bundle never succeeds.
+   */
+  private async openApp(action: { appName: string } | { bundleId: string }): Promise<ActionResult> {
+    const driver = this.driver!
+    const registry = await this.ensureAppRegistry()
+
+    if ('bundleId' in action) {
+      return await this.openByBundleId(action.bundleId, registry)
+    }
+
+    // appName variant. Registry unavailable (iOS simulator) ⇒ the §7.1 degradation lane (Pitfall 5).
+    if (registry === null) {
+      return {
+        success: false,
+        error:
+          `openApp could not enumerate installed apps by name: "mobile: listApps" is unavailable on `
+          + `iOS simulators. Retry with an explicit openApp {bundleId} using the app's exact bundle identifier.`,
+      }
+    }
+
+    let reg = registry
+    let resolution = resolveAppName(action.appName, reg)
+    if (resolution.kind === 'unknown' || resolution.kind === 'ambiguous') {
+      // Re-enumerate exactly once on a MISS before erroring (D-12).
+      const fresh = await this.enumerateApps()
+      if (fresh !== null) {
+        this.appRegistry = fresh
+        reg = fresh
+        resolution = resolveAppName(action.appName, reg)
+      }
+    }
+
+    switch (resolution.kind) {
+      case 'exact':
+      case 'fuzzy':
+        await driver.activateApp(resolution.id)
+        return { success: true, metadata: { openApp: { resolvedId: resolution.id, matchKind: resolution.kind } } }
+      case 'ambiguous':
+      case 'unknown': {
+        const ids = resolution.candidates.map((c) => c.id).join(', ')
+        const lead =
+          resolution.kind === 'ambiguous' ? 'is ambiguous between installed apps' : 'did not match an installed app'
+        return {
+          success: false,
+          error: `openApp: "${action.appName}" ${lead}. Closest candidates: ${ids || '(none)'}. Retry openApp {bundleId} with the exact bundle identifier.`,
+        }
+      }
+    }
+  }
+
+  /**
+   * Explicit `{bundleId}` launch (D-12, A2). With a registry, validate membership; without one
+   * (simulator) validate via `driver.isAppInstalled` when the driver exposes it, otherwise attempt
+   * `activateApp` and convert a driver rejection into the structured §7.1 error. An invalid bundle
+   * NEVER returns success:true.
+   */
+  private async openByBundleId(bundleId: string, registry: AppRegistryEntry[] | null): Promise<ActionResult> {
+    const driver = this.driver!
+    if (registry !== null) {
+      if (!registry.some((entry) => entry.id === bundleId)) {
+        return {
+          success: false,
+          error: `openApp: bundleId "${bundleId}" is not installed (not in the app registry). Verify the bundle identifier or use openApp {appName}.`,
+        }
+      }
+      await driver.activateApp(bundleId)
+      return { success: true, metadata: { openApp: { resolvedId: bundleId, matchKind: 'explicit' } } }
+    }
+
+    // Registry unavailable (simulator): validate via isAppInstalled when the driver exposes it.
+    const isAppInstalled = (driver as { isAppInstalled?: (id: string) => Promise<boolean> }).isAppInstalled
+    if (typeof isAppInstalled === 'function') {
+      let installed = false
+      try {
+        installed = await isAppInstalled.call(driver, bundleId)
+      } catch {
+        installed = false
+      }
+      if (!installed) {
+        return {
+          success: false,
+          error: `openApp: bundleId "${bundleId}" is not installed on this device. Verify the bundle identifier.`,
+        }
+      }
+      await driver.activateApp(bundleId)
+      return { success: true, metadata: { openApp: { resolvedId: bundleId, matchKind: 'explicit' } } }
+    }
+
+    // Last resort — attempt activateApp and convert a rejection into the §7.1 form (never a false success).
+    try {
+      await driver.activateApp(bundleId)
+      return { success: true, metadata: { openApp: { resolvedId: bundleId, matchKind: 'explicit' } } }
+    } catch (err) {
+      return {
+        success: false,
+        error: `openApp: could not launch bundleId "${bundleId}": ${err instanceof Error ? err.message : String(err)}. Verify the bundle identifier.`,
+      }
+    }
+  }
+
+  /** Return the cached registry, enumerating once on first use. Failed enumeration returns null (uncached). */
+  private async ensureAppRegistry(): Promise<AppRegistryEntry[] | null> {
+    if (this.appRegistry !== null) return this.appRegistry
+    const enumerated = await this.enumerateApps()
+    if (enumerated !== null) this.appRegistry = enumerated
+    return enumerated
+  }
+
+  /**
+   * Enumerate installed apps through the driver only (ownership contract — webdriverio only, no
+   * child_process/simctl). `mobile: listApps` maps bundle ids → AppRegistryEntry with CFBundleName
+   * labels when present (D-10 — no per-app round-trips). It throws on simulators (Pitfall 5) ⇒ null,
+   * leaving enumeration unavailable WITHOUT crashing.
+   */
+  private async enumerateApps(): Promise<AppRegistryEntry[] | null> {
+    const driver = this.driver!
+    try {
+      const raw = await driver.execute('mobile: listApps')
+      return this.mapListApps(raw)
+    } catch {
+      return null
+    }
+  }
+
+  /** Coerce a `mobile: listApps` result (bundle-id-keyed map, or an array of entries) into the registry. */
+  private mapListApps(raw: unknown): AppRegistryEntry[] {
+    const labelOf = (value: unknown): string | undefined => {
+      if (!value || typeof value !== 'object') return undefined
+      const v = value as Record<string, unknown>
+      for (const key of ['CFBundleName', 'CFBundleDisplayName', 'label', 'name']) {
+        const candidate = v[key]
+        if (typeof candidate === 'string' && candidate.length > 0) return candidate
+      }
+      return undefined
+    }
+    const entries: AppRegistryEntry[] = []
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        if (!item || typeof item !== 'object') continue
+        const v = item as Record<string, unknown>
+        const id = v.bundleId ?? v.CFBundleIdentifier ?? v.id
+        if (typeof id !== 'string' || id.length === 0) continue
+        const label = labelOf(item)
+        entries.push(label !== undefined ? { id, label } : { id })
+      }
+    } else if (raw && typeof raw === 'object') {
+      for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+        if (!id) continue
+        const label = labelOf(value)
+        entries.push(label !== undefined ? { id, label } : { id })
+      }
+    }
+    return entries
+  }
+
+  // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
 
@@ -423,6 +779,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'fill': {
+        // EXEC-01 fill compound (D-05..D-08): tap-focus → clear/append → type → RE-READ the SAME
+        // focused handle via getAttribute('value') → (return/newline if submit). ONE ActionResult
+        // carrying fillReread metadata; a mismatch is an honest single-shot failure (no internal
+        // retry — the 358 ladder mediates). Secure is detected adapter-side from the refMap's
+        // nativeType (iOS is the one platform with secure evidence in lastRefs, Pitfall 6).
         const { center, bounds } = resolver.resolve(action.ref)
         const refData = this.lastRefs[action.ref]
         const role = refData?.role?.toLowerCase()
@@ -432,13 +793,15 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
             error: `Element ${action.ref} is not fillable (role: ${role}). Use a textbox or input element instead.`,
           }
         }
+        const secure = refData?.nativeType === 'XCUIElementTypeSecureTextField'
+        const box = { coordinates: center, boundingBox: bounds }
         // Tap to focus
         await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: Math.round(center.x), y: Math.round(center.y) })
           .down({ button: 0 })
           .up({ button: 0 })
           )
-        // Find the input element — try focused first, then any matching type
+        // Find the input element — try focused first, then any matching type.
         const selectors = [
           // Focused element (most precise)
           '-ios class chain:**/XCUIElementTypeTextField[`hasFocus == 1`]',
@@ -453,14 +816,14 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           try {
             const el = await driver.$(sel)
             if (await el.isExisting()) {
-              await el.setValue(action.value)
-              return { success: true, coordinates: center, boundingBox: bounds }
+              return await this.fillIOSCompound(el, action, box, secure)
             }
           } catch { /* try next */ }
         }
-        // Last resort — type via keyboard (pass whole string, not split chars)
-        await driver.keys([action.value])
-        return { success: true, coordinates: center, boundingBox: bounds }
+        // Last resort — type via keyboard (pass whole string, not split chars). No focused handle
+        // to re-read; return success with NO fillReread block (signal-presence law — never fabricate).
+        await driver.keys([action.text])
+        return { success: true, ...box }
       }
 
       case 'nativeSelect': {
@@ -524,42 +887,42 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       }
 
       case 'scroll': {
-        // Try JS scroll in web context first (more reliable, no direction inversion)
-        const webCtx = await this.getWebContext()
-        if (webCtx) {
+        // EXEC-02 scroll (D-02/D-03): ONE ActionResult carrying scrollUntilVisible metadata.
+        // untilVisible prefers the native `mobile: scroll` predicateString rung (injection-escaped),
+        // then bounded swipes with light page-source probes; direction rides the shared self-heal
+        // loop. Progress is judged ONLY by interim-tree identity — never by mobile scroll offsets
+        // (documented zeros, Pitfall 3) — and lastRefs is untouched (D-03).
+        if (action.mode === 'untilVisible') {
+          // Reject a hostile/control-char target up front — never interpolate it (Pitfall 9).
           try {
-            await this.ensureContext(webCtx)
-            const dx = action.scrollType === 'horizontal' ? action.value : 0
-            const dy = action.scrollType === 'vertical' ? action.value : 0
-            await driver.execute(
-              'window.scrollBy(arguments[0], arguments[1]);',
-              dx, dy,
-            )
-            await this.ensureContext('NATIVE_APP')
-            return { success: true }
-          } catch {
-            try { await this.ensureContext('NATIVE_APP') } catch { /* best-effort */ }
+            escapeIOSPredicateText(action.text)
+          } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : String(err) }
           }
+          const primitives = await this.buildIOSScrollPrimitives(action.direction, action.maxSwipes)
+          const { meta } = await runUntilVisibleLoop(primitives, {
+            target: action.text,
+            direction: action.direction,
+            maxSwipes: action.maxSwipes,
+            retryOpposite: action.retryOpposite,
+            ...(action.ref ? { ref: action.ref } : {}),
+          })
+          return { success: true, metadata: { scrollUntilVisible: meta } }
         }
 
-        // Fall back to native touch gesture scroll
-        const { width, height } = await driver.getWindowSize()
-        const centerX = Math.round(width / 2)
-        const centerY = Math.round(height / 2)
-        // Invert value for native touch: positive value = scroll down = finger swipes UP
-        const scrollStartX = centerX
-        const scrollStartY = centerY
-        const scrollEndX = action.scrollType === 'horizontal' ? centerX - action.value : centerX
-        const scrollEndY = action.scrollType === 'vertical' ? centerY - action.value : centerY
-        const scrollDuration = action.duration ?? 300
-
-        await safePerform(driver.action('pointer', { parameters: { pointerType: 'touch' } })
-          .move({ x: scrollStartX, y: scrollStartY })
-          .down({ button: 0 })
-          .move({ x: scrollEndX, y: scrollEndY, duration: scrollDuration })
-          .up({ button: 0 })
-          )
-        return { success: true }
+        // direction mode: page / halfPage / toEnd.
+        const factor = action.amount === 'halfPage' ? 0.5 : 1
+        const primitives = await this.buildIOSScrollPrimitives(action.direction, 0, factor)
+        if (action.amount === 'toEnd') {
+          const meta = await this.scrollToEndIOS(primitives, action.direction, action.ref)
+          return { success: true, metadata: { scrollUntilVisible: meta } }
+        }
+        const { meta } = await runDirectionScrollWithRetry(primitives, {
+          direction: action.direction,
+          retryOpposite: action.retryOpposite,
+          ...(action.ref ? { ref: action.ref } : {}),
+        })
+        return { success: true, metadata: { scrollUntilVisible: meta } }
       }
 
       case 'swipe': {
@@ -789,7 +1152,14 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         return { success: true, coordinates: center, boundingBox: bounds }
       }
 
+      case 'openApp':
+        // EXEC-03 (D-10/D-12): resolve a human app name (or validate an explicit bundleId) over a
+        // session-cached registry, with the simulator degradation lane (Pitfall 5). Never a
+        // best-guess launch; an invalid bundle never returns success.
+        return await this.openApp(action)
+
       case 'launchApp': {
+        // KEPT as the raw launch primitive (360 retires it as a planner verb).
         await driver.activateApp(action.bundleId)
         return { success: true }
       }
