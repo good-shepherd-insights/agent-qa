@@ -959,7 +959,7 @@ describe('DashboardReporter', () => {
         trace: {
           observation: `observed ${PHASE_222_RAW_SECRET}`,
           reasoning: 'use {{secret:loginPassword}}',
-          plannedAction: { type: 'fill', ref: '[password]', value: PHASE_222_RAW_SECRET },
+          plannedAction: { type: 'fill', ref: '[password]', text: PHASE_222_RAW_SECRET, clearMode: 'replace', submit: false } as any,
           result: 'success',
           error: `trace error ${PHASE_222_RAW_SECRET}`,
           screenStateBefore: `before ${PHASE_222_RAW_SECRET}`,
@@ -968,7 +968,7 @@ describe('DashboardReporter', () => {
             index: 0,
             observation: `sub ${PHASE_222_RAW_SECRET}`,
             reasoning: 'subaction',
-            plannedAction: { type: 'fill', ref: '[password]', value: PHASE_222_RAW_SECRET },
+            plannedAction: { type: 'fill', ref: '[password]', text: PHASE_222_RAW_SECRET, clearMode: 'replace', submit: false } as any,
             result: 'success',
             screenStateBefore: `sub before ${PHASE_222_RAW_SECRET}`,
             cached: false,

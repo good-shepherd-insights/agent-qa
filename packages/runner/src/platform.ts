@@ -4,9 +4,11 @@
 import type {
   AndroidAction,
   CommonAction,
+  Fill,
   IosAction,
   MobileAction,
   Platform,
+  Scroll,
   ScreenState,
   WebAction,
 } from '@vostride/agent-qa-schema'
@@ -15,6 +17,11 @@ import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
 export interface ObserveOptions {
   extractDom?: boolean
 }
+
+// Toggle/picker idempotency intent (D-13): the state a tap/click should ensure. Absent ⇒ a
+// plain gesture with no idempotency claim; the dispatch seam compares it against the persisted
+// element state (Plan 08). Mirrors the four values of compound/idempotency.ts DesiredState.
+type DesiredState = 'checked' | 'unchecked' | 'selected' | 'unselected'
 
 type WebVerbs = (WebAction | CommonAction)['type']
 type LegacyFoldedWebVerbs =
@@ -58,12 +65,12 @@ export interface PlatformAdapter<P extends Platform = Platform> {
 
 export type Action =
   // Web actions
-  | { type: 'click'; ref: string; clickDelay?: number }
-  | { type: 'fill'; ref: string; value: string }
+  | { type: 'click'; ref: string; clickDelay?: number; desiredState?: DesiredState }
+  | ({ type: 'fill' } & Fill)
   | { type: 'select'; ref: string; value: string }
   | { type: 'nativeSelect'; ref: string; value: string }
   | { type: 'navigate'; url: string }
-  | { type: 'scroll'; scrollType: 'vertical' | 'horizontal'; value: number; ref?: string; duration?: number }
+  | ({ type: 'scroll' } & Scroll)
   | { type: 'waitFor'; condition: string; timeout?: number }
   | { type: 'delay'; ms: number }
   | { type: 'assert'; condition: string; expected?: string; visual?: boolean }
@@ -88,7 +95,7 @@ export type Action =
   | { type: 'fileUpload'; ref: string; files: string[] }
   | { type: 'copy'; ref: string }
   // Mobile actions
-  | { type: 'tap'; ref: string }
+  | { type: 'tap'; ref: string; desiredState?: DesiredState }
   | { type: 'swipe'; direction: 'up' | 'down' | 'left' | 'right'; ref?: string; startX?: number; startY?: number; endX?: number; endY?: number; duration?: number }
   | { type: 'longpress'; ref: string; duration?: number }
   // Cross-platform actions
@@ -97,6 +104,8 @@ export type Action =
   | { type: 'openLink'; url: string; appId?: string; bundleId?: string; appPackage?: string; waitForLaunch?: boolean }
   | { type: 'drag'; fromRef: string; toRef: string }
   | { type: 'doubleTap'; ref: string }
+  | { type: 'openApp'; appName: string }
+  | { type: 'openApp'; bundleId: string }
   | { type: 'launchApp'; bundleId: string }
   | { type: 'stopApp'; bundleId: string }
   | { type: 'setOrientation'; orientation: 'portrait' | 'landscape' }

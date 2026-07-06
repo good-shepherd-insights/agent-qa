@@ -45,7 +45,7 @@ describe('evaluateLocalEffect — scroll row (§12.12 changed-tree = progress)',
   it('achieved when metadata.scroll offset delta moved', () => {
     const before = state([listItem('Row A', 100)], { metadata: { ...VIEWPORT, scroll: { offsetX: 0, offsetY: 0, contentWidth: 390, contentHeight: 2000 } } })
     const after = state([listItem('Row A', 100)], { metadata: { ...VIEWPORT, scroll: { offsetX: 0, offsetY: 600, contentWidth: 390, contentHeight: 2000 } } })
-    const res: LocalEffectResult = evaluateLocalEffect({ action: { type: 'scroll', scrollType: 'vertical', value: 600 }, stateBefore: before, stateAfter: after, ...hashes(before, after) })
+    const res: LocalEffectResult = evaluateLocalEffect({ action: { type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: true }, stateBefore: before, stateAfter: after, ...hashes(before, after) })
     expect(res.verbClass).toBe('scroll')
     expect(res.oracle).toBe('scroll')
     expect(res.achieved).toBe(true)
@@ -55,7 +55,7 @@ describe('evaluateLocalEffect — scroll row (§12.12 changed-tree = progress)',
     const scroll = { offsetX: 0, offsetY: 0, contentWidth: 390, contentHeight: 2000 }
     const before = state([listItem('Row 1', 100), listItem('Row 2', 150)], { metadata: { ...VIEWPORT, scroll } })
     const after = state([listItem('Row 9', 100), listItem('Row 10', 150)], { metadata: { ...VIEWPORT, scroll } })
-    const res = evaluateLocalEffect({ action: { type: 'scroll', scrollType: 'vertical', value: 600 }, stateBefore: before, stateAfter: after, ...hashes(before, after) })
+    const res = evaluateLocalEffect({ action: { type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: true }, stateBefore: before, stateAfter: after, ...hashes(before, after) })
     expect(res.oracle).toBe('scroll')
     expect(res.achieved).toBe(true)
   })
@@ -64,7 +64,7 @@ describe('evaluateLocalEffect — scroll row (§12.12 changed-tree = progress)',
     const scroll = { offsetX: 0, offsetY: 0, contentWidth: 390, contentHeight: 844 }
     const before = state([listItem('Row A', 100)], { metadata: { ...VIEWPORT, scroll } })
     const after = state([listItem('Row A', 100)], { metadata: { ...VIEWPORT, scroll } })
-    const res = evaluateLocalEffect({ action: { type: 'scroll', scrollType: 'vertical', value: 600 }, stateBefore: before, stateAfter: after, ...hashes(before, after) })
+    const res = evaluateLocalEffect({ action: { type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: true }, stateBefore: before, stateAfter: after, ...hashes(before, after) })
     expect(res.oracle).toBe('hash-fallback')
     expect(res.achieved).toBe(false)
   })

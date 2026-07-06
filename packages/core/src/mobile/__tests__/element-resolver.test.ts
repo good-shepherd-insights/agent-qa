@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
 import { MobileElementResolver } from '../element-resolver.js'
 import type { MobileRefMap } from '../types.js'
 import type { Action } from '@vostride/agent-qa-runner'
@@ -87,7 +88,7 @@ describe('MobileElementResolver', () => {
 
     it('returns coordinates for fill action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'fill', ref: 'e1', value: 'test@example.com' }
+      const action: Action = { type: 'fill', ref: asRef('e1'), text: 'test@example.com', clearMode: 'replace', submit: false }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
@@ -105,14 +106,14 @@ describe('MobileElementResolver', () => {
 
     it('returns null for scroll without ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'scroll', scrollType: 'vertical', value: -500 }
+      const action: Action = { type: 'scroll', mode: 'direction', direction: 'up', amount: 'page', retryOpposite: true }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
     it('returns coordinates for scroll with ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'scroll', scrollType: 'vertical', value: -500, ref: 'e2' }
+      const action: Action = { type: 'scroll', mode: 'direction', direction: 'up', amount: 'page', retryOpposite: true, ref: asRef('e2') }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
