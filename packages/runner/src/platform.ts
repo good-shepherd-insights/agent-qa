@@ -14,10 +14,10 @@ export interface ObserveOptions {
 }
 
 // D-15 (Phase 360): the runner's action world IS the schema `ActionsFor<P>` projection. The
-// legacy runner-owned union (LegacyFoldedWebVerbs / RuntimeOnlyCommonVerbs / RuntimeOnlyMobileVerbs
-// and the local shape declarations) was demolished here — `Extract` keyed on the `type` string
-// only, so the legacy member shapes silently won over the schema shapes (RESEARCH §Type-Level Flip).
-// The planner-reachable surface is now the single schema truth; adapters read schema execution shapes.
+// legacy runner-owned action union and its folded/runtime-only verb groups plus the local shape
+// declarations were demolished here — `Extract` keyed on the `type` string only, so the legacy
+// member shapes silently won over the schema shapes (RESEARCH §Type-Level Flip). The
+// planner-reachable surface is now the single schema truth; adapters read schema execution shapes.
 //
 // `RunnerRuntimeVerbs` is a documented named alias re-exporting the three author-channel verbs that
 // already exist as schema members — NOT new union members. It marks the surviving runner-runtime
