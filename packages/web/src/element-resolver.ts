@@ -3,7 +3,7 @@ import type { Action, InterimNode, RefBinding } from '@vostride/agent-qa-runner'
 import type { Ref } from '@vostride/agent-qa-schema'
 import type { RefMap } from './types.js'
 
-const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'waitForUrl', 'assert'])
+const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'waitForUrl', 'assertValue'])
 
 /**
  * Re-feed the adapter-private execute-time RefMap from the buildScreenState binding.

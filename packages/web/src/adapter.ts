@@ -1,4 +1,4 @@
-import type { Browser, BrowserContext, Page } from 'playwright-core'
+import type { Browser, BrowserContext, Dialog, Page } from 'playwright-core'
 import type {
   ActionsFor,
   ActionResult,
@@ -52,6 +52,14 @@ function clickDelayOption(clickDelay?: number): { delay?: number } {
   return clickDelay !== undefined && clickDelay > 0 ? { delay: clickDelay } : {}
 }
 
+// The Plan 10 dispatch seam injects the persisted raw Playwright storage-state blob onto a
+// `storageState`/restore action before it reaches the adapter (the schema restore shape carries
+// only `{op,name}`; the adapter never reads it off disk — D-14). Reading that seam field lives in
+// this `unknown`-typed helper so no cast leaks into the execute switch (no-shims law).
+function readSeamStorageState(action: unknown): Parameters<BrowserContext['setStorageState']>[0] {
+  return (action as { state: Parameters<BrowserContext['setStorageState']>[0] }).state
+}
+
 export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   readonly platform = 'web' as const
 
@@ -65,6 +73,10 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private logCaptureConfig: { console: boolean; network: boolean } = { console: true, network: true }
   private disconnected = false
   private intentionalClose = false
+  // Persistent route interception + one-shot dialog arms live until an explicit unroute or
+  // test teardown (D-12/D-18); cleanup() drains both so nothing bleeds across tests (Pitfall 7).
+  private armedRoutes = new Set<string>()
+  private pendingDialogArm: ((dialog: Dialog) => void) | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     const { chromium, firefox, webkit } = await import('playwright-core')
@@ -124,6 +136,17 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
   async cleanup(): Promise<void> {
     this.intentionalClose = true
+    // Pitfall 7: clear persistent route interception, network emulation, and any pending
+    // dialog arm BEFORE closing the browser so state never bleeds into the next test.
+    if (this.context) {
+      try { await this.context.unrouteAll({ behavior: 'ignoreErrors' }) } catch { /* best-effort */ }
+      try { await this.context.setOffline(false) } catch { /* best-effort */ }
+    }
+    if (this.page && this.pendingDialogArm) {
+      try { this.page.off('dialog', this.pendingDialogArm) } catch { /* best-effort */ }
+    }
+    this.armedRoutes.clear()
+    this.pendingDialogArm = null
     if (this.browser) {
       await this.browser.close()
     }
@@ -408,7 +431,22 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       }
 
       case 'navigate': {
-        await page.goto(action.url, { waitUntil: 'domcontentloaded' })
+        // Fold re-key: the schema `to` discriminant drives url/history/reload on the proven
+        // legacy bodies (goto / goBack|goForward / reload).
+        switch (action.to) {
+          case 'url':
+            await page.goto(action.url, { waitUntil: 'domcontentloaded' })
+            break
+          case 'back':
+            await page.goBack({ waitUntil: 'domcontentloaded' })
+            break
+          case 'forward':
+            await page.goForward({ waitUntil: 'domcontentloaded' })
+            break
+          case 'reload':
+            await page.reload({ waitUntil: 'domcontentloaded' })
+            break
+        }
         await waitForPageReady(page)
         return { success: true }
       }
@@ -418,23 +456,24 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       }
 
       case 'waitFor': {
-        // Wait for condition: try as text content first, then fall back to selector.
-        // The LLM generates natural language conditions ("loading spinner disappears")
-        // which aren't CSS selectors — use page.waitForFunction for text matching.
-        const timeout = action.timeout ?? 5000
+        // Schema on-shapes drive real waiting keyed on `text`/`selector` (the degenerate
+        // legacy `{condition,timeout}` read is retired — Pitfall 1). Best-effort: on timeout we
+        // still return success so the agent loop re-observes rather than hard-failing the step.
+        const timeout = action.timeoutMs
         try {
-          // Runs in browser context — checks if the condition text appears on page
-          await page.waitForFunction(
-            `document.body && document.body.innerText.includes(${JSON.stringify(action.condition)})`,
-            { timeout },
-          )
-        } catch {
-          // Fall back to waitForSelector for CSS-selector-shaped conditions
-          try {
-            await page.waitForSelector(action.condition, { timeout })
-          } catch {
-            // Best-effort — return success so the agent loop can re-observe
+          switch (action.on) {
+            case 'text':
+              await page.getByText(action.text).first().waitFor({ state: 'visible', timeout })
+              break
+            case 'gone':
+              await page.getByText(action.text).first().waitFor({ state: 'hidden', timeout })
+              break
+            case 'selector':
+              await page.waitForSelector(action.selector, { timeout })
+              break
           }
+        } catch {
+          // Best-effort — condition never satisfied; let the loop re-observe.
         }
         return { success: true }
       }
@@ -458,12 +497,20 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       }
 
       case 'keypress': {
+        // Fold re-key of keyDown/keyUp: the schema `mode` selects press / down / up on the
+        // platform-normalized keys.
         const effectiveKeys = convertKeysForPlatform(action.keys, {
           enabled: action.convertPlatformKeys !== false,
           isMac: isMacPlatform(),
         })
         for (const key of effectiveKeys) {
-          await page.keyboard.press(key)
+          if (action.mode === 'down') {
+            await page.keyboard.down(key)
+          } else if (action.mode === 'up') {
+            await page.keyboard.up(key)
+          } else {
+            await page.keyboard.press(key)
+          }
         }
         return { success: true }
       }
@@ -515,81 +562,110 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         return { success: true, boundingBox: box ?? undefined, data: { copied: text } }
       }
 
-      case 'keyDown': {
-        await page.keyboard.down(action.key)
+      case 'tab': {
+        // Fold re-key of newTab/switchTab: `action` discriminant selects open-new vs switch.
+        if (action.action === 'new') {
+          const newPage = await this.context!.newPage()
+          this.attachLogListeners(newPage)
+          await newPage.goto(action.url, { waitUntil: 'domcontentloaded' })
+          await waitForPageReady(newPage)
+          this.page = newPage
+          return { success: true }
+        }
+        const pages = this.context!.pages()
+        let target: Page | undefined
+        if (action.index !== undefined) {
+          if (action.index < 0 || action.index >= pages.length) {
+            return { success: false, error: `Tab index ${action.index} out of range (${pages.length} tabs open)` }
+          }
+          target = pages[action.index]
+        } else if (action.title !== undefined) {
+          for (const p of pages) {
+            const t = await p.title()
+            if (t.includes(action.title)) { target = p; break }
+          }
+        } else if (action.url !== undefined) {
+          target = pages.find(p => p.url().includes(action.url!))
+        }
+        if (!target) {
+          return { success: false, error: `No tab found matching ${JSON.stringify({ index: action.index, title: action.title, url: action.url })}` }
+        }
+        this.page = target
         return { success: true }
       }
 
-      case 'keyUp': {
-        await page.keyboard.up(action.key)
+      case 'inspect': {
+        // Fold re-key of the four read* verbs; output rides ActionResult.data through the
+        // existing guardActionData/guardBlob compaction path (no new compaction).
+        switch (action.what) {
+          case 'console': {
+            let entries: ConsoleLogEntry[]
+            if (action.tab) {
+              const targetPage = await this.resolveTabTargetAsync(action.tab)
+              if (!targetPage) {
+                return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
+              }
+              const buffers = this.pageLogBuffers.get(targetPage)
+              entries = buffers ? [...buffers.consoleLogs] : []
+            } else {
+              entries = []
+              for (const buffers of this.pageLogBuffers.values()) {
+                entries.push(...buffers.consoleLogs)
+              }
+            }
+            if (action.level) {
+              entries = entries.filter(e => e.level === action.level)
+            }
+            return { success: true, data: entries }
+          }
+          case 'network': {
+            let entries: NetworkLogEntry[]
+            if (action.tab) {
+              const targetPage = await this.resolveTabTargetAsync(action.tab)
+              if (!targetPage) {
+                return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
+              }
+              const buffers = this.pageLogBuffers.get(targetPage)
+              entries = buffers ? [...buffers.networkLogs] : []
+            } else {
+              entries = []
+              for (const buffers of this.pageLogBuffers.values()) {
+                entries.push(...buffers.networkLogs)
+              }
+            }
+            if (action.urlPattern) {
+              entries = entries.filter(e => e.url.includes(action.urlPattern!))
+            }
+            return { success: true, data: entries }
+          }
+          case 'cookies': {
+            const cookies = await this.context!.cookies()
+            if (action.name) {
+              const cookie = cookies.find(c => c.name === action.name) ?? null
+              return { success: true, data: cookie }
+            }
+            return { success: true, data: cookies }
+          }
+          case 'localStorage': {
+            const pageUrl = page.url()
+            if (pageUrl === 'about:blank') {
+              return { success: true, data: action.key ? null : {} }
+            }
+            if (action.key) {
+              const value = await page.evaluate(
+                (k: string) => localStorage.getItem(k), action.key
+              )
+              return { success: true, data: value }
+            }
+            const all = await page.evaluate(
+              () => Object.fromEntries(
+                Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])
+              )
+            )
+            return { success: true, data: all }
+          }
+        }
         return { success: true }
-      }
-
-      case 'refresh': {
-        await page.reload({ waitUntil: 'domcontentloaded' })
-        await waitForPageReady(page)
-        return { success: true }
-      }
-
-      case 'navigateHistory': {
-        if (action.direction === 'back') {
-          await page.goBack({ waitUntil: 'domcontentloaded' })
-        } else {
-          await page.goForward({ waitUntil: 'domcontentloaded' })
-        }
-        await waitForPageReady(page)
-        return { success: true }
-      }
-
-      case 'readConsoleLogs': {
-        let entries: ConsoleLogEntry[]
-        if (action.tab) {
-          const targetPage = await this.resolveTabTargetAsync(action.tab)
-          if (!targetPage) {
-            return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
-          }
-          const buffers = this.pageLogBuffers.get(targetPage)
-          entries = buffers ? [...buffers.consoleLogs] : []
-        } else {
-          entries = []
-          for (const buffers of this.pageLogBuffers.values()) {
-            entries.push(...buffers.consoleLogs)
-          }
-        }
-        if (action.level) {
-          entries = entries.filter(e => e.level === action.level)
-        }
-        return { success: true, data: entries }
-      }
-
-      case 'readNetworkLogs': {
-        let entries: NetworkLogEntry[]
-        if (action.tab) {
-          const targetPage = await this.resolveTabTargetAsync(action.tab)
-          if (!targetPage) {
-            return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
-          }
-          const buffers = this.pageLogBuffers.get(targetPage)
-          entries = buffers ? [...buffers.networkLogs] : []
-        } else {
-          entries = []
-          for (const buffers of this.pageLogBuffers.values()) {
-            entries.push(...buffers.networkLogs)
-          }
-        }
-        if (action.urlPattern) {
-          entries = entries.filter(e => e.url.includes(action.urlPattern!))
-        }
-        return { success: true, data: entries }
-      }
-
-      case 'readCookies': {
-        const cookies = await this.context!.cookies()
-        if (action.name) {
-          const cookie = cookies.find(c => c.name === action.name) ?? null
-          return { success: true, data: cookie }
-        }
-        return { success: true, data: cookies }
       }
 
       case 'setCookies': {
@@ -601,25 +677,6 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         return { success: true }
       }
 
-      case 'readLocalStorage': {
-        const pageUrl = page.url()
-        if (pageUrl === 'about:blank') {
-          return { success: true, data: action.key ? null : {} }
-        }
-        if (action.key) {
-          const value = await page.evaluate(
-            (k: string) => localStorage.getItem(k), action.key
-          )
-          return { success: true, data: value }
-        }
-        const all = await page.evaluate(
-          () => Object.fromEntries(
-            Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])
-          )
-        )
-        return { success: true, data: all }
-      }
-
       case 'setLocalStorage': {
         await page.evaluate((entries: Array<{ key: string; value: string }>) => {
           for (const { key, value } of entries) {
@@ -629,8 +686,42 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         return { success: true }
       }
 
-      case 'assert': {
-        return { success: true }
+      case 'focus': {
+        const locator = resolver.resolve(action.ref)
+        const box = await resolver.getBoundingBox(action.ref)
+        await locator.focus()
+        return { success: true, boundingBox: box ?? undefined }
+      }
+
+      case 'assertValue': {
+        // D-10: the adapter RESOLVES the requested source to a raw value on ActionResult.data;
+        // the runner-side comparator applies the op and judges. The adapter never compares.
+        let value: unknown
+        if ('expr' in action) {
+          value = await page.evaluate(action.expr)
+        } else {
+          switch (action.source) {
+            case 'url':
+              value = page.url()
+              break
+            case 'storage':
+              value = page.url() === 'about:blank'
+                ? {}
+                : await page.evaluate(
+                    () => Object.fromEntries(
+                      Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])
+                    )
+                  )
+              break
+            case 'network':
+              value = this.drainNetworkLogs()
+              break
+            case 'expr-result':
+              value = undefined
+              break
+          }
+        }
+        return { success: true, data: { value } }
       }
 
       case 'clearText': {
@@ -671,47 +762,86 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         return { success: true, coordinates, boundingBox: box ?? undefined }
       }
 
-      case 'openLink': {
-        await page.goto(action.url, { waitUntil: 'domcontentloaded' })
-        await waitForPageReady(page)
+      case 'route': {
+        // D-18: persistent interception until an explicit unroute or teardown. Planner-authored
+        // status/headers/body fulfil the matched request (a mocked response body crosses into
+        // page context — declared destructive in the risk metadata, Plan 09).
+        await this.context!.route(action.urlPattern, async (route) => {
+          await route.fulfill({
+            status: 200,
+            ...(action.contentType !== undefined ? { contentType: action.contentType } : {}),
+            ...(action.headers !== undefined ? { headers: action.headers } : {}),
+            ...(action.body !== undefined ? { body: action.body } : {}),
+          })
+        })
+        this.armedRoutes.add(action.urlPattern)
         return { success: true }
       }
 
-      case 'newTab': {
-        const newPage = await this.context!.newPage()
-        this.attachLogListeners(newPage)
-        await newPage.goto(action.url, { waitUntil: 'domcontentloaded' })
-        await waitForPageReady(newPage)
-        this.page = newPage
-        return { success: true }
-      }
-
-      case 'switchTab': {
-        const pages = this.context!.pages()
-
-        let target: Page | undefined
-
-        if (action.index !== undefined) {
-          if (action.index < 0 || action.index >= pages.length) {
-            return { success: false, error: `Tab index ${action.index} out of range (${pages.length} tabs open)` }
-          }
-          target = pages[action.index]
-        } else if (action.title) {
-          for (const p of pages) {
-            const t = await p.title()
-            if (t.includes(action.title)) { target = p; break }
-          }
-        } else if (action.url) {
-          target = pages.find(p => p.url().includes(action.url!))
+      case 'unroute': {
+        if (action.urlPattern !== undefined) {
+          await this.context!.unroute(action.urlPattern)
+          this.armedRoutes.delete(action.urlPattern)
         } else {
-          return { success: false, error: 'switchTab requires at least one of: index, title, or url' }
+          await this.context!.unrouteAll({ behavior: 'ignoreErrors' })
+          this.armedRoutes.clear()
         }
+        return { success: true }
+      }
 
-        if (!target) {
-          return { success: false, error: `No tab found matching ${JSON.stringify({ index: action.index, title: action.title, url: action.url })}` }
+      case 'networkState': {
+        if (action.mode === 'offline') {
+          await this.context!.setOffline(true)
+          return { success: true }
         }
+        // throttle: Chromium-only via CDP; non-Chromium contexts reject newCDPSession (D-18).
+        try {
+          const cdp = await this.context!.newCDPSession(page)
+          await cdp.send('Network.emulateNetworkConditions', {
+            offline: false,
+            latency: action.latencyMs,
+            downloadThroughput: (action.downloadKbps * 1000) / 8,
+            uploadThroughput: (action.uploadKbps * 1000) / 8,
+          })
+          return { success: true }
+        } catch (err) {
+          return {
+            success: false,
+            error: `Network throttling is only available on Chromium (via CDP); this context does not support it. ${err instanceof Error ? err.message : String(err)}`,
+          }
+        }
+      }
 
-        this.page = target
+      case 'storageState': {
+        // D-14: the adapter only PRODUCES/CONSUMES the raw blob. On save it returns the state +
+        // name (the Plan 10 seam strips + persists it — never fs here); on restore it applies the
+        // seam-injected blob via setStorageState (present in pinned 1.59.1 — never hand-rolled).
+        if (action.op === 'save') {
+          const state = await this.context!.storageState()
+          return { success: true, data: { name: action.name, state } }
+        }
+        await this.context!.setStorageState(readSeamStorageState(action))
+        return { success: true }
+      }
+
+      case 'handleDialog': {
+        // D-12: one-shot arm for the NEXT dialog; a re-arm REPLACES the pending arm (never stacks).
+        if (this.pendingDialogArm) {
+          page.off('dialog', this.pendingDialogArm)
+          this.pendingDialogArm = null
+        }
+        const accept = action.accept
+        const promptText = action.promptText
+        const handler = (dialog: Dialog): void => {
+          this.pendingDialogArm = null
+          if (accept) {
+            void dialog.accept(promptText)
+          } else {
+            void dialog.dismiss()
+          }
+        }
+        this.pendingDialogArm = handler
+        page.once('dialog', handler)
         return { success: true }
       }
 
@@ -719,9 +849,19 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         return { success: false, error: 'executeScript is a mobile-only action' }
       }
 
-      case 'setVariable': {
-        return { success: true }
-      }
+      // Runner-minted / author-channel verbs (D-01/D-15/D-16): reportValue, uniqueValue, assertAI,
+      // extractAI, and setVariable are intercepted at the dispatch seam and never reach the adapter.
+      // A grouped §7.1 defensive case surfaces a dispatch-routing error if one arrives here;
+      // assertNever remains the backstop for a genuinely unknown schema verb.
+      case 'reportValue':
+      case 'uniqueValue':
+      case 'assertAI':
+      case 'extractAI':
+      case 'setVariable':
+        return {
+          success: false,
+          error: `Action "${action.type}" is handled by the runner dispatch seam and must not reach the web adapter (runner-minted/author-channel verb). This indicates a dispatch routing error.`,
+        }
 
       default:
         return assertNever(action)
