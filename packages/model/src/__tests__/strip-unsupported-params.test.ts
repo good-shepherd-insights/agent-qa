@@ -1,10 +1,16 @@
+import { generateText } from 'ai'
 import type { LanguageModelMiddleware } from 'ai'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { LanguageModelV3, LanguageModelV3CallOptions } from '@ai-sdk/provider'
+import type { ModelProfile, ModelProviderId } from '@vostride/agent-qa-schema'
+import { setActiveMaskingContextResolver } from '@vostride/agent-qa-safety'
 
+import { overrideStore } from '../capability/override-store.js'
 import { stripUnsupportedParamsMiddleware } from '../middleware/strip-unsupported-params.js'
 import { getProvider } from '../providers/registry.js'
+import { createModel } from '../registry.js'
+import type { ResolvedModelAuth } from '../auth.js'
 
 const fakeModel = {} as LanguageModelV3
 
@@ -79,6 +85,75 @@ describe('stripUnsupportedParamsMiddleware', () => {
     expect(result).not.toHaveProperty('maxOutputTokens')
     expect(result).not.toHaveProperty('topK')
     expect(result).toHaveProperty('temperature', 0.5)
+  })
+})
+
+const noneAuth: ResolvedModelAuth = { kind: 'none' }
+
+function captureModel(onGenerate: (params: LanguageModelV3CallOptions) => void): LanguageModelV3 {
+  return {
+    specificationVersion: 'v3',
+    provider: 'capture.test',
+    modelId: 'capture-model',
+    supportedUrls: {},
+    async doGenerate(params) {
+      onGenerate(params)
+      return {
+        content: [],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      }
+    },
+    async doStream() {
+      throw new Error('not used')
+    },
+  }
+}
+
+function captureProfile(provider: ModelProviderId): ModelProfile {
+  const needsBaseURL = provider === 'openai-compatible' || provider === 'anthropic-compatible'
+  return {
+    provider,
+    model: 'capture-model',
+    ...(needsBaseURL ? { baseURL: 'http://localhost:11434/v1' } : {}),
+    auth: { mode: 'none' },
+  }
+}
+
+async function captureMaxOutputTokens(provider: ModelProviderId): Promise<number | undefined> {
+  let captured: LanguageModelV3CallOptions | undefined
+  const model = createModel(captureProfile(provider), noneAuth, {
+    languageModels: { 'capture-model': captureModel((params) => { captured = params }) },
+  })
+  await generateText({
+    model,
+    maxOutputTokens: 4096,
+    prompt: 'plan the next step',
+  })
+  return captured?.maxOutputTokens
+}
+
+describe('createModel egress strip (auth-free capture proof)', () => {
+  beforeEach(() => {
+    overrideStore.clear()
+    setActiveMaskingContextResolver(() => undefined)
+  })
+
+  it('strips maxOutputTokens on the wire for openai-subscription (codex Responses 400 fix)', async () => {
+    // The captured params are what the provider adapter would serialize to the wire.
+    expect(await captureMaxOutputTokens('openai-subscription')).toBeUndefined()
+  })
+
+  it('preserves maxOutputTokens for a cap-supporting provider (anthropic-subscription)', async () => {
+    expect(await captureMaxOutputTokens('anthropic-subscription')).toBe(4096)
+  })
+
+  it('preserves maxOutputTokens for a cap-supporting provider (openai-compatible)', async () => {
+    expect(await captureMaxOutputTokens('openai-compatible')).toBe(4096)
   })
 })
 
