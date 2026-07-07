@@ -25,6 +25,7 @@ import type {
   ExecutionContext,
   IssueDelta,
   IssueId,
+  MemberTestOutcome,
   OriginStage,
   PerTestOutcome,
   ReadTrace,
@@ -53,7 +54,7 @@ expectTypeOf<CompletedRunHandoff['runId']>().toEqualTypeOf<RunId>()
 expectTypeOf<CompletedRunHandoff['executionContext']>().toEqualTypeOf<ExecutionContext>()
 expectTypeOf<CompletedRunHandoff['aggregateVerdict']>().toEqualTypeOf<RunStatus>()
 expectTypeOf<CompletedRunHandoff['tests']>().toEqualTypeOf<PerTestOutcome[]>()
-expectTypeOf<PerTestOutcome['outcome']>().toEqualTypeOf<RunStatus>()
+expectTypeOf<PerTestOutcome['outcome']>().toEqualTypeOf<MemberTestOutcome>() // D-15 member-level split
 expectTypeOf<PerTestOutcome['steps']>().toEqualTypeOf<StepEvidence[]>()
 expectTypeOf<StepEvidence['servedBrief']>().toEqualTypeOf<ServedBrief>()
 expectTypeOf<StepEvidence['subActions']>().toEqualTypeOf<SubActionEvidence[]>()

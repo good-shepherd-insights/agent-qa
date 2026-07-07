@@ -8,6 +8,7 @@ import type { StepEvidence, VerifierVerdict } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { RecordedActionResult } from '../result/index'
+import type { MemberTestOutcome } from '../run/member-outcome'
 import type { RunStatus } from '../run/run-status'
 import type { ScreenState } from '../screen/screen-state'
 
@@ -42,7 +43,16 @@ const invalidVerifierVerdict: StepEvidence['verifierVerdict'] = verifierVerdictS
 
 expectTypeOf<SubActionEvidence['plannedAction']>().toEqualTypeOf<Action>()
 expectTypeOf<SubActionEvidence['result']>().toEqualTypeOf<RecordedActionResult>()
-expectTypeOf<PerTestOutcome['outcome']>().toEqualTypeOf<RunStatus>()
+
+// D-15: PerTestOutcome.outcome splits off RunStatus onto the member-level MemberTestOutcome
+// (RunStatus + 'skipped'). 'skipped' is a member-only concept — it can never be an aggregate.
+expectTypeOf<PerTestOutcome['outcome']>().toEqualTypeOf<MemberTestOutcome>()
+const skippedMember: PerTestOutcome['outcome'] = 'skipped'
+
+// @ts-expect-error 'skipped' is member-level only — never assignable to the aggregate verdict.
+const invalidSkippedAggregate: CompletedRunHandoff['aggregateVerdict'] = 'skipped'
 
 void invalidAggregateVerdict
 void invalidVerifierVerdict
+void skippedMember
+void invalidSkippedAggregate

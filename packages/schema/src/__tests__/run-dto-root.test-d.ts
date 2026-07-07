@@ -46,7 +46,7 @@ expectTypeOf<z.infer<typeof approvalSchema>>().toEqualTypeOf<Approval>()
 expectTypeOf<z.infer<typeof actionProposalSchema>>().toEqualTypeOf<ActionProposal>()
 expectTypeOf<z.infer<typeof patchSchema>>().toEqualTypeOf<Patch>()
 
-expectTypeOf<RunSession['status']>().toEqualTypeOf<RunStatus>()
+expectTypeOf<RunSession['status']>().toEqualTypeOf<'running' | RunStatus>() // D-13 M1-lite: running -> terminal
 expectTypeOf<RunSession['executionContext']>().toEqualTypeOf<ExecutionContext>()
 expectTypeOf<RunSession['id']>().toEqualTypeOf<RunId>()
 
