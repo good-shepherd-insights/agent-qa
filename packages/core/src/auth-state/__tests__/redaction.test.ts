@@ -96,6 +96,37 @@ describe('auth-state redaction', () => {
       .toContain(`"authState":"${AUTH_STATE_REDACTION_MARKER}"`)
   })
 
+  it('redacts a multi-line config in linear time (RUNX-05 ReDoS regression guard)', () => {
+    // An `authState:` block with NO following `name:` (here `services.authState.dir`) used to
+    // drive catastrophic backtracking in redactStructuredAuthStateText, freezing the main
+    // thread for ~30s before the first testStarted. This asserts the redaction stays linear:
+    // a config with an unterminated authState block + many indented lines must complete fast.
+    const adversarialConfig = [
+      'services:',
+      '  authState:',
+      '    dir: .agent-qa/auth-states',
+      ...Array.from({ length: 4000 }, (_v, i) => `    field${i}: value${i}`),
+      'steps: []',
+    ].join('\n')
+
+    const start = performance.now()
+    const redacted = redactAuthStateString(adversarialConfig)
+    const elapsedMs = performance.now() - start
+
+    // A linear pass over ~4000 lines is single-digit ms; the ReDoS took ~30_000ms. The 2s
+    // bound fails loudly if the catastrophic quantifier is reintroduced, without being flaky.
+    expect(elapsedMs).toBeLessThan(2000)
+    // The block has no `name:` line, so the multi-line block redaction leaves the ordinary
+    // (non-auth) field lines intact — the pass completed rather than hanging.
+    expect(redacted).toContain('field3999: value3999')
+    expect(redacted).toContain('steps: []')
+
+    // The actual name-in-block redaction still works (behavior preserved by the linear regex).
+    const withName = redactAuthStateString('use:\n  authState:\n    name: admin\n    load: false\nsteps: []')
+    expect(withName).toContain(AUTH_STATE_REDACTION_MARKER)
+    expect(withName).not.toContain('admin')
+  })
+
   it('composes with SecretRedactor and redacts auth-like reporting keys', () => {
     const secretStore = new SecretStore({ API_KEY: 'raw-secret' })
     const redacted = redactAuthStateValue({

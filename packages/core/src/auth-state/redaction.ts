@@ -117,7 +117,13 @@ function looksLikeAuthStateHookJson(value: string): boolean {
 function redactStructuredAuthStateText(value: string): string {
   return value
     .replace(
-      /(\bauthState\s*:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+name\s*:\s*)[^\n#]+/gi,
+      // Redact the `name:` value inside a YAML `authState:` block. The intermediate-line
+      // matcher uses a single leading `[ \t]` (not `[ \t]+[^\n]*`): the previous `[ \t]+`
+      // and `[^\n]*` overlapped, so an `authState:` block WITHOUT a following `name:` (e.g.
+      // `services.authState.dir`) drove catastrophic backtracking that froze the main thread
+      // for ~30s on a normal multi-line config (RUNX-05). One `[ \t]` + greedy `[^\n]*` per
+      // line is unambiguous, so scanning is linear in the input length.
+      /(\bauthState[ \t]*:[ \t]*\n(?:[ \t][^\n]*\n)*?[ \t]+name[ \t]*:[ \t]*)[^\n#]+/gi,
       (_match, prefix: string) => `${prefix}${AUTH_STATE_REDACTION_MARKER}`,
     )
     .replace(
