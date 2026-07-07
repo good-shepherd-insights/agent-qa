@@ -17,7 +17,13 @@ import { slugBranch } from '../branch-resolver.js'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 function envelope(seq: number): RunEventEnvelope {
-  return { seq, ts: 1_700_000_000_000 + seq, runId: 'run-1', type: 'runWarning', payload: { code: `c${seq}` } }
+  return {
+    seq,
+    ts: 1_700_000_000_000 + seq,
+    runId: 'run-1',
+    type: 'runWarning',
+    payload: { code: `c${seq}`, message: `w${seq}` },
+  }
 }
 
 describe('FsEventLog (D-06)', () => {

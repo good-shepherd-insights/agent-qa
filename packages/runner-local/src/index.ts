@@ -24,3 +24,13 @@ export type { BranchResolverOptions, ResolvedBranch } from './branch-resolver.js
 // Branch write-skip policy (D-14).
 export { shouldWrite } from './write-policy.js'
 export type { CachePolicy } from './write-policy.js'
+
+// Runner-local persistence tier (Phase 361, D-05/D-06/D-17/D-18/D-19).
+// JSONL event log + completed-run handoff store + per-product buildOrdinal counter,
+// each behind a runner-declared port (EventLogPort/HandoffStorePort) or a thin fs leg.
+export { FsEventLog, RUNS_SUBDIR, EVENTS_FILE } from './event-log.js'
+export type { FsEventLogConfig } from './event-log.js'
+export { FsHandoffStore, loadCompletedRunHandoff, HANDOFF_FILE } from './handoff-store.js'
+export type { FsHandoffStoreConfig } from './handoff-store.js'
+export { nextBuildOrdinal, BUILD_ORDINALS_FILE } from './build-ordinal.js'
+export type { NextBuildOrdinalOptions } from './build-ordinal.js'

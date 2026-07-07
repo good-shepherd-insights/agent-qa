@@ -7,6 +7,9 @@ export const AGENT_QA_RUNNER_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'local filesystem action-plan cache store behind the runner ActionPlanCache port',
   'git-branch + default/protected-branch detection for cache namespacing',
   'branch write-skip policy evaluation for the cache store',
+  'local filesystem JSONL run-event log behind the runner EventLogPort',
+  'local filesystem completed-run handoff store behind the runner HandoffStorePort',
+  'project-local per-product buildOrdinal counter persistence',
 ] as const
 export const AGENT_QA_RUNNER_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'cache-key assembly or hashing semantics',
