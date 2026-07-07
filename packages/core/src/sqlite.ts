@@ -140,7 +140,14 @@ function acquireBetterSqlite3RebuildLock(installRoot: string): () => void {
   }
 }
 
-function rebuildBetterSqlite3ForCurrentRuntime(originalError: unknown): void {
+/**
+ * Explicit, out-of-band native rebuild of better-sqlite3 for the current Node
+ * runtime. Retained for a user-initiated doctor/preflight path ONLY — it is
+ * NEVER invoked from `createBetterSqlite3Database` (RUNX-02 / D1), because its
+ * `Atomics.wait` lock spin + `execFileSync` node-gyp rebuild block the main
+ * thread and swallow SIGINT during a run.
+ */
+export function rebuildBetterSqlite3ForCurrentRuntime(originalError: unknown): void {
   if (rebuildAttempted) {
     if (rebuildFailureMessage) {
       throw new Error(rebuildFailureMessage)
@@ -225,20 +232,60 @@ function loadBetterSqlite3(): BetterSqlite3Constructor {
 
 export type BetterSqlite3Database = import('better-sqlite3').Database
 
+/**
+ * Thrown when better-sqlite3's native binding does not match the running Node.js
+ * ABI (or is missing). agent-qa no longer rebuilds native modules inside a run —
+ * the previous inline `execFileSync` rebuild + `Atomics.wait` lock spin blocked the
+ * main thread and swallowed SIGINT (RUNX-02 / D1). This fails fast instead so the
+ * caller (CLI, plan 364-03) can surface an actionable, cancellable message.
+ */
+export class BetterSqlite3AbiMismatchError extends Error {
+  constructor(originalError: unknown) {
+    const detail = getBetterSqlite3ErrorMessage(originalError)
+    super(
+      `better-sqlite3's native binding does not match the running Node.js `
+      + `(${process.version}, NODE_MODULE_VERSION). agent-qa no longer rebuilds `
+      + `native modules inside a run. Rebuild it out of band with `
+      + `\`pnpm rebuild better-sqlite3\` (or reinstall dependencies) and re-run.\n`
+      + `Underlying error: ${detail}`,
+    )
+    this.name = 'BetterSqlite3AbiMismatchError'
+  }
+}
+
 function openBetterSqlite3Database(path: string): BetterSqlite3Database {
   const Database = loadBetterSqlite3()
   return new Database(path)
 }
 
-export function createBetterSqlite3Database(path: string): BetterSqlite3Database {
+export interface CreateBetterSqlite3DatabaseOptions {
+  /** Injected open seam — defaults to the native `openBetterSqlite3Database`. */
+  open?: (path: string) => BetterSqlite3Database
+  /**
+   * Injected out-of-band rebuild seam. Retained ONLY so tests can assert it is
+   * never reached from the run open path. The default is a no-op: the run path
+   * MUST fail fast on a native module error, never rebuild synchronously.
+   */
+  rebuild?: (originalError: unknown) => void
+}
+
+export function createBetterSqlite3Database(
+  path: string,
+  options: CreateBetterSqlite3DatabaseOptions = {},
+): BetterSqlite3Database {
+  const open = options.open ?? openBetterSqlite3Database
   try {
-    return openBetterSqlite3Database(path)
+    return open(path)
   } catch (error) {
     if (!isBetterSqlite3NativeModuleError(error)) {
       throw error
     }
 
-    rebuildBetterSqlite3ForCurrentRuntime(error)
-    return openBetterSqlite3Database(path)
+    // RUNX-02 / D1: fail fast on an ABI/bindings mismatch. Never call the
+    // synchronous rebuild (`rebuildBetterSqlite3ForCurrentRuntime`) on the run
+    // hot path — its `Atomics.wait` lock spin + `execFileSync` node-gyp rebuild
+    // block the main thread and swallow SIGINT. The rebuild helper stays exported
+    // for an explicit out-of-band doctor/preflight, not for an implicit run open.
+    throw new BetterSqlite3AbiMismatchError(error)
   }
 }
