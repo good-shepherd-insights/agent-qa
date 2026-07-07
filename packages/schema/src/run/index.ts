@@ -32,3 +32,11 @@ export type {
   IssuesCompletedPayload,
   IssuesFailedPayload,
 } from './bus-events'
+// 361 D-10/D-09: pure masked payload projections (schema-in/schema-out).
+export {
+  maskPayloadStrings,
+  projectStepFinalized,
+  projectSubActionRecorded,
+  projectTestFinished,
+} from './bus-projections'
+export type { MaskFn } from './bus-projections'

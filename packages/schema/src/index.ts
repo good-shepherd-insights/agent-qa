@@ -84,6 +84,8 @@ export { asRunId } from './run/index'
 export { asRecordId, asIssueId, asEvidenceToken } from './ids/index'
 export { computeBriefDigest } from './brief/index'
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
+// 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).
+export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './handoff/index'
 export type { RunStatus, ExecutionContext, RunId } from './run/index'
 export type { RecordId, IssueId, EvidenceToken, ArtifactRef } from './ids/index'
 export type { Verdict, VerdictEvidence } from './verdict/index'
@@ -117,6 +119,14 @@ export { workingMemoryEntrySchema } from './memory/index'
 export type { RunSession } from './run/index'
 // 361 bus schema v1 + M1-lite session vocabulary (SESSION-01/02/03, D-05/D-13/D-15)
 export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './run/index'
+// 361 D-10/D-09: pure masked payload projections (SESSION-03 projection layer).
+export {
+  maskPayloadStrings,
+  projectStepFinalized,
+  projectSubActionRecorded,
+  projectTestFinished,
+} from './run/index'
+export type { MaskFn } from './run/index'
 export type {
   MemberTestOutcome,
   RunCompletion,

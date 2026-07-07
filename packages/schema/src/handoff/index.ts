@@ -1,5 +1,7 @@
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './completed-run-handoff'
 export type { CompletedRunHandoff } from './completed-run-handoff'
+// 361 D-19: the one handoff version guard (reject-newer / migrate-older seam).
+export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './load-completed-run-handoff'
 export type { PerTestOutcome } from './per-test-outcome'
 export type { StepEvidence } from './step-evidence'
 export type { VerifierVerdict, Decision } from './step-evidence'
