@@ -72,6 +72,28 @@ describe('both paths build the identity MaskingContext unconditionally (D-09 / T
   })
 })
 
+// (e) SESSION-04 force-exit backstop (Plan 361-13 Task 3): BOTH handleShutdown paths arm a bounded
+// `process.exit(130)` grace timer after cancel, and BOTH clear it after `await session.done`, so a
+// genuinely un-settleable run still exits 130 (live Ctrl+C can never hang) and a clean completion
+// never leaks the timer. Source-anchored per this file's convention.
+describe('both handleShutdown paths arm + clear a bounded force-exit backstop (SESSION-04)', () => {
+  it('arms a bounded process.exit(130) grace timer in both handleShutdown sites', () => {
+    expect(count(runSource, 'setTimeout(() => process.exit(130), cancelGraceMs())')).toBe(2)
+  })
+
+  it('unrefs the grace timer in both sites so it never keeps the loop alive on its own', () => {
+    expect(count(runSource, 'grace.unref?.()')).toBe(2)
+  })
+
+  it('clears the grace timer after session.done in both paths so a clean completion never leaks it', () => {
+    expect(count(runSource, 'clearTimeout(graceTimer)')).toBe(2)
+  })
+
+  it('reads the grace window from an env-overridable constant, defaulting to 3000ms', () => {
+    expect(runSource).toContain("Number(process.env.AGENT_QA_CANCEL_GRACE_MS ?? 3000)")
+  })
+})
+
 // (d) The config/setup exit-2 convention is untouched (D-14): exit 2 stays reserved for
 // config/setup errors and is NOT produced by the verdict map.
 describe('the config/setup exit-2 convention survives the cutover (D-14)', () => {

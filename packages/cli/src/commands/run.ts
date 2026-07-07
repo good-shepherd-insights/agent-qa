@@ -34,6 +34,15 @@ const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artif
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const RUNTIME_VIDEOS_DIR = DEFAULT_AGENT_QA_VIDEOS_DIR || '.agent-qa/artifacts/videos'
 
+// SESSION-04 force-exit backstop grace window. Primary guarantee is the shell settling `done`
+// cleanly on cancel/budget (Plan 361-13 Task 2); this is a hard safety net so a genuinely
+// un-settleable run still exits 130 and a live Ctrl+C can never hang the CLI. Overridable via env
+// for tests. The armed timer is `.unref()`d — it never keeps the loop alive on its own, but still
+// fires if a wedged run is keeping the loop alive.
+function cancelGraceMs(): number {
+  return Number(process.env.AGENT_QA_CANCEL_GRACE_MS ?? 3000)
+}
+
 // CI vendor-var set reused for the CachePolicy.isCI resolution at the composition root
 // (mirrors safety-local's execution-context-detector set — D-14). Kept inline so the CLI
 // does not take a new cross-package dependency purely to read env markers.
@@ -941,11 +950,17 @@ async function executeSuites(
   // handler routes the abort into `session.cancel()` (skip the rest, aggregate `cancelled`); core's
   // per-test SIGINT registration is suppressed because the executor threads ctx.abortSignal (D-03).
   let activeRunSession: { cancel(): void } | undefined
+  // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
+  // `await session.done`. Fires only if `done` is genuinely un-settleable so the CLI can never hang.
+  let graceTimer: ReturnType<typeof setTimeout> | undefined
 
   const handleShutdown = () => {
     shutdownRequested = true
     process.exitCode = 130
     try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
+    const grace = setTimeout(() => process.exit(130), cancelGraceMs())
+    grace.unref?.()
+    graceTimer = grace
     for (const activeSuiteDb of activeSuiteDbs) {
       try {
         const now = new Date().toISOString()
@@ -1857,6 +1872,7 @@ async function executeSuites(
   activeRunSession = session
 
   const { verdict } = await session.done
+  if (graceTimer) clearTimeout(graceTimer)
   await lifecycle.finalize()
   activeRunSession = undefined
 
@@ -2985,10 +3001,16 @@ export function createRunCommand(): Command {
         // absorbs executor throws into failed members (D-13, never crashes the run), so we capture the
         // first one, cancel the run, and re-surface it after `done` to preserve the exit-2 contract.
         let frameworkError: unknown | undefined
+        // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
+        // `await session.done` (and BEFORE any frameworkError re-throw so the exit-2 contract holds).
+        let graceTimer: ReturnType<typeof setTimeout> | undefined
         const handleShutdown = () => {
           shutdownRequested = true
           process.exitCode = 130
           try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
+          const grace = setTimeout(() => process.exit(130), cancelGraceMs())
+          grace.unref?.()
+          graceTimer = grace
         }
         process.once('SIGINT', handleShutdown)
         process.once('SIGTERM', handleShutdown)
@@ -3073,11 +3095,13 @@ export function createRunCommand(): Command {
         activeRunSession = session
 
         const { verdict } = await session.done
+        if (graceTimer) clearTimeout(graceTimer)
         activeRunSession = undefined
         process.removeListener('SIGINT', handleShutdown)
         process.removeListener('SIGTERM', handleShutdown)
 
-        // Re-surface a captured framework/setup error so the existing exit-2 contract holds.
+        // Re-surface a captured framework/setup error so the existing exit-2 contract holds. The
+        // grace backstop is already cleared above, so the exit-2 re-throw path is unaffected.
         if (frameworkError !== undefined) {
           throw frameworkError
         }
