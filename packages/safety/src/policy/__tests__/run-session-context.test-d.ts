@@ -7,6 +7,12 @@ const session: RunSession = {
   id: asRunId('run_execution_context'),
   status: 'passed',
   executionContext: resolveExecutionContext({ isTty: false, ciMarkers: true }),
+  // The M1-lite RunSession (SESSION-01) expanded the provisional three-field DTO with the
+  // live subscribe/cancel/done seam; this type-only fixture stubs them — the assertion below
+  // still targets executionContext alone.
+  subscribe: () => () => {},
+  cancel: () => {},
+  done: Promise.resolve() as unknown as RunSession['done'],
 }
 
 expectTypeOf(session.executionContext).toEqualTypeOf<

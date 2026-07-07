@@ -276,6 +276,20 @@ function normalizeLiteral(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+/**
+ * Blank out `//` line comments and `/* … *\/` block comments, replacing every comment
+ * character with a space so byte offsets AND line numbers stay aligned with the original.
+ * Timeout literals are executable config, never comment prose — decision-reference tags
+ * (`D-03`, `D-14`) and exit-code documentation (`healed=0`, `cancelled=130`) live only in
+ * comments, so numeric extraction runs over the code-only projection while context matching
+ * still uses the raw lines.
+ */
+function blankComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, match =>
+    match.replace(/[^\n]/g, ' '),
+  )
+}
+
 describe('execution timeout inventory', () => {
   it('inventories reviewed timeout literals in execution-relevant files', async () => {
     for (const entry of timeoutInventory) {
@@ -291,6 +305,9 @@ describe('execution timeout inventory', () => {
     for (const file of scannedFiles) {
       const content = await readFile(join(agentQaRoot, file), 'utf-8')
       const lines = content.split('\n')
+      // Numeric extraction runs over the code-only projection (comments blanked); context
+      // matching still uses the raw lines so `contextIncludes` prose anchors keep working.
+      const codeLines = blankComments(content).split('\n')
 
       for (const retired of retiredInventory.filter(entry => entry.file === file)) {
         expect(content, `${retired.id} must remain retired`).not.toContain(retired.literal)
@@ -302,7 +319,7 @@ describe('execution timeout inventory', () => {
         const timerArgumentLine = /^\s*},\s*\d[\d_\s*]*\)?/.test(line)
         if (!ownLineHasTimeoutContext && !timerArgumentLine) return []
         if (!timeoutContextPattern.test(context)) return []
-        return [...line.matchAll(numericExpressionPattern)].map(match => ({
+        return [...codeLines[index].matchAll(numericExpressionPattern)].map(match => ({
           file,
           line: index + 1,
           literal: normalizeLiteral(match[0]),
