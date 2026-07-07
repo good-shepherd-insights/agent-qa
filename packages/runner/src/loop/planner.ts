@@ -64,6 +64,44 @@ function resolveActionAnchorKey(
 // structured 'ungroundable_action' turn failure (357 D-09 machinery, unmodified). Any other verb, or
 // an action on a DIFFERENT element, returns undefined — D-04's explicit negative: no wandering
 // heuristic here; genuine loops are caught by CYCLE-03 revisitation.
+// Extract the trimmed textual content of a system tier. A tier's `content` is a string
+// (the SystemModelMessage shape the planner builders emit); defensively, if a tier ever
+// carries array content parts, join their text before trimming so an empty check stays
+// honest across shapes.
+function tierTextContent(tier: SystemModelMessage): string {
+  const content = tier.content as unknown
+  if (typeof content === 'string') return content.trim()
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part && typeof part === 'object' && 'text' in part ? String((part as { text: unknown }).text) : ''))
+      .join('')
+      .trim()
+  }
+  return ''
+}
+
+// RUNX-01 / D2 fix: assemble the cache-ordered [stable, context, volatile] planner
+// system tiers and DROP any tier whose trimmed text content is empty. For a bare test
+// (no suiteContext/testContext) buildContextTier returns a role:'system' message with
+// content '' — published 0.1.21 sent a single non-empty `system` string and never emitted
+// an empty message, so the OpenAI Responses API never rejected it with HTTP 400. Filtering
+// at assembly time (not inside buildContextTier) means every caller benefits and the
+// retained tiers keep their content + providerOptions (incl. the Anthropic cache_control
+// breakpoint on a retained context tier) byte-for-byte. Pure + exported so the regression
+// test drives it directly; LLMPlanner.buildSystemTiers delegates here unchanged in behavior
+// except for the drop.
+export function assemblePlannerSystemTiers(
+  context: StepContext,
+  options: { platform: Platform; agentRules?: string },
+): SystemModelMessage[] {
+  const tiers: SystemModelMessage[] = [
+    { role: 'system', content: buildSystemPrompt(options.platform, options.agentRules) },
+    buildContextTier(context),
+    buildVolatileTier(context),
+  ]
+  return tiers.filter((tier) => tierTextContent(tier).length > 0)
+}
+
 function bannedSubstitutionMessage(
   action: { type: string; [key: string]: unknown },
   screenState: ScreenState,
@@ -115,11 +153,7 @@ export class LLMPlanner implements Planner {
   // enters these tiers — it rides composeTurnMessages after the system region. Non-Anthropic
   // providers never parse the `anthropic` namespace, so the breakpoint is a transparent no-op.
   private buildSystemTiers(context: StepContext): SystemModelMessage[] {
-    return [
-      { role: 'system', content: buildSystemPrompt(this.platform, this.agentRules) },
-      buildContextTier(context),
-      buildVolatileTier(context),
-    ]
+    return assemblePlannerSystemTiers(context, { platform: this.platform, agentRules: this.agentRules })
   }
 
   async plan(
