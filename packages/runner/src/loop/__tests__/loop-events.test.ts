@@ -1,0 +1,128 @@
+// D-02 live emission + D-20 digest threading (Plan 361-08). Harness-driven pins for the
+// two loop-side chokepoints: `stepFinalized` fires exactly once per step in finish() with
+// the SAME evidence object attached to the StepResult; `subActionRecorded` fires once per
+// recorded sub-action with the recorder's monotonic indices. Degrade-when-absent: with
+// `events` unset the loop is byte-identical (no throw). D-20: `configDigests` threads into
+// the cache-key material — a present digest pair changes the key the loop keys the cache on
+// (proven by captured CacheKeys, not by grep).
+import { describe, it, expect } from 'vitest'
+import type { CacheKey, StepEvidence, SubActionEvidence } from '@vostride/agent-qa-schema'
+import type { LoopPorts, LoopEventEmitPort } from '../ports.js'
+import type { ActionPlanCache } from '../../cache/port.js'
+import { executeStep } from '../index.js'
+import { makeActionPlan, makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
+import { makeScreenState } from '../../testing/screen-fixtures.js'
+
+function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
+  return overrides
+}
+
+function makeEventsPort(): {
+  port: LoopEventEmitPort
+  stepFinalized: StepEvidence[]
+  subActions: { evidence: SubActionEvidence; index: number }[]
+} {
+  const stepFinalized: StepEvidence[] = []
+  const subActions: { evidence: SubActionEvidence; index: number }[] = []
+  const port: LoopEventEmitPort = {
+    stepFinalized(evidence) {
+      stepFinalized.push(evidence)
+    },
+    subActionRecorded(evidence, index) {
+      subActions.push({ evidence, index })
+    },
+  }
+  return { port, stepFinalized, subActions }
+}
+
+// A two-sub-action scenario: the first plan does not complete the step, the second does.
+function twoSubActionPorts(events?: LoopEventEmitPort): LoopPorts {
+  const adapter = makeAdapter({
+    observeResults: [makeScreenState(), makeScreenState(), makeScreenState()],
+    executeResults: [{ success: true }, { success: true }],
+  })
+  const planner = makePlanner([
+    makeActionPlan({ action: { type: 'click', ref: 'e1' }, stepComplete: false }),
+    makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+  ])
+  return ports(events ? { adapter, planner, events } : { adapter, planner })
+}
+
+describe('loop live emission (D-02)', () => {
+  it('(a) fires exactly one stepFinalized carrying the StepResult evidence, and one subActionRecorded per sub-action with monotonic indices', async () => {
+    const spy = makeEventsPort()
+    const result = await executeStep('Click Log in', twoSubActionPorts(spy.port), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    // stepFinalized: exactly once, with the same evidence object attached to the StepResult.
+    expect(spy.stepFinalized).toHaveLength(1)
+    expect(spy.stepFinalized[0]).toBe(result.evidence)
+
+    // subActionRecorded: once per recorded sub-action, monotonic indices from 0.
+    expect(spy.subActions).toHaveLength(result.evidence!.subActions.length)
+    expect(spy.subActions.map(c => c.index)).toEqual([0, 1])
+    for (const call of spy.subActions) {
+      expect(call.evidence).toBe(result.evidence!.subActions[call.index])
+    }
+  })
+
+  it('(b) with events unset the StepResult is unchanged and nothing throws (degrade-when-absent)', async () => {
+    const spy = makeEventsPort()
+    const withPort = await executeStep('Click Log in', twoSubActionPorts(spy.port), makeStepContext())
+    const withoutPort = await executeStep('Click Log in', twoSubActionPorts(), makeStepContext())
+
+    expect(withoutPort.status).toBe(withPort.status)
+    expect(withoutPort.name).toBe(withPort.name)
+    expect(withoutPort.evidence!.subActions.length).toBe(withPort.evidence!.subActions.length)
+    expect(withoutPort.evidence!.stepText).toBe(withPort.evidence!.stepText)
+    expect(withoutPort.evidence!.cacheStatus).toBe(withPort.evidence!.cacheStatus)
+  })
+})
+
+describe('loop cache-key digest threading (D-20)', () => {
+  function capturingCache(): { cache: ActionPlanCache; keys: CacheKey[] } {
+    const keys: CacheKey[] = []
+    const cache: ActionPlanCache = {
+      async get(key) {
+        keys.push(key)
+        return null
+      },
+      async set() {},
+      async invalidate() {},
+    }
+    return { cache, keys }
+  }
+
+  // One single-sub-action step ⇒ exactly one cache.get ⇒ one captured key per run.
+  async function keyFor(configDigests?: LoopPorts['configDigests']): Promise<CacheKey> {
+    const { cache, keys } = capturingCache()
+    const base: LoopPorts = ports({
+      adapter: makeAdapter(),
+      planner: makePlanner(),
+      verifier: makeVerifier(),
+      cache,
+    })
+    await executeStep('Click Log in', configDigests ? { ...base, configDigests } : base, makeStepContext())
+    expect(keys).toHaveLength(1)
+    return keys[0]
+  }
+
+  it('(c) a present configDigests pair changes the cache key the loop keys on; suite and test digests are each load-bearing', async () => {
+    const baseline = await keyFor(undefined)
+    const suiteOnly = await keyFor({ suiteConfigDigest: 'sd-1', testConfigDigest: '' })
+    const testOnly = await keyFor({ suiteConfigDigest: '', testConfigDigest: 'td-1' })
+    const both = await keyFor({ suiteConfigDigest: 'sd-1', testConfigDigest: 'td-1' })
+
+    // Absent-port digests are empty strings — identical to today's key material.
+    const empties = await keyFor({ suiteConfigDigest: '', testConfigDigest: '' })
+    expect(empties).toBe(baseline)
+
+    // Each digest independently perturbs the key ⇒ both thread through the mint.
+    expect(both).not.toBe(baseline)
+    expect(suiteOnly).not.toBe(baseline)
+    expect(testOnly).not.toBe(baseline)
+    expect(suiteOnly).not.toBe(testOnly)
+    expect(both).not.toBe(suiteOnly)
+    expect(both).not.toBe(testOnly)
+  })
+})
