@@ -172,7 +172,18 @@ export type {
   MemberTestRunContext,
   MemberTestExecutor,
   RunConfig,
+  RunPorts,
 } from './run/ports.js'
+// SESSION-01/02/04/05 run shell (Plan 06) — the run lifecycle owner every later surface
+// (362 seams, 363 reporters, M1b/M2 handoff readers) attaches to. The projection/mask sink
+// and §A8 handoff assembly are exported for CLI/core composition roots (Plans 09–11).
+export { startRun } from './run/shell.js'
+export { createMemberEventSink } from './run/event-sink.js'
+export {
+  assemblePerTestOutcome,
+  skippedPerTestOutcome,
+  assembleHandoff,
+} from './run/handoff-assembly.js'
 // SESSION-04 verdict-derivation core (Plan 05) — the shell (Plan 06, via src) and the CLI
 // (Plans 10/11, via dist) resolve these pure functions from the barrel.
 export {
