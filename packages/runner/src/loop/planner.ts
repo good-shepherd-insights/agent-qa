@@ -29,6 +29,39 @@ import { buildAnchorKey } from './progress/stagnation-tree.js'
 const SCREENSHOT_UNAVAILABLE_NOTE =
   '[Note: Visual screenshot is unavailable for this step. Rely on the accessibility tree and DOM context for element identification.]'
 
+// Max characters of a provider `responseBody` to carry into log meta / rethrown messages —
+// bounds an accidentally-large error body so a swallowed catch never dumps an unbounded blob.
+const MAX_RESPONSE_BODY_CHARS = 500
+
+// RUNX-04 (planner half): duck-typed `@ai-sdk/provider` APICallError extraction — mirrors
+// `packages/cli/src/commands/auth.ts` `extractProviderError`. The runner stays provider-neutral
+// (no model/@ai-sdk import): it reads the structural `statusCode?: number` + `responseBody?:
+// string` fields off the error object. Returns undefined when NEITHER field is present (an
+// ordinary Error), so the existing rethrow paths are unaffected. `detail` is the provider's own
+// words parsed out of a JSON responseBody (e.g. codex's "Unsupported parameter: max_output_tokens").
+function extractProviderError(
+  err: unknown,
+): { statusCode?: number; responseBody?: string; detail?: string } | undefined {
+  if (err === null || typeof err !== 'object') return undefined
+  const e = err as { statusCode?: unknown; responseBody?: unknown }
+  const statusCode = typeof e.statusCode === 'number' ? e.statusCode : undefined
+  const rawBody = typeof e.responseBody === 'string' ? e.responseBody : undefined
+  if (statusCode === undefined && rawBody === undefined) return undefined
+
+  const responseBody = rawBody !== undefined ? rawBody.slice(0, MAX_RESPONSE_BODY_CHARS) : undefined
+  let detail: string | undefined
+  if (rawBody !== undefined) {
+    try {
+      const body = JSON.parse(rawBody) as { detail?: unknown; error?: { message?: unknown } }
+      if (typeof body?.detail === 'string') detail = body.detail
+      else if (typeof body?.error?.message === 'string') detail = body.error.message
+    } catch {
+      // Provider did not return JSON — the bounded responseBody still carries its words.
+    }
+  }
+  return { statusCode, responseBody, detail }
+}
+
 // D-04 longpress-for-tap ban resolution. Resolve the emitted action's target to the STABLE
 // element anchor (role + nameNormalized + same-screen ordinal) — never the volatile ref string —
 // so the ban keys on the exact identity the stagnation tree does (buildAnchorKey, reused). Reads a
@@ -251,8 +284,12 @@ export class LLMPlanner implements Planner {
         try {
           clamped = await runTurn(composeTurnMessages(turnContext, screenState))
         } catch (err) {
+          const provider = extractProviderError(err)
           this.logger?.warn('Screenshot send failed, retrying without image', {
             error: err instanceof Error ? err.message : String(err),
+            ...(provider !== undefined
+              ? { statusCode: provider.statusCode, responseBody: provider.responseBody }
+              : {}),
           })
           const fallbackNote = turnContext.promptNote
             ? `${turnContext.promptNote}\n${SCREENSHOT_UNAVAILABLE_NOTE}`
@@ -275,6 +312,21 @@ export class LLMPlanner implements Planner {
       if (errorMsg.includes('invalid_tool_input') || errorMsg.includes('tool input') || errorMsg.includes('schema validation')) {
         this.logger?.warn('LLM provided invalid tool input', { error: errorMsg })
         throw new Error(`LLM provided invalid tool input: ${errorMsg}`)
+      }
+      // RUNX-04: a provider APICallError must not collapse to a bare "Bad Request". When the
+      // duck-typed statusCode/responseBody are present, surface them in the log meta and the
+      // rethrown message so the provider's own words (e.g. codex's max_output_tokens 400) survive
+      // the runner boundary — no temporary capture patch needed.
+      const provider = extractProviderError(err)
+      if (provider !== undefined) {
+        this.logger?.warn('LLM planning failed (provider error)', {
+          statusCode: provider.statusCode,
+          responseBody: provider.responseBody,
+          error: errorMsg,
+        })
+        const status = provider.statusCode !== undefined ? `HTTP ${provider.statusCode}` : 'provider error'
+        const detail = provider.detail ?? provider.responseBody ?? errorMsg
+        throw new Error(`LLM planning failed (${status}): ${detail}`)
       }
       throw err
     }
