@@ -1,3 +1,5 @@
 export type { SuiteDefinition, SuiteResult } from './types.js'
 export { runSuite } from './runner.js'
 export type { RunSuiteConfig } from './runner.js'
+export { executeSuiteMember, patchTestForSuite } from './member.js'
+export type { SuiteMemberInput } from './member.js'

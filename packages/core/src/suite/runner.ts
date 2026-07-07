@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
 import type { PlatformAdapter, PlatformConfig, RuntimeAuthStateConfig } from '@vostride/agent-qa-runner'
 import type { TestResult } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../types/test.js'
 import type { SuiteDefinition, SuiteResult } from './types.js'
 import type { Reporter, RunSummary, SuiteSummary } from '../reporter/types.js'
 import { MultiReporter } from '../reporter/types.js'
-import { runTest } from '../agent/runner.js'
 import type { RunTestConfig } from '../agent/runner.js'
+import { executeSuiteMember } from './member.js'
 import type { ActionPlanCache, Planner, Verifier } from '@vostride/agent-qa-runner'
 import type { MaskingContext } from '@vostride/agent-qa-schema'
 import type { LanguageModel } from 'ai'
@@ -16,15 +15,12 @@ import type { HookDefinition } from '../hooks/types.js'
 import type { SandboxRunnerOptions } from '../hooks/sandbox-runner.js'
 import { runHooks } from '../hooks/orchestrator.js'
 import type { MemoryProvider } from '../memory/provider.js'
-import { runCurator } from '../memory/curator.js'
 import type { MemoryLog } from '../memory/curator.js'
-import type { MemoryIndexParams } from '../memory/memory-index.js'
 import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
 import { VariableStore, findUnresolvedTemplates, interpolateVariables } from '../agent/variables.js'
 import { resolveSecretTemplatesInValue, type SecretRedactor, type SecretStore } from '@vostride/agent-qa-runner'
 import { withAbort } from '@vostride/agent-qa-runner'
 import { generateRunId } from '../ids/run-id.js'
-import pc from 'picocolors'
 
 export interface RunSuiteConfig {
   runId?: string
@@ -85,58 +81,6 @@ export interface RunSuiteConfig {
   }
   secretStore?: SecretStore
   secretRedactor?: SecretRedactor
-}
-
-function isPlainObject(val: unknown): val is Record<string, unknown> {
-  return typeof val === 'object' && val !== null && !Array.isArray(val)
-}
-
-function deepMerge(base: unknown, override: unknown): unknown {
-  if (!isPlainObject(base) || !isPlainObject(override)) return override
-  const result: Record<string, unknown> = { ...base }
-  for (const key of Object.keys(override)) {
-    if (key in result && isPlainObject(result[key]) && isPlainObject(override[key])) {
-      result[key] = deepMerge(result[key], override[key])
-    } else {
-      result[key] = override[key]
-    }
-  }
-  return result
-}
-
-function printMemoryStatus(log: { added: number; confirmed: number; deprecated: number; errors: string[]; curatorDuration: number }): void {
-  const parts: string[] = []
-  if (log.added > 0) parts.push(pc.green(`${log.added} added`))
-  if (log.confirmed > 0) parts.push(`${log.confirmed} confirmed`)
-  if (log.deprecated > 0) parts.push(pc.yellow(`${log.deprecated} deprecated`))
-  if (parts.length === 0) parts.push('no changes')
-  const secs = log.curatorDuration >= 1000 ? `${Math.round(log.curatorDuration / 1000)}s` : `${log.curatorDuration}ms`
-  console.log(`  ${pc.dim('Memory:')} ${parts.join(', ')} ${pc.dim(`(${secs})`)}`)
-  for (const err of log.errors) {
-    console.log(`  ${pc.dim('Memory:')} ${pc.yellow(`warning -- ${err}`)}`)
-  }
-}
-
-function patchTestForSuite(
-  test: TestDefinition,
-  suite: SuiteDefinition,
-  index: number,
-): TestDefinition {
-  const patched = structuredClone(test)
-
-  if (suite.target) {
-    ;(patched as any).target = suite.target
-  }
-
-  if (suite.use && (patched as any).use) {
-    ;(patched as any).use = deepMerge(suite.use, (patched as any).use)
-  } else {
-    ;(patched as any).use = (patched as any).use ?? suite.use
-  }
-
-  delete (patched as any).url
-
-  return patched
 }
 
 function resolveSuiteStartUrl(
@@ -320,214 +264,34 @@ export async function runSuite(
     } else {
       for (let i = 0; i < testEntries.length; i++) {
         const [test, filePath] = testEntries[i]
-        const patched = patchTestForSuite(test, suite, i)
 
-        // Fire onTestStart BEFORE per-test setup hooks so DashboardReporter creates
-        // the DB row and runId is available for hook recording (Phase 107 fix)
-        const suiteMembers = (suiteArtifact?.source as { members?: unknown[] } | undefined)?.members
-        const memberArtifact = Array.isArray(suiteMembers) ? suiteMembers[i] : undefined
-        const childRunId = generateRunId()
-        await reporter?.onTestStart?.(patched, filePath, {
-          runId: childRunId,
-          parentRunId: suiteRunId,
-          artifact: {
-            kind: 'suite-child',
-            suiteIndex: i,
-            source: {
-              kind: 'test',
-              ...(memberArtifact && typeof memberArtifact === 'object' ? memberArtifact as Record<string, unknown> : {}),
-              resolvedDefinition: patched,
-              loadStatus: 'loaded',
-            },
-            config: suiteArtifact?.config,
-            runtime: {
-              platform: config.platformConfig.platform,
-              suiteIndex: i,
-              suiteTotal: testEntries.length,
-              parentSuiteId: (suite as any)['suite-id'] ?? suite.name,
-            },
-          },
-        } as any)
-
-        // Per-test setup hooks (before each test, D-01/D-03)
-        let perTestHookVars: Record<string, string> = {}
-        let perTestSetupFailed = false
-        if ((patched as any).setup?.length && config.resolvedHooks && suiteSandboxOptions) {
-          const hookDefs: HookDefinition[] = []
-          let hookMissing = false
-          for (const hookId of (patched as any).setup) {
-            const hook = config.resolvedHooks.get(hookId)
-            if (!hook) { hookMissing = true; break }
-            hookDefs.push(hook)
-          }
-
-        if (!hookMissing && hookDefs.length > 0) {
-          const allVars: Record<string, string> = {}
-          if (config.envFileVars) Object.assign(allVars, config.envFileVars)
-          if (config.inlineVars) Object.assign(allVars, config.inlineVars)
-          if (config.cliVars) Object.assign(allVars, config.cliVars)
-          Object.assign(allVars, suiteHookVars)
-
-          for (const hookDef of hookDefs) {
-            const hookExecId = randomUUID()
-            await reporter?.onHookStart?.({ hookId: hookDef.id, hookName: hookDef.name, phase: 'setup', hookExecutionId: hookExecId, runId: childRunId })
-            const hookResult = await runHooks([hookDef], {
-              ...suiteSandboxOptions,
-              secretStore: config.secretStore,
-              secretRedactor: config.secretRedactor,
-              envVars: { ...suiteSandboxOptions.envVars, ...allVars, ...perTestHookVars },
-            })
-            const hr = hookResult.results.get(hookDef.name)
-            await reporter?.onHookEnd?.({
-              hookId: hookDef.id, hookName: hookDef.name, phase: 'setup', hookExecutionId: hookExecId,
-              runId: childRunId,
-              status: hr?.success ? 'passed' : 'failed',
-              duration: hr?.duration ?? 0, stdout: hr?.stdout ?? '', stderr: hr?.stderr ?? '',
-              variables: hr?.variables ?? {}, error: hr?.error,
-            })
-            if (!hr?.success) { hookMissing = true; break }
-            Object.assign(perTestHookVars, hr.variables)
-            Object.assign(allVars, hr.variables)
-          }
-        }
-
-        if (hookMissing) perTestSetupFailed = true
-      }
-
-        if (perTestSetupFailed) {
-          const setupFailureResult: TestResult = {
-          runId: childRunId,
-          name: test.name, filePath, status: 'failed', steps: [],
-          duration: 0, failureSummary: 'Setup hook failed',
-        }
-        results.push(setupFailureResult)
-        await reporter?.onTestEnd(setupFailureResult)
-        break
-      }
-
-      let testFileContent = ''
-      try { testFileContent = await readFile(filePath, 'utf-8') } catch { /* best-effort */ }
-
-      const memoryInitParams: MemoryIndexParams | undefined = memoryEnabled ? {
-        product: config.product!,
-        testId: (test as any)['test-id'] ?? test.name,
-        memoryRoot,
-        suiteId: (suite as any)['suite-id'] ?? suite.name,
-        currentSuiteTests: suite.tests as Array<{ test: string; id: string }>,
-        currentPosition: i,
-      } : undefined
-
-      const result = await runTest(patched, {
-        adapter: config.adapter,
-        planner: config.planner,
-        verifier: config.verifier,
-        cache: config.cache,
-        masking: config.masking,
-        workingMemory: config.workingMemory,
-        storageState: config.storageState,
-        plannerModel: config.plannerModel,
-        verifierModel: config.verifierModel,
-        reporters: config.reporters,
-        captureScreenshots: config.captureScreenshots,
-        screenshotMode: config.screenshotMode,
-        timeouts: config.timeouts,
-        logger: config.logger,
-        configContent: config.configContent,
-        testFileContent,
-        suiteFileContent: config.suiteFileContent,
-        suiteTestIndex: i,
-        suiteContext: (suite as any).context,
-        envFileVars: config.envFileVars,
-        inlineVars: config.inlineVars,
-        suiteVars: suiteHookVars,
-        cliVars: config.cliVars,
-        hookSetupVars: perTestHookVars,
-        inlineHookDefs: config.resolvedHooks,
-        inlineHookSandboxOptions: suiteSandboxOptions,
-        secretStore: config.secretStore,
-        secretRedactor: config.secretRedactor,
-        accessibility: config.accessibility,
-        accessibilityCheck: config.accessibilityCheck,
-        logCapture: config.logCapture,
-        vision: config.vision,
-        visionGate: config.visionGate,
-        memoryProvider: memoryEnabled ? config.memoryProvider : undefined,
-        memoryInitParams,
-        skipReporterOnTestStart: true,
-        runId: childRunId,
-        parentRunId: suiteRunId,
-      }, filePath)
-      if (!result.runId) result.runId = childRunId
-
-      // Per-test teardown hooks (after each test, D-01/D-03)
-      if ((patched as any).teardown?.length && config.resolvedHooks && suiteSandboxOptions) {
-        for (const hookId of (patched as any).teardown) {
-          const hook = config.resolvedHooks.get(hookId)
-          if (!hook) continue
-          const hookExecId = randomUUID()
-          try {
-            await reporter?.onHookStart?.({ hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId, runId: childRunId })
-            const teardownVars: Record<string, string> = {}
-            if (config.envFileVars) Object.assign(teardownVars, config.envFileVars)
-            if (config.cliVars) Object.assign(teardownVars, config.cliVars)
-            Object.assign(teardownVars, suiteHookVars, perTestHookVars)
-            const hookResult = await runHooks([hook], {
-              ...suiteSandboxOptions,
-              secretStore: config.secretStore,
-              secretRedactor: config.secretRedactor,
-              envVars: { ...suiteSandboxOptions.envVars, ...teardownVars },
-            })
-            const hr = hookResult.results.get(hook.name)
-            await reporter?.onHookEnd?.({
-              hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId,
-              runId: childRunId,
-              status: hr?.success ? 'passed' : 'failed',
-              duration: hr?.duration ?? 0, stdout: hr?.stdout ?? '', stderr: hr?.stderr ?? '',
-              variables: hr?.variables ?? {}, error: hr?.error,
-            })
-          } catch {}
-        }
-      }
-
-      if (memoryEnabled && config.memoryProvider) {
-        // D-10: the memory-ablation re-run and the circuit breaker are deleted — no
-        // ablation second-attempt, no runaway-mitigation counters. The suite path stays
-        // single-attempt (Assumption A3); the curator runs unconditionally on the result.
-        if (config.memoryConfig?.curatorEnabled !== false) {
-          try {
-            const injectedObservationIds = new Map<number, string[]>()
-            for (let si = 0; si < result.steps.length; si++) {
-              const ids = config.memoryProvider.getInjectedObservations(si)
-              if (ids.length > 0) injectedObservationIds.set(si, ids)
-            }
-            const suiteId = (suite as any)['suite-id'] ?? suite.name
-            const testId = (test as any)['test-id'] ?? test.name
-            const memoryLog = await runCurator({
-              testResult: result,
-              provider: config.memoryProvider,
-              model: config.plannerModel,
-              memoryRoot,
-              product: config.product!,
-              testId,
-              suiteId,
-              suiteContext: {
-                tests: suite.tests as Array<{ test: string; id: string }>,
-                position: i,
-              },
-              injectedObservationIds,
-              trustConfirmDelta: config.memoryConfig?.trustConfirmDelta,
-              trustContradictDelta: config.memoryConfig?.trustContradictDelta,
-            })
-            ;(result as any).memoryLog = memoryLog
-            printMemoryStatus(memoryLog)
-            config.onCuratorComplete?.(test.name, memoryLog)
-          } catch (err) {
-            console.warn(`  ${pc.dim('Memory:')} curator error -- ${(err as Error).message}`)
-          }
-        }
-      }
+        // D-01: the per-member body (patch, child runId + onTestStart, setup/teardown hooks,
+        // runTest, curator) lives in the single audited executeSuiteMember; runSuite (the shell)
+        // owns ONLY iteration, fail-fast, skip synthesis, and aggregation. Plan 10's CLI executor
+        // closure wraps this same function instead of replicating the body.
+        const result = await executeSuiteMember({
+          suite,
+          test,
+          filePath,
+          index: i,
+          totalTests: testEntries.length,
+          config,
+          reporter,
+          suiteRunId,
+          suiteHookVars,
+          suiteSandboxOptions,
+          suiteArtifact,
+          memoryEnabled,
+          memoryRoot,
+        })
 
         results.push(result)
+
+        // Per-test setup-hook failure breaks WITHOUT synthesizing skips (executeSuiteMember tags
+        // it); preserves today's control flow where a setup failure is not a fail-fast skip event.
+        if ((result.metadata as { phase?: string } | undefined)?.phase === 'per-test-setup') {
+          break
+        }
 
         if (result.status === 'cancelled') {
           break
