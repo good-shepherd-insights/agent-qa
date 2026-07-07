@@ -103,16 +103,53 @@ function defaultReadHead(cwd: string): string | null {
   }
 }
 
-function defaultRunSymbolicRef(cwd: string): string | null {
+/** Default git ABI: the 5s bound below caps the synchronous subprocess. */
+const DEFAULT_GIT_SYMBOLIC_REF_TIMEOUT_MS = 5000
+
+type GitExec = (
+  command: string,
+  args: string[],
+  options: {
+    cwd: string
+    encoding: 'utf-8'
+    stdio: ['ignore', 'pipe', 'ignore']
+    timeout: number
+  },
+) => string
+
+interface RunGitSymbolicRefOptions {
+  /** Bound (ms) on the synchronous git subprocess; ETIMEDOUT degrades to null. */
+  timeoutMs?: number
+  /** Injected exec seam for tests — defaults to node:child_process execFileSync. */
+  exec?: GitExec
+}
+
+/**
+ * Read `git symbolic-ref refs/remotes/origin/HEAD` with a finite timeout so the
+ * synchronous subprocess can never wedge pre-run branch resolution (RUNX-02 / D1
+ * secondary hazard). Any failure — including an ETIMEDOUT or kill-by-signal —
+ * degrades to null so the resolver falls back to the configured default branch.
+ */
+export function runGitSymbolicRef(
+  cwd: string,
+  options: RunGitSymbolicRefOptions = {},
+): string | null {
+  const exec = options.exec ?? (execFileSync as unknown as GitExec)
+  const timeout = options.timeoutMs ?? DEFAULT_GIT_SYMBOLIC_REF_TIMEOUT_MS
   try {
-    return execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
+    return exec('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
       cwd,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout,
     })
   } catch {
     return null
   }
+}
+
+function defaultRunSymbolicRef(cwd: string): string | null {
+  return runGitSymbolicRef(cwd)
 }
 
 function safe(read: () => string | null): string | null {

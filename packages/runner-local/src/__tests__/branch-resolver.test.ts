@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { resolveBranch, slugBranch } from '../branch-resolver.js'
+import { resolveBranch, runGitSymbolicRef, slugBranch } from '../branch-resolver.js'
 
 describe('resolveBranch', () => {
   it('reads the current branch from .git/HEAD (injected)', () => {
@@ -53,6 +53,65 @@ describe('resolveBranch', () => {
         configuredDefault: 'main',
       }),
     ).not.toThrow()
+  })
+})
+
+type ExecSeam = (command: string, args: string[], options: { cwd: string; timeout: number }) => string
+
+describe('runGitSymbolicRef', () => {
+  it('passes a finite timeout (ms) to the injected exec', () => {
+    const exec = vi.fn<ExecSeam>(() => 'refs/remotes/origin/main\n')
+    runGitSymbolicRef('/repo', { exec })
+    expect(exec).toHaveBeenCalledTimes(1)
+    const [command, args, execOptions] = exec.mock.calls[0]
+    expect(command).toBe('git')
+    expect(args).toEqual(['symbolic-ref', 'refs/remotes/origin/HEAD'])
+    expect(execOptions).toMatchObject({ cwd: '/repo' })
+    expect(typeof execOptions.timeout).toBe('number')
+    expect(execOptions.timeout).toBeGreaterThan(0)
+    expect(Number.isFinite(execOptions.timeout)).toBe(true)
+  })
+
+  it('honours a caller-supplied timeoutMs', () => {
+    const exec = vi.fn<ExecSeam>(() => 'refs/remotes/origin/main\n')
+    runGitSymbolicRef('/repo', { exec, timeoutMs: 1234 })
+    const [, , execOptions] = exec.mock.calls[0]
+    expect(execOptions.timeout).toBe(1234)
+  })
+
+  it('returns null when the git call times out (ETIMEDOUT degrades)', () => {
+    const exec = vi.fn<ExecSeam>(() => {
+      throw Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' })
+    })
+    expect(runGitSymbolicRef('/repo', { exec })).toBeNull()
+  })
+
+  it('returns null when the git call is killed by signal', () => {
+    const exec = vi.fn<ExecSeam>(() => {
+      throw Object.assign(new Error('killed'), { signal: 'SIGTERM' })
+    })
+    expect(runGitSymbolicRef('/repo', { exec })).toBeNull()
+  })
+
+  it('returns the branch ref on success', () => {
+    const exec = vi.fn<ExecSeam>(() => 'refs/remotes/origin/develop\n')
+    expect(runGitSymbolicRef('/repo', { exec })).toBe('refs/remotes/origin/develop\n')
+  })
+})
+
+describe('resolveBranch git timeout degradation', () => {
+  it('falls back to the configured default when the git symbolic-ref times out', () => {
+    const resolved = resolveBranch({
+      readHead: () => null,
+      runSymbolicRef: () =>
+        runGitSymbolicRef('/repo', {
+          exec: () => {
+            throw Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' })
+          },
+        }),
+      configuredDefault: 'trunk',
+    })
+    expect(resolved).toEqual({ currentBranch: 'trunk', defaultBranch: 'trunk' })
   })
 })
 
