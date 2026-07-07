@@ -2061,6 +2061,22 @@ describe('run command — exit codes', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
   })
+
+  // RUNX-06: discovery resolved a file but parsing produced ZERO runnable tests (no parse errors).
+  // This previously exited 0 with a green "No tests match filters" — a silent zero-member non-run.
+  // It must now fail LOUDLY (exit 2) and never render a benign "0 of 0" run summary.
+  it('exits 2 (not silent green) when files resolve but zero runnable tests parse', async () => {
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [], errors: [] })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    expect(exitSpy).not.toHaveBeenCalledWith(0)
+    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    const errOutput = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(errOutput).toContain('0 runnable tests')
+  })
 })
 
 

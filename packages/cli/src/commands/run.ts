@@ -2267,9 +2267,18 @@ export function createRunCommand(): Command {
 
         const filtered = parseResult.tests
 
+        // RUNX-06: `filtered` is `parseResult.tests` verbatim — no grep/filter narrows it here — so
+        // `filtered.length === 0` means discovery RESOLVED >=1 test file (the exit-2 guards above
+        // already proved that) but parsing produced ZERO runnable tests. Starting a run from here
+        // would assemble a zero-member RunSession and render a benign-looking "Tests: 0 of 0 passed"
+        // summary (console-reporter printStandaloneSummary) — a silent green non-run. An existing
+        // resolved target must instead FAIL LOUDLY (exit 2, the same config/usage contract as the
+        // "no files found" guards), never a silent empty run. (T-365-04b)
         if (filtered.length === 0) {
-          console.log(pc.yellow('No tests match filters'))
-          process.exit(0)
+          console.error(pc.red('Error: Resolved test file(s) but found 0 runnable tests.'))
+          for (const f of files) console.error(pc.red(`  ${f}`))
+          console.error(pc.dim('Each test file must define at least one test (a top-level `name` + `steps`, or a `tests:` list).'))
+          process.exit(2)
         }
 
         if (opts.dryRun) {
@@ -3067,6 +3076,14 @@ export function createRunCommand(): Command {
         // single-member run collapses the run-level pair to the member values).
         const runDigests = computeRunConfigDigests({ configContent, members: digestMembers })
         perMemberDigests = runDigests.perMember
+
+        // RUNX-06 invariant (defense-in-depth): the `filtered.length === 0` guard above makes this
+        // unreachable, but assert it at the session boundary so no future refactor can start a
+        // zero-member RunSession that renders a silent "0 of 0" summary.
+        if (members.length === 0) {
+          console.error(pc.red('Error: Refusing to start a run with zero members (no runnable tests resolved).'))
+          process.exit(2)
+        }
 
         const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
         let singleRunProduct = 'unknown'
