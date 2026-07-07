@@ -15,6 +15,10 @@ export interface ProviderDescriptor {
   modelAdapter?: 'openai-responses' | 'anthropic-messages'
   baseURLPlaceholder?: string
   defaultModel?: string
+  // SDK-level `LanguageModelV3CallOptions` param names this provider's backend rejects.
+  // The model layer strips exactly these at egress (stripUnsupportedParamsMiddleware)
+  // before the wire — e.g. openai-subscription rejects `maxOutputTokens` (RUNX-01).
+  unsupportedParams?: readonly string[]
 }
 
 const registry = new Map<string, ProviderDescriptor>()

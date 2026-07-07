@@ -36,6 +36,10 @@ export function seedBuiltins(): void {
     subscription: true,
     modelAdapter: 'openai-responses',
     defaultModel: 'gpt-5.5',
+    // RUNX-01: the codex/ChatGPT-subscription Responses backend rejects the output cap
+    // (`max_output_tokens`) with HTTP 400. Strip it at egress for this provider ONLY —
+    // standard OpenAI-compatible `.chat()` endpoints and Anthropic support the cap.
+    unsupportedParams: ['maxOutputTokens'],
   })
   registerProvider({
     id: 'anthropic-subscription',
