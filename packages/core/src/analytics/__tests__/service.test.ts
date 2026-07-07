@@ -7,7 +7,7 @@ import { writeAnalyticsIdentity } from '../identity.js'
 import { captureAnalytics, createAnalyticsService, flushAnalytics, resetAnalyticsServiceForTests } from '../service.js'
 import { MockAnalyticsTransport, type AnalyticsTransport } from '../transport.js'
 
-const EMPTY_KEY_WARNING = 'PostHog analytics initialization failed because AGENT_QA_POSTHOG_KEY is empty. Analytics telemetry is disabled.'
+const EMPTY_KEY_NOTICE = 'Analytics disabled: no telemetry key configured.'
 
 describe('analytics service', () => {
   let tempDir: string
@@ -55,9 +55,26 @@ describe('analytics service', () => {
     expect(transport.flush).not.toHaveBeenCalled()
   })
 
-  it('uses noop behavior and warns once when the source PostHog key is empty', async () => {
+  it('stays silent by default (no notice) but still noops when the source PostHog key is empty', async () => {
     const warningSink = vi.fn()
     const service = createAnalyticsService({ projectKey: '', warningSink, identityPath })
+
+    await expect(service.capture(buildAnalyticsEvent({
+      name: 'agent-qa.analytics.test_event',
+      properties: { surface: 'core', runtime_context: 'user' },
+    }))).resolves.toBeUndefined()
+    await expect(service.capture(buildAnalyticsEvent({
+      name: 'agent-qa.analytics.test_event',
+      properties: { surface: 'core', runtime_context: 'user' },
+    }))).resolves.toBeUndefined()
+    await expect(service.flush()).resolves.toBeUndefined()
+
+    expect(warningSink).not.toHaveBeenCalled()
+  })
+
+  it('surfaces the calm notice exactly once under verbose when the source PostHog key is empty', async () => {
+    const warningSink = vi.fn()
+    const service = createAnalyticsService({ projectKey: '', warningSink, verbose: true, identityPath })
 
     await service.capture(buildAnalyticsEvent({
       name: 'agent-qa.analytics.test_event',
@@ -70,7 +87,7 @@ describe('analytics service', () => {
     await service.flush()
 
     expect(warningSink).toHaveBeenCalledTimes(1)
-    expect(warningSink).toHaveBeenCalledWith(EMPTY_KEY_WARNING)
+    expect(warningSink).toHaveBeenCalledWith(EMPTY_KEY_NOTICE)
   })
 
   it('uses the shared noop service for MCP events when the PostHog key is empty', async () => {
@@ -79,6 +96,7 @@ describe('analytics service', () => {
     const service = createAnalyticsService({
       projectKey: '',
       warningSink,
+      verbose: true,
       identityPath,
       posthogTransportFactory,
     })
@@ -99,7 +117,7 @@ describe('analytics service', () => {
 
     expect(posthogTransportFactory).not.toHaveBeenCalled()
     expect(warningSink).toHaveBeenCalledTimes(1)
-    expect(warningSink).toHaveBeenCalledWith(EMPTY_KEY_WARNING)
+    expect(warningSink).toHaveBeenCalledWith(EMPTY_KEY_NOTICE)
   })
 
   it('captures sanitized built events with an injected mock transport', async () => {
@@ -232,12 +250,13 @@ describe('analytics service', () => {
     createAnalyticsService({
       projectKey: '',
       warningSink,
+      verbose: true,
       posthogTransportFactory,
       identityPath,
     })
 
     expect(posthogTransportFactory).not.toHaveBeenCalled()
-    expect(warningSink).toHaveBeenCalledWith(EMPTY_KEY_WARNING)
+    expect(warningSink).toHaveBeenCalledWith(EMPTY_KEY_NOTICE)
   })
 
   it('privacy options short-circuit shared capture and flush helpers', async () => {

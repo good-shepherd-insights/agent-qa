@@ -5,7 +5,7 @@ import { PostHogAnalyticsTransport } from './posthog-transport.js'
 import { NoopAnalyticsTransport, type AnalyticsTransport } from './transport.js'
 import { getAgentQaVersion } from '../version.js'
 
-export const EMPTY_POSTHOG_KEY_WARNING = 'PostHog analytics initialization failed because AGENT_QA_POSTHOG_KEY is empty. Analytics telemetry is disabled.'
+export const EMPTY_POSTHOG_KEY_WARNING = 'Analytics disabled: no telemetry key configured.'
 
 export interface AnalyticsServiceConfig {
   analytics?: {
@@ -24,6 +24,7 @@ export interface AnalyticsServiceOptions {
   surface?: AnalyticsSurface
   transport?: AnalyticsTransport
   warningSink?: (message: string) => void
+  verbose?: boolean
   projectKey?: string
   projectHost?: string
   identityPath?: string
@@ -83,7 +84,9 @@ class DefaultAnalyticsService implements AnalyticsService {
 
     const projectKey = options.projectKey ?? AGENT_QA_POSTHOG_KEY
     if (!projectKey.trim()) {
-      ;(options.warningSink ?? console.warn)(EMPTY_POSTHOG_KEY_WARNING)
+      if (options.verbose === true) {
+        ;(options.warningSink ?? console.warn)(EMPTY_POSTHOG_KEY_WARNING)
+      }
       this.transport = new NoopAnalyticsTransport()
       return
     }
