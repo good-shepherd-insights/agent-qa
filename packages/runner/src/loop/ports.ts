@@ -6,7 +6,14 @@
 // throw-on-absent (D-05 degrade-when-absent).
 
 import type { LanguageModelUsage, ModelMessage } from 'ai'
-import type { MaskingContext, ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
+import type {
+  MaskingContext,
+  ScreenState,
+  WorkingMemoryEntry,
+  StepEvidence,
+  SubActionEvidence,
+} from '@vostride/agent-qa-schema'
+import type { ConfigDigests } from '../run/ports.js'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { PlatformAdapter } from '../platform.js'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
@@ -114,6 +121,20 @@ export interface TokenAccounting {
 }
 
 /**
+ * D-02 run-scoped event-emit seam. The loop emits `stepFinalized`/`subActionRecorded` at the
+ * moment they occur (live semantics from day one) — the bus assigns `seq` centrally. Both legs
+ * are fire-and-forget SYNCHRONOUS void: the loop must NEVER await telemetry (D-02/D-07). Follows
+ * the optional-port idiom (masking/workingMemory): structural, optional on {@link LoopPorts},
+ * optional-chained at the emit site, never throw-on-absent (D-05 degrade-when-absent). The
+ * concrete curry lands at the run shell (`MemberEventSink.loopEmitFor`); the port survives 363's
+ * migration unchanged.
+ */
+export interface LoopEventEmitPort {
+  stepFinalized(evidence: StepEvidence): void
+  subActionRecorded(evidence: SubActionEvidence, subActionIndex: number): void
+}
+
+/**
  * The runner-owned port bundle the loop executes against — successor to v1's
  * AgentLoopConfig (core types.ts:66-104), minus the D-10 healing/attempt-limit
  * fields and minus the v1 cache-key inputs (those move behind the cache port).
@@ -182,4 +203,16 @@ export interface LoopPorts {
    * model's canonical `guardBlob`; the loop degrades to a runner-local fallback when absent.
    */
   guardBlob?: (value: unknown) => string | undefined
+  /**
+   * D-02 run-scoped event-emit seam. Bound by the run shell (per-step curry via
+   * `MemberEventSink.loopEmitFor`) so the loop emits `stepFinalized`/`subActionRecorded` live;
+   * absent ⇒ the loop runs telemetry-less (no emit), never throws (D-05 degrade-when-absent).
+   */
+  events?: LoopEventEmitPort
+  /**
+   * D-20 real config digests, so the loop can key the cache on what the run actually keyed on
+   * (consumed in Plan 08). Type-imported from the run layer; absent ⇒ the existing key material
+   * is used unchanged.
+   */
+  configDigests?: ConfigDigests
 }
