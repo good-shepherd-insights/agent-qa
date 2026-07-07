@@ -65,11 +65,16 @@ export interface RunTimerPort {
  * One ordered member of the run (D-04). `failFastGroup` scopes today's suite fail-fast: a
  * failed/timed-out member skips the remaining SAME-group members; ungrouped members never
  * fail-fast, preserving the single-test path's run-all behavior.
+ *
+ * `testIndex`/`name` are OPTIONAL: the shell owns iteration and derives the authoritative
+ * `testIndex` from array position (a caller-supplied value is a hint at most), and `name`
+ * defaults to `testId` when absent. The Wave-0 `run-shell.test.ts` pins members as bare
+ * `{ testId }` (± `failFastGroup`), so these must not be required.
  */
 export interface RunMemberDescriptor {
   testId: string
-  testIndex: number
-  name: string
+  testIndex?: number
+  name?: string
   failFastGroup?: string
 }
 
@@ -103,10 +108,31 @@ export type MemberTestExecutor = (
 ) => Promise<TestResult>
 
 /**
+ * The durable/telemetry/clock seams the run wires behind ports (D-04/D-05). All optional —
+ * an absent leg degrades gracefully (no persistence, memory-only telemetry, default clock).
+ * Grouped under `ports` so the resolved config keeps the run identity fields flat and the
+ * injectable I/O seams together (the Wave-0 `run-shell.test.ts` pins this nesting).
+ */
+export interface RunPorts {
+  handoffStore?: HandoffStorePort
+  eventLog?: EventLogPort
+  /**
+   * The run-budget clock (D-03). The shell arms `runBudgetMs` on this timer; it is NOT
+   * routed into the bus heartbeat (the two clocks stay distinct so firing the injected
+   * budget timer is unambiguous — see the shell's timer note).
+   */
+  timer?: RunTimerPort
+}
+
+/**
  * The fully-resolved run configuration `startRun` receives (D-04). The CLI keeps pattern
  * discovery, parsing, config merge, and target/device/model resolution; `startRun` never
  * touches fs or providers (validate:arch stays clean) — hence NO fs/provider/discovery-shaped
  * members here. A future cloud RPC surface reuses this same resolved-config contract.
+ *
+ * `masking` is OPTIONAL (identity when absent, pre-362): 362's masking-context seeding
+ * supplies the real redactor with zero further wiring. `members`/`ports` shapes are pinned
+ * by the Wave-0 `run-shell.test.ts` scaffold.
  */
 export interface RunConfig {
   runId: RunId
@@ -114,11 +140,9 @@ export interface RunConfig {
   executionContext: ExecutionContext
   configDigests: ConfigDigests
   buildOrdinal: number
-  memberTests: readonly RunMemberDescriptor[]
+  members: readonly RunMemberDescriptor[]
   executor: MemberTestExecutor
-  masking: MaskingContext
+  masking?: MaskingContext
   runBudgetMs?: number
-  eventLog?: EventLogPort
-  handoffStore?: HandoffStorePort
-  timers?: RunTimerPort
+  ports?: RunPorts
 }
