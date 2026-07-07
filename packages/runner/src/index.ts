@@ -155,6 +155,25 @@ export type {
   StorageStateReference,
   StorageStateBlob,
 } from './storage-state/port.js'
+
+// Run layer (Phase 361, SESSION-01/02 · D-01/D-02/D-04/D-05). The in-memory §2.2 event bus
+// (pure runner logic) plus every new run-layer port contract, declared interface-first so
+// runner-local (Plan 07), core, and cli build against them. The LoopEventEmitPort lives on
+// LoopPorts (loop/ports.js) and is re-exported there.
+export { createRunEventBus, ReplayIncompleteError } from './run/bus.js'
+export type { RunEventBus, CreateRunEventBusOptions } from './run/bus.js'
+export type {
+  ConfigDigests,
+  EventLogPort,
+  HandoffStorePort,
+  RunTimerPort,
+  RunMemberDescriptor,
+  MemberEventSink,
+  MemberTestRunContext,
+  MemberTestExecutor,
+  RunConfig,
+} from './run/ports.js'
+export type { LoopEventEmitPort } from './loop/ports.js'
 export {
   buildCacheableStepInput,
   CACHE_ENV_DIGEST_SALT,
