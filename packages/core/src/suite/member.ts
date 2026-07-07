@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import type { TestResult } from '@vostride/agent-qa-runner'
+import type { TestResult, MemberEventSink, ConfigDigests } from '@vostride/agent-qa-runner'
 import type { TestDefinition } from '../types/test.js'
 import type { SuiteDefinition } from './types.js'
 import type { RunSuiteConfig } from './runner.js'
@@ -92,6 +92,16 @@ export interface SuiteMemberInput {
   suiteArtifact: Record<string, unknown> | undefined
   memoryEnabled: boolean
   memoryRoot: string
+  /**
+   * Run-shell ctx seams (D-02/D-03/D-20), supplied by the Plan 10 CLI executor closure and
+   * threaded straight through into `runTest`. All optional — absent ⇒ byte-identical to the
+   * runSuite path (the runSuite caller supplies none). `events`/`abortSignal` come from the
+   * shell's per-member `MemberTestRunContext`; `configDigests` is the member's cache pair from
+   * the composition root's ONE digest mint so the cache keys on real digests end-to-end.
+   */
+  events?: MemberEventSink
+  abortSignal?: AbortSignal
+  configDigests?: ConfigDigests
 }
 
 /**
@@ -122,6 +132,9 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
     suiteArtifact,
     memoryEnabled,
     memoryRoot,
+    events,
+    abortSignal,
+    configDigests,
   } = input
 
   const patched = patchTestForSuite(test, suite, i)
@@ -260,6 +273,10 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
     skipReporterOnTestStart: true,
     runId: childRunId,
     parentRunId: suiteRunId,
+    // D-02/D-03/D-20 run-shell seams (absent ⇒ byte-identical to the runSuite path).
+    events,
+    abortSignal,
+    configDigests,
   }, filePath)
   if (!result.runId) result.runId = childRunId
 
