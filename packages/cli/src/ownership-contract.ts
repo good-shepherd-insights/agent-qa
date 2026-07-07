@@ -33,6 +33,7 @@ export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-runner',
   '@vostride/agent-qa-runner-local',
   '@vostride/agent-qa-safety',
+  '@vostride/agent-qa-safety-local',
   '@vostride/agent-qa-web',
 ] as const
 
