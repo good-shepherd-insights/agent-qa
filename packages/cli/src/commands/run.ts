@@ -28,6 +28,8 @@ import {
 } from '../run-session-composition.js'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
+import { BetterSqlite3AbiMismatchError, isBetterSqlite3AbiMismatch } from '@vostride/agent-qa-core'
+import { createShutdownController } from './shutdown-controller.js'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
 
 const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artifacts'
@@ -954,13 +956,8 @@ async function executeSuites(
   // `await session.done`. Fires only if `done` is genuinely un-settleable so the CLI can never hang.
   let graceTimer: ReturnType<typeof setTimeout> | undefined
 
-  const handleShutdown = () => {
-    shutdownRequested = true
-    process.exitCode = 130
-    try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
-    const grace = setTimeout(() => process.exit(130), cancelGraceMs())
-    grace.unref?.()
-    graceTimer = grace
+  // Best-effort suite-DB running→cancelled sweep, invoked by the controller on the first signal.
+  const sweepSuiteDbs = () => {
     for (const activeSuiteDb of activeSuiteDbs) {
       try {
         const now = new Date().toISOString()
@@ -979,8 +976,24 @@ async function executeSuites(
     }
   }
 
-  process.once('SIGINT', handleShutdown)
-  process.once('SIGTERM', handleShutdown)
+  // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
+  // (130) immediately, independent of the grace timer and of any wedged async `done`. The grace-timer
+  // arming/unref/clear stays inline here (owned by the caller) so the 361-13 backstop anchors hold.
+  const shutdownController = createShutdownController({
+    cancel: () => { try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ } },
+    exit: (code) => process.exit(code),
+    setExitCode: (code) => { shutdownRequested = true; process.exitCode = code },
+    armGrace: () => {
+      const grace = setTimeout(() => process.exit(130), cancelGraceMs())
+      grace.unref?.()
+      graceTimer = grace
+    },
+    sweepSuiteDbs,
+  })
+
+  // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
+  process.on('SIGINT', shutdownController.handleSignal)
+  process.on('SIGTERM', shutdownController.handleSignal)
 
   const dashboardCfg = config.services?.dashboard as Record<string, unknown> | undefined
   const reporterSelectionResult = resolveReporterSelection(opts, Boolean(dashboardCfg))
@@ -1876,8 +1889,9 @@ async function executeSuites(
   await lifecycle.finalize()
   activeRunSession = undefined
 
-  process.removeListener('SIGINT', handleShutdown)
-  process.removeListener('SIGTERM', handleShutdown)
+  shutdownController.dispose()
+  process.removeListener('SIGINT', shutdownController.handleSignal)
+  process.removeListener('SIGTERM', shutdownController.handleSignal)
 
   releaseAppium()
   // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
@@ -3004,16 +3018,22 @@ export function createRunCommand(): Command {
         // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
         // `await session.done` (and BEFORE any frameworkError re-throw so the exit-2 contract holds).
         let graceTimer: ReturnType<typeof setTimeout> | undefined
-        const handleShutdown = () => {
-          shutdownRequested = true
-          process.exitCode = 130
-          try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
-          const grace = setTimeout(() => process.exit(130), cancelGraceMs())
-          grace.unref?.()
-          graceTimer = grace
-        }
-        process.once('SIGINT', handleShutdown)
-        process.once('SIGTERM', handleShutdown)
+        // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
+        // (130) immediately, independent of the grace timer and of any wedged async `done`. The
+        // grace-timer arming/unref/clear stays inline here so the 361-13 backstop anchors hold.
+        const shutdownController = createShutdownController({
+          cancel: () => { try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ } },
+          exit: (code) => process.exit(code),
+          setExitCode: (code) => { shutdownRequested = true; process.exitCode = code },
+          armGrace: () => {
+            const grace = setTimeout(() => process.exit(130), cancelGraceMs())
+            grace.unref?.()
+            graceTimer = grace
+          },
+        })
+        // `on`, not `once`, so a repeated Ctrl+C reaches the controller's hard force-exit path.
+        process.on('SIGINT', shutdownController.handleSignal)
+        process.on('SIGTERM', shutdownController.handleSignal)
 
         // Pre-read each member's test file content for the ONE digest mint (D-20). Mirrors the
         // closure's own per-file read; digests must be resolved before startRun (D-04).
@@ -3097,8 +3117,9 @@ export function createRunCommand(): Command {
         const { verdict } = await session.done
         if (graceTimer) clearTimeout(graceTimer)
         activeRunSession = undefined
-        process.removeListener('SIGINT', handleShutdown)
-        process.removeListener('SIGTERM', handleShutdown)
+        shutdownController.dispose()
+        process.removeListener('SIGINT', shutdownController.handleSignal)
+        process.removeListener('SIGTERM', shutdownController.handleSignal)
 
         // Re-surface a captured framework/setup error so the existing exit-2 contract holds. The
         // grace backstop is already cleared above, so the exit-2 re-throw path is unaffected.
@@ -3133,6 +3154,14 @@ export function createRunCommand(): Command {
         })
         process.exit(exitCode)
       } catch (err) {
+        // RUNX-02 / D1: a better-sqlite3 ABI/bindings mismatch (from 364-02's fail-fast) is an
+        // actionable environment problem, not a framework crash. Surface its own guidance calmly and
+        // exit clean and non-zero — never an opaque "Framework error" or an unhandled hang.
+        if (err instanceof BetterSqlite3AbiMismatchError || isBetterSqlite3AbiMismatch(err)) {
+          console.error(pc.red(err instanceof Error ? err.message : String(err)))
+          if (_crashDb) { try { _crashDb.close() } catch {} }
+          process.exit(1)
+        }
         const errMsg = err instanceof Error ? err.message : String(err)
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)

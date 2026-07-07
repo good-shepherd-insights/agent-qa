@@ -97,6 +97,13 @@ vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',
   DEFAULT_AGENT_QA_VIDEOS_DIR: '.agent-qa/artifacts/videos',
   AUTH_STATE_SCHEMA_VERSION: 1,
+  BetterSqlite3AbiMismatchError: class BetterSqlite3AbiMismatchError extends Error {
+    constructor(originalError: unknown) {
+      super(`better-sqlite3 ABI mismatch. Run \`pnpm rebuild better-sqlite3\`. Underlying error: ${originalError instanceof Error ? originalError.message : String(originalError)}`)
+      this.name = 'BetterSqlite3AbiMismatchError'
+    }
+  },
+  isBetterSqlite3AbiMismatch: vi.fn(() => false),
   parseAllTests: mockParseAllTests,
   formatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
   parseHooksFile: mockParseHooksFile,
