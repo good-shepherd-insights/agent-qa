@@ -154,7 +154,14 @@ export async function executeStep(
   const deadline = ports.stepTimeout ? startTime + ports.stepTimeout : 0
 
   // §A8 evidence accumulator (D-14) — the recording array IS SubActionEvidence[].
-  const recorder = new EvidenceRecorder()
+  // D-02 (Plan 361-08): bind the one sub-action emission chokepoint to ports.events when
+  // present, so every recordSubAction append emits `subActionRecorded` live — the five call
+  // sites stay untouched. Unbound ⇒ no callback (byte-identical to today, D-05).
+  const recorder = new EvidenceRecorder({
+    onSubActionRecorded: ports.events
+      ? (evidence, index) => ports.events?.subActionRecorded(evidence, index)
+      : undefined,
+  })
   context.subActionHistory = []
 
   // Phase 358 progress subsystem (CYCLE-01..03). Fresh per-step instances (the Plan 04
@@ -231,6 +238,11 @@ export async function executeStep(
       )
     }
     const evidence = recorder.finalize(verdict, 0, stepInstruction, { nonCacheable: nonCacheable || cacheBypass })
+    // D-02 live emission (Plan 361-08): finish() is the single terminal funnel (success/
+    // failure/cancelled + the direct finish() call sites all route here), so emitting once
+    // here covers EVERY terminal path exactly once. Fire-and-forget SYNC, optional-chained —
+    // the loop never awaits telemetry; unbound port ⇒ no emit, byte-identical (D-02/D-07/D-05).
+    ports.events?.stepFinalized(evidence)
     // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
     // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
     const subActions = projectLegacyTrace(evidence)

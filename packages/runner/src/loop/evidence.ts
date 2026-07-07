@@ -213,10 +213,23 @@ export class EvidenceRecorder {
   private aiJudgment?: AiJudgmentEvidence
   private assertOutcome?: AssertValueEvidence
   private verdictSource?: VerdictSource
+  /**
+   * D-02 single sub-action chokepoint (Plan 361-08). When bound, invoked at the END of
+   * every {@link recordSubAction} append with the recorded evidence and its index — so all
+   * five loop call sites emit `subActionRecorded` through ONE seam, never per-call-site.
+   * Optional-chained: unbound ⇒ the recorder is byte-identical to today (never throws, D-05).
+   */
+  private readonly onSubActionRecorded?: (evidence: SubActionEvidence, index: number) => void
 
-  constructor(options?: { servedBrief?: ServedBrief; scope?: ScopeKey; asOfBuild?: number }) {
+  constructor(options?: {
+    servedBrief?: ServedBrief
+    scope?: ScopeKey
+    asOfBuild?: number
+    onSubActionRecorded?: (evidence: SubActionEvidence, index: number) => void
+  }) {
     this.servedBrief = options?.servedBrief
       ?? makeEmptyServedBrief(options?.scope ?? { tier: 'test', key: '' }, options?.asOfBuild ?? 0)
+    this.onSubActionRecorded = options?.onSubActionRecorded
   }
 
   /** Append a §A8 SubActionEvidence. Returns its index (for attachStateAfter). */
@@ -233,7 +246,12 @@ export class EvidenceRecorder {
     if (input.localEffect) evidence.localEffect = input.localEffect
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
-    return this.subActions.length - 1
+    const index = this.subActions.length - 1
+    // D-02 live emission (Plan 361-08): fire the one chokepoint AFTER the append so the
+    // recorded evidence + its index leave the loop at the moment they occur. Fire-and-forget,
+    // optional-chained — never throws when unbound.
+    this.onSubActionRecorded?.(evidence, index)
+    return index
   }
 
   /**
