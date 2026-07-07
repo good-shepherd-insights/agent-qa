@@ -13,14 +13,41 @@ export interface AgentTimeoutAbortReason {
   message: string
 }
 
+// Single mint site for the timeout-abort message format. Both the reason factory
+// below and the isTestTimeoutMessage matcher derive from these — the label + shape
+// live in exactly one place (RESEARCH Open Q3 resolution).
+const TIMEOUT_LABEL: Record<AgentAbortScope, string> = { test: 'Test', step: 'Step' }
+
+function timeoutAbortMessage(scope: AgentAbortScope, timeoutMs: number): string {
+  return `${TIMEOUT_LABEL[scope]} timed out after ${timeoutMs}ms`
+}
+
 export function createTimeoutAbortReason(scope: AgentAbortScope, timeoutMs: number): AgentTimeoutAbortReason {
-  const label = scope === 'test' ? 'Test' : 'Step'
   return {
     type: 'agent-qa-timeout',
     scope,
     timeoutMs,
-    message: `${label} timed out after ${timeoutMs}ms`,
+    message: timeoutAbortMessage(scope, timeoutMs),
   }
+}
+
+// Anchored to the exact test-scope shape minted by timeoutAbortMessage('test', ms).
+// Label is single-sourced from TIMEOUT_LABEL; only the numeric ms varies.
+const TEST_TIMEOUT_MESSAGE_PATTERN = new RegExp(`^${TIMEOUT_LABEL.test} timed out after \\d+ms$`)
+
+/**
+ * True iff `message` is the message createTimeoutAbortReason('test', ms) mints for
+ * some ms — the D-16 member-timeout signal. Rejects the 'step'-scope variant (a step
+ * timeout is an ordinary failure) and any arbitrary text.
+ *
+ * WHY match on the message string: the AgentTimeoutAbortReason object does NOT survive
+ * onto TestResult — the only trace that reaches verdict derivation is a failed step
+ * whose `error` equals this minted message (RESEARCH Q3). This matcher is the one place
+ * that knowledge lives, exported beside the sole mint site so the format stays
+ * single-sourced.
+ */
+export function isTestTimeoutMessage(message: string): boolean {
+  return TEST_TIMEOUT_MESSAGE_PATTERN.test(message)
 }
 
 export function getTimeoutAbortReason(signal: AbortSignal | undefined): AgentTimeoutAbortReason | undefined {
