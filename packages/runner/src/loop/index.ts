@@ -547,8 +547,12 @@ export async function executeStep(
       cacheKey = computeCacheKey(buildCacheableStepInput({
         masking: ports.masking,
         platform: screenState.platform,
-        suiteConfigDigest: '',
-        testConfigDigest: '',
+        // D-20 (Plan 361-08): key the cache on the real digests the CLI mints when present, so
+        // cache identity and the future handoff identity share ONE mint (Pitfall 1 — they cannot
+        // fork). Absent port ⇒ empty strings, preserving today's key material exactly (D-05). The
+        // one-time invalidation when real digests first arrive is accepted (no-back-compat law).
+        suiteConfigDigest: ports.configDigests?.suiteConfigDigest ?? '',
+        testConfigDigest: ports.configDigests?.testConfigDigest ?? '',
         stepText: stepInstruction,
         stepIndex: actionIndex,
         testIndex: 0,
