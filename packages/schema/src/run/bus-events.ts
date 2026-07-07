@@ -157,7 +157,13 @@ export interface SubActionRecordedPayload {
   plannedAction: Action
   grounding?: GroundingEvidence
   result: RecordedActionResult
-  screenStateHashBefore: string
+  /**
+   * The `stateBefore` identity — the full {@link ScreenState} collapsed to a
+   * `screenStateHash` string (D-10). This is the sub-action's primary state hash;
+   * `screenStateHashAfter` is present only when the action recorded a distinct
+   * post-action state.
+   */
+  screenStateHash: string
   screenStateHashAfter?: string
   artifactRefs?: readonly ArtifactRef[]
   readonly stateBefore?: never

@@ -50,7 +50,7 @@ const validSubAction = {
   plan: 'click Save',
   plannedAction: {} as Action,
   result: {} as RecordedActionResult,
-  screenStateHashBefore: 'hash-before',
+  screenStateHash: 'hash-before',
 }
 
 // states collapse to hash identity (D-10/D-11) — a raw ScreenState cannot ride as `stateBefore`.
