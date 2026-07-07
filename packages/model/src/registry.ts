@@ -14,6 +14,7 @@ import { deriveTransport } from './auth.js'
 import type { ResolvedModelAuth } from './auth.js'
 import { resolveCapabilities } from './capability/resolve.js'
 import { capabilityUpdateMiddleware } from './middleware/capability-update.js'
+import { dropEmptyMessagesMiddleware } from './middleware/drop-empty-messages.js'
 import { deriveExamplesMiddleware } from './middleware/examples.js'
 import { extractJsonStrategy } from './middleware/extract-json.js'
 import { repairMiddleware } from './middleware/repair.js'
@@ -37,6 +38,10 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
+  // RUNX-01 defense-in-depth: strip empty-content messages just before the wire. Sits
+  // immediately BEFORE the pinned-last safety seam (which must stay the final element,
+  // structurally enforced by validate:safety).
+  dropEmptyMessagesMiddleware(),
   registerFirstPartySafetyHooks().middleware,
 ]
 
