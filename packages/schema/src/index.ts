@@ -115,6 +115,28 @@ export { workingMemoryEntrySchema } from './memory/index'
 
 // 315 run+agent DTOs
 export type { RunSession } from './run/index'
+// 361 bus schema v1 + M1-lite session vocabulary (SESSION-01/02/03, D-05/D-13/D-15)
+export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './run/index'
+export type {
+  MemberTestOutcome,
+  RunCompletion,
+  RunEvent,
+  RunEventEnvelope,
+  RunEventPayload,
+  RunEventType,
+  RunStartedPayload,
+  RunFinishedPayload,
+  VerdictPayload,
+  RunWarningPayload,
+  RunErrorPayload,
+  HeartbeatPayload,
+  TestStartedPayload,
+  TestFinishedPayload,
+  StepStartedPayload,
+  StepFinalizedPayload,
+  SubActionRecordedPayload,
+  ChipEventPayload,
+} from './run/index'
 export type { Job, JobKind, JobStatus, JobConclusionKind, JobId } from './job/index'
 export { asJobId, jobSchema } from './job/index'
 export type {
