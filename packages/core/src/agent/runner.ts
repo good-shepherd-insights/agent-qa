@@ -14,6 +14,7 @@ import { MultiReporter } from '../reporter/types.js'
 import { captureFailureScreenshot } from '../reporter/screenshot.js'
 import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort, executeStep } from '@vostride/agent-qa-runner'
 import type { LoopPorts, StepContext as RunnerStepContext, WorkingMemoryPort, StorageStatePort } from '@vostride/agent-qa-runner'
+import type { MemberEventSink, ConfigDigests } from '@vostride/agent-qa-runner'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
@@ -123,6 +124,29 @@ export interface RunTestConfig {
    * this is 362's registration point, not populated here.
    */
   safetyHooks?: SafetyHookRunner
+  /**
+   * D-02 run-scoped member event sink (Phase 361). Constructed at the CLI composition root
+   * (bound to the run bus + `testIndex` + masking) and threaded straight through into the loop:
+   * `stepStarted` fires as each step opens; `loopEmitFor(stepIndex)` yields the per-step
+   * `LoopEventEmitPort` assembled into `LoopPorts.events` so the loop emits identity-complete
+   * `stepFinalized`/`subActionRecorded` without learning indices. Absent ⇒ no emission (D-05).
+   */
+  events?: MemberEventSink
+  /**
+   * D-03 external run-level abort signal (Phase 361). Supplied by the run shell (`startRun`)
+   * so its run-level SIGINT/budget handler is the single signal owner: an external abort chains
+   * into this test's abort controller, cancelling the active step. When present, core SUPPRESSES
+   * its own per-test `process.on('SIGINT')` registration entirely — the shell owns cancellation.
+   * Absent ⇒ core keeps today's per-test SIGINT handler (other core callers keep working).
+   */
+  abortSignal?: AbortSignal
+  /**
+   * D-20 config digests the run actually keyed on, computed once at the CLI composition root and
+   * threaded straight through into `LoopPorts.configDigests` (consumed by the cache-key threading,
+   * Plan 08). Absent ⇒ the loop's existing empty-string key material is unchanged. Core stays
+   * digest-neutral — it never derives these.
+   */
+  configDigests?: ConfigDigests
 }
 
 /**
@@ -179,17 +203,32 @@ export async function runTest(
   // Handle graceful cancellation (SIGINT) — set flag so the main loop breaks cleanly
   let cancelled = false
   let activeStepController: AbortController | undefined
-  const onCancel = () => {
+  const cancelWith = (reason: Error) => {
     cancelled = true
-    const cancelReason = new Error('Test cancelled by user')
     if (!testAbortController.signal.aborted) {
-      testAbortController.abort(cancelReason)
+      testAbortController.abort(reason)
     }
     if (activeStepController && !activeStepController.signal.aborted) {
-      activeStepController.abort(testAbortController.signal.reason ?? cancelReason)
+      activeStepController.abort(testAbortController.signal.reason ?? reason)
     }
   }
-  process.on('SIGINT', onCancel)
+  // D-03 (Phase 361): when the run shell supplies an external abort signal, IT owns run-level
+  // cancellation — core suppresses its own per-test SIGINT registration and chains the external
+  // signal into this test's abort instead (mirroring the SIGINT path). Without the signal, today's
+  // per-test SIGINT handler stays so other core callers keep working.
+  const onCancel = () => cancelWith(new Error('Test cancelled by user'))
+  const onExternalAbort = () => cancelWith(
+    (config.abortSignal?.reason as Error | undefined) ?? new Error('Test cancelled by run'),
+  )
+  if (config.abortSignal) {
+    if (config.abortSignal.aborted) {
+      onExternalAbort()
+    } else {
+      config.abortSignal.addEventListener('abort', onExternalAbort, { once: true })
+    }
+  } else {
+    process.on('SIGINT', onCancel)
+  }
 
   const runnerLog = config.logger?.createScopedLogger('runner')
 
@@ -483,6 +522,9 @@ export async function runTest(
     }
 
     await reporter?.onStepStart(instruction, test.name, stepEventContext)
+    // D-02 (Phase 361): announce the step to the run bus where stepText/stepIndex live. Same
+    // raw posture as the reporter feed — masking happens downstream in the sink, not here.
+    config.events?.stepStarted({ stepIndex, stepText: instruction })
 
     // Runner StepContext (D-02) — the v1 healingConfig field is a D-10 deletion target
     // and is intentionally absent. D-13 re-run threading (LOOP-03): on a re-run attempt
@@ -542,6 +584,13 @@ export async function runTest(
         abortSignal: stepAbortController.signal,
         secretStore: config.secretStore,
         secretRedactor: config.secretRedactor,
+        // D-02 curried identity: the loop emits stepFinalized/subActionRecorded through this
+        // per-step port without ever learning its own stepIndex (the sink bound it). Absent
+        // events sink ⇒ undefined ⇒ the loop runs telemetry-less (D-05 degrade-when-absent).
+        events: config.events?.loopEmitFor(stepIndex),
+        // D-20: the real config digests ride straight through so the loop keys the cache on what
+        // the run actually keyed on (consumed Plan 08). Absent ⇒ existing key material unchanged.
+        configDigests: config.configDigests,
       }
 
     let result: StepResult
@@ -798,7 +847,11 @@ export async function runTest(
     : testFailed ? generateFailureSummary(steps)
     : cancelled ? `Test cancelled after ${steps.length} step(s)` : undefined
 
-  process.removeListener('SIGINT', onCancel)
+  if (config.abortSignal) {
+    config.abortSignal.removeEventListener('abort', onExternalAbort)
+  } else {
+    process.removeListener('SIGINT', onCancel)
+  }
   if (testDeadlineTimer) clearTimeout(testDeadlineTimer)
 
   const testResult: TestResult = {
