@@ -15,6 +15,17 @@ import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuite
 import type { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { WorkingMemoryStore } from '@vostride/agent-qa-runner'
+import type { RunMemberDescriptor, ConfigDigests } from '@vostride/agent-qa-runner'
+import {
+  computeRunConfigDigests,
+  resolveRunExecutionContext,
+  buildIdentityMasking,
+  buildRunPorts,
+  resolveRunBuildOrdinal,
+  createSuiteLifecycle,
+  buildSuiteMemberExecutor,
+  type SuiteMemberBinding,
+} from '../run-session-composition.js'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
@@ -913,25 +924,28 @@ async function executeSuites(
     inheritedRunAttributes?: RunAttributes
   },
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
-): Promise<boolean> {
-  const { parseSuiteFile, parseTestFile, runSuite,
+): Promise<number> {
+  const { parseSuiteFile, parseTestFile, executeSuiteMember,
     ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
   } = await import('@vostride/agent-qa-core')
-  const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
+  const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
   const path = await import('node:path')
 
   const configFilePath = globalOpts.config ?? 'agent-qa.config.yaml'
   const configDir = path.dirname(path.resolve(configFilePath))
 
-  const suiteResults: SuiteResult[] = []
-
   const activeSuiteDbs = new Set<any>()
   let shutdownRequested = false
+  // SESSION-04 (D-01/D-03): the CLI owns the ONE run-level SIGINT. When a RunSession is live the
+  // handler routes the abort into `session.cancel()` (skip the rest, aggregate `cancelled`); core's
+  // per-test SIGINT registration is suppressed because the executor threads ctx.abortSignal (D-03).
+  let activeRunSession: { cancel(): void } | undefined
 
   const handleShutdown = () => {
     shutdownRequested = true
     process.exitCode = 130
+    try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
     for (const activeSuiteDb of activeSuiteDbs) {
       try {
         const now = new Date().toISOString()
@@ -984,26 +998,39 @@ async function executeSuites(
     dashboardDb.close()
   }
 
-  type SuiteParentOutcome = { failed: boolean; cancelled: boolean }
-
-  const resolveSuiteParentPlatform = async (suite: SuiteDefinition): Promise<'web' | 'android' | 'ios'> => {
-    if (suite.target) {
-      return resolveTarget(config, suite.target).platform
-    }
-    const firstEntry = suite.tests[0]
-    if (firstEntry) {
-      const absolutePath = path.resolve(configDir, firstEntry.test)
-      const fileContent = await readFile(absolutePath, 'utf-8')
-      const parseResult = parseTestFile(fileContent, absolutePath)
-      const firstTest = parseResult.tests[0]
-      if (firstTest?.target) {
-        return resolveTarget(config, firstTest.target).platform
-      }
-    }
-    return 'web'
+  // A suite fully resolved by the composition root, ready to contribute its members to the ONE
+  // RunSession (D-04). Suite-level orchestration (setup hooks + adapter setup + nav / teardown +
+  // auth capture + reporter end-calls) is captured as the lazy lifecycle `setup`/`teardown` the
+  // shell drives when a member of this suite first runs / when the run crosses a suite boundary.
+  type PreparedSuite = {
+    suiteFile: string
+    suite: SuiteDefinition
+    suiteKey: string
+    suiteConfig: RunSuiteConfig
+    testEntries: [TestDefinition, string][]
+    suiteMembers: Array<Record<string, unknown>>
+    reporter: InstanceType<typeof MultiReporter> | undefined
+    suiteRunId: string
+    suiteArtifact: Record<string, unknown> | undefined
+    memoryEnabled: boolean
+    memoryRoot: string
+    product: string | undefined
+    testFileContents: string[]
+    // Mutable run-state filled during execution.
+    suiteHookVars: Record<string, string>
+    suiteSandboxOptions: RunSuiteConfig['sandboxOptions']
+    results: TestResult[]
+    perMemberDigests: ConfigDigests[]
+    bootstrapFailure: string | undefined
+    // Teardown-time composition side effects (the old runSuite `.finally`).
+    dashboardDb: any
+    analyticsReporter: ReturnType<typeof createAnalyticsRunReporter>
+    suiteWorkingMemory: WorkingMemoryStore
+    actionMasking: IdentityMaskingContext | undefined
+    suiteAttributes: RunAttributes
   }
 
-  const runOneSuiteFile = async (suiteFile: string, suite: SuiteDefinition): Promise<SuiteParentOutcome> => {
+  const prepareSuite = async (suiteFile: string, suite: SuiteDefinition): Promise<PreparedSuite> => {
     const suiteFailureAttributes = resolveCliRunAttributes(
       variableContext?.userRunAttributes ?? {},
       'local',
@@ -1543,78 +1570,303 @@ async function executeSuites(
     ;(suiteConfig as any).secretRedactor = variableContext?.secretRedactor
     ;(suiteConfig as any).secretsFileMetadata = variableContext?.secretsFileMetadata
 
-    const suiteResult = await runSuite(suite, testEntries, suiteConfig)
-      .finally(async () => {
-        // WM-02 (D-13): redacted flush + disposal on every run outcome (pass/fail/error).
-        // The helper never throws, so the run exit code is untouched (Pitfall 5).
-        await flushWorkingMemory(suiteWorkingMemory, {
-          artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
-          mask: actionMasking ? (value: string) => actionMasking!.mask(value) : undefined,
+    // Suite-level run-scoped values runSuite used to resolve internally, now resolved at the
+    // composition root and threaded into executeSuiteMember (D-01). The suite-level orchestration
+    // (setup hooks + adapter.setup + nav / teardown + auth capture + reporter end-calls) runs from
+    // the lazy lifecycle hooks the shell drives (suiteSetup/suiteTeardown below).
+    const reporter = suiteConfig.reporters?.length ? new MultiReporter(suiteConfig.reporters) : undefined
+    const preparedSuiteRunId = process.env.AGENT_QA_SUITE_QUEUE_ID ?? generateRunId()
+    const preparedSuiteArtifact = (suiteConfig.artifactContext as { artifact?: Record<string, unknown> } | undefined)?.artifact
+      ?? (suiteConfig.artifactContext as Record<string, unknown> | undefined)
+    const initialSuiteSandboxOptions = suiteConfig.sandboxOptions && suiteConfig.platformConfig.authState
+      ? { ...suiteConfig.sandboxOptions, authState: suiteConfig.platformConfig.authState }
+      : suiteConfig.sandboxOptions
+    const memoryEnabledForSuite = suiteConfig.memoryConfig?.enabled !== false && !!suiteConfig.memoryProvider
+
+    return {
+      suiteFile,
+      suite,
+      suiteKey: suiteFile,
+      suiteConfig,
+      testEntries,
+      suiteMembers,
+      reporter,
+      suiteRunId: preparedSuiteRunId,
+      suiteArtifact: preparedSuiteArtifact,
+      memoryEnabled: memoryEnabledForSuite,
+      memoryRoot: suiteConfig.memoryRoot ?? suiteMemoryRoot,
+      product: resolvedTarget?.product,
+      testFileContents: suiteMembers.map((m) => (typeof m.rawYaml === 'string' ? m.rawYaml : '')),
+      suiteHookVars: {},
+      suiteSandboxOptions: initialSuiteSandboxOptions,
+      results: [],
+      perMemberDigests: [],
+      bootstrapFailure: undefined,
+      dashboardDb,
+      analyticsReporter,
+      suiteWorkingMemory,
+      actionMasking,
+      suiteAttributes,
+    }
+  }
+
+  // Suite-level SETUP the shell runs on the first member of each suite (lazy lifecycle). Fires
+  // onSuiteStart/onRunStart, runs suite setup hooks (→ suiteHookVars), then adapter.setup + the
+  // suite-URL navigation. A hook/nav failure records `bootstrapFailure` so the member closures
+  // synthesize a bootstrap failure (the shell then group-fail-fasts the remaining members).
+  const suiteSetup = async (prepared: PreparedSuite): Promise<void> => {
+    const { suite, suiteConfig, reporter, suiteRunId, suiteArtifact, testEntries } = prepared
+
+    await reporter?.onSuiteStart?.(suite, {
+      runId: suiteRunId,
+      artifact: suiteArtifact ? { kind: 'suite-parent', ...suiteArtifact } : { kind: 'suite-parent' },
+    } as any)
+    await reporter?.onRunStart(testEntries.map(([t]) => t))
+
+    if ((suite as any).setup?.length && suiteConfig.resolvedHooks && prepared.suiteSandboxOptions) {
+      const hookDefs: HookDefinition[] = []
+      let hookMissing = false
+      for (const hookId of (suite as any).setup) {
+        const hook = suiteConfig.resolvedHooks.get(hookId)
+        if (!hook) { hookMissing = true; break }
+        hookDefs.push(hook)
+      }
+      if (hookMissing) {
+        prepared.bootstrapFailure = 'Suite setup hook not found'
+        return
+      }
+      if (hookDefs.length > 0) {
+        const envVars: Record<string, string> = {}
+        if (suiteConfig.envFileVars) Object.assign(envVars, suiteConfig.envFileVars)
+        if (suiteConfig.inlineVars) Object.assign(envVars, suiteConfig.inlineVars)
+        if (suiteConfig.cliVars) Object.assign(envVars, suiteConfig.cliVars)
+        const { runHooks } = await import('@vostride/agent-qa-core')
+        const hookRun = await runHooks(hookDefs, {
+          ...prepared.suiteSandboxOptions,
+          secretStore: suiteConfig.secretStore,
+          secretRedactor: suiteConfig.secretRedactor,
+          envVars: { ...prepared.suiteSandboxOptions.envVars, ...envVars },
         })
-        closeSuiteDashboardDb(dashboardDb)
-        await flushAnalyticsRunReporter(analyticsReporter)
-      })
-    suiteResults.push(suiteResult)
-    printRunAttributes(suiteAttributes)
+        for (const [name, hr] of hookRun.results) {
+          const hookDef = hookDefs.find((h) => h.name === name)
+          const hookExecId = randomUUID()
+          await reporter?.onHookStart?.({ hookId: hookDef?.id, hookName: name, phase: 'setup', hookExecutionId: hookExecId, runId: suiteRunId })
+          await reporter?.onHookEnd?.({ hookId: hookDef?.id, hookName: name, phase: 'setup', hookExecutionId: hookExecId, runId: suiteRunId, status: hr.success ? 'passed' : 'failed', duration: hr.duration, stdout: hr.stdout, stderr: hr.stderr, variables: hr.variables, error: hr.error })
+        }
+        if (!hookRun.allPassed) {
+          prepared.bootstrapFailure = 'Suite setup hook failed'
+          return
+        }
+        prepared.suiteHookVars = hookRun.variables
+      }
+    }
 
-    return {
-      failed: suiteResult.status === 'failed',
-      cancelled: suiteResult.status === 'cancelled' || shutdownRequested,
+    await suiteConfig.adapter.setup(suiteConfig.platformConfig)
+
+    const initialTargetName = suite.target ?? testEntries[0]?.[0].target
+    if (suiteConfig.resolveUrl && initialTargetName) {
+      const rawSuiteUrl = suiteConfig.resolveUrl(initialTargetName)
+      if (rawSuiteUrl) {
+        try {
+          const navResult = await suiteConfig.adapter.execute({ type: 'navigate', to: 'url', url: rawSuiteUrl } as any)
+          if (navResult && navResult.success === false) {
+            prepared.bootstrapFailure = navResult.error ?? `Failed to navigate to suite target URL "${rawSuiteUrl}"`
+          }
+        } catch (err) {
+          prepared.bootstrapFailure = err instanceof Error ? err.message : `Failed to navigate to suite target URL "${rawSuiteUrl}"`
+        }
+      }
     }
   }
 
-  const pendingSuiteParents: Promise<SuiteParentOutcome>[] = []
-  const flushSuiteParents = async (): Promise<SuiteParentOutcome> => {
-    if (pendingSuiteParents.length === 0) return { failed: false, cancelled: false }
-    const batch = pendingSuiteParents.splice(0, pendingSuiteParents.length)
-    const settled = await Promise.allSettled(batch)
-    const rejected = settled.find((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
-    if (rejected) throw rejected.reason
-    const outcomes = settled
-      .filter((outcome): outcome is PromiseFulfilledResult<SuiteParentOutcome> => outcome.status === 'fulfilled')
-      .map((outcome) => outcome.value)
-    return {
-      failed: outcomes.some((outcome) => outcome.failed),
-      cancelled: outcomes.some((outcome) => outcome.cancelled),
+  // Suite-level TEARDOWN the shell runs when crossing a suite boundary / at finalize: auth-state
+  // capture (when every member ran and passed), suite teardown hooks, adapter.cleanup + memory
+  // destroy, the aggregated onRunEnd/onSuiteEnd reporter calls, and the old runSuite `.finally`
+  // composition side effects (working-memory flush, dashboard-db close, analytics flush).
+  const suiteTeardown = async (prepared: PreparedSuite): Promise<void> => {
+    const { suite, suiteConfig, reporter, suiteRunId, results } = prepared
+    const totalMembers = prepared.testEntries.length
+
+    if (
+      suiteConfig.authStateCapture
+      && results.length === totalMembers
+      && results.length > 0
+      && results.every((r) => r.status === 'passed')
+    ) {
+      try {
+        const captured = await suiteConfig.authStateCapture.capture()
+        prepared.suiteSandboxOptions = suiteConfig.sandboxOptions
+          ? { ...suiteConfig.sandboxOptions, authState: captured }
+          : suiteConfig.sandboxOptions
+      } catch {
+        const captureFailure: TestResult = {
+          runId: suiteRunId, name: 'Auth state capture', filePath: '', status: 'failed',
+          steps: [], duration: 0, failureSummary: suiteConfig.authStateCapture.failureSummary,
+          metadata: { phase: 'auth-state-capture' },
+        }
+        results.push(captureFailure)
+        await reporter?.onTestEnd(captureFailure)
+      }
     }
+
+    if ((suite as any).teardown?.length && suiteConfig.resolvedHooks && prepared.suiteSandboxOptions) {
+      const teardownVars: Record<string, string> = {}
+      if (suiteConfig.envFileVars) Object.assign(teardownVars, suiteConfig.envFileVars)
+      if (suiteConfig.inlineVars) Object.assign(teardownVars, suiteConfig.inlineVars)
+      if (suiteConfig.cliVars) Object.assign(teardownVars, suiteConfig.cliVars)
+      Object.assign(teardownVars, prepared.suiteHookVars)
+      const { runHooks } = await import('@vostride/agent-qa-core')
+      for (const hookId of (suite as any).teardown) {
+        const hook = suiteConfig.resolvedHooks.get(hookId)
+        if (!hook) continue
+        const hookExecId = randomUUID()
+        try {
+          await reporter?.onHookStart?.({ hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId, runId: suiteRunId })
+          const hr = (await runHooks([hook], {
+            ...prepared.suiteSandboxOptions,
+            secretStore: suiteConfig.secretStore,
+            secretRedactor: suiteConfig.secretRedactor,
+            envVars: { ...prepared.suiteSandboxOptions.envVars, ...teardownVars },
+          })).results.get(hook.name)
+          await reporter?.onHookEnd?.({ hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId, runId: suiteRunId, status: hr?.success ? 'passed' : 'failed', duration: hr?.duration ?? 0, stdout: hr?.stdout ?? '', stderr: hr?.stderr ?? '', variables: hr?.variables ?? {}, error: hr?.error })
+        } catch {}
+      }
+    }
+
+    try { await suiteConfig.adapter.cleanup() } catch {}
+    if (suiteConfig.memoryProvider) { try { suiteConfig.memoryProvider.destroy() } catch {} }
+
+    const passed = results.filter((r) => r.status === 'passed').length
+    const failed = results.filter((r) => r.status === 'failed').length
+    const cancelled = results.filter((r) => r.status === 'cancelled').length
+    const skipped = (totalMembers - results.length) + results.filter((r) => r.status === 'skipped').length
+    const duration = results.reduce((sum, r) => sum + r.duration, 0)
+    const suiteStatus = failed > 0 ? 'failed' : cancelled > 0 ? 'cancelled' : 'passed'
+    await reporter?.onRunEnd?.({ results, duration, passed, failed, skipped })
+    await reporter?.onSuiteEnd?.({ runId: suiteRunId, name: suite.name, status: suiteStatus, tests: results, duration, passed, failed, skipped })
+
+    await flushWorkingMemory(prepared.suiteWorkingMemory, {
+      artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
+      mask: prepared.actionMasking ? (value: string) => prepared.actionMasking!.mask(value) : undefined,
+    })
+    closeSuiteDashboardDb(prepared.dashboardDb)
+    await flushAnalyticsRunReporter(prepared.analyticsReporter)
+    printRunAttributes(prepared.suiteAttributes)
   }
 
+  // ---- Compose the ONE RunSession per invocation (D-01/D-04, SESSION-01/04/05) ---------------
+  // Resolve every suite up front (parse/target/model/reporter/cache resolution + suiteConfig).
+  // Resolution errors still process.exit(2) inside prepareSuite (the config-error contract, D-14).
+  const preparedSuites: PreparedSuite[] = []
   for (const suiteFile of suiteFiles) {
     const suite = await parseSuiteFile(suiteFile)
-    const suitePlatform = await resolveSuiteParentPlatform(suite)
-    const effectiveSuiteParallel = suite.use?.parallel ?? config.use?.parallel ?? false
-    const canRunSuiteInParallel = suitePlatform === 'web' && effectiveSuiteParallel === true
+    preparedSuites.push(await prepareSuite(suiteFile, suite))
+  }
 
-    if (canRunSuiteInParallel) {
-      pendingSuiteParents.push(runOneSuiteFile(suiteFile, suite))
-      continue
-    }
+  // Flat ordered member list across all suites (file order, then in-suite order). Each member's
+  // failFastGroup = its suite file, preserving today's within-suite fail-fast while other suites
+  // still run (D-15). testIndex = global array position (the shell's authoritative index).
+  const members: RunMemberDescriptor[] = []
+  const bindings: SuiteMemberBinding[] = []
+  const digestMembers: Array<{ testFileContent: string; suiteFileContent?: string }> = []
+  let perMemberDigests: ConfigDigests[] = []
 
-    const batchOutcome = await flushSuiteParents()
-    if (batchOutcome.cancelled || shutdownRequested) break
-    if (opts.bail && batchOutcome.failed) {
-      console.log(pc.yellow('\nBailing out — stopping after first failed suite'))
-      break
-    }
-
-    const outcome = await runOneSuiteFile(suiteFile, suite)
-    if (outcome.cancelled || shutdownRequested) break
-    if (opts.bail && outcome.failed) {
-      console.log(pc.yellow('\nBailing out — stopping after first failed suite'))
-      break
+  for (const prepared of preparedSuites) {
+    for (let i = 0; i < prepared.testEntries.length; i++) {
+      const [test, filePath] = prepared.testEntries[i]
+      const globalIndex = members.length
+      const memberSuiteIndex = i
+      members.push({
+        testId: (test as any)['test-id'] ?? test.name,
+        testIndex: globalIndex,
+        name: test.name,
+        failFastGroup: prepared.suiteKey,
+      })
+      digestMembers.push({
+        testFileContent: prepared.testFileContents[i] ?? '',
+        suiteFileContent: prepared.suiteConfig.suiteFileContent,
+      })
+      bindings.push({
+        suiteKey: prepared.suiteKey,
+        hooks: {
+          setup: () => suiteSetup(prepared),
+          teardown: () => suiteTeardown(prepared),
+        },
+        run: async (ctx) => {
+          if (prepared.bootstrapFailure) {
+            const bootstrapResult: TestResult = {
+              runId: prepared.suiteRunId, name: test.name, filePath, status: 'failed',
+              steps: [], duration: 0, failureSummary: prepared.bootstrapFailure,
+              metadata: { phase: 'suite-bootstrap' },
+            }
+            prepared.results.push(bootstrapResult)
+            return bootstrapResult
+          }
+          const result = await executeSuiteMember({
+            suite: prepared.suite,
+            test,
+            filePath,
+            index: memberSuiteIndex,
+            totalTests: prepared.testEntries.length,
+            config: prepared.suiteConfig,
+            reporter: prepared.reporter,
+            suiteRunId: prepared.suiteRunId,
+            suiteHookVars: prepared.suiteHookVars,
+            suiteSandboxOptions: prepared.suiteSandboxOptions,
+            suiteArtifact: prepared.suiteArtifact,
+            memoryEnabled: prepared.memoryEnabled,
+            memoryRoot: prepared.memoryRoot,
+            // D-02/D-03/D-20 run-shell seams.
+            events: ctx.events,
+            abortSignal: ctx.abortSignal,
+            configDigests: perMemberDigests[globalIndex],
+          })
+          prepared.results.push(result)
+          return result
+        },
+      })
     }
   }
 
-  const finalBatchOutcome = await flushSuiteParents()
-  if (opts.bail && finalBatchOutcome.failed) {
-    console.log(pc.yellow('\nBailing out — stopping after first failed suite'))
-  }
+  // D-20: the ONE digest mint — per-member cache pairs + the run-level handoff pair; both consumers
+  // (per-member cache via ctx, run-level handoff via RunConfig) draw from this single call.
+  const runDigests = computeRunConfigDigests({ configContent, members: digestMembers })
+  perMemberDigests = runDigests.perMember
+
+  const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+  const runProduct = preparedSuites.find((p) => p.product)?.product ?? 'unknown'
+  const executionContext = resolveRunExecutionContext()
+  const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct })
+  const runPorts = buildRunPorts({ configDir, runId })
+
+  const lifecycle = createSuiteLifecycle()
+  const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
+
+  const session = startRun({
+    // generateRunId returns a plain string; brand it to the RunConfig's RunId without a schema dep.
+    runId: runId as unknown as Parameters<typeof startRun>[0]['runId'],
+    scope: { tier: 'product', key: runProduct },
+    executionContext,
+    configDigests: runDigests.runLevel,
+    buildOrdinal,
+    members,
+    executor,
+    masking: buildIdentityMasking(),
+    ports: runPorts,
+  })
+  activeRunSession = session
+
+  const { verdict } = await session.done
+  await lifecycle.finalize()
+  activeRunSession = undefined
 
   process.removeListener('SIGINT', handleShutdown)
   process.removeListener('SIGTERM', handleShutdown)
 
   releaseAppium()
-  return suiteResults.some(r => r.status === 'failed' || r.status === 'cancelled') || shutdownRequested
+  // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
+  // SIGINT that raced the terminal verdict still maps to 130.
+  return mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
 }
 
 export function createRunCommand(): Command {
@@ -1830,8 +2082,7 @@ export function createRunCommand(): Command {
 
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
-          const hasFailed = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined)
-          const exitCode = hasFailed ? 1 : 0
+          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined)
           const suiteReporterSelection = resolveReporterSelection(opts, Boolean(config.services?.dashboard)).selection
           if (suiteReporterSelection) {
             await maybePrintPostRunUpdateNotice({
@@ -1847,7 +2098,7 @@ export function createRunCommand(): Command {
         // Handle --all: run suites first, then fall through to test execution
         let suitesFailed = false
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length > 0) {
-          suitesFailed = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined)
+          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined)) !== 0
         }
 
         const files = discoveredTestFiles

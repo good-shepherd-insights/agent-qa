@@ -14,6 +14,10 @@ const {
   mockFormatParseError,
   mockRunHooks,
   mockRunSuite,
+  mockExecuteSuiteMember,
+  mockFsEventLog,
+  mockFsHandoffStore,
+  mockNextBuildOrdinal,
   mockRunTestWithRetry,
   mockCreateMemoryProvider,
   mockCreateModel,
@@ -69,6 +73,10 @@ const {
     mockFormatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
     mockRunHooks: vi.fn(),
     mockRunSuite: vi.fn(),
+    mockExecuteSuiteMember: vi.fn(),
+    mockFsEventLog: vi.fn(function () { return { append: vi.fn(), read: vi.fn(() => []) } }),
+    mockFsHandoffStore: vi.fn(function () { return { save: vi.fn() } }),
+    mockNextBuildOrdinal: vi.fn(async () => 1),
     mockRunTestWithRetry: vi.fn(),
     mockCreateMemoryProvider: vi.fn(),
     mockCreateModel: vi.fn(() => ({})),
@@ -124,6 +132,9 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   FsActionCache: mockFsActionCache,
   FsStorageStateStore: mockFsStorageStateStore,
   resolveBranch: mockResolveBranch,
+  FsEventLog: mockFsEventLog,
+  FsHandoffStore: mockFsHandoffStore,
+  nextBuildOrdinal: mockNextBuildOrdinal,
 }))
 
 vi.mock('@vostride/agent-qa-core', () => {
@@ -143,6 +154,7 @@ vi.mock('@vostride/agent-qa-core', () => {
   formatParseError: mockFormatParseError,
   runHooks: mockRunHooks,
   runSuite: mockRunSuite,
+  executeSuiteMember: mockExecuteSuiteMember,
   runTestWithRetry: mockRunTestWithRetry,
   resolveAuthStateForRun: mockResolveAuthStateForRun,
   resolveAuthStatePaths: mockResolveAuthStatePaths,
@@ -630,6 +642,17 @@ beforeEach(() => {
   })
   mockRunSuite.mockReset()
   mockRunSuite.mockResolvedValue({ status: 'passed', duration: 100 })
+  // The suite path now runs through startRun; each member wraps executeSuiteMember (D-01). Default
+  // to a passing member TestResult so the aggregate verdict is `passed` ⇒ exit 0.
+  mockExecuteSuiteMember.mockReset()
+  mockExecuteSuiteMember.mockResolvedValue({
+    runId: 'r_member',
+    name: 'Suite Member',
+    filePath: 'tests/login.yaml',
+    status: 'passed',
+    steps: [],
+    duration: 100,
+  })
   mockResolveAuthStateForRun.mockReset()
   mockResolveAuthStateForRun.mockResolvedValue({
     version: 1,
@@ -792,13 +815,17 @@ function suiteDefinition(name: string, testFile: string, use?: Record<string, un
   }
 }
 
+// Resolves to a per-member TestResult (the suite path now runs through executeSuiteMember, not
+// runSuite). Used to control sequential member timing inside the ONE RunSession.
 function deferredSuiteResult(name: string) {
   let resolveResult!: () => void
   const promise = new Promise<Record<string, unknown>>((resolvePromise) => {
     resolveResult = () => resolvePromise({
+      runId: `r_${name}`,
       name,
+      filePath: `tests/${name}.yaml`,
       status: 'passed',
-      tests: [],
+      steps: [],
       duration: 100,
     })
   })
@@ -1330,7 +1357,7 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
@@ -1353,8 +1380,8 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockRunSuite).toHaveBeenCalled()
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    expect(mockExecuteSuiteMember).toHaveBeenCalled()
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
@@ -1378,7 +1405,7 @@ describe('run command — auth state consumption', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(mockResolveAuthStateForRun).not.toHaveBeenCalled()
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.platformConfig.authState).toBeUndefined()
     expect(suiteConfig.authStateCapture).toEqual(expect.objectContaining({
       capture: expect.any(Function),
@@ -1401,8 +1428,8 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockRunSuite).toHaveBeenCalled()
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    expect(mockExecuteSuiteMember).toHaveBeenCalled()
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
@@ -1426,7 +1453,7 @@ describe('run command — auth state consumption', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunSuite).not.toHaveBeenCalled()
+    expect(mockExecuteSuiteMember).not.toHaveBeenCalled()
     expect(mockWebAdapterSetup).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Suite auth state "admin"')
@@ -1690,7 +1717,7 @@ describe('run command — mobile app state and device resolution', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(resolveMobileRunConfig).not.toHaveBeenCalled()
-    expect(mockRunSuite).toHaveBeenCalled()
+    expect(mockExecuteSuiteMember).toHaveBeenCalled()
   })
 })
 
@@ -1934,7 +1961,7 @@ describe('run command — run attributes', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2] as Record<string, any>
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config as Record<string, any>
     expect(suiteConfig.artifactContext.metadata.attributes).toMatchObject({
       'agent-qa.trigger': 'api',
       'agent-qa.runner': 'browserstack',
@@ -2152,8 +2179,12 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunSuite.mockResolvedValue({
+    mockExecuteSuiteMember.mockResolvedValue({
+      runId: 'r_member',
+      name: 'Suite Member',
+      filePath: 'tests/login.yaml',
       status: 'passed',
+      steps: [],
       duration: 100,
       ...resultOverrides,
     })
@@ -2178,7 +2209,10 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunSuite.mockResolvedValue({ status: 'passed', duration: 100 })
+    mockExecuteSuiteMember.mockResolvedValue({
+      runId: 'r_member', name: 'Suite Member', filePath: 'tests/login.yaml',
+      status: 'passed', steps: [], duration: 100,
+    })
     mockRunTestWithRetry.mockResolvedValue({
       name: 'Test One',
       filePath: testPath,
@@ -2261,11 +2295,11 @@ describe('run command — reporter integration', () => {
       config: expect.objectContaining({ workspace: expect.any(Object) }),
       surface: 'cli',
     }))
-    expect(mockRunSuite).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
+    expect(mockExecuteSuiteMember).toHaveBeenCalledWith(
       expect.objectContaining({
-        reporters: expect.arrayContaining([mockAnalyticsRunReporterInstance]),
+        config: expect.objectContaining({
+          reporters: expect.arrayContaining([mockAnalyticsRunReporterInstance]),
+        }),
       }),
     )
     expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
@@ -2297,12 +2331,12 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], '--all')
 
-    expect(mockRunSuite).toHaveBeenCalledTimes(1)
+    expect(mockExecuteSuiteMember).toHaveBeenCalledTimes(1)
     expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
     expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
     expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunSuite))
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockExecuteSuiteMember))
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunTestWithRetry))
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockMultiReporterInstance.onRunEnd))
     expect(exitSpy).toHaveBeenCalledWith(0)
@@ -2790,7 +2824,7 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.accessibility).toEqual(accessibility)
     expect(suiteConfig.accessibilityCheck).toEqual(expect.any(Function))
   })
@@ -3186,7 +3220,11 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('starts two web suite parents concurrently when global use.parallel is true', async () => {
+  // Phase 361 (D-01/SESSION-04): the suite path is now ONE RunSession per invocation that iterates
+  // ALL suite members sequentially — parallel suite-parent execution (the old pendingSuiteParents
+  // path) is intentionally dropped. `use.parallel` no longer starts suite parents concurrently;
+  // members run in file order, one at a time, inside the single session.
+  it('runs all suite members in one sequential RunSession even when global use.parallel is true', async () => {
     const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
@@ -3201,23 +3239,26 @@ describe('run command — reporter integration', () => {
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
     const started: string[] = []
-    mockRunSuite.mockImplementation((suite: any) => {
-      started.push(suite.name)
-      return suite.name === 'Suite A' ? first.promise : second.promise
+    mockExecuteSuiteMember.mockImplementation((input: any) => {
+      started.push(input.suite.name)
+      return input.suite.name === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
-    await waitForCondition(() => started.length >= 2)
-    expect(started).toHaveLength(2)
-    expect(started).toEqual(expect.arrayContaining(['Suite A', 'Suite B']))
+    // Sequential: Suite B's member does not start until Suite A's member resolves.
+    await waitForCondition(() => started.length >= 1)
+    expect(started).toEqual(['Suite A'])
 
     first.resolve()
+    await waitForCondition(() => started.length >= 2)
+    expect(started).toEqual(['Suite A', 'Suite B'])
+
     second.resolve()
     await commandPromise
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('runs web suite parents sequentially when global use.parallel is false', async () => {
+  it('runs web suite members sequentially when global use.parallel is false', async () => {
     const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = false
@@ -3232,9 +3273,9 @@ describe('run command — reporter integration', () => {
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
     const started: string[] = []
-    mockRunSuite.mockImplementation((suite: any) => {
-      started.push(suite.name)
-      return suite.name === 'Suite A' ? first.promise : second.promise
+    mockExecuteSuiteMember.mockImplementation((input: any) => {
+      started.push(input.suite.name)
+      return input.suite.name === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
@@ -3250,7 +3291,7 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('treats suite-level use.parallel false as a suite parent barrier', async () => {
+  it('iterates every suite in file order within the one session (suite-level use.parallel is a no-op)', async () => {
     const { configPath, suiteA, suiteB, suiteC } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
@@ -3268,9 +3309,9 @@ describe('run command — reporter integration', () => {
       ['Suite C', deferredSuiteResult('Suite C')],
     ])
     const started: string[] = []
-    mockRunSuite.mockImplementation((suite: any) => {
-      started.push(suite.name)
-      return runs.get(suite.name)!.promise
+    mockExecuteSuiteMember.mockImplementation((input: any) => {
+      started.push(input.suite.name)
+      return runs.get(input.suite.name)!.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
@@ -3483,13 +3524,13 @@ describe('run command — dashboard video recording root', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], '--record', suitePath)
 
-    expect(mockRunSuite).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
+    expect(mockExecuteSuiteMember).toHaveBeenCalledWith(
       expect.objectContaining({
-        platformConfig: expect.objectContaining({
-          recording: expect.objectContaining({
-            videoDir: resolve(rootDir, 'dashboard-artifacts', 'videos'),
+        config: expect.objectContaining({
+          platformConfig: expect.objectContaining({
+            recording: expect.objectContaining({
+              videoDir: resolve(rootDir, 'dashboard-artifacts', 'videos'),
+            }),
           }),
         }),
       }),
@@ -3718,7 +3759,7 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.cache).toBeUndefined()
     expect(suiteConfig.artifactContext.config.cache.enabled).toBe(false)
   })
@@ -3737,7 +3778,7 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
     expect(suiteConfig.cache).toBeDefined()
     expect(suiteConfig.artifactContext.config.cache.enabled).toBe(true)
   })
