@@ -1,0 +1,83 @@
+// Wave-0 RED scaffold (361-01, Task 1). Pins the schema-side handoff version guard
+// BEFORE any implementation exists — RED strictly on the unresolved import of the
+// not-yet-existing `../handoff/load-completed-run-handoff` module (right-reason RED).
+//
+// Contract source: 361-CONTEXT.md D-19 (361 ships the READ side of the version
+// discipline: parse → version check → reject newer-than-known with a typed error →
+// migrate older; empty migration table at v1, but the seam exists so every future
+// consumer imports the one guard instead of re-implementing the rule) +
+// eval-and-core-types.md §A8 schema-version discipline (reject newer / migrate older).
+//
+// Schema module-discipline law: extension-less relative import specifiers, no node builtins.
+import { describe, expect, it } from 'vitest'
+
+import {
+  guardCompletedRunHandoff,
+  HandoffVersionError,
+  HANDOFF_MIGRATIONS,
+} from '../handoff/load-completed-run-handoff'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  type CompletedRunHandoff,
+} from '../handoff/completed-run-handoff'
+import { asRunId } from '../run/run-id'
+import type { ScopeKey } from '../identity/scope-key'
+
+const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
+
+function makeValidHandoff(): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId('run-abc'),
+    scope,
+    buildOrdinal: 1,
+    executionContext: 'ci',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+    startedAt: 1_700_000_000_000,
+    endedAt: 1_700_000_010_000,
+    tests: [],
+  }
+}
+
+describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
+  it('returns a typed handoff for a valid schemaVersion 1 document', () => {
+    const doc = makeValidHandoff()
+    const guarded = guardCompletedRunHandoff(doc)
+    expect(guarded.schemaVersion).toBe(1)
+    expect(guarded.runId).toBe('run-abc')
+    expect(guarded.aggregateVerdict).toBe('passed')
+  })
+
+  it('rejects a newer-than-known schemaVersion 2 with a typed HandoffVersionError', () => {
+    const doc = { ...makeValidHandoff(), schemaVersion: 2 }
+    let thrown: unknown
+    try {
+      guardCompletedRunHandoff(doc)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(HandoffVersionError)
+    const err = thrown as HandoffVersionError
+    // The typed error carries both the found and the supported version.
+    expect(err.foundVersion).toBe(2)
+    expect(err.supportedVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
+  })
+
+  it('throws for a non-numeric schemaVersion', () => {
+    const doc = { ...makeValidHandoff(), schemaVersion: 'one' as unknown as number }
+    expect(() => guardCompletedRunHandoff(doc)).toThrow()
+  })
+
+  it('throws for a missing schemaVersion', () => {
+    const { schemaVersion: _omit, ...withoutVersion } = makeValidHandoff()
+    void _omit
+    expect(() => guardCompletedRunHandoff(withoutVersion as CompletedRunHandoff)).toThrow()
+  })
+
+  it('exposes an (empty at v1) migration table — the older-version seam, not a rewrite', () => {
+    expect(HANDOFF_MIGRATIONS).toBeDefined()
+    // v1 is the first schema version: no older versions to migrate yet.
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
+  })
+})
