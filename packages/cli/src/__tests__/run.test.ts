@@ -2050,10 +2050,14 @@ describe('run command — exit codes', () => {
 
 
 describe('run command — bail mode', () => {
-  it('stops execution after first failure with --bail', async () => {
+  // Phase 361 (D-01/SESSION-04): the single-test path is now ONE RunSession per invocation whose
+  // members carry NO failFastGroup, so ungrouped members never fail-fast — every discovered test runs
+  // then the run aggregates. The old --bail short-circuit is dropped (the single-test analog of Plan
+  // 10's suite-parent parallel drop); --bail is a no-op under the one-RunSession law.
+  it('runs all members in one RunSession — --bail no longer short-circuits after the first failure', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     const test1 = makeTest({ name: 'Failing Test' })
-    const test2 = makeTest2({ name: 'Skipped Test' })
+    const test2 = makeTest2({ name: 'Second Test' })
     mockParseAllTests.mockResolvedValue({
       tests: [test1, test2],
       errors: [],
@@ -2063,7 +2067,7 @@ describe('run command — bail mode', () => {
     mockRunTestWithRetry.mockImplementation(async () => {
       callCount++
       return {
-        name: callCount === 1 ? 'Failing Test' : 'Skipped Test',
+        name: callCount === 1 ? 'Failing Test' : 'Second Test',
         filePath: 'tests/a.yaml',
         status: 'failed',
         steps: [],
@@ -2073,10 +2077,9 @@ describe('run command — bail mode', () => {
 
     await runCommand('--bail', 'tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    // Both members execute inside the one session; the failed aggregate verdict still maps to exit 1.
+    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(2)
     expect(exitSpy).toHaveBeenCalledWith(1)
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain('Bailing out')
   })
 })
 
@@ -2914,7 +2917,9 @@ describe('run command — reporter integration', () => {
 
   it('preserves one generated run ID from reporter start through failed result summary', async () => {
     const runId = 'r_harbor-iris-jade-kilo-lima-maple-nova-orbit-pearl-quartz'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+    // One RunSession now mints a run-level id up front AND the member closure mints the per-test id;
+    // pin both to the same value so the per-test id still flows through the reporters (D-04/SESSION-04).
+    mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
@@ -2980,7 +2985,8 @@ describe('run command — reporter integration', () => {
 
   it('adds run ID to cancelled results before final summary', async () => {
     const runId = 'r_cancel-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+    // Run-level + per-test id both from generateRunId; pin both so the per-test id reaches onRunEnd.
+    mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
@@ -3005,7 +3011,8 @@ describe('run command — reporter integration', () => {
 
   it('passes run ID through setup hook failure result before execution', async () => {
     const runId = 'r_setup-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+    // Run-level + per-test id both from generateRunId; pin both so the setup-failure result carries it.
+    mockGenerateRunId.mockReturnValue(runId)
     const { rootDir, testPath, configPath } = await createTempSuiteWorkspace()
     await writeFile(join(rootDir, 'hooks.yaml'), 'hooks:\n  - id: hook-seed\n')
     mockGlob.mockResolvedValue([testPath])
@@ -3120,7 +3127,10 @@ describe('run command — reporter integration', () => {
     }))
   })
 
-  it('starts two web tests concurrently when global use.parallel is true', async () => {
+  // Phase 361 (D-01/SESSION-04): the single-test path is now ONE sequential RunSession per invocation.
+  // `use.parallel: true` no longer starts web tests concurrently (the single-test analog of Plan 10's
+  // suite-parent parallel drop) — members run one at a time in file order inside the single session.
+  it('runs all web tests in one sequential RunSession even when global use.parallel is true (parallel is a no-op)', async () => {
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
     mockResolveConfig.mockResolvedValue(cfg)
@@ -3138,11 +3148,14 @@ describe('run command — reporter integration', () => {
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 2)
-    expect(started).toHaveLength(2)
-    expect(started).toEqual(expect.arrayContaining(['Test One', 'Test Two']))
+    await waitForCondition(() => started.length >= 1)
+    // Sequential: Test Two does not start until Test One's member resolves.
+    expect(started).toEqual(['Test One'])
 
     first.resolve()
+    await waitForCondition(() => started.length >= 2)
+    expect(started).toEqual(['Test One', 'Test Two'])
+
     second.resolve()
     await commandPromise
     expect(exitSpy).toHaveBeenCalledWith(0)

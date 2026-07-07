@@ -18,6 +18,12 @@ const {
   mockMultiReporterInstance,
   mockCreateAnalyticsRunReporter,
   mockWebAdapterCleanup,
+  mockFsEventLog,
+  mockFsHandoffStore,
+  mockNextBuildOrdinal,
+  mockFsActionCache,
+  mockFsStorageStateStore,
+  mockResolveBranch,
 } = vi.hoisted(() => {
   const multiReporter = {
     onRunStart: vi.fn().mockResolvedValue(undefined),
@@ -47,6 +53,15 @@ const {
     mockMultiReporterInstance: multiReporter,
     mockCreateAnalyticsRunReporter: vi.fn(function () { return analyticsRunReporter }),
     mockWebAdapterCleanup: vi.fn(),
+    // Phase 361 Plan 11: the single-test path now composes startRun with runner-local persistence
+    // ports (FsEventLog/FsHandoffStore/nextBuildOrdinal) + the cache/storage stores. Mock the module
+    // so the hook-identity assertions stay isolated from fs (mirrors run.test.ts).
+    mockFsEventLog: vi.fn(function () { return { append: vi.fn(), read: vi.fn(() => []) } }),
+    mockFsHandoffStore: vi.fn(function () { return { save: vi.fn() } }),
+    mockNextBuildOrdinal: vi.fn(async () => 1),
+    mockFsActionCache: vi.fn(function () { return { get: vi.fn(), set: vi.fn(), invalidate: vi.fn() } }),
+    mockFsStorageStateStore: vi.fn(function () { return { save: vi.fn(), load: vi.fn() } }),
+    mockResolveBranch: vi.fn(() => ({ currentBranch: 'main', defaultBranch: 'main' })),
   }
 })
 
@@ -66,6 +81,15 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
   return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier }
 })
+
+vi.mock('@vostride/agent-qa-runner-local', () => ({
+  FsActionCache: mockFsActionCache,
+  FsStorageStateStore: mockFsStorageStateStore,
+  resolveBranch: mockResolveBranch,
+  FsEventLog: mockFsEventLog,
+  FsHandoffStore: mockFsHandoffStore,
+  nextBuildOrdinal: mockNextBuildOrdinal,
+}))
 
 vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',

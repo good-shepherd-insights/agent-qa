@@ -15,7 +15,7 @@ import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuite
 import type { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { WorkingMemoryStore } from '@vostride/agent-qa-runner'
-import type { RunMemberDescriptor, ConfigDigests } from '@vostride/agent-qa-runner'
+import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor } from '@vostride/agent-qa-runner'
 import {
   computeRunConfigDigests,
   resolveRunExecutionContext,
@@ -2261,7 +2261,7 @@ export function createRunCommand(): Command {
           runTestWithRetry,
           ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
         } = await import('@vostride/agent-qa-core')
-        const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
+        const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
 
         const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
 
@@ -2346,8 +2346,16 @@ export function createRunCommand(): Command {
 
         await multiReporter.onRunStart(filtered)
 
-        type DirectTestOutcome = { failed: boolean }
-        const runOneDirectTest = async (test: TestDefinition): Promise<DirectTestOutcome> => {
+        // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
+        // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
+        // derives the member outcome from the returned final TestResult exactly as for suite members
+        // (RESEARCH A2 — the suite path is single-attempt, this path keeps its retry). The run-shell
+        // ctx seams (events/abortSignal) and the member's cache digest pair are threaded in.
+        const runOneDirectTest = async (
+          test: TestDefinition,
+          ctx: MemberTestRunContext,
+          perMemberDigest: ConfigDigests | undefined,
+        ): Promise<TestResult> => {
           let currentPlatform: 'web' | 'android' | 'ios' | null = null
           let currentAdapterKey: string | null = null
           let adapter: import('@vostride/agent-qa-runner').PlatformAdapter | null = null
@@ -2662,6 +2670,7 @@ export function createRunCommand(): Command {
             let perTestSetupVars: Record<string, string> = {}
             let testStartTime = Date.now()
             let setupHookFailed = false
+            let setupFailureResult: TestResult | undefined
             if (resolvedHooks && authAwareSandboxOptions && (testDef as any).setup?.length) {
               const { runHooks } = await import('@vostride/agent-qa-core')
               const hookDefs: HookDefinition[] = []
@@ -2717,13 +2726,15 @@ export function createRunCommand(): Command {
                   failureSummary: hookSetupError,
                 }
                 results.push(setupResult)
+                setupFailureResult = setupResult
                 await multiReporter.onTestEnd(setupResult)
                 printRunAttributes(testAttributes)
               }
             }
 
             if (setupHookFailed) {
-              return { failed: true }
+              // Synthesized failed TestResult feeds the shell's member-outcome derivation (D-16).
+              return setupFailureResult!
             }
 
             // Memory provider setup (best-effort)
@@ -2787,6 +2798,11 @@ export function createRunCommand(): Command {
               runId,
               skipReporterOnTestStart: true,
               skipReporterOnTestEnd: testAuthStateUse?.capture === true,
+              // D-02/D-03/D-20 run-shell seams: live event emit + run-level cancel + the member's
+              // cache digest pair. Retry is preserved (runTestWithRetry) with the seams threaded in.
+              events: ctx.events,
+              abortSignal: ctx.abortSignal,
+              configDigests: perMemberDigest,
             } as any, filePath)
 
             if (!result.runId) result.runId = runId
@@ -2917,7 +2933,7 @@ export function createRunCommand(): Command {
             // screenIdentityHash and carry no raw step text on disk, D-06), so the loop owns
             // invalidation and no CLI-side key recompute remains.
 
-            return { failed: result.status === 'failed' }
+            return result
           } finally {
             if (adapter) await adapter.cleanup()
             // WM-02 (D-13): redacted flush + disposal on every run outcome (pass/fail/error).
@@ -2957,53 +2973,113 @@ export function createRunCommand(): Command {
           }
         }
 
-        const pendingParallelRuns: Promise<DirectTestOutcome>[] = []
-        const flushParallelRuns = async (): Promise<boolean> => {
-          if (pendingParallelRuns.length === 0) return false
-          const batch = pendingParallelRuns.splice(0, pendingParallelRuns.length)
-          const outcomes = await Promise.all(batch)
-          return outcomes.some((outcome) => outcome.failed)
+        // ---- Compose the ONE RunSession per invocation (D-01/D-04, SESSION-01/04) ---------------
+        // Each discovered test file is a member of ONE RunSession. Members carry NO failFastGroup —
+        // ungrouped members never fail-fast (Plan 04 port contract), so today's run-all-then-aggregate
+        // behavior is preserved (the old parallel batching + --bail short-circuit are dropped, the
+        // single-test analog of Plan 10's suite-parent parallel drop under the one-RunSession law).
+        // The run-level SIGINT routes into session.cancel(); the D-14 verdict map owns the exit code.
+        let shutdownRequested = false
+        let activeRunSession: { cancel(): void } | undefined
+        // A throw out of a member closure is a framework/setup error (not a test failure): the shell
+        // absorbs executor throws into failed members (D-13, never crashes the run), so we capture the
+        // first one, cancel the run, and re-surface it after `done` to preserve the exit-2 contract.
+        let frameworkError: unknown | undefined
+        const handleShutdown = () => {
+          shutdownRequested = true
+          process.exitCode = 130
+          try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
+        }
+        process.once('SIGINT', handleShutdown)
+        process.once('SIGTERM', handleShutdown)
+
+        // Pre-read each member's test file content for the ONE digest mint (D-20). Mirrors the
+        // closure's own per-file read; digests must be resolved before startRun (D-04).
+        const { readFile: readMemberFile } = await import('node:fs/promises')
+        const members: RunMemberDescriptor[] = []
+        const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> = []
+        const digestMembers: Array<{ testFileContent: string }> = []
+        let perMemberDigests: ConfigDigests[] = []
+
+        for (let i = 0; i < filtered.length; i++) {
+          const test = filtered[i]
+          const memberFilePath = files.find(f =>
+            parseResult.tests.some(t => t.name === test.name),
+          ) ?? 'unknown'
+          let memberFileContent = ''
+          if (memberFilePath !== 'unknown') {
+            try { memberFileContent = await readMemberFile(memberFilePath, 'utf-8') } catch { /* best-effort */ }
+          }
+          const globalIndex = i
+          members.push({
+            testId: (test as any)['test-id'] ?? test.name,
+            testIndex: globalIndex,
+            name: test.name,
+            // NO failFastGroup — the single-test path runs all members then aggregates.
+          })
+          digestMembers.push({ testFileContent: memberFileContent })
+          memberBindings.push((ctx) => runOneDirectTest(test, ctx, perMemberDigests[globalIndex]))
         }
 
-        let bailTriggered = false
-        for (const test of filtered) {
-          const testFlagOverrides: Record<string, unknown> = {}
-          if (opts.headless !== undefined) testFlagOverrides.browser = { headless: opts.headless }
-          if (opts.browser) testFlagOverrides.browser = { ...(testFlagOverrides.browser as Record<string, unknown> ?? {}), name: opts.browser }
-          const schedulingUse = mergeUseBlocks(
-            config.use as Record<string, unknown>,
-            undefined,
-            test.use as Record<string, unknown> | undefined,
-            testFlagOverrides,
-          )
-          const schedulingTarget = resolveTarget(config, test.target!)
-          const canRunInParallel = schedulingTarget.platform === 'web' && (schedulingUse as Record<string, unknown>).parallel === true
+        // D-20: the ONE digest mint — per-member cache pairs (suiteFileContent absent ⇒ a
+        // single-member run collapses the run-level pair to the member values).
+        const runDigests = computeRunConfigDigests({ configContent, members: digestMembers })
+        perMemberDigests = runDigests.perMember
 
-          if (canRunInParallel) {
-            pendingParallelRuns.push(runOneDirectTest(test))
-            continue
+        const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+        let singleRunProduct = 'unknown'
+        try {
+          singleRunProduct = resolveTarget(config, filtered[0].target!).product ?? 'unknown'
+        } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
+        const singleExecutionContext = resolveRunExecutionContext()
+        const singleBuildOrdinal = await resolveRunBuildOrdinal({ configDir, product: singleRunProduct })
+        const singleRunPorts = buildRunPorts({ configDir, runId: singleRunId })
+
+        const executor: MemberTestExecutor = async (member, ctx) => {
+          const binding = memberBindings[ctx.testIndex]
+          if (!binding) {
+            throw new Error(`No test-member binding for testIndex ${ctx.testIndex} (testId ${member.testId})`)
           }
-
-          const parallelBatchFailed = await flushParallelRuns()
-          if (opts.bail && parallelBatchFailed) {
-            console.log(pc.yellow('\nBailing out — stopping after first failure'))
-            bailTriggered = true
-            break
-          }
-
-          const outcome = await runOneDirectTest(test)
-          if (opts.bail && outcome.failed) {
-            console.log(pc.yellow('\nBailing out — stopping after first failure'))
-            bailTriggered = true
-            break
+          try {
+            return await binding(ctx)
+          } catch (err) {
+            if (frameworkError === undefined) {
+              frameworkError = err
+              try { activeRunSession?.cancel() } catch { /* best-effort */ }
+            }
+            return {
+              runId: member.testId,
+              name: member.name ?? member.testId,
+              filePath: 'unknown',
+              status: 'failed',
+              steps: [],
+              duration: 0,
+              failureSummary: err instanceof Error ? err.message : String(err),
+            }
           }
         }
 
-        if (!bailTriggered) {
-          const parallelBatchFailed = await flushParallelRuns()
-          if (opts.bail && parallelBatchFailed) {
-            console.log(pc.yellow('\nBailing out — stopping after first failure'))
-          }
+        const session = startRun({
+          runId: singleRunId as unknown as Parameters<typeof startRun>[0]['runId'],
+          scope: { tier: 'product', key: singleRunProduct },
+          executionContext: singleExecutionContext,
+          configDigests: runDigests.runLevel,
+          buildOrdinal: singleBuildOrdinal,
+          members,
+          executor,
+          masking: buildIdentityMasking(),
+          ports: singleRunPorts,
+        })
+        activeRunSession = session
+
+        const { verdict } = await session.done
+        activeRunSession = undefined
+        process.removeListener('SIGINT', handleShutdown)
+        process.removeListener('SIGTERM', handleShutdown)
+
+        // Re-surface a captured framework/setup error so the existing exit-2 contract holds.
+        if (frameworkError !== undefined) {
+          throw frameworkError
         }
 
         releaseAppium()
@@ -3020,8 +3096,11 @@ export function createRunCommand(): Command {
           dashboardDb.close()
         }
 
-        const hasFailed = results.some(r => r.status === 'failed') || suitesFailed
-        const exitCode = hasFailed ? 1 : 0
+        // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
+        // SIGINT that raced the terminal verdict still maps to 130. `suitesFailed` (the --all combined
+        // path) still forces a nonzero exit when the separately-run suites leg failed.
+        const singleExit = mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+        const exitCode = singleExit !== 0 ? singleExit : (suitesFailed ? 1 : 0)
         await maybePrintPostRunUpdateNotice({
           reporterSelection,
           effectiveLogLevel,
