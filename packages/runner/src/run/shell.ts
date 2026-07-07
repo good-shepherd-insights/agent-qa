@@ -125,19 +125,53 @@ export function startRun(config: RunConfig): RunSession {
 
       const events = createMemberEventSink({ bus, masking, testIndex })
 
-      let result: TestResult
+      // Race the executor against member-abort (SESSION-04). A member wedged on a genuinely-
+      // pending async op that never observes `ctx.abortSignal` (the planner's retry-without-image
+      // window) would otherwise block `await config.executor(...)` forever, so `done` never settles,
+      // the terminal sequence never runs, and `bus.close()` never clears the heartbeat — the live
+      // Ctrl+C hang. Racing lets the loop finalize the wedged member as `cancelled` and reach the
+      // ONE terminal sequence even when the executor never settles. The unit suite missed this
+      // because its `abortableExecutor` resolves the instant abort fires (executor-settles branch).
+      type RaceOutcome =
+        | { kind: 'result'; result: TestResult }
+        | { kind: 'error'; error: unknown }
+        | { kind: 'aborted' }
+
+      // The `.then(onResolve, onReject)` mapping attaches a rejection handler to the executor promise
+      // synchronously, so a member that settles (or rejects) AFTER the run raced past it can never
+      // surface as an unhandled rejection — the swallow is structural, no extra `.catch` needed.
+      const executorRaced: Promise<RaceOutcome> = config
+        .executor(member, { abortSignal: memberController.signal, testIndex, events })
+        .then(
+          (r): RaceOutcome => ({ kind: 'result', result: r }),
+          (error): RaceOutcome => ({ kind: 'error', error }),
+        )
+
+      let onMemberAbort: (() => void) | undefined
+      const abortRaced: Promise<RaceOutcome> = memberController.signal.aborted
+        ? Promise.resolve<RaceOutcome>({ kind: 'aborted' })
+        : new Promise<RaceOutcome>((resolve) => {
+            onMemberAbort = (): void => resolve({ kind: 'aborted' })
+            memberController.signal.addEventListener('abort', onMemberAbort, { once: true })
+          })
+
+      let raced: RaceOutcome
       try {
-        result = await config.executor(member, {
-          abortSignal: memberController.signal,
-          testIndex,
-          events,
-        })
-      } catch (error) {
+        raced = await Promise.race([executorRaced, abortRaced])
+      } finally {
+        runController.signal.removeEventListener('abort', onRunAbort)
+        if (onMemberAbort) memberController.signal.removeEventListener('abort', onMemberAbort)
+      }
+
+      let result: TestResult
+      if (raced.kind === 'result') {
+        result = raced.result
+      } else if (raced.kind === 'error') {
         // An executor throw is never silent and never crashes the run (T-361-10): a runWarning
         // plus a synthesized failed result keep termination on the verdict + runFinished path.
         bus.publish('runWarning', {
           code: 'member-executor-error',
-          message: error instanceof Error ? error.message : String(error),
+          message: raced.error instanceof Error ? raced.error.message : String(raced.error),
         })
         result = {
           name: member.testId,
@@ -146,8 +180,19 @@ export function startRun(config: RunConfig): RunSession {
           steps: [],
           duration: 0,
         }
-      } finally {
-        runController.signal.removeEventListener('abort', onRunAbort)
+      } else {
+        // Abort won the race — the member did not settle after run-level cancel/budget. Finalize it
+        // as `cancelled` through the SAME deriveMemberOutcome/assemblePerTestOutcome helpers below so
+        // the "exactly one handoff / verdict once / runFinished last" invariants stay intact. The
+        // aggregate verdict is still run-level-first (deriveAggregateVerdict: cancel⇒cancelled,
+        // budget⇒timeout), so this member's own 'cancelled' outcome never changes the aggregate.
+        result = {
+          name,
+          filePath: `${member.testId}.test.ts`,
+          status: 'cancelled',
+          steps: [],
+          duration: 0,
+        }
       }
 
       const outcome = deriveMemberOutcome(result)
