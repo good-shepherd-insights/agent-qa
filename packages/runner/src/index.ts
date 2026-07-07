@@ -173,6 +173,14 @@ export type {
   MemberTestExecutor,
   RunConfig,
 } from './run/ports.js'
+// SESSION-04 verdict-derivation core (Plan 05) — the shell (Plan 06, via src) and the CLI
+// (Plans 10/11, via dist) resolve these pure functions from the barrel.
+export {
+  deriveMemberOutcome,
+  deriveAggregateVerdict,
+  mapVerdictToExitCode,
+  isTestTimeoutMessage,
+} from './run/verdict.js'
 export type { LoopEventEmitPort } from './loop/ports.js'
 export {
   buildCacheableStepInput,
