@@ -9,8 +9,33 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { StepContext } from '../types.js'
+import type { LoopScopedLogger } from '../ports.js'
 import { LLMPlanner } from '../planner.js'
 import { makeFakeTokenAccounting } from './loop-harness.js'
+
+// A capturing LoopScopedLogger spy — records every warn/error call so a test can assert what
+// meta the planner surfaced for a swallowed provider error.
+interface LoggedCall { message: string; meta?: Record<string, unknown> }
+function makeSpyLogger(): LoopScopedLogger & { warnCalls: LoggedCall[]; errorCalls: LoggedCall[] } {
+  const warnCalls: LoggedCall[] = []
+  const errorCalls: LoggedCall[] = []
+  return {
+    warnCalls,
+    errorCalls,
+    debug() {},
+    info() {},
+    warn(message, meta) { warnCalls.push({ message, meta }) },
+    error(message, meta) { errorCalls.push({ message, meta }) },
+  }
+}
+
+// The codex Responses 400 exactly like the live RUNX-01 capture, duck-typed onto an Error.
+function makeApiCallError(): Error & { statusCode: number; responseBody: string } {
+  return Object.assign(new Error('Bad Request'), {
+    statusCode: 400,
+    responseBody: '{"detail":"Unsupported parameter: max_output_tokens"}',
+  })
+}
 
 vi.mock('ai', async (importActual) => {
   const actual = await importActual<typeof import('ai')>()
@@ -109,5 +134,58 @@ describe('LLMPlanner', () => {
 
     expect(accounting.recordUsageCalls).toHaveLength(1)
     expect(accounting.recordUsageCalls[0].messages.length).toBeGreaterThan(0)
+  })
+
+  // RUNX-04 (planner half): the swallowed provider-error catch must no longer collapse an
+  // APICallError to a bare "Bad Request" — statusCode + responseBody must survive the runner
+  // boundary so the codex 400 is diagnosable without a temporary patch.
+  it('surfaces a provider APICallError statusCode + responseBody through the log meta and rethrown message', async () => {
+    const { generateText } = await import('ai')
+    const apiError = makeApiCallError()
+    vi.mocked(generateText).mockRejectedValue(apiError as never)
+
+    const logger = makeSpyLogger()
+    const planner = new LLMPlanner({} as never, 'web', logger, undefined, makeFakeTokenAccounting())
+
+    await expect(planner.plan('Click sign in', screen, makeContext())).rejects.toThrow(
+      /Unsupported parameter: max_output_tokens/,
+    )
+
+    const logged = [...logger.warnCalls, ...logger.errorCalls]
+    const providerLog = logged.find((call) => call.meta?.statusCode === 400)
+    expect(providerLog).toBeDefined()
+    expect(String(providerLog?.meta?.responseBody)).toContain('Unsupported parameter: max_output_tokens')
+  })
+
+  it('rethrows an ordinary Error unchanged (no provider fields) with no regression', async () => {
+    const { generateText } = await import('ai')
+    const plainError = new Error('boom (ordinary)')
+    vi.mocked(generateText).mockRejectedValue(plainError as never)
+
+    const logger = makeSpyLogger()
+    const planner = new LLMPlanner({} as never, 'web', logger, undefined, makeFakeTokenAccounting())
+
+    await expect(planner.plan('Click sign in', screen, makeContext())).rejects.toBe(plainError)
+    // No provider enrichment fired for a plain error.
+    const logged = [...logger.warnCalls, ...logger.errorCalls]
+    expect(logged.some((call) => call.meta?.statusCode !== undefined)).toBe(false)
+  })
+
+  it('short-circuits an aborted signal via the existing abort path, rethrowing unchanged', async () => {
+    const { generateText } = await import('ai')
+    const abortError = makeApiCallError()
+    vi.mocked(generateText).mockRejectedValue(abortError as never)
+
+    const controller = new AbortController()
+    controller.abort()
+
+    const logger = makeSpyLogger()
+    const planner = new LLMPlanner({} as never, 'web', logger, undefined, makeFakeTokenAccounting())
+
+    await expect(
+      planner.plan('Click sign in', screen, makeContext(), controller.signal),
+    ).rejects.toBe(abortError)
+    // The abort path rethrows before any provider enrichment/logging.
+    expect(logger.warnCalls.some((call) => call.meta?.statusCode !== undefined)).toBe(false)
   })
 })
