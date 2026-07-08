@@ -12,9 +12,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  projectHookStarted,
+  projectHookFinished,
   projectStepFinalized,
   projectSubActionRecorded,
   projectTestFinished,
+  projectTestRetryScheduled,
 } from '../run/bus-projections'
 import type { MaskFn } from '../run/bus-projections'
 import { screenStateHash } from '../determinism/screen-hash'
@@ -193,6 +196,171 @@ describe('projectTestFinished (D-10, spec §2.2 member-test lifecycle)', () => {
 
   it('JSON-round-trips deep-equal', () => {
     const payload = projectTestFinished(makePerTestOutcome(), mask)
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})
+
+// Phase 363 D-01/Q-3 parity-append projections: hook lifecycle + retry visibility, plus
+// the widened optional fields on stepFinalized/testFinished. Every string routes through
+// the synthetic MaskFn (T-363-01 information-disclosure mitigation), proving the SECRET-42
+// roll-call holds for the new payloads before 362 activates the real redactor.
+describe('projectHookStarted (D-01, spec §2.2 hook lifecycle)', () => {
+  it('carries hook identity + phase/scope and masks string fields', () => {
+    const payload = projectHookStarted(
+      {
+        hookName: `seed-db ${SECRET}`,
+        phase: 'setup',
+        hookExecutionId: 'hx-1',
+        hookId: 'hook-1',
+        scope: 'suite',
+        testIndex: 0,
+        stepIndex: 2,
+      },
+      mask,
+    )
+    expect(payload.phase).toBe('setup')
+    expect(payload.scope).toBe('suite')
+    expect(payload.hookExecutionId).toBe('hx-1')
+    expect(JSON.stringify(payload)).not.toContain(SECRET)
+    expect(payload.hookName).toContain('[masked]')
+  })
+
+  it('omits absent optional identity fields (no undefined holes)', () => {
+    const payload = projectHookStarted(
+      { hookName: 'seed-db', phase: 'teardown', hookExecutionId: 'hx-2' },
+      mask,
+    )
+    expect(payload).not.toHaveProperty('hookId')
+    expect(payload).not.toHaveProperty('scope')
+    expect(payload).not.toHaveProperty('testIndex')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})
+
+describe('projectHookFinished (D-01, T-363-01 — captured-stream masking)', () => {
+  it('masks stdout, stderr, error, and each variables VALUE while preserving keys', () => {
+    const payload = projectHookFinished(
+      {
+        hookName: 'seed-db',
+        phase: 'setup',
+        hookExecutionId: 'hx-1',
+        status: 'failed',
+        durationMs: 128,
+        stdout: `seeded with token ${SECRET}`,
+        stderr: `warning: ${SECRET} rejected`,
+        variables: { API_TOKEN: `bearer ${SECRET}`, REGION: 'us-east' },
+        error: `hook failed: ${SECRET}`,
+        kind: 'hook',
+      },
+      mask,
+    )
+    expect(JSON.stringify(payload)).not.toContain(SECRET)
+    expect(payload.stdout).toContain('[masked]')
+    expect(payload.stderr).toContain('[masked]')
+    expect(payload.error).toContain('[masked]')
+    // Keys survive; only the secret-bearing value is masked.
+    expect(Object.keys(payload.variables).sort()).toEqual(['API_TOKEN', 'REGION'])
+    expect(payload.variables.API_TOKEN).toContain('[masked]')
+    expect(payload.variables.REGION).toBe('us-east')
+    expect(payload.status).toBe('failed')
+    expect(payload.durationMs).toBe(128)
+  })
+
+  it('omits absent optional fields and JSON-round-trips deep-equal', () => {
+    const payload = projectHookFinished(
+      {
+        hookName: 'seed-db',
+        phase: 'teardown',
+        hookExecutionId: 'hx-9',
+        status: 'passed',
+        durationMs: 5,
+        stdout: '',
+        stderr: '',
+        variables: {},
+      },
+      mask,
+    )
+    expect(payload).not.toHaveProperty('error')
+    expect(payload).not.toHaveProperty('kind')
+    expect(payload).not.toHaveProperty('hookId')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})
+
+describe('projectTestRetryScheduled (Q-3 — per-test attempt reset marker)', () => {
+  it('carries the attempt accounting and omits an absent reason', () => {
+    const payload = projectTestRetryScheduled({
+      testId: 'checkout::happy-path',
+      testIndex: 0,
+      attempt: 2,
+      maxAttempts: 3,
+    })
+    expect(payload.attempt).toBe(2)
+    expect(payload.maxAttempts).toBe(3)
+    expect(payload).not.toHaveProperty('reason')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+
+  it('carries an optional reason when present', () => {
+    const payload = projectTestRetryScheduled({
+      testId: 'checkout::happy-path',
+      testIndex: 0,
+      attempt: 1,
+      maxAttempts: 3,
+      reason: 'timeout on step 4',
+    })
+    expect(payload.reason).toBe('timeout on step 4')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})
+
+describe('projectStepFinalized widened fields (Q1 append — status/durationMs/error)', () => {
+  it('carries the additive optional fields with error masked', () => {
+    const payload = projectStepFinalized(
+      makeStepEvidence(false),
+      { testIndex: 0, stepIndex: 0 },
+      mask,
+      { status: 'failed', durationMs: 900, error: `boom ${SECRET}` },
+    )
+    expect(payload.status).toBe('failed')
+    expect(payload.durationMs).toBe(900)
+    expect(JSON.stringify(payload)).not.toContain(SECRET)
+    expect(payload.error).toContain('[masked]')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+
+  it('omits the widened fields when the optional inputs are absent (no undefined holes)', () => {
+    const payload = projectStepFinalized(
+      makeStepEvidence(false),
+      { testIndex: 0, stepIndex: 0 },
+      mask,
+    )
+    expect(payload).not.toHaveProperty('status')
+    expect(payload).not.toHaveProperty('durationMs')
+    expect(payload).not.toHaveProperty('error')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+})
+
+describe('projectTestFinished widened fields (Q1 append — durationMs/failureSummary/retryCount)', () => {
+  it('carries the additive optional fields with failureSummary masked', () => {
+    const payload = projectTestFinished(makePerTestOutcome(), mask, {
+      durationMs: 4200,
+      failureSummary: `step 4 failed: ${SECRET}`,
+      retryCount: 2,
+    })
+    expect(payload.durationMs).toBe(4200)
+    expect(payload.retryCount).toBe(2)
+    expect(JSON.stringify(payload)).not.toContain(SECRET)
+    expect(payload.failureSummary).toContain('[masked]')
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+
+  it('omits the widened fields when the optional inputs are absent (no undefined holes)', () => {
+    const payload = projectTestFinished(makePerTestOutcome(), mask)
+    expect(payload).not.toHaveProperty('durationMs')
+    expect(payload).not.toHaveProperty('failureSummary')
+    expect(payload).not.toHaveProperty('retryCount')
     expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
   })
 })

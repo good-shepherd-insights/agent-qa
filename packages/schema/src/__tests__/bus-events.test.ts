@@ -19,6 +19,12 @@ import type {
   RunEventType,
   RunFinishedPayload,
   RunStartedPayload,
+  HookStartedPayload,
+  HookFinishedPayload,
+  TestRetryScheduledPayload,
+  TestStartedPayload,
+  StepFinalizedPayload,
+  TestFinishedPayload,
 } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
@@ -57,6 +63,10 @@ const EXPECTED_EVENT_TYPES: readonly string[] = [
   'issuesStarted',
   'issuesCompleted',
   'issuesFailed',
+  // Phase 363 D-01/Q-3 parity appends — hook lifecycle + retry visibility
+  'hookStarted',
+  'hookFinished',
+  'testRetryScheduled',
 ]
 
 const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
@@ -168,5 +178,134 @@ describe('MemberTestOutcome — the D-15 per-test union split', () => {
   it('PerTestOutcome.outcome is assignable from MemberTestOutcome (D-15)', () => {
     expectTypeOf<MemberTestOutcome>().toMatchTypeOf<PerTestOutcome['outcome']>()
     expectTypeOf<RunEventType>().toEqualTypeOf<(typeof RUN_EVENT_TYPES)[number]>()
+  })
+})
+
+// Phase 363 D-01/Q-3 parity appends: the bus must carry hook lifecycle and retry
+// visibility as first-class typed events so the v1 Reporter interface can be deleted.
+// Envelope is untouched; the enum is extended append-only (spec §2.2). Payload shapes
+// mirror core/src/reporter/types.ts HookEvent/HookResultEvent (lines 25-52).
+describe('bus schema v1 — Phase 363 parity event vocabulary (D-01, spec §2.2)', () => {
+  it('appends hookStarted, hookFinished, testRetryScheduled at the end of the enum', () => {
+    for (const type of ['hookStarted', 'hookFinished', 'testRetryScheduled']) {
+      expect(RUN_EVENT_TYPES).toContain(type)
+    }
+    // Existing entries keep their order; the appends land after them.
+    const idx = (t: string) => (RUN_EVENT_TYPES as readonly string[]).indexOf(t)
+    expect(idx('hookStarted')).toBeGreaterThan(idx('issuesFailed'))
+    expect(idx('hookFinished')).toBeGreaterThan(idx('hookStarted'))
+    expect(idx('testRetryScheduled')).toBeGreaterThan(idx('hookFinished'))
+  })
+
+  it('HookStartedPayload carries hook identity + phase/scope and JSON-round-trips', () => {
+    const payload: HookStartedPayload = {
+      hookName: 'seed-db',
+      phase: 'setup',
+      hookExecutionId: 'hx-1',
+      hookId: 'hook-1',
+      scope: 'suite',
+      testIndex: 0,
+      stepIndex: 2,
+    }
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+  })
+
+  it('HookStartedPayload identity fields are the only required keys', () => {
+    const minimal: HookStartedPayload = {
+      hookName: 'seed-db',
+      phase: 'teardown',
+      hookExecutionId: 'hx-2',
+    }
+    expect(JSON.parse(JSON.stringify(minimal))).toEqual(minimal)
+  })
+
+  it('HookFinishedPayload extends the identity fields with result + captured streams', () => {
+    const payload: HookFinishedPayload = {
+      hookName: 'seed-db',
+      phase: 'setup',
+      hookExecutionId: 'hx-1',
+      hookId: 'hook-1',
+      scope: 'test',
+      testIndex: 0,
+      stepIndex: 2,
+      status: 'passed',
+      durationMs: 128,
+      stdout: 'seeded 3 rows',
+      stderr: '',
+      variables: { API_TOKEN: 'plain-value' },
+      error: undefined,
+      kind: 'hook',
+    }
+    // A HookFinishedPayload is assignable where the identity fields are expected.
+    const identity: HookStartedPayload = payload
+    expect(identity.hookExecutionId).toBe('hx-1')
+    // undefined optional keys are absent after JSON round-trip.
+    const { error: _e, ...defined } = payload
+    void _e
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(defined)
+  })
+
+  it('TestRetryScheduledPayload carries the per-test attempt accounting (Q-3)', () => {
+    const payload: TestRetryScheduledPayload = {
+      testId: 'checkout::happy-path',
+      testIndex: 0,
+      attempt: 2,
+      maxAttempts: 3,
+      reason: 'timeout on step 4',
+    }
+    expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
+    const minimal: TestRetryScheduledPayload = {
+      testId: 'checkout::happy-path',
+      testIndex: 0,
+      attempt: 1,
+      maxAttempts: 3,
+    }
+    expect(JSON.parse(JSON.stringify(minimal))).toEqual(minimal)
+  })
+})
+
+describe('bus schema v1 — Phase 363 widened payload fields (additive-optional, §2.2)', () => {
+  it('TestStartedPayload gains filePath + suite grouping + totalSteps (all optional)', () => {
+    const base: TestStartedPayload = { testId: 't1', testIndex: 0, name: 'happy path' }
+    expect(JSON.parse(JSON.stringify(base))).toEqual(base)
+    const widened: TestStartedPayload = {
+      testId: 't1',
+      testIndex: 0,
+      name: 'happy path',
+      filePath: 'suites/checkout.suite.yaml',
+      suiteId: 'checkout',
+      suiteName: 'Checkout',
+      suiteIndex: 0,
+      suiteTotal: 2,
+      totalSteps: 5,
+    }
+    expect(JSON.parse(JSON.stringify(widened))).toEqual(widened)
+  })
+
+  it('StepFinalizedPayload gains status/durationMs/error (all optional)', () => {
+    const widened: StepFinalizedPayload = {
+      testIndex: 0,
+      stepIndex: 1,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: false, reasoning: 'element not found' },
+      selfHealOccurred: true,
+      briefDigest: 'brief-d',
+      status: 'failed',
+      durationMs: 900,
+      error: 'element not found',
+    }
+    expect(JSON.parse(JSON.stringify(widened))).toEqual(widened)
+  })
+
+  it('TestFinishedPayload gains durationMs/failureSummary/retryCount (all optional)', () => {
+    const widened: TestFinishedPayload = {
+      testId: 't1',
+      testIndex: 0,
+      outcome: 'failed',
+      durationMs: 4200,
+      failureSummary: 'step 4 failed: element not found',
+      retryCount: 2,
+    }
+    expect(JSON.parse(JSON.stringify(widened))).toEqual(widened)
   })
 })
