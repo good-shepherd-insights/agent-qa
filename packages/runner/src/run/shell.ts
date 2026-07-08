@@ -132,7 +132,22 @@ export function startRun(config: RunConfig): RunSession {
         continue
       }
 
-      bus.publish('testStarted', { testId: member.testId, testIndex, name })
+      // 363 D-01: enrich testStarted with the member descriptor's parity fields (filePath, suite
+      // grouping, totalSteps). Suite grouping rides testStarted — the shell stays suite-agnostic
+      // (no suite lifecycle events); reporters derive boundaries by watching the grouping change.
+      // Absent optionals are omitted via conditional spread so no undefined-hole survives round-trip.
+      // These are structural identity fields (not captured streams) — unmasked, matching testId/name.
+      bus.publish('testStarted', {
+        testId: member.testId,
+        testIndex,
+        name,
+        ...(member.filePath !== undefined ? { filePath: member.filePath } : {}),
+        ...(member.suiteId !== undefined ? { suiteId: member.suiteId } : {}),
+        ...(member.suiteName !== undefined ? { suiteName: member.suiteName } : {}),
+        ...(member.suiteIndex !== undefined ? { suiteIndex: member.suiteIndex } : {}),
+        ...(member.suiteTotal !== undefined ? { suiteTotal: member.suiteTotal } : {}),
+        ...(member.totalSteps !== undefined ? { totalSteps: member.totalSteps } : {}),
+      })
 
       // Member abort chained to the run controller so run-level cancel/budget aborts the active test.
       const memberController = new AbortController()
@@ -225,7 +240,18 @@ export function startRun(config: RunConfig): RunSession {
       })
       outcomes.push(perTest)
       memberOutcomes.push(outcome)
-      bus.publish('testFinished', projectTestFinished(perTest, mask))
+      // 363 D-01: enrich testFinished with the TestResult the shell already holds at assembly —
+      // durationMs, retryCount, and the masked failureSummary (masked by projectTestFinished's
+      // terminal walk, T-363-05). Absent optionals are omitted (Pitfall 2 — sourced from the runner
+      // result, never new fields on the §A8 PerTestOutcome DTO).
+      bus.publish(
+        'testFinished',
+        projectTestFinished(perTest, mask, {
+          durationMs: result.duration,
+          failureSummary: result.failureSummary,
+          retryCount: result.retryCount,
+        }),
+      )
     }
 
     // ---- Terminal sequence — ONE owner (Pitfall 7) -------------------------------------------

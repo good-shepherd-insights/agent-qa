@@ -254,7 +254,12 @@ export async function executeStep(
     // failure/cancelled + the direct finish() call sites all route here), so emitting once
     // here covers EVERY terminal path exactly once. Fire-and-forget SYNC, optional-chained —
     // the loop never awaits telemetry; unbound port ⇒ no emit, byte-identical (D-02/D-07/D-05).
-    ports.events?.stepFinalized(evidence)
+    //
+    // 363 D-01: this is the ONE place the StepResult-derived status/durationMs/error exist AND the
+    // stepFinalized event is emitted, so the parity enrichment rides here (not a second core-side
+    // emission, which would double-publish). `error` is masked at the sink chokepoint (T-363-05).
+    const durationMs = performance.now() - startTime
+    ports.events?.stepFinalized(evidence, { status, durationMs, error })
     // The legacy trace is projected FROM evidence (Open Q5) — this array is exactly
     // projectLegacyTrace(result.evidence); the loop never mutates it after projection.
     const subActions = projectLegacyTrace(evidence)
@@ -262,7 +267,7 @@ export async function executeStep(
     const result: StepResult = {
       name: stepInstruction,
       status,
-      duration: performance.now() - startTime,
+      duration: durationMs,
       trace,
       evidence,
     }

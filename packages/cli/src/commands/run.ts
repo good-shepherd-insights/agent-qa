@@ -1839,7 +1839,8 @@ async function executeSuites(
   const digestMembers: Array<{ testFileContent: string; suiteFileContent?: string }> = []
   let perMemberDigests: ConfigDigests[] = []
 
-  for (const prepared of preparedSuites) {
+  for (let suiteIndex = 0; suiteIndex < preparedSuites.length; suiteIndex++) {
+    const prepared = preparedSuites[suiteIndex]
     for (let i = 0; i < prepared.testEntries.length; i++) {
       const [test, filePath] = prepared.testEntries[i]
       const globalIndex = members.length
@@ -1849,6 +1850,14 @@ async function executeSuites(
         testIndex: globalIndex,
         name: test.name,
         failFastGroup: prepared.suiteKey,
+        // 363 D-01: parity descriptor fields the shell rides onto testStarted. Suite grouping is
+        // per-suite (id/name/index/total); filePath + totalSteps are per-member.
+        filePath,
+        suiteId: prepared.suite['suite-id'],
+        suiteName: prepared.suite.name,
+        suiteIndex,
+        suiteTotal: preparedSuites.length,
+        totalSteps: test.steps.length,
       })
       digestMembers.push({
         testFileContent: prepared.testFileContents[i] ?? '',
@@ -3164,6 +3173,9 @@ export function createRunCommand(): Command {
             testIndex: globalIndex,
             name: test.name,
             // NO failFastGroup — the single-test path runs all members then aggregates.
+            // 363 D-01: filePath + totalSteps parity fields; no suite grouping on the single-test path.
+            ...(memberFilePath !== 'unknown' ? { filePath: memberFilePath } : {}),
+            totalSteps: test.steps.length,
           })
           digestMembers.push({ testFileContent: memberFileContent })
           memberBindings.push((ctx) => runOneDirectTest(test, ctx, perMemberDigests[globalIndex]))

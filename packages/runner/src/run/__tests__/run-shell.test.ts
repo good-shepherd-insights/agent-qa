@@ -442,5 +442,95 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
   })
 })
 
+// ---- 363 D-01 parity enrichment (testStarted descriptor fields + testFinished extras) ----
+//
+// The producer side of the reporter-parity contract: the shell rides the RunMemberDescriptor's
+// parity fields onto testStarted and the TestResult's durationMs/retryCount/failureSummary onto
+// testFinished, masking the failureSummary at the sink. Absent optionals leave no undefined-hole.
+
+describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
+  const SECRET = 'SECRET-42'
+  const masking = {
+    mask: (text: string) => text.replaceAll(SECRET, '[masked]'),
+    unmask: (text: string) => text,
+  }
+
+  it('testStarted carries the member descriptor parity fields when present', async () => {
+    const members: RunMemberDescriptor[] = [
+      {
+        testId: 'checkout-happy',
+        filePath: 'tests/checkout.yaml',
+        suiteId: 'checkout-suite',
+        suiteName: 'Checkout',
+        suiteIndex: 0,
+        suiteTotal: 2,
+        totalSteps: 4,
+      },
+    ]
+    const session = startRun(baseConfig({ members, executor: scriptedExecutor({}, []) }))
+    const events = drain(session)
+    await done(session)
+
+    const started = events.find(e => e.type === 'testStarted')
+    expect(started).toBeDefined()
+    expect(started!.payload).toMatchObject({
+      testId: 'checkout-happy',
+      testIndex: 0,
+      filePath: 'tests/checkout.yaml',
+      suiteId: 'checkout-suite',
+      suiteName: 'Checkout',
+      suiteIndex: 0,
+      suiteTotal: 2,
+      totalSteps: 4,
+    })
+  })
+
+  it('a bare member (no parity fields) yields a testStarted with no undefined-holes (JSON round-trip)', async () => {
+    const session = startRun(baseConfig({ members: [{ testId: 'a' }], executor: scriptedExecutor({}, []) }))
+    const events = drain(session)
+    await done(session)
+
+    const started = events.find(e => e.type === 'testStarted')!
+    expect(started.payload).not.toHaveProperty('filePath')
+    expect(started.payload).not.toHaveProperty('suiteId')
+    expect(JSON.parse(JSON.stringify(started.payload))).toEqual(started.payload)
+  })
+
+  it('testFinished carries durationMs + retryCount and a MASKED failureSummary from the TestResult', async () => {
+    const result: TestResult = {
+      name: 'a',
+      filePath: 'a.test.ts',
+      status: 'failed',
+      steps: [defaultStep({ status: 'failed' })],
+      duration: 987,
+      retryCount: 2,
+      failureSummary: `crashed on ${SECRET}`,
+    }
+    const session = startRun(
+      baseConfig({ masking, members: [{ testId: 'a' }], executor: scriptedExecutor({ a: result }, []) }),
+    )
+    const events = drain(session)
+    await done(session)
+
+    const finished = events.find(e => e.type === 'testFinished')!
+    const payload = finished.payload as Record<string, unknown>
+    expect(payload.durationMs).toBe(987)
+    expect(payload.retryCount).toBe(2)
+    expect(payload.failureSummary).toBe('crashed on [masked]')
+    expect(JSON.stringify(payload)).not.toContain(SECRET)
+  })
+
+  it('a passing member with no failureSummary/retryCount leaves those testFinished fields absent', async () => {
+    const session = startRun(baseConfig({ members: [{ testId: 'a' }], executor: scriptedExecutor({}, []) }))
+    const events = drain(session)
+    await done(session)
+
+    const finished = events.find(e => e.type === 'testFinished')!
+    expect(finished.payload).not.toHaveProperty('failureSummary')
+    expect(finished.payload).not.toHaveProperty('retryCount')
+    expect(JSON.parse(JSON.stringify(finished.payload))).toEqual(finished.payload)
+  })
+})
+
 // Keep vi referenced (fake-timer discipline utility) so lint does not flag the import.
 void vi
