@@ -10,6 +10,8 @@ import {
 import { createGuardrailStreamScan } from '../guardrail/stream-scan'
 import { createMaskingProviderRequestHook } from '../masking/egress-hook'
 import { getActiveMaskingContext } from '../masking/resolver'
+import { getActiveAuditSink } from '../policy/audit-sink-resolver'
+import type { GateTrust } from '../policy/gate'
 import { createPolicyGateToolCallHook } from '../policy/gate-hook'
 import type { AuditSink } from '../ports/audit-sink'
 import type { ConfirmPort, StandingApprovalReader } from '../ports/policy-ports'
@@ -26,7 +28,24 @@ export interface FirstPartySafetyDeps {
   reader?: StandingApprovalReader
   confirm?: ConfirmPort
   resolveExecutionContext?: () => ExecutionContext
+  trust?: GateTrust
   guardrailPolicyInput?: unknown
+}
+
+// When the caller supplies no direct auditSink, every egress path resolves the
+// active sink AT APPEND TIME (RESEARCH Pitfall 3): the run's ALS-stamped sink wins
+// while a run is active, the D-03 process default wins outside (once 362-02 installs
+// it). Registration-time capture silently dropped rows for the deps-less model
+// registrar — this adapter closes that gap without touching its call signature (D-01).
+function resolverBackedAuditSink(): AuditSink {
+  return {
+    appendExecutionAudit(row) {
+      return getActiveAuditSink()?.appendExecutionAudit(row)
+    },
+    appendGuardrailAudit(row) {
+      return getActiveAuditSink()?.appendGuardrailAudit(row)
+    },
+  }
 }
 
 export interface FirstPartySafetyHooks {
@@ -44,8 +63,12 @@ export function registerFirstPartySafetyHooks(
   // default: garbage input is passed explicitly by callers/tests.
   const policy = loadGuardrailPolicy(deps.guardrailPolicyInput ?? defaultGuardrailPolicyInput)
 
-  // (2) One registry, wired to the caller's audit sink.
-  const registry = new HookRegistry({ auditSink: deps.auditSink })
+  // A single composition-level sink threaded to every egress path: the caller's
+  // direct sink when provided, otherwise the resolver-backed adapter (Pitfall 3).
+  const auditSink: AuditSink = deps.auditSink ?? resolverBackedAuditSink()
+
+  // (2) One registry, wired to the composed audit sink.
+  const registry = new HookRegistry({ auditSink })
 
   // (3) masking BEFORE guardrail (locked 346 order: guardrail scans an
   // already-masked request). Every register method is token-gated (D-03), so the
@@ -55,7 +78,7 @@ export function registerFirstPartySafetyHooks(
     FIRST_PARTY,
   )
   registry.registerProviderRequest(
-    createGuardrailProviderRequestHook(policy, deps.auditSink),
+    createGuardrailProviderRequestHook(policy, auditSink),
     FIRST_PARTY,
   )
 
@@ -65,10 +88,11 @@ export function registerFirstPartySafetyHooks(
   // contravariant), so widen at this single trusted registration site — tool_call
   // dispatch only ever threads RiskActionDescriptors here (HOOK-FUT-01).
   const gateHook = createPolicyGateToolCallHook({
-    auditSink: deps.auditSink,
+    auditSink,
     reader: deps.reader,
     confirm: deps.confirm,
     resolveExecutionContext: deps.resolveExecutionContext,
+    trust: deps.trust,
   }) as AsyncToolCallHook
   registry.registerToolCallAsync(gateHook, FIRST_PARTY)
 
@@ -76,7 +100,7 @@ export function registerFirstPartySafetyHooks(
     registry,
     middleware: createProviderRequestMiddleware(
       registry,
-      createGuardrailStreamScan(policy, deps.auditSink),
+      createGuardrailStreamScan(policy, auditSink),
     ),
   }
 }
