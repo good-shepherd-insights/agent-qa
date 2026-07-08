@@ -1,0 +1,397 @@
+// SEAM-05 both-sides unmask-boundary ROLL-CALL (Phase 363, Plan 13 — D-12 regression clause).
+//
+// Decision provenance:
+//   D-09 — every projection/sink routes payload strings through the run MaskingContext (placeholders
+//          only exist post-seam).
+//   D-10 — the masking mechanism is grep-auditable; THIS suite is its behavioral backstop.
+//   D-11 — the human terminal is the SOLE unmasking surface (console prose + the ask-tier confirm
+//          prompt restore originals); every durable/machine/egress surface stays masked.
+//   D-12 — one synthetic fixture drives BOTH directions: human surfaces restore the ORIGINAL secrets,
+//          machine/durable surfaces keep only the placeholders.
+//   SEAM-05 — this file discharges the requirement's regression-test clause. Permanent; extended,
+//          never replaced.
+//
+// ENROLLMENT RULE (the house roll-call idiom — 345 role-coverage / 356 key-floor / 361 payload
+// roll-call): every human OR masked surface is a NAMED registry entry walked exhaustively. A new
+// surface that touches run output MUST enrol in exactly one of the two registries AND appear in the
+// single `SURFACE_ROLLCALL` union below — the enrollment guard fails on any surface that is walked
+// but not enrolled, or enrolled but not walked. New surfaces must enrol to ship.
+//
+// ONE fixture, both sides (D-12): a single `createMaskingContext()` with five sentinel secrets of
+// different shapes is planted — via `ctx.mask(...)` exactly where each sink puts a placeholder — into
+// one envelope stream + one handoff + one artifact snapshot + one cache-key input + one provider-egress
+// request + one debug-log record + one confirm action. The human registry drives the REAL console
+// reporter and the REAL Plan-09 unmasking confirm decorator; the masked registry drives the REAL
+// FsEventLog / FsHandoffStore / FsRunArtifactStore ports, the REAL JUnit + wire reporters, the REAL
+// masking egress hook, the REAL cache-key floor helpers, and the REAL debug-logging middleware.
+
+import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import {
+  createMaskingContext,
+  createMaskingProviderRequestHook,
+  unmaskForHumanOutput,
+} from '@vostride/agent-qa-safety'
+import type { ConfirmPort, ProviderRequestParams } from '@vostride/agent-qa-safety'
+import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
+import {
+  ARTIFACT_FILE,
+  EVENTS_FILE,
+  FsEventLog,
+  FsHandoffStore,
+  FsRunArtifactStore,
+  HANDOFF_FILE,
+  RUNS_SUBDIR,
+  slugBranch,
+} from '@vostride/agent-qa-runner-local'
+import {
+  computeCacheKey,
+  relevantEnvDigest,
+  RUN_ARTIFACT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
+import type {
+  CacheableStepInput,
+  CompletedRunHandoff,
+  MaskingContext,
+  PerTestOutcome,
+  RedactedEnvVar,
+  RiskActionDescriptor,
+  RunArtifactStageInput,
+  RunEventEnvelope,
+  RunEventType,
+  RunFinishedPayload,
+  RunId,
+  RunStartedPayload,
+  ScopeKey,
+  ServedBrief,
+  StepEvidence,
+  StepFinalizedPayload,
+  StepStartedPayload,
+  TestFinishedPayload,
+  TestStartedPayload,
+} from '@vostride/agent-qa-schema'
+
+import { createConsoleReporter, createJunitReporter, createWireReporter } from '../reporters/index.js'
+import { buildUnmaskingConfirm } from '../run-session-composition.js'
+
+// Any `<SECRET_n>` residue — matches both the raw `<SECRET_0>` and the XML-escaped `&lt;SECRET_0&gt;`.
+const PLACEHOLDER = /SECRET_\d+/
+
+// The five sentinel originals, of deliberately different shapes. None contains the substring
+// `SECRET_`, so a placeholder-absence assertion can never false-positive on an original.
+const SECRETS = {
+  step: 'sk-live-URL-000aaa111', // rides a rendered step line
+  error: 'sk-live-STEP-222bbb333', // rides a step error / cache input / egress / debug body
+  hook: 'hook-pw-444ccc555', // rides a hook variable value + hook stdout
+  summary: 'sk-live-SUM-666ddd777', // rides a failureSummary + handoff evidence + artifact snapshot
+  confirm: 'sk-live-ASK-888eee999', // rides the ask-tier confirm action name
+} as const
+
+const RUN_ID = 'rollcall-run'
+const SCOPE: ScopeKey = { tier: 'suite', key: 'auth' }
+
+interface RollCallFixture {
+  ctx: MaskingContext
+  envelopes: RunEventEnvelope[]
+  handoff: CompletedRunHandoff
+  artifactStage: RunArtifactStageInput
+  cacheInput: CacheableStepInput
+  egressParams: ProviderRequestParams
+  debugResponseBody: string
+  confirmActionName: string
+}
+
+/**
+ * Build the ONE fixture (D-12). Register all five secrets in a single MaskingContext, then plant each
+ * as a placeholder — through `ctx.mask(...)` — exactly where its sink would emit it: the envelope
+ * stream (step text, step error, hook variable + stdout, failureSummary), the completed-run handoff
+ * (step evidence reasoning), the run artifact (config snapshot + terminal error), the cache-key input
+ * (masked step text), the provider-egress request (RAW secret the egress hook masks), the debug-log
+ * response body, and the confirm action name (masked; the decorator unmasks it for the human).
+ */
+function buildRollCallFixture(): RollCallFixture {
+  const ctx = createMaskingContext()
+  for (const secret of Object.values(SECRETS)) ctx.register(secret)
+
+  // --- one envelope stream --------------------------------------------------------------------
+  let seq = 0
+  const env = <P>(type: RunEventType, payload: P): RunEventEnvelope =>
+    ({ seq: seq++, ts: 1_000 + seq, runId: RUN_ID, type, payload }) as RunEventEnvelope
+
+  const runStarted: RunStartedPayload = {
+    busSchemaVersion: 1,
+    scope: { tier: 'suite', key: 'auth-suite' },
+    executionContext: 'local-headless',
+    buildOrdinal: 1,
+    configDigests: { suiteConfigDigest: 'aaaa', testConfigDigest: 'bbbb' },
+    memberTestCount: 2,
+  }
+
+  const test0Started: TestStartedPayload = {
+    testId: 't0',
+    testIndex: 0,
+    name: 'Login test',
+    filePath: 'tests/login.yaml',
+    suiteId: 'suite-1',
+    suiteName: 'Auth',
+    suiteIndex: 0,
+    suiteTotal: 1,
+    totalSteps: 2,
+  }
+
+  const okStep: StepFinalizedPayload = {
+    testIndex: 0,
+    stepIndex: 0,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: true, reasoning: 'ok' },
+    selfHealOccurred: false,
+    briefDigest: 'digest',
+    status: 'passed',
+    durationMs: 1_200,
+  }
+
+  const failedStep: StepFinalizedPayload = {
+    testIndex: 0,
+    stepIndex: 1,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: false, reasoning: 'timeout' },
+    selfHealOccurred: false,
+    briefDigest: 'digest',
+    status: 'failed',
+    durationMs: 800,
+    error: ctx.mask(`Timeout waiting for token ${SECRETS.error}`),
+  }
+
+  const hookFinished = {
+    hookName: 'seed-db',
+    phase: 'setup',
+    hookExecutionId: 'h1',
+    scope: 'test',
+    status: 'passed',
+    durationMs: 300,
+    stdout: ctx.mask(`seeded with ${SECRETS.hook}`),
+    stderr: '',
+    variables: { TOKEN: ctx.mask(SECRETS.hook), REGION: 'us-east-1' },
+    kind: 'hook',
+  }
+
+  const test0Finished: TestFinishedPayload = { testId: 't0', testIndex: 0, outcome: 'failed', durationMs: 2_000 }
+
+  const test1Started: TestStartedPayload = {
+    testId: 't1',
+    testIndex: 1,
+    name: 'Checkout test',
+    filePath: 'tests/checkout.yaml',
+    suiteId: 'suite-1',
+    suiteName: 'Auth',
+    suiteIndex: 0,
+    suiteTotal: 1,
+    totalSteps: 1,
+  }
+
+  const test1FailedStep: StepFinalizedPayload = {
+    testIndex: 1,
+    stepIndex: 0,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: false, reasoning: 'assertion failed' },
+    selfHealOccurred: false,
+    briefDigest: 'digest',
+    status: 'failed',
+    durationMs: 1_200,
+    error: ctx.mask('Element not found'),
+  }
+
+  const test1Finished: TestFinishedPayload = {
+    testId: 't1',
+    testIndex: 1,
+    outcome: 'failed',
+    durationMs: 1_500,
+    failureSummary: ctx.mask(`Checkout failed near ${SECRETS.summary}`),
+  }
+
+  const runFinished: RunFinishedPayload = { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: 0 }
+
+  const envelopes: RunEventEnvelope[] = [
+    env('runStarted', runStarted),
+    env('testStarted', test0Started),
+    // step 0 carries the sentinel in its VISIBLE step text (console step-line surface)
+    env('stepStarted', { testIndex: 0, stepIndex: 0, stepText: ctx.mask(`Navigate to ${SECRETS.step}`) } satisfies StepStartedPayload),
+    env('stepFinalized', okStep),
+    env('stepStarted', { testIndex: 0, stepIndex: 1, stepText: 'Submit credentials' } satisfies StepStartedPayload),
+    env('stepFinalized', failedStep),
+    env('hookStarted', { hookName: 'seed-db', phase: 'setup', hookExecutionId: 'h1', scope: 'test' }),
+    env('hookFinished', hookFinished),
+    env('testFinished', test0Finished),
+    env('testStarted', test1Started),
+    env('stepStarted', { testIndex: 1, stepIndex: 0, stepText: 'Add to cart' } satisfies StepStartedPayload),
+    env('stepFinalized', test1FailedStep),
+    env('testFinished', test1Finished),
+    env('verdict', { verdict: 'failed' }),
+    env('runFinished', { ...runFinished, finalSeq: seq }),
+  ]
+
+  // --- one completed-run handoff carrying masked step evidence --------------------------------
+  const servedBrief: ServedBrief = {
+    scope: SCOPE,
+    asOfBuild: 1,
+    budget: 4_096,
+    truncation: 'none',
+    channel1: [],
+    channel2: [],
+    channel3: [],
+    briefDigest: 'brief-digest-deadbeef',
+  }
+  const maskedStep: StepEvidence = {
+    stepIndex: 0,
+    stepText: ctx.mask(`Save the record ${SECRETS.summary}`),
+    cacheStatus: 'miss',
+    servedBrief,
+    subActions: [],
+    verifierVerdict: { pass: false, reasoning: ctx.mask(`failed near ${SECRETS.summary}`) },
+  }
+  const outcome: PerTestOutcome = { testId: 't1', testIndex: 1, outcome: 'failed', steps: [maskedStep] }
+  const handoff: CompletedRunHandoff = {
+    schemaVersion: 1,
+    runId: RUN_ID as unknown as RunId,
+    scope: SCOPE,
+    buildOrdinal: 1,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'failed',
+    configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+    startedAt: 1_700_000_000_000,
+    endedAt: 1_700_000_010_000,
+    tests: [outcome],
+  }
+
+  // --- one run artifact snapshot (config + terminal error) ------------------------------------
+  const artifactStage: RunArtifactStageInput = {
+    schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
+    config: { rawConfigContent: ctx.mask(`base_url: https://app.test\n# token ${SECRETS.summary}`) },
+    errors: [{ code: 'RUN_FAILED', message: ctx.mask(`boom ${SECRETS.error}`), phase: 'run' }],
+  }
+
+  // --- one cache-key input (356 floor: masked step text + value-free env digest) --------------
+  const envVars: RedactedEnvVar[] = [{ name: 'API_KEY', present: true, kind: 'string', lengthBucket: 4 }]
+  const cacheInput: CacheableStepInput = {
+    platform: 'web',
+    suiteConfigDigest: 'suite-digest',
+    testConfigDigest: 'test-digest',
+    stepText: ctx.mask(`call API with ${SECRETS.error}`),
+    stepIndex: 0,
+    testIndex: 0,
+    relevantEnvDigest: relevantEnvDigest(envVars, 'salt'),
+    screenIdentityHash: 'screen-hash',
+  }
+
+  // --- one provider-egress request carrying the RAW secret (the hook masks it) ----------------
+  const egressParams = {
+    prompt: [{ role: 'user', content: [{ type: 'text', text: `use ${SECRETS.error}` }] }],
+    temperature: 0.2,
+  } as unknown as ProviderRequestParams
+
+  return {
+    ctx,
+    envelopes,
+    handoff,
+    artifactStage,
+    cacheInput,
+    egressParams,
+    debugResponseBody: ctx.mask(`{"detail":"rejected ${SECRETS.error}"}`),
+    confirmActionName: ctx.mask(`git push to ${SECRETS.confirm}`),
+  }
+}
+
+const FIXTURE = buildRollCallFixture()
+const ALL_ORIGINALS = Object.values(SECRETS)
+
+/** Replay the full envelope stream through the REAL console reporter (the sole unmasking surface). */
+function renderConsole(): string {
+  const chunks: string[] = []
+  const reporter = createConsoleReporter(FIXTURE.ctx, {
+    write: (chunk) => void chunks.push(chunk),
+    plain: true,
+    isTTY: false,
+    colorize: false,
+    verbose: true,
+  })
+  for (const envelope of FIXTURE.envelopes) reporter.handler(envelope)
+  return chunks.join('')
+}
+
+/** Grab only the console lines matching a needle, so each entry pins a distinct surface region. */
+function consoleLines(needle: string): string {
+  return renderConsole()
+    .split('\n')
+    .filter((line) => line.includes(needle))
+    .join('\n')
+}
+
+// ---- HUMAN registry: surfaces that MUST restore the original secrets (D-11) ------------------
+
+interface HumanSurface {
+  name: string
+  originals: string[]
+  render: () => string | Promise<string>
+}
+
+const HUMAN_SURFACES: HumanSurface[] = [
+  {
+    name: 'console:step-line',
+    originals: [SECRETS.step],
+    render: () => consoleLines('Navigate to'),
+  },
+  {
+    name: 'console:error-prose',
+    originals: [SECRETS.error],
+    render: () => consoleLines('Error:'),
+  },
+  {
+    name: 'console:hook-variable',
+    originals: [SECRETS.hook],
+    render: () => consoleLines('TOKEN='),
+  },
+  {
+    name: 'console:run-summary',
+    originals: [SECRETS.summary],
+    render: () => consoleLines('Checkout failed near'),
+  },
+  {
+    name: 'confirm:ask-prompt',
+    originals: [SECRETS.confirm],
+    // Drive the REAL Plan-09 unmasking confirm decorator: the base port receives the UNMASKED name.
+    render: async () => {
+      const seen: string[] = []
+      const base: ConfirmPort = (action: RiskActionDescriptor) => {
+        seen.push(action.name)
+        return false
+      }
+      const confirm = buildUnmaskingConfirm({ base, maskingContext: FIXTURE.ctx })
+      await confirm({ name: FIXTURE.confirmActionName, recognized: true })
+      return seen.join('\n')
+    },
+  },
+]
+
+describe('SEAM-05 unmask boundary roll-call — HUMAN side restores originals (D-11/D-12)', () => {
+  it.each(HUMAN_SURFACES.map((surface) => [surface.name, surface] as const))(
+    'human surface %s restores every original and shows no placeholder',
+    async (_name, surface) => {
+      const output = await surface.render()
+      for (const original of surface.originals) {
+        expect(output).toContain(original)
+      }
+      expect(output).not.toMatch(PLACEHOLDER)
+    },
+  )
+
+  it('the console reporter is the sole unmasking surface — the whole stream carries zero placeholders', () => {
+    const output = renderConsole()
+    expect(output).not.toMatch(PLACEHOLDER)
+    for (const original of ALL_ORIGINALS.filter((s) => s !== SECRETS.confirm)) {
+      expect(output).toContain(original)
+    }
+  })
+})
