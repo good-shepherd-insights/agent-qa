@@ -20,6 +20,7 @@ export { FirstPartyHookError } from './hooks/capability'
 export { createMaskingContext } from './masking/context'
 export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
+export { getActiveAuditSink, setActiveAuditSinkResolver } from './policy/audit-sink-resolver'
 export { unmaskForHumanOutput } from './masking/human-output'
 export { classifyRisk } from './policy/risk-classifier'
 export { evaluate } from './policy/gate'
@@ -50,6 +51,7 @@ export type { FirstPartySafetyDeps, FirstPartySafetyHooks } from './hooks/first-
 export type { PolicyGateHookDeps } from './policy/gate-hook'
 export type { MaskCategory } from './masking/categories'
 export type { MaskingContextResolver } from './masking/resolver'
+export type { AuditSinkResolver } from './policy/audit-sink-resolver'
 export type { MaskingSeedSources } from './masking/seed'
 export type {
   ExecutionContextResolver,

@@ -1,8 +1,20 @@
-import type { ContentOrigin, PolicyVerdict, RiskTier, ScanAction } from '@vostride/agent-qa-schema'
+import type {
+  ContentOrigin,
+  ExecutionContext,
+  PolicyVerdict,
+  RiskTier,
+  ScanAction,
+} from '@vostride/agent-qa-schema'
 
 export interface ExecutionAuditRow {
   runId?: string
   actionId?: string
+  /**
+   * Coded execution context the decision resolved under
+   * (local-interactive, local-headless, ci, or cloud). Additive SEAM-02
+   * correlation (D-13): the run stamps it so gate rows are self-describing.
+   */
+  executionContext?: ExecutionContext
   /**
    * Secret-free coded action value, e.g. tool_call or delete_resource.
    */
