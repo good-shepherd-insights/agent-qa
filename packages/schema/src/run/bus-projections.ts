@@ -3,9 +3,12 @@ import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
 import type {
+  HookFinishedPayload,
+  HookStartedPayload,
   StepFinalizedPayload,
   SubActionRecordedPayload,
   TestFinishedPayload,
+  TestRetryScheduledPayload,
 } from './bus-events'
 
 /**
@@ -53,6 +56,11 @@ export function projectStepFinalized(
   evidence: StepEvidence,
   ids: { testIndex: number; stepIndex: number },
   mask: MaskFn,
+  extra?: {
+    status?: StepFinalizedPayload['status']
+    durationMs?: number
+    error?: string
+  },
 ): StepFinalizedPayload {
   const payload: StepFinalizedPayload = {
     testIndex: ids.testIndex,
@@ -61,6 +69,12 @@ export function projectStepFinalized(
     verifierVerdict: evidence.verifierVerdict,
     selfHealOccurred: evidence.selfHeal !== undefined,
     briefDigest: evidence.servedBrief.briefDigest,
+    // Phase 363 D-01 additive-optional appends (RESEARCH Q1). These are plain extra inputs
+    // sourced from the runner `StepResult` — NOT fields on the §A8 StepEvidence DTO
+    // (Pitfall 2). Omitted when absent so no undefined-hole survives JSON round-trip.
+    ...(extra?.status !== undefined ? { status: extra.status } : {}),
+    ...(extra?.durationMs !== undefined ? { durationMs: extra.durationMs } : {}),
+    ...(extra?.error !== undefined ? { error: extra.error } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }
@@ -106,6 +120,7 @@ export function projectSubActionRecorded(
 export function projectTestFinished(
   outcome: PerTestOutcome,
   mask: MaskFn,
+  extra?: { durationMs?: number; failureSummary?: string; retryCount?: number },
 ): TestFinishedPayload {
   const { steps, ...rest } = outcome
   void steps
@@ -114,6 +129,82 @@ export function projectTestFinished(
     testId: rest.testId,
     testIndex: rest.testIndex,
     outcome: rest.outcome,
+    // Phase 363 D-01 additive-optional appends (RESEARCH Q1). Plain extra inputs sourced
+    // from the runner `TestResult` — NOT fields on the §A8 PerTestOutcome DTO (Pitfall 2).
+    // `failureSummary` is a string so it routes through the mask like every payload string.
+    ...(extra?.durationMs !== undefined ? { durationMs: extra.durationMs } : {}),
+    ...(extra?.failureSummary !== undefined
+      ? { failureSummary: extra.failureSummary }
+      : {}),
+    ...(extra?.retryCount !== undefined ? { retryCount: extra.retryCount } : {}),
   }
   return maskPayloadStrings(payload, mask)
+}
+
+// --- Hook lifecycle + retry projections (Phase 363 D-01 parity appends, spec §2.2) ----
+
+/**
+ * Hook identity → `hookStarted` payload (D-01). Pure structural pass: absent optional
+ * identity fields are omitted (no undefined holes), every string routes through the mask.
+ */
+export function projectHookStarted(
+  input: HookStartedPayload,
+  mask: MaskFn,
+): HookStartedPayload {
+  const payload: HookStartedPayload = {
+    hookName: input.hookName,
+    phase: input.phase,
+    hookExecutionId: input.hookExecutionId,
+    ...(input.hookId !== undefined ? { hookId: input.hookId } : {}),
+    ...(input.scope !== undefined ? { scope: input.scope } : {}),
+    ...(input.testIndex !== undefined ? { testIndex: input.testIndex } : {}),
+    ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
+  }
+  return maskPayloadStrings(payload, mask)
+}
+
+/**
+ * Hook result → `hookFinished` payload (D-01, T-363-01). `stdout`/`stderr`/`error` and each
+ * `variables` VALUE are routed through the mask by the terminal string walk — keys pass
+ * through because {@link maskPayloadStrings} masks values only. Absent optionals are omitted.
+ */
+export function projectHookFinished(
+  input: HookFinishedPayload,
+  mask: MaskFn,
+): HookFinishedPayload {
+  const payload: HookFinishedPayload = {
+    hookName: input.hookName,
+    phase: input.phase,
+    hookExecutionId: input.hookExecutionId,
+    status: input.status,
+    durationMs: input.durationMs,
+    stdout: input.stdout,
+    stderr: input.stderr,
+    variables: { ...input.variables },
+    ...(input.hookId !== undefined ? { hookId: input.hookId } : {}),
+    ...(input.scope !== undefined ? { scope: input.scope } : {}),
+    ...(input.testIndex !== undefined ? { testIndex: input.testIndex } : {}),
+    ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
+    ...(input.error !== undefined ? { error: input.error } : {}),
+    ...(input.kind !== undefined ? { kind: input.kind } : {}),
+  }
+  return maskPayloadStrings(payload, mask)
+}
+
+/**
+ * Retry accounting → `testRetryScheduled` payload (resolves RESEARCH Open Q-3). No mask
+ * param: the payload carries only identifiers and scheduling accounting (testId, indices,
+ * attempt counts, a coarse reason) — no captured secret-bearing streams. Absent `reason`
+ * is omitted so no undefined-hole survives JSON round-trip.
+ */
+export function projectTestRetryScheduled(
+  input: TestRetryScheduledPayload,
+): TestRetryScheduledPayload {
+  return {
+    testId: input.testId,
+    testIndex: input.testIndex,
+    attempt: input.attempt,
+    maxAttempts: input.maxAttempts,
+    ...(input.reason !== undefined ? { reason: input.reason } : {}),
+  }
 }

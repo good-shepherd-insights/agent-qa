@@ -50,6 +50,13 @@ export const RUN_EVENT_TYPES = [
   'issuesStarted',
   'issuesCompleted',
   'issuesFailed',
+  // Phase 363 D-01/Q-3 parity appends (append-only per spec §2.2): hook lifecycle
+  // (hookStarted/hookFinished) closes the reporter-parity gap before the v1 Reporter
+  // interface is deleted; testRetryScheduled (resolves RESEARCH Open Q-3) marks a
+  // per-test attempt reset so subscribers don't corrupt accumulation on retries.
+  'hookStarted',
+  'hookFinished',
+  'testRetryScheduled',
 ] as const
 
 export type RunEventType = (typeof RUN_EVENT_TYPES)[number]
@@ -100,11 +107,23 @@ export type HeartbeatPayload = Record<string, never>
 
 // --- Member-test lifecycle payloads -----------------------------------------
 
-/** `testStarted`: the {@link PerTestOutcome} identity fields (never the embedded steps). */
+/**
+ * `testStarted`: the {@link PerTestOutcome} identity fields (never the embedded steps).
+ * Phase 363 D-01 additive-optional appends (§2.2 append-only, RESEARCH A2): suite grouping
+ * rides testStarted rather than a new suite lifecycle event — the shell is suite-agnostic,
+ * so reporters derive suite boundaries by watching the grouping change. `filePath`/`totalSteps`
+ * restore console/JUnit/wire parity (RESEARCH Q1 table).
+ */
 export interface TestStartedPayload {
   testId: string
   testIndex: number
   name: string
+  filePath?: string
+  suiteId?: string
+  suiteName?: string
+  suiteIndex?: number
+  suiteTotal?: number
+  totalSteps?: number
 }
 
 /**
@@ -115,6 +134,14 @@ export interface TestFinishedPayload {
   testId: string
   testIndex: number
   outcome: MemberTestOutcome
+  /**
+   * Phase 363 D-01 additive-optional appends (§2.2, RESEARCH Q1). Sourced from the runner
+   * `TestResult` at projection time — NOT new fields on the §A8 `PerTestOutcome` DTO
+   * (Pitfall 2). `failureSummary` is masked at the sink.
+   */
+  durationMs?: number
+  failureSummary?: string
+  retryCount?: number
   readonly steps?: never
 }
 
@@ -138,6 +165,14 @@ export interface StepFinalizedPayload {
   verifierVerdict: VerifierVerdict
   selfHealOccurred: boolean
   briefDigest: string
+  /**
+   * Phase 363 D-01 additive-optional appends (§2.2, RESEARCH Q1). Sourced from the runner
+   * `StepResult` at projection time — NOT new fields on the §A8 `StepEvidence` DTO
+   * (Pitfall 2). `error` is masked at the sink.
+   */
+  status?: 'passed' | 'failed' | 'healed' | 'skipped' | 'cancelled'
+  durationMs?: number
+  error?: string
   readonly servedBrief?: never
 }
 
@@ -168,6 +203,53 @@ export interface SubActionRecordedPayload {
   artifactRefs?: readonly ArtifactRef[]
   readonly stateBefore?: never
   readonly screenshot?: never
+}
+
+// --- Hook lifecycle payloads (Phase 363 D-01 parity appends) ----------------
+
+/**
+ * `hookStarted`: the hook identity fields (mirrors core `HookEvent`, reporter/types.ts
+ * lines 25-32). `phase` distinguishes suite/test setup·teardown from `inline` hooks;
+ * `scope`/`testIndex`/`stepIndex` locate the hook in the run tree when present.
+ */
+export interface HookStartedPayload {
+  hookName: string
+  phase: 'setup' | 'teardown' | 'inline'
+  hookExecutionId: string
+  hookId?: string
+  scope?: 'suite' | 'test' | 'step'
+  testIndex?: number
+  stepIndex?: number
+}
+
+/**
+ * `hookFinished`: the identity fields plus the hook result (mirrors core `HookResultEvent`,
+ * reporter/types.ts lines 47-52). `stdout`/`stderr`/`error` and each `variables` VALUE are
+ * masked at projection (T-363-01); `variables` keys pass through. `kind` distinguishes a
+ * plain hook from an appium-script / runjs inline body.
+ */
+export interface HookFinishedPayload extends HookStartedPayload {
+  status: 'passed' | 'failed' | 'skipped'
+  durationMs: number
+  stdout: string
+  stderr: string
+  variables: Record<string, string>
+  error?: string
+  kind?: 'hook' | 'appium-script' | 'runjs'
+}
+
+/**
+ * `testRetryScheduled` (resolves RESEARCH Open Q-3): emitted when the member-runner retry
+ * loop schedules another attempt. Only the FINAL attempt emits the authoritative
+ * `testFinished`; this event marks a per-test accumulation reset for subscribers so
+ * repeated `stepStarted` sequences mid-member don't corrupt counts/durations.
+ */
+export interface TestRetryScheduledPayload {
+  testId: string
+  testIndex: number
+  attempt: number
+  maxAttempts: number
+  reason?: string
 }
 
 // --- Post-processing / status chip payloads (defined-never-emitted in M1) -----
@@ -208,6 +290,9 @@ export type RunEventPayload =
   | StepStartedPayload
   | StepFinalizedPayload
   | SubActionRecordedPayload
+  | HookStartedPayload
+  | HookFinishedPayload
+  | TestRetryScheduledPayload
   | ChipEventPayload
 
 /**
@@ -251,6 +336,9 @@ export type RunEvent =
   | RunEventOf<'stepStarted', StepStartedPayload>
   | RunEventOf<'stepFinalized', StepFinalizedPayload>
   | RunEventOf<'subActionRecorded', SubActionRecordedPayload>
+  | RunEventOf<'hookStarted', HookStartedPayload>
+  | RunEventOf<'hookFinished', HookFinishedPayload>
+  | RunEventOf<'testRetryScheduled', TestRetryScheduledPayload>
   | RunEventOf<'analysisStarted', AnalysisStartedPayload>
   | RunEventOf<'analysisCompleted', AnalysisCompletedPayload>
   | RunEventOf<'analysisFailed', AnalysisFailedPayload>
