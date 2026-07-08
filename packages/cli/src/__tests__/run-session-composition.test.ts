@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync } from 'node:fs'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { FsEventLog, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   computeRunConfigDigests,
   buildIdentityMasking,
@@ -12,6 +13,9 @@ import {
   sensitiveEnvSlice,
   extractAuthStateSensitiveStrings,
   buildRunMaskingContext,
+  stampAuditSink,
+  buildRunAuditSink,
+  buildRunSafetyHooks,
 } from '../run-session-composition.js'
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
@@ -276,5 +280,139 @@ describe('resolveRunExecutionContext (delegates to safety-local)', () => {
   it('honors an explicit override', () => {
     const ctx = resolveRunExecutionContext('cloud')
     expect(ctx).toBe('cloud')
+  })
+})
+
+// ---- (8) per-run stamped audit sink (D-12/D-13) --------------------------------------------
+
+// D-13 (RESEARCH Open Q3): the stamp WINS over any pre-existing row runId/executionContext —
+// correlation is authored at the single composition-root stamping site, not by callers.
+describe('stampAuditSink (D-13 — stamp-wins correlation)', () => {
+  it('overrides row runId + executionContext on execution rows, and runId on guardrail rows', async () => {
+    const execRows: ExecutionAuditRow[] = []
+    const guardRows: GuardrailAuditRow[] = []
+    const inner: AuditSink = {
+      appendExecutionAudit(row) {
+        execRows.push(row)
+      },
+      appendGuardrailAudit(row) {
+        guardRows.push(row)
+      },
+    }
+    const stamped = stampAuditSink(inner, 'run-1', 'ci')
+
+    await stamped.appendExecutionAudit({
+      runId: 'STALE',
+      executionContext: 'cloud',
+      action: 'delete_record',
+      riskTier: 'destructive',
+      verdict: 'deny',
+      outcome: 'fail-closed-denied',
+      reason: 'r',
+    })
+    await stamped.appendGuardrailAudit({ runId: 'STALE', action: 'redact' })
+
+    expect(execRows).toHaveLength(1)
+    expect(execRows[0].runId).toBe('run-1')
+    expect(execRows[0].executionContext).toBe('ci')
+    expect(guardRows).toHaveLength(1)
+    expect(guardRows[0].runId).toBe('run-1')
+  })
+})
+
+// D-12: the per-run sink writes into the SAME .agent-qa/runs/<slug(runId)>/ directory FsEventLog
+// uses — the paths cannot fork (a completed run is one self-contained directory).
+describe('buildRunAuditSink (D-12 — path identity with FsEventLog)', () => {
+  it('writes execution_audit.jsonl in the exact dir FsEventLog writes events.jsonl', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-audit-'))
+    const runId = 'r_audit-path-check'
+    const sink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
+
+    await sink.appendExecutionAudit({
+      action: 'noop',
+      riskTier: 'read-only',
+      verdict: 'allow',
+      outcome: 'proceeded',
+      reason: 'r',
+    })
+
+    const root = resolve(configDir, '.agent-qa')
+    new FsEventLog({ root, runId }).append({
+      seq: 1,
+      ts: 0,
+      runId,
+      type: 'runWarning',
+      payload: { code: 'x', message: 'x' },
+    } as never)
+
+    const runDir = join(root, RUNS_SUBDIR, slugBranch(runId))
+    expect(existsSync(join(runDir, 'execution_audit.jsonl'))).toBe(true)
+    expect(existsSync(join(runDir, 'events.jsonl'))).toBe(true)
+  })
+})
+
+// ---- (9) per-run safety-hooks registrar (D-01/D-15/D-10/D-11) ------------------------------
+
+describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)', () => {
+  it('denies a destructive descriptor in a fail-closed ci context AND appends a stamped execution row (D-01)', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+    const runId = 'r_hooks-deny'
+    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
+    const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', trustMode: false })
+
+    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    expect(result.action).toBe('deny')
+
+    const line = readFileSync(
+      join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
+      'utf-8',
+    ).trim()
+    const row = JSON.parse(line) as Record<string, unknown>
+    expect(row).toHaveProperty('runId', runId)
+    expect(row).toHaveProperty('executionContext', 'ci')
+    expect(row.outcome).toBe('fail-closed-denied')
+  })
+
+  it('allows the same dispatch under session trustMode (D-15)', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+    const runId = 'r_hooks-trust'
+    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'ci' })
+    const { safetyHooks } = buildRunSafetyHooks({ auditSink, executionContext: 'ci', trustMode: true })
+
+    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    expect(result.action).toBe('allow')
+
+    const line = readFileSync(
+      join(resolve(configDir, '.agent-qa'), RUNS_SUBDIR, slugBranch(runId), 'execution_audit.jsonl'),
+      'utf-8',
+    ).trim()
+    const row = JSON.parse(line) as Record<string, unknown>
+    expect(row.outcome).toBe('proceeded')
+    expect(row.trustSource).toBe('session-trust-mode')
+  })
+
+  it('accumulates awaited confirm time; confirmPausedMs() reports the running total (D-10)', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
+    const runId = 'r_hooks-pause'
+    const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'local-interactive' })
+    const confirm = async () => {
+      await new Promise((r) => setTimeout(r, 10))
+      return true
+    }
+    const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
+      auditSink,
+      executionContext: 'local-interactive',
+      trustMode: false,
+      confirm,
+    })
+
+    expect(confirmPausedMs()).toBe(0)
+    const first = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    expect(first.action).toBe('allow')
+    const afterOne = confirmPausedMs()
+    expect(afterOne).toBeGreaterThan(0)
+
+    await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    expect(confirmPausedMs()).toBeGreaterThanOrEqual(afterOne)
   })
 })
