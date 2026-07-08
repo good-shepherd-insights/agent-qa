@@ -323,6 +323,9 @@ importers:
       '@vostride/agent-qa-runner-local':
         specifier: workspace:*
         version: link:../runner-local
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
       '@vostride/agent-qa-web':
         specifier: workspace:*
         version: link:../web

@@ -8,7 +8,7 @@ import type {
   RunArtifactTestSourceSnapshot,
   RunAttributes,
 } from '@vostride/agent-qa-core'
-import type { RunEventEnvelope } from '@vostride/agent-qa-runner'
+import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase } from '../db/database.js'
 
 /**

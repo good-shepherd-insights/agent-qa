@@ -1,12 +1,61 @@
 import { EventEmitter } from 'node:events'
 import { spawn, execSync, type ChildProcess } from 'node:child_process'
 import treeKill from 'tree-kill'
+import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 import type { ExecutionBackend, ExecuteOptions } from './execution-backend.js'
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000
 const DEFAULT_STALE_THRESHOLD_MS = 30_000
 const PROCESS_TERMINATION_GRACE_MS = 5_000
 const HANDLE_RETENTION_MS = 5 * 60 * 1000
+
+const AGENT_QA_EVENT_PREFIX = 'AGENT_QA_EVENT:'
+
+type ProcessStatus = 'completed' | 'failed' | 'cancelled'
+
+/**
+ * Map a bus `testFinished.outcome` / `verdict` / `runFinished.aggregateVerdict` value
+ * (the frozen §2.2 envelope vocabulary) to the spawn's process-status ground truth.
+ * `passed`/`healed` → completed, `cancelled` → cancelled, `failed`/`timeout` → failed.
+ * `skipped` (a member-only outcome) is ignored for process status — an all-skipped run
+ * is vacuously passed at the aggregate level (D-15). Returns undefined for anything else,
+ * so the caller leaves the running status untouched.
+ */
+function mapOutcomeToProcessStatus(outcome: unknown): ProcessStatus | undefined {
+  switch (outcome) {
+    case 'passed':
+    case 'healed':
+      return 'completed'
+    case 'cancelled':
+      return 'cancelled'
+    case 'failed':
+    case 'timeout':
+      return 'failed'
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Derive the process-status ground truth from a bus envelope. `testFinished.outcome` is the
+ * per-member signal; `verdict.verdict` and `runFinished.aggregateVerdict` are the authoritative
+ * run-level results (they arrive last in the stream, so last-writer-wins yields the aggregate).
+ * Every other event type (including `heartbeat`, `stepFinalized`, hooks, unknown types) returns
+ * undefined so the caller leaves the running status untouched.
+ */
+function processStatusFromEnvelope(envelope: RunEventEnvelope): ProcessStatus | undefined {
+  const payload = envelope.payload as Record<string, unknown> | undefined
+  switch (envelope.type) {
+    case 'testFinished':
+      return mapOutcomeToProcessStatus(payload?.outcome)
+    case 'verdict':
+      return mapOutcomeToProcessStatus(payload?.verdict)
+    case 'runFinished':
+      return mapOutcomeToProcessStatus(payload?.aggregateVerdict)
+    default:
+      return undefined
+  }
+}
 
 export interface LiveExecutionEvent {
   id: number
@@ -132,10 +181,34 @@ export class TestRunner extends EventEmitter implements ExecutionBackend {
     this.pushEvent(opts.runId, { type: 'run-start', runId: opts.runId, status: 'running' })
 
     let stdoutBuffer = ''
-    // Capture the actual test result status from the reporter (test-complete event).
-    // This is the ground truth — process exit code can be misleading (e.g., mobile
-    // tests exit non-zero from Appium cleanup even when all steps pass).
-    let testResultStatus: string | undefined
+    // Capture the process-status ground truth from the bus wire (D-02): `testFinished.outcome`
+    // per member, `verdict`/`runFinished.aggregateVerdict` authoritative at the run level. This
+    // is the ground truth — process exit code can be misleading (e.g., mobile tests exit
+    // non-zero from Appium cleanup even when all steps pass).
+    let testProcessStatus: ProcessStatus | undefined
+
+    // Parse one wire line: `AGENT_QA_EVENT:<JSON envelope>`. The envelope is the frozen §2.2
+    // shape `{seq, ts, runId, type, payload}`. Every parsed event refreshes the heartbeat clock;
+    // completion events update the process-status ground truth; unknown types pass through to the
+    // buffer untouched (the try/catch below tolerates malformed lines). The removed per-event
+    // base64 screenshot field is simply absent — nothing here dereferences it.
+    const ingestWireLine = (line: string): void => {
+      if (line.startsWith(AGENT_QA_EVENT_PREFIX)) {
+        try {
+          const envelope = JSON.parse(line.slice(AGENT_QA_EVENT_PREFIX.length)) as RunEventEnvelope
+          handle.lastEventAt = Date.now()
+          const mapped = processStatusFromEnvelope(envelope)
+          if (mapped) testProcessStatus = mapped
+          this.pushEvent(opts.runId, envelope as unknown as Record<string, unknown>)
+        } catch {
+          handle.output.push(line)
+          this.emit('output', opts.runId, line)
+        }
+      } else {
+        handle.output.push(line)
+        this.emit('output', opts.runId, line)
+      }
+    }
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdoutBuffer += chunk.toString()
@@ -144,22 +217,7 @@ export class TestRunner extends EventEmitter implements ExecutionBackend {
 
       for (const line of lines) {
         if (!line) continue
-        if (line.startsWith('AGENT_QA_EVENT:')) {
-          try {
-            const payload = JSON.parse(line.slice('AGENT_QA_EVENT:'.length))
-            handle.lastEventAt = Date.now()
-            if (payload.type === 'test-complete' && payload.status) {
-              testResultStatus = payload.status
-            }
-            this.pushEvent(opts.runId, payload)
-          } catch {
-            handle.output.push(line)
-            this.emit('output', opts.runId, line)
-          }
-        } else {
-          handle.output.push(line)
-          this.emit('output', opts.runId, line)
-        }
+        ingestWireLine(line)
       }
     })
 
@@ -174,31 +232,15 @@ export class TestRunner extends EventEmitter implements ExecutionBackend {
       if (timer) clearTimeout(timer)
       if (forceKillTimer) clearTimeout(forceKillTimer)
       if (stdoutBuffer) {
-        if (stdoutBuffer.startsWith('AGENT_QA_EVENT:')) {
-          try {
-            const payload = JSON.parse(stdoutBuffer.slice('AGENT_QA_EVENT:'.length))
-            if (payload.type === 'test-complete' && payload.status) {
-              testResultStatus = payload.status
-            }
-            this.pushEvent(opts.runId, payload)
-          } catch {
-            handle.output.push(stdoutBuffer)
-          }
-        } else {
-          handle.output.push(stdoutBuffer)
-        }
+        ingestWireLine(stdoutBuffer)
         stdoutBuffer = ''
       }
 
       if (handle.status !== 'timeout' && handle.status !== 'cancelled' && handle.status !== 'failed') {
-        // Use the actual test result from the reporter (test-complete event) as
-        // ground truth. A clean process exit without reporter completion is incomplete.
-        if (testResultStatus) {
-          handle.status = testResultStatus === 'passed'
-            ? 'completed'
-            : testResultStatus === 'cancelled'
-              ? 'cancelled'
-              : 'failed'
+        // Use the bus ground truth (testFinished / verdict / runFinished) as the authoritative
+        // status. A clean process exit without a terminal envelope is incomplete.
+        if (testProcessStatus) {
+          handle.status = testProcessStatus
         } else {
           handle.status = 'failed'
           handle.completionReason = 'process exited before test completed'

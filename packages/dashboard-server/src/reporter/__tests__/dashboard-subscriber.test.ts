@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-runner'
+import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 import { DashboardDatabase } from '../../db/database.js'
 import { createDashboardRunIngest } from '../dashboard-subscriber.js'
 

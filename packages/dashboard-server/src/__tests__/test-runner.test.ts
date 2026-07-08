@@ -43,7 +43,7 @@ function waitForEvent(r: TestRunner, runId: string, eventType: string): Promise<
 }
 
 describe('TestRunner', () => {
-  it('spawn + event parsing: emits test-start and run-complete on successful exit', async () => {
+  it('spawn + envelope parsing: emits testStarted/testFinished and run-complete on successful exit', async () => {
     runner = new TestRunner({ cliBin: okScript })
     const runId = `run-ok-${Date.now()}`
 
@@ -55,9 +55,11 @@ describe('TestRunner', () => {
 
     const events = runner.getBufferedEvents(runId)
     const types = events.map(e => e.type)
+    // Synthesized server frames flank the verbatim bus envelopes.
     expect(types).toContain('run-start')
-    expect(types).toContain('test-start')
-    expect(types).toContain('test-complete')
+    expect(types).toContain('testStarted')
+    expect(types).toContain('testFinished')
+    expect(types).toContain('runFinished')
     expect(types).toContain('run-complete')
   })
 
@@ -85,8 +87,8 @@ describe('TestRunner', () => {
 
   it('kill requests graceful cancellation before force-kill fallback', async () => {
     const gracefulScript = createTempScript('graceful-cancel.sh', `#!/bin/sh
-trap "echo 'AGENT_QA_EVENT:{\\"type\\":\\"test-complete\\",\\"testName\\":\\"test\\",\\"status\\":\\"cancelled\\"}'; exit 130" INT TERM
-echo 'AGENT_QA_EVENT:{"type":"test-start","testName":"test"}'
+trap "echo 'AGENT_QA_EVENT:{\\"seq\\":2,\\"ts\\":2,\\"runId\\":\\"r\\",\\"type\\":\\"testFinished\\",\\"payload\\":{\\"testId\\":\\"t\\",\\"testIndex\\":0,\\"outcome\\":\\"cancelled\\"}}'; exit 130" INT TERM
+echo 'AGENT_QA_EVENT:{"seq":1,"ts":1,"runId":"r","type":"testStarted","payload":{"testId":"t","testIndex":0,"name":"test"}}'
 while true; do sleep 1; done
 `)
     const processKill = vi.spyOn(process, 'kill')
@@ -265,7 +267,7 @@ while true; do sleep 1; done
 
   it('exit zero without reporter completion is failed', async () => {
     const incompleteScript = createTempScript('incomplete.sh', `#!/bin/sh
-echo 'AGENT_QA_EVENT:{"type":"test-start","testName":"test"}'
+echo 'AGENT_QA_EVENT:{"seq":1,"ts":1,"runId":"r","type":"testStarted","payload":{"testId":"t","testIndex":0,"name":"test"}}'
 exit 0
 `)
     const onClose = vi.fn()
@@ -304,5 +306,67 @@ exit 0
 
     await runComplete
     expect(onClose).toHaveBeenCalledWith(runId, 'completed')
+  })
+
+  it('healed outcome maps to completed (process-status ground truth)', async () => {
+    const healedScript = createTempScript('healed.sh', `#!/bin/sh
+echo 'AGENT_QA_EVENT:{"seq":1,"ts":1,"runId":"r","type":"testStarted","payload":{"testId":"t","testIndex":0,"name":"test"}}'
+echo 'AGENT_QA_EVENT:{"seq":2,"ts":2,"runId":"r","type":"testFinished","payload":{"testId":"t","testIndex":0,"outcome":"healed"}}'
+exit 0
+`)
+    runner = new TestRunner({ cliBin: healedScript })
+    const runId = `run-healed-${Date.now()}`
+    const runComplete = waitForEvent(runner, runId, 'run-complete')
+    runner.execute({ runId, args: [], source: 'manual' })
+    const event = await runComplete
+    expect(event.status).toBe('completed')
+  })
+
+  it('cancelled outcome maps to cancelled without an external kill', async () => {
+    const cancelledScript = createTempScript('cancelled.sh', `#!/bin/sh
+echo 'AGENT_QA_EVENT:{"seq":1,"ts":1,"runId":"r","type":"testStarted","payload":{"testId":"t","testIndex":0,"name":"test"}}'
+echo 'AGENT_QA_EVENT:{"seq":2,"ts":2,"runId":"r","type":"testFinished","payload":{"testId":"t","testIndex":0,"outcome":"cancelled"}}'
+exit 0
+`)
+    runner = new TestRunner({ cliBin: cancelledScript })
+    const runId = `run-cancelled-outcome-${Date.now()}`
+    const runComplete = waitForEvent(runner, runId, 'run-complete')
+    runner.execute({ runId, args: [], source: 'manual' })
+    const event = await runComplete
+    expect(event.status).toBe('cancelled')
+  })
+
+  it('runFinished aggregateVerdict is authoritative over an earlier testFinished', async () => {
+    // A member reports passed, but the run-level aggregate is failed — the run result must
+    // follow the authoritative runFinished verdict.
+    const aggScript = createTempScript('aggregate.sh', `#!/bin/sh
+echo 'AGENT_QA_EVENT:{"seq":1,"ts":1,"runId":"r","type":"testStarted","payload":{"testId":"t","testIndex":0,"name":"test"}}'
+echo 'AGENT_QA_EVENT:{"seq":2,"ts":2,"runId":"r","type":"testFinished","payload":{"testId":"t","testIndex":0,"outcome":"passed"}}'
+echo 'AGENT_QA_EVENT:{"seq":3,"ts":3,"runId":"r","type":"runFinished","payload":{"aggregateVerdict":"failed","disposition":"detached","finalSeq":3}}'
+exit 0
+`)
+    runner = new TestRunner({ cliBin: aggScript })
+    const runId = `run-aggregate-${Date.now()}`
+    const runComplete = waitForEvent(runner, runId, 'run-complete')
+    runner.execute({ runId, args: [], source: 'manual' })
+    const event = await runComplete
+    expect(event.status).toBe('failed')
+  })
+
+  it('unknown envelope type is buffered without throwing', async () => {
+    const unknownScript = createTempScript('unknown.sh', `#!/bin/sh
+echo 'AGENT_QA_EVENT:{"seq":1,"ts":1,"runId":"r","type":"someFutureEvent","payload":{"whatever":true}}'
+echo 'AGENT_QA_EVENT:{"seq":2,"ts":2,"runId":"r","type":"testFinished","payload":{"testId":"t","testIndex":0,"outcome":"passed"}}'
+exit 0
+`)
+    runner = new TestRunner({ cliBin: unknownScript })
+    const runId = `run-unknown-${Date.now()}`
+    const runComplete = waitForEvent(runner, runId, 'run-complete')
+    runner.execute({ runId, args: [], source: 'manual' })
+    const event = await runComplete
+    // The unknown type neither crashed the parse loop nor blocked the passed mapping.
+    expect(event.status).toBe('completed')
+    const types = runner.getBufferedEvents(runId).map(e => e.type)
+    expect(types).toContain('someFutureEvent')
   })
 })
