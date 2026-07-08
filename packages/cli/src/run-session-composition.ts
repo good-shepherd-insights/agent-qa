@@ -15,6 +15,7 @@
 
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
+import { createMaskingContext, seedMaskingContext } from '@vostride/agent-qa-safety'
 import { detectExecutionContext } from '@vostride/agent-qa-safety-local'
 import { FsEventLog, FsHandoffStore, nextBuildOrdinal } from '@vostride/agent-qa-runner-local'
 import type {
@@ -240,4 +241,118 @@ export function buildSuiteMemberExecutor(input: {
     await input.lifecycle.ensureReady(binding.suiteKey, binding.hooks)
     return binding.run(ctx)
   }
+}
+
+// ---- (7) masking seed pipeline — sensitiveEnvSlice / extractAuthStateSensitiveStrings / -------
+// ---------------------------------- buildRunMaskingContext (D-05/D-06/D-07) --------------------
+//
+// The real MaskingContext seed pipeline 362-06 wires at the D-09 `buildIdentityMasking` injection
+// point. seedMaskingContext registers EVERY env value it is handed (filtering is explicitly the
+// caller's job), so `sensitiveEnvSlice` is the D-05 gate: masking must never degrade planning, so
+// selection is name-based ONLY (never value-based) — planner-visible config (BASE_URL, NODE_ENV,
+// HOME, PATH) is never seeded while every ambient-credential-shaped name is. `extractAuthStateSensitiveStrings`
+// is the D-07 channel (all cookie + all localStorage values, no classification heuristics — exact-string
+// masking means benign blobs only mask when the app renders that exact string). The ≥4-char
+// `minRegisteredLength` guard rides through unchanged.
+
+/** Uppercase-name suffix families that mark an env var as an ambient credential (D-05). */
+const SENSITIVE_ENV_SUFFIXES: readonly string[] = [
+  '_KEY',
+  '_TOKEN',
+  '_SECRET',
+  '_PASSWORD',
+  '_PASSWD',
+  '_CREDENTIAL',
+  '_CREDENTIALS',
+  '_AUTH',
+]
+
+/** Uppercase-name prefix families that mark an env var as an ambient credential (D-05). */
+const SENSITIVE_ENV_PREFIXES: readonly string[] = [
+  'AWS_SECRET',
+  'AWS_SESSION',
+  'ANTHROPIC_',
+  'OPENAI_',
+  'GH_',
+  'NPM_TOKEN',
+  'GITHUB_TOKEN',
+]
+
+/**
+ * Select the sensitive slice of `env` by NAME only (D-05). Deterministic: an uppercased name is
+ * kept when it ends with a sensitive suffix family OR begins with a sensitive prefix family.
+ * Never reads or matches on env VALUES; undefined values are skipped. The kept values feed
+ * `seedMaskingContext`'s `env` channel — planner-visible config names never appear here.
+ */
+export function sensitiveEnvSlice(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined) continue
+    const upper = name.toUpperCase()
+    const sensitive =
+      SENSITIVE_ENV_SUFFIXES.some((suffix) => upper.endsWith(suffix)) ||
+      SENSITIVE_ENV_PREFIXES.some((prefix) => upper.startsWith(prefix))
+    if (sensitive) out[name] = value
+  }
+  return out
+}
+
+/**
+ * Walk a Playwright `storageState` payload defensively and return every `cookies[].value` string
+ * plus every `origins[].localStorage[].value` string (D-07). No classification; tolerant of
+ * missing/odd sections and non-string values; returns [] for a non-object payload. The shape
+ * mirrors what `captureAuthStateForRun` (run.ts) persists.
+ */
+export function extractAuthStateSensitiveStrings(payload: unknown): string[] {
+  if (payload === null || typeof payload !== 'object') return []
+  const out: string[] = []
+
+  const cookies = (payload as { cookies?: unknown }).cookies
+  if (Array.isArray(cookies)) {
+    for (const cookie of cookies) {
+      const value = (cookie as { value?: unknown } | null)?.value
+      if (typeof value === 'string') out.push(value)
+    }
+  }
+
+  const origins = (payload as { origins?: unknown }).origins
+  if (Array.isArray(origins)) {
+    for (const origin of origins) {
+      const localStorage = (origin as { localStorage?: unknown } | null)?.localStorage
+      if (!Array.isArray(localStorage)) continue
+      for (const entry of localStorage) {
+        const value = (entry as { value?: unknown } | null)?.value
+        if (typeof value === 'string') out.push(value)
+      }
+    }
+  }
+
+  return out
+}
+
+/** The full run MaskingContext (register/dispose included) — 362-06 registers mid-run auth (D-06). */
+export type RunMaskingContext = ReturnType<typeof createMaskingContext>
+
+/**
+ * Construct and seed the run's real MaskingContext (D-05/D-06/D-07). One `createMaskingContext()`
+ * (default ≥4-char guard) seeded by a single `seedMaskingContext` call drawing from all three
+ * sources: the run's `SecretStore` (all values), the D-05 name-based sensitive env slice, and the
+ * concatenated D-07 auth-state values. The FULL context is returned so 362-06 can register mid-run
+ * auth values at lazy suite load/capture (D-06) and dispose at run end.
+ */
+export function buildRunMaskingContext(input: {
+  secretStore?: { forEachSecret(cb: (name: string, value: string) => void): void }
+  env?: NodeJS.ProcessEnv
+  authStatePayloads?: readonly unknown[]
+}): RunMaskingContext {
+  const ctx = createMaskingContext()
+  const knownSensitiveStrings = (input.authStatePayloads ?? []).flatMap((payload) =>
+    extractAuthStateSensitiveStrings(payload),
+  )
+  seedMaskingContext(ctx, {
+    secretStore: input.secretStore,
+    env: sensitiveEnvSlice(input.env ?? {}),
+    authState: { knownSensitiveStrings },
+  })
+  return ctx
 }
