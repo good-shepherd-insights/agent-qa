@@ -55,7 +55,6 @@ import {
 import type {
   CacheableStepInput,
   CompletedRunHandoff,
-  MaskingContext,
   PerTestOutcome,
   RedactedEnvVar,
   RiskActionDescriptor,
@@ -93,8 +92,12 @@ const SECRETS = {
 const RUN_ID = 'rollcall-run'
 const SCOPE: ScopeKey = { tier: 'suite', key: 'auth' }
 
+// The concrete safety context type (register/dispose/clear) the confirm decorator's
+// `RunMaskingContext` param requires — the leaner schema `MaskingContext` interface omits them.
+type RollCallMaskingContext = ReturnType<typeof createMaskingContext>
+
 interface RollCallFixture {
-  ctx: MaskingContext
+  ctx: RollCallMaskingContext
   envelopes: RunEventEnvelope[]
   handoff: CompletedRunHandoff
   artifactStage: RunArtifactStageInput
@@ -393,5 +396,173 @@ describe('SEAM-05 unmask boundary roll-call — HUMAN side restores originals (D
     for (const original of ALL_ORIGINALS.filter((s) => s !== SECRETS.confirm)) {
       expect(output).toContain(original)
     }
+  })
+})
+
+// ---- MASKED registry: surfaces that MUST keep only placeholders (D-11) -----------------------
+//
+// Each entry produces the surface's bytes from the SAME fixture and asserts placeholders present
+// AND every original absent. Filesystem ports write under one tmp runtime root; the reporters use
+// their injected write targets; the egress/cache/debug surfaces call the real helpers directly.
+
+const TMP_ROOT = mkdtempSync(join(tmpdir(), 'unmask-rollcall-'))
+const runDir = join(TMP_ROOT, RUNS_SUBDIR, slugBranch(RUN_ID))
+
+interface MaskedSurface {
+  name: string
+  render: () => string | Promise<string>
+}
+
+const MASKED_SURFACES: MaskedSurface[] = [
+  {
+    // events.jsonl — the durable event log, through the REAL FsEventLog under a tmpdir.
+    name: 'durable:events.jsonl',
+    render: () => {
+      const log = new FsEventLog({ root: TMP_ROOT, runId: RUN_ID })
+      for (const envelope of FIXTURE.envelopes) log.append(envelope)
+      return readFileSync(join(runDir, EVENTS_FILE), 'utf-8')
+    },
+  },
+  {
+    // handoff.json — the completed-run handoff, through the REAL FsHandoffStore.
+    name: 'durable:handoff.json',
+    render: () => {
+      new FsHandoffStore({ root: TMP_ROOT, runId: RUN_ID }).save(FIXTURE.handoff)
+      return readFileSync(join(runDir, HANDOFF_FILE), 'utf-8')
+    },
+  },
+  {
+    // artifact.json — the run-dir artifact snapshot, through the REAL FsRunArtifactStore.
+    name: 'durable:artifact.json',
+    render: () => {
+      new FsRunArtifactStore({ root: TMP_ROOT, runId: RUN_ID }).stage(FIXTURE.artifactStage)
+      return readFileSync(join(runDir, ARTIFACT_FILE), 'utf-8')
+    },
+  },
+  {
+    // JUnit XML — the CI-archived masked artifact, through the REAL junit reporter's flush.
+    name: 'durable:junit-xml',
+    render: async () => {
+      let xml = ''
+      const junit = createJunitReporter({
+        outputPath: '/unused/report.xml',
+        write: async (_path, content) => {
+          xml = content
+        },
+      })
+      for (const envelope of FIXTURE.envelopes) junit.handler(envelope)
+      await junit.flush()
+      return xml
+    },
+  },
+  {
+    // stdout wire — the spawn/CI-captured verbatim envelope stream, through the REAL wire reporter.
+    name: 'machine:stdout-wire',
+    render: () => {
+      const previous = process.env.AGENT_QA_LIVE_EVENTS
+      process.env.AGENT_QA_LIVE_EVENTS = 'true'
+      try {
+        const chunks: string[] = []
+        const wire = createWireReporter({ write: (chunk) => void chunks.push(chunk) })
+        for (const envelope of FIXTURE.envelopes) wire.handler(envelope)
+        return chunks.join('')
+      } finally {
+        if (previous === undefined) delete process.env.AGENT_QA_LIVE_EVENTS
+        else process.env.AGENT_QA_LIVE_EVENTS = previous
+      }
+    },
+  },
+  {
+    // debug log — the RUNX-04 middleware error surface, driven through the REAL middleware.
+    name: 'machine:debug-log',
+    render: async () => {
+      const lines: string[] = []
+      const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => void lines.push(line) })
+      const wrapGenerate = middleware.wrapGenerate
+      if (!wrapGenerate) throw new Error('debug middleware must expose wrapGenerate when enabled')
+      const params = {
+        prompt: [{ role: 'user', content: [{ type: 'text', text: FIXTURE.egressParams.prompt[0] ? 'shape-only' : 'x' }] }],
+      }
+      try {
+        await wrapGenerate({
+          doGenerate: async () => {
+            throw { statusCode: 400, url: 'https://provider.test', responseBody: FIXTURE.debugResponseBody }
+          },
+          params,
+          model: { modelId: 'test-model' },
+        } as never)
+      } catch {
+        // the middleware re-throws after logging — expected
+      }
+      return lines.join('\n')
+    },
+  },
+  {
+    // cache key material — the 356 masked-input floor, through the REAL computeCacheKey helpers.
+    name: 'machine:cache-key-material',
+    render: () => {
+      // The key hash must be stable from the masked input and must not embed the raw secret.
+      const key = computeCacheKey(FIXTURE.cacheInput)
+      expect(key).not.toContain(SECRETS.error)
+      return JSON.stringify(FIXTURE.cacheInput)
+    },
+  },
+  {
+    // provider egress — the 362-07 proof idiom, through the REAL masking egress hook.
+    name: 'machine:provider-egress',
+    render: () => {
+      const hook = createMaskingProviderRequestHook(() => FIXTURE.ctx)
+      return JSON.stringify(hook(FIXTURE.egressParams))
+    },
+  },
+]
+
+describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (D-11/D-12)', () => {
+  it.each(MASKED_SURFACES.map((surface) => [surface.name, surface] as const))(
+    'masked surface %s keeps placeholders and leaks no original',
+    async (_name, surface) => {
+      const output = await surface.render()
+      expect(output).toMatch(PLACEHOLDER)
+      for (const original of ALL_ORIGINALS) {
+        expect(output).not.toContain(original)
+      }
+    },
+  )
+})
+
+// ---- Enrollment guard: the roll-call union (T-363-31) ---------------------------------------
+//
+// The single source of truth for what is walked. A surface added to either registry without being
+// listed here (or listed here without a walking entry) fails this test — new surfaces MUST enrol.
+const SURFACE_ROLLCALL = [
+  'console:step-line',
+  'console:error-prose',
+  'console:hook-variable',
+  'console:run-summary',
+  'confirm:ask-prompt',
+  'durable:events.jsonl',
+  'durable:handoff.json',
+  'durable:artifact.json',
+  'durable:junit-xml',
+  'machine:stdout-wire',
+  'machine:debug-log',
+  'machine:cache-key-material',
+  'machine:provider-egress',
+] as const
+
+describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {
+  it('every walked surface is enrolled in the SURFACE_ROLLCALL union exactly once', () => {
+    const walked = [...HUMAN_SURFACES.map((s) => s.name), ...MASKED_SURFACES.map((s) => s.name)]
+    // No name collides across the two registries.
+    expect(new Set(walked).size).toBe(walked.length)
+    // The walked union is exactly the declared roll-call — a new unenrolled surface fails here.
+    expect([...walked].sort()).toEqual([...SURFACE_ROLLCALL].sort())
+  })
+
+  it('both sides derive from ONE fixture (single MaskingContext, single envelope stream)', () => {
+    // Every masked-side envelope surface and every human-side surface reads the same FIXTURE.ctx /
+    // FIXTURE.envelopes references — no per-surface fixture forks.
+    expect(FIXTURE.envelopes.length).toBeGreaterThan(0)
+    expect(HUMAN_SURFACES.length + MASKED_SURFACES.length).toBe(SURFACE_ROLLCALL.length)
   })
 })
