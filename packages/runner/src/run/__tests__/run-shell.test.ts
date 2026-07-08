@@ -286,6 +286,97 @@ describe('run-level cancel + budget (D-03)', () => {
   })
 })
 
+// ---- Pause-aware run-budget expiry (D-10, plan 362-04) -------------------
+//
+// D-10: human confirm time extends BOTH the step deadline (plan 362-03) and the run
+// wall-clock budget accounting. The shell owns the budget timer, so the pause credit
+// lives here: when the budget "expires" but the injected `confirmPausedMs` supplier
+// reports un-credited human-confirm time, the shell re-arms for exactly that delta
+// instead of aborting — a slow human never turns the budget into a fake timeout.
+
+describe('pause-aware run-budget expiry (D-10)', () => {
+  it('Test 1: expiry re-arms for accrued confirm-pause instead of aborting; run completes normally', async () => {
+    const timer = makeFakeTimer()
+    let pausedMs = 0
+    const session = startRun(
+      baseConfig({
+        executor: scriptedExecutor({}, []),
+        runBudgetMs: 5_000,
+        ports: { handoffStore: makeFakeHandoffStore(), timer, confirmPausedMs: () => pausedMs },
+      }),
+    )
+    drain(session)
+    pausedMs = 3_000 // 3s of human confirm accrued before the budget fired
+    timer.fireLatest() // budget "expiry" — must re-arm for the un-credited pause, not abort
+    const { verdict } = await done(session)
+    expect(verdict).toBe('passed')
+  })
+
+  it('Test 2: re-armed expiry with no further pause aborts with budget-timeout semantics', async () => {
+    const timer = makeFakeTimer()
+    let pausedMs = 0
+    const calls: string[] = []
+    const session = startRun(
+      baseConfig({
+        executor: abortableExecutor(calls),
+        runBudgetMs: 5_000,
+        ports: { handoffStore: makeFakeHandoffStore(), timer, confirmPausedMs: () => pausedMs },
+      }),
+    )
+    drain(session)
+    pausedMs = 3_000
+    timer.fireLatest() // re-arms (credits 3000)
+    timer.fireLatest() // fires again, no new pause accrued → abort with existing semantics
+    const { verdict } = await done(session)
+    expect(verdict).toBe('timeout')
+  })
+
+  it('Test 3: no confirmPausedMs supplier bound — expiry aborts immediately (byte-identical to today)', async () => {
+    const timer = makeFakeTimer()
+    const calls: string[] = []
+    const session = startRun(
+      baseConfig({
+        executor: abortableExecutor(calls),
+        runBudgetMs: 5_000,
+        ports: { handoffStore: makeFakeHandoffStore(), timer },
+      }),
+    )
+    drain(session)
+    timer.fireLatest()
+    const { verdict } = await done(session)
+    expect(verdict).toBe('timeout')
+  })
+
+  it('Test 4: cumulative pause across multiple confirms re-arms for the un-credited delta only (never double-counts)', async () => {
+    const base = makeFakeTimer()
+    const delays: number[] = []
+    const recordingTimer: FakeTimer = {
+      now: base.now,
+      fireLatest: base.fireLatest,
+      schedule(delayMs: number, fn: () => void) {
+        delays.push(delayMs)
+        return base.schedule(delayMs, fn)
+      },
+    }
+    let pausedMs = 0
+    const session = startRun(
+      baseConfig({
+        executor: scriptedExecutor({}, []),
+        runBudgetMs: 5_000,
+        ports: { handoffStore: makeFakeHandoffStore(), timer: recordingTimer, confirmPausedMs: () => pausedMs },
+      }),
+    )
+    drain(session)
+    pausedMs = 3_000
+    base.fireLatest() // re-arm delta = 3000 - 0
+    pausedMs = 5_000
+    base.fireLatest() // re-arm delta = 5000 - 3000 = 2000, NOT 5000
+    const { verdict } = await done(session)
+    expect(verdict).toBe('passed')
+    expect(delays).toEqual([5_000, 3_000, 2_000])
+  })
+})
+
 // ---- Handoff (SESSION-05, D-13/D-17) -------------------------------------
 
 describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
