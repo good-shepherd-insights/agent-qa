@@ -199,6 +199,9 @@ importers:
       '@vostride/agent-qa-arch':
         specifier: workspace:*
         version: link:../arch
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
       glob:
         specifier: 13.0.6
         version: 13.0.6

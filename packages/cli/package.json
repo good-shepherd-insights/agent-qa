@@ -107,6 +107,7 @@
     "@inquirer/confirm": "6.0.12",
     "@types/node": "~24.12.2",
     "@vostride/agent-qa-arch": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*",
     "glob": "13.0.6",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3",
