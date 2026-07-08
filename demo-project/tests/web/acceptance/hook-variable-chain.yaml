@@ -1,0 +1,18 @@
+test-id: t_tested-edge-chaft-boom-haw-view-easy-aries-dust-target
+name: Hook-variable chain (per-test + inline hooks)
+target: wai-bad
+context: >
+  D-15 hook-variable chain. A per-test setup hook (Set Runtime Env) exports
+  RUNTIME_ENV_VALUE, an inline step hook (Generate Timestamp) fires mid-steps, and
+  the final step CONSUMES the hook-set variable via {{env:RUNTIME_ENV_VALUE}}. The
+  value resolves to real page text ("CityLights") so the step grounds green.
+# Per-test setup/teardown hooks — the test-level lifecycle legs (D-15 level 3).
+setup:
+  - h_osse-elope-merk-ice-poly-links-quake-redo-slider-ima
+teardown:
+  - h_oki-hat-upon-pine-dab-dos-lying-lan-amy-hat
+steps:
+  # Inline step hook (D-15 level 4) — Generate Timestamp fires as part of this step.
+  - Run {{runHook:"h_hag-digest-sett-mongo-abb-except-lift-hong-bios-client"}} and then confirm the home page has finished loading
+  # Consume a variable SET BY the per-test setup hook (the hook-variable chain).
+  - Verify the page contains the text "{{env:RUNTIME_ENV_VALUE}}"

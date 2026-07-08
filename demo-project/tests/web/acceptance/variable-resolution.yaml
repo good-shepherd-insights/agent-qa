@@ -1,0 +1,14 @@
+test-id: t_alya-chid-anker-pliers-azine-web-brig-nit-lias-wag
+name: Variable resolution (env-file + --var inline)
+target: wai-bad
+context: >
+  D-15 variable resolution. Both resolution paths feed the same VariableStore and are
+  referenced with {{env:...}}: EXPECTED_HEADING is supplied by the workspace .env file,
+  INLINE_MARKER is supplied at run time via `--var INLINE_MARKER=CityLights`. Plan 15
+  sets .env (EXPECTED_HEADING=Inaccessible) and passes the --var flag; both values are
+  real wai-bad page text so the steps ground green.
+steps:
+  # env-file resolution: {{env:EXPECTED_HEADING}} comes from .env.
+  - Verify the page contains the text "{{env:EXPECTED_HEADING}}"
+  # inline --var resolution: {{env:INLINE_MARKER}} comes from `--var INLINE_MARKER=...`.
+  - Verify the page contains the text "{{env:INLINE_MARKER}}"

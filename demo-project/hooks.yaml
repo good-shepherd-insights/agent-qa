@@ -1,26 +1,29 @@
 hooks:
-  - id: h_sole-under-stod-badge-manes-rag-nous-mind-twig-legal
+  - id: h_hag-digest-sett-mongo-abb-except-lift-hong-bios-client
     name: Generate Timestamp
     runtime: bash
     file: hooks/generate-timestamp.sh
     timeout: 10s
-  - id: h_eer-mallow-ibo-ursa-schema-sports-gary-placer-church-scene
+    network: false
+  - id: h_cut-kino-ruck-andre-nat-unity-gray-court-ame-ers
     name: Fetch API Data
     runtime: node
     file: hooks/fetch-api-data.js
     timeout: 10s
     network: true
-  - id: h_beek-fiber-vault-taj-hear-keen-sid-motion-lung-folio
+  - id: h_oki-hat-upon-pine-dab-dos-lying-lan-amy-hat
     name: Log Cleanup
     runtime: bash
     file: hooks/log-cleanup.sh
     timeout: 10s
-  - id: h_embar-tables-haven-orbit-admin-chunk-that-nye-avera-err
+    network: false
+  - id: h_osse-elope-merk-ice-poly-links-quake-redo-slider-ima
     name: Set Runtime Env
     runtime: node
     file: hooks/set-runtime-env.js
     timeout: 10s
-  - id: h_pad-job-nea-shin-eld-hone-azo-god-encode-press
+    network: false
+  - id: h_rain-rad-date-fan-sink-agio-juan-push-close-mux
     name: Fetch HN Top Story
     runtime: node
     file: hooks/fetch-hn-top-story.js

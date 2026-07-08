@@ -1,0 +1,24 @@
+suite-id: s_lice-flat-otus-mult-mask-lack-messe-degree-ref-quite
+name: D-15 acceptance suite
+target: wai-bad
+context: >
+  The purpose-built D-15 acceptance suite. A green run of this suite MEANS the
+  LOOP-05/SEAM-05 contracts are met: all four hook levels fire (suite setup +
+  suite teardown here; per-test setup/teardown and an inline step hook in the
+  members), a step consumes a hook-set variable, env/inline variables resolve,
+  and a capture/setVariable value feeds a later step. Re-run every milestone.
+# Suite-level setup: a deterministic bash hook (exports GENERATED_TIMESTAMP +
+# ACCEPTANCE_TOKEN) followed by the one networked hook (degrades no-network-safe).
+setup:
+  - h_hag-digest-sett-mongo-abb-except-lift-hong-bios-client
+  - h_cut-kino-ruck-andre-nat-unity-gray-court-ame-ers
+# Suite-level teardown: the cleanup hook fires when the suite boundary is crossed.
+teardown:
+  - h_oki-hat-upon-pine-dab-dos-lying-lan-amy-hat
+tests:
+  - test: tests/web/acceptance/hook-variable-chain.yaml
+    id: t_tested-edge-chaft-boom-haw-view-easy-aries-dust-target
+  - test: tests/web/acceptance/variable-resolution.yaml
+    id: t_alya-chid-anker-pliers-azine-web-brig-nit-lias-wag
+  - test: tests/web/acceptance/capture-chain.yaml
+    id: t_loaded-iao-angers-err-alur-rust-gist-hyper-kitty-assi

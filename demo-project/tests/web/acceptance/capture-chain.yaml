@@ -1,0 +1,17 @@
+test-id: t_loaded-iao-angers-err-alur-rust-gist-hyper-kitty-assi
+name: Capture chain (capture value feeds a later step)
+target: wai-bad
+context: >
+  D-15 capture / setVariable chain. The first step captures the page's main heading
+  text into PAGE_HEADING; a LATER step consumes that captured value via
+  {{env:PAGE_HEADING}}. On the wai-bad target the heading is "Inaccessible Home Page",
+  so the downstream verification grounds green off the captured value alone.
+steps:
+  # Capture step: extract the main heading into PAGE_HEADING (ai method, described target).
+  - step: Read the main page heading
+    capture:
+      variable: PAGE_HEADING
+      method: ai
+      description: The primary heading text shown at the top of the home page
+  # Consume the captured value in a later step.
+  - Verify the page contains the text "{{env:PAGE_HEADING}}"
