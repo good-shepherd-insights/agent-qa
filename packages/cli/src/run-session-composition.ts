@@ -15,9 +15,25 @@
 
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
-import { createMaskingContext, seedMaskingContext } from '@vostride/agent-qa-safety'
-import { detectExecutionContext } from '@vostride/agent-qa-safety-local'
-import { FsEventLog, FsHandoffStore, nextBuildOrdinal } from '@vostride/agent-qa-runner-local'
+import { performance } from 'node:perf_hooks'
+import {
+  createMaskingContext,
+  registerFirstPartySafetyHooks,
+  seedMaskingContext,
+} from '@vostride/agent-qa-safety'
+import type { AuditSink, ConfirmPort, SafetyHookRunner } from '@vostride/agent-qa-safety'
+import {
+  createReadlineConfirm,
+  detectExecutionContext,
+  JsonlAuditSink,
+} from '@vostride/agent-qa-safety-local'
+import {
+  FsEventLog,
+  FsHandoffStore,
+  nextBuildOrdinal,
+  RUNS_SUBDIR,
+  slugBranch,
+} from '@vostride/agent-qa-runner-local'
 import type {
   ConfigDigests,
   EventLogPort,
@@ -355,4 +371,96 @@ export function buildRunMaskingContext(input: {
     authState: { knownSensitiveStrings },
   })
   return ctx
+}
+
+// ---- (8) per-run stamped audit sink — stampAuditSink / buildRunAuditSink (D-12/D-13) ---------
+//
+// D-13: `evaluate()` stays the single execution-audit author (untouched); the run stamps
+// correlation at ONE composition-root site — a thin wrapper that injects runId + the resolved
+// executionContext into every row before append so rows are self-describing (SEAM-02 is literal
+// in the row, no joins). The stamp WINS over any pre-existing row field (RESEARCH Open Q3): spread
+// the row FIRST, stamp AFTER. D-12: the sink is a JsonlAuditSink rooted at the SAME
+// .agent-qa/runs/<slug(runId)>/ directory FsEventLog uses (slugBranch reuse — path forking is the
+// failure mode), so a completed run is one self-contained directory.
+
+/**
+ * Wrap an AuditSink so every appended row carries `runId` + `executionContext` (D-13). Stamp-wins:
+ * the row is spread first and the stamp applied after, so a stale row field never survives.
+ * Guardrail rows carry `runId` only (their schema has no executionContext). The void-or-promise
+ * return of the inner sink is preserved.
+ */
+export function stampAuditSink(
+  inner: AuditSink,
+  runId: string,
+  executionContext: RunExecutionContext,
+): AuditSink {
+  return {
+    appendExecutionAudit(row) {
+      return inner.appendExecutionAudit({ ...row, runId, executionContext })
+    },
+    appendGuardrailAudit(row) {
+      return inner.appendGuardrailAudit({ ...row, runId })
+    },
+  }
+}
+
+/**
+ * Build the per-run stamped audit sink (D-12/D-13). A `JsonlAuditSink` rooted at the EXACT run dir
+ * `FsEventLog`/`FsHandoffStore` write to — `<configDir>/.agent-qa/runs/<slugBranch(runId)>/` — so
+ * execution_audit.jsonl / guardrail_audit.jsonl land beside events.jsonl + handoff.json. The
+ * slug is `slugBranch` from runner-local (the exact slug the event log uses); path forking would
+ * scatter a run's evidence. The sink is wrapped by `stampAuditSink` so every row is correlated.
+ */
+export function buildRunAuditSink(input: {
+  configDir: string
+  runId: string
+  executionContext: RunExecutionContext
+}): AuditSink {
+  const runDir = resolve(input.configDir, '.agent-qa', RUNS_SUBDIR, slugBranch(input.runId))
+  return stampAuditSink(new JsonlAuditSink(runDir), input.runId, input.executionContext)
+}
+
+// ---- (9) per-run safety-hooks registrar — buildRunSafetyHooks (D-01/D-15/D-10/D-11) ----------
+//
+// D-01: the loop's SafetyHookRunner is a SECOND, per-run registerFirstPartySafetyHooks() invocation
+// at the composition root with DIRECT deps (the model registry's deps-less call stays untouched).
+// It carries the stamped per-run sink, a pause-timing ConfirmPort decorator, the resolved execution
+// context, and the D-15 trust flag. D-10: the decorator measures each awaited confirm and accumulates
+// the elapsed ms into a closure counter exposed as `confirmPausedMs` — the run-budget supplier 362-06
+// wires into RunPorts.confirmPausedMs so human decision time never counts against the app under test.
+// D-11: NO reader is passed — the no-standing-approvals default is reached by omission (the standing-
+// approval WRITE side is M4's). Reporter/stdout interleaving beyond the readline default is 363 scope.
+
+/**
+ * Perform the D-01 per-run `registerFirstPartySafetyHooks` invocation and return the loop's
+ * `SafetyHookRunner` plus the D-10 confirm-pause supplier. The confirm (readline by default, D-15)
+ * is wrapped in a timing decorator whose accumulated awaited-ms is exposed via `confirmPausedMs()`.
+ * `trustMode` flows through as `GateTrust.trustMode` (D-15). No `reader` is supplied so the
+ * no-standing-approvals default holds by omission (D-11).
+ */
+export function buildRunSafetyHooks(input: {
+  auditSink: AuditSink
+  executionContext: RunExecutionContext
+  trustMode: boolean
+  confirm?: ConfirmPort
+}): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
+  let pausedMs = 0
+  const baseConfirm = input.confirm ?? createReadlineConfirm()
+  const timedConfirm: ConfirmPort = async (action) => {
+    const start = performance.now()
+    try {
+      return await baseConfirm(action)
+    } finally {
+      pausedMs += performance.now() - start
+    }
+  }
+
+  const { registry } = registerFirstPartySafetyHooks({
+    auditSink: input.auditSink,
+    confirm: timedConfirm,
+    resolveExecutionContext: () => input.executionContext,
+    trust: { trustMode: input.trustMode },
+  })
+
+  return { safetyHooks: registry, confirmPausedMs: () => pausedMs }
 }
