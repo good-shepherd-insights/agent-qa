@@ -79,12 +79,29 @@ export function startRun(config: RunConfig): RunSession {
   const runController = new AbortController()
 
   // Run-budget clock (D-03): expiry aborts the active member and rolls up to a `timeout` verdict.
+  //
+  // Pause-aware expiry (D-10, the run-budget half): human confirm time is never charged to the
+  // app under test. When the budget fires but `ports.confirmPausedMs` reports human-confirm time
+  // that has not yet been credited, re-arm for exactly the un-credited delta instead of aborting.
+  // `creditedPauseMs` monotonically tracks what we have already extended for, so successive
+  // confirms credit cumulatively and the delta is never double-counted. Absent supplier or an
+  // unarmed budget ⇒ byte-identical to the one-shot abort. Each re-arm reassigns `cancelBudget`
+  // so the terminal sequence's `cancelBudget?.()` still cancels the live handle.
   let cancelBudget: (() => void) | undefined
   if (config.runBudgetMs !== undefined && timer) {
-    cancelBudget = timer.schedule(config.runBudgetMs, () => {
+    let creditedPauseMs = 0
+    const onBudgetExpiry = (): void => {
+      const pausedMs = ports.confirmPausedMs?.() ?? 0
+      const uncreditedPauseMs = pausedMs - creditedPauseMs
+      if (uncreditedPauseMs > 0) {
+        creditedPauseMs = pausedMs
+        cancelBudget = timer.schedule(uncreditedPauseMs, onBudgetExpiry)
+        return
+      }
       runBudgetExpired = true
       runController.abort()
-    })
+    }
+    cancelBudget = timer.schedule(config.runBudgetMs, onBudgetExpiry)
   }
 
   const done: Promise<RunCompletion> = (async (): Promise<RunCompletion> => {

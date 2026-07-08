@@ -122,6 +122,14 @@ export interface RunPorts {
    * budget timer is unambiguous — see the shell's timer note).
    */
   timer?: RunTimerPort
+  /**
+   * The D-10 run-budget half: a monotonic supplier returning the TOTAL milliseconds this run
+   * has spent awaiting human confirms so far. Human decision time is never attributed to the
+   * app under test — so when the run-budget timer fires, the shell credits the accrued pause
+   * and re-arms for the un-credited delta instead of aborting. The CLI's timed `ConfirmPort`
+   * decorator feeds this (plan 362-06); absent ⇒ budget expiry aborts exactly as before.
+   */
+  confirmPausedMs?: () => number
 }
 
 /**
