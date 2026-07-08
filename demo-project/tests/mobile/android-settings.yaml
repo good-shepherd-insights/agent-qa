@@ -1,0 +1,20 @@
+test-id: t_ales-erade-kids-ande-adat-peace-abe-usar-endere-brew
+name: Android Settings search (D-13 mobile loop)
+target: android-settings
+context: >
+  D-13 minimal-but-real Android acceptance: drives the system Settings app on the
+  local Medium_Phone AVD (no APK build) to exercise the re-derived loop end to end —
+  observe (open/verify), act (tap/type), hooks (a before-test setup hook fires), and
+  variables (the search term is consumed from {{env:SETTINGS_SEARCH_TERM}}, set by
+  Plan 15 via .env or `--var SETTINGS_SEARCH_TERM=Battery`). Steps use large, labeled
+  first-party UI so the grounding ladder stays unambiguous. Runs as LOCAL UAT (Plan 15).
+use:
+  device: medium-phone-avd
+# Before-test hook — exercises the hook lifecycle on the mobile loop.
+setup:
+  - h_hag-digest-sett-mongo-abb-except-lift-hong-bios-client
+steps:
+  - Verify the Settings home screen is visible
+  - Tap the search field at the top of Settings
+  - Type "{{env:SETTINGS_SEARCH_TERM}}" into the Settings search field
+  - Verify a search result for "{{env:SETTINGS_SEARCH_TERM}}" is visible

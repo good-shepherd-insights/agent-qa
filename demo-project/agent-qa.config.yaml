@@ -26,6 +26,28 @@ registry:
     wai-bad:
       platform: web
       url: https://www.w3.org/WAI/demos/bad/before/home.html
+    # D-13 mobile acceptance targets — first-party system apps, no APK/IPA build.
+    android-settings:
+      platform: android
+      appPackage: com.android.settings
+      appActivity: com.android.settings.Settings
+    ios-preferences:
+      platform: ios
+      bundleId: com.apple.Preferences
+  devices:
+    # Local Android AVD (RESEARCH Q9: Medium_Phone_-_API_36.1 verified present).
+    medium-phone-avd:
+      platform: android
+      transport: local
+      match:
+        avd: Medium_Phone_-_API_36.1
+    # Local iOS simulator (iPhone 16 family, iOS 18.x). Plan 15 may override the
+    # concrete simulator with `--device` or a udid match.
+    iphone-16-sim:
+      platform: ios
+      transport: local
+      match:
+        platformVersion: "18.2"
 use:
   mobile:
     appState: preserve

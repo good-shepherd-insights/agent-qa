@@ -1,0 +1,19 @@
+test-id: t_bright-hoi-rada-alin-waar-geo-hale-ward-orient-egger
+name: iOS Preferences navigation (D-13 mobile loop)
+target: ios-preferences
+context: >
+  D-13 minimal-but-real iOS acceptance: drives the system Preferences (Settings) app on
+  an iPhone 16-family simulator to exercise the re-derived loop — observe (open/verify),
+  act (tap a pane), hooks (a before-test setup hook fires), and variables (the asserted
+  pane label is consumed from {{env:IOS_PANE_LABEL}}, set by Plan 15 via .env or
+  `--var IOS_PANE_LABEL=About`). First-party labeled UI keeps grounding unambiguous.
+  Runs as LOCAL UAT (Plan 15).
+use:
+  device: iphone-16-sim
+# Before-test hook — exercises the hook lifecycle on the mobile loop.
+setup:
+  - h_hag-digest-sett-mongo-abb-except-lift-hong-bios-client
+steps:
+  - Verify the Settings (Preferences) home screen is visible
+  - Tap the "General" row
+  - Verify the "{{env:IOS_PANE_LABEL}}" row is visible on the General screen
