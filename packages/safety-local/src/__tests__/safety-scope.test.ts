@@ -90,6 +90,58 @@ describe('runSafetyScope', () => {
     })
   })
 
+  it('keeps interleaved sibling scopes isolated — D-02 concurrent-run clobber fix (Test 6)', async () => {
+    const ctxA = createMaskingContext()
+    const ctxB = createMaskingContext()
+    const sinkA = fakeSink()
+    const sinkB = fakeSink()
+
+    await Promise.all([
+      runSafetyScope(
+        { maskingContext: ctxA, auditSink: sinkA, executionContext: 'ci' },
+        async () => {
+          expect(getActiveMaskingContext()).toBe(ctxA)
+          expect(getActiveAuditSink()).toBe(sinkA)
+          expect(getActiveExecutionContext()).toBe('ci')
+          await Promise.resolve()
+          expect(getActiveMaskingContext()).toBe(ctxA)
+          expect(getActiveAuditSink()).toBe(sinkA)
+          expect(getActiveExecutionContext()).toBe('ci')
+        },
+      ),
+      runSafetyScope(
+        { maskingContext: ctxB, auditSink: sinkB, executionContext: 'cloud' },
+        async () => {
+          expect(getActiveMaskingContext()).toBe(ctxB)
+          expect(getActiveAuditSink()).toBe(sinkB)
+          expect(getActiveExecutionContext()).toBe('cloud')
+          await Promise.resolve()
+          expect(getActiveMaskingContext()).toBe(ctxB)
+          expect(getActiveAuditSink()).toBe(sinkB)
+          expect(getActiveExecutionContext()).toBe('cloud')
+        },
+      ),
+    ])
+
+    expect(getActiveMaskingContext()).toBeUndefined()
+  })
+
+  it('process-default sink is a lazily-constructed memoized singleton, never clobbered by scopes (Test 7)', () => {
+    const scopedSink = fakeSink()
+
+    const outerDefault = getActiveAuditSink()
+    expect(outerDefault).toBeInstanceOf(JsonlAuditSink)
+
+    runSafetyScope({ auditSink: scopedSink }, () => {
+      // an active scope with its own sink never consults the process default
+      expect(getActiveAuditSink()).toBe(scopedSink)
+    })
+
+    // the memoized process-default survives the scope transition — same instance,
+    // proving it is a single lazily-built singleton, not reconstructed per resolution
+    expect(getActiveAuditSink()).toBe(outerDefault)
+  })
+
   it('is exported from the safety-local barrel (reachability)', () => {
     expect(surface.runSafetyScope).toBe(runSafetyScope)
   })
