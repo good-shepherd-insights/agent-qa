@@ -4,7 +4,19 @@ export const AGENT_QA_CORE_PACKAGE_NAME = '@vostride/agent-qa-core'
 export const AGENT_QA_CORE_PACKAGE_DIR = 'packages/core'
 export const AGENT_QA_CORE_PACKAGE_CLASSES = ['transitional'] as const
 export const AGENT_QA_CORE_ALLOWED_RESPONSIBILITIES = [
-  'transitional home for v1 runner / memory / agent code pending re-derivation into bounded v2 packages',
+  // Narrowed 363-12 after the run-path cut (Plans 10/11): the per-test run path,
+  // v1 Reporter, inline-DSL parsers, hook orchestration/sandbox, screenshot pipeline,
+  // and the suite run-path half all left core. What remains are the non-run-path
+  // subsystems, each with its own milestone home. Every top-level dir under core/src
+  // is accounted for below (D-05).
+  'suite/test parsing + discovery: yaml/suite/test/config parsing, hooks-file parser + schema, and workspace file discovery — feeding the resolved RunConfig at the CLI composition root (parser, suite, schema, types, hooks, workspace, validation)',
+  'memory/knowledge subsystem pending its M2 milestone home, incl. the better-sqlite3 native host (memory, sqlite)',
+  'analytics subsystem: PostHog identity + core-owned bus-subscriber run feed per D-16 (analytics)',
+  'LLM provider auth + captured browser auth-state reuse: OAuth/PKCE plugin auth and auth-state redaction/resolution (auth, auth-state)',
+  'mobile + device-farm support: appium launch/element/gesture resolution and BrowserStack capability mapping (mobile, farm)',
+  'provider + plugin loading (providers, plugin-loader-util)',
+  'agent token-budget/context helpers (agent)',
+  'cross-cutting host-neutral helpers consumed by the CLI: run-id minting, run-attribute assembly, runtime path resolution, LogManager, version + update-check reporting, path-validation (ids, run-attributes, runtime-paths, logging, version, version-check, utils)',
 ] as const
 export const AGENT_QA_CORE_FORBIDDEN_RESPONSIBILITIES = [
   'new responsibilities or new boundary violations beyond what the ledger already enumerates',
