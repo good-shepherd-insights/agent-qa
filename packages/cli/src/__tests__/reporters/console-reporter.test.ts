@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { createConsoleReporter } from '../../reporters/console-reporter'
-import { buildReporterFixture, createCapture } from './fixtures'
+import { createConsoleReporter } from '../../reporters/console-reporter.js'
+import { buildReporterFixture, createCapture } from './fixtures.js'
 
 function renderFixture(verbose = true): { output: string; secrets: ReturnType<typeof buildReporterFixture> } {
   const fixture = buildReporterFixture()
