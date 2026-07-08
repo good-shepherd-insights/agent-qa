@@ -15,7 +15,7 @@ import { runHooks, type HookDefinition, type SandboxRunnerOptions } from '@vostr
 import type { MemoryProvider } from '../memory/provider.js'
 import type { MemoryLog } from '../memory/curator.js'
 import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
-import { VariableStore, findUnresolvedTemplates, interpolateVariables } from '../agent/variables.js'
+import { VariableStore, findUnresolvedTemplates, interpolateVariables } from '@vostride/agent-qa-runner'
 import { resolveSecretTemplatesInValue, type SecretRedactor, type SecretStore } from '@vostride/agent-qa-runner'
 import { withAbort } from '@vostride/agent-qa-runner'
 import { generateRunId } from '../ids/run-id.js'

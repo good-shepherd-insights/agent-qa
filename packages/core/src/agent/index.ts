@@ -22,5 +22,7 @@ export { parseHookInline, stripHookInline } from './hook-inline.js'
 
 export { generateFailureSummary } from './failure-summary.js'
 
-export { VariableStore, interpolateVariables, findBareVariables, findUnresolvedTemplates, ExplicitExtractor, LLMVariableExtractor, createExtractor, ExtractionResultSchema, parseEnvFile, serializeEnvFile } from './variables.js'
-export type { VariableSource } from './variables.js'
+// Variables subsystem moved to @vostride/agent-qa-runner (Phase 363 D-07); consumers
+// import it from runner directly. The env-file codec stays runner-owned (Plan 04) and is
+// re-exported here for the existing CLI/dashboard env-file consumers (the Plan-04 precedent).
+export { parseEnvFile, serializeEnvFile } from '@vostride/agent-qa-runner'

@@ -2,9 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { dirname, resolve as resolvePath } from 'node:path'
 import {
   AUTH_STATE_SCHEMA_VERSION,
-  VariableStore,
-  interpolateVariables,
-  findUnresolvedTemplates,
   parseHookInline,
   stripHookInline,
   MobileSetupError,
@@ -14,6 +11,9 @@ import {
   writeAuthStateFiles,
 } from '@vostride/agent-qa-core'
 import {
+  VariableStore,
+  interpolateVariables,
+  findUnresolvedTemplates,
   executeStep,
   LLMPlanner,
   LLMVerifier,

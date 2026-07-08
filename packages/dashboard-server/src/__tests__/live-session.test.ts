@@ -103,6 +103,10 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
     // runHooks moved to runner in Phase 363 D-06.
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
+    // Variables subsystem moved to runner in Phase 363 D-07.
+    VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
+    interpolateVariables: (...args: unknown[]) => mockInterpolateVariables(...args as Parameters<typeof mockInterpolateVariables>),
+    findUnresolvedTemplates: (...args: unknown[]) => mockFindUnresolvedTemplates(...args as Parameters<typeof mockFindUnresolvedTemplates>),
   }
 })
 
@@ -201,9 +205,6 @@ vi.mock('@vostride/agent-qa-core', () => {
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
-    VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
-    interpolateVariables: (...args: unknown[]) => mockInterpolateVariables(...args as Parameters<typeof mockInterpolateVariables>),
-    findUnresolvedTemplates: (...args: unknown[]) => mockFindUnresolvedTemplates(...args as Parameters<typeof mockFindUnresolvedTemplates>),
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
     runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
     parseHookInline: (text: string) => mockParseHookInline(text),

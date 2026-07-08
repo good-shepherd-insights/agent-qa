@@ -87,9 +87,9 @@ describe('masking egress middleware', () => {
     expect(text).not.toContain(secret)
 
     // The removed role markers named live LLM-egress consumers:
-    // packages/core/src/agent/variables.ts:202 (LLMVariableExtractor) and
-    // packages/core/src/agent/asserter.ts:116 (LLMAssertionEvaluator, wired via
-    // createAsserter at :165). Both take a createModel-built LanguageModel, so
+    // packages/runner/src/loop/llm-variable-extractor.ts (LLMVariableExtractor, moved
+    // in Phase 363 D-07) and packages/runner/src/loop/asserter.ts (LLMAssertionEvaluator,
+    // wired via createAsserter). Both take a createModel-built LanguageModel, so
     // CONTEXT D-05's 2026-07-02 correction makes the unbypassable-last masking
     // middleware the structural proof; the old pending markers were a gap.
   })

@@ -4,7 +4,7 @@ import { TestDefinitionSchema } from '../schema/test-schema.js'
 import type { TestDefinition } from '../types/test.js'
 import { formatYamlError, formatZodErrors } from './errors.js'
 import type { ParseError } from './errors.js'
-import { findBareVariables } from '../agent/variables.js'
+import { findBareVariables } from '@vostride/agent-qa-runner'
 
 export interface ParseResult {
   tests: TestDefinition[]

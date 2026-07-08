@@ -74,6 +74,10 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
     // runHooks moved to runner in Phase 363 D-06.
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
+    // Variables subsystem moved to runner in Phase 363 D-07.
+    VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
+    interpolateVariables: vi.fn((instruction: string) => instruction),
+    findUnresolvedTemplates: vi.fn(() => []),
   }
 })
 
@@ -96,9 +100,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
   executeStep: (...args: unknown[]) => mockExecuteStep(...args),
   LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
   LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
-  VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
-  interpolateVariables: vi.fn((instruction: string) => instruction),
-  findUnresolvedTemplates: vi.fn(() => []),
   redactSecretValue: vi.fn((value: unknown) => value),
   redactAuthStateValue: vi.fn((value: unknown) => value),
   parseHookInline: () => mockParseHookInline(),

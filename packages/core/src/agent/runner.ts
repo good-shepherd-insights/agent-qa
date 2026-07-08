@@ -18,7 +18,7 @@ import type { MemberEventSink, ConfigDigests } from '@vostride/agent-qa-runner'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
-import { VariableStore, interpolateVariables, findUnresolvedTemplates, createExtractor } from './variables.js'
+import { VariableStore, interpolateVariables, findUnresolvedTemplates, createExtractor } from '@vostride/agent-qa-runner'
 import { resolveSecretTemplatesInValue, redactSecretValue, type SecretRedactor, type SecretStore } from '@vostride/agent-qa-runner'
 import { parseAppiumInline } from './appium-inline.js'
 import { parseHookInline, stripHookInline } from './hook-inline.js'
@@ -170,7 +170,10 @@ export async function runTest(
   const startTime = performance.now()
   const steps: StepResult[] = []
   const previousSteps: { instruction: string; outcome: string; reasoning?: string; plannedAction?: string; verifierResponse?: string }[] = []
-  const variableStore = new VariableStore()
+  const runnerLog = config.logger?.createScopedLogger('runner')
+  // Pitfall 10 (display neutrality): the runner's VariableStore never touches console —
+  // the capture-over-non-capture warning routes through this injected seam to the scoped logger.
+  const variableStore = new VariableStore({ onWarn: (message: string) => runnerLog?.warn(message) })
   if (config.envFileVars) variableStore.setAll(config.envFileVars, 'env')
   if (config.inlineVars) variableStore.setAll(config.inlineVars, 'inline')
   if (config.suiteVars) variableStore.setAll(config.suiteVars, 'suite')
@@ -228,8 +231,6 @@ export async function runTest(
   } else {
     process.on('SIGINT', onCancel)
   }
-
-  const runnerLog = config.logger?.createScopedLogger('runner')
 
   // Navigate to test URL before executing steps (url injected by CLI from resolved target)
   let shouldRunSteps = true
