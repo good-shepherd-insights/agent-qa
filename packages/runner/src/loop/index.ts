@@ -38,6 +38,7 @@ import type {
   GroundingAttempt,
   GroundingEvidence,
   Ref,
+  RiskTier,
   ScreenState,
   StagnationEvidence,
   TargetDescriptor,
@@ -50,6 +51,7 @@ import type { Action, ActionResult } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
+import { projectRiskAction } from '../tools/project-risk-action.js'
 import { classifyStep } from '../cache/classify.js'
 import { buildCacheableStepInput } from '../cache/key.js'
 import { buildCachedPlanValue, toGroundedLocator } from '../cache/value.js'
@@ -151,7 +153,10 @@ export async function executeStep(
   const gate = ports.visionGate ?? { attachImage: true, captureMode: 'full' as const, promptNote: '' }
   // D-11: the ONLY surviving resource backstop. Not a healing-attempts counter.
   const maxSubActions = ports.plannerConfig?.maxSubActions ?? 50
-  const deadline = ports.stepTimeout ? startTime + ports.stepTimeout : 0
+  // D-10: MUTABLE (was const) so the measured async-gate/confirm await extends it in-flight — the
+  // three usage sites (loop-top check, settle gate) re-read this closure variable each iteration,
+  // so a slow human confirm can never fake a step timeout (RESEARCH Pitfall 5).
+  let deadline = ports.stepTimeout ? startTime + ports.stepTimeout : 0
 
   // §A8 evidence accumulator (D-14) — the recording array IS SubActionEvidence[].
   // D-02 (Plan 361-08): bind the one sub-action emission chokepoint to ports.events when
@@ -191,6 +196,13 @@ export async function executeStep(
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
   let lastPlannedAction: Action | undefined
+
+  // D-09 policy-denied terminal marker (the 353/D-08 discriminated no-throw idiom, precedent:
+  // PlanningTurnFailureReason). Set by executeResolvedAction when the async gate denies at ANY of
+  // the five dispatch paths; the post-dispatch terminal check reads it and returns a terminal
+  // policy_denied failure — no replan turn, no verifier call, no further planner call. Loop-local
+  // by design (RESEARCH Open Q2: the existing failure/error shape suffices; no schema field minted).
+  let policyDenial: { reason: string; riskTier?: RiskTier } | undefined
 
   // D-08 (Phase 360): a completing plan that dispatched an assertAI/extractAI step never
   // writes the cache (the runtime half of the CacheablePlannedAction type exclusion). This
@@ -281,57 +293,68 @@ export async function executeStep(
     try { screenshotBefore = await withAbort(ports.adapter.screenshot(), ports.abortSignal) } catch { /* best-effort */ }
   }
 
-  // The single execute step: resolve secret templates, gate through the tool_call hook,
-  // dispatch to the adapter (or the setVariable callback), then the tool_result hook. Shared
-  // by the primary dispatch AND the D-10 heal's patched re-execute so the security ordering
-  // (redact-before-record, hook mediation) is single-sourced and cannot drift between them.
-  // `mutated` is present ONLY when a hook rewrote the action (the sole case the recorded
-  // action must be swapped — the redact-without-template-resolution rule is unchanged).
+  // The single execute step: resolve secret templates, project + AWAIT the async policy gate
+  // (SEAM-03/D-08), dispatch to the adapter (or the setVariable callback), then the tool_result
+  // hook. Shared by the primary dispatch AND the D-10 heal's patched re-execute so the security
+  // ordering (redact-before-record, gate mediation) is single-sourced and cannot drift between
+  // them, and so ALL five dispatch paths (primary, assertValue read, storageState save/restore,
+  // heal re-execute) are gated. D-08: EVERY action projects into a RiskActionDescriptor and awaits
+  // runToolCallAsync before any execution branch; read-only actions classify to an instant allow,
+  // undeclared verbs hit the restricted floor. The vestigial sync runToolCall telemetry call is
+  // superseded here (the v1 onPhase-only posture ends per SEAM-03); runToolResult is unchanged.
   const executeResolvedAction = async (
     toExecute: Action,
-  ): Promise<{ result: ActionResult; error?: string; mutated?: Action }> => {
-    let mutated: Action | undefined
+  ): Promise<{ result: ActionResult; error?: string }> => {
     let result: ActionResult
     try {
       // Template resolution stays INSIDE the try (T-353-08): a MissingSecretError is caught
       // and surfaced as a redacted execError — the action never reaches the adapter.
-      let actionForExecution = resolveSecretTemplatesInValue(toExecute, ports.secretStore)
-      const hookResult = ports.safetyHooks?.runToolCall(actionForExecution)
-      if (hookResult?.action === 'deny') {
-        result = { success: false, error: hookResult.reason }
-      } else {
-        if (hookResult?.action === 'mutate') {
-          actionForExecution = hookResult.mutated
-          mutated = redactSecretValue(actionForExecution, ports.secretRedactor)
-        } else if (hookResult?.action === 'allow') {
-          actionForExecution = hookResult.call
+      const actionForExecution = resolveSecretTemplatesInValue(toExecute, ports.secretStore)
+      if (ports.safetyHooks) {
+        // Gate on the DESCRIPTOR; on allow execute the ORIGINAL resolved Action — never the hook
+        // result's `call` payload, which is the descriptor (RESEARCH Pitfall 4). A mutate result on
+        // the descriptor is advisory-only and never swaps the executed action.
+        const descriptor = projectRiskAction(actionForExecution)
+        const gateStart = performance.now()
+        const gate = await ports.safetyHooks.runToolCallAsync(descriptor)
+        // D-10: the measured gate/confirm await extends the step deadline — human decision time is
+        // never attributed to the app under test (only when a deadline is armed).
+        if (deadline) deadline += performance.now() - gateStart
+        if (gate.action === 'deny') {
+          // D-09: record the terminal marker (with the gate's audited D-16 reason + optional tier)
+          // and short-circuit; the post-dispatch terminal check ends the step. The action never
+          // reaches the adapter/callback.
+          policyDenial = { reason: gate.reason, ...(gate.policy ? { riskTier: gate.policy.riskTier } : {}) }
+          result = { success: false, error: gate.reason }
+          result = ports.safetyHooks.runToolResult(result).result ?? result
+          return { result, error: gate.reason }
         }
+      }
 
-        if (actionForExecution.type === 'setVariable') {
-          // Pitfall 8 — setVariable runs via the callback, NOT the adapter.
-          const sv = actionForExecution as Extract<Action, { type: 'setVariable' }>
-          ports.onSetVariable?.(sv.name, sv.value)
-          result = { success: true }
-        } else {
-          let actionToExecute = actionForExecution
-          if (actionForExecution.type === 'fileUpload' && ports.resolveUploadPath) {
-            // Pitfall 1 — path resolution is injected core-side; the loop never touches paths.
-            const resolveUpload = ports.resolveUploadPath
-            actionToExecute = { ...actionForExecution, files: actionForExecution.files.map(f => resolveUpload(f)) }
-          }
-          result = redactSecretValue(
-            await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal),
-            ports.secretRedactor,
-          )
+      if (actionForExecution.type === 'setVariable') {
+        // Pitfall 8 — setVariable runs via the callback, NOT the adapter (still gated above, D-08).
+        const sv = actionForExecution as Extract<Action, { type: 'setVariable' }>
+        ports.onSetVariable?.(sv.name, sv.value)
+        result = { success: true }
+      } else {
+        let actionToExecute = actionForExecution
+        if (actionForExecution.type === 'fileUpload' && ports.resolveUploadPath) {
+          // Pitfall 1 — path resolution is injected core-side; the loop never touches paths.
+          const resolveUpload = ports.resolveUploadPath
+          actionToExecute = { ...actionForExecution, files: actionForExecution.files.map(f => resolveUpload(f)) }
         }
+        result = redactSecretValue(
+          await withAbort(ports.adapter.execute(actionToExecute), ports.abortSignal),
+          ports.secretRedactor,
+        )
       }
       result = ports.safetyHooks?.runToolResult(result).result ?? result
     } catch (err) {
       const error = redactSecretValue(err instanceof Error ? err.message : String(err), ports.secretRedactor)
-      return { result: { success: false, error }, error, mutated }
+      return { result: { success: false, error }, error }
     }
     const error = !result.success ? (result.error ?? 'Action failed') : undefined
-    return { result, error, mutated }
+    return { result, error }
   }
 
   for (let actionIndex = 0; ; actionIndex++) {
@@ -900,11 +923,6 @@ export async function executeStep(
       const outcome = await executeResolvedAction(normalizedAction)
       execResult = outcome.result
       execError = outcome.error
-      if (outcome.mutated !== undefined) {
-        action = outcome.mutated
-        lastPlannedAction = action
-        grounding = buildGroundingEvidence(action, screenState.elements, gateAttempts, ports.secretRedactor)
-      }
     }
 
     const abortAfterExecute = checkAbort()
@@ -934,11 +952,29 @@ export async function executeStep(
         const outcome = await executeResolvedAction(patched)
         execResult = outcome.result
         execError = outcome.error
-        action = outcome.mutated ?? redactSecretValue(patched, ports.secretRedactor)
+        action = redactSecretValue(patched, ports.secretRedactor)
         lastPlannedAction = action
         const abortAfterHeal = checkAbort()
         if (abortAfterHeal) return abortAfterHeal
       }
+    }
+
+    // D-09 policy-denied terminal failure. A gate deny at ANY of the five dispatch paths ends the
+    // step immediately, carrying the gate's audited D-16 reason (classification + remediation come
+    // from the safety package; the loop adds no wording) into §A8 evidence — no replan turn, no
+    // verifier call, no further planner call (policy is deterministic; retrying burns LLM calls to
+    // reach the same deny). The redactSecretValue wrapper is applied where the loop already applies
+    // it to errors; the deny reason is data-value-free by V7 discipline upstream.
+    if (policyDenial) {
+      recorder.recordSubAction({
+        plan: reasoning,
+        plannedAction: action as unknown as SchemaAction,
+        stateBefore: screenState,
+        result: toSchemaResult(execResult),
+        cached,
+        grounding,
+      })
+      return failure(redactSecretValue(policyDenial.reason, ports.secretRedactor))
     }
 
     const viewport: Viewport = {

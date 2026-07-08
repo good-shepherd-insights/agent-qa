@@ -65,17 +65,15 @@ describe('executeStep — ported v1 scenarios', () => {
     expect((passed as StepContext).testContext).toBe('This is a banking app')
   })
 
-  it('routes context, tool_call, and tool_result through safety hooks', async () => {
+  it('routes context and tool_result through safety hooks; the async gate executes the ORIGINAL action (SEAM-03)', async () => {
     const executed: Action[] = []
     let plannerContext: string | undefined
 
+    // Post-SEAM-03: the sync runToolCall dispatch call is superseded by the async gate, which
+    // operates on the descriptor and NEVER swaps the executed action (Pitfall 4). runContext and
+    // runToolResult are unchanged. The gate returns allow carrying the descriptor — ignored.
     const safetyHooks = makeSafetyHooks({
       runContext: (context) => ({ context: { ...(context as StepContext), testContext: 'rewritten by safety' } as typeof context }),
-      runToolCall: (call) => {
-        const action = call as Action
-        if (action.type !== 'click') return { action: 'allow', call }
-        return { action: 'mutate', mutated: { ...action, ref: 'e1' } as typeof call }
-      },
       runToolResult: (result) => ({ result: { ...(result as ActionResult), data: { rewrittenBySafety: true } } as typeof result }),
     })
 
@@ -93,15 +91,15 @@ describe('executeStep — ported v1 scenarios', () => {
 
     expect(result.status).toBe('passed')
     expect(plannerContext).toBe('rewritten by safety')
-    expect(executed).toEqual([{ type: 'click', ref: 'e1' }])
+    expect(executed).toEqual([{ type: 'click', ref: 'e2' }])
     expect(result.trace?.subActions?.[0]?.data).toEqual({ rewrittenBySafety: true })
   })
 
-  it('blocks a denied tool_call before adapter execution', async () => {
+  it('blocks a denied tool_call before adapter execution (async gate, D-09 terminal)', async () => {
     const execute = vi.fn((_a: Action): Promise<ActionResult> => Promise.resolve({ success: true }))
     const adapter = makeAdapter()
     adapter.execute = execute
-    const safetyHooks = makeSafetyHooks({ runToolCall: () => ({ action: 'deny', reason: 'restricted action blocked' }) })
+    const safetyHooks = makeSafetyHooks({ runToolCallAsync: async () => ({ action: 'deny', reason: 'restricted action blocked' }) })
 
     const result = await executeStep(
       'Click the Log in button',
