@@ -19,7 +19,6 @@ import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTe
 import {
   computeRunConfigDigests,
   resolveRunExecutionContext,
-  buildIdentityMasking,
   buildRunPorts,
   resolveRunBuildOrdinal,
   createSuiteLifecycle,
@@ -69,21 +68,16 @@ function resolveIsCI(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /**
  * Composition-root construction of the redesigned action cache (Phase 356, D-01/D-05/D-14).
- * Builds the runner-local `FsActionCache` behind a resolved branch `CachePolicy` and the
- * identity `MaskingContext` (Phase 362 seeds the live run-scope secrets). Returned pair is
- * injected into the runner loop's cache + masking ports via RunTest/RunSuite config.
+ * Builds the runner-local `FsActionCache` behind a resolved branch `CachePolicy`, injected into the
+ * runner loop's cache port via RunTest/RunSuite config. The loop's masking port carries the ONE run
+ * MaskingContext (built at the composition root's startRun sites, SEAM-01/362-06), not this helper.
  */
-// Structural copy of schema's browser-safe MaskingContext (identity pre-362). Kept local
-// so the CLI does not take a schema dependency purely to name the injected seam type; it
-// structurally satisfies RunTestConfig/RunSuiteConfig `masking?: MaskingContext`.
-type IdentityMaskingContext = { mask(text: string): string; unmask(text: string): string }
-
 async function buildActionCacheContext(params: {
   cacheDir: string
   disableCache: boolean
   saveCache: boolean
   protectedBranches?: string[]
-}): Promise<{ cache: import('@vostride/agent-qa-runner').ActionPlanCache; masking: IdentityMaskingContext }> {
+}): Promise<{ cache: import('@vostride/agent-qa-runner').ActionPlanCache }> {
   const { FsActionCache, resolveBranch } = await import('@vostride/agent-qa-runner-local')
   const branch = resolveBranch({ cwd: process.cwd() })
   const cache = new FsActionCache({
@@ -97,10 +91,7 @@ async function buildActionCacheContext(params: {
       disableCache: params.disableCache,
     },
   })
-  // Identity masking pre-362 (D-05): the mask-before-key routing structure is permanent;
-  // live secret seeding lands in Phase 362 (SEAM-01/MASK-FUT-04).
-  const masking = { mask: (t: string) => t, unmask: (t: string) => t }
-  return { cache, masking }
+  return { cache }
 }
 
 /**
@@ -2389,7 +2380,12 @@ export function createRunCommand(): Command {
 
         // Wire action cache from config (logger wired after LogManager creation below)
         let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
-        let actionMasking: IdentityMaskingContext | undefined
+        // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner for this path,
+        // built at the singleRunId mint below and captured here so runOneDirectTest (defined before
+        // the mint) resolves the run bundle at call time — the second call site, same helpers
+        // (Pitfall 7). `singleMaskingContext` also feeds the D-06 mid-run auth registration.
+        let singleMaskingContext: RunMaskingContext | undefined
+        let singleSafetyHooks: SafetyHookRunner | undefined
 
         // WM-01/WM-02: one run-scoped working-memory store per run, constructed with the run's
         // SecretRedactor (capture-time redaction live); threaded into the loop and flushed
@@ -2443,8 +2439,9 @@ export function createRunCommand(): Command {
           redactor: runtimeSecrets.secretRedactor,
         })
 
-        // Wire the redesigned action cache (runner-local FsActionCache + branch policy)
-        // and the identity masking seam; skip when --disable-cache.
+        // Wire the redesigned action cache (runner-local FsActionCache + branch policy); skip when
+        // --disable-cache. The loop's masking port now carries the run MaskingContext (assigned at
+        // the singleRunId mint below), no longer a cache-context identity mint (SEAM-01/D-09).
         if (opts.disableCache !== true) {
           const { resolve } = await import('node:path')
           const ctx = await buildActionCacheContext({
@@ -2453,7 +2450,6 @@ export function createRunCommand(): Command {
             saveCache: opts.saveCache === true,
           })
           actionCache = ctx.cache
-          actionMasking = ctx.masking
         } else {
           const cacheLog = logger.createScopedLogger('cache')
           cacheLog.info('Cache disabled via --disable-cache', { operation: 'bypass' })
@@ -2560,6 +2556,14 @@ export function createRunCommand(): Command {
             resolvedTarget: testResolvedTarget,
             authState: testAuthStateUse,
           })
+          // D-06: register the loaded auth-state's sensitive values into the run context (runs inside
+          // runSafetyScope, after the mint — singleMaskingContext is live). Additive; stable placeholders.
+          if (singleMaskingContext && testAuthState) {
+            registerAuthStateIntoMaskingContext(
+              singleMaskingContext,
+              await readAuthStatePayloadBestEffort(testAuthState.storageStatePath),
+            )
+          }
           let activeTestAuthState = testAuthState
 
           const testMergedUse = (testMergedConfig as any).use ?? (config as any).use ?? {}
@@ -2891,7 +2895,9 @@ export function createRunCommand(): Command {
               captureScreenshots,
               screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
               cache: effectiveCacheEnabled ? actionCache : undefined,
-              masking: effectiveCacheEnabled ? actionMasking : undefined,
+              // SEAM-01/03: the ONE run context + gate, ungated from cache enablement (D-09/356).
+              masking: singleMaskingContext,
+              safetyHooks: singleSafetyHooks,
               workingMemory: singleWorkingMemory,
               storageState: singleStorageState,
               recording: testRecording,
@@ -2936,6 +2942,14 @@ export function createRunCommand(): Command {
                   adapter: adapter!,
                   paths: testAuthStateCapturePaths,
                 })
+                // D-06: a mid-run captured auth state may carry freshly-minted tokens — register its
+                // sensitive values so every subsequent egress masks them.
+                if (singleMaskingContext) {
+                  registerAuthStateIntoMaskingContext(
+                    singleMaskingContext,
+                    await readAuthStatePayloadBestEffort(activeTestAuthState.storageStatePath),
+                  )
+                }
               } catch {
                 result.status = 'failed'
                 result.failureSummary = formatAuthStateCaptureFailure(testAuthStateCapturePaths)
@@ -3062,7 +3076,7 @@ export function createRunCommand(): Command {
             // The helper never throws, so the run exit code is untouched (Pitfall 5).
             await flushWorkingMemory(singleWorkingMemory, {
               artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
-              mask: actionMasking ? (value: string) => actionMasking!.mask(value) : undefined,
+              mask: singleMaskingContext ? (value: string) => singleMaskingContext!.mask(value) : undefined,
             })
           }
           } catch (err) {
@@ -3201,31 +3215,56 @@ export function createRunCommand(): Command {
           }
         }
 
-        const session = startRun({
-          runId: singleRunId as unknown as Parameters<typeof startRun>[0]['runId'],
-          scope: { tier: 'product', key: singleRunProduct },
-          executionContext: singleExecutionContext,
-          configDigests: runDigests.runLevel,
-          buildOrdinal: singleBuildOrdinal,
-          members,
-          executor,
-          masking: buildIdentityMasking(),
-          ports: singleRunPorts,
+        // SEAM-01/03/04 (362-06): the SAME helpers as the suite path (Pitfall 7 — this is the common
+        // local-dev invocation and 363's demo path, it must not lag). Seed from secrets + env (auth
+        // registers dynamically per-test via D-06 at resolve/capture), stamp the per-run sink, build
+        // the per-run gate, and run the whole body inside runSafetyScope; dispose the context LAST.
+        const maskingContext = buildRunMaskingContext({
+          secretStore: runtimeSecrets.secretStore,
+          env: process.env,
         })
-        activeRunSession = session
+        const auditSink = buildRunAuditSink({ configDir, runId: singleRunId, executionContext: singleExecutionContext })
+        const trustMode = opts.trustSession === true || config.safety?.trustMode === true
+        const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext: singleExecutionContext, trustMode })
+        singleMaskingContext = maskingContext
+        singleSafetyHooks = safetyHooks
 
-        const { verdict } = await session.done
-        if (graceTimer) clearTimeout(graceTimer)
-        activeRunSession = undefined
-        shutdownController.dispose()
-        process.removeListener('SIGINT', shutdownController.handleSignal)
-        process.removeListener('SIGTERM', shutdownController.handleSignal)
+        const singleExit = await runSafetyScope({ maskingContext, auditSink, executionContext: singleExecutionContext }, async () => {
+          try {
+            const session = startRun({
+              runId: singleRunId as unknown as Parameters<typeof startRun>[0]['runId'],
+              scope: { tier: 'product', key: singleRunProduct },
+              executionContext: singleExecutionContext,
+              configDigests: runDigests.runLevel,
+              buildOrdinal: singleBuildOrdinal,
+              members,
+              executor,
+              masking: maskingContext,
+              ports: { ...singleRunPorts, confirmPausedMs },
+            })
+            activeRunSession = session
 
-        // Re-surface a captured framework/setup error so the existing exit-2 contract holds. The
-        // grace backstop is already cleared above, so the exit-2 re-throw path is unaffected.
-        if (frameworkError !== undefined) {
-          throw frameworkError
-        }
+            const { verdict } = await session.done
+            if (graceTimer) clearTimeout(graceTimer)
+            activeRunSession = undefined
+            shutdownController.dispose()
+            process.removeListener('SIGINT', shutdownController.handleSignal)
+            process.removeListener('SIGTERM', shutdownController.handleSignal)
+
+            // Re-surface a captured framework/setup error so the existing exit-2 contract holds — the
+            // throw stays inside the scope so dispose (finally) runs before it propagates. The grace
+            // backstop is already cleared above, so the exit-2 re-throw path is unaffected.
+            if (frameworkError !== undefined) {
+              throw frameworkError
+            }
+
+            // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130).
+            return mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+          } finally {
+            // Pitfall 8: dispose LAST so late maskers (handoff assembly, WM flush) still replace.
+            maskingContext.dispose()
+          }
+        })
 
         releaseAppium()
 
@@ -3241,10 +3280,9 @@ export function createRunCommand(): Command {
           dashboardDb.close()
         }
 
-        // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
-        // SIGINT that raced the terminal verdict still maps to 130. `suitesFailed` (the --all combined
-        // path) still forces a nonzero exit when the separately-run suites leg failed.
-        const singleExit = mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+        // `singleExit` (the D-14 verdict-mapped exit code) is returned from the run-safety scope
+        // above. `suitesFailed` (the --all combined path) still forces a nonzero exit when the
+        // separately-run suites leg failed.
         const exitCode = singleExit !== 0 ? singleExit : (suitesFailed ? 1 : 0)
         await maybePrintPostRunUpdateNotice({
           reporterSelection,

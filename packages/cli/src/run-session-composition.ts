@@ -6,9 +6,9 @@
 // seam, the runner-local persistence ports + buildOrdinal, the lazy suite-lifecycle manager, and
 // the member-executor closure that wraps core's `executeSuiteMember` behind the injected
 // `MemberTestExecutor` port. `startRun` itself never discovers or resolves (D-04): the composition
-// root owns all of it. Phase 362 seeds the real MaskingContext at `buildIdentityMasking`; Phase
-// 363 dissolves the executor port's core side. A future cloud RPC surface reuses this same
-// resolved-config shape.
+// root owns all of it. Phase 362 (section 7 below) seeds the real run MaskingContext both startRun
+// sites wrap in `runSafetyScope`; Phase 363 dissolves the executor port's core side. A future cloud
+// RPC surface reuses this same resolved-config shape.
 //
 // The CLI is a surface / composition root with full host access (spec §4), so this module uses
 // node builtins directly and constructs the runner-local fs stores.
@@ -46,11 +46,8 @@ import type {
 
 // ---- Local structural types -----------------------------------------------------------------
 // The CLI does not take a `@vostride/agent-qa-schema` dependency purely to name these injected
-// seam types — the local shapes structurally satisfy the runner `RunConfig` fields (the run.ts
-// IdentityMaskingContext idiom). ExecutionContext mirrors the schema union exactly.
-
-/** Structural copy of schema's browser-safe MaskingContext (identity pre-362). */
-export type IdentityMaskingContext = { mask(text: string): string; unmask(text: string): string }
+// seam types — the local shapes structurally satisfy the runner `RunConfig` fields. ExecutionContext
+// mirrors the schema union exactly.
 
 /** Mirror of schema's ExecutionContext union (safety-local's detectExecutionContext returns it). */
 export type RunExecutionContext = 'local-interactive' | 'local-headless' | 'ci' | 'cloud'
@@ -134,17 +131,10 @@ export function resolveRunExecutionContext(override?: RunExecutionContext): RunE
   return detectExecutionContext(override) as RunExecutionContext
 }
 
-// ---- (3) buildIdentityMasking — unconditional (D-09, Pitfall 2) ------------------------------
-
-/**
- * Construct the identity MaskingContext for a run. Constructed UNCONDITIONALLY — decoupled from
- * cache enablement (D-09; the Pitfall-2 anti-pattern is closed): the masking seam exists cache-on
- * and cache-off. Phase 362 seeds the real run-scope redactor at this exact injection point with
- * zero further wiring. There is intentionally NO cache-enablement parameter or branch.
- */
-export function buildIdentityMasking(): IdentityMaskingContext {
-  return { mask: (t: string) => t, unmask: (t: string) => t }
-}
+// ---- (3) run masking seed pipeline lives in section (7) below (SEAM-01, 362-06) --------------
+// The pre-362 identity masking injection point is gone: both run.ts startRun sites now construct the
+// real seeded run MaskingContext via `buildRunMaskingContext` (section 7) and run the body inside
+// `runSafetyScope`. No production call site constructs an identity masking context.
 
 // ---- (4) buildRunPorts + buildOrdinal — runner-local persistence tier (D-06/D-17/D-18) -------
 
@@ -262,8 +252,8 @@ export function buildSuiteMemberExecutor(input: {
 // ---- (7) masking seed pipeline — sensitiveEnvSlice / extractAuthStateSensitiveStrings / -------
 // ---------------------------------- buildRunMaskingContext (D-05/D-06/D-07) --------------------
 //
-// The real MaskingContext seed pipeline 362-06 wires at the D-09 `buildIdentityMasking` injection
-// point. seedMaskingContext registers EVERY env value it is handed (filtering is explicitly the
+// The real MaskingContext seed pipeline 362-06 wires at both run.ts startRun sites (the former D-09
+// identity injection point). seedMaskingContext registers EVERY env value it is handed (filtering is explicitly the
 // caller's job), so `sensitiveEnvSlice` is the D-05 gate: masking must never degrade planning, so
 // selection is name-based ONLY (never value-based) — planner-visible config (BASE_URL, NODE_ENV,
 // HOME, PATH) is never seeded while every ambient-credential-shaped name is. `extractAuthStateSensitiveStrings`

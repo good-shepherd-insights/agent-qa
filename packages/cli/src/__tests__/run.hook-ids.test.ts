@@ -89,6 +89,10 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   FsEventLog: mockFsEventLog,
   FsHandoffStore: mockFsHandoffStore,
   nextBuildOrdinal: mockNextBuildOrdinal,
+  // 362-06: the run paths now construct buildRunAuditSink (run-session-composition) which roots the
+  // per-run JsonlAuditSink via the shared run-dir slug — expose both so the mock stays complete.
+  RUNS_SUBDIR: 'runs',
+  slugBranch: (name: string) => String(name),
 }))
 
 vi.mock('@vostride/agent-qa-core', () => ({
