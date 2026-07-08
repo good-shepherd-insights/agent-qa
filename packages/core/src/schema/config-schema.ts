@@ -37,6 +37,9 @@ export const AgentQaConfigSchema = z.object({
   use: UseSchema.optional(),
   plugins: PluginsSchema.optional(),
   analytics: AnalyticsSchema.optional(),
+  // D-15 config half: explicit opt-in trusted-ask mode (the CLI flag half is plan 362-06).
+  // Strict so unknown safety subkeys are rejected — no implicit/unscoped trust channel (§2.3).
+  safety: z.object({ trustMode: z.boolean().optional() }).strict().optional(),
 }).strict()
 .superRefine((val, ctx) => {
   const llms = val.registry?.llms ?? []

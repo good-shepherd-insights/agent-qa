@@ -6,19 +6,18 @@ import { describe, it, expect, vi } from 'vitest'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { TestResult } from '@vostride/agent-qa-runner'
 
-// Capture the config `runTest` receives without running the real loop.
+// Capture the configs `runTest` receives without running the real loop.
+const capturedConfigs: Array<Record<string, unknown>> = []
 const runTestMock = vi.fn(
-  async (): Promise<TestResult> => ({
-    name: 't',
-    filePath: 't.test.ts',
-    status: 'passed',
-    steps: [],
-    duration: 1,
-  }),
+  async (_test: unknown, config: Record<string, unknown>, _filePath: string): Promise<TestResult> => {
+    capturedConfigs.push(config)
+    return { name: 't', filePath: 't.test.ts', status: 'passed', steps: [], duration: 1 }
+  },
 )
 
 vi.mock('../../agent/runner.js', () => ({
-  runTest: (...args: unknown[]) => runTestMock(...args),
+  runTest: (test: unknown, config: Record<string, unknown>, filePath: string) =>
+    runTestMock(test, config, filePath),
 }))
 
 import { executeSuiteMember, type SuiteMemberInput } from '../member.js'
@@ -51,18 +50,16 @@ function baseInput(overrides: Partial<SuiteMemberInput> = {}): SuiteMemberInput 
 
 describe('executeSuiteMember — safetyHooks passthrough (D-04/Open-Q1)', () => {
   it('threads input.safetyHooks into the runTest config', async () => {
-    runTestMock.mockClear()
+    capturedConfigs.length = 0
     const hooks = fakeSafetyHooks()
     await executeSuiteMember(baseInput({ safetyHooks: hooks }))
-    expect(runTestMock).toHaveBeenCalledTimes(1)
-    const config = runTestMock.mock.calls[0][1] as { safetyHooks?: SafetyHookRunner }
-    expect(config.safetyHooks).toBe(hooks)
+    expect(capturedConfigs).toHaveLength(1)
+    expect(capturedConfigs[0]?.safetyHooks).toBe(hooks)
   })
 
   it('leaves runTest config.safetyHooks undefined when the input omits it (byte-identical to runSuite path)', async () => {
-    runTestMock.mockClear()
+    capturedConfigs.length = 0
     await executeSuiteMember(baseInput())
-    const config = runTestMock.mock.calls[0][1] as { safetyHooks?: SafetyHookRunner }
-    expect(config.safetyHooks).toBeUndefined()
+    expect(capturedConfigs[0]?.safetyHooks).toBeUndefined()
   })
 })

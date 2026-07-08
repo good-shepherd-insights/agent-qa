@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import type { TestResult, MemberEventSink, ConfigDigests } from '@vostride/agent-qa-runner'
+import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { TestDefinition } from '../types/test.js'
 import type { SuiteDefinition } from './types.js'
 import type { RunSuiteConfig } from './runner.js'
@@ -102,6 +103,14 @@ export interface SuiteMemberInput {
   events?: MemberEventSink
   abortSignal?: AbortSignal
   configDigests?: ConfigDigests
+  /**
+   * The per-run v48 SafetyHookRunner (D-04, RESEARCH Open Q1). Captured lexically at the CLI
+   * composition root and threaded straight into `runTest`'s already-wired `config.safetyHooks`
+   * slot (which carries it into `LoopPorts`). This additive `SuiteMemberInput` field is the
+   * whole threading path — runner's `RunConfig`/`MemberTestRunContext` deliberately gain NO
+   * safety channel (zero runner-surface change). Absent ⇒ byte-identical to the runSuite path.
+   */
+  safetyHooks?: SafetyHookRunner
 }
 
 /**
@@ -135,6 +144,7 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
     events,
     abortSignal,
     configDigests,
+    safetyHooks,
   } = input
 
   const patched = patchTestForSuite(test, suite, i)
@@ -277,6 +287,9 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
     events,
     abortSignal,
     configDigests,
+    // D-04/Open-Q1: the per-run SafetyHookRunner reaches core's already-wired
+    // config.safetyHooks → LoopPorts line here (runner surface unchanged).
+    safetyHooks,
   }, filePath)
   if (!result.runId) result.runId = childRunId
 
