@@ -127,12 +127,14 @@ describe('POLICY-05 scenario contract', () => {
       expectedOutcome: 'proceeded',
     },
     {
-      name: 'mutating-local ci with no trust fails closed',
+      // §2.1 (Ratified 2026-07-05): mutating-local allows in every execution
+      // context — ordinary in-test verbs are unaffected in ci (D-15 guarantee).
+      name: 'mutating-local ci with no trust proceeds',
       action: { name: 'edit_local_file', recognized: true },
       ctx: 'ci',
       expectedRiskTier: 'mutating-local',
-      expectedVerdict: 'deny',
-      expectedOutcome: 'fail-closed-denied',
+      expectedVerdict: 'allow',
+      expectedOutcome: 'proceeded',
     },
     {
       name: 'mutating-shared ci with matching credential proceeds',
@@ -236,13 +238,15 @@ describe('POLICY-05 scenario contract', () => {
     }
 
     it('lets a matching standing approval stop prompting for its action class', async () => {
+      // Post-§2.1, mutating-local allows outright and never reaches resolveAsk, so
+      // standing-approval coverage is pinned on an ask-tier (destructive) action.
       await evaluateScenario({
         name: 'standing approval covers file_issue in project A',
-        action: { name: 'file_issue', recognized: true },
+        action: { name: 'file_issue', recognized: true, declaredTier: 'destructive' },
         ctx: 'ci',
         trust: { actionScope: { project: PROJECT_A } },
         reader,
-        expectedRiskTier: 'mutating-local',
+        expectedRiskTier: 'destructive',
         expectedVerdict: 'allow',
         expectedOutcome: 'proceeded',
         expectedTrustSource: 'standing-approval',

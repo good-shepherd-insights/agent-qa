@@ -53,6 +53,13 @@ const destructiveAction: RiskActionDescriptor = {
   declaredTier: 'destructive',
 }
 
+// A recognized flagless verb floors to mutating-local (the surface-aware floor) —
+// the "ordinary in-test verb" the §2.1 CI guarantee (D-15) keeps unblocked.
+const mutatingLocalAction: RiskActionDescriptor = {
+  name: 'edit_local_file',
+  recognized: true,
+}
+
 async function evaluateWithAudit(
   action: RiskActionDescriptor,
   ctx: ExecutionContext,
@@ -85,10 +92,14 @@ describe('baseVerdict', () => {
     [
       ...contexts.map((ctx) => ({ tier: 'read-only' as const, ctx, expected: 'allow' as const })),
       ...contexts.map((ctx) => ({ tier: 'restricted' as const, ctx, expected: 'deny' as const })),
-      { tier: 'mutating-local', ctx: 'local-interactive', expected: 'allow' },
-      { tier: 'mutating-local', ctx: 'local-headless', expected: 'ask' },
-      { tier: 'mutating-local', ctx: 'ci', expected: 'ask' },
-      { tier: 'mutating-local', ctx: 'cloud', expected: 'ask' },
+      // spec/v2/execution-safety.md §2.1 (Ratified 2026-07-05): mutating-local
+      // allows in EVERY execution context — the ask + fail-closed rule is reserved
+      // for mutating-shared/destructive. Recognized in-test verbs never reach resolveAsk.
+      ...contexts.map((ctx) => ({
+        tier: 'mutating-local' as const,
+        ctx,
+        expected: 'allow' as const,
+      })),
       ...contexts.map((ctx) => ({
         tier: 'mutating-shared' as const,
         ctx,
@@ -242,6 +253,46 @@ describe('evaluate', () => {
       verdict: 'deny',
       outcome: 'prompted-denied',
     })
+  })
+})
+
+describe('§2.1 mutating-local conformance and D-16 remediation reasons', () => {
+  it('allows a recognized in-test verb in ci with no trust (the D-15 CI guarantee)', async () => {
+    const { result, row } = await evaluateWithAudit(mutatingLocalAction, 'ci')
+
+    expect(result).toMatchObject({ verdict: 'allow', riskTier: 'mutating-local' })
+    expect(row).toMatchObject({ outcome: 'proceeded' })
+    expect(row).not.toHaveProperty('trustSource')
+  })
+
+  it('carries classification AND the way out in a fail-closed deny reason', async () => {
+    const { result, row } = await evaluateWithAudit(destructiveAction, 'ci')
+
+    expect(result.verdict).toBe('deny')
+    expect(row.outcome).toBe('fail-closed-denied')
+    // Classification fragment plus D-16 remediation (action names only, no data values).
+    expect(row.reason).toContain('ci')
+    expect(row.reason).toContain('--trust-session')
+    expect(row.reason).toContain('locally')
+  })
+
+  it('carries remediation in a prompted-denied reason', async () => {
+    const { result, row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: () => false,
+    })
+
+    expect(result.verdict).toBe('deny')
+    expect(row.outcome).toBe('prompted-denied')
+    expect(row.reason).toContain('--trust-session')
+  })
+
+  it('carries a finality clause in a blocked (restricted) reason', async () => {
+    const { result, row } = await evaluateWithAudit(restrictedAction, 'local-interactive')
+
+    expect(result.verdict).toBe('deny')
+    expect(row.outcome).toBe('blocked')
+    // §2.4: grants never override a restricted deny.
+    expect(row.reason).toMatch(/never|no grant|cannot/i)
   })
 })
 
