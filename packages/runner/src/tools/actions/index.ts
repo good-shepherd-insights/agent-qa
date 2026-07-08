@@ -428,7 +428,7 @@ if (mobileFillDefinition.id !== 'mobile_fill') {
   throw new Error(`Unexpected mobile fill id "${mobileFillDefinition.id}"`)
 }
 
-const ACTION_DEFINITIONS: ToolDefinition[] = [
+export const ACTION_DEFINITIONS: ToolDefinition[] = [
   action('click', 'Click an element', z.object({
     ref: optionalRef(`Element to click; ${CURRENT_SCREEN_REF_DESCRIPTION}`),
     target: targetSibling('element to click'),
