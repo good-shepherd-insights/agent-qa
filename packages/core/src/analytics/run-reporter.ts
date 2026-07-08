@@ -1,4 +1,4 @@
-import type { RunArtifactReporterContext } from '../artifacts/run-artifact.js'
+import type { RunArtifactReporterContext } from '@vostride/agent-qa-schema'
 import {
   ATTR_RUNNER,
   ATTR_TRIGGER,

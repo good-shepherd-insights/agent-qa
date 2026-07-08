@@ -1,3 +1,4 @@
+import type { RunAttributes } from '@vostride/agent-qa-core'
 import type {
   ArtifactRecord,
   RunArtifactConfigSnapshot,
@@ -6,9 +7,8 @@ import type {
   RunArtifactStageInput,
   RunArtifactSuiteSourceSnapshot,
   RunArtifactTestSourceSnapshot,
-  RunAttributes,
-} from '@vostride/agent-qa-core'
-import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
+  RunEventEnvelope,
+} from '@vostride/agent-qa-schema'
 import type { DashboardDatabase } from '../db/database.js'
 
 /**
@@ -23,8 +23,8 @@ import type { DashboardDatabase } from '../db/database.js'
  * until M5 (Pitfall 1's hard requirement). This module implements no Reporter
  * interface — pure envelope consumption.
  *
- * NOTE: Plan 06 (363-06) relocates the `RunArtifact*` payload family from its current
- * core home to schema and re-points these imports; build to this spec now.
+ * NOTE: Plan 06 (363-06) relocated the `RunArtifact*` payload family from core to
+ * @vostride/agent-qa-schema (D-08); these imports now point at their canonical home.
  */
 
 type SourceSnapshot =

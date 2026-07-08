@@ -6,16 +6,18 @@ import {
   createBetterSqlite3Database,
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   generateRunId,
-  RUN_ARTIFACT_SCHEMA_VERSION,
   type BetterSqlite3Database,
   type LogEntry,
   type LogStorage,
+  type RunAttributes,
+} from '@vostride/agent-qa-core'
+import {
+  RUN_ARTIFACT_SCHEMA_VERSION,
   type RunArtifactFinalizeInput,
   type RunArtifactKind,
   type RunArtifactPayload,
   type RunArtifactStageInput,
-  type RunAttributes,
-} from '@vostride/agent-qa-core'
+} from '@vostride/agent-qa-schema'
 
 const DASHBOARD_DB_PATH_FALLBACK = DEFAULT_AGENT_QA_RUNS_DB_PATH || '.agent-qa/runs.db'
 

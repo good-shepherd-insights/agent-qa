@@ -1,7 +1,7 @@
 import type { Reporter, RunSummary, HookEvent, HookResultEvent, StepEventContext } from './types.js'
 import type { TestDefinition } from '../types/test.js'
 import type { StepResult, StepPhaseEvent, TestResult } from '@vostride/agent-qa-runner'
-import type { RunArtifactReporterContext } from '../artifacts/run-artifact.js'
+import type { RunArtifactReporterContext } from '@vostride/agent-qa-schema'
 import { redactSecretValue, type SecretRedactor } from '@vostride/agent-qa-runner'
 
 export interface StdoutLiveReporterOptions {

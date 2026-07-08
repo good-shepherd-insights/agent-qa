@@ -180,6 +180,7 @@ export type {
   RunPorts,
   HookExecutorPort,
   HookExecuteOptions,
+  RunArtifactStorePort,
 } from './run/ports.js'
 // Phase 363 D-06 — runner-owned hook contracts + orchestration. The Docker impl
 // (DockerHookExecutor) lives in runner-local behind the HookExecutorPort above.

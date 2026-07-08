@@ -1,7 +1,7 @@
 import type { TestDefinition } from '../types/test.js'
 import type { StepPhaseEvent, StepResult, TestResult } from '@vostride/agent-qa-runner'
 import type { SuiteDefinition } from '../suite/types.js'
-import type { RunArtifactReporterContext } from '../artifacts/run-artifact.js'
+import type { RunArtifactReporterContext } from '@vostride/agent-qa-schema'
 
 export interface RunSummary {
   results: TestResult[]

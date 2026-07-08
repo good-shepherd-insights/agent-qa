@@ -30,6 +30,7 @@ import {
 import {
   FsEventLog,
   FsHandoffStore,
+  FsRunArtifactStore,
   nextBuildOrdinal,
   RUNS_SUBDIR,
   slugBranch,
@@ -40,6 +41,7 @@ import type {
   HandoffStorePort,
   MemberTestExecutor,
   MemberTestRunContext,
+  RunArtifactStorePort,
   RunMemberDescriptor,
   TestResult,
 } from '@vostride/agent-qa-runner'
@@ -138,22 +140,24 @@ export function resolveRunExecutionContext(override?: RunExecutionContext): RunE
 
 // ---- (4) buildRunPorts + buildOrdinal — runner-local persistence tier (D-06/D-17/D-18) -------
 
-/** The durable run ports the shell wires behind `RunConfig.ports` (event log + handoff store). */
+/** The durable run ports the shell wires behind `RunConfig.ports` (event log + handoff + artifact). */
 export interface RunPersistencePorts {
   eventLog: EventLogPort
   handoffStore: HandoffStorePort
+  runArtifactStore: RunArtifactStorePort
 }
 
 /**
  * Construct the runner-local persistence ports rooted at the run's `.agent-qa` runtime dir (the
- * FsActionCache rooting idiom). `FsEventLog`/`FsHandoffStore` both write under
- * `<configDir>/.agent-qa/runs/<slug(runId)>/…`.
+ * FsActionCache rooting idiom). `FsEventLog`/`FsHandoffStore`/`FsRunArtifactStore` all write under
+ * the SAME `<configDir>/.agent-qa/runs/<slug(runId)>/…` family (D-08 — one self-contained run dir).
  */
 export function buildRunPorts(input: { configDir: string; runId: string }): RunPersistencePorts {
   const root = resolve(input.configDir, '.agent-qa')
   return {
     eventLog: new FsEventLog({ root, runId: input.runId }),
     handoffStore: new FsHandoffStore({ root, runId: input.runId }),
+    runArtifactStore: new FsRunArtifactStore({ root, runId: input.runId }),
   }
 }
 

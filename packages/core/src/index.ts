@@ -14,7 +14,7 @@ export * from './validation/index.js'
 export * from './hooks/index.js'
 export * from './memory/index.js'
 export * from './ids/index.js'
-export * from './artifacts/index.js'
+// 363 D-08: the run-artifact type family relocated to @vostride/agent-qa-schema (was ./artifacts).
 export * from './workspace/index.js'
 export * from './analytics/index.js'
 export * from './run-attributes.js'

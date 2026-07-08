@@ -73,6 +73,18 @@ export function startRun(config: RunConfig): RunSession {
     memberTestCount: config.members.length,
   })
 
+  // D-08: stage the config + source artifact snapshot into the run dir once, right after
+  // runStarted. Fire-and-forget (sync) — a store throw degrades with a runWarning and NEVER gates
+  // the run (D-07). Absent store ⇒ no-op; absent snapshot ⇒ an empty (schema-version-only) stage.
+  try {
+    ports.runArtifactStore?.stage(config.runArtifact ?? {})
+  } catch (error) {
+    bus.publish('runWarning', {
+      code: 'artifact-stage-failed',
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+
   let status: 'running' | RunStatus = 'running'
   let runCancelled = false
   let runBudgetExpired = false
@@ -270,6 +282,18 @@ export function startRun(config: RunConfig): RunSession {
     } catch (error) {
       bus.publish('runWarning', {
         code: 'handoff-write-failed',
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
+
+    // D-08: finalize the run artifact with the end timestamp before runFinished. Fire-and-forget
+    // (sync) — a store throw degrades with a runWarning and NEVER gates done (D-07). The keep/drop
+    // table drops the top-level runtime section, so only errors + finalizedAt are merged here.
+    try {
+      ports.runArtifactStore?.finalize({ finalizedAt: new Date(endedAt).toISOString() })
+    } catch (error) {
+      bus.publish('runWarning', {
+        code: 'artifact-finalize-failed',
         message: error instanceof Error ? error.message : String(error),
       })
     }

@@ -16,6 +16,8 @@ import type {
   HookStartedPayload,
   HookFinishedPayload,
   TestRetryScheduledPayload,
+  RunArtifactStageInput,
+  RunArtifactFinalizeInput,
 } from '@vostride/agent-qa-schema'
 import type { TestResult } from '../result.js'
 import type { LoopEventEmitPort, SecretRedactorPort } from '../loop/ports.js'
@@ -82,6 +84,24 @@ export interface HookExecutorPort {
  */
 export interface HandoffStorePort {
   save(handoff: CompletedRunHandoff): void
+}
+
+/**
+ * The D-08 run-artifact persistence seam: a runner-owned port whose only implementation is the
+ * runner-local `FsRunArtifactStore` (the 356/361 port-in-runner/impl-in-runner-local precedent).
+ * BOTH legs are SYNC and fire-and-forget — the shell NEVER awaits artifact persistence, and a
+ * throw degrades with a `runWarning`, never gates the verdict (the JsonlAuditSink/handoff
+ * discipline; D-07). The store writes ONE `artifact.json` into the SAME
+ * `<root>/runs/<slug(runId)>/` family as `events.jsonl`/`handoff.json` (one self-contained run
+ * directory). `stage(document)` persists the config + source snapshot once after `runStarted`;
+ * `finalize(patch)` merges terminal errors + the end timestamp before `runFinished` — matching
+ * the dashboard DB staged/finalize idiom so a crashed run still leaves a staged artifact. Per the
+ * RESEARCH Q5 keep/drop table the FILE artifact keeps config/source/errors only; the top-level
+ * `runtime` section is dropped (derived from events/handoff). An absent port is a silent no-op.
+ */
+export interface RunArtifactStorePort {
+  stage(document: RunArtifactStageInput): void
+  finalize(patch: RunArtifactFinalizeInput): void
 }
 
 /**
@@ -177,6 +197,11 @@ export interface RunPorts {
   handoffStore?: HandoffStorePort
   eventLog?: EventLogPort
   /**
+   * The D-08 run-artifact store. Staged after `runStarted`, finalized before `runFinished`;
+   * absent ⇒ no artifact.json is written (memory-only run, byte-identical pre-363-06 behavior).
+   */
+  runArtifactStore?: RunArtifactStorePort
+  /**
    * The run-budget clock (D-03). The shell arms `runBudgetMs` on this timer; it is NOT
    * routed into the bus heartbeat (the two clocks stay distinct so firing the injected
    * budget timer is unambiguous — see the shell's timer note).
@@ -213,4 +238,11 @@ export interface RunConfig {
   masking?: MaskingContext
   runBudgetMs?: number
   ports?: RunPorts
+  /**
+   * The D-08 config + source artifact snapshot the CLI composition root assembles (the
+   * `buildRunArtifactContext` document). Staged verbatim into `artifact.json` after `runStarted`
+   * via `ports.runArtifactStore`. Optional — absent ⇒ an empty stage (schema-version-only doc),
+   * so the store leg stays a no-op-shaped write and the memory-only path is unchanged.
+   */
+  runArtifact?: RunArtifactStageInput
 }

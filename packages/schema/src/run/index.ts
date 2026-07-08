@@ -1,5 +1,30 @@
 export { asRunId } from './run-id'
 export type { RunId } from './run-id'
+// 363 D-08: run-artifact payload type family (relocated from core/src/artifacts).
+export { RUN_ARTIFACT_SCHEMA_VERSION } from './run-artifact'
+export type {
+  ArtifactRecord,
+  JsonArray,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  RunArtifactConfigSnapshot,
+  RunArtifactFinalizeInput,
+  RunArtifactKind,
+  RunArtifactMemoryDelta,
+  RunArtifactMemoryDeltaAction,
+  RunArtifactMemoryObservationSnapshot,
+  RunArtifactMemorySnapshot,
+  RunArtifactMetadata,
+  RunArtifactPayload,
+  RunArtifactReporterContext,
+  RunArtifactRuntimeSnapshot,
+  RunArtifactStageInput,
+  RunArtifactSuiteMemberSnapshot,
+  RunArtifactSuiteSourceSnapshot,
+  RunArtifactTerminalError,
+  RunArtifactTestSourceSnapshot,
+} from './run-artifact'
 export type { RunStatus, ExecutionContext } from './run-status'
 export type { MemberTestOutcome } from './member-outcome'
 export type { RunSession, RunCompletion } from './run-session'

@@ -1,4 +1,12 @@
-import type { RunAttributes } from '../run-attributes.js'
+// Run-artifact payload type family (Phase 363, D-08 — relocated from core/src/artifacts).
+//
+// These are PURE, host-API-free types (the schema-package discipline: no globalThis/fetch/fs/
+// node:*). They describe the durable "run-artifact document": the config snapshot + test/suite
+// source snapshot + terminal errors a run persists. Two consumers share the shapes — the
+// dashboard SQLite `run_artifacts` payload (the real document) and the runner-owned
+// `FsRunArtifactStore` file-side artifact.json (D-08, RESEARCH Q5) — so the type family lives in
+// the lowest shared layer (schema) rather than core. `attributes` is typed structurally as
+// `Record<string, string>` (the core `RunAttributes` alias) so schema takes no core dependency.
 
 export const RUN_ARTIFACT_SCHEMA_VERSION = 1 as const
 
@@ -14,7 +22,9 @@ export type JsonArray = JsonValue[]
 export type ArtifactRecord = Record<string, unknown>
 
 export interface RunArtifactMetadata extends ArtifactRecord {
-  attributes?: RunAttributes
+  // Structurally the core `RunAttributes` alias (Record<string, string>); inlined so schema
+  // stays free of a core dependency.
+  attributes?: Record<string, string>
 }
 
 export interface RunArtifactTerminalError {

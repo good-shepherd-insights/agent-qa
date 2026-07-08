@@ -32,6 +32,11 @@ export { FsEventLog, RUNS_SUBDIR, EVENTS_FILE } from './event-log.js'
 export type { FsEventLogConfig } from './event-log.js'
 export { FsHandoffStore, loadCompletedRunHandoff, HANDOFF_FILE } from './handoff-store.js'
 export type { FsHandoffStoreConfig } from './handoff-store.js'
+
+// Phase 363 D-08 — the fs run-artifact store behind the runner RunArtifactStorePort. Writes one
+// artifact.json into the SAME <root>/runs/<slug(runId)>/ family as events.jsonl / handoff.json.
+export { FsRunArtifactStore, ARTIFACT_FILE } from './run-artifact-store.js'
+export type { FsRunArtifactStoreConfig } from './run-artifact-store.js'
 export { nextBuildOrdinal, BUILD_ORDINALS_FILE } from './build-ordinal.js'
 export type { NextBuildOrdinalOptions } from './build-ordinal.js'
 

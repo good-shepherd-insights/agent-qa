@@ -21,6 +21,7 @@ import type {
   RunMemberDescriptor,
 } from '../shell.js'
 import type { EventLogPort, HandoffStorePort, RunTimerPort } from '../ports.js'
+import type { RunArtifactStageInput, RunArtifactFinalizeInput } from '@vostride/agent-qa-schema'
 import type { StepResult, TestResult } from '../../result.js'
 import type {
   CompletedRunHandoff,
@@ -529,6 +530,93 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     expect(finished.payload).not.toHaveProperty('failureSummary')
     expect(finished.payload).not.toHaveProperty('retryCount')
     expect(JSON.parse(JSON.stringify(finished.payload))).toEqual(finished.payload)
+  })
+})
+
+// ---- D-08 run-artifact store lifecycle (363-06) --------------------------
+
+interface FakeArtifactStore {
+  stage(document: RunArtifactStageInput): void
+  finalize(patch: RunArtifactFinalizeInput): void
+  stageCalls: RunArtifactStageInput[]
+  finalizeCalls: RunArtifactFinalizeInput[]
+}
+
+function makeFakeArtifactStore(options: { fail?: boolean } = {}): FakeArtifactStore {
+  return {
+    stageCalls: [],
+    finalizeCalls: [],
+    stage(document) {
+      this.stageCalls.push(document)
+      if (options.fail) throw new Error('artifact disk full')
+    },
+    finalize(patch) {
+      this.finalizeCalls.push(patch)
+      if (options.fail) throw new Error('artifact disk full')
+    },
+  }
+}
+
+describe('run-artifact store lifecycle (D-08, 363-06)', () => {
+  it('stages the config+source snapshot synchronously after runStarted, before finalize', () => {
+    const store = makeFakeArtifactStore()
+    const runArtifact: RunArtifactStageInput = {
+      config: { rawConfigContent: 'baseUrl: x' },
+      source: { kind: 'test', testId: 't-1' },
+    }
+    const session = startRun(
+      baseConfig({
+        runArtifact,
+        ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog(), runArtifactStore: store },
+      }),
+    )
+    // startRun is synchronous through runStarted → stage fires during construction; finalize waits
+    // for the terminal sequence (await done), proving stage-after-runStarted / finalize-before-runFinished.
+    expect(store.stageCalls).toHaveLength(1)
+    expect(store.stageCalls[0]).toEqual(runArtifact)
+    expect(store.finalizeCalls).toHaveLength(0)
+    return done(session).then(() => {
+      expect(store.finalizeCalls).toHaveLength(1)
+      expect(typeof store.finalizeCalls[0].finalizedAt).toBe('string')
+    })
+  })
+
+  it('stages an empty document when no runArtifact snapshot is supplied', async () => {
+    const store = makeFakeArtifactStore()
+    const session = startRun(
+      baseConfig({
+        ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog(), runArtifactStore: store },
+      }),
+    )
+    await done(session)
+    expect(store.stageCalls).toEqual([{}])
+    expect(store.finalizeCalls).toHaveLength(1)
+  })
+
+  it('is a silent no-op when no runArtifactStore is present', async () => {
+    const session = startRun(
+      baseConfig({
+        runArtifact: { config: { rawConfigContent: 'x' } },
+        ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
+      }),
+    )
+    await expect(done(session)).resolves.toBeDefined()
+  })
+
+  it('a throwing store degrades with runWarnings and never gates the verdict (D-07)', async () => {
+    const store = makeFakeArtifactStore({ fail: true })
+    const session = startRun(
+      baseConfig({
+        runArtifact: { config: { rawConfigContent: 'x' } },
+        ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog(), runArtifactStore: store },
+      }),
+    )
+    const events = drain(session)
+    const result = await done(session)
+    expect(result.verdict).toBeDefined()
+    const warnings = events.filter(e => e.type === 'runWarning').map(e => (e.payload as { code: string }).code)
+    expect(warnings).toContain('artifact-stage-failed')
+    expect(warnings).toContain('artifact-finalize-failed')
   })
 })
 

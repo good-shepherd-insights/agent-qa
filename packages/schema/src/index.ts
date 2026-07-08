@@ -117,6 +117,31 @@ export { workingMemoryEntrySchema } from './memory/index'
 
 // 315 run+agent DTOs
 export type { RunSession } from './run/index'
+// 363 D-08: run-artifact payload type family (relocated from core/src/artifacts).
+export { RUN_ARTIFACT_SCHEMA_VERSION } from './run/index'
+export type {
+  ArtifactRecord,
+  JsonArray,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  RunArtifactConfigSnapshot,
+  RunArtifactFinalizeInput,
+  RunArtifactKind,
+  RunArtifactMemoryDelta,
+  RunArtifactMemoryDeltaAction,
+  RunArtifactMemoryObservationSnapshot,
+  RunArtifactMemorySnapshot,
+  RunArtifactMetadata,
+  RunArtifactPayload,
+  RunArtifactReporterContext,
+  RunArtifactRuntimeSnapshot,
+  RunArtifactStageInput,
+  RunArtifactSuiteMemberSnapshot,
+  RunArtifactSuiteSourceSnapshot,
+  RunArtifactTerminalError,
+  RunArtifactTestSourceSnapshot,
+} from './run/index'
 // 361 bus schema v1 + M1-lite session vocabulary (SESSION-01/02/03, D-05/D-13/D-15)
 export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './run/index'
 // 361 D-10/D-09: pure masked payload projections (SESSION-03 projection layer).
