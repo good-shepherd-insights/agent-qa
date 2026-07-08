@@ -14,6 +14,15 @@ import type {
 } from '../reporter/types.js'
 import type { SuiteDefinition } from '../suite/types.js'
 import type { StepResult, TestResult, TokenUsage } from '@vostride/agent-qa-runner'
+import type {
+  RunEventEnvelope,
+  RunFinishedPayload,
+  RunStartedPayload,
+  StepFinalizedPayload,
+  TestFinishedPayload,
+  TestStartedPayload,
+  VerdictPayload,
+} from '@vostride/agent-qa-schema'
 import type { TestDefinition } from '../types/test.js'
 import { buildAnalyticsEvent, type AnalyticsEventProperties, type AnalyticsSurface } from './events.js'
 import {
@@ -486,4 +495,246 @@ export class AnalyticsRunReporter implements Reporter {
 
 export function createAnalyticsRunReporter(options: AnalyticsRunReporterOptions = {}): AnalyticsRunReporter {
   return new AnalyticsRunReporter(options)
+}
+
+// --- Bus subscriber (D-16 / RUNX-03) ----------------------------------------
+//
+// `createAnalyticsRunSubscriber` re-homes the analytics feed onto the bus. The v1
+// `AnalyticsRunReporter` above stays live until Plan 09 swaps the CLI attachment (and Plan 11
+// deletes the Reporter shape); this factory is built + unit-tested here so Plan 09 can attach it
+// at the CLI root. Analytics STAYS core-owned (D-16 — relocation rejected as scope creep).
+//
+// The bus carries a strict projection of the run (spec §2.2), so the subscriber preserves the
+// derivable slice of the v1 metric set — run/member counts, outcomes, durations, step tallies,
+// retry/flaky — accumulated from the envelope stream and submitted once the run finishes. Rich
+// per-subaction/token/memory measures that only ever lived on the runner `TestResult` are not on
+// the wire and are intentionally out of scope for the bus feed.
+//
+// RUNX-03 posture carried over verbatim: a privacy opt-out or a keyless service ⇒ silent no-op,
+// zero startup cost; every handler/flush body swallows its own errors so an analytics fault can
+// never touch a run (the 361 D-08 detach-on-error backstop is the second line of defence).
+
+export interface AnalyticsRunSubscriberOptions extends Omit<AnalyticsServiceOptions, 'transport'> {
+  surface?: AnalyticsSurface
+  service?: AnalyticsService
+  transport?: AnalyticsTransport
+  /** Trusted run attributes (trigger/runner). Falls back to `AGENT_QA_RUN_ATTRIBUTES_JSON`. */
+  attributes?: RunAttributes
+}
+
+export interface AnalyticsRunSubscriber {
+  handler(envelope: RunEventEnvelope): void
+  flush(): Promise<void>
+}
+
+interface MemberStepTally {
+  step_count: number
+  passed_step_count: number
+  failed_step_count: number
+  skipped_step_count: number
+}
+
+interface MemberRecord {
+  testId?: string
+  outcome: string
+  durationMs?: number
+  retryCount?: number
+  steps: MemberStepTally
+}
+
+function emptyStepTally(): MemberStepTally {
+  return { step_count: 0, passed_step_count: 0, failed_step_count: 0, skipped_step_count: 0 }
+}
+
+/**
+ * Map a member/aggregate {@link MemberTestOutcome} to the analytics status vocabulary.
+ * `healed` runs are `passed` (the heal marker lives on the step); `timeout` collapses to `failed`.
+ */
+function outcomeToAnalyticsStatus(outcome: unknown): AnalyticsEventProperties['status'] {
+  switch (outcome) {
+    case 'passed':
+    case 'healed':
+      return 'passed'
+    case 'failed':
+    case 'timeout':
+      return 'failed'
+    case 'skipped':
+      return 'skipped'
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return 'unknown'
+  }
+}
+
+export function createAnalyticsRunSubscriber(options: AnalyticsRunSubscriberOptions = {}): AnalyticsRunSubscriber {
+  const surface = options.surface ?? 'core'
+  const identityPath = options.identityPath
+  const env = options.env
+  const disabled = options.config?.analytics?.privacy === true
+  const service = options.service ?? createAnalyticsService({ ...options, surface, transport: options.transport })
+  const attributes = options.attributes ?? readAttributesFromEnv(env) ?? fallbackAttributes()
+
+  // Accumulated run state, filled from the envelope stream and read once at flush.
+  let runId: string | undefined
+  let finished = false
+  let aggregateVerdict: string | undefined
+  let sawSuite = false
+  const members = new Map<number, MemberRecord>()
+  // Live step tallies keyed by testIndex; testRetryScheduled resets a member's tally so a
+  // re-run's repeated stepFinalized sequence never double-counts (schema §2.2 retry note).
+  const liveSteps = new Map<number, MemberStepTally>()
+
+  function stepTallyFor(testIndex: number): MemberStepTally {
+    let tally = liveSteps.get(testIndex)
+    if (!tally) {
+      tally = emptyStepTally()
+      liveSteps.set(testIndex, tally)
+    }
+    return tally
+  }
+
+  function handleTestStarted(payload: TestStartedPayload): void {
+    if (typeof payload.suiteId === 'string' && payload.suiteId.length > 0) sawSuite = true
+    liveSteps.set(payload.testIndex, emptyStepTally())
+  }
+
+  function handleStepFinalized(payload: StepFinalizedPayload): void {
+    const tally = stepTallyFor(payload.testIndex)
+    tally.step_count += 1
+    switch (payload.status) {
+      case 'passed':
+      case 'healed':
+        tally.passed_step_count += 1
+        break
+      case 'failed':
+      case 'cancelled':
+        tally.failed_step_count += 1
+        break
+      case 'skipped':
+        tally.skipped_step_count += 1
+        break
+      default:
+        break
+    }
+  }
+
+  function handleTestFinished(payload: TestFinishedPayload): void {
+    const steps = liveSteps.get(payload.testIndex) ?? emptyStepTally()
+    // Only the final attempt emits testFinished — overwrite any prior record for this index.
+    members.set(payload.testIndex, {
+      testId: readString(payload.testId),
+      outcome: readString(payload.outcome) ?? 'unknown',
+      durationMs: readNumber(payload.durationMs),
+      retryCount: readNumber(payload.retryCount),
+      steps,
+    })
+    liveSteps.delete(payload.testIndex)
+  }
+
+  return {
+    handler(envelope: RunEventEnvelope): void {
+      if (disabled) return
+      try {
+        runId = envelope.runId
+        switch (envelope.type) {
+          case 'runStarted':
+            // memberTestCount is available for parity but the tally is derived from members.
+            void (envelope.payload as RunStartedPayload).memberTestCount
+            break
+          case 'testStarted':
+            handleTestStarted(envelope.payload as TestStartedPayload)
+            break
+          case 'stepFinalized':
+            handleStepFinalized(envelope.payload as StepFinalizedPayload)
+            break
+          case 'testRetryScheduled':
+            liveSteps.delete((envelope.payload as { testIndex: number }).testIndex)
+            break
+          case 'testFinished':
+            handleTestFinished(envelope.payload as TestFinishedPayload)
+            break
+          case 'verdict':
+            aggregateVerdict = readString((envelope.payload as VerdictPayload).verdict) ?? aggregateVerdict
+            break
+          case 'runFinished':
+            aggregateVerdict =
+              readString((envelope.payload as RunFinishedPayload).aggregateVerdict) ?? aggregateVerdict
+            finished = true
+            break
+          default:
+            break
+        }
+      } catch {
+        // A malformed envelope must never break a run — analytics is best-effort (RUNX-03).
+      }
+    },
+
+    async flush(): Promise<void> {
+      if (disabled || !finished || !runId) {
+        // Still drain the transport so a keyless/best-effort service settles cleanly.
+        try {
+          await service.flush()
+        } catch {
+          // Analytics is intentionally best-effort.
+        }
+        return
+      }
+
+      try {
+        const standard = await resolveAnalyticsStandardProperties({ surface, identityPath, env })
+        const triggerSource = normalizeTriggerSource(attributes[ATTR_TRIGGER])
+        const runner = normalizeRunner(attributes[ATTR_RUNNER])
+
+        const memberRecords = [...members.values()]
+        for (const record of memberRecords) {
+          const status = outcomeToAnalyticsStatus(record.outcome)
+          await service.capture(buildAnalyticsEvent({
+            name: 'agent-qa.test_run.completed',
+            properties: definedProperties({
+              ...standard,
+              run_id: runId,
+              test_id: record.testId,
+              trigger_source: triggerSource,
+              runner,
+              status,
+              duration_ms: record.durationMs,
+              retry_count: record.retryCount,
+              is_flaky: record.retryCount !== undefined
+                ? status === 'passed' && record.retryCount > 0
+                : undefined,
+              cancelled: status === 'cancelled' ? true : undefined,
+              ...record.steps,
+            }),
+          }))
+        }
+
+        if (sawSuite) {
+          const passed = memberRecords.filter(r => outcomeToAnalyticsStatus(r.outcome) === 'passed').length
+          const failed = memberRecords.filter(r => outcomeToAnalyticsStatus(r.outcome) === 'failed').length
+          const skipped = memberRecords.filter(r => outcomeToAnalyticsStatus(r.outcome) === 'skipped').length
+          const totalDuration = memberRecords.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
+          await service.capture(buildAnalyticsEvent({
+            name: 'agent-qa.suite_run.completed',
+            properties: definedProperties({
+              ...standard,
+              run_id: runId,
+              trigger_source: triggerSource,
+              runner,
+              status: outcomeToAnalyticsStatus(aggregateVerdict),
+              duration_ms: totalDuration,
+              suite_child_count: memberRecords.length,
+              suite_passed_count: passed,
+              suite_failed_count: failed,
+              suite_skipped_count: skipped,
+            }),
+          }))
+        }
+
+        await service.flush()
+      } catch {
+        // Analytics is intentionally best-effort — never surface a fault to the run.
+      }
+    },
+  }
 }
