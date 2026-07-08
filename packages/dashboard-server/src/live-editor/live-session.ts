@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { dirname, resolve as resolvePath } from 'node:path'
 import {
   AUTH_STATE_SCHEMA_VERSION,
-  parseHookInline,
-  stripHookInline,
   MobileSetupError,
   readAuthStateMetadata,
   redactAuthStateValue,
@@ -20,6 +18,8 @@ import {
   resolveSecretTemplatesInValue,
   runHooks,
   resolveSecretEnv,
+  parseHookInline,
+  stripHookInline,
 } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import { createModel, createTokenAccounting, resolveCapabilities } from '@vostride/agent-qa-model'
@@ -910,7 +910,6 @@ export class LiveSession {
         plannerConfig: { maxSubActions: 50, previousStepCount: 5 },
         vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),
-        onPhase,
         abortSignal: this.abortController.signal,
         secretStore: this.secretStore,
         secretRedactor: this.secretRedactor,

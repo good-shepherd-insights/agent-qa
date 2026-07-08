@@ -6,12 +6,6 @@ import {
   type RunAttributes,
   validateTrustedRunAttributes,
 } from '../run-attributes.js'
-import type {
-  HookResultEvent,
-  Reporter,
-  RunSummary,
-  SuiteSummary,
-} from '../reporter/types.js'
 import type { SuiteDefinition } from '../suite/types.js'
 import type { StepResult, TestResult, TokenUsage } from '@vostride/agent-qa-runner'
 import type {
@@ -63,12 +57,6 @@ interface SuiteState {
   suiteId?: string
   attributes: RunAttributes
   executionMode?: AnalyticsEventProperties['suite_execution_mode']
-}
-
-export interface AnalyticsRunReporterOptions extends Omit<AnalyticsServiceOptions, 'transport'> {
-  surface?: AnalyticsSurface
-  service?: AnalyticsService
-  transport?: AnalyticsTransport
 }
 
 function isRecord(value: unknown): value is RecordLike {
@@ -333,176 +321,13 @@ function definedProperties(properties: AnalyticsEventProperties): Record<string,
   return output
 }
 
-export class AnalyticsRunReporter implements Reporter {
-  private readonly service: AnalyticsService
-  private readonly surface: AnalyticsSurface
-  private readonly identityPath?: string
-  private readonly env?: Record<string, string | undefined>
-  private readonly disabled: boolean
-  private readonly runStates = new Map<string, RunState>()
-  private readonly suiteStates = new Map<string, SuiteState>()
-
-  constructor(options: AnalyticsRunReporterOptions = {}) {
-    this.surface = options.surface ?? 'core'
-    this.identityPath = options.identityPath
-    this.env = options.env
-    this.disabled = options.config?.analytics?.privacy === true
-    this.service = options.service ?? createAnalyticsService({
-      ...options,
-      surface: this.surface,
-      transport: options.transport,
-    })
-  }
-
-  async onSuiteStart(suite: SuiteDefinition, context?: RunArtifactReporterContext): Promise<void> {
-    if (this.disabled) return
-    const runId = context?.runId ?? readString(context?.artifact?.runtime?.runId)
-    if (!runId) return
-    const runtime = isRecord(context?.artifact?.runtime) ? context?.artifact?.runtime : {}
-    this.suiteStates.set(runId, {
-      runId,
-      suiteId: readSuiteId(suite, context),
-      attributes: resolveAttributes(context, this.env),
-      executionMode: normalizeSuiteExecutionMode(runtime.executionMode ?? runtime.execution_mode ?? runtime.parallel),
-    })
-  }
-
-  async onTestStart(test: TestDefinition, _filePath: string, context?: RunArtifactReporterContext): Promise<void> {
-    if (this.disabled) return
-    const state = readRunState({ test, context, env: this.env })
-    this.runStates.set(state.runId, state)
-  }
-
-  async onHookEnd(event: HookResultEvent): Promise<void> {
-    if (this.disabled) return
-    const runId = event.runId
-    if (!runId) return
-    const state = this.runStates.get(runId)
-    if (!state) return
-    state.hookCount += 1
-    if (event.status === 'failed') state.failedHookCount += 1
-  }
-
-  async onTestEnd(): Promise<void> {
-    // Retry attempts can emit onTestEnd before the final retry-aware result exists.
-  }
-
-  async onRunEnd(summary: RunSummary): Promise<void> {
-    if (this.disabled) return
-    for (const result of summary.results) {
-      await this.captureTestResult(result)
-    }
-  }
-
-  async onSuiteEnd(summary: SuiteSummary): Promise<void> {
-    if (this.disabled) return
-    await this.captureSuiteResult(summary)
-  }
-
-  async flush(): Promise<void> {
-    try {
-      await this.service.flush()
-    } catch {
-      // Analytics is intentionally best-effort.
-    }
-  }
-
-  private findStateForResult(result: TestResult): RunState | undefined {
-    if (result.runId) return this.runStates.get(result.runId)
-    return [...this.runStates.values()].find(state => state.testId && result.metadata?.testId === state.testId)
-  }
-
-  private async captureTestResult(result: TestResult): Promise<void> {
-    const state = this.findStateForResult(result)
-    const resultMetadata = isRecord(result.metadata) ? result.metadata : undefined
-    const resultRuntime = readNestedRecord(resultMetadata, 'runtime')
-    const resultAttributes = readAttributes(resultMetadata?.attributes)
-    const retryCount = typeof result.retryCount === 'number' && result.retryCount >= 0 ? result.retryCount : undefined
-    const properties = definedProperties({
-      ...await resolveAnalyticsStandardProperties({
-        surface: this.surface,
-        identityPath: this.identityPath,
-        env: this.env,
-      }),
-      run_id: result.runId ?? state?.runId,
-      parent_run_id: state?.parentRunId,
-      test_id: state?.testId ?? readString(resultMetadata?.testId),
-      suite_id: state?.suiteId ?? readString(resultMetadata?.suiteId),
-      trigger_source: normalizeTriggerSource(state?.attributes[ATTR_TRIGGER] ?? resultAttributes?.[ATTR_TRIGGER]),
-      runner: normalizeRunner(state?.attributes[ATTR_RUNNER] ?? resultAttributes?.[ATTR_RUNNER]),
-      platform: state?.platform ?? normalizePlatform(resultRuntime?.platform ?? resultMetadata?.platform),
-      browser_name: state?.browserName ?? readString(resultRuntime?.browserName) ?? readString(resultRuntime?.browser),
-      mobile_transport: state?.mobileTransport ?? readString(resultRuntime?.mobileTransport) ?? readString(resultRuntime?.mobile_transport),
-      mobile_provider: state?.mobileProvider ?? readString(resultRuntime?.mobileProvider) ?? readString(resultRuntime?.mobile_provider),
-      app_state: state?.appState ?? readString(resultRuntime?.appState) ?? readString(resultRuntime?.app_state),
-      execution_destination: state?.executionDestination ?? readString(resultRuntime?.executionDestination) ?? readString(resultRuntime?.execution_destination),
-      provider: state?.provider,
-      provider_mode: state?.providerMode,
-      planner_model: state?.plannerModel,
-      verifier_model: state?.verifierModel,
-      status: normalizeStatus(result.status),
-      duration_ms: result.duration,
-      retry_count: retryCount,
-      is_flaky: retryCount !== undefined ? result.status === 'passed' && retryCount > 0 : undefined,
-      cancelled: result.status === 'cancelled' ? true : undefined,
-      timed_out: classifyFailureCategory(result) === 'timeout' ? true : undefined,
-      failure_category: classifyFailureCategory(result),
-      ...collectExecutionMetrics(result, state),
-      ...collectMemoryMetrics(result, state),
-    })
-
-    try {
-      await this.service.capture(buildAnalyticsEvent({
-        name: 'agent-qa.test_run.completed',
-        properties,
-      }))
-    } catch {
-      // Analytics is intentionally best-effort.
-    }
-  }
-
-  private async captureSuiteResult(summary: SuiteSummary): Promise<void> {
-    const state = summary.runId ? this.suiteStates.get(summary.runId) : undefined
-    const properties = definedProperties({
-      ...await resolveAnalyticsStandardProperties({
-        surface: this.surface,
-        identityPath: this.identityPath,
-        env: this.env,
-      }),
-      run_id: summary.runId ?? state?.runId,
-      suite_id: state?.suiteId,
-      trigger_source: normalizeTriggerSource(state?.attributes[ATTR_TRIGGER]),
-      runner: normalizeRunner(state?.attributes[ATTR_RUNNER]),
-      status: normalizeStatus(summary.status),
-      duration_ms: summary.duration,
-      suite_child_count: summary.tests.length,
-      suite_passed_count: summary.passed,
-      suite_failed_count: summary.failed,
-      suite_skipped_count: summary.skipped,
-      suite_execution_mode: state?.executionMode,
-    })
-
-    try {
-      await this.service.capture(buildAnalyticsEvent({
-        name: 'agent-qa.suite_run.completed',
-        properties,
-      }))
-    } catch {
-      // Analytics is intentionally best-effort.
-    }
-  }
-}
-
-export function createAnalyticsRunReporter(options: AnalyticsRunReporterOptions = {}): AnalyticsRunReporter {
-  return new AnalyticsRunReporter(options)
-}
 
 // --- Bus subscriber (D-16 / RUNX-03) ----------------------------------------
 //
-// `createAnalyticsRunSubscriber` re-homes the analytics feed onto the bus. The v1
-// `AnalyticsRunReporter` above stays live until Plan 09 swaps the CLI attachment (and Plan 11
-// deletes the Reporter shape); this factory is built + unit-tested here so Plan 09 can attach it
-// at the CLI root. Analytics STAYS core-owned (D-16 — relocation rejected as scope creep).
+// `createAnalyticsRunSubscriber` feeds the analytics pipeline from the run-session bus. The v1
+// `AnalyticsRunReporter` (a v1 Reporter implementation) was deleted in Phase 363-11 with the rest
+// of the Reporter shape; this bus subscriber is the sole analytics attachment at the CLI root.
+// Analytics STAYS core-owned (D-16 — relocation rejected as scope creep).
 //
 // The bus carries a strict projection of the run (spec §2.2), so the subscriber preserves the
 // derivable slice of the v1 metric set — run/member counts, outcomes, durations, step tallies,

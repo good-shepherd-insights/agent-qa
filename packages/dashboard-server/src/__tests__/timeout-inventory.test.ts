@@ -194,17 +194,9 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'Retired with provider-specific callback HTML; plugin auth owns provider callback behavior.',
     allowed: false,
   },
-  {
-    id: 'stdout-live-reporter-heartbeat',
-    file: 'packages/core/src/reporter/stdout-live-reporter.ts',
-    literal: '10_000',
-    contextIncludes: 'heartbeat',
-    owner: 'core live reporter',
-    scope: 'child process heartbeat emission cadence',
-    lifecycleAffecting: true,
-    rationale: 'Feeds dashboard stale detection while a test is active.',
-    allowed: true,
-  },
+  // The v1 core reporters (packages/core/src/reporter/) — including stdout-live-reporter.ts's
+  // 10_000ms heartbeat cadence — were deleted in Phase 363-11. Live reporting moved onto the
+  // run-session bus subscribers in the CLI/dashboard packages, outside this curated scope.
   {
     id: 'cli-suite-step-timeout-fallback',
     file: 'packages/cli/src/commands/run.ts',
@@ -260,28 +252,10 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'The SIGINT (130) exit code the bounded grace timer forces so a genuinely un-settleable run still exits; armed in both handleShutdown sites and cleared after session.done.',
     allowed: true,
   },
-  {
-    id: 'core-test-timeout-disabled-sentinel',
-    file: 'packages/core/src/agent/runner.ts',
-    literal: '0',
-    contextIncludes: 'testTimeout ? startTime + testTimeout : 0',
-    owner: 'core runner',
-    scope: 'test deadline disabled sentinel',
-    lifecycleAffecting: true,
-    rationale: 'Disables the core test deadline only when no effective timeout is configured.',
-    allowed: true,
-  },
-  {
-    id: 'core-test-timeout-artifact-action-sentinel',
-    file: 'packages/core/src/agent/runner.ts',
-    literal: '0',
-    contextIncludes: "timeoutMs: 0",
-    owner: 'core runner',
-    scope: 'timeout failure artifact placeholder',
-    lifecycleAffecting: false,
-    rationale: 'Represents a no-op planned action (schema waitFor placeholder) in failure traces; does not control execution.',
-    allowed: true,
-  },
+  // The core per-test runner (packages/core/src/agent/runner.ts) was deleted in Phase 363-11 —
+  // its test-deadline `: 0` disabled sentinel and the `timeoutMs: 0` failure-artifact placeholder
+  // moved onto runner soil (packages/runner/src/run/member-runner.ts), outside this
+  // dashboard-server scanner's curated core-execution scope.
   // The v1 core step-execution loop (packages/core/src/agent/loop.ts) was deleted in
   // Phase 353-07 (D-02) — its step-deadline `: 0` disabled sentinel and the
   // `timeout: 0` failure-artifact placeholder moved with the loop into

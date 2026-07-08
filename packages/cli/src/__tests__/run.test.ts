@@ -940,11 +940,10 @@ describe('run command — secrets file preflight', () => {
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.secretStore.require('LOGIN_PASSWORD')).toBe('super-secret')
     expect(runConfig.secretRedactor).toBeDefined()
-    // secretsFileMetadata is no longer threaded through the per-member config (runMemberTest
-    // owns execution); the secret store/redactor threading above is the meaningful assertion.
+    // 363-11: secretsFileMetadata / the run artifact are no longer threaded through a v1 reporter
+    // (runMemberTest owns execution); the secret store + redactor threading above is the meaningful
+    // assertion — the run redactor is what keeps raw secrets out of any rendered/persisted output.
     void secretsPath
-    const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(JSON.stringify(reporterContext.artifact.config.secretsFile)).not.toContain('super-secret')
   })
 })
 
@@ -1273,9 +1272,8 @@ describe('run command — auth state consumption', () => {
         }),
       }),
     )
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'passed',
-    }))
+    // 363-11: the member outcome is no longer surfaced via a v1 reporter; a passing run exits 0.
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
   it('does not capture direct auth state when product execution fails', async () => {
@@ -1298,10 +1296,8 @@ describe('run command — auth state consumption', () => {
     expect(mockWriteAuthStateFiles).not.toHaveBeenCalled()
     expect(mockWebStorageState).not.toHaveBeenCalled()
     expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
-      failureSummary: 'Button missing',
-    }))
+    // 363-11: a failing member surfaces via the run exit code (no v1 reporter).
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
   it('fails the direct run safely when auth-state capture write fails without retrying product steps', async () => {
@@ -1322,12 +1318,9 @@ describe('run command — auth state consumption', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    // 363-11: the auth-capture-write failure synthesizes a failed run → exit 1 (no v1 reporter);
+    // the sensitive path must never leak to stderr.
     expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
-      failureSummary: 'Could not save auth state "admin" for target "test-app".',
-      steps: [expect.objectContaining({ status: 'passed' })],
-    }))
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).not.toContain('/internal/auth')
   })
@@ -1794,13 +1787,8 @@ describe('run command — run attributes', () => {
 
     await runCommand('tests/**/*.yaml', '--run-attr', 'git.branch=phase223-main', 'user.email=CI')
 
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'cli',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase223-main',
-      'user.email': 'CI',
-    })
+    // 363-11: the run artifact is no longer surfaced via a v1 reporter; the resolved run
+    // attributes remain observable in the printed run-attributes block.
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allOutput).toContain('Run attributes:')
     expect(allOutput).toContain('git.branch=phase223-main')
@@ -1822,8 +1810,9 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'git.branch=dev', '--run-attr', 'git.branch=phase223-main')
 
     expect(warnSpy).toHaveBeenCalledWith('Warning: duplicate --run-attr key "git.branch"; using last value')
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes['git.branch']).toBe('phase223-main')
+    // 363-11: the last-value-wins result is observable in the printed run-attributes block.
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput).toContain('git.branch=phase223-main')
     warnSpy.mockRestore()
   })
 
@@ -1873,12 +1862,11 @@ describe('run command — run attributes', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase247-review',
-    })
+    // 363-11: inherited attributes are observable in the printed run-attributes block.
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput).toContain('agent-qa.trigger=dashboard')
+    expect(allOutput).toContain('agent-qa.runner=local')
+    expect(allOutput).toContain('git.branch=phase247-review')
   })
 
   it('recomputes inherited runner attributes after direct BrowserStack device resolution', async () => {
@@ -1938,12 +1926,10 @@ describe('run command — run attributes', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'browserstack',
-      'git.branch': 'phase247-review',
-    })
+    // 363-11: the recomputed runner attribute (browserstack) is observable in the printed block.
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput).toContain('agent-qa.runner=browserstack')
+    expect(allOutput).toContain('git.branch=phase247-review')
   })
 
   it('recomputes inherited runner attributes after suite BrowserStack device resolution', async () => {
@@ -2368,8 +2354,10 @@ describe('run command — reporter integration', () => {
       }),
     }))
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockMultiReporterInstance.onRunEnd))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockAnalyticsRunReporterInstance.flush))
+    // 363-11: the notice fires after member execution + the analytics bus subscriber flush
+    // (the v1 reporter/analytics-reporter lifecycle is deleted).
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockAnalyticsRunSubscriberInstance.flush))
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -2427,8 +2415,8 @@ describe('run command — reporter integration', () => {
     expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
     expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
+    // 363-11: the notice fires after all members finish executing (no v1 reporter onRunEnd).
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockMultiReporterInstance.onRunEnd))
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -2636,10 +2624,9 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const { ConsoleReporter, JUnitReporter, StdoutLiveReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).not.toHaveBeenCalled()
-    expect(JUnitReporter).not.toHaveBeenCalled()
-    expect(StdoutLiveReporter).not.toHaveBeenCalled()
+    // 363-11: the v1 core reporters (ConsoleReporter / JUnitReporter / StdoutLiveReporter /
+    // DashboardReporter) were deleted; there is nothing to construct. The run still reaches
+    // execution via the bus subscribers and exits clean.
     expect(mockDashboardReporter).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
@@ -2653,10 +2640,8 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml', '--reporter', 'console,junit', '--junit-output', join(tmpdir(), 'agent-qa-selection-junit.xml'))
 
-    const { ConsoleReporter, JUnitReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).not.toHaveBeenCalled()
-    expect(JUnitReporter).not.toHaveBeenCalled()
     // The selection is accepted (no pre-execution error) and the run reaches execution + exits 0.
+    // The v1 core reporters no longer exist to construct (363-11).
     expect(mockRunMemberTest).toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
@@ -2795,8 +2780,11 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onRunStart).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ name: 'Test One' })]),
+    // 363-11: the v1 reporter lifecycle is deleted; the run reaching execution is observable via
+    // the member executor receiving the discovered test.
+    expect(mockRunMemberTest).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Test One' }),
+      expect.anything(),
     )
   })
 
@@ -2816,20 +2804,17 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: expect.any(Array),
-        duration: expect.any(Number),
-        passed: 1,
-        failed: 0,
-        skipped: 0,
-      }),
-    )
+    // 363-11: run aggregation/counts are carried by the bus, not a v1 reporter; a single passing
+    // member exits 0 after execution completes.
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('uses one generated run ID from reporter start through passing result summary', async () => {
+  it('threads one generated run ID onto the passing member result', async () => {
     const runId = 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+    // One RunSession mints a run-level id up front AND the member closure mints the per-test id;
+    // pin both so the per-test id lands on the member result (363-11: no v1 reporter to observe).
+    mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
@@ -2845,23 +2830,17 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onTestStart).toHaveBeenCalledWith(
+    expect(mockRunMemberTest).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Test One' }),
-      'tests/a.yaml',
-      expect.objectContaining({ runId }),
+      expect.anything(),
     )
-    expect(mockRunMemberTest).toHaveBeenCalled()
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ status: 'passed', runId })],
-      }),
-    )
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('preserves one generated run ID from reporter start through failed result summary', async () => {
+  it('threads one generated run ID onto the failed member result', async () => {
     const runId = 'r_harbor-iris-jade-kilo-lima-maple-nova-orbit-pearl-quartz'
-    // One RunSession now mints a run-level id up front AND the member closure mints the per-test id;
-    // pin both to the same value so the per-test id still flows through the reporters (D-04/SESSION-04).
     mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -2878,20 +2857,13 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onTestStart).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Test One' }),
-      'tests/a.yaml',
-      expect.objectContaining({ runId }),
-    )
     expect(mockRunMemberTest).toHaveBeenCalled()
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ status: 'failed', runId })],
-      }),
-    )
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
-  it('reuses queued AGENT_QA_RUN_ID for single-test reporter context and result summary', async () => {
+  it('reuses queued AGENT_QA_RUN_ID for the single-test member result', async () => {
     const runId = 'r_queue-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
     process.env.AGENT_QA_RUN_ID = runId
     mockGlob.mockResolvedValue(['tests/a.yaml'])
@@ -2911,16 +2883,12 @@ describe('run command — reporter integration', () => {
 
     expect(mockGenerateRunId).not.toHaveBeenCalled()
     expect(mockRunMemberTest).toHaveBeenCalled()
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ runId })],
-      }),
-    )
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
   })
 
-  it('adds run ID to cancelled results before final summary', async () => {
+  it('threads the run ID onto a cancelled member result', async () => {
     const runId = 'r_cancel-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    // Run-level + per-test id both from generateRunId; pin both so the per-test id reaches onRunEnd.
     mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -2937,16 +2905,13 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ status: 'cancelled', runId })],
-      }),
-    )
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
+    expect(memberResult.status).toBe('cancelled')
   })
 
-  it('passes run ID through setup hook failure result before execution', async () => {
+  it('fails the run before execution when a setup hook fails', async () => {
     const runId = 'r_setup-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    // Run-level + per-test id both from generateRunId; pin both so the setup-failure result carries it.
     mockGenerateRunId.mockReturnValue(runId)
     const { rootDir, testPath, configPath } = await createTempSuiteWorkspace()
     await writeFile(join(rootDir, 'hooks.yaml'), 'hooks:\n  - id: hook-seed\n')
@@ -2974,19 +2939,10 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], testPath)
 
+    // 363-11: a per-test setup-hook failure short-circuits before the member executes and fails the
+    // run (exit 1) — no v1 reporter onTestEnd/onRunEnd to observe.
     expect(mockRunMemberTest).not.toHaveBeenCalled()
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'failed',
-        runId,
-        failureSummary: expect.stringContaining('Setup hook'),
-      }),
-    )
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ runId })],
-      }),
-    )
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
   it('does not pass a default screenshotDir when not specified', async () => {
@@ -3651,8 +3607,6 @@ describe('run command — runtime cache paths', () => {
 
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.cache).toBeUndefined()
-    const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(reporterContext.artifact.config.cache.enabled).toBe(false)
   })
 
   it('keeps direct test cache enabled when use.cache is absent', async () => {
@@ -3673,8 +3627,6 @@ describe('run command — runtime cache paths', () => {
 
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.cache).toBeDefined()
-    const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(reporterContext.artifact.config.cache.enabled).toBe(true)
   })
 
   it('disables suite cache when use.cache is false', async () => {

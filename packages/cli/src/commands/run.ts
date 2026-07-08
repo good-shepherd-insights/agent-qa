@@ -979,7 +979,7 @@ async function executeSuites(
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
 ): Promise<number> {
   const { parseSuiteFile, parseTestFile, patchTestForSuite,
-    MultiReporter, createAnalyticsRunSubscriber, runCurator,
+    createAnalyticsRunSubscriber, runCurator,
   } = await import('@vostride/agent-qa-core')
   const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
@@ -1085,7 +1085,6 @@ async function executeSuites(
     suiteConfig: RunSuiteConfig
     testEntries: [TestDefinition, string][]
     suiteMembers: Array<Record<string, unknown>>
-    reporter: InstanceType<typeof MultiReporter> | undefined
     suiteRunId: string
     suiteArtifact: Record<string, unknown> | undefined
     memoryEnabled: boolean
@@ -1476,11 +1475,10 @@ async function executeSuites(
     const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined, plannerAccounting)
     const verifier = new LLMVerifier(verifierModel, verifierAccounting)
 
-    // 363-09 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus subscribers
-    // (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are attached at the ONE
-    // run-level startRun site below via `attachRunSubscribers`. This empty list keeps core's internal
-    // MultiReporter inert (Plan 11 deletes it) and threads no reporter into the runner config.
-    const reporters: never[] = []
+    // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
+    // subscribers (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are
+    // attached at the ONE run-level startRun site below via `attachRunSubscribers`. No reporter is
+    // threaded into the runner config.
 
     // Wire the redesigned action cache (runner-local FsActionCache + branch policy), injected into
     // the runner loop's cache port. The loop's masking port now carries the ONE run MaskingContext
@@ -1582,7 +1580,6 @@ async function executeSuites(
       storageState: suiteStorageState,
       plannerModel,
       verifierModel,
-      reporters,
       captureScreenshots,
       screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
       timeouts: testTimeouts,
@@ -1628,11 +1625,10 @@ async function executeSuites(
     ;(suiteConfig as any).secretRedactor = variableContext?.secretRedactor
     ;(suiteConfig as any).secretsFileMetadata = variableContext?.secretsFileMetadata
 
-    // Suite-level run-scoped values runSuite used to resolve internally, now resolved at the
-    // composition root and threaded into executeSuiteMember (D-01). The suite-level orchestration
-    // (setup hooks + adapter.setup + nav / teardown + auth capture + reporter end-calls) runs from
-    // the lazy lifecycle hooks the shell drives (suiteSetup/suiteTeardown below).
-    const reporter = suiteConfig.reporters?.length ? new MultiReporter(suiteConfig.reporters) : undefined
+    // Suite-level run-scoped values the former runSuite resolved internally, now resolved at the
+    // composition root and composed per-member at the CLI (Phase 363). The suite-level orchestration
+    // (setup hooks + adapter.setup + nav / teardown + auth capture) runs from the lazy lifecycle
+    // hooks the shell drives (suiteSetup/suiteTeardown below).
     const preparedSuiteRunId = process.env.AGENT_QA_SUITE_QUEUE_ID ?? generateRunId()
     const preparedSuiteArtifact = (suiteConfig.artifactContext as { artifact?: Record<string, unknown> } | undefined)?.artifact
       ?? (suiteConfig.artifactContext as Record<string, unknown> | undefined)
@@ -1648,7 +1644,6 @@ async function executeSuites(
       suiteConfig,
       testEntries,
       suiteMembers,
-      reporter,
       suiteRunId: preparedSuiteRunId,
       suiteArtifact: preparedSuiteArtifact,
       memoryEnabled: memoryEnabledForSuite,
@@ -1672,13 +1667,7 @@ async function executeSuites(
   // suite-URL navigation. A hook/nav failure records `bootstrapFailure` so the member closures
   // synthesize a bootstrap failure (the shell then group-fail-fasts the remaining members).
   const suiteSetup = async (prepared: PreparedSuite): Promise<void> => {
-    const { suite, suiteConfig, reporter, suiteRunId, suiteArtifact, testEntries } = prepared
-
-    await reporter?.onSuiteStart?.(suite, {
-      runId: suiteRunId,
-      artifact: suiteArtifact ? { kind: 'suite-parent', ...suiteArtifact } : { kind: 'suite-parent' },
-    } as any)
-    await reporter?.onRunStart(testEntries.map(([t]) => t))
+    const { suite, suiteConfig, testEntries } = prepared
 
     if ((suite as any).setup?.length && suiteConfig.resolvedHooks && prepared.suiteSandboxOptions) {
       const hookDefs: HookDefinition[] = []
@@ -1704,12 +1693,6 @@ async function executeSuites(
           secretRedactor: suiteConfig.secretRedactor,
           envVars: { ...prepared.suiteSandboxOptions.envVars, ...envVars },
         })
-        for (const [name, hr] of hookRun.results) {
-          const hookDef = hookDefs.find((h) => h.name === name)
-          const hookExecId = randomUUID()
-          await reporter?.onHookStart?.({ hookId: hookDef?.id, hookName: name, phase: 'setup', hookExecutionId: hookExecId, runId: suiteRunId })
-          await reporter?.onHookEnd?.({ hookId: hookDef?.id, hookName: name, phase: 'setup', hookExecutionId: hookExecId, runId: suiteRunId, status: hr.success ? 'passed' : 'failed', duration: hr.duration, stdout: hr.stdout, stderr: hr.stderr, variables: hr.variables, error: hr.error })
-        }
         if (!hookRun.allPassed) {
           prepared.bootstrapFailure = 'Suite setup hook failed'
           return
@@ -1741,7 +1724,7 @@ async function executeSuites(
   // destroy, the aggregated onRunEnd/onSuiteEnd reporter calls, and the old runSuite `.finally`
   // composition side effects (working-memory flush, dashboard-db close, analytics flush).
   const suiteTeardown = async (prepared: PreparedSuite): Promise<void> => {
-    const { suite, suiteConfig, reporter, suiteRunId, results } = prepared
+    const { suite, suiteConfig, suiteRunId, results } = prepared
     const totalMembers = prepared.testEntries.length
 
     if (
@@ -1771,7 +1754,6 @@ async function executeSuites(
           metadata: { phase: 'auth-state-capture' },
         }
         results.push(captureFailure)
-        await reporter?.onTestEnd(captureFailure)
       }
     }
 
@@ -1785,31 +1767,19 @@ async function executeSuites(
       for (const hookId of (suite as any).teardown) {
         const hook = suiteConfig.resolvedHooks.get(hookId)
         if (!hook) continue
-        const hookExecId = randomUUID()
         try {
-          await reporter?.onHookStart?.({ hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId, runId: suiteRunId })
-          const hr = (await runHooks([hook], {
+          await runHooks([hook], {
             ...prepared.suiteSandboxOptions,
             secretStore: suiteConfig.secretStore,
             secretRedactor: suiteConfig.secretRedactor,
             envVars: { ...prepared.suiteSandboxOptions.envVars, ...teardownVars },
-          })).results.get(hook.name)
-          await reporter?.onHookEnd?.({ hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId, runId: suiteRunId, status: hr?.success ? 'passed' : 'failed', duration: hr?.duration ?? 0, stdout: hr?.stdout ?? '', stderr: hr?.stderr ?? '', variables: hr?.variables ?? {}, error: hr?.error })
+          })
         } catch {}
       }
     }
 
     try { await suiteConfig.adapter.cleanup() } catch {}
     if (suiteConfig.memoryProvider) { try { suiteConfig.memoryProvider.destroy() } catch {} }
-
-    const passed = results.filter((r) => r.status === 'passed').length
-    const failed = results.filter((r) => r.status === 'failed').length
-    const cancelled = results.filter((r) => r.status === 'cancelled').length
-    const skipped = (totalMembers - results.length) + results.filter((r) => r.status === 'skipped').length
-    const duration = results.reduce((sum, r) => sum + r.duration, 0)
-    const suiteStatus = failed > 0 ? 'failed' : cancelled > 0 ? 'cancelled' : 'passed'
-    await reporter?.onRunEnd?.({ results, duration, passed, failed, skipped })
-    await reporter?.onSuiteEnd?.({ runId: suiteRunId, name: suite.name, status: suiteStatus, tests: results, duration, passed, failed, skipped })
 
     await flushWorkingMemory(prepared.suiteWorkingMemory, {
       artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
@@ -2574,7 +2544,7 @@ export function createRunCommand(): Command {
         // Actual execution
         const startTime = Date.now()
         const {
-          MultiReporter, createAnalyticsRunSubscriber,
+          createAnalyticsRunSubscriber,
         } = await import('@vostride/agent-qa-core')
         const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
 
@@ -2598,12 +2568,9 @@ export function createRunCommand(): Command {
         // `.agent-qa` dir (the FsActionCache rooting idiom); threaded into the loop's storageState port.
         const singleStorageState = await buildStorageStateStore(configDir)
 
-        // 363-09 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus subscribers
-        // (console unmasks; junit + wire masked; dashboard ingest; analytics) attach at the startRun site
-        // below via `attachRunSubscribers`. This empty list keeps core's internal MultiReporter + the
-        // runTest reporters inert (Plan 11 deletes the Reporter shape).
-        const reporters: never[] = []
-
+        // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
+        // subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics) attach at the
+        // startRun site below via `attachRunSubscribers`. No reporter is threaded into the run path.
         const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
         const { LogManager } = await import('@vostride/agent-qa-core')
@@ -2632,14 +2599,10 @@ export function createRunCommand(): Command {
           cacheLog.info('Cache disabled via --disable-cache', { operation: 'bypass' })
         }
 
-        const multiReporter = new MultiReporter(reporters)
-
         const results: TestResult[] = []
 
         const memoryGlobalConfig = config.services?.memory
         const runtimeMemoryRoot = resolveMemoryRoot(config, configDir)
-
-        await multiReporter.onRunStart(filtered)
 
         // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
         // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
@@ -2957,13 +2920,6 @@ export function createRunCommand(): Command {
               },
             })
 
-            // Fire onTestStart BEFORE setup hooks so DashboardReporter creates
-            // the DB row and runId is available for hook recording (Phase 107 fix)
-            await (multiReporter.onTestStart as any)(testDef, filePath, {
-              runId,
-              artifact: artifactContext.artifact,
-            })
-
             const getAuthAwareSandboxOptions = () => sandboxOptions && activeTestAuthState
               ? { ...sandboxOptions, authState: activeTestAuthState }
               : sandboxOptions
@@ -2991,23 +2947,8 @@ export function createRunCommand(): Command {
                 if (cliVars) Object.assign(allVars, cliVars)
 
                 for (const hookDef of hookDefs) {
-                  const hookExecId = randomUUID()
-                  await multiReporter.onHookStart({ hookId: hookDef.id, hookName: hookDef.name, phase: 'setup', hookExecutionId: hookExecId, runId })
                   const hookResult = await runHooks([hookDef], { ...authAwareSandboxOptions, envVars: { ...authAwareSandboxOptions.envVars, ...allVars, ...perTestSetupVars } })
                   const hr = hookResult.results.get(hookDef.name)
-                  await multiReporter.onHookEnd({
-                    hookId: hookDef.id,
-                    hookName: hookDef.name,
-                    phase: 'setup',
-                    hookExecutionId: hookExecId,
-                    runId,
-                    status: hr?.success ? 'passed' : 'failed',
-                    duration: hr?.duration ?? 0,
-                    stdout: hr?.stdout ?? '',
-                    stderr: hr?.stderr ?? '',
-                    variables: hr?.variables ?? {},
-                    error: hr?.error,
-                  })
                   if (!hr?.success) {
                     hookSetupError = `Setup hook "${hookDef.name}" failed: ${hr?.error ?? 'unknown'}`
                     break
@@ -3030,7 +2971,6 @@ export function createRunCommand(): Command {
                 }
                 results.push(setupResult)
                 setupFailureResult = setupResult
-                await multiReporter.onTestEnd(setupResult)
                 printRunAttributes(testAttributes)
               }
             }
@@ -3156,26 +3096,10 @@ export function createRunCommand(): Command {
               for (const hookId of (testDef as any).teardown) {
                 const hook = resolvedHooks.get(hookId)
                 if (!hook) continue
-                const hookExecId = randomUUID()
                 try {
-                  await multiReporter.onHookStart({ hookId: hook.id, hookName: hook.name, phase: 'teardown', hookExecutionId: hookExecId, runId })
                   const allVars: Record<string, string> = { ...envFileVars, ...perTestSetupVars }
                   if (cliVars) Object.assign(allVars, cliVars)
-                  const hookResult = await runHooks([hook], { ...teardownSandboxOptions, envVars: { ...teardownSandboxOptions.envVars, ...allVars } })
-                  const hr = hookResult.results.get(hook.name)
-                  await multiReporter.onHookEnd({
-                    hookId: hook.id,
-                    hookName: hook.name,
-                    phase: 'teardown',
-                    hookExecutionId: hookExecId,
-                    runId,
-                    status: hr?.success ? 'passed' : 'failed',
-                    duration: hr?.duration ?? 0,
-                    stdout: hr?.stdout ?? '',
-                    stderr: hr?.stderr ?? '',
-                    variables: hr?.variables ?? {},
-                    error: hr?.error,
-                  })
+                  await runHooks([hook], { ...teardownSandboxOptions, envVars: { ...teardownSandboxOptions.envVars, ...allVars } })
                 } catch {}
               }
             }
@@ -3241,10 +3165,6 @@ export function createRunCommand(): Command {
               } catch (err) {
                 console.warn(`  ${pc.dim('Memory:')} curator error -- ${(err as Error).message}`)
               }
-            }
-
-            if (testAuthStateUse?.capture === true) {
-              await multiReporter.onTestEnd(result)
             }
 
             results.push(result)
@@ -3478,13 +3398,6 @@ export function createRunCommand(): Command {
         })
 
         releaseAppium()
-
-        const duration = results.reduce((sum, r) => sum + r.duration, 0)
-        const passed = results.filter(r => r.status === 'passed').length
-        const failed = results.filter(r => r.status === 'failed').length
-        const skipped = results.filter(r => r.status === 'skipped').length
-
-        await multiReporter.onRunEnd({ results, duration, passed, failed, skipped })
 
         if (dashboardDb) {
           dashboardDb.close()

@@ -107,6 +107,9 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
     VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
     interpolateVariables: (...args: unknown[]) => mockInterpolateVariables(...args as Parameters<typeof mockInterpolateVariables>),
     findUnresolvedTemplates: (...args: unknown[]) => mockFindUnresolvedTemplates(...args as Parameters<typeof mockFindUnresolvedTemplates>),
+    // Inline hook parsing moved to runner in Phase 363-11; live-session imports it from runner.
+    parseHookInline: (text: string) => mockParseHookInline(text),
+    stripHookInline: (text: string) => mockStripHookInline(text),
   }
 })
 

@@ -15,12 +15,9 @@ export type {
 
 export { estimateTokens } from './token-budget.js'
 
-export { runTest, runTestWithRetry } from './runner.js'
-export type { AccessibilityCheck, AccessibilityCheckOptions, RunTestConfig } from './runner.js'
-
-export { parseHookInline, stripHookInline } from './hook-inline.js'
-
-export { generateFailureSummary } from './failure-summary.js'
+// Phase 363-11: core's per-test run path (runTest/runTestWithRetry + the inline-DSL parsers +
+// failure-summary) was dissolved onto runner soil (runMemberTest / run/inline-steps). Consumers
+// import those from @vostride/agent-qa-runner directly.
 
 // Variables subsystem moved to @vostride/agent-qa-runner (Phase 363 D-07); consumers
 // import it from runner directly. The env-file codec stays runner-owned (Plan 04) and is
