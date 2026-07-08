@@ -1115,3 +1115,27 @@ describe('TargetSchema — product key validation', () => {
     }
   })
 })
+
+// D-15 config half: an explicit opt-in `safety.trustMode` boolean. Strict object rejects
+// unknown subkeys and non-boolean values; the key is optional so pre-362 configs still parse.
+describe('AgentQaConfigSchema — safety.trustMode (D-15)', () => {
+  it('accepts safety.trustMode: true', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({ safety: { trustMode: true } }))
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects a non-boolean trustMode', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({ safety: { trustMode: 'yes' } }))
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects unknown safety subkeys (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({ safety: { trustMode: true, bypass: true } }))
+    expect(result.success).toBe(false)
+  })
+
+  it('parses a config WITHOUT the safety key (optional, additive)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+  })
+})
