@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createWireReporter } from '../../reporters/wire-reporter'
-import { buildReporterFixture, createCapture } from './fixtures'
+import { createWireReporter } from '../../reporters/wire-reporter.js'
+import { buildReporterFixture, createCapture } from './fixtures.js'
 
 const PREFIX = 'AGENT_QA_EVENT:'
 

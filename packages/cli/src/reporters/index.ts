@@ -1,2 +1,6 @@
 export { createConsoleReporter, humanDuration } from './console-reporter.js'
 export type { ConsoleReporterOptions, ConsoleReporterHandle } from './console-reporter.js'
+export { createJunitReporter } from './junit-reporter.js'
+export type { JunitReporterOptions, JunitReporterHandle } from './junit-reporter.js'
+export { createWireReporter } from './wire-reporter.js'
+export type { WireReporterTarget, WireReporterHandle } from './wire-reporter.js'
