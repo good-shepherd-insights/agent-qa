@@ -34,3 +34,9 @@ export { FsHandoffStore, loadCompletedRunHandoff, HANDOFF_FILE } from './handoff
 export type { FsHandoffStoreConfig } from './handoff-store.js'
 export { nextBuildOrdinal, BUILD_ORDINALS_FILE } from './build-ordinal.js'
 export type { NextBuildOrdinalOptions } from './build-ordinal.js'
+
+// Phase 363 D-06 — the Docker hook-execution impl behind the runner HookExecutorPort.
+// The sandbox-runner body (node:child_process + node:fs) lives here; the runner stays
+// storageNeutral. `checkDockerAvailable` is re-homed from core for the CLI doctor command.
+export { DockerHookExecutor, checkDockerAvailable } from './hook-executor.js'
+export type { DockerHookExecutorConfig } from './hook-executor.js'

@@ -10,6 +10,7 @@ export const AGENT_QA_RUNNER_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'local filesystem JSONL run-event log behind the runner EventLogPort',
   'local filesystem completed-run handoff store behind the runner HandoffStorePort',
   'project-local per-product buildOrdinal counter persistence',
+  'Docker sandbox hook execution behind the runner HookExecutorPort',
 ] as const
 export const AGENT_QA_RUNNER_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'cache-key assembly or hashing semantics',

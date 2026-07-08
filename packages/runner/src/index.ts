@@ -173,7 +173,12 @@ export type {
   MemberTestExecutor,
   RunConfig,
   RunPorts,
+  HookExecutorPort,
+  HookExecuteOptions,
 } from './run/ports.js'
+// Phase 363 D-06 — runner-owned hook contracts + orchestration. The Docker impl
+// (DockerHookExecutor) lives in runner-local behind the HookExecutorPort above.
+export * from './hooks/index.js'
 // SESSION-01/02/04/05 run shell (Plan 06) — the run lifecycle owner every later surface
 // (362 seams, 363 reporters, M1b/M2 handoff readers) attaches to. The projection/mask sink
 // and §A8 handoff assembly are exported for CLI/core composition roots (Plans 09–11).

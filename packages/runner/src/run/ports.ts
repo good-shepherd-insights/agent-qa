@@ -18,7 +18,9 @@ import type {
   TestRetryScheduledPayload,
 } from '@vostride/agent-qa-schema'
 import type { TestResult } from '../result.js'
-import type { LoopEventEmitPort } from '../loop/ports.js'
+import type { LoopEventEmitPort, SecretRedactorPort } from '../loop/ports.js'
+import type { HookDefinition, HookResult } from '../hooks/types.js'
+import type { RuntimeAuthStateConfig } from '../platform.js'
 
 /**
  * The two 356 A5 config digests the run actually keyed on, computed once at the CLI
@@ -40,6 +42,36 @@ export interface ConfigDigests {
 export interface EventLogPort {
   append(envelope: RunEventEnvelope): void
   read(fromSeq: number): RunEventEnvelope[]
+}
+
+/**
+ * The per-hook execution options the orchestration threads into the {@link HookExecutorPort}
+ * (D-06). `env` is the accumulated-variables + user-env map the orchestrator merges per hook;
+ * `secretEnv` is the ALREADY-RESOLVED secret name→value map for container injection — the CLI
+ * composition root resolves the SecretStore and the runner never touches the store itself. The
+ * secret VALUES double as the output-variable filter (a hook-emitted variable equal to a secret
+ * value is dropped). `secretRedactor` redacts stdout/stderr/error; `authState` mounts + injects
+ * the active auth state (container-local paths only). Pitfall 3: all sandbox-side
+ * redaction/filtering stays inside the impl — the sink mask is additive.
+ */
+export interface HookExecuteOptions {
+  env: Record<string, string>
+  secretEnv: Record<string, string>
+  secretRedactor?: SecretRedactorPort
+  authState?: RuntimeAuthStateConfig
+}
+
+/**
+ * The D-06 hook-execution seam: a runner-owned port whose only implementation is the
+ * runner-local `DockerHookExecutor` (the 356/361 port-in-runner/impl-in-runner-local
+ * precedent). `execute` runs ONE hook in the sandboxed container and resolves a
+ * {@link HookResult} — a per-hook timeout resolves a FAILED result with an exit-124-style
+ * error, NEVER a throw (the orchestration relies on a resolved result to synthesize
+ * fail-fast skips). node:child_process / node:fs live behind this port in runner-local;
+ * the runner stays storageNeutral (validate:arch is the arbiter).
+ */
+export interface HookExecutorPort {
+  execute(hook: HookDefinition, opts: HookExecuteOptions): Promise<HookResult>
 }
 
 /**
