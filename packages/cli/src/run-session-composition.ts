@@ -14,8 +14,9 @@
 // node builtins directly and constructs the runner-local fs stores.
 
 import { createHash } from 'node:crypto'
-import { resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import type { LanguageModel } from 'ai'
 import {
   createMaskingContext,
   registerFirstPartySafetyHooks,
@@ -40,7 +41,7 @@ import type {
 } from './reporters/index.js'
 // Type-only (erased at build; schema is a type-only devDependency, 363-07). The bus subscriber
 // handlers name the real envelope type without a runtime schema coupling.
-import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
+import type { MaskingContext, RunEventEnvelope } from '@vostride/agent-qa-schema'
 import {
   FsEventLog,
   FsHandoffStore,
@@ -51,16 +52,43 @@ import {
   SharpScreenshotCompressor,
 } from '@vostride/agent-qa-runner-local'
 import type { ScreenshotCompressorLogger } from '@vostride/agent-qa-runner-local'
+import {
+  coerceRunJSResult,
+  resolveSecretEnv,
+  resolveSecretTemplatesInValue,
+} from '@vostride/agent-qa-runner'
 import type {
+  Action,
+  AccessibilityCheckHandler,
+  ActionPlanCache,
+  AppiumScriptHandler,
   ConfigDigests,
   EventLogPort,
+  FailureScreenshotWriter,
   HandoffStorePort,
+  HookDefinition,
+  HookExecutorPort,
+  LoopLogger,
+  MemberEventSink,
+  MemberRunConfig,
+  MemberStepSpec,
+  MemberTest,
   MemberTestExecutor,
   MemberTestRunContext,
+  PlannerConfig,
+  Planner,
+  PlatformAdapter,
   RunArtifactStorePort,
+  RunJsHandler,
   RunMemberDescriptor,
+  SandboxRunnerOptions,
   ScreenshotCompressor,
+  SecretRedactorPort,
+  SecretStore,
+  StorageStatePort,
   TestResult,
+  Verifier,
+  WorkingMemoryPort,
 } from '@vostride/agent-qa-runner'
 
 // ---- Local structural types -----------------------------------------------------------------
@@ -631,5 +659,205 @@ export function attachRunSubscribers(input: AttachRunSubscribersInput): { flush:
     async flush(): Promise<void> {
       await Promise.allSettled(flushes.map((f) => f()))
     },
+  }
+}
+
+// ---- (11) member-run-config builder — the D-05 cutover onto runMemberTest (363-11) -----------
+//
+// Both startRun sites (suite + single-test) execute each member through the runner-owned
+// `runMemberTest` (Plan 10). The executor closure at each site composes core-owned memory
+// init/curator/destroy AROUND this member run and returns the member `TestResult` to the shell.
+// `buildMemberRunConfig` is the ONE place (Pitfall 8 — no per-site drift) that maps the resolved
+// host impls into a `MemberRunConfig`, constructing the adapter-backed injected handlers the runner
+// stays neutral about: runJS (web `page.evaluate` + `coerceRunJSResult`), appium (adapter execute
+// with secret resolution), the accessibility check (dynamic web-package import), the failure
+// screenshot writer, and the store-neutral secret resolver. Adapter internals are legal HERE — this
+// is the CLI composition root (D-05). Core's `runTest`/`runTestWithRetry` per-test wrapper is gone;
+// its responsibilities live in `runMemberTest` (runner) and in the memory/curator composition here.
+
+/** Capture a best-effort failure screenshot from the adapter (re-homed from the deleted core
+ * reporter/screenshot.ts). Returns undefined when the adapter exposes no screenshot capability or
+ * capture throws — never fails the step. */
+async function captureFailureScreenshotFromAdapter(adapter: PlatformAdapter): Promise<Buffer | undefined> {
+  try {
+    const shot = (adapter as { screenshot?: () => Promise<Buffer> }).screenshot
+    if (typeof shot !== 'function') return undefined
+    return await shot.call(adapter)
+  } catch {
+    return undefined
+  }
+}
+
+/** Build the injected runJS handler (Q-2). Web-only, mirroring the deleted core runjs-inline
+ * execution half: resolve the page from the adapter, `page.evaluate`, coerce the result. Non-web /
+ * page-less returns a `[runJS error: …]` value the runner splices in (the same self-describing text
+ * core produced). */
+function buildRunJsHandler(adapter: PlatformAdapter): RunJsHandler {
+  return async (code, ctx) => {
+    if (adapter.platform !== 'web') {
+      return { value: '[runJS error: runJS is only supported on web platform]', error: 'runJS is only supported on web platform' }
+    }
+    const page = 'getPage' in adapter
+      ? (adapter as { getPage: () => { evaluate: (c: string) => Promise<unknown> } | undefined }).getPage()
+      : undefined
+    if (!page) {
+      return { value: '[runJS error: no browser page available]', error: 'no browser page available' }
+    }
+    void ctx
+    const raw = await page.evaluate(code)
+    return { value: coerceRunJSResult(raw) }
+  }
+}
+
+/** Build the injected appium handler (Q-2). Resolves secret templates in the action, then executes
+ * it on the adapter (the core appium-inline execution half). */
+function buildAppiumScriptHandler(adapter: PlatformAdapter, secretStore?: SecretStore): AppiumScriptHandler {
+  return async (action) => adapter.execute(resolveSecretTemplatesInValue(action as Action, secretStore) as Action)
+}
+
+/** Build the injected accessibility-check handler (Q-4). Web-only; resolves the page and runs the
+ * dynamically-imported `@vostride/agent-qa-web` `runAccessibilityCheck` (the CLI is the dynamic-import
+ * host — resolves Open Q-4 as move-now). Returns [] when no page is available. */
+function buildAccessibilityCheckHandler(adapter: PlatformAdapter): AccessibilityCheckHandler {
+  return async (opts) => {
+    const page = 'getPage' in adapter ? (adapter as { getPage: () => unknown }).getPage() : undefined
+    if (!page) return []
+    const web = await import('@vostride/agent-qa-web')
+    return web.runAccessibilityCheck(page as any, opts)
+  }
+}
+
+/** Build the injected failure-screenshot writer. Captures from the adapter into the member's
+ * `result.screenshot` (in-run buffer, the same artifact the reporter subscribers persist beside the
+ * run dir). */
+function buildFailureScreenshotWriter(adapter: PlatformAdapter): FailureScreenshotWriter {
+  return async () => captureFailureScreenshotFromAdapter(adapter)
+}
+
+/** The runner-owned `MemberTest` shape derived from a resolved (already suite-patched) TestDefinition.
+ * `filePath` is the member's own file. A suite-patched test carries no `url` (the suite owns nav), so
+ * `runMemberTest` skips the per-test navigate for suite members. */
+export function toMemberTest(test: any, filePath: string): MemberTest {
+  return {
+    testId: (test['test-id'] as string | undefined) ?? test.name,
+    name: test.name,
+    filePath,
+    url: test.url as string | undefined,
+    context: test.context as string | undefined,
+    steps: test.steps as Array<string | MemberStepSpec>,
+    meta: test.meta as MemberTest['meta'],
+  }
+}
+
+/** Everything both executor closures resolve at the composition root and hand to
+ * {@link buildMemberRunConfig}. The adapter-backed injected handlers are constructed here from
+ * `adapter` + `secretStore` so the two sites never drift (Pitfall 8). */
+export interface BuildMemberRunConfigInput {
+  // loop host impls
+  adapter: PlatformAdapter
+  planner: Planner
+  verifier?: Verifier
+  cache?: ActionPlanCache
+  masking?: MaskingContext
+  workingMemory?: WorkingMemoryPort
+  storageState?: StorageStatePort
+  compressor?: ScreenshotCompressor
+  safetyHooks?: SafetyHookRunner
+  configDigests?: ConfigDigests
+  // models
+  plannerModel: LanguageModel
+  verifierModel: LanguageModel
+  // variable seeds
+  envFileVars?: Record<string, string>
+  inlineVars?: Record<string, string>
+  suiteVars?: Record<string, string>
+  cliVars?: Record<string, string>
+  hookSetupVars?: Record<string, string>
+  // inline hooks
+  inlineHookDefs?: Map<string, HookDefinition>
+  sandboxOptions?: SandboxRunnerOptions
+  // secrets — the concrete SecretStore (superset of SecretResolver); resolveSecretEnv needs forEachSecret.
+  secretStore?: SecretStore
+  secretRedactor?: SecretRedactorPort
+  // per-member ctx (bound by the run shell)
+  sink: MemberEventSink
+  testIndex: number
+  abortSignal: AbortSignal
+  // run config
+  captureScreenshots?: boolean
+  accessibility?: MemberRunConfig['accessibility']
+  timeouts?: MemberRunConfig['timeouts']
+  plannerConfig?: PlannerConfig
+  logger?: LoopLogger
+  logCapture?: { console?: boolean; network?: boolean }
+  vision?: { screenshotSize?: number; effectiveResolution?: number }
+  visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
+  contextWindow?: number
+  suiteContext?: string
+  /** The member's own file, for the core-parity fileUpload path resolver. */
+  filePath: string
+}
+
+/**
+ * Assemble the {@link MemberRunConfig} `runMemberTest` slots behind, wiring the adapter-backed
+ * injected handlers (runJS/appium/a11y/failure-shot), the store-neutral secret resolver, and the
+ * fileUpload path resolver — reproducing core's `runTest` per-test behavior on runner soil (D-05).
+ */
+export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRunConfig {
+  const sandbox = input.sandboxOptions
+  return {
+    adapter: input.adapter,
+    planner: input.planner,
+    verifier: input.verifier,
+    cache: input.cache,
+    masking: input.masking,
+    workingMemory: input.workingMemory,
+    storageState: input.storageState,
+    compressor: input.compressor,
+    safetyHooks: input.safetyHooks,
+    configDigests: input.configDigests,
+
+    plannerModel: input.plannerModel,
+    verifierModel: input.verifierModel,
+
+    envFileVars: input.envFileVars,
+    inlineVars: input.inlineVars,
+    suiteVars: input.suiteVars,
+    cliVars: input.cliVars,
+    hookSetupVars: input.hookSetupVars,
+
+    // Inline hooks: the runner-local DockerHookExecutor + sandbox env/authState come off the resolved
+    // sandbox options; the per-run secret env is resolved store-side (never crosses into the runner).
+    hookExecutor: sandbox?.executor as HookExecutorPort | undefined,
+    inlineHookDefs: input.inlineHookDefs,
+    hookEnvVars: sandbox?.envVars,
+    hookSecretEnv: resolveSecretEnv(input.secretStore),
+    hookAuthState: sandbox?.authState,
+
+    runJs: buildRunJsHandler(input.adapter),
+    appiumScript: buildAppiumScriptHandler(input.adapter, input.secretStore),
+    accessibilityCheck: buildAccessibilityCheckHandler(input.adapter),
+    persistFailureScreenshot: buildFailureScreenshotWriter(input.adapter),
+
+    resolveSecrets: (text: string) => resolveSecretTemplatesInValue(text, input.secretStore),
+    secretStore: input.secretStore,
+    secretRedactor: input.secretRedactor,
+
+    sink: input.sink,
+    testIndex: input.testIndex,
+    abortSignal: input.abortSignal,
+
+    captureScreenshots: input.captureScreenshots,
+    accessibility: input.accessibility,
+    timeouts: input.timeouts,
+    plannerConfig: input.plannerConfig,
+    logger: input.logger,
+    logCapture: input.logCapture,
+    vision: input.vision,
+    visionGate: input.visionGate,
+    contextWindow: input.contextWindow,
+    suiteContext: input.suiteContext,
+    resolveUploadPath: (rawPath: string) =>
+      isAbsolute(rawPath) ? rawPath : resolve(dirname(input.filePath), rawPath),
   }
 }

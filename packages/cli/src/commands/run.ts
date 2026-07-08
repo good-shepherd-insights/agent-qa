@@ -15,7 +15,7 @@ import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuite
 import type { SecretStore, SecretRedactor, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
-import { WorkingMemoryStore } from '@vostride/agent-qa-runner'
+import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
 import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor } from '@vostride/agent-qa-runner'
 import {
   computeRunConfigDigests,
@@ -25,6 +25,8 @@ import {
   resolveRunBuildOrdinal,
   createSuiteLifecycle,
   buildSuiteMemberExecutor,
+  buildMemberRunConfig,
+  toMemberTest,
   buildRunMaskingContext,
   buildRunAuditSink,
   buildRunSafetyHooks,
@@ -976,8 +978,8 @@ async function executeSuites(
   },
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
 ): Promise<number> {
-  const { parseSuiteFile, parseTestFile, executeSuiteMember,
-    MultiReporter, createAnalyticsRunSubscriber,
+  const { parseSuiteFile, parseTestFile, patchTestForSuite,
+    MultiReporter, createAnalyticsRunSubscriber, runCurator,
   } = await import('@vostride/agent-qa-core')
   const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
@@ -1874,28 +1876,179 @@ async function executeSuites(
             prepared.results.push(bootstrapResult)
             return bootstrapResult
           }
-          const result = await executeSuiteMember({
-            suite: prepared.suite,
-            test,
-            filePath,
-            index: memberSuiteIndex,
-            totalTests: prepared.testEntries.length,
-            config: prepared.suiteConfig,
-            reporter: prepared.reporter,
-            suiteRunId: prepared.suiteRunId,
-            suiteHookVars: prepared.suiteHookVars,
-            suiteSandboxOptions: prepared.suiteSandboxOptions,
-            suiteArtifact: prepared.suiteArtifact,
-            memoryEnabled: prepared.memoryEnabled,
+
+          // 363-11 (D-05): the per-member orchestration that used to live in core's
+          // executeSuiteMember now runs at the CLI composition root — patch the test for the suite,
+          // run per-test setup hooks, init the core-owned memory index, execute on runner soil via
+          // runMemberTest (buildMemberRunConfig injects the adapter-backed handlers), run per-test
+          // teardown hooks, then destroy the memory index + run the core-owned curator (D-05).
+          const suiteConfig = prepared.suiteConfig
+          const patched = patchTestForSuite(test, prepared.suite, memberSuiteIndex)
+          const secretStore = (suiteConfig as any).secretStore
+          const secretRedactor = (suiteConfig as any).secretRedactor
+
+          // Per-test SETUP hooks (before each test).
+          let perTestHookVars: Record<string, string> = {}
+          let perTestSetupFailed = false
+          if ((patched as any).setup?.length && suiteConfig.resolvedHooks && prepared.suiteSandboxOptions) {
+            const hookDefs: HookDefinition[] = []
+            let hookMissing = false
+            for (const hookId of (patched as any).setup) {
+              const hook = suiteConfig.resolvedHooks.get(hookId)
+              if (!hook) { hookMissing = true; break }
+              hookDefs.push(hook)
+            }
+            if (!hookMissing && hookDefs.length > 0) {
+              const { runHooks } = await import('@vostride/agent-qa-runner')
+              const allVars: Record<string, string> = {}
+              if (suiteConfig.envFileVars) Object.assign(allVars, suiteConfig.envFileVars)
+              if (suiteConfig.inlineVars) Object.assign(allVars, suiteConfig.inlineVars)
+              if (suiteConfig.cliVars) Object.assign(allVars, suiteConfig.cliVars)
+              Object.assign(allVars, prepared.suiteHookVars)
+              for (const hookDef of hookDefs) {
+                const hookResult = await runHooks([hookDef], {
+                  ...prepared.suiteSandboxOptions,
+                  secretStore,
+                  secretRedactor,
+                  envVars: { ...prepared.suiteSandboxOptions.envVars, ...allVars, ...perTestHookVars },
+                  emit: ctx.events,
+                  identity: { phase: 'setup', scope: 'test', testIndex: memberSuiteIndex },
+                })
+                const hr = hookResult.results.get(hookDef.name)
+                if (!hr?.success) { hookMissing = true; break }
+                Object.assign(perTestHookVars, hr.variables)
+                Object.assign(allVars, hr.variables)
+              }
+            }
+            if (hookMissing) perTestSetupFailed = true
+          }
+
+          if (perTestSetupFailed) {
+            const setupFailureResult: TestResult = {
+              runId: undefined, name: test.name, filePath, status: 'failed', steps: [],
+              duration: 0, failureSummary: 'Setup hook failed', metadata: { phase: 'per-test-setup' },
+            }
+            prepared.results.push(setupFailureResult)
+            return setupFailureResult
+          }
+
+          // Memory init (core-owned; runMemberTest never touches memory).
+          let memberMemoryProvider = prepared.memoryEnabled ? suiteConfig.memoryProvider : undefined
+          const memoryInitParams = memberMemoryProvider ? {
+            product: suiteConfig.product!,
+            testId: (test as any)['test-id'] ?? test.name,
             memoryRoot: prepared.memoryRoot,
-            // D-02/D-03/D-20 run-shell seams.
-            events: ctx.events,
-            abortSignal: ctx.abortSignal,
-            configDigests: perMemberDigests[globalIndex],
-            // SEAM-03 (D-04): the per-run SafetyHookRunner populates LoopPorts.safetyHooks so every
-            // tool call routes the async policy gate. Read at call time (bindings predate the mint).
+            suiteId: (prepared.suite as any)['suite-id'] ?? prepared.suite.name,
+            currentSuiteTests: prepared.suite.tests as Array<{ test: string; id: string }>,
+            currentPosition: memberSuiteIndex,
+          } : undefined
+          if (memberMemoryProvider && memoryInitParams) {
+            try {
+              await memberMemoryProvider.init(memoryInitParams)
+            } catch (err) {
+              console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
+              memberMemoryProvider = undefined
+            }
+          }
+
+          const memberRunConfig = buildMemberRunConfig({
+            adapter: suiteConfig.adapter,
+            planner: suiteConfig.planner,
+            verifier: suiteConfig.verifier,
+            cache: suiteConfig.cache,
+            masking: suiteConfig.masking,
+            workingMemory: suiteConfig.workingMemory,
+            storageState: suiteConfig.storageState,
+            compressor: suiteConfig.compressor,
+            // SEAM-03 (D-04): the per-run SafetyHookRunner (read at call time — bindings predate the mint).
             safetyHooks: runSafetyHooks,
+            configDigests: perMemberDigests[globalIndex],
+            plannerModel: suiteConfig.plannerModel,
+            verifierModel: suiteConfig.verifierModel,
+            envFileVars: suiteConfig.envFileVars,
+            inlineVars: suiteConfig.inlineVars,
+            suiteVars: prepared.suiteHookVars,
+            cliVars: suiteConfig.cliVars,
+            hookSetupVars: perTestHookVars,
+            inlineHookDefs: suiteConfig.resolvedHooks,
+            sandboxOptions: prepared.suiteSandboxOptions,
+            secretStore,
+            secretRedactor,
+            sink: ctx.events,
+            testIndex: ctx.testIndex,
+            abortSignal: ctx.abortSignal,
+            captureScreenshots: suiteConfig.captureScreenshots,
+            accessibility: suiteConfig.accessibility,
+            timeouts: suiteConfig.timeouts,
+            logger: suiteConfig.logger,
+            logCapture: suiteConfig.logCapture,
+            vision: suiteConfig.vision,
+            visionGate: suiteConfig.visionGate,
+            suiteContext: (prepared.suite as any).context,
+            filePath,
           })
+          const result = await runMemberTest(toMemberTest(patched, filePath), memberRunConfig)
+
+          // Per-test TEARDOWN hooks (after each test).
+          if ((patched as any).teardown?.length && suiteConfig.resolvedHooks && prepared.suiteSandboxOptions) {
+            const { runHooks } = await import('@vostride/agent-qa-runner')
+            for (const hookId of (patched as any).teardown) {
+              const hook = suiteConfig.resolvedHooks.get(hookId)
+              if (!hook) continue
+              try {
+                const teardownVars: Record<string, string> = {}
+                if (suiteConfig.envFileVars) Object.assign(teardownVars, suiteConfig.envFileVars)
+                if (suiteConfig.cliVars) Object.assign(teardownVars, suiteConfig.cliVars)
+                Object.assign(teardownVars, prepared.suiteHookVars, perTestHookVars)
+                await runHooks([hook], {
+                  ...prepared.suiteSandboxOptions,
+                  secretStore,
+                  secretRedactor,
+                  envVars: { ...prepared.suiteSandboxOptions.envVars, ...teardownVars },
+                  emit: ctx.events,
+                  identity: { phase: 'teardown', scope: 'test', testIndex: memberSuiteIndex },
+                })
+              } catch { /* teardown hook failure is best-effort */ }
+            }
+          }
+
+          // Core's runTest destroyed the per-test memory index (in its finally) BEFORE the curator ran.
+          if (memberMemoryProvider) { try { memberMemoryProvider.destroy() } catch { /* best-effort */ } }
+
+          // Memory curator (core-owned, D-05 — memory stays core).
+          if (prepared.memoryEnabled && suiteConfig.memoryProvider && suiteConfig.memoryConfig?.curatorEnabled !== false) {
+            try {
+              const injectedObservationIds = new Map<number, string[]>()
+              for (let si = 0; si < result.steps.length; si++) {
+                const ids = suiteConfig.memoryProvider.getInjectedObservations(si)
+                if (ids.length > 0) injectedObservationIds.set(si, ids)
+              }
+              const suiteId = (prepared.suite as any)['suite-id'] ?? prepared.suite.name
+              const testId = (test as any)['test-id'] ?? test.name
+              const memoryLog = await runCurator({
+                testResult: result,
+                provider: suiteConfig.memoryProvider,
+                model: suiteConfig.plannerModel,
+                memoryRoot: prepared.memoryRoot,
+                product: suiteConfig.product!,
+                testId,
+                suiteId,
+                suiteContext: {
+                  tests: prepared.suite.tests as Array<{ test: string; id: string }>,
+                  position: memberSuiteIndex,
+                },
+                injectedObservationIds,
+                trustConfirmDelta: suiteConfig.memoryConfig?.trustConfirmDelta,
+                trustContradictDelta: suiteConfig.memoryConfig?.trustContradictDelta,
+              })
+              ;(result as any).memoryLog = memoryLog
+              printMemoryStatus(memoryLog)
+              suiteConfig.onCuratorComplete?.(test.name, memoryLog)
+            } catch (err) {
+              console.warn(`  ${pc.dim('Memory:')} curator error -- ${(err as Error).message}`)
+            }
+          }
+
           prepared.results.push(result)
           return result
         },
@@ -2421,7 +2574,6 @@ export function createRunCommand(): Command {
         // Actual execution
         const startTime = Date.now()
         const {
-          runTestWithRetry,
           MultiReporter, createAnalyticsRunSubscriber,
         } = await import('@vostride/agent-qa-core')
         const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
@@ -2905,20 +3057,29 @@ export function createRunCommand(): Command {
                 const product = testResolvedTarget.product
                 const testId = testDef['test-id'] ?? testDef.name
                 memoryInitParams = { product, testId, memoryRoot }
+                // 363-11: runMemberTest no longer inits memory internally (core's runTest did) —
+                // the CLI executor closure owns the core memory init/curator/destroy lifecycle now.
+                if (memoryProvider) {
+                  try {
+                    await memoryProvider.init(memoryInitParams)
+                  } catch (initErr) {
+                    console.warn(`  ${pc.dim('Memory:')} init error -- ${(initErr as Error).message}`)
+                    memoryProvider = undefined
+                  }
+                }
               } catch (err) {
                 console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
               }
             }
 
-            const result = await runTestWithRetry(testDef, {
+            // 363-11 (D-05): execute the member on runner soil via runMemberTest. The core
+            // runTest/runTestWithRetry wrapper is deleted; retry lives inside runMemberTest, and the
+            // adapter-backed handlers (runJS/appium/a11y/failure-shot) + secret resolver are wired by
+            // the shared buildMemberRunConfig helper (Pitfall 8 — the suite path uses the same helper).
+            const memberRunConfig = buildMemberRunConfig({
               adapter: adapter!,
               planner,
               verifier,
-              plannerModel,
-              verifierModel,
-              reporters,
-              captureScreenshots,
-              screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
               cache: effectiveCacheEnabled ? actionCache : undefined,
               // D-08/Q10: the sharp compressor injected from the composition root (sharp left core).
               compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
@@ -2927,38 +3088,38 @@ export function createRunCommand(): Command {
               safetyHooks: singleSafetyHooks,
               workingMemory: singleWorkingMemory,
               storageState: singleStorageState,
-              recording: testRecording,
-              plannerConfig,
-              timeouts: testTimeouts,
-              logger,
-              configContent,
-              testFileContent,
+              configDigests: perMemberDigest,
+              plannerModel,
+              verifierModel,
               envFileVars,
-              secretStore: runtimeSecrets.secretStore,
-              secretRedactor: runtimeSecrets.secretRedactor,
-              secretsFileMetadata: runtimeSecrets.secretsFileMetadata,
               inlineVars,
               cliVars,
               hookSetupVars: perTestSetupVars,
               inlineHookDefs: resolvedHooks,
-              inlineHookSandboxOptions: authAwareSandboxOptions,
-              logCapture: testLogCapture,
+              sandboxOptions: authAwareSandboxOptions,
+              secretStore: runtimeSecrets.secretStore,
+              secretRedactor: runtimeSecrets.secretRedactor,
+              // D-02/D-03/D-20 run-shell seams: live event sink + run-level cancel + the member's
+              // cache digest pair.
+              sink: ctx.events,
+              testIndex: ctx.testIndex,
+              abortSignal: ctx.abortSignal,
+              captureScreenshots,
               accessibility: config.services?.accessibility,
-              accessibilityCheck: runWebAccessibilityCheck,
+              timeouts: testTimeouts,
+              plannerConfig,
+              logger,
+              logCapture: testLogCapture,
               vision: resolveVisionConfig(config.services?.vision),
               visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
               contextWindow: plannerCfg.contextWindow,
-              memoryProvider,
-              memoryInitParams,
-              runId,
-              skipReporterOnTestStart: true,
-              skipReporterOnTestEnd: testAuthStateUse?.capture === true,
-              // D-02/D-03/D-20 run-shell seams: live event emit + run-level cancel + the member's
-              // cache digest pair. Retry is preserved (runTestWithRetry) with the seams threaded in.
-              events: ctx.events,
-              abortSignal: ctx.abortSignal,
-              configDigests: perMemberDigest,
-            } as any, filePath)
+              filePath,
+            })
+            const result = await runMemberTest(toMemberTest(testDef, filePath), memberRunConfig)
+
+            // Core's runTest destroyed the per-test memory index in its finally BEFORE the curator
+            // ran; replicate that ordering here (destroy then curate).
+            if (memoryProvider) { try { memoryProvider.destroy() } catch { /* best-effort */ } }
 
             if (!result.runId) result.runId = runId
             completedResult = result

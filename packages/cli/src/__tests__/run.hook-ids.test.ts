@@ -9,7 +9,7 @@ const {
   mockParseAllTests,
   mockParseHooksFile,
   mockRunHooks,
-  mockRunTestWithRetry,
+  mockRunMemberTest,
   mockResolveConfig,
   mockResolveTarget,
   mockCreateModel,
@@ -50,7 +50,7 @@ const {
     mockParseAllTests: vi.fn(),
     mockParseHooksFile: vi.fn(),
     mockRunHooks: vi.fn(),
-    mockRunTestWithRetry: vi.fn(),
+    mockRunMemberTest: vi.fn(),
     mockResolveConfig: vi.fn(),
     mockResolveTarget: vi.fn(),
     mockCreateModel: vi.fn(() => ({})),
@@ -86,7 +86,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
 vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
   // runHooks moved to runner in Phase 363 D-06; intercept it while keeping every other export real.
-  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks }
+  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks, runMemberTest: mockRunMemberTest }
 })
 
 vi.mock('@vostride/agent-qa-runner-local', () => ({
@@ -132,7 +132,7 @@ vi.mock('@vostride/agent-qa-core', () => ({
   formatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
   parseHooksFile: mockParseHooksFile,
   runHooks: mockRunHooks,
-  runTestWithRetry: mockRunTestWithRetry,
+  runCurator: vi.fn(async () => ({ added: 0, confirmed: 0, deprecated: 0, errors: [], curatorDuration: 0 })),
   normalizeAuthStateUse: vi.fn((use: { authState?: unknown } | undefined) => {
     const authState = use?.authState
     if (typeof authState === 'string' && authState.trim().length > 0) {
@@ -425,7 +425,7 @@ beforeEach(async () => {
       ['Auth Hook', { success: true, duration: 5, stdout: '', stderr: '', variables: {}, error: undefined }],
     ]),
   })
-  mockRunTestWithRetry.mockResolvedValue({
+  mockRunMemberTest.mockResolvedValue({
     name: 'Hook identity test',
     filePath: 'tests/hook-id.yaml',
     status: 'passed',
@@ -493,8 +493,8 @@ describe('run command hook identity resolution', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
-    const inlineHookDefs = mockRunTestWithRetry.mock.calls[0][1].inlineHookDefs as Map<string, unknown>
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    const inlineHookDefs = mockRunMemberTest.mock.calls[0][1].inlineHookDefs as Map<string, unknown>
     expect(inlineHookDefs.has(HOOK_ID)).toBe(true)
     expect(inlineHookDefs.get(HOOK_ID)).toEqual(expect.objectContaining({ id: HOOK_ID, name: 'Auth Hook' }))
     expect(inlineHookDefs.has('Auth Hook')).toBe(false)

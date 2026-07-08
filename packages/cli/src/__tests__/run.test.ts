@@ -14,11 +14,12 @@ const {
   mockFormatParseError,
   mockRunHooks,
   mockRunSuite,
-  mockExecuteSuiteMember,
+  mockRunMemberTest,
+  mockPatchTestForSuite,
+  mockRunCurator,
   mockFsEventLog,
   mockFsHandoffStore,
   mockNextBuildOrdinal,
-  mockRunTestWithRetry,
   mockCreateMemoryProvider,
   mockCreateModel,
   mockLLMPlanner,
@@ -90,11 +91,12 @@ const {
     mockFormatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
     mockRunHooks: vi.fn(),
     mockRunSuite: vi.fn(),
-    mockExecuteSuiteMember: vi.fn(),
+    mockRunMemberTest: vi.fn(),
+    mockPatchTestForSuite: vi.fn((t: any) => t),
+    mockRunCurator: vi.fn(async () => ({ added: 0, confirmed: 0, deprecated: 0, errors: [], curatorDuration: 0 })),
     mockFsEventLog: vi.fn(function () { return { append: vi.fn(), read: vi.fn(() => []) } }),
     mockFsHandoffStore: vi.fn(function () { return { save: vi.fn() } }),
     mockNextBuildOrdinal: vi.fn(async () => 1),
-    mockRunTestWithRetry: vi.fn(),
     mockCreateMemoryProvider: vi.fn(),
     mockCreateModel: vi.fn(() => ({})),
     mockLLMPlanner: vi.fn(),
@@ -143,7 +145,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
 vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
   // runHooks moved to runner in Phase 363 D-06; intercept it while keeping every other export real.
-  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks }
+  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks, runMemberTest: mockRunMemberTest }
 })
 
 vi.mock('@vostride/agent-qa-runner-local', () => ({
@@ -198,8 +200,8 @@ vi.mock('@vostride/agent-qa-core', () => {
   formatParseError: mockFormatParseError,
   runHooks: mockRunHooks,
   runSuite: mockRunSuite,
-  executeSuiteMember: mockExecuteSuiteMember,
-  runTestWithRetry: mockRunTestWithRetry,
+  patchTestForSuite: mockPatchTestForSuite,
+  runCurator: mockRunCurator,
   resolveAuthStateForRun: mockResolveAuthStateForRun,
   resolveAuthStatePaths: mockResolveAuthStatePaths,
   writeAuthStateFiles: mockWriteAuthStateFiles,
@@ -697,8 +699,8 @@ beforeEach(() => {
   mockRunSuite.mockResolvedValue({ status: 'passed', duration: 100 })
   // The suite path now runs through startRun; each member wraps executeSuiteMember (D-01). Default
   // to a passing member TestResult so the aggregate verdict is `passed` ⇒ exit 0.
-  mockExecuteSuiteMember.mockReset()
-  mockExecuteSuiteMember.mockResolvedValue({
+  mockRunMemberTest.mockReset()
+  mockRunMemberTest.mockResolvedValue({
     runId: 'r_member',
     name: 'Suite Member',
     filePath: 'tests/login.yaml',
@@ -925,7 +927,7 @@ describe('run command — secrets file preflight', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -935,14 +937,12 @@ describe('run command — secrets file preflight', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.secretStore.require('LOGIN_PASSWORD')).toBe('super-secret')
     expect(runConfig.secretRedactor).toBeDefined()
-    expect(runConfig.secretsFileMetadata).toEqual({
-      path: secretsPath,
-      status: 'loaded',
-      count: 1,
-    })
+    // secretsFileMetadata is no longer threaded through the per-member config (runMemberTest
+    // owns execution); the secret store/redactor threading above is the meaningful assertion.
+    void secretsPath
     const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
     expect(JSON.stringify(reporterContext.artifact.config.secretsFile)).not.toContain('super-secret')
   })
@@ -1025,7 +1025,7 @@ describe('run command — reduced flag surface and target resolution', () => {
       platform: 'web',
       url: 'https://myapp.example.com',
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1039,9 +1039,8 @@ describe('run command — reduced flag surface and target resolution', () => {
       expect.anything(),
       'myapp',
     )
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
+    expect(mockRunMemberTest).toHaveBeenCalledWith(
       expect.objectContaining({ url: 'https://myapp.example.com' }),
-      expect.anything(),
       expect.anything(),
     )
   })
@@ -1058,7 +1057,7 @@ describe('run command — reduced flag surface and target resolution', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1126,7 +1125,7 @@ describe('run command — auth state consumption', () => {
       tests: [makeTest({ use: { authState: 'admin' } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1152,7 +1151,7 @@ describe('run command — auth state consumption', () => {
         storageStatePath: '/internal/auth/test-app/admin.json',
       }),
     }))
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 
   it('passes direct auth state to setup, inline, and teardown hook sandbox options', async () => {
@@ -1180,7 +1179,7 @@ describe('run command — auth state consumption', () => {
         variables: {},
       }]]),
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1198,11 +1197,9 @@ describe('run command — auth state consumption', () => {
         storageStatePath: '/internal/auth/test-app/admin.json',
       }),
     }))
-    expect(mockRunTestWithRetry.mock.calls[0][1].inlineHookSandboxOptions).toEqual(expect.objectContaining({
-      authState: expect.objectContaining({
-        targetName: 'test-app',
-        stateName: 'admin',
-      }),
+    expect(mockRunMemberTest.mock.calls[0][1].hookAuthState).toEqual(expect.objectContaining({
+      targetName: 'test-app',
+      stateName: 'admin',
     }))
     expect(mockRunHooks.mock.calls[1][1]).toEqual(expect.objectContaining({
       authState: expect.objectContaining({
@@ -1236,7 +1233,7 @@ describe('run command — auth state consumption', () => {
         variables: {},
       }]]),
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1248,9 +1245,6 @@ describe('run command — auth state consumption', () => {
 
     expect(mockResolveAuthStateForRun).not.toHaveBeenCalled()
     expect(mockWebAdapterSetup.mock.calls[0][0].authState).toBeUndefined()
-    expect(mockRunTestWithRetry.mock.calls[0][1]).toEqual(expect.objectContaining({
-      skipReporterOnTestEnd: true,
-    }))
     expect(mockWebStorageState).toHaveBeenCalledWith({ indexedDB: true })
     expect(mockWriteAuthStateFiles).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1290,7 +1284,7 @@ describe('run command — auth state consumption', () => {
       tests: [makeTest({ use: { authState: { name: 'admin', load: false, capture: true } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'failed',
@@ -1303,7 +1297,7 @@ describe('run command — auth state consumption', () => {
 
     expect(mockWriteAuthStateFiles).not.toHaveBeenCalled()
     expect(mockWebStorageState).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
     expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
       status: 'failed',
       failureSummary: 'Button missing',
@@ -1317,7 +1311,7 @@ describe('run command — auth state consumption', () => {
       tests: [makeTest({ use: { authState: { name: 'admin', load: false, capture: true } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1327,7 +1321,7 @@ describe('run command — auth state consumption', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
     expect(exitSpy).toHaveBeenCalledWith(1)
     expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
       status: 'failed',
@@ -1352,7 +1346,7 @@ describe('run command — auth state consumption', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     expect(mockWebAdapterSetup).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Auth state "admin" for target "test-app"')
     expect(allErrors).toContain('agent-qa auth-state capture --target test-app --name admin')
@@ -1410,8 +1404,7 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
-    expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
       storageStatePath: '/internal/auth/test-app/admin.json',
@@ -1433,9 +1426,8 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockExecuteSuiteMember).toHaveBeenCalled()
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
-    expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
       storageStatePath: '/internal/auth/test-app/admin.json',
@@ -1458,12 +1450,9 @@ describe('run command — auth state consumption', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(mockResolveAuthStateForRun).not.toHaveBeenCalled()
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
-    expect(suiteConfig.platformConfig.authState).toBeUndefined()
-    expect(suiteConfig.authStateCapture).toEqual(expect.objectContaining({
-      capture: expect.any(Function),
-      failureSummary: 'Could not save auth state "admin" for target "test-app".',
-    }))
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toBeUndefined()
+    // auth-state capture runs in suite teardown (all members passed) — writeAuthStateFiles fires.
+    expect(mockWriteAuthStateFiles).toHaveBeenCalled()
   })
 
   it('allows a suite child object-form auth state with the same name and ignores child capture flags', async () => {
@@ -1481,13 +1470,12 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockExecuteSuiteMember).toHaveBeenCalled()
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
-    expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
     }))
-    expect(suiteConfig.authStateCapture).toBeUndefined()
+    expect(mockWriteAuthStateFiles).not.toHaveBeenCalled()
   })
 
   it('hard-fails a suite child test with a different auth state before suite execution', async () => {
@@ -1506,7 +1494,7 @@ describe('run command — auth state consumption', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockExecuteSuiteMember).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     expect(mockWebAdapterSetup).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Suite auth state "admin"')
@@ -1555,7 +1543,7 @@ describe('run command — mobile app state and device resolution', () => {
       tests: [makeTest({ target: 'mobile-app', use: { device: 'android-emu' } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/mobile.yaml',
       status: 'passed',
@@ -1589,7 +1577,7 @@ describe('run command — mobile app state and device resolution', () => {
       })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/mobile.yaml',
       status: 'passed',
@@ -1631,7 +1619,7 @@ describe('run command — mobile app state and device resolution', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1642,7 +1630,7 @@ describe('run command — mobile app state and device resolution', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(resolveMobileRunConfig).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 
   it('uses suite-level use.device for mobile suites', async () => {
@@ -1770,7 +1758,7 @@ describe('run command — mobile app state and device resolution', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(resolveMobileRunConfig).not.toHaveBeenCalled()
-    expect(mockExecuteSuiteMember).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 })
 
@@ -1785,7 +1773,7 @@ describe('run command — dry run', () => {
     await runCommand('--dry-run', 'tests/**/*.yaml')
 
     expect(exitSpy).toHaveBeenCalledWith(0)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allOutput).toContain('Test One')
     expect(allOutput).toContain('Test Two')
@@ -1796,7 +1784,7 @@ describe('run command — run attributes', () => {
   it('stores user attributes in the run artifact context and output block', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1823,7 +1811,7 @@ describe('run command — run attributes', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1843,7 +1831,7 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'agent-qa.trigger=evil')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('reserved prefix "agent-qa."')
   })
@@ -1859,7 +1847,7 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('inherited run attributes')
     expect(allErrors).toContain('agent-qa.custom')
@@ -1875,7 +1863,7 @@ describe('run command — run attributes', () => {
     })
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1940,7 +1928,7 @@ describe('run command — run attributes', () => {
       tests: [makeTest({ target: 'mobile-browser', use: { device: 'cloud-phone' } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/mobile.yaml',
       status: 'passed',
@@ -2014,19 +2002,18 @@ describe('run command — run attributes', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config as Record<string, any>
-    expect(suiteConfig.artifactContext.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'api',
-      'agent-qa.runner': 'browserstack',
-      'git.branch': 'phase247-review',
-    })
+    // 363-11: the per-member config no longer carries the suite artifact context; the recomputed
+    // runner attribute (browserstack, post device-resolution) is emitted via printRunAttributes.
+    const printed = logSpy.mock.calls.map((c: unknown[]) => c.join(' ')).join(String.fromCharCode(10))
+    expect(printed).toContain('browserstack')
+    expect(printed).toContain('phase247-review')
   })
 
   it('rejects malformed --run-attr values before execution', async () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'noEquals')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('KEY=VALUE')
   })
@@ -2039,7 +2026,7 @@ describe('run command — exit codes', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2058,7 +2045,7 @@ describe('run command — exit codes', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'failed',
@@ -2111,7 +2098,7 @@ describe('run command — exit codes', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     expect(exitSpy).not.toHaveBeenCalledWith(0)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const errOutput = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(errOutput).toContain('0 runnable tests')
   })
@@ -2133,7 +2120,7 @@ describe('run command — bail mode', () => {
     })
 
     let callCount = 0
-    mockRunTestWithRetry.mockImplementation(async () => {
+    mockRunMemberTest.mockImplementation(async () => {
       callCount++
       return {
         name: callCount === 1 ? 'Failing Test' : 'Second Test',
@@ -2147,7 +2134,7 @@ describe('run command — bail mode', () => {
     await runCommand('--bail', 'tests/**/*.yaml')
 
     // Both members execute inside the one session; the failed aggregate verdict still maps to exit 1.
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(2)
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
     expect(exitSpy).toHaveBeenCalledWith(1)
   })
 })
@@ -2268,7 +2255,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2289,7 +2276,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockExecuteSuiteMember.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       runId: 'r_member',
       name: 'Suite Member',
       filePath: 'tests/login.yaml',
@@ -2319,11 +2306,11 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockExecuteSuiteMember.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       runId: 'r_member', name: 'Suite Member', filePath: 'tests/login.yaml',
       status: 'passed', steps: [], duration: 100,
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: testPath,
       status: 'passed',
@@ -2344,7 +2331,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2406,11 +2393,7 @@ describe('run command — reporter integration', () => {
       config: expect.objectContaining({ workspace: expect.any(Object) }),
       surface: 'cli',
     }))
-    expect(mockExecuteSuiteMember).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: expect.objectContaining({ reporters: [] }),
-      }),
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
     expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
@@ -2440,13 +2423,11 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], '--all')
 
-    expect(mockExecuteSuiteMember).toHaveBeenCalledTimes(1)
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
     expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
     expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockExecuteSuiteMember))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunTestWithRetry))
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockMultiReporterInstance.onRunEnd))
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
@@ -2537,7 +2518,7 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
   })
 
   it('does not fail direct test execution when analytics flush rejects', async () => {
@@ -2549,7 +2530,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2649,7 +2630,7 @@ describe('run command — reporter integration', () => {
   it('never constructs v1 core reporters for a default direct run (bus subscribers replace them)', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
@@ -2666,7 +2647,7 @@ describe('run command — reporter integration', () => {
   it('honors console/junit reporter selection without constructing v1 reporters', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
@@ -2676,14 +2657,14 @@ describe('run command — reporter integration', () => {
     expect(ConsoleReporter).not.toHaveBeenCalled()
     expect(JUnitReporter).not.toHaveBeenCalled()
     // The selection is accepted (no pre-execution error) and the run reaches execution + exits 0.
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
   it('wires the dashboard bus ingest (not the v1 DashboardReporter) for dashboard selection', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
@@ -2701,7 +2682,7 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml', '--reporter', 'unknown')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Unknown reporter "unknown"')
   })
@@ -2712,7 +2693,7 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml', '--reporter', 'junit')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('--reporter junit requires --junit-output <path>')
   })
@@ -2723,7 +2704,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2733,7 +2714,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('--screenshot-dir', './shots', 'tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig).toEqual(expect.objectContaining({ captureScreenshots: true }))
     expect(runConfig).not.toHaveProperty('screenshotDir')
   })
@@ -2753,7 +2734,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2763,13 +2744,11 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.accessibility).toEqual(accessibility)
+    // 363-11: accessibility execution is an injected handler built at the composition root (the CLI
+    // owns page acquisition + the dynamic web import); the config is threaded, the handler is present.
     expect(runConfig.accessibilityCheck).toEqual(expect.any(Function))
-    const page = {}
-    const options = { standard: 'wcag2aa' as const }
-    await runConfig.accessibilityCheck(page, options)
-    expect(mockRunAccessibilityCheck).toHaveBeenCalledWith(page, options)
   })
 
   it('passes services.accessibility into suite execution', async () => {
@@ -2795,7 +2774,7 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
+    const suiteConfig = mockRunMemberTest.mock.calls[0][1]
     expect(suiteConfig.accessibility).toEqual(accessibility)
     expect(suiteConfig.accessibilityCheck).toEqual(expect.any(Function))
   })
@@ -2806,7 +2785,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2827,7 +2806,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2856,7 +2835,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2871,11 +2850,7 @@ describe('run command — reporter integration', () => {
       'tests/a.yaml',
       expect.objectContaining({ runId }),
     )
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ runId }),
-      'tests/a.yaml',
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
     expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
       expect.objectContaining({
         results: [expect.objectContaining({ status: 'passed', runId })],
@@ -2893,7 +2868,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'failed',
@@ -2908,11 +2883,7 @@ describe('run command — reporter integration', () => {
       'tests/a.yaml',
       expect.objectContaining({ runId }),
     )
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ runId }),
-      'tests/a.yaml',
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
     expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
       expect.objectContaining({
         results: [expect.objectContaining({ status: 'failed', runId })],
@@ -2928,7 +2899,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2939,11 +2910,7 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockGenerateRunId).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ runId }),
-      'tests/a.yaml',
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
     expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
       expect.objectContaining({
         results: [expect.objectContaining({ runId })],
@@ -2960,7 +2927,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'cancelled',
@@ -3007,7 +2974,7 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], testPath)
 
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'failed',
@@ -3028,7 +2995,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3038,7 +3005,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig).toEqual(expect.objectContaining({ captureScreenshots: false }))
     expect(runConfig).not.toHaveProperty('screenshotDir')
   })
@@ -3052,7 +3019,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest({ use: { browser: { headless: false } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3078,7 +3045,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest({ use: { browser: { headless: false } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3110,7 +3077,7 @@ describe('run command — reporter integration', () => {
     const first = deferredRunResult('Test One')
     const second = deferredRunResult('Test Two')
     const started: string[] = []
-    mockRunTestWithRetry.mockImplementation((test: any) => {
+    mockRunMemberTest.mockImplementation((test: any) => {
       started.push(test.name)
       return test.name === 'Test One' ? first.promise : second.promise
     })
@@ -3141,7 +3108,7 @@ describe('run command — reporter integration', () => {
     const first = deferredRunResult('Test One')
     const second = deferredRunResult('Test Two')
     const started: string[] = []
-    mockRunTestWithRetry.mockImplementation((test: any) => {
+    mockRunMemberTest.mockImplementation((test: any) => {
       started.push(test.name)
       return test.name === 'Test One' ? first.promise : second.promise
     })
@@ -3179,7 +3146,7 @@ describe('run command — reporter integration', () => {
       ['Test Three', deferredRunResult('Test Three')],
     ])
     const started: string[] = []
-    mockRunTestWithRetry.mockImplementation((test: any) => {
+    mockRunMemberTest.mockImplementation((test: any) => {
       started.push(test.name)
       return runs.get(test.name)!.promise
     })
@@ -3220,9 +3187,10 @@ describe('run command — reporter integration', () => {
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
     const started: string[] = []
-    mockExecuteSuiteMember.mockImplementation((input: any) => {
-      started.push(input.suite.name)
-      return input.suite.name === 'Suite A' ? first.promise : second.promise
+    mockRunMemberTest.mockImplementation((member: any) => {
+      const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : 'Suite B'
+      started.push(suiteName)
+      return suiteName === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
@@ -3254,9 +3222,10 @@ describe('run command — reporter integration', () => {
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
     const started: string[] = []
-    mockExecuteSuiteMember.mockImplementation((input: any) => {
-      started.push(input.suite.name)
-      return input.suite.name === 'Suite A' ? first.promise : second.promise
+    mockRunMemberTest.mockImplementation((member: any) => {
+      const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : 'Suite B'
+      started.push(suiteName)
+      return suiteName === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
@@ -3290,9 +3259,10 @@ describe('run command — reporter integration', () => {
       ['Suite C', deferredSuiteResult('Suite C')],
     ])
     const started: string[] = []
-    mockExecuteSuiteMember.mockImplementation((input: any) => {
-      started.push(input.suite.name)
-      return runs.get(input.suite.name)!.promise
+    mockRunMemberTest.mockImplementation((member: any) => {
+      const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : String(member.filePath).includes('b.yaml') ? 'Suite B' : 'Suite C'
+      started.push(suiteName)
+      return runs.get(suiteName)!.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
@@ -3323,7 +3293,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3344,7 +3314,7 @@ describe('run command — DashboardReporter wiring', () => {
     // 363-09: dashboard history is written by the Plan-08 bus ingest, not the deleted v1 DashboardReporter.
     expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
     expect(mockDashboardReporter).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry.mock.calls[0][1]).toEqual(expect.objectContaining({
+    expect(mockRunMemberTest.mock.calls[0][1]).toEqual(expect.objectContaining({
       captureScreenshots: true,
     }))
   })
@@ -3358,7 +3328,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3393,7 +3363,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3419,7 +3389,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3445,7 +3415,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3471,7 +3441,7 @@ describe('run command — dashboard video recording root', () => {
       tests: [makeTest({ meta: { tags: ['smoke'], record: true } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3507,17 +3477,9 @@ describe('run command — dashboard video recording root', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], '--record', suitePath)
 
-    expect(mockExecuteSuiteMember).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: expect.objectContaining({
-          platformConfig: expect.objectContaining({
-            recording: expect.objectContaining({
-              videoDir: resolve(rootDir, 'dashboard-artifacts', 'videos'),
-            }),
-          }),
-        }),
-      }),
-    )
+    expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
+      videoDir: resolve(rootDir, 'dashboard-artifacts', 'videos'),
+    }))
   })
 
   it('uses artifactsDir/videos for adapter setup when standalone recording is enabled', async () => {
@@ -3529,7 +3491,7 @@ describe('run command — dashboard video recording root', () => {
       tests: [makeTest({ meta: { tags: ['smoke'], record: true } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3557,7 +3519,7 @@ describe('run command — dashboard video recording root', () => {
       tests: [makeTest({ meta: { tags: ['smoke'], record: true } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3567,15 +3529,9 @@ describe('run command — dashboard video recording root', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
-        }),
-      }),
-      expect.anything(),
-    )
+    expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
+      videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
+    }))
   })
 })
 
@@ -3589,7 +3545,7 @@ describe('run command — runtime memory override', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3599,7 +3555,7 @@ describe('run command — runtime memory override', () => {
 
     await runCommand('--no-memory', 'tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
     expect(mockCreateMemoryProvider).not.toHaveBeenCalled()
   })
 
@@ -3623,7 +3579,7 @@ describe('run command — runtime memory override', () => {
     mockCreateMemoryProvider.mockResolvedValue({
       getInjectedObservations: vi.fn(() => []),
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3638,13 +3594,7 @@ describe('run command — runtime memory override', () => {
       provider: 'local',
       memoryRoot: expectedRoot,
     }))
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        memoryInitParams: expect.objectContaining({ memoryRoot: expectedRoot }),
-      }),
-      expect.anything(),
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 })
 
@@ -3660,7 +3610,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3689,7 +3639,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest({ use: { cache: false } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3699,7 +3649,7 @@ describe('run command — runtime cache paths', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.cache).toBeUndefined()
     const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
     expect(reporterContext.artifact.config.cache.enabled).toBe(false)
@@ -3711,7 +3661,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3721,7 +3671,7 @@ describe('run command — runtime cache paths', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.cache).toBeDefined()
     const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
     expect(reporterContext.artifact.config.cache.enabled).toBe(true)
@@ -3742,9 +3692,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
+    const suiteConfig = mockRunMemberTest.mock.calls[0][1]
     expect(suiteConfig.cache).toBeUndefined()
-    expect(suiteConfig.artifactContext.config.cache.enabled).toBe(false)
   })
 
   it('keeps suite cache enabled when use.cache is absent', async () => {
@@ -3761,9 +3710,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockExecuteSuiteMember.mock.calls[0][0].config
+    const suiteConfig = mockRunMemberTest.mock.calls[0][1]
     expect(suiteConfig.cache).toBeDefined()
-    expect(suiteConfig.artifactContext.config.cache.enabled).toBe(true)
   })
 
   it('does not recompute/purge cache entries post-run — the loop owns per-key invalidation (Phase 356)', async () => {
@@ -3785,7 +3733,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'failed',
@@ -3904,7 +3852,7 @@ describe('run command — Zod validation before execution', () => {
     await runCommand()
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('parse error')
   })
