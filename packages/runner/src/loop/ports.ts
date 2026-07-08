@@ -185,6 +185,13 @@ export interface LoopPorts {
   visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
   /** Pitfall 8 — setVariable executes via this callback, NOT the adapter. */
   onSetVariable?: (name: string, value: string) => void
+  /**
+   * Step-phase telemetry callback. The loop never CALLS this (zero read sites); it is
+   * spec-retired per runner.md §2.2. Its full removal is deferred to Plan 11, which deletes
+   * core/src/agent/runner.ts — the sole remaining site that SETS it. Deleting it here would
+   * break core's tsup DTS build (TS2353) and thus the whole-workspace build/test, violating
+   * this plan's additive/no-regression + "core untouched" invariants (Plan 10 deviation).
+   */
   onPhase?: (event: StepPhaseEvent) => void | Promise<void>
   /** Pitfall 1 — path resolution stays core-side, injected pre-resolved into the loop. */
   resolveUploadPath?: (rawPath: string) => string

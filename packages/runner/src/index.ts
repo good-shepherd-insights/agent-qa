@@ -190,6 +190,29 @@ export * from './hooks/index.js'
 // and §A8 handoff assembly are exported for CLI/core composition roots (Plans 09–11).
 export { startRun } from './run/shell.js'
 export { createMemberEventSink } from './run/event-sink.js'
+// Phase 363 D-05 — the runner-owned member-runner (dissolution target for core's
+// runTest/runTestWithRetry) + the pure inline-DSL parsing + the moved failure-summary.
+// Built + tested against fakes here; Plan 11 cuts the CLI over and deletes the core side.
+export { runMemberTest } from './run/member-runner.js'
+export type {
+  MemberTest,
+  MemberStepSpec,
+  MemberRunConfig,
+  RunJsHandler,
+  AppiumScriptHandler,
+  AccessibilityCheckHandler,
+  FailureScreenshotWriter,
+} from './run/member-runner.js'
+export {
+  parseHookInline,
+  stripHookInline,
+  isCanonicalHookIdShape,
+  parseRunJSInline,
+  coerceRunJSResult,
+  parseAppiumInline,
+} from './run/inline-steps.js'
+export type { InlineHookCall, RunJSMatch } from './run/inline-steps.js'
+export { generateFailureSummary } from './run/failure-summary.js'
 export {
   assemblePerTestOutcome,
   skippedPerTestOutcome,
