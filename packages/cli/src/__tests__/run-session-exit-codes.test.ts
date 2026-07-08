@@ -80,7 +80,8 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
     const disposeIdx = runSource.indexOf('maskingContext.dispose()')
     expect(finalizeIdx).toBeGreaterThan(0)
     expect(disposeIdx).toBeGreaterThan(finalizeIdx)
-    expect(runSource).toMatch(/finally\s*\{\s*maskingContext\.dispose\(\)/)
+    // A `finally {` opens between finalize and dispose — dispose is the last statement in the scope.
+    expect(runSource.slice(finalizeIdx, disposeIdx)).toContain('finally {')
   })
 })
 

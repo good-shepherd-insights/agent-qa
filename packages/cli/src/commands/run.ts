@@ -24,8 +24,15 @@ import {
   resolveRunBuildOrdinal,
   createSuiteLifecycle,
   buildSuiteMemberExecutor,
+  buildRunMaskingContext,
+  buildRunAuditSink,
+  buildRunSafetyHooks,
+  extractAuthStateSensitiveStrings,
   type SuiteMemberBinding,
+  type RunMaskingContext,
 } from '../run-session-composition.js'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { BetterSqlite3AbiMismatchError, isBetterSqlite3AbiMismatch } from '@vostride/agent-qa-core'
@@ -308,6 +315,7 @@ interface RunOptions {
   device?: string
   var?: string[]
   runAttr?: string[]
+  trustSession?: boolean
 }
 
 const SUPPORTED_REPORTERS = ['console', 'junit', 'stdout-live', 'dashboard'] as const
@@ -863,6 +871,31 @@ function formatAuthStateCaptureFailure(paths: ResolvedAuthStatePaths): string {
   return `Could not save auth state "${paths.stateName}" for target "${paths.targetName}".`
 }
 
+/**
+ * Read a persisted storage-state payload JSON best-effort (D-06 masking seed source). A missing or
+ * unreadable file degrades to `undefined` — never a run failure; the source simply contributes no
+ * seed. Used to seed the run MaskingContext from statically-resolved auth-state at run start and to
+ * register mid-run captured auth values.
+ */
+async function readAuthStatePayloadBestEffort(storageStatePath: string | undefined): Promise<unknown> {
+  if (!storageStatePath) return undefined
+  try {
+    const { readFile } = await import('node:fs/promises')
+    return JSON.parse(await readFile(storageStatePath, 'utf-8')) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Register every cookie/localStorage value from an auth-state payload into the run MaskingContext
+ * (D-06). Additive; the same stable per-run placeholders. A token minted by a mid-run login flow is
+ * protected for every subsequent egress once registered here.
+ */
+function registerAuthStateIntoMaskingContext(ctx: RunMaskingContext, payload: unknown): void {
+  for (const value of extractAuthStateSensitiveStrings(payload)) ctx.register(value)
+}
+
 function getStorageStateContext(adapter: PlatformAdapter): { storageState: (options?: { indexedDB?: boolean }) => Promise<unknown> } | null {
   const maybeGetPage = (adapter as { getPage?: () => unknown }).getPage
   if (typeof maybeGetPage !== 'function') return null
@@ -955,6 +988,12 @@ async function executeSuites(
   // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
   // `await session.done`. Fires only if `done` is genuinely un-settleable so the CLI can never hang.
   let graceTimer: ReturnType<typeof setTimeout> | undefined
+  // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner, built at the runId
+  // mint below and captured here so the earlier-defined member/teardown closures (which only execute
+  // after startRun) resolve the run bundle at call time. `runMaskingContext` also feeds the D-06
+  // mid-run auth-state registration at teardown capture and the WM-flush report mask.
+  let runMaskingContext: RunMaskingContext | undefined
+  let runSafetyHooks: SafetyHookRunner | undefined
 
   // Best-effort suite-DB running→cancelled sweep, invoked by the controller on the first signal.
   const sweepSuiteDbs = () => {
@@ -1054,7 +1093,7 @@ async function executeSuites(
     dashboardDb: any
     analyticsReporter: ReturnType<typeof createAnalyticsRunReporter>
     suiteWorkingMemory: WorkingMemoryStore
-    actionMasking: IdentityMaskingContext | undefined
+    authStateStoragePath: string | undefined
     suiteAttributes: RunAttributes
   }
 
@@ -1456,10 +1495,10 @@ async function executeSuites(
     const analyticsReporter = createAnalyticsRunReporter({ config, surface: 'cli' })
     reporters.push(analyticsReporter)
 
-    // Wire the redesigned action cache (runner-local FsActionCache + branch policy) and
-    // the identity masking seam, injected into the runner loop's cache/masking ports.
+    // Wire the redesigned action cache (runner-local FsActionCache + branch policy), injected into
+    // the runner loop's cache port. The loop's masking port now carries the ONE run MaskingContext
+    // (assigned at the runId mint below), no longer the cache-context identity mint (SEAM-01/D-09).
     let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
-    let actionMasking: IdentityMaskingContext | undefined
     if (suiteEffectiveCacheEnabled) {
       const { resolve } = await import('node:path')
       const ctx = await buildActionCacheContext({
@@ -1468,7 +1507,6 @@ async function executeSuites(
         saveCache: opts.saveCache === true,
       })
       actionCache = ctx.cache
-      actionMasking = ctx.masking
     }
 
     // WM-01/WM-02: ONE run-scoped working-memory store spans all suite member tests; threaded
@@ -1547,7 +1585,9 @@ async function executeSuites(
       planner,
       verifier,
       cache: suiteEffectiveCacheEnabled ? actionCache : undefined,
-      masking: suiteEffectiveCacheEnabled ? actionMasking : undefined,
+      // The run MaskingContext is assigned at the runId mint (below) — one source of truth,
+      // ungated from cache enablement (SEAM-01/D-09; WM masking + mask-before-cache-key go live).
+      masking: undefined,
       workingMemory: suiteWorkingMemory,
       storageState: suiteStorageState,
       plannerModel,
@@ -1633,7 +1673,7 @@ async function executeSuites(
       dashboardDb,
       analyticsReporter,
       suiteWorkingMemory,
-      actionMasking,
+      authStateStoragePath: suiteAuthState?.storageStatePath,
       suiteAttributes,
     }
   }
@@ -1723,6 +1763,15 @@ async function executeSuites(
     ) {
       try {
         const captured = await suiteConfig.authStateCapture.capture()
+        // D-06: a mid-run captured auth state may carry freshly-minted tokens — register its
+        // sensitive values into the run context so every subsequent egress masks them. Teardown
+        // runs inside runSafetyScope; the lexically-captured run context is the active one.
+        if (runMaskingContext) {
+          registerAuthStateIntoMaskingContext(
+            runMaskingContext,
+            await readAuthStatePayloadBestEffort(captured.storageStatePath),
+          )
+        }
         prepared.suiteSandboxOptions = suiteConfig.sandboxOptions
           ? { ...suiteConfig.sandboxOptions, authState: captured }
           : suiteConfig.sandboxOptions
@@ -1775,7 +1824,7 @@ async function executeSuites(
 
     await flushWorkingMemory(prepared.suiteWorkingMemory, {
       artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
-      mask: prepared.actionMasking ? (value: string) => prepared.actionMasking!.mask(value) : undefined,
+      mask: runMaskingContext ? (value: string) => runMaskingContext!.mask(value) : undefined,
     })
     closeSuiteDashboardDb(prepared.dashboardDb)
     await flushAnalyticsRunReporter(prepared.analyticsReporter)
@@ -1848,6 +1897,9 @@ async function executeSuites(
             events: ctx.events,
             abortSignal: ctx.abortSignal,
             configDigests: perMemberDigests[globalIndex],
+            // SEAM-03 (D-04): the per-run SafetyHookRunner populates LoopPorts.safetyHooks so every
+            // tool call routes the async policy gate. Read at call time (bindings predate the mint).
+            safetyHooks: runSafetyHooks,
           })
           prepared.results.push(result)
           return result
@@ -1867,36 +1919,66 @@ async function executeSuites(
   const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct })
   const runPorts = buildRunPorts({ configDir, runId })
 
+  // SEAM-01/03/04 (362-06): construct the run's real seeded MaskingContext (D-05/06/07), the per-run
+  // stamped audit sink (D-12/13), and the per-run SafetyHookRunner (D-01/15/10) — then run the whole
+  // run body inside runSafetyScope so every createModel egress masks and every tool call is gated +
+  // audited (D-02/D-04). The masking context needs no runId, so it seeds from the statically-resolved
+  // suite auth-state payloads read best-effort here.
+  const authStatePayloads = (
+    await Promise.all(preparedSuites.map((p) => readAuthStatePayloadBestEffort(p.authStateStoragePath)))
+  ).filter((payload): payload is unknown => payload !== undefined)
+  const maskingContext = buildRunMaskingContext({
+    secretStore: variableContext?.secretStore,
+    env: process.env,
+    authStatePayloads,
+  })
+  const auditSink = buildRunAuditSink({ configDir, runId, executionContext })
+  const trustMode = opts.trustSession === true || config.safety?.trustMode === true
+  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext, trustMode })
+  runMaskingContext = maskingContext
+  runSafetyHooks = safetyHooks
+  // Point every suite's loop masking port at the ONE run context (ungated from cache — D-09/356).
+  for (const prepared of preparedSuites) prepared.suiteConfig.masking = maskingContext
+
   const lifecycle = createSuiteLifecycle()
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
 
-  const session = startRun({
-    // generateRunId returns a plain string; brand it to the RunConfig's RunId without a schema dep.
-    runId: runId as unknown as Parameters<typeof startRun>[0]['runId'],
-    scope: { tier: 'product', key: runProduct },
-    executionContext,
-    configDigests: runDigests.runLevel,
-    buildOrdinal,
-    members,
-    executor,
-    masking: buildIdentityMasking(),
-    ports: runPorts,
-  })
-  activeRunSession = session
+  const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
+    try {
+      const session = startRun({
+        // generateRunId returns a plain string; brand it to the RunConfig's RunId without a schema dep.
+        runId: runId as unknown as Parameters<typeof startRun>[0]['runId'],
+        scope: { tier: 'product', key: runProduct },
+        executionContext,
+        configDigests: runDigests.runLevel,
+        buildOrdinal,
+        members,
+        executor,
+        masking: maskingContext,
+        ports: { ...runPorts, confirmPausedMs },
+      })
+      activeRunSession = session
 
-  const { verdict } = await session.done
-  if (graceTimer) clearTimeout(graceTimer)
-  await lifecycle.finalize()
-  activeRunSession = undefined
+      const { verdict } = await session.done
+      if (graceTimer) clearTimeout(graceTimer)
+      await lifecycle.finalize()
+      activeRunSession = undefined
+      // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
+      // SIGINT that raced the terminal verdict still maps to 130.
+      return mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+    } finally {
+      // Pitfall 8: dispose LAST — after session.done + lifecycle.finalize() (teardown auth capture +
+      // handoff assembly) so every late masker still replaces; a post-run stray egress sees no mask.
+      maskingContext.dispose()
+    }
+  })
 
   shutdownController.dispose()
   process.removeListener('SIGINT', shutdownController.handleSignal)
   process.removeListener('SIGTERM', shutdownController.handleSignal)
 
   releaseAppium()
-  // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
-  // SIGINT that raced the terminal verdict still maps to 130.
-  return mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+  return exitCode
 }
 
 export function createRunCommand(): Command {
@@ -1925,6 +2007,7 @@ export function createRunCommand(): Command {
     .option('--device <name>', 'Override the mobile test/suite device for this run')
     .option('--var <kv...>', 'set variable KEY=VALUE (repeatable)')
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
+    .option('--trust-session', 'treat every ask-tier policy decision in this session as trusted (execution-safety §2.3 session.trustMode; explicit opt-in, session-scoped)')
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
       try {
