@@ -53,22 +53,34 @@ describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
   })
 })
 
-// (b) Both paths construct the identity MaskingContext UNCONDITIONALLY (D-09, Pitfall 2 — the
-// Phase-362 seeding point). The RunConfig masking is never conditioned on cache enablement, and the
-// builder itself takes no cache flag; T-361-02 (cache-off runs emitting unmasked payloads) is closed.
-describe('both paths build the identity MaskingContext unconditionally (D-09 / T-361-02)', () => {
-  it('feeds RunConfig.masking = buildIdentityMasking() in both paths', () => {
-    expect(count(runSource, 'masking: buildIdentityMasking()')).toBeGreaterThanOrEqual(2)
+// (b) 362-06 SEAM-01/03 — the suite (multi-member) path activates the seams: it seeds a real run
+// MaskingContext, wraps the run body in `runSafetyScope`, threads the per-run SafetyHookRunner into
+// the member executor, wires `--trust-session`, and disposes the context LAST (Pitfall 8). The
+// identity mint (`buildIdentityMasking()`) no longer feeds the suite path's RunConfig.masking.
+describe('the suite path seeds a real run MaskingContext inside runSafetyScope (SEAM-01/03, 362-06)', () => {
+  it('registers the --trust-session flag and reads config.safety?.trustMode', () => {
+    expect(runSource).toContain('--trust-session')
+    expect(runSource).toContain('config.safety?.trustMode')
   })
 
-  it('never conditions the identity masking builder on cache enablement (no cache-flag argument)', () => {
-    // Every buildIdentityMasking() call site at the RunConfig masking position is argument-free.
-    const calls = runSource.match(/buildIdentityMasking\([^)]*\)/g) ?? []
-    expect(calls.length).toBeGreaterThanOrEqual(2)
-    for (const call of calls) expect(call).toBe('buildIdentityMasking()')
-    // The composition helper's signature takes NO cache parameter (D-09 decoupling by construction).
-    expect(compositionSource).toContain('export function buildIdentityMasking(): IdentityMaskingContext')
-    expect(compositionSource).not.toMatch(/buildIdentityMasking\(\s*\w/)
+  it('wraps at least one run body in runSafetyScope with a real seeded run MaskingContext', () => {
+    expect(count(runSource, 'runSafetyScope(')).toBeGreaterThanOrEqual(1)
+    expect(count(runSource, 'buildRunMaskingContext(')).toBeGreaterThanOrEqual(1)
+    // The suite RunConfig masking is the run context, not the identity mint.
+    expect(runSource).toContain('masking: maskingContext')
+  })
+
+  it('threads the per-run SafetyHookRunner into the suite member executor', () => {
+    expect(count(runSource, 'buildRunSafetyHooks(')).toBeGreaterThanOrEqual(1)
+    expect(count(runSource, 'safetyHooks:')).toBeGreaterThanOrEqual(1)
+  })
+
+  it('disposes the run MaskingContext inside a finally, lexically after lifecycle.finalize()', () => {
+    const finalizeIdx = runSource.indexOf('await lifecycle.finalize()')
+    const disposeIdx = runSource.indexOf('maskingContext.dispose()')
+    expect(finalizeIdx).toBeGreaterThan(0)
+    expect(disposeIdx).toBeGreaterThan(finalizeIdx)
+    expect(runSource).toMatch(/finally\s*\{\s*maskingContext\.dispose\(\)/)
   })
 })
 

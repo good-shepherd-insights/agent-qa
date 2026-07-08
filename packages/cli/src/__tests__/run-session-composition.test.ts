@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { FsEventLog, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   computeRunConfigDigests,
@@ -414,5 +416,45 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
 
     await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
     expect(confirmPausedMs()).toBeGreaterThanOrEqual(afterOne)
+  })
+})
+
+// 362-06 SEAM-01 — the exact run-body wrap shape both startRun sites use: a real seeded
+// MaskingContext resolves inside `runSafetyScope` (getActiveMaskingContext returns it), and
+// `dispose()` is the LAST statement inside the scope body (Pitfall 8) so values masked DURING
+// the in-scope run body (handoff assembly, teardown capture) are replaced, but a post-run stray
+// egress sees no masking. This pins the pattern the run.ts wiring reproduces at both sites.
+describe('runSafetyScope run-body wrap (SEAM-01 / Pitfall 8, 362-06)', () => {
+  const tmpAuditDir = mkdtempSync(join(tmpdir(), 'run-scope-wrap-'))
+
+  it('resolves the seeded run MaskingContext inside the scope and disposes last', async () => {
+    const maskingContext = buildRunMaskingContext({
+      env: { MY_SERVICE_TOKEN: 'super-secret-token-value' },
+    })
+    const auditSink = buildRunAuditSink({
+      configDir: tmpAuditDir,
+      runId: 'run-scope-wrap',
+      executionContext: 'local-interactive',
+    })
+
+    let inScopeMasked = ''
+    let handoffMasked = ''
+    await runSafetyScope({ maskingContext, auditSink, executionContext: 'local-interactive' }, async () => {
+      try {
+        // The active resolver reaches the run's context for every in-scope egress.
+        inScopeMasked = getActiveMaskingContext()?.mask('leak super-secret-token-value here') ?? 'NO-CTX'
+        // A late masker (handoff assembly / teardown capture) still masks — dispose has not run yet.
+        handoffMasked = maskingContext.mask('handoff has super-secret-token-value')
+      } finally {
+        maskingContext.dispose()
+      }
+    })
+
+    expect(inScopeMasked).not.toContain('super-secret-token-value')
+    expect(handoffMasked).not.toContain('super-secret-token-value')
+    // After the scope body disposed the context, mask() no longer replaces (order pinned).
+    expect(maskingContext.mask('super-secret-token-value')).toBe('super-secret-token-value')
+    // Outside the scope the active resolver returns no run context.
+    expect(getActiveMaskingContext()).toBeUndefined()
   })
 })
