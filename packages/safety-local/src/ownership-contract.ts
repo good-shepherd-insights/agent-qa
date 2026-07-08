@@ -7,7 +7,7 @@ export const AGENT_QA_SAFETY_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'local JSONL audit writer implementation behind the safety AuditSink port',
   'local guardrail configuration loader implementation for execution safety',
   'filesystem access for local safety audit and guardrail configuration adapters',
-  'local AsyncLocalStorage run-scope binding behind the safety masking-context resolver seam',
+  'local AsyncLocalStorage run-safety scope binding behind the safety masking-context, execution-context, and audit-sink resolver seams',
   'host execution-context detection behind the safety resolver seam',
   'host readline confirm adapter behind the safety confirm port',
 ] as const

@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
-
 import { detectExecutionContext, readSignals } from '../execution-context-detector'
 
 const isProcessTty = Boolean(process.stdout?.isTTY) && Boolean(process.stdin?.isTTY)
@@ -37,11 +35,5 @@ describe('detectExecutionContext', () => {
     vi.stubEnv('CI', 'false')
 
     expect(detectExecutionContext('cloud')).toBe('cloud')
-  })
-
-  it('installs the active execution-context resolver at module load', () => {
-    vi.stubEnv('CI', 'true')
-
-    expect(getActiveExecutionContext()).toBe('ci')
   })
 })

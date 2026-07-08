@@ -119,7 +119,7 @@ describe('JsonlAuditSink', () => {
       'createReadlineConfirm',
       'detectExecutionContext',
       'fingerprint',
-      'runMaskingScope',
+      'runSafetyScope',
     ])
   })
 

@@ -1,5 +1,6 @@
 export { fingerprint } from './fingerprint'
 export { JsonlAuditSink } from './jsonl-audit-sink'
 export { detectExecutionContext } from './execution-context-detector'
-export { runMaskingScope } from './masking-scope'
+export { runSafetyScope } from './safety-scope'
+export type { SafetyScopeBundle } from './safety-scope'
 export { createReadlineConfirm } from './readline-confirm'

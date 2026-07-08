@@ -1,8 +1,4 @@
-import {
-  resolveExecutionContext,
-  setActiveExecutionContextResolver,
-  type ExecutionContextSignals,
-} from '@vostride/agent-qa-safety'
+import { resolveExecutionContext, type ExecutionContextSignals } from '@vostride/agent-qa-safety'
 import type { ExecutionContext } from '@vostride/agent-qa-schema'
 
 export const CI_VENDOR_VARS = new Set([
@@ -49,5 +45,3 @@ export function readSignals(env: NodeJS.ProcessEnv = process.env): ExecutionCont
 export function detectExecutionContext(override?: ExecutionContext): ExecutionContext {
   return resolveExecutionContext(readSignals(), override)
 }
-
-setActiveExecutionContextResolver(() => detectExecutionContext())
