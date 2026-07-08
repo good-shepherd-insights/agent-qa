@@ -101,8 +101,17 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
+    // runHooks moved to runner in Phase 363 D-06.
+    runHooks: (...args: unknown[]) => mockRunHooks(...args),
   }
 })
+
+// DockerHookExecutor moved to runner-local in Phase 363 D-06; its execute() is the old
+// runHookInSandbox body behind the port.
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
 
 vi.mock('@vostride/agent-qa-core', () => {
   class LocalSecretStore {
@@ -483,7 +492,7 @@ describe('LiveSession', () => {
 
     expect(mockRunHookInSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ id: HOOK_ID, name: 'Seed Auth' }),
-      expect.objectContaining({ envVars: {} }),
+      expect.objectContaining({ env: {} }),
     )
     expect(mockFindUnresolvedTemplates).toHaveBeenCalledWith('Verify that 42 equals 42')
     expect(mockExecuteStep).toHaveBeenCalledWith(
@@ -571,7 +580,7 @@ describe('LiveSession', () => {
 
     expect(mockRunHooks).toHaveBeenCalledWith(
       [expect.objectContaining({ name: 'Seed Auth' })],
-      { envVars: {} },
+      expect.objectContaining({ env: {} }),
     )
     expect(mockVariableStoreInstance.setAll).toHaveBeenCalledWith(
       { AUTH_TOKEN: 'hook-token' },
@@ -671,7 +680,7 @@ describe('LiveSession', () => {
 
     expect(mockRunHooks).toHaveBeenLastCalledWith(
       [expect.objectContaining({ id: HOOK_ID, name: 'Seed Auth' })],
-      { envVars: {} },
+      expect.objectContaining({ env: {} }),
     )
     expect(mockVariableStoreInstance.setAll).toHaveBeenCalledWith(
       { AUTH_TOKEN: 'hook-token' },
@@ -806,7 +815,7 @@ describe('LiveSession', () => {
     expect(mockCleanup).toHaveBeenCalled()
     expect(mockRunHooks).toHaveBeenLastCalledWith(
       [expect.objectContaining({ name: 'Cleanup Auth' })],
-      { envVars: { AUTH_TOKEN: 'hook-token' } },
+      expect.objectContaining({ env: { AUTH_TOKEN: 'hook-token' } }),
     )
   })
 

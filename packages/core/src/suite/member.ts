@@ -7,9 +7,9 @@ import type { SuiteDefinition } from './types.js'
 import type { RunSuiteConfig } from './runner.js'
 import type { MultiReporter } from '../reporter/types.js'
 import { runTest } from '../agent/runner.js'
-import { runHooks } from '../hooks/orchestrator.js'
+import { runHooks } from '@vostride/agent-qa-runner'
 import { runCurator } from '../memory/curator.js'
-import type { HookDefinition } from '../hooks/types.js'
+import type { HookDefinition } from '@vostride/agent-qa-runner'
 import type { MemoryIndexParams } from '../memory/memory-index.js'
 import { generateRunId } from '../ids/run-id.js'
 import pc from 'picocolors'
@@ -203,6 +203,8 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
           secretStore: config.secretStore,
           secretRedactor: config.secretRedactor,
           envVars: { ...suiteSandboxOptions.envVars, ...allVars, ...perTestHookVars },
+          emit: events,
+          identity: { phase: 'setup', scope: 'test', testIndex: i },
         })
         const hr = hookResult.results.get(hookDef.name)
         await reporter?.onHookEnd?.({
@@ -310,6 +312,8 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
           secretStore: config.secretStore,
           secretRedactor: config.secretRedactor,
           envVars: { ...suiteSandboxOptions.envVars, ...teardownVars },
+          emit: events,
+          identity: { phase: 'teardown', scope: 'test', testIndex: i },
         })
         const hr = hookResult.results.get(hook.name)
         await reporter?.onHookEnd?.({

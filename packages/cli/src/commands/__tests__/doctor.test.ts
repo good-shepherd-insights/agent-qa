@@ -16,11 +16,15 @@ vi.mock('picocolors', () => ({
 }))
 
 vi.mock('@vostride/agent-qa-core', () => ({
-  checkDockerAvailable: vi.fn(),
   AgentQaConfigSchema: { safeParse: vi.fn().mockReturnValue({ success: true }) },
 }))
 
-import { checkDockerAvailable } from '@vostride/agent-qa-core'
+// checkDockerAvailable moved to runner-local in Phase 363 D-06.
+vi.mock('@vostride/agent-qa-runner-local', () => ({
+  checkDockerAvailable: vi.fn(),
+}))
+
+import { checkDockerAvailable } from '@vostride/agent-qa-runner-local'
 const mockCheckDocker = vi.mocked(checkDockerAvailable)
 
 describe('doctor Docker check', () => {

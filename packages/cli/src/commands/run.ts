@@ -11,8 +11,9 @@ import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
-import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-core'
-import type { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
+import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
+import type { SecretStore, SecretRedactor, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
+import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { WorkingMemoryStore } from '@vostride/agent-qa-runner'
 import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor } from '@vostride/agent-qa-runner'
@@ -1699,7 +1700,7 @@ async function executeSuites(
         if (suiteConfig.envFileVars) Object.assign(envVars, suiteConfig.envFileVars)
         if (suiteConfig.inlineVars) Object.assign(envVars, suiteConfig.inlineVars)
         if (suiteConfig.cliVars) Object.assign(envVars, suiteConfig.cliVars)
-        const { runHooks } = await import('@vostride/agent-qa-core')
+        const { runHooks } = await import('@vostride/agent-qa-runner')
         const hookRun = await runHooks(hookDefs, {
           ...prepared.suiteSandboxOptions,
           secretStore: suiteConfig.secretStore,
@@ -1783,7 +1784,7 @@ async function executeSuites(
       if (suiteConfig.inlineVars) Object.assign(teardownVars, suiteConfig.inlineVars)
       if (suiteConfig.cliVars) Object.assign(teardownVars, suiteConfig.cliVars)
       Object.assign(teardownVars, prepared.suiteHookVars)
-      const { runHooks } = await import('@vostride/agent-qa-core')
+      const { runHooks } = await import('@vostride/agent-qa-runner')
       for (const hookId of (suite as any).teardown) {
         const hook = suiteConfig.resolvedHooks.get(hookId)
         if (!hook) continue
@@ -2112,10 +2113,13 @@ export function createRunCommand(): Command {
             process.exit(1)
           }
           resolvedHooks = new Map(hooks.map((h: HookDefinition) => [h.id, h]))
+          // D-06: construct the runner-local Docker hook executor once at this composition
+          // root and thread it inside the sandboxOptions carrier to every hook site.
           sandboxOptions = {
+            executor: new DockerHookExecutor(),
             secretStore: runtimeSecrets.secretStore,
             secretRedactor: runtimeSecrets.secretRedactor,
-          } as any
+          }
         } catch (err: any) {
           console.error(pc.red(`Error: Hooks file could not be read: ${hooksFilePath}`))
           if (err instanceof Error && err.message) console.error(pc.dim(err.message))
@@ -2807,7 +2811,7 @@ export function createRunCommand(): Command {
             let setupHookFailed = false
             let setupFailureResult: TestResult | undefined
             if (resolvedHooks && authAwareSandboxOptions && (testDef as any).setup?.length) {
-              const { runHooks } = await import('@vostride/agent-qa-core')
+              const { runHooks } = await import('@vostride/agent-qa-runner')
               const hookDefs: HookDefinition[] = []
               let hookSetupError: string | undefined
               for (const hookId of (testDef as any).setup) {
@@ -2973,7 +2977,7 @@ export function createRunCommand(): Command {
 
             // Per-test teardown hooks: run AFTER test execution (D-01, D-03)
             if (resolvedHooks && teardownSandboxOptions && (testDef as any).teardown?.length) {
-              const { runHooks } = await import('@vostride/agent-qa-core')
+              const { runHooks } = await import('@vostride/agent-qa-runner')
               for (const hookId of (testDef as any).teardown) {
                 const hook = resolvedHooks.get(hookId)
                 if (!hook) continue

@@ -18,6 +18,11 @@ vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(() => Promise.reject({ code: 'ENOENT' })),
 }))
 
+// checkDockerAvailable moved to runner-local in Phase 363 D-06 (doctor.ts imports it from there).
+vi.mock('@vostride/agent-qa-runner-local', () => ({
+  checkDockerAvailable: vi.fn(() => Promise.resolve(true)),
+}))
+
 vi.mock('@vostride/agent-qa-core', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
   return {
@@ -45,7 +50,6 @@ vi.mock('@vostride/agent-qa-core', async () => {
     readAuth: vi.fn(() => ({})),
     resolveAppiumExecutable: vi.fn(() => ({ command: 'appium', source: 'path' })),
     formatAppiumInstallGuidance: vi.fn(() => 'Install Appium locally with `npm install -D appium` or globally with `npm install -g appium`.'),
-    checkDockerAvailable: vi.fn(() => Promise.resolve(true)),
     validateProject: vi.fn(() => Promise.resolve({ errorCount: 0, warningCount: 0, fileCount: 5, results: [] })),
     resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
       const configDir = String(configPath).includes('/')

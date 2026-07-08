@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { generateHookId, isCanonicalHookId } from '@vostride/agent-qa-ids'
 import { AgentQaConfigSchema } from '../schema/config-schema.js'
 import { discoverWorkspaceFiles, resolveWorkspacePaths } from '../workspace/workspace-paths.js'
-import type { HookRuntime } from './types.js'
+import type { HookRuntime } from '@vostride/agent-qa-runner'
 
 const DEFAULT_CLEANUP_TARGETS = [
   '.agent-qa',

@@ -25,8 +25,7 @@ import { parseHookInline, stripHookInline } from './hook-inline.js'
 import { parseRunJSInline, coerceRunJSResult } from './runjs-inline.js'
 import { generateFailureSummary } from './failure-summary.js'
 import type { LogManager } from '../logging/log-manager.js'
-import type { HookDefinition } from '../hooks/types.js'
-import { runHookInSandbox, type SandboxRunnerOptions } from '../hooks/sandbox-runner.js'
+import { resolveSecretEnv, type HookDefinition, type SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 
 const accessibilityWebModuleName: string = '@vostride/agent-qa-web'
 
@@ -347,11 +346,11 @@ export async function runTest(
         })
         try {
           const result = await withAbort(
-            runHookInSandbox(hookDef, {
-              ...config.inlineHookSandboxOptions,
-              secretStore: config.secretStore,
+            config.inlineHookSandboxOptions.executor.execute(hookDef, {
+              env: { ...config.inlineHookSandboxOptions.envVars, ...allVars },
+              secretEnv: resolveSecretEnv(config.secretStore),
               secretRedactor: config.secretRedactor,
-              envVars: { ...config.inlineHookSandboxOptions.envVars, ...allVars },
+              authState: config.inlineHookSandboxOptions.authState,
             }),
             stepAbortController.signal,
           )

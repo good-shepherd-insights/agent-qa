@@ -72,8 +72,16 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
+    // runHooks moved to runner in Phase 363 D-06.
+    runHooks: (...args: unknown[]) => mockRunHooks(...args),
   }
 })
+
+// DockerHookExecutor moved to runner-local in Phase 363 D-06.
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
 
 vi.mock('@vostride/agent-qa-core', () => ({
   MobileSetupError: class MobileSetupError extends Error {

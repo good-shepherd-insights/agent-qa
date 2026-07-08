@@ -240,7 +240,7 @@ function checkDocker(): DoctorCheck {
     fixInstructions: 'Install Docker Desktop from https://docker.com/ and ensure the daemon is running',
     check: async () => {
       try {
-        const { checkDockerAvailable } = await import('@vostride/agent-qa-core')
+        const { checkDockerAvailable } = await import('@vostride/agent-qa-runner-local')
         const available = await checkDockerAvailable()
         if (available) {
           return { status: 'pass', message: 'Docker daemon running' }

@@ -11,11 +11,15 @@ const { mockRunHookInSandbox } = vi.hoisted(() => ({
 
 vi.mock('@vostride/agent-qa-core', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
-  return {
-    ...actual,
-    runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
-  }
+  return { ...actual }
 })
+
+// Hook execution moved to runner-local DockerHookExecutor in Phase 363 D-06; execute() is the
+// old runHookInSandbox body behind the port.
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
 
 import { ConfigManager } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
@@ -909,13 +913,13 @@ describe('POST /api/hooks/:hookId/run', () => {
         runtime: 'node',
         network: false,
       }),
-      {
-        envVars: {
+      expect.objectContaining({
+        env: {
           FROM_ENV: 'base',
           SHARED: 'from-override',
           ADHOC: 'yes',
         },
-      },
+      }),
     )
     expect(JSON.parse(res.body)).toEqual({
       success: true,
@@ -1057,7 +1061,7 @@ describe('POST /api/hooks/:hookId/run', () => {
     }))
     expect(mockRunHookInSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ runtime: 'bun' }),
-      expect.objectContaining({ envVars: { FROM_ENV: 'base' } }),
+      expect.objectContaining({ env: { FROM_ENV: 'base' } }),
     )
   })
 

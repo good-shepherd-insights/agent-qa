@@ -17,7 +17,10 @@ vi.mock('../../agent/runner.js', () => ({
   runTest: mockRunTest,
 }))
 
-vi.mock('../../hooks/orchestrator.js', () => ({
+// runHooks moved to @vostride/agent-qa-runner (Phase 363 D-06). Partial-mock the module so the
+// suite runner's runHooks is intercepted while every other runner export stays real.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner')>()),
   runHooks: mockRunHooks,
 }))
 

@@ -16,7 +16,45 @@ import type { HookDefinition, HookResult } from './types.js'
 import type { HookExecutorPort } from '../run/ports.js'
 import type { SecretRedactorPort } from '../loop/ports.js'
 import type { RuntimeAuthStateConfig } from '../platform.js'
+import type { SecretStore } from '../loop/secrets.js'
 import { stripReservedAuthStateHookEnv } from './auth-env.js'
+
+/** Structural secret source (SecretStore satisfies it) — used to resolve container secretEnv. */
+interface SecretEnvSource {
+  forEachSecret(callback: (name: string, value: string) => void): void
+}
+
+/**
+ * Resolve the already-materialized secret name→value map the container is injected with
+ * (D-06). The runner-owned {@link SecretStore} satisfies the structural source; the port only
+ * ever sees the resolved map, never the store itself.
+ */
+export function resolveSecretEnv(store?: SecretEnvSource): Record<string, string> {
+  if (!store) return {}
+  const out: Record<string, string> = {}
+  store.forEachSecret((name, value) => {
+    out[name] = value
+  })
+  return out
+}
+
+/**
+ * The threaded hook-execution carrier (Phase 363 D-06) — successor to core's
+ * `SandboxRunnerOptions`. Threaded through the run/suite config as `sandboxOptions` and
+ * spread into {@link RunHooksOptions} at each hook site. Carries the injected
+ * {@link HookExecutorPort} (constructed once at the composition root) plus the secret
+ * store / redactor / active auth-state the hook body needs. `dockerBin`/`pullPolicy` are
+ * retained for source-compat with the old carrier (the executor owns those now).
+ */
+export interface SandboxRunnerOptions {
+  executor: HookExecutorPort
+  dockerBin?: string
+  pullPolicy?: 'always' | 'if-not-present' | 'never'
+  envVars?: Record<string, string>
+  secretStore?: SecretStore
+  secretRedactor?: SecretRedactorPort
+  authState?: RuntimeAuthStateConfig
+}
 
 export interface HookOrchestrationResult {
   results: Map<string, HookResult>
@@ -50,12 +88,19 @@ export interface RunHooksOptions {
   executor: HookExecutorPort
   /** User env + CLI/suite variables the first hook starts from. */
   env?: Record<string, string>
+  /** Carrier-compat alias for {@link env} (the old `SandboxRunnerOptions.envVars` field). */
+  envVars?: Record<string, string>
   /** Already-resolved secret name→value pairs for container injection (D-06). */
   secretEnv?: Record<string, string>
+  /** Runner-owned secret store; the orchestrator resolves {@link secretEnv} from it. */
+  secretStore?: SecretEnvSource
   /** Structural secret redactor for stdout/stderr/error redaction. */
   secretRedactor?: SecretRedactorPort
   /** Active auth-state mounted + injected per hook. */
   authState?: RuntimeAuthStateConfig
+  /** Tolerated carrier fields (the executor owns docker config now; ignored by orchestration). */
+  dockerBin?: string
+  pullPolicy?: 'always' | 'if-not-present' | 'never'
   /** Optional lifecycle emit seam; requires {@link identity} to emit. */
   emit?: HookEmitSeam
   /** Payload provenance; when present alongside {@link emit}, every executed hook emits. */
@@ -70,10 +115,12 @@ export async function runHooks(
   const results = new Map<string, HookResult>()
   const mergedVars: Record<string, string> = {}
   const { executor, emit, identity } = options
+  const baseEnv = options.env ?? options.envVars ?? {}
+  const secretEnv = { ...resolveSecretEnv(options.secretStore), ...options.secretEnv }
   let execCounter = 0
 
   for (const hook of hooks) {
-    const env = { ...options.env, ...mergedVars }
+    const env = { ...baseEnv, ...mergedVars }
     const hookExecutionId = makeExecutionId(hook, identity, execCounter++)
 
     if (emit && identity) {
@@ -82,7 +129,7 @@ export async function runHooks(
 
     const result = await executor.execute(hook, {
       env,
-      secretEnv: options.secretEnv ?? {},
+      secretEnv,
       secretRedactor: options.secretRedactor,
       authState: options.authState,
     })

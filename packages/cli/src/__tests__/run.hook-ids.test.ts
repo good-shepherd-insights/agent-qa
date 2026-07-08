@@ -79,7 +79,8 @@ vi.mock('@vostride/agent-qa-model', async () => {
 // imports them from @vostride/agent-qa-runner, so intercept them there.
 vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
-  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier }
+  // runHooks moved to runner in Phase 363 D-06; intercept it while keeping every other export real.
+  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks }
 })
 
 vi.mock('@vostride/agent-qa-runner-local', () => ({
@@ -89,6 +90,9 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   FsEventLog: mockFsEventLog,
   FsHandoffStore: mockFsHandoffStore,
   nextBuildOrdinal: mockNextBuildOrdinal,
+  // 363-04: the run paths construct DockerHookExecutor here (D-06); runHooks is mocked so execute
+  // is never actually invoked, but the constructor must exist.
+  DockerHookExecutor: class { async execute() { return { success: true, variables: {}, output: '', stdout: '', stderr: '', duration: 0 } } },
   // 362-06: the run paths now construct buildRunAuditSink (run-session-composition) which roots the
   // per-run JsonlAuditSink via the shared run-dir slug — expose both so the mock stays complete.
   RUNS_SUBDIR: 'runs',

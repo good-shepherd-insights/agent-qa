@@ -57,6 +57,16 @@ vi.mock('@vostride/agent-qa-web', () => ({
   }),
 }))
 
+// runHooks + DockerHookExecutor moved to runner / runner-local in Phase 363 D-06.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner')>()),
+  runHooks: (...args: unknown[]) => mockRunHooks(...args),
+}))
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
+
 vi.mock('@vostride/agent-qa-core', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
   return {

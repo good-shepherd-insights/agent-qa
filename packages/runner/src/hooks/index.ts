@@ -18,10 +18,11 @@ export {
   redactAuthStateValue,
 } from './redaction.js'
 export type { AuthStateRedactionContext } from './redaction.js'
-export { runHooks } from './orchestrator.js'
+export { runHooks, resolveSecretEnv } from './orchestrator.js'
 export type {
   HookOrchestrationResult,
   HookEmitSeam,
   HookRunIdentity,
   RunHooksOptions,
+  SandboxRunnerOptions,
 } from './orchestrator.js'

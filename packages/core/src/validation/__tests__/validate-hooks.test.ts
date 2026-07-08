@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { HookDefinition } from '../../hooks/types.js'
+import type { HookDefinition } from '@vostride/agent-qa-runner'
 
 // Mock all external dependencies before importing validate
 vi.mock('yaml', () => ({

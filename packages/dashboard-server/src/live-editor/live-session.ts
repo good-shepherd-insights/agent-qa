@@ -7,8 +7,6 @@ import {
   findUnresolvedTemplates,
   parseHookInline,
   stripHookInline,
-  runHooks,
-  runHookInSandbox,
   MobileSetupError,
   readAuthStateMetadata,
   redactAuthStateValue,
@@ -20,7 +18,10 @@ import {
   LLMPlanner,
   LLMVerifier,
   resolveSecretTemplatesInValue,
+  runHooks,
+  resolveSecretEnv,
 } from '@vostride/agent-qa-runner'
+import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import { createModel, createTokenAccounting, resolveCapabilities } from '@vostride/agent-qa-model'
 import type {
   AuthStateMetadata,
@@ -409,7 +410,8 @@ export class LiveSession {
       }
 
       const result = await runHooks([hookDef], {
-        envVars: this.getHookEnvVars(),
+        executor: new DockerHookExecutor(),
+        env: this.getHookEnvVars(),
         secretStore: this.secretStore,
         secretRedactor: this.secretRedactor,
       })
@@ -666,9 +668,9 @@ export class LiveSession {
 
         const startedAt = performance.now()
         try {
-          const result = await runHookInSandbox(hookDef, {
-            envVars: this.getHookEnvVars(),
-            secretStore: this.secretStore,
+          const result = await new DockerHookExecutor().execute(hookDef, {
+            env: this.getHookEnvVars(),
+            secretEnv: resolveSecretEnv(this.secretStore),
             secretRedactor: this.secretRedactor,
           })
           executionLogs.push({

@@ -63,34 +63,9 @@ export class VariableStore {
   }
 }
 
-export function parseEnvFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {}
-  for (const rawLine of content.split('\n')) {
-    const line = rawLine.trim()
-    if (!line || line.startsWith('#')) continue
-    const eqIndex = line.indexOf('=')
-    if (eqIndex === -1) continue
-    const key = line.slice(0, eqIndex).trim()
-    let value = line.slice(eqIndex + 1).trim()
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
-    result[key] = value
-  }
-  return result
-}
-
-export function serializeEnvFile(vars: Record<string, string>): string {
-  const lines: string[] = []
-  for (const [key, value] of Object.entries(vars)) {
-    if (value.includes(' ') || value.includes('"') || value.includes("'") || value === '') {
-      lines.push(`${key}="${value.replace(/"/g, '\\"')}"`)
-    } else {
-      lines.push(`${key}=${value}`)
-    }
-  }
-  return lines.length > 0 ? lines.join('\n') + '\n' : ''
-}
+// parseEnvFile/serializeEnvFile moved to @vostride/agent-qa-runner (Phase 363 D-06); re-exported
+// here so core consumers keep resolving through the core barrel until Plan 05 deletes this file.
+export { parseEnvFile, serializeEnvFile } from '@vostride/agent-qa-runner'
 
 export function interpolateVariables(template: string, store: VariableStore): string {
   return template.replace(/\{\{env:(\w+)\}\}/g, (_match, varName) => {

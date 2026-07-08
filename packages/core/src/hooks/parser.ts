@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { HooksFileSchema } from './schema.js'
-import type { HookDefinition } from './types.js'
+import type { HookDefinition } from '@vostride/agent-qa-runner'
 
 export async function parseHooksFile(filePath: string): Promise<{ hooks: HookDefinition[]; errors: string[] }> {
   let raw: string
