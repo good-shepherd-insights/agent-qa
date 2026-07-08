@@ -9,6 +9,9 @@ import {
   buildRunPorts,
   createSuiteLifecycle,
   resolveRunExecutionContext,
+  sensitiveEnvSlice,
+  extractAuthStateSensitiveStrings,
+  buildRunMaskingContext,
 } from '../run-session-composition.js'
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
@@ -132,6 +135,135 @@ describe('createSuiteLifecycle (lazy per-suite setup/teardown)', () => {
     const lc = createSuiteLifecycle()
     await lc.finalize()
     expect(events).toEqual([])
+  })
+})
+
+// ---- (7) masking seed pipeline (D-05/D-06/D-07) --------------------------------------------
+
+// D-05: the env slice is name-based ONLY — masking must not degrade planning, so planner-visible
+// config never seeds, while every ambient-credential-shaped name does.
+describe('sensitiveEnvSlice (D-05 — name-based sensitive-env selection)', () => {
+  it('selects credential-shaped names (positive set)', () => {
+    const env = {
+      MY_API_KEY: 'a1',
+      STRIPE_SECRET: 'a2',
+      DB_PASSWORD: 'a3',
+      CI_JOB_TOKEN: 'a4',
+      AWS_SECRET_ACCESS_KEY: 'a5',
+      GITHUB_TOKEN: 'a6',
+      ANTHROPIC_API_KEY: 'a7',
+    }
+    const slice = sensitiveEnvSlice(env)
+    expect(Object.keys(slice).sort()).toEqual(
+      [
+        'ANTHROPIC_API_KEY',
+        'AWS_SECRET_ACCESS_KEY',
+        'CI_JOB_TOKEN',
+        'DB_PASSWORD',
+        'GITHUB_TOKEN',
+        'MY_API_KEY',
+        'STRIPE_SECRET',
+      ].sort(),
+    )
+  })
+
+  it('NEVER selects planner-visible config names (negative set — asserted explicitly)', () => {
+    const env = {
+      BASE_URL: 'https://example.com',
+      NODE_ENV: 'production',
+      HOME: '/home/agent',
+      PATH: '/usr/bin:/bin',
+      CI: 'true',
+      TERM: 'xterm',
+    }
+    const slice = sensitiveEnvSlice(env)
+    expect(slice).toEqual({})
+    expect(Object.keys(slice)).not.toContain('BASE_URL')
+    expect(Object.keys(slice)).not.toContain('NODE_ENV')
+    expect(Object.keys(slice)).not.toContain('HOME')
+    expect(Object.keys(slice)).not.toContain('PATH')
+    expect(Object.keys(slice)).not.toContain('CI')
+    expect(Object.keys(slice)).not.toContain('TERM')
+  })
+
+  it('skips undefined values (never seeds a missing var)', () => {
+    const slice = sensitiveEnvSlice({ MY_API_KEY: undefined, OTHER_TOKEN: 'present' })
+    expect(slice).toEqual({ OTHER_TOKEN: 'present' })
+  })
+})
+
+// D-07: all cookie values + all localStorage values, no classification heuristics; tolerant of
+// missing/odd sections (exact-string masking means benign blobs only mask when rendered verbatim).
+describe('extractAuthStateSensitiveStrings (D-07 — cookies + localStorage values)', () => {
+  it('returns every cookie value and every localStorage value from a storageState payload', () => {
+    const payload = {
+      cookies: [
+        { name: 'session', value: 'cookie-session-value', domain: 'example.com' },
+        { name: 'csrf', value: 'cookie-csrf-value' },
+      ],
+      origins: [
+        {
+          origin: 'https://example.com',
+          localStorage: [
+            { name: 'token', value: 'ls-token-value' },
+            { name: 'refresh', value: 'ls-refresh-value' },
+          ],
+        },
+      ],
+    }
+    expect(extractAuthStateSensitiveStrings(payload).sort()).toEqual(
+      ['cookie-session-value', 'cookie-csrf-value', 'ls-token-value', 'ls-refresh-value'].sort(),
+    )
+  })
+
+  it('tolerates non-string values and absent sections', () => {
+    expect(extractAuthStateSensitiveStrings({ cookies: [{ name: 'n', value: 42 }] })).toEqual([])
+    expect(extractAuthStateSensitiveStrings({ origins: [{ origin: 'x' }] })).toEqual([])
+    expect(extractAuthStateSensitiveStrings({})).toEqual([])
+  })
+
+  it('returns [] for a non-object payload', () => {
+    expect(extractAuthStateSensitiveStrings(null)).toEqual([])
+    expect(extractAuthStateSensitiveStrings('nope')).toEqual([])
+    expect(extractAuthStateSensitiveStrings(undefined)).toEqual([])
+  })
+})
+
+// buildRunMaskingContext seeds a REAL MaskingContext from all three sources and returns the full
+// context (register/dispose included) so 362-06 can register mid-run auth values (D-06) at load/capture.
+describe('buildRunMaskingContext (D-05/06/07 — real seeded context)', () => {
+  it('masks a secrets-file value, a sensitive env value, and a cookie value; passes a BASE_URL value through', () => {
+    const secretStore = {
+      forEachSecret(cb: (name: string, value: string) => void) {
+        cb('FILE_SECRET', 'super-secret-file-value')
+      },
+    }
+    const ctx = buildRunMaskingContext({
+      secretStore,
+      env: { MY_API_KEY: 'env-api-key-value', BASE_URL: 'https://example.com' },
+      authStatePayloads: [
+        { cookies: [{ name: 'session', value: 'cookie-session-value' }] },
+      ],
+    })
+
+    const masked = ctx.mask(
+      'file=super-secret-file-value env=env-api-key-value cookie=cookie-session-value url=https://example.com',
+    )
+    expect(masked).not.toContain('super-secret-file-value')
+    expect(masked).not.toContain('env-api-key-value')
+    expect(masked).not.toContain('cookie-session-value')
+    // BASE_URL is planner-visible config — it must survive unmasked (D-05 negative).
+    expect(masked).toContain('https://example.com')
+  })
+
+  it('does not register values shorter than the 4-char minRegisteredLength guard', () => {
+    const secretStore = {
+      forEachSecret(cb: (name: string, value: string) => void) {
+        cb('SHORT', 'abc')
+      },
+    }
+    const ctx = buildRunMaskingContext({ secretStore })
+    expect(ctx.mask('value=abc')).toBe('value=abc')
   })
 })
 
