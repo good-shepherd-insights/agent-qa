@@ -89,6 +89,16 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   resolveBranch: mockResolveBranch,
   FsEventLog: mockFsEventLog,
   FsHandoffStore: mockFsHandoffStore,
+  // 363-06: buildRunPorts + buildScreenshotCompressor construct these; legs never exercised here.
+  FsRunArtifactStore: class { stage(): void {} finalize(): void {} },
+  SharpScreenshotCompressor: class {
+    async compress(buffer: Buffer): Promise<{ buffer: Buffer; imageWidth: number; imageHeight: number }> {
+      return { buffer, imageWidth: 0, imageHeight: 0 }
+    }
+    async dimensions(): Promise<{ width: number; height: number }> {
+      return { width: 0, height: 0 }
+    }
+  },
   nextBuildOrdinal: mockNextBuildOrdinal,
   // 363-04: the run paths construct DockerHookExecutor here (D-06); runHooks is mocked so execute
   // is never actually invoked, but the constructor must exist.

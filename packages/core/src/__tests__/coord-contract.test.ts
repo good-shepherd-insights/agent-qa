@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { PlatformAdapter } from '@vostride/agent-qa-runner'
 import type { ScreenStateMetadata } from '@vostride/agent-qa-schema'
-import type { CompressResult } from '../screenshot/compress.js'
+// 363 D-08/Q10: the compress pipeline moved to runner-local; CompressedScreenshot is the runner
+// port's identical v1 CompressResult shape (core already depends on runner — no backwards dep).
+import type { CompressedScreenshot as CompressResult } from '@vostride/agent-qa-runner'
 import { warnIfOutOfBounds } from '../validation/coord-bounds.js'
 
 describe('viewport-space coordinate contract', () => {

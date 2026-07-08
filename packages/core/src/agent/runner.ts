@@ -14,9 +14,8 @@ import { MultiReporter } from '../reporter/types.js'
 import { captureFailureScreenshot } from '../reporter/screenshot.js'
 import { createTimeoutAbortReason, getTimeoutAbortReason, withAbort, executeStep } from '@vostride/agent-qa-runner'
 import type { LoopPorts, StepContext as RunnerStepContext, WorkingMemoryPort, StorageStatePort } from '@vostride/agent-qa-runner'
-import type { MemberEventSink, ConfigDigests } from '@vostride/agent-qa-runner'
+import type { MemberEventSink, ConfigDigests, ScreenshotCompressor } from '@vostride/agent-qa-runner'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
-import { CoreScreenshotCompressor } from '../screenshot/compressor-adapter.js'
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { VariableStore, interpolateVariables, findUnresolvedTemplates, createExtractor } from '@vostride/agent-qa-runner'
 import { resolveSecretTemplatesInValue, redactSecretValue, type SecretRedactor, type SecretStore } from '@vostride/agent-qa-runner'
@@ -72,6 +71,13 @@ export interface RunTestConfig {
    * builds it. Absent ⇒ a `storageState` action degrades to a §7.1 error (never throws, D-05).
    */
   storageState?: StorageStatePort
+  /**
+   * D-08/Q10 screenshot compressor (Phase 363). The runner-local `SharpScreenshotCompressor` (a
+   * runner `ScreenshotCompressor`) is constructed + injected at the CLI composition root — sharp
+   * left core, so core no longer builds one. Absent ⇒ the loop runs compressor-less (LoopPorts
+   * optional; never throws, D-05).
+   */
+  compressor?: ScreenshotCompressor
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]
@@ -553,8 +559,9 @@ export async function runTest(
     // D-01/D-02/D-03 LIVE cutover: assemble the runner LoopPorts bundle and delegate to
     // the runner-owned executeStep. The redesigned per-key cache (runner-local FsActionCache)
     // and the masking seam are constructed + injected at the CLI composition root and flow
-    // straight through here — core no longer builds a cache adapter. The compressor keeps
-    // sharp core-side (Pitfall 9); safetyHooks is the unpopulated 362 slot and knowledgeReader
+    // straight through here — core no longer builds a cache adapter. The screenshot compressor
+    // (runner-local SharpScreenshotCompressor) is likewise injected at the CLI root — sharp left
+    // core (363 D-08/Q10); safetyHooks is the unpopulated 362 slot and knowledgeReader
     // stays undefined (no M2 impl — the loop tolerates its absence, D-05).
     const ports: LoopPorts = {
         adapter: config.adapter,
@@ -566,7 +573,7 @@ export async function runTest(
         workingMemory: config.workingMemory,
         // D-14: the run-scoped storage-state store threads straight through (core storage-neutral).
         storageState: config.storageState,
-        compressor: new CoreScreenshotCompressor(config.logger?.createScopedLogger('adapter')),
+        compressor: config.compressor,
         safetyHooks: config.safetyHooks,
         plannerConfig: config.plannerConfig,
         stepTimeout,

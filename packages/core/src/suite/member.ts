@@ -254,6 +254,7 @@ export async function executeSuiteMember(input: SuiteMemberInput): Promise<TestR
     masking: config.masking,
     workingMemory: config.workingMemory,
     storageState: config.storageState,
+    compressor: config.compressor,
     plannerModel: config.plannerModel,
     verifierModel: config.verifierModel,
     reporters: config.reporters,

@@ -40,6 +40,12 @@ export interface RunSuiteConfig {
    * threaded into each test's runner loop; the CLI constructs it at the composition root.
    */
   storageState?: RunTestConfig['storageState']
+  /**
+   * D-08/Q10 screenshot compressor (Phase 363). ONE runner-local `SharpScreenshotCompressor`
+   * constructed at the CLI composition root, threaded into each member's runner loop (sharp left
+   * core). Absent ⇒ compressor-less loop.
+   */
+  compressor?: RunTestConfig['compressor']
   plannerModel: LanguageModel
   verifierModel: LanguageModel
   reporters?: Reporter[]

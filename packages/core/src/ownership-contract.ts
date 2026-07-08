@@ -21,7 +21,6 @@ export const AGENT_QA_CORE_EXTERNAL_DEPENDENCIES = [
   'playwright-core',
   'posthog-node',
   'semver',
-  'sharp',
   'yaml',
   'zod',
 ] as const
@@ -45,12 +44,8 @@ export const AGENT_QA_CORE_MIGRATION_LEDGER = [
     clearedBy: 'M2 Knowledge store',
     reason: 'memory/knowledge-store SQLite subsystem still in core',
   },
-  {
-    rule: 'storageImplementation',
-    target: 'sharp',
-    clearedBy: 'Phase 356 (cache & screenshot redesign)',
-    reason: 'screenshot compression pipeline still in core until Phase 356',
-  },
+  // 363-06 (D-08/Q10): the sharp entry was cleared here — the screenshot pipeline moved to
+  // runner-local (its host-adapter home) and sharp left core, so the ledger no longer carries it.
 ] as const
 
 export const AGENT_QA_CORE_OWNERSHIP_CONTRACT = {

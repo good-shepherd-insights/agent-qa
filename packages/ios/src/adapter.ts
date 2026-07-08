@@ -25,7 +25,6 @@ import {
   KEY_MAP,
   MobileElementResolver,
   MobileSetupError,
-  alignToWindow,
   buildRefEntries,
   computeFingerPositions,
   computePinch,
@@ -35,6 +34,8 @@ import {
   warnIfOutOfBounds,
 } from '@vostride/agent-qa-core'
 import type { MobileRefMap } from '@vostride/agent-qa-core'
+// 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core, its host-adapter home).
+import { alignToWindow } from '@vostride/agent-qa-runner-local'
 import { createIOSSession } from './session.js'
 import type { IOSAdapterConfig } from './types.js'
 

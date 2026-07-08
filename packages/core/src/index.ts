@@ -22,7 +22,6 @@ export * from './version.js'
 export * from './version-check/index.js'
 export * from './sqlite.js'
 export * from './runtime-paths.js'
-export { compressScreenshot, type CompressResult, type CompressOptions } from './screenshot/compress.js'
-export { alignToWindow, type AlignOptions } from './screenshot/align.js'
-export { getImageDimensions, type ImageDimensions } from './screenshot/image-dimensions.js'
+// 363 D-08/Q10: the sharp screenshot pipeline (compress/align/dimensions) moved to
+// @vostride/agent-qa-runner-local (sharp left core); mobile adapters import it from there.
 export { isPathInsideDir } from './utils/path-validation.js'

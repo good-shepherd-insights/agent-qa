@@ -335,7 +335,6 @@ describe('validate:arch held-out fixtures', () => {
         transitionalLeaks([
           fixtureHit('node:dgram'),
           fixtureHit('better-sqlite3', { line: 2 }),
-          fixtureHit('sharp', { line: 3 }),
         ]),
         AGENT_QA_CORE_MIGRATION_LEDGER,
         new Set(AGENT_QA_CORE_HOST_BASELINE),

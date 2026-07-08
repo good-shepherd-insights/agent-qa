@@ -37,6 +37,18 @@ export type { FsHandoffStoreConfig } from './handoff-store.js'
 // artifact.json into the SAME <root>/runs/<slug(runId)>/ family as events.jsonl / handoff.json.
 export { FsRunArtifactStore, ARTIFACT_FILE } from './run-artifact-store.js'
 export type { FsRunArtifactStoreConfig } from './run-artifact-store.js'
+
+// Phase 363 D-08 / Q10 — the sharp screenshot compressor behind the runner ScreenshotCompressor
+// port (sharp's host-adapter home; banned in the storage-neutral runner). `alignToWindow` /
+// `getImageDimensions` are host-side sharp utilities the mobile adapters call directly.
+export { SharpScreenshotCompressor, alignToWindow, getImageDimensions } from './screenshot-compressor.js'
+export type {
+  AlignOptions,
+  CompressOptions,
+  CompressResult,
+  ImageDimensions,
+  ScreenshotCompressorLogger,
+} from './screenshot-compressor.js'
 export { nextBuildOrdinal, BUILD_ORDINALS_FILE } from './build-ordinal.js'
 export type { NextBuildOrdinalOptions } from './build-ordinal.js'
 

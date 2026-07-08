@@ -11,13 +11,15 @@ export const AGENT_QA_RUNNER_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'local filesystem completed-run handoff store behind the runner HandoffStorePort',
   'project-local per-product buildOrdinal counter persistence',
   'Docker sandbox hook execution behind the runner HookExecutorPort',
+  'local filesystem run-artifact store behind the runner RunArtifactStorePort',
+  'sharp screenshot compression + image utilities behind the runner ScreenshotCompressor port',
 ] as const
 export const AGENT_QA_RUNNER_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'cache-key assembly or hashing semantics',
   'cacheable/non-cacheable classification logic',
   'agent decision or planning logic',
 ] as const
-export const AGENT_QA_RUNNER_LOCAL_EXTERNAL_DEPENDENCIES = [] as const
+export const AGENT_QA_RUNNER_LOCAL_EXTERNAL_DEPENDENCIES = ['sharp'] as const
 export const AGENT_QA_RUNNER_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-runner',
   '@vostride/agent-qa-schema',

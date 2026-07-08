@@ -621,7 +621,8 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       // On native, dims match (1080x2400 == 1080x2400 getWindowSize). Phase 142 removed all
       // scaling code — coords are viewport-space identity. Log kept for diagnostics.
       try {
-        const { getImageDimensions } = await import('@vostride/agent-qa-core')
+        // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core).
+        const { getImageDimensions } = await import('@vostride/agent-qa-runner-local')
         const dims = await getImageDimensions(buf)
         const { width } = await this.driver.getWindowSize()
         if (dims && Math.abs(dims.width - width) > 1) {

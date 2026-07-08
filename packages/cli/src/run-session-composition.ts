@@ -34,7 +34,9 @@ import {
   nextBuildOrdinal,
   RUNS_SUBDIR,
   slugBranch,
+  SharpScreenshotCompressor,
 } from '@vostride/agent-qa-runner-local'
+import type { ScreenshotCompressorLogger } from '@vostride/agent-qa-runner-local'
 import type {
   ConfigDigests,
   EventLogPort,
@@ -43,6 +45,7 @@ import type {
   MemberTestRunContext,
   RunArtifactStorePort,
   RunMemberDescriptor,
+  ScreenshotCompressor,
   TestResult,
 } from '@vostride/agent-qa-runner'
 
@@ -159,6 +162,15 @@ export function buildRunPorts(input: { configDir: string; runId: string }): RunP
     handoffStore: new FsHandoffStore({ root, runId: input.runId }),
     runArtifactStore: new FsRunArtifactStore({ root, runId: input.runId }),
   }
+}
+
+/**
+ * Construct the D-08/Q10 screenshot compressor at the CLI composition root (sharp's host-adapter
+ * home). The runner-local `SharpScreenshotCompressor` is injected into every member's runner loop
+ * via `RunSuiteConfig.compressor` / `RunTestConfig.compressor` — core no longer constructs one.
+ */
+export function buildScreenshotCompressor(logger?: ScreenshotCompressorLogger): ScreenshotCompressor {
+  return new SharpScreenshotCompressor(logger)
 }
 
 /**

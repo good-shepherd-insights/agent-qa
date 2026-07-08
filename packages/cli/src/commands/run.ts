@@ -21,6 +21,7 @@ import {
   computeRunConfigDigests,
   resolveRunExecutionContext,
   buildRunPorts,
+  buildScreenshotCompressor,
   resolveRunBuildOrdinal,
   createSuiteLifecycle,
   buildSuiteMemberExecutor,
@@ -1577,6 +1578,9 @@ async function executeSuites(
       planner,
       verifier,
       cache: suiteEffectiveCacheEnabled ? actionCache : undefined,
+      // D-08/Q10: the sharp compressor is constructed at the composition root and injected into
+      // every member's runner loop (sharp left core).
+      compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
       // The run MaskingContext is assigned at the runId mint (below) — one source of truth,
       // ungated from cache enablement (SEAM-01/D-09; WM masking + mask-before-cache-key go live).
       masking: undefined,
@@ -2908,6 +2912,8 @@ export function createRunCommand(): Command {
               captureScreenshots,
               screenshotMode: (opts.screenshotMode as 'failure' | 'every-step') ?? 'failure',
               cache: effectiveCacheEnabled ? actionCache : undefined,
+              // D-08/Q10: the sharp compressor injected from the composition root (sharp left core).
+              compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
               // SEAM-01/03: the ONE run context + gate, ungated from cache enablement (D-09/356).
               masking: singleMaskingContext,
               safetyHooks: singleSafetyHooks,
