@@ -47,6 +47,10 @@ const {
   mockResolveBranch,
   mockAnalyticsRunReporterInstance,
   mockCreateAnalyticsRunReporter,
+  mockAnalyticsRunSubscriberInstance,
+  mockCreateAnalyticsRunSubscriber,
+  mockDashboardRunIngestInstance,
+  mockCreateDashboardRunIngest,
   mockShouldPrintAgentQaUpdateNotice,
   mockPrintAgentQaUpdateNoticeIfNeeded,
 } = vi.hoisted(() => {
@@ -64,7 +68,20 @@ const {
     onRunEnd: vi.fn().mockResolvedValue(undefined),
     flush: vi.fn().mockResolvedValue(undefined),
   }
+  // 363-09: the bus-subscriber successors — analytics + dashboard ingest ride the run session bus.
+  const analyticsRunSubscriber = {
+    handler: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
+  }
+  const dashboardRunIngest = {
+    handler: vi.fn(),
+    finalize: vi.fn().mockResolvedValue(undefined),
+  }
   return {
+    mockAnalyticsRunSubscriberInstance: analyticsRunSubscriber,
+    mockCreateAnalyticsRunSubscriber: vi.fn(function () { return analyticsRunSubscriber }),
+    mockDashboardRunIngestInstance: dashboardRunIngest,
+    mockCreateDashboardRunIngest: vi.fn(function () { return dashboardRunIngest }),
     mockGlob: vi.fn(),
     mockParseAllTests: vi.fn(),
     mockParseSuiteFile: vi.fn(),
@@ -408,6 +425,7 @@ vi.mock('@vostride/agent-qa-core', () => {
   }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
+  createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   createMemoryProvider: mockCreateMemoryProvider,
   resolveMemoryRoot: vi.fn((config: any, configDir: string) => {
     const memoryDir = config?.services?.memory?.dir ?? 'agent-qa-memory'
@@ -538,6 +556,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
 vi.mock('@vostride/agent-qa-dashboard', () => ({
   DashboardDatabase: mockDashboardDatabase,
   DashboardReporter: mockDashboardReporter,
+  createDashboardRunIngest: mockCreateDashboardRunIngest,
   resolveDashboardDbPath: mockResolveDashboardDbPath,
 }))
 
@@ -2335,15 +2354,14 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockCreateAnalyticsRunReporter).toHaveBeenCalledWith(expect.objectContaining({
+    // 363-09 (D-16): analytics rides the bus now — the v1 AnalyticsRunReporter is replaced by the
+    // core-owned envelope subscriber, attached at the startRun site and flushed after session.done.
+    expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
       config: expect.objectContaining({ workspace: expect.any(Object) }),
       surface: 'cli',
     }))
-    const { MultiReporter } = await import('@vostride/agent-qa-core')
-    expect(vi.mocked(MultiReporter).mock.calls[0][0]).toEqual(
-      expect.arrayContaining([mockAnalyticsRunReporterInstance]),
-    )
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
+    expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
   it('prints the update notice once after direct reporter completion and analytics flush', async () => {
@@ -2382,18 +2400,18 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockCreateAnalyticsRunReporter).toHaveBeenCalledWith(expect.objectContaining({
+    // 363-09 (D-16): the suite path attaches the analytics bus subscriber at the run-level startRun
+    // site (no reporter threaded into executeSuiteMember's config — the runner emits envelopes now).
+    expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
       config: expect.objectContaining({ workspace: expect.any(Object) }),
       surface: 'cli',
     }))
     expect(mockExecuteSuiteMember).toHaveBeenCalledWith(
       expect.objectContaining({
-        config: expect.objectContaining({
-          reporters: expect.arrayContaining([mockAnalyticsRunReporterInstance]),
-        }),
+        config: expect.objectContaining({ reporters: [] }),
       }),
     )
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
   it.each([
@@ -2465,7 +2483,7 @@ describe('run command — reporter integration', () => {
     [
       '--reporter junit',
       [],
-      ['tests/**/*.yaml', '--reporter', 'junit', '--junit-output', 'results.xml'],
+      ['tests/**/*.yaml', '--reporter', 'junit', '--junit-output', join(tmpdir(), 'agent-qa-run-notice-junit.xml')],
       undefined,
       { effectiveLogLevel: 'warn', reporterSelection: expect.objectContaining({ console: false, junit: true, stdoutLive: false }) },
     ],
@@ -2523,7 +2541,9 @@ describe('run command — reporter integration', () => {
   })
 
   it('does not fail direct test execution when analytics flush rejects', async () => {
-    mockAnalyticsRunReporterInstance.flush.mockRejectedValueOnce(new Error('posthog unavailable'))
+    // 363-09: the attach helper flushes every subscriber with allSettled, so a best-effort analytics
+    // flush rejection can never abort the run or its exit code (RUNX-03 / D-08 detach-on-error).
+    mockAnalyticsRunSubscriberInstance.flush.mockRejectedValueOnce(new Error('posthog unavailable'))
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
@@ -2539,7 +2559,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -2578,30 +2598,12 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
+    // 363-09 (D-16): a mobile setup failure occurs BEFORE the runner emits a testFinished envelope, so
+    // its telemetry is no longer captured (the v1 per-result analytics capture is gone; analytics now
+    // rides the bus). The failure is still surfaced as a clean framework-error exit 2, and the run does
+    // NOT construct the removed v1 AnalyticsRunReporter.
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockAnalyticsRunReporterInstance.onRunEnd).toHaveBeenCalledWith(expect.objectContaining({
-      failed: 1,
-      results: [
-        expect.objectContaining({
-          runId: process.env.AGENT_QA_RUN_ID,
-          status: 'failed',
-          metadata: expect.objectContaining({
-            phase: 'setup',
-            platform,
-            attributes: expect.objectContaining({
-              'agent-qa.trigger': 'dashboard',
-              'agent-qa.runner': 'local',
-            }),
-            runtime: expect.objectContaining({
-              platform,
-              mobileTransport: 'local',
-              appState: 'preserve',
-            }),
-          }),
-        }),
-      ],
-    }))
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
   })
 
   it.each(['android', 'ios'] as const)('emits cli/local analytics attributes for standalone %s setup failures', async (platform) => {
@@ -2633,186 +2635,64 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
+    // 363-09 (D-16): pre-runner mobile setup-failure telemetry is dropped with the v1 analytics reporter
+    // (analytics rides the bus). The failure still surfaces as a clean framework-error exit 2.
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockAnalyticsRunReporterInstance.onRunEnd).toHaveBeenCalledWith(expect.objectContaining({
-      failed: 1,
-      results: [
-        expect.objectContaining({
-          runId: 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet',
-          status: 'failed',
-          metadata: expect.objectContaining({
-            phase: 'setup',
-            platform,
-            attributes: expect.objectContaining({
-              'agent-qa.trigger': 'cli',
-              'agent-qa.runner': 'local',
-            }),
-          }),
-        }),
-      ],
-    }))
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
   })
 
-  it('creates ConsoleReporter with verbose=false by default', async () => {
+  // 363-09 (D-01 clean cut): the CLI no longer constructs v1 core Reporters (ConsoleReporter /
+  // JUnitReporter / StdoutLiveReporter / DashboardReporter). Reporter rendering is unit-tested in
+  // src/__tests__/reporters/*.test.ts; here we pin that the selection is HONORED — v1 reporters are
+  // never constructed, the accepted selection reaches execution, and dashboard selection wires the
+  // Plan-08 bus ingest (createDashboardRunIngest) rather than the deleted DashboardReporter.
+  it('never constructs v1 core reporters for a default direct run (bus subscribers replace them)', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
     mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
     await runCommand('tests/**/*.yaml')
 
-    const { ConsoleReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalledWith(expect.objectContaining({ verbose: false }))
-  })
-
-  it('ConsoleReporter always gets verbose=false (LogManager handles verbose display)', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    const program = new Command()
-    program.option('--config <path>', 'config file path', 'agent-qa.config.yaml')
-    program.option('--log-level <level>', 'log verbosity: silent|error|warn|info|debug')
-    program.option('--verbose', 'shorthand for --log-level debug')
-    program.option('--quiet', 'shorthand for --log-level silent')
-    program.addCommand(createRunCommand())
-
-    try {
-      await program.parseAsync(['node', 'agent-qa', '--verbose', 'run', 'tests/**/*.yaml'])
-    } catch (err) {
-      if ((err as Error).message !== 'process.exit') throw err
-    }
-
-    const { ConsoleReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalledWith(expect.objectContaining({ verbose: false }))
-  })
-
-  it('creates JUnitReporter when --junit-output is specified', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('--junit-output', 'test-results.xml', 'tests/**/*.yaml')
-
-    const { JUnitReporter } = await import('@vostride/agent-qa-core')
-    expect(JUnitReporter).toHaveBeenCalledWith({ outputPath: 'test-results.xml' })
-  })
-
-  it('supports explicit console-only reporter selection', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml', '--reporter', 'console')
-
     const { ConsoleReporter, JUnitReporter, StdoutLiveReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalled()
+    expect(ConsoleReporter).not.toHaveBeenCalled()
     expect(JUnitReporter).not.toHaveBeenCalled()
     expect(StdoutLiveReporter).not.toHaveBeenCalled()
     expect(mockDashboardReporter).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('supports explicit console and junit reporter selection', async () => {
+  it('honors console/junit reporter selection without constructing v1 reporters', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
     mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
-    await runCommand('tests/**/*.yaml', '--reporter', 'console,junit', '--junit-output', 'test-results.xml')
+    await runCommand('tests/**/*.yaml', '--reporter', 'console,junit', '--junit-output', join(tmpdir(), 'agent-qa-selection-junit.xml'))
 
     const { ConsoleReporter, JUnitReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalled()
-    expect(JUnitReporter).toHaveBeenCalledWith({ outputPath: 'test-results.xml' })
-  })
-
-  it('supports explicit stdout-live reporter selection without env opt-in', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml', '--reporter', 'stdout-live')
-
-    const { ConsoleReporter, StdoutLiveReporter } = await import('@vostride/agent-qa-core')
     expect(ConsoleReporter).not.toHaveBeenCalled()
-    expect(StdoutLiveReporter).toHaveBeenCalledWith(expect.objectContaining({
-      active: true,
-      redactor: expect.anything(),
-    }))
+    expect(JUnitReporter).not.toHaveBeenCalled()
+    // The selection is accepted (no pre-execution error) and the run reaches execution + exits 0.
+    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('supports explicit dashboard reporter selection', async () => {
+  it('wires the dashboard bus ingest (not the v1 DashboardReporter) for dashboard selection', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
     mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
     await runCommand('tests/**/*.yaml', '--reporter', 'dashboard')
 
-    const { ConsoleReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).not.toHaveBeenCalled()
     expect(mockDashboardDatabase).toHaveBeenCalled()
-    expect(mockDashboardReporter).toHaveBeenCalled()
+    expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
+    expect(mockDashboardReporter).not.toHaveBeenCalled()
+    expect(mockDashboardRunIngestInstance.finalize).toHaveBeenCalled()
   })
 
   it('fails unknown reporter selection before execution', async () => {
@@ -3461,7 +3341,9 @@ describe('run command — DashboardReporter wiring', () => {
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: resolve(process.cwd(), '.agent-qa/runs.db'),
     })
-    expect(mockDashboardReporter).toHaveBeenCalled()
+    // 363-09: dashboard history is written by the Plan-08 bus ingest, not the deleted v1 DashboardReporter.
+    expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
+    expect(mockDashboardReporter).not.toHaveBeenCalled()
     expect(mockRunTestWithRetry.mock.calls[0][1]).toEqual(expect.objectContaining({
       captureScreenshots: true,
     }))

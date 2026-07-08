@@ -29,6 +29,9 @@ import {
   buildRunAuditSink,
   buildRunSafetyHooks,
   extractAuthStateSensitiveStrings,
+  attachRunSubscribers,
+  createLivePauseController,
+  type RunSubscriberHandle,
   type SuiteMemberBinding,
   type RunMaskingContext,
 } from '../run-session-composition.js'
@@ -437,23 +440,56 @@ function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean
   }
 }
 
-type AnalyticsRunEndReporter = {
-  onRunEnd?: (summary: {
-    results: TestResult[]
-    duration: number
-    passed: number
-    failed: number
-    skipped: number
-  }) => Promise<void> | void
-  flush: () => Promise<void>
+// 363-09: the spawn correlation env the dashboard ingest reads from `process.env` (the bus never
+// carries it). Read once at the composition root and passed into `createDashboardRunIngest`.
+function readDashboardCorrelationEnv(env: NodeJS.ProcessEnv = process.env): {
+  runId?: string
+  parentRunId?: string
+  suiteQueueId?: string
+  maxRetries?: number
+  attemptNumber?: number
+} {
+  const num = (value: string | undefined): number | undefined => {
+    if (value === undefined) return undefined
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return {
+    runId: env.AGENT_QA_RUN_ID,
+    parentRunId: env.AGENT_QA_PARENT_RUN_ID,
+    suiteQueueId: env.AGENT_QA_SUITE_QUEUE_ID,
+    maxRetries: num(env.AGENT_QA_MAX_RETRIES),
+    attemptNumber: num(env.AGENT_QA_ATTEMPT_NUMBER),
+  }
 }
 
-async function flushAnalyticsRunReporter(reporter: { flush: () => Promise<void> } | undefined): Promise<void> {
-  if (!reporter) return
+// 363-09 (D-08 successor): construct the dashboard DB ingest as a bus subscriber (replacing the v1
+// DashboardReporter attach). Config/source snapshots + correlation env ride construction; envelopes
+// drive lifecycle. Returns a subscriber handle whose `flush` lands the finalize sweep (the memory
+// section arrives out-of-band). Dashboard is optional — a load failure degrades to no subscriber.
+async function buildDashboardIngestSubscriber(input: {
+  db: any
+  configSnapshot?: unknown
+  sourceSnapshot?: unknown
+  attributes?: RunAttributes
+  onRunCreated?: (runId: string) => void
+}): Promise<RunSubscriberHandle | undefined> {
   try {
-    await reporter.flush()
+    const { createDashboardRunIngest } = await import('@vostride/agent-qa-dashboard')
+    const ingest = createDashboardRunIngest({
+      db: input.db,
+      configSnapshot: input.configSnapshot as any,
+      sourceSnapshot: input.sourceSnapshot as any,
+      attributes: input.attributes,
+      correlationEnv: readDashboardCorrelationEnv(),
+      onRunCreated: input.onRunCreated,
+    })
+    return {
+      handler: ingest.handler,
+      flush: () => ingest.finalize(),
+    }
   } catch {
-    // Analytics is best-effort and must not affect run outcomes.
+    return undefined
   }
 }
 
@@ -464,28 +500,6 @@ async function maybePrintPostRunUpdateNotice(context: AgentQaUpdateNoticeContext
   } catch {
     // Update notices are best-effort and must not affect run outcomes.
   }
-}
-
-async function captureSingleAnalyticsResult(
-  reporter: AnalyticsRunEndReporter | undefined,
-  result: TestResult,
-): Promise<void> {
-  if (!reporter?.onRunEnd) {
-    await flushAnalyticsRunReporter(reporter)
-    return
-  }
-  try {
-    await reporter.onRunEnd({
-      results: [result],
-      duration: result.duration,
-      passed: result.status === 'passed' ? 1 : 0,
-      failed: result.status === 'failed' ? 1 : 0,
-      skipped: result.status === 'skipped' ? 1 : 0,
-    })
-  } catch {
-    // Analytics is best-effort and must not affect run outcomes.
-  }
-  await flushAnalyticsRunReporter(reporter)
 }
 
 function formatParseErrors(errors: ParseError[]): void {
@@ -963,7 +977,7 @@ async function executeSuites(
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
 ): Promise<number> {
   const { parseSuiteFile, parseTestFile, executeSuiteMember,
-    ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
+    MultiReporter, createAnalyticsRunSubscriber,
   } = await import('@vostride/agent-qa-core')
   const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
@@ -1084,7 +1098,6 @@ async function executeSuites(
     bootstrapFailure: string | undefined
     // Teardown-time composition side effects (the old runSuite `.finally`).
     dashboardDb: any
-    analyticsReporter: ReturnType<typeof createAnalyticsRunReporter>
     suiteWorkingMemory: WorkingMemoryStore
     authStateStoragePath: string | undefined
     suiteAttributes: RunAttributes
@@ -1461,32 +1474,11 @@ async function executeSuites(
     const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined, plannerAccounting)
     const verifier = new LLMVerifier(verifierModel, verifierAccounting)
 
-    const reporters: import('@vostride/agent-qa-core').Reporter[] = []
-    if (reporterSelection.console) {
-      reporters.push(new ConsoleReporter({ verbose: false, logLevel: effectiveLogLevel }))
-    }
-    if (reporterSelection.junit && opts.junitOutput) {
-      reporters.push(new JUnitReporter({ outputPath: opts.junitOutput }))
-    }
-    if (reporterSelection.stdoutLive) {
-      const { StdoutLiveReporter } = await import('@vostride/agent-qa-core')
-      reporters.push(new StdoutLiveReporter({ active: true, redactor: variableContext?.secretRedactor }))
-    }
-    if (reporterSelection.dashboard && dashboardDb) {
-      try {
-        const { DashboardReporter } = await import('@vostride/agent-qa-dashboard')
-        const { resolve } = await import('node:path')
-        const dashArtifactsDir = config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR
-        reporters.push(new DashboardReporter({
-          db: dashboardDb,
-          artifactsDir: resolve(configDir, dashArtifactsDir),
-          redactor: variableContext?.secretRedactor,
-          onRunCreated: (runId: string) => { lastSuiteRunId = runId; logger.setRunId(runId) },
-        }))
-      } catch { /* dashboard reporter not available */ }
-    }
-    const analyticsReporter = createAnalyticsRunReporter({ config, surface: 'cli' })
-    reporters.push(analyticsReporter)
+    // 363-09 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus subscribers
+    // (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are attached at the ONE
+    // run-level startRun site below via `attachRunSubscribers`. This empty list keeps core's internal
+    // MultiReporter inert (Plan 11 deletes it) and threads no reporter into the runner config.
+    const reporters: never[] = []
 
     // Wire the redesigned action cache (runner-local FsActionCache + branch policy), injected into
     // the runner loop's cache port. The loop's masking port now carries the ONE run MaskingContext
@@ -1667,7 +1659,6 @@ async function executeSuites(
       perMemberDigests: [],
       bootstrapFailure: undefined,
       dashboardDb,
-      analyticsReporter,
       suiteWorkingMemory,
       authStateStoragePath: suiteAuthState?.storageStatePath,
       suiteAttributes,
@@ -1823,7 +1814,6 @@ async function executeSuites(
       mask: runMaskingContext ? (value: string) => runMaskingContext!.mask(value) : undefined,
     })
     closeSuiteDashboardDb(prepared.dashboardDb)
-    await flushAnalyticsRunReporter(prepared.analyticsReporter)
     printRunAttributes(prepared.suiteAttributes)
   }
 
@@ -1929,6 +1919,12 @@ async function executeSuites(
   // run body inside runSafetyScope so every createModel egress masks and every tool call is gated +
   // audited (D-02/D-04). The masking context needs no runId, so it seeds from the statically-resolved
   // suite auth-state payloads read best-effort here.
+  //
+  // MASKING BOUNDARY (363-09, RESEARCH Q7 item 3): every placeholder-bearing string originates AFTER
+  // this seam (masked egress, tool gating, WM). Pre-run errors (config/parse/target resolution, the
+  // validation-error DB writes and crash-finalizer above) occur BEFORE the MaskingContext exists, so
+  // they carry NO placeholders and need NO unmask call — the console reporter (the sole unmasking
+  // surface) only handles post-seam envelopes; step-failure/deny prose reaches humans through it.
   const authStatePayloads = (
     await Promise.all(preparedSuites.map((p) => readAuthStatePayloadBestEffort(p.authStateStoragePath)))
   ).filter((payload): payload is unknown => payload !== undefined)
@@ -1939,7 +1935,11 @@ async function executeSuites(
   })
   const auditSink = buildRunAuditSink({ configDir, runId, executionContext })
   const trustMode = opts.trustSession === true || config.safety?.trustMode === true
-  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext, trustMode })
+  // D-11 (363-09): the console pause/resume seam shared with the ask-tier confirm decorator; bound to
+  // the console reporter inside `attachRunSubscribers` below. buildRunSafetyHooks composes the unmask
+  // decorator OVER the timed decorator so live confirm prompts show real values (masked machine surfaces).
+  const livePause = createLivePauseController()
+  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext, trustMode, maskingContext, live: livePause })
   runMaskingContext = maskingContext
   runSafetyHooks = safetyHooks
   // Point every suite's loop masking port at the ONE run context (ungated from cache — D-09/356).
@@ -1947,6 +1947,25 @@ async function executeSuites(
 
   const lifecycle = createSuiteLifecycle()
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
+
+  // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both startRun sites use).
+  // Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes runs/run_artifacts
+  // rows as a subscriber (D-08). Dashboard/analytics construction data the wire omits rides here.
+  const runLevelDashboardDb = preparedSuites.find((p) => p.dashboardDb)?.dashboardDb
+  const extraSubscribers: RunSubscriberHandle[] = []
+  if (runLevelDashboardDb) {
+    const suiteArtifact = preparedSuites.find((p) => p.dashboardDb)?.suiteArtifact as
+      | { config?: unknown; source?: unknown }
+      | undefined
+    const dashboardSubscriber = await buildDashboardIngestSubscriber({
+      db: runLevelDashboardDb,
+      configSnapshot: suiteArtifact?.config,
+      sourceSnapshot: suiteArtifact?.source,
+      attributes: preparedSuites.find((p) => p.dashboardDb)?.suiteAttributes,
+    })
+    if (dashboardSubscriber) extraSubscribers.push(dashboardSubscriber)
+  }
+  extraSubscribers.push(createAnalyticsRunSubscriber({ config, surface: 'cli' }))
 
   const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
     try {
@@ -1964,9 +1983,23 @@ async function executeSuites(
       })
       activeRunSession = session
 
+      // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics)
+      // via subscribe(0) — replay-then-live gives D-04 for free. Console options carry the run's flags.
+      const subscribers = attachRunSubscribers({
+        session,
+        maskingContext,
+        console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
+        junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
+        extraSubscribers,
+        live: livePause,
+      })
+
       const { verdict } = await session.done
       if (graceTimer) clearTimeout(graceTimer)
       await lifecycle.finalize()
+      // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
+      // AFTER session.done + lifecycle.finalize() and BEFORE mapping the verdict to the exit code.
+      await subscribers.flush()
       activeRunSession = undefined
       // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
       // SIGINT that raced the terminal verdict still maps to 130.
@@ -2389,7 +2422,7 @@ export function createRunCommand(): Command {
         const startTime = Date.now()
         const {
           runTestWithRetry,
-          ConsoleReporter, JUnitReporter, MultiReporter, createAnalyticsRunReporter,
+          MultiReporter, createAnalyticsRunSubscriber,
         } = await import('@vostride/agent-qa-core')
         const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
 
@@ -2413,40 +2446,15 @@ export function createRunCommand(): Command {
         // `.agent-qa` dir (the FsActionCache rooting idiom); threaded into the loop's storageState port.
         const singleStorageState = await buildStorageStateStore(configDir)
 
-        const reporters: import('@vostride/agent-qa-core').Reporter[] = []
-        if (reporterSelection.console) {
-          reporters.push(new ConsoleReporter({ verbose: false, logLevel: effectiveLogLevel }))
-        }
-        if (reporterSelection.junit && opts.junitOutput) {
-          reporters.push(new JUnitReporter({ outputPath: opts.junitOutput }))
-        }
-
-        if (reporterSelection.stdoutLive) {
-          const { StdoutLiveReporter } = await import('@vostride/agent-qa-core')
-          reporters.push(new StdoutLiveReporter({ active: true, redactor: runtimeSecrets.secretRedactor }))
-        }
+        // 363-09 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus subscribers
+        // (console unmasks; junit + wire masked; dashboard ingest; analytics) attach at the startRun site
+        // below via `attachRunSubscribers`. This empty list keeps core's internal MultiReporter + the
+        // runTest reporters inert (Plan 11 deletes the Reporter shape).
+        const reporters: never[] = []
 
         const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
-        // Wire DashboardReporter (DB already created above before parse step)
         const { LogManager } = await import('@vostride/agent-qa-core')
-        if (reporterSelection.dashboard && dashboardDb) {
-          try {
-            const { DashboardReporter } = await import('@vostride/agent-qa-dashboard')
-            const { resolve } = await import('node:path')
-            const dashArtifactsDir = config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR
-            reporters.push(new DashboardReporter({
-              db: dashboardDb,
-              artifactsDir: resolve(configDir, dashArtifactsDir),
-              redactor: runtimeSecrets.secretRedactor,
-              onRunCreated: (runId: string) => { currentRunId = runId; logger.setRunId(runId) },
-            }))
-          } catch (err) {
-            console.warn(pc.yellow(`Warning: Could not load dashboard reporter: ${err instanceof Error ? err.message : String(err)}`))
-          }
-        }
-        const analyticsReporter = createAnalyticsRunReporter({ config, surface: 'cli' })
-        reporters.push(analyticsReporter)
 
         const logger = new LogManager({
           runId: process.env.AGENT_QA_RUN_ID || undefined,
@@ -3099,31 +3107,11 @@ export function createRunCommand(): Command {
             })
           }
           } catch (err) {
-            if ((analyticsPlatform === 'android' || analyticsPlatform === 'ios') && analyticsRunId) {
-              const errorMessage = err instanceof Error ? err.message : String(err)
-              const analyticsResult = completedResult ?? {
-                runId: analyticsRunId,
-                name: test.name,
-                filePath: analyticsFilePath,
-                status: 'failed',
-                steps: [],
-                duration: Date.now() - analyticsStartedAt,
-                failureSummary: errorMessage,
-                metadata: {
-                  phase: 'setup',
-                  error: errorMessage,
-                  platform: analyticsPlatform,
-                  testId: analyticsTestId,
-                  attributes: analyticsAttributes,
-                  runtime: {
-                    platform: analyticsPlatform,
-                    mobileTransport: analyticsMobileTransport,
-                    appState: analyticsAppState,
-                  },
-                },
-              } satisfies TestResult
-              await captureSingleAnalyticsResult(analyticsReporter, analyticsResult)
-            }
+            // 363-09 (D-16): mobile setup-failure telemetry previously fed the v1 AnalyticsRunReporter
+            // here. Analytics now rides the bus via `createAnalyticsRunSubscriber`; a pre-runner setup
+            // failure re-throws (below) into the framework-error path and emits no testFinished envelope,
+            // so this niche pre-runner telemetry is a known gap (re-addressable when the runner emits a
+            // failure envelope for it). The normal completion path is fully covered by the bus subscriber.
             throw err
           }
         }
@@ -3241,15 +3229,41 @@ export function createRunCommand(): Command {
         // local-dev invocation and 363's demo path, it must not lag). Seed from secrets + env (auth
         // registers dynamically per-test via D-06 at resolve/capture), stamp the per-run sink, build
         // the per-run gate, and run the whole body inside runSafetyScope; dispose the context LAST.
+        //
+        // MASKING BOUNDARY (363-09, RESEARCH Q7 item 3): placeholders only exist AFTER this seam. The
+        // pre-run validation-error DB writes + crash-finalizer above run BEFORE the MaskingContext, so
+        // they carry no placeholders and need no unmask call; humans see post-seam prose through the
+        // console reporter (the sole unmasking surface).
         const maskingContext = buildRunMaskingContext({
           secretStore: runtimeSecrets.secretStore,
           env: process.env,
         })
         const auditSink = buildRunAuditSink({ configDir, runId: singleRunId, executionContext: singleExecutionContext })
         const trustMode = opts.trustSession === true || config.safety?.trustMode === true
-        const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext: singleExecutionContext, trustMode })
+        // D-11 (363-09): the console pause/resume seam bound to the console reporter in attachRunSubscribers
+        // below; buildRunSafetyHooks composes the unmask decorator OVER the timed decorator (Pitfall 4).
+        const livePause = createLivePauseController()
+        const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext: singleExecutionContext, trustMode, maskingContext, live: livePause })
         singleMaskingContext = maskingContext
         singleSafetyHooks = safetyHooks
+
+        // 363-09: run-level bus subscribers (Pitfall 8 — the SAME attach helper the suite path uses).
+        // Analytics rides the bus (D-16); the dashboard ingest (when the dashboard DB exists) writes
+        // runs/run_artifacts rows as a subscriber (D-08), adopting the plain/retry correlation env.
+        const singleExtraSubscribers: RunSubscriberHandle[] = []
+        if (dashboardDb) {
+          // The primary run row is adopted from AGENT_QA_RUN_ID and refreshed from the bus envelope
+          // stream (testStarted identity, testFinished status/duration, stepFinalized steps). The
+          // resolved per-test config/source snapshot lives inside the member closure (D-04), so the
+          // ingest seeds identity from the wire; the run row + steps (dashboard history) stay populated.
+          const dashboardSubscriber = await buildDashboardIngestSubscriber({
+            db: dashboardDb,
+            attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
+            onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger.setRunId(createdRunId) },
+          })
+          if (dashboardSubscriber) singleExtraSubscribers.push(dashboardSubscriber)
+        }
+        singleExtraSubscribers.push(createAnalyticsRunSubscriber({ config, surface: 'cli' }))
 
         const singleExit = await runSafetyScope({ maskingContext, auditSink, executionContext: singleExecutionContext }, async () => {
           try {
@@ -3266,8 +3280,22 @@ export function createRunCommand(): Command {
             })
             activeRunSession = session
 
+            // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics)
+            // via subscribe(0) — replay-then-live gives D-04 for free.
+            const subscribers = attachRunSubscribers({
+              session,
+              maskingContext,
+              console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
+              junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
+              extraSubscribers: singleExtraSubscribers,
+              live: livePause,
+            })
+
             const { verdict } = await session.done
             if (graceTimer) clearTimeout(graceTimer)
+            // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
+            // AFTER session.done and BEFORE mapping the verdict / re-throwing a framework error.
+            await subscribers.flush()
             activeRunSession = undefined
             shutdownController.dispose()
             process.removeListener('SIGINT', shutdownController.handleSignal)
@@ -3296,7 +3324,6 @@ export function createRunCommand(): Command {
         const skipped = results.filter(r => r.status === 'skipped').length
 
         await multiReporter.onRunEnd({ results, duration, passed, failed, skipped })
-        await flushAnalyticsRunReporter(analyticsReporter)
 
         if (dashboardDb) {
           dashboardDb.close()

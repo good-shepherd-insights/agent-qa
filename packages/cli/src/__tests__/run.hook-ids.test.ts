@@ -17,6 +17,7 @@ const {
   mockLLMVerifier,
   mockMultiReporterInstance,
   mockCreateAnalyticsRunReporter,
+  mockCreateAnalyticsRunSubscriber,
   mockWebAdapterCleanup,
   mockFsEventLog,
   mockFsHandoffStore,
@@ -38,8 +39,13 @@ const {
   const analyticsRunReporter = {
     flush: vi.fn().mockResolvedValue(undefined),
   }
+  const analyticsRunSubscriber = {
+    handler: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
+  }
 
   return {
+    mockCreateAnalyticsRunSubscriber: vi.fn(function () { return analyticsRunSubscriber }),
     mockGlob: vi.fn(),
     mockParseAllTests: vi.fn(),
     mockParseHooksFile: vi.fn(),
@@ -214,6 +220,7 @@ vi.mock('@vostride/agent-qa-core', () => ({
   JUnitReporter: vi.fn(function () { return {} }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
+  createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   createMemoryProvider: vi.fn(),
   resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => `${configDir}/agent-qa-memory`),
   generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
