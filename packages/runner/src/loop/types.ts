@@ -212,8 +212,9 @@ export interface Asserter {
   evaluate(assertion: AssertionInput, screenState: ScreenState): Promise<AssertionResult>
 }
 
-// Extraction vocabulary — buildExtractionPrompt (moved with the prompts module) is
-// the only consumer in this plan.
+// Extraction vocabulary (Phase 363 D-07) — the runner owns the full capture surface:
+// buildExtractionPrompt (prompts.ts), the ExplicitExtractor + createExtractor factory
+// (variables/extractor.ts), and the LLMVariableExtractor (loop/llm-variable-extractor.ts).
 export type ExtractionMethod = 'regex' | 'selector' | 'ai'
 
 export interface ExtractorInput {
@@ -222,4 +223,15 @@ export interface ExtractorInput {
   pattern?: string
   selector?: string
   description?: string
+}
+
+export interface CaptureResult {
+  success: boolean
+  variableName: string
+  value?: string
+  reasoning: string
+}
+
+export interface VariableExtractor {
+  extract(input: ExtractorInput, screenState: ScreenState): Promise<CaptureResult>
 }

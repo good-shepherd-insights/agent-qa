@@ -78,6 +78,8 @@ export type {
   AssertionType,
   ExtractionMethod,
   ExtractorInput,
+  CaptureResult,
+  VariableExtractor,
 } from './loop/types.js'
 export { LLMPlanner } from './loop/planner.js'
 export {
@@ -96,6 +98,9 @@ export type {
 } from './loop/planning-turn.js'
 export { LLMVerifier, VerificationResultSchema, AiJudgmentResultSchema } from './loop/verifier.js'
 export { AssertionEvaluator, LLMAssertionEvaluator, createAsserter } from './loop/asserter.js'
+// Phase 363 D-07 — runner-owned variables subsystem (store / interpolation / extractors).
+// LLMVariableExtractor rides the injected-model idiom in loop/; the sub-barrel re-exports it.
+export * from './variables/index.js'
 export {
   buildSystemPrompt,
   buildContextTier,
