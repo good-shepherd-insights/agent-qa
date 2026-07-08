@@ -97,7 +97,14 @@ function createFakeSink(): {
     emitPorts.push(port)
     return port
   })
-  return { sink: { stepStarted, loopEmitFor }, stepStarted, loopEmitFor, emitPorts }
+  // 363 D-01: the widened MemberEventSink exposes the hook/retry legs; this threading mock only
+  // exercises stepStarted/loopEmitFor, so the parity legs are inert no-op spies here.
+  return {
+    sink: { stepStarted, loopEmitFor, hookStarted: vi.fn(), hookFinished: vi.fn(), testRetryScheduled: vi.fn() },
+    stepStarted,
+    loopEmitFor,
+    emitPorts,
+  }
 }
 
 describe('361-09 · member event sink threading (D-02)', () => {

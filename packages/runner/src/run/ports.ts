@@ -13,6 +13,9 @@ import type {
   ExecutionContext,
   MaskingContext,
   CompletedRunHandoff,
+  HookStartedPayload,
+  HookFinishedPayload,
+  TestRetryScheduledPayload,
 } from '@vostride/agent-qa-schema'
 import type { TestResult } from '../result.js'
 import type { LoopEventEmitPort } from '../loop/ports.js'
@@ -76,6 +79,21 @@ export interface RunMemberDescriptor {
   testIndex?: number
   name?: string
   failFastGroup?: string
+  /**
+   * 363 D-01 parity fields (RESEARCH Q1). All OPTIONAL and additive — the shell rides them onto
+   * the widened `testStarted` payload so reporters can render the full v1 console/JUnit/wire
+   * surface from the bus alone. Suite grouping (`suiteId`/`suiteName`/`suiteIndex`/`suiteTotal`)
+   * rides testStarted rather than a suite lifecycle event — the shell stays suite-agnostic and
+   * reporters derive suite boundaries by watching the grouping change. `filePath`/`totalSteps` are
+   * the per-member file + parsed step count. The CLI populates these at both startRun sites; absent
+   * ⇒ omitted from the payload (no undefined-hole survives JSON round-trip).
+   */
+  filePath?: string
+  suiteId?: string
+  suiteName?: string
+  suiteIndex?: number
+  suiteTotal?: number
+  totalSteps?: number
 }
 
 /**
@@ -87,6 +105,16 @@ export interface RunMemberDescriptor {
 export interface MemberEventSink {
   stepStarted(input: { stepIndex: number; stepText: string }): void
   loopEmitFor(stepIndex: number): LoopEventEmitPort
+  /**
+   * 363 D-01 parity legs, each routed through its Plan 01 projection + the sink mask (never a raw
+   * `bus.publish` from the caller — T-363-06). `hookStarted`/`hookFinished` are emitted by the
+   * runner hook orchestration (Plan 04 populates them; `hookFinished` stdout/stderr/error and every
+   * `variables` value are masked at the sink, T-363-05). `testRetryScheduled` is emitted by the
+   * member-runner retry loop (Plan 10) and marks a per-test accumulation reset for subscribers.
+   */
+  hookStarted(input: HookStartedPayload): void
+  hookFinished(input: HookFinishedPayload): void
+  testRetryScheduled(input: TestRetryScheduledPayload): void
 }
 
 /** The per-member execution context threaded into the injected {@link MemberTestExecutor}. */

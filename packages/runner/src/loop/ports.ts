@@ -11,6 +11,7 @@ import type {
   ScreenState,
   WorkingMemoryEntry,
   StepEvidence,
+  StepFinalizedPayload,
   SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 import type { ConfigDigests } from '../run/ports.js'
@@ -130,7 +131,21 @@ export interface TokenAccounting {
  * migration unchanged.
  */
 export interface LoopEventEmitPort {
-  stepFinalized(evidence: StepEvidence): void
+  /**
+   * 363 D-01: the additive-optional `extra` carries the StepResult-derived
+   * `{status, durationMs, error}` the reporters need (RESEARCH Q1 parity). Sourced from the
+   * runner `StepResult` at the loop's single terminal `finish()` funnel — NOT fields on the §A8
+   * `StepEvidence` DTO (Pitfall 2). `error` is masked at the sink chokepoint (T-363-05). Absent
+   * ⇒ the base evidence-only payload, source-compatible with pre-363 callers.
+   */
+  stepFinalized(
+    evidence: StepEvidence,
+    extra?: {
+      status?: StepFinalizedPayload['status']
+      durationMs?: number
+      error?: string
+    },
+  ): void
   subActionRecorded(evidence: SubActionEvidence, subActionIndex: number): void
 }
 

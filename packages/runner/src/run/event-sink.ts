@@ -9,8 +9,22 @@
 // publish failure degrades to a single best-effort `runWarning` and is otherwise swallowed. This
 // module carries ZERO verdict logic and touches NO fs — it is a pure bus adapter.
 
-import type { MaskingContext, StepEvidence, SubActionEvidence } from '@vostride/agent-qa-schema'
-import { projectStepFinalized, projectSubActionRecorded } from '@vostride/agent-qa-schema'
+import type {
+  HookFinishedPayload,
+  HookStartedPayload,
+  MaskingContext,
+  StepEvidence,
+  StepFinalizedPayload,
+  SubActionEvidence,
+  TestRetryScheduledPayload,
+} from '@vostride/agent-qa-schema'
+import {
+  projectHookFinished,
+  projectHookStarted,
+  projectStepFinalized,
+  projectSubActionRecorded,
+  projectTestRetryScheduled,
+} from '@vostride/agent-qa-schema'
 import type { RunEventBus } from './bus.js'
 import type { MemberEventSink } from './ports.js'
 import type { LoopEventEmitPort } from '../loop/ports.js'
@@ -62,11 +76,20 @@ export function createMemberEventSink(deps: {
 
     loopEmitFor(stepIndex: number): LoopEventEmitPort {
       return {
-        stepFinalized(evidence: StepEvidence): void {
+        stepFinalized(
+          evidence: StepEvidence,
+          extra?: {
+            status?: StepFinalizedPayload['status']
+            durationMs?: number
+            error?: string
+          },
+        ): void {
           guardEmit(bus, () => {
+            // 363 D-01: the widened projection folds the StepResult-derived status/durationMs/error
+            // extras in — `error` is masked by projectStepFinalized's terminal walk (T-363-05).
             bus.publish(
               'stepFinalized',
-              projectStepFinalized(evidence, { testIndex, stepIndex }, mask),
+              projectStepFinalized(evidence, { testIndex, stepIndex }, mask, extra),
             )
           })
         },
@@ -79,6 +102,27 @@ export function createMemberEventSink(deps: {
           })
         },
       }
+    },
+
+    // 363 D-01 parity legs — hook lifecycle (Plan 04 producer) + retry accounting (Plan 10
+    // producer). Each rides the SAME projection + mask chokepoint as every other payload
+    // (T-363-05/T-363-06): no leg reaches the bus without crossing projection + mask.
+    hookStarted(input: HookStartedPayload): void {
+      guardEmit(bus, () => {
+        bus.publish('hookStarted', projectHookStarted(input, mask))
+      })
+    },
+    hookFinished(input: HookFinishedPayload): void {
+      guardEmit(bus, () => {
+        // stdout/stderr/error + every `variables` VALUE are masked at projection (keys preserved).
+        bus.publish('hookFinished', projectHookFinished(input, mask))
+      })
+    },
+    testRetryScheduled(input: TestRetryScheduledPayload): void {
+      guardEmit(bus, () => {
+        // Identifiers + scheduling accounting only — no captured stream, so no MaskFn (Plan 01).
+        bus.publish('testRetryScheduled', projectTestRetryScheduled(input))
+      })
     },
   }
 }

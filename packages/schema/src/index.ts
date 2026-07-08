@@ -125,6 +125,10 @@ export {
   projectStepFinalized,
   projectSubActionRecorded,
   projectTestFinished,
+  // 363 D-01 parity appends: hook lifecycle + retry projections (masked at the sink).
+  projectHookStarted,
+  projectHookFinished,
+  projectTestRetryScheduled,
 } from './run/index'
 export type { MaskFn } from './run/index'
 export type {
@@ -146,6 +150,10 @@ export type {
   StepFinalizedPayload,
   SubActionRecordedPayload,
   ChipEventPayload,
+  // 363 D-01 parity appends: hook lifecycle + retry payloads.
+  HookStartedPayload,
+  HookFinishedPayload,
+  TestRetryScheduledPayload,
 } from './run/index'
 export type { Job, JobKind, JobStatus, JobConclusionKind, JobId } from './job/index'
 export { asJobId, jobSchema } from './job/index'

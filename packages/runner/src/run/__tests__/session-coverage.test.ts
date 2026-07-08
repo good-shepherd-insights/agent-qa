@@ -346,6 +346,22 @@ const EVENT_FIXTURES: Record<RunEventType, RunEvent> = {
       screenStateHash: 'sha256:before', screenStateHashAfter: 'sha256:after',
     },
   },
+  // 363 D-01 parity appends — hook lifecycle + retry accounting (all browser-safe JSON, no handles).
+  hookStarted: {
+    seq: 12, ts: 0, runId: RID, type: 'hookStarted',
+    payload: { hookName: 'seed-db', phase: 'setup', hookExecutionId: 'hx-1', scope: 'suite' },
+  },
+  hookFinished: {
+    seq: 13, ts: 0, runId: RID, type: 'hookFinished',
+    payload: {
+      hookName: 'seed-db', phase: 'setup', hookExecutionId: 'hx-1', status: 'passed',
+      durationMs: 12, stdout: 'ok', stderr: '', variables: { SEED: 'done' },
+    },
+  },
+  testRetryScheduled: {
+    seq: 14, ts: 0, runId: RID, type: 'testRetryScheduled',
+    payload: { testId: 'a', testIndex: 0, attempt: 2, maxAttempts: 3, reason: 'flaky' },
+  },
   analysisStarted: chip('analysisStarted'),
   analysisCompleted: chip('analysisCompleted'),
   analysisFailed: chip('analysisFailed'),

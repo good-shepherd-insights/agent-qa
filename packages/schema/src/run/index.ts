@@ -31,6 +31,10 @@ export type {
   IssuesStartedPayload,
   IssuesCompletedPayload,
   IssuesFailedPayload,
+  // 363 D-01 parity appends: hook lifecycle + retry payloads.
+  HookStartedPayload,
+  HookFinishedPayload,
+  TestRetryScheduledPayload,
 } from './bus-events'
 // 361 D-10/D-09: pure masked payload projections (schema-in/schema-out).
 export {
@@ -38,5 +42,9 @@ export {
   projectStepFinalized,
   projectSubActionRecorded,
   projectTestFinished,
+  // 363 D-01 parity appends: hook lifecycle + retry projections (masked at the sink).
+  projectHookStarted,
+  projectHookFinished,
+  projectTestRetryScheduled,
 } from './bus-projections'
 export type { MaskFn } from './bus-projections'
