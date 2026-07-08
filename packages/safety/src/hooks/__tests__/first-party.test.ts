@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
+
+import {
+  getActiveAuditSink,
+  setActiveAuditSinkResolver,
+} from '../../policy/audit-sink-resolver'
+import type { ProviderRequestParams } from '../interfaces'
 
 // House style: real engine end-to-end, no mocks (349 POLICY-05 precedent). Test 3
 // drives the actual evaluate() through the actual classifier lexicon; the
@@ -102,6 +108,95 @@ describe('registerFirstPartySafetyHooks (HOOK-02 attach/block/audit)', () => {
     expect(() =>
       registerFirstPartySafetyHooks({ guardrailPolicyInput: { detectors: 'garbage' } }),
     ).toThrow(GuardrailConfigError)
+  })
+})
+
+// A user-text prompt carrying a bearer token deterministically trips the default
+// guardrail redact (mirrors guardrail/__tests__/egress-hook.ts). Driving it through
+// registry.runProviderRequest exercises the same composed sink the model egress uses.
+function bearerParams(): ProviderRequestParams {
+  return {
+    prompt: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Authorization: Bearer abcdefghijklmno12345' }],
+      },
+    ],
+  } as unknown as ProviderRequestParams
+}
+
+const mutatingSharedAction: RiskActionDescriptor = {
+  name: 'push_to_remote',
+  recognized: true,
+  declaredTier: 'mutating-shared',
+}
+
+describe('registerFirstPartySafetyHooks invocation-time sink + trust forwarding (362-01)', () => {
+  afterEach(() => {
+    setActiveAuditSinkResolver(() => undefined)
+  })
+
+  it('resolves the guardrail sink at invocation time — a resolver installed AFTER registration still receives rows (Pitfall 3)', () => {
+    // No auditSink at registration; the resolver is installed only afterwards.
+    const { registry } = registerFirstPartySafetyHooks()
+    const recordingSink = new InMemoryAuditSink()
+    setActiveAuditSinkResolver(() => recordingSink)
+
+    registry.runProviderRequest(bearerParams())
+
+    expect(recordingSink.guardrailRows).toHaveLength(1)
+    expect(recordingSink.guardrailRows[0]).toMatchObject({ action: 'redact', detector: 'bearer' })
+  })
+
+  it('prefers a directly-supplied auditSink and never consults the active resolver (Test 2)', () => {
+    const directSink = new InMemoryAuditSink()
+    const resolverSink = new InMemoryAuditSink()
+    setActiveAuditSinkResolver(() => resolverSink)
+
+    const { registry } = registerFirstPartySafetyHooks({ auditSink: directSink })
+    registry.runProviderRequest(bearerParams())
+
+    expect(directSink.guardrailRows).toHaveLength(1)
+    expect(resolverSink.guardrailRows).toHaveLength(0)
+  })
+
+  it('forwards trust to the gate — session trust mode satisfies an ask in ci (Pitfall 1, Test 3)', async () => {
+    const auditSink = new InMemoryAuditSink()
+    const { registry } = registerFirstPartySafetyHooks({
+      auditSink,
+      trust: { trustMode: true },
+      resolveExecutionContext: () => 'ci',
+    })
+
+    const result = await registry.runToolCallAsync(mutatingSharedAction)
+
+    expect(result.action).toBe('allow')
+    expect(auditSink.executionRows).toHaveLength(1)
+    expect(auditSink.executionRows[0]).toMatchObject({
+      verdict: 'allow',
+      outcome: 'proceeded',
+      trustSource: 'session-trust-mode',
+    })
+  })
+
+  it('keeps the default fail-closed posture when no trust is forwarded in ci (Test 4)', async () => {
+    const auditSink = new InMemoryAuditSink()
+    const { registry } = registerFirstPartySafetyHooks({
+      auditSink,
+      resolveExecutionContext: () => 'ci',
+    })
+
+    const result = await registry.runToolCallAsync(mutatingSharedAction)
+
+    expect(result.action).toBe('deny')
+    expect(auditSink.executionRows[0]).toMatchObject({
+      verdict: 'deny',
+      outcome: 'fail-closed-denied',
+    })
+  })
+
+  it('keeps getActiveAuditSink undefined once the default resolver is restored', () => {
+    expect(getActiveAuditSink()).toBeUndefined()
   })
 })
 
