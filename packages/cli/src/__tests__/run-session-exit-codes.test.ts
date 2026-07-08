@@ -107,6 +107,38 @@ describe('both handleShutdown paths arm + clear a bounded force-exit backstop (S
   })
 })
 
+// (f) 362-06 SEAM-01/03 — the single-test path (the 363 demo path) activates the SAME seams with the
+// SAME helpers (Pitfall 7): BOTH startRun sites are wrapped in runSafetyScope, no identity mint
+// remains anywhere in production composition, the run MaskingContext + SafetyHookRunner reach the
+// single-test runTest config, and trust reaches the gate only via the flag/config channel (D-15).
+describe('the single-test path activates the seams with no identity mint remaining (SEAM-01/03, 362-06)', () => {
+  it('wraps BOTH run bodies in runSafetyScope', () => {
+    expect(count(runSource, 'runSafetyScope(')).toBeGreaterThanOrEqual(2)
+  })
+
+  it('constructs no identity MaskingContext anywhere in production composition (Pitfall 7 warning sign)', () => {
+    expect(count(runSource, 'buildIdentityMasking')).toBe(0)
+    expect(count(compositionSource, 'buildIdentityMasking')).toBe(0)
+  })
+
+  it('builds the run MaskingContext + SafetyHookRunner at BOTH sites with the same helpers', () => {
+    expect(count(runSource, 'buildRunMaskingContext(')).toBeGreaterThanOrEqual(2)
+    expect(count(runSource, 'buildRunSafetyHooks(')).toBeGreaterThanOrEqual(2)
+  })
+
+  it('threads the run context + hooks into the single-test runTest config', () => {
+    expect(runSource).toContain('masking: singleMaskingContext')
+    expect(runSource).toContain('safetyHooks: singleSafetyHooks')
+  })
+
+  it('routes trust to the gate only via --trust-session / config.safety.trustMode (no env-var bypass, D-15)', () => {
+    expect(count(runSource, 'opts.trustSession === true || config.safety?.trustMode === true')).toBeGreaterThanOrEqual(2)
+    // No env var feeds trustMode — guard against a smuggled AGENT_QA_TRUST-style implicit grant.
+    expect(runSource).not.toMatch(/trustMode:\s*[^,\n)]*process\.env/)
+    expect(runSource).not.toMatch(/process\.env\.[A-Z_]*TRUST/)
+  })
+})
+
 // (d) The config/setup exit-2 convention is untouched (D-14): exit 2 stays reserved for
 // config/setup errors and is NOT produced by the verdict map.
 describe('the config/setup exit-2 convention survives the cutover (D-14)', () => {

@@ -8,7 +8,6 @@ import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   computeRunConfigDigests,
-  buildIdentityMasking,
   buildRunPorts,
   createSuiteLifecycle,
   resolveRunExecutionContext,
@@ -74,22 +73,6 @@ describe('computeRunConfigDigests (D-20 — one mint)', () => {
     })
     expect(d.perMember[0].suiteConfigDigest).toMatch(/^[0-9a-f]{16}$/)
     expect(d.runLevel).toEqual(d.perMember[0])
-  })
-})
-
-// D-09 / Pitfall 2: the identity MaskingContext is constructed UNCONDITIONALLY — the masking
-// seam exists cache-on or cache-off; Phase 362 seeds the real redactor at this exact point.
-describe('buildIdentityMasking (D-09 — decoupled from cache)', () => {
-  it('returns an identity masking context regardless of any cache-enabled flag', () => {
-    for (const _cacheEnabled of [true, false]) {
-      const m = buildIdentityMasking()
-      expect(m.mask('secret-value')).toBe('secret-value')
-      expect(m.unmask('secret-value')).toBe('secret-value')
-    }
-  })
-
-  it('takes no cache-enablement parameter', () => {
-    expect(buildIdentityMasking).toHaveLength(0)
   })
 })
 
