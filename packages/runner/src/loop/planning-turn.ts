@@ -25,7 +25,12 @@
 // zod schemaInvalid grounding error from toolCallToActionPlan (D-09 / T-353-05).
 import { generateText } from 'ai'
 import type { LanguageModel, ModelMessage, SystemModelMessage, Tool, ToolCallPart, ToolResultPart, ToolSet } from 'ai'
-import type { GroundingAttempt } from '@vostride/agent-qa-schema'
+import type {
+  GroundingAttempt,
+  ModelCallRecord,
+  SamplingParams,
+  ToolExchangeEvidence,
+} from '@vostride/agent-qa-schema'
 import type { ActionPlan } from './types.js'
 import type { TokenUsage } from '../result.js'
 import type { LoopScopedLogger } from './ports.js'
@@ -57,14 +62,10 @@ export type NonActionToolMap = Record<string, NonActionToolHandler>
 
 /**
  * An ordered record of one executed non-action tool call within a planning turn
- * (§B1). Kept in-memory on the turn result for M1b's cassette extractor; NO schema
- * field is minted for it in this phase (Deferred Ideas fence).
+ * (§B1). Exchanges persist on SubActionEvidence for successful decisions (INST-01,
+ * D-01) and PlanningFailureEvidence for failed turns (D-03).
  */
-export interface ToolExchange {
-  tool: string
-  args: Record<string, unknown>
-  result: unknown
-}
+export type ToolExchange = ToolExchangeEvidence
 
 export type PlanningTurnFailureReason =
   | 'no_action_tool_called'
@@ -96,6 +97,7 @@ export interface PlanningTurnSuccess {
   plan: ActionPlan
   exchanges: ToolExchange[]
   tokenUsage?: TokenUsage
+  callRecord?: ModelCallRecord
 }
 
 export interface PlanningTurnFailure {
@@ -104,6 +106,7 @@ export interface PlanningTurnFailure {
   message: string
   exchanges: ToolExchange[]
   tokenUsage?: TokenUsage
+  callRecord?: ModelCallRecord
 }
 
 export type PlanningTurnResult = PlanningTurnSuccess | PlanningTurnFailure
@@ -142,8 +145,32 @@ export interface ExecutePlanningTurnOptions {
    * computes no clamp of its own (D-15/Pitfall 5).
    */
   maxOutputTokens?: number
+  /**
+   * Optional sampling parameters applied at the model call site (D-10/D-11). Every
+   * field is optional and absence preserves the provider default. `maxOutputTokens`
+   * is deliberately excluded because the output ceiling remains clamp-owned.
+   */
+  sampling?: SamplingParams
   abortSignal?: AbortSignal
   logger?: LoopScopedLogger
+}
+
+function appliedSampling(sampling: SamplingParams | undefined): SamplingParams | undefined {
+  if (
+    sampling?.temperature === undefined &&
+    sampling?.topP === undefined &&
+    sampling?.stop === undefined &&
+    sampling?.seed === undefined
+  ) {
+    return undefined
+  }
+
+  return {
+    ...(sampling.temperature !== undefined ? { temperature: sampling.temperature } : {}),
+    ...(sampling.topP !== undefined ? { topP: sampling.topP } : {}),
+    ...(sampling.stop !== undefined ? { stop: sampling.stop } : {}),
+    ...(sampling.seed !== undefined ? { seed: sampling.seed } : {}),
+  }
 }
 
 /** Defensive tool-call arg extraction across SDK key variants (v1 planner.ts:104-110). */
@@ -194,6 +221,7 @@ export async function executePlanningTurn(
 ): Promise<PlanningTurnResult> {
   const budgetLimit = options.budget ?? DEFAULT_NON_ACTION_TOOL_BUDGET
   const nonActionTools = options.nonActionTools ?? {}
+  const effectiveSampling = appliedSampling(options.sampling)
 
   // Always-send-all: the full v45 action slice plus any caller-registered non-action
   // tools. The surface never shrinks or gates (D-07).
@@ -208,6 +236,7 @@ export async function executePlanningTurn(
   let promptTokens = 0
   let completionTokens = 0
   let usageSeen = false
+  let lastResponseModelId: string | undefined
   let rePromptedForNoTool = false
   let budgetErrorInjected = false
   // D-09 turn-local one-shot: a boolean, never a counter (LOOP-02). Once a grounding
@@ -219,6 +248,14 @@ export async function executePlanningTurn(
     usageSeen
       ? { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens }
       : undefined
+
+  const callRecord = (): ModelCallRecord => ({
+    ...(lastResponseModelId !== undefined ? { resolvedModelId: lastResponseModelId } : {}),
+    ...(options.maxOutputTokens !== undefined
+      ? { effectiveMaxOutputTokens: options.maxOutputTokens }
+      : {}),
+    ...(effectiveSampling !== undefined ? { effectiveSampling } : {}),
+  })
 
   // Iteration backstop: at most K executed non-action calls, plus the exhaustion
   // re-prompt, the no-tool re-prompt, the terminating action response, and the one
@@ -232,12 +269,22 @@ export async function executePlanningTurn(
       model: options.model,
       maxRetries: 0,
       maxOutputTokens: options.maxOutputTokens,
+      ...(options.sampling?.temperature !== undefined
+        ? { temperature: options.sampling.temperature }
+        : {}),
+      ...(options.sampling?.topP !== undefined ? { topP: options.sampling.topP } : {}),
+      ...(options.sampling?.stop !== undefined
+        ? { stopSequences: options.sampling.stop }
+        : {}),
+      ...(options.sampling?.seed !== undefined ? { seed: options.sampling.seed } : {}),
       tools: combinedTools,
       toolChoice: 'required',
       system: options.system,
       abortSignal: options.abortSignal,
       messages,
     })
+
+    lastResponseModelId = result.response?.modelId
 
     if (result.usage) {
       usageSeen = true
@@ -263,6 +310,7 @@ export async function executePlanningTurn(
         message: 'Model produced no action tool call after a re-prompt.',
         exchanges,
         tokenUsage: tokenUsage(),
+        callRecord: callRecord(),
       }
     }
 
@@ -328,6 +376,7 @@ export async function executePlanningTurn(
               message: grounded.message,
               exchanges,
               tokenUsage: tokenUsage(),
+              callRecord: callRecord(),
             }
           }
           groundingErrorInjected = true
@@ -348,7 +397,7 @@ export async function executePlanningTurn(
         if (grounded.attempts) plan.groundingAttempts = grounded.attempts
       }
 
-      return { ok: true, plan, exchanges, tokenUsage: tokenUsage() }
+      return { ok: true, plan, exchanges, tokenUsage: tokenUsage(), callRecord: callRecord() }
     }
 
     // No action this response — append the model's tool calls and their results so the
@@ -368,6 +417,7 @@ export async function executePlanningTurn(
           message: BUDGET_EXHAUSTED_MESSAGE,
           exchanges,
           tokenUsage: tokenUsage(),
+          callRecord: callRecord(),
         }
       }
       budgetErrorInjected = true
@@ -381,5 +431,6 @@ export async function executePlanningTurn(
     message: 'Planning turn exceeded its iteration backstop.',
     exchanges,
     tokenUsage: tokenUsage(),
+    callRecord: callRecord(),
   }
 }
