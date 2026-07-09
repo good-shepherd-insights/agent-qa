@@ -134,7 +134,6 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
   const stepTimeout = getIn(['use', 'timeout', 'step']) as string | undefined
   const testTimeout = getIn(['use', 'timeout', 'test']) as string | undefined
   const navTimeout = getIn(['use', 'timeout', 'navigation']) as string | undefined
-  const healingMaxAttempts = getIn(['use', 'healing', 'maxAttempts']) as number | undefined
   const plannerMaxSubActions = getIn(['use', 'planner', 'maxSubActions']) as number | undefined
   const plannerPrevStepCount = getIn(['use', 'planner', 'previousStepCount']) as number | undefined
   const logConsole = getIn(['use', 'logCapture', 'console']) as boolean | undefined
@@ -406,17 +405,6 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
       <div className="space-y-2">
         <span className="text-sm font-semibold text-foreground tracking-tight">Agent</span>
         <div className="grid grid-cols-3 gap-2">
-          <div className="space-y-0.5">
-            <Label className="text-[11px] text-muted-foreground">Heal Attempts</Label>
-            <Input
-              type="number"
-              min={0}
-              value={healingMaxAttempts ?? ''}
-              onChange={(e) => handleSet(['use', 'healing', 'maxAttempts'], e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={ih(g?.healing?.maxAttempts ?? 3)}
-              className="h-7 text-xs"
-            />
-          </div>
           <div className="space-y-0.5">
             <Label className="text-[11px] text-muted-foreground">Sub-Actions</Label>
             <Input

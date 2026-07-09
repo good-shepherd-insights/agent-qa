@@ -205,16 +205,6 @@ const CONFIG_ITEMS = [
   {
     bucket: 'use',
     bucketLabel: 'Use',
-    item: 'healing',
-    itemLabel: 'Healing',
-    title: 'Healing',
-    description: 'Set default healing attempts and related runtime behavior.',
-    fieldPaths: ['use.healing'],
-    aliases: ['healing', 'retry'],
-  },
-  {
-    bucket: 'use',
-    bucketLabel: 'Use',
     item: 'planner',
     itemLabel: 'Planner',
     title: 'Planner',

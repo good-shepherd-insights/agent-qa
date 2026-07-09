@@ -102,7 +102,6 @@ function formatOverrideSummary(overrides: StepOverrides): string | null {
   if (overrides.timeout) parts.push(`TIMEOUT: ${overrides.timeout.toUpperCase()}`)
   if (overrides.retries != null) parts.push(`RETRIES: ${overrides.retries}`)
   if (overrides.screenshot != null) parts.push(`SCREENSHOT: ${overrides.screenshot ? 'ON' : 'OFF'}`)
-  if (overrides.maxAttempts != null) parts.push(`MAX ATTEMPTS: ${overrides.maxAttempts}`)
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
@@ -452,22 +451,6 @@ export function StepCardEditor({
                 value={overrides.retries ?? ''}
                 onChange={(event) => onOverrideChange(index, 'retries', event.target.value ? Number(event.target.value) : undefined)}
                 placeholder="0"
-                disabled={disabled}
-                className="h-8 text-xs"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <Label htmlFor={`step-${index}-maxAttempts`} className="text-[11px] text-muted-foreground">
-                Max Attempts
-              </Label>
-              <Input
-                id={`step-${index}-maxAttempts`}
-                type="number"
-                min={1}
-                value={overrides.maxAttempts ?? ''}
-                onChange={(event) => onOverrideChange(index, 'maxAttempts', event.target.value ? Number(event.target.value) : undefined)}
-                placeholder="1"
                 disabled={disabled}
                 className="h-8 text-xs"
               />

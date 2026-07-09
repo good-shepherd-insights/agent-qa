@@ -20,7 +20,6 @@ export interface GlobalUseConfig {
   browser?: { name?: string; headless?: boolean; viewport?: { width?: number; height?: number } }
   mobile?: { appState?: 'preserve' | 'reset' }
   timeout?: { step?: string; test?: string; navigation?: string }
-  healing?: { maxAttempts?: number }
   planner?: { maxSubActions?: number; previousStepCount?: number }
   logCapture?: { console?: boolean; network?: boolean }
   llm?: string

@@ -83,7 +83,6 @@ describe('yamlToFormState', () => {
     expect(state!.steps[0].overrides.timeout).toBe('30s')
     expect(state!.steps[0].overrides.retries).toBe(3)
     expect(state!.steps[0].overrides.screenshot).toBeUndefined()
-    expect(state!.steps[0].overrides.maxAttempts).toBeUndefined()
   })
 
   it('parses setup and teardown hooks from YAML', () => {

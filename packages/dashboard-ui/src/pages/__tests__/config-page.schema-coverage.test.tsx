@@ -113,7 +113,6 @@ const { sampleConfig } = vi.hoisted(() => ({
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
     timeout: { step: '30s', test: '10m', navigation: '10s' },
-    healing: { maxAttempts: 3 },
     planner: { maxSubActions: 20, previousStepCount: 5 },
     logCapture: { console: true, network: true },
     llm: 'anthropic-compatible',
@@ -193,7 +192,6 @@ const EXPECTED_DESTINATIONS = [
   'registry:providers',
   'use:browser',
   'use:timeouts',
-  'use:healing',
   'use:planner',
   'use:log-capture',
   'use:mobile',
@@ -219,7 +217,6 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'registry:providers': { title: 'Providers', marker: 'BrowserStack' },
   'use:browser': { title: 'Browser', marker: 'Viewport Width' },
   'use:timeouts': { title: 'Timeouts', marker: 'Step Timeout' },
-  'use:healing': { title: 'Healing', marker: 'Max Healing Attempts' },
   'use:planner': { title: 'Planner', marker: 'Max Sub-Actions' },
   'use:log-capture': { title: 'Log Capture', marker: 'Capture network logs' },
   'use:mobile': { title: 'Mobile', marker: 'App state' },
@@ -506,7 +503,6 @@ describe('ConfigPage schema coverage', () => {
     await assertConfigSectionShells([
       'use:browser',
       'use:timeouts',
-      'use:healing',
       'use:planner',
       'use:log-capture',
     ])

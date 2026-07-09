@@ -28,7 +28,6 @@ describe('config navigation inventory', () => {
       'registry:providers',
       'use:browser',
       'use:timeouts',
-      'use:healing',
       'use:planner',
       'use:log-capture',
       'use:mobile',

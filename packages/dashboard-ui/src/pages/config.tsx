@@ -28,7 +28,6 @@ import {
 import { ConfigLineNotice } from "@/components/config-manager/config-section-shell"
 import { LlmSection } from "@/components/config-manager/llm-section"
 import { TimeoutSection } from "@/components/config-manager/timeout-section"
-import { HealingSection } from "@/components/config-manager/healing-section"
 import { CacheSection } from "@/components/config-manager/cache-section"
 import { AuthStatesSection } from "@/components/config-manager/auth-states-section"
 import { LoggingSection } from "@/components/config-manager/logging-section"
@@ -73,7 +72,6 @@ const SECTION_COMPONENTS: Record<string, ComponentType<SectionProps>> = {
   'registry:providers': ProvidersSection,
   'use:browser': BrowserSection,
   'use:timeouts': TimeoutSection,
-  'use:healing': HealingSection,
   'use:planner': PlannerSection,
   'use:log-capture': LogCaptureSection,
   'use:mobile': MobileSection,
