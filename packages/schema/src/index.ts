@@ -71,12 +71,14 @@ export {
   screenStateHash,
   relevantEnvDigest,
   computeCacheKey,
+  computeToolSchemaDigest,
 } from './determinism/index'
 export type {
   CacheKey,
   CacheableStepInput,
   NonCacheableStepInput,
   RedactedEnvVar,
+  ToolSurfaceEntry,
 } from './determinism/index'
 
 // 314 async-seam
