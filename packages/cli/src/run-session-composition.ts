@@ -41,6 +41,7 @@ import type {
 } from './reporters/index.js'
 // Type-only (erased at build; schema is a type-only devDependency, 363-07). The bus subscriber
 // handlers name the real envelope type without a runtime schema coupling.
+import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { MaskingContext, RunEventEnvelope } from '@vostride/agent-qa-schema'
 import {
   FsEventLog,
@@ -813,6 +814,9 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     masking: input.masking,
     workingMemory: input.workingMemory,
     storageState: input.storageState,
+    // CTXB-06: model's canonical compaction (compactLogs for log bursts, guardBlob
+    // otherwise) replaces the runner-local ceiling fallback on every tool-output value.
+    guardBlob: guardToolOutput,
     compressor: input.compressor,
     safetyHooks: input.safetyHooks,
     configDigests: input.configDigests,

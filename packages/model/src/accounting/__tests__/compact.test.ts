@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { compactLogs, guardBlob, type LogEntry } from '../compact.js'
+import { compactLogs, guardBlob, guardToolOutput, type LogEntry } from '../compact.js'
 
 const TRUNCATION_MARKER = '…[truncated to fit context budget]'
 
@@ -128,5 +128,55 @@ describe('guardBlob (D-14)', () => {
   it('is deterministic (same input ⇒ same output)', () => {
     const value = { a: 1, b: [2, 3], c: 'four' }
     expect(guardBlob(value)).toBe(guardBlob(value))
+  })
+})
+
+describe('guardToolOutput — log-shape routing', () => {
+  it('routes a console-shaped burst through compactLogs (grouped, ≤5 samples)', () => {
+    const burst = Array.from({ length: 40 }, (_, i) => ({
+      level: 'error',
+      text: `fetch failed for item ${i}`,
+      timestamp: 1751970000000 + i,
+    }))
+    const out = guardToolOutput(burst)
+    expect(out).toContain('[console] error ×40: fetch failed for item <*>')
+    expect(sampleLines(out ?? '').length).toBeLessThanOrEqual(5)
+  })
+
+  it('routes a network-shaped burst through compactLogs keyed by method/url/status', () => {
+    const burst = Array.from({ length: 12 }, (_, i) => ({
+      url: `https://api.example.com/items/${i}`,
+      method: 'GET',
+      status: 500,
+    }))
+    const out = guardToolOutput(burst)
+    expect(out).toContain('[network] 500 ×12: GET https://api.example.com/items/<*>')
+  })
+
+  it('falls back to guardBlob for non-log arrays and scalar/object values', () => {
+    const elements = [{ role: 'button', name: 'Save' }]
+    expect(guardToolOutput(elements)).toBe(guardBlob(elements))
+    expect(guardToolOutput('plain string')).toBe(guardBlob('plain string'))
+    expect(guardToolOutput({ a: 1 })).toBe(guardBlob({ a: 1 }))
+    expect(guardToolOutput(undefined)).toBeUndefined()
+  })
+
+  it('bounds compacted output at the blob ceiling with the visible marker', () => {
+    const burst = Array.from({ length: 3000 }, (_, i) => ({
+      level: 'log',
+      text: `wholly-distinct-alpha-${'x'.repeat(i % 97)}-beta`,
+      source: `src-${'y'.repeat(i % 89)}`,
+    }))
+    const out = guardToolOutput(burst)
+    expect(out?.length).toBeLessThanOrEqual(8000 + TRUNCATION_MARKER.length)
+    expect(out?.endsWith(TRUNCATION_MARKER)).toBe(true)
+  })
+
+  it('is deterministic (same burst ⇒ same output)', () => {
+    const burst = [
+      { level: 'warn', text: 'slow response 1200ms' },
+      { level: 'warn', text: 'slow response 3400ms' },
+    ]
+    expect(guardToolOutput(burst)).toBe(guardToolOutput(burst))
   })
 })

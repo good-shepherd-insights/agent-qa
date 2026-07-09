@@ -88,6 +88,50 @@ export function guardBlob(value: unknown): string | undefined {
   return str.slice(0, BLOB_CEILING) + TRUNCATION_MARKER
 }
 
+type ConsoleShaped = { text?: unknown; message?: unknown; level?: unknown; source?: unknown }
+type NetworkShaped = { url?: unknown; method?: unknown; status?: unknown }
+
+function asLogEntry(value: unknown): LogEntry | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const c = value as ConsoleShaped
+  const text = typeof c.text === 'string' ? c.text : typeof c.message === 'string' ? c.message : undefined
+  if (text !== undefined) {
+    return {
+      source: typeof c.source === 'string' ? c.source : 'console',
+      level: typeof c.level === 'string' ? c.level : undefined,
+      message: text,
+    }
+  }
+  const n = value as NetworkShaped
+  if (typeof n.url === 'string' && typeof n.method === 'string') {
+    return {
+      source: 'network',
+      level: n.status === undefined ? undefined : String(n.status),
+      message: `${n.method} ${n.url}`,
+    }
+  }
+  return undefined
+}
+
+/**
+ * The composed pre-prompt guard for one tool-output value (CTXB-06): a burst of
+ * log-shaped entries (console `{level, text}` / network `{url, method, status}` /
+ * generic `{source?, level?, message}`) routes through {@link compactLogs};
+ * anything else through {@link guardBlob}. Compacted output is still bounded by
+ * the blob ceiling so a burst of all-distinct classes cannot flood the prompt.
+ */
+export function guardToolOutput(value: unknown): string | undefined {
+  if (Array.isArray(value) && value.length > 0) {
+    const entries = value.map(asLogEntry)
+    if (entries.every((e): e is LogEntry => e !== undefined)) {
+      const compacted = compactLogs(entries)
+      if (compacted.length <= BLOB_CEILING) return compacted
+      return compacted.slice(0, BLOB_CEILING) + TRUNCATION_MARKER
+    }
+  }
+  return guardBlob(value)
+}
+
 /** Cycle-safe stringify preserving key order (verbatim, D-14); never throws (V5). */
 function safeStringify(value: unknown): string {
   const seen = new WeakSet<object>()
