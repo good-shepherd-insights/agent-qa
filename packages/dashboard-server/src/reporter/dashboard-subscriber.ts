@@ -103,12 +103,36 @@ interface TestFinishedLike {
   retryCount?: number
 }
 
+interface StepStartedLike {
+  testIndex?: number
+  stepIndex?: number
+  stepText?: string
+}
+
 interface StepFinalizedLike {
   testIndex?: number
   stepIndex?: number
   status?: string
   durationMs?: number
   error?: string
+}
+
+interface HookFinishedLike {
+  hookName?: string
+  phase?: string
+  hookExecutionId?: string
+  hookId?: string
+  testIndex?: number
+  status?: string
+  durationMs?: number
+  stdout?: string
+  stderr?: string
+  variables?: Record<string, string>
+  kind?: string
+}
+
+interface TestRetryScheduledLike {
+  testIndex?: number
 }
 
 interface VerdictLike {
@@ -176,6 +200,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   let runId: string | undefined
   /** Child rows created per test in suite mode, keyed by envelope `testIndex`. */
   const childRunIds = new Map<number, string>()
+  /** `stepStarted.stepText` cached per `testIndex:stepIndex` for the step-row name. */
+  const stepNames = new Map<string, string>()
   let startedAtMs = 0
   let finalized = false
 
@@ -349,6 +375,17 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     })
   }
 
+  function stepNameKey(testIndex: number | undefined, stepIndex: number): string {
+    return `${testIndex ?? 0}:${stepIndex}`
+  }
+
+  function handleStepStarted(payload: StepStartedLike): void {
+    const stepText = readString(payload.stepText)
+    if (stepText === undefined) return
+    const stepIndex = typeof payload.stepIndex === 'number' ? payload.stepIndex : 0
+    stepNames.set(stepNameKey(payload.testIndex, stepIndex), stepText)
+  }
+
   function handleStepFinalized(payload: StepFinalizedLike): void {
     const id = targetForTest(payload)
     if (!id) return
@@ -356,7 +393,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     try {
       db.insertStep({
         runId: id,
-        name: `Step ${stepIndex + 1}`,
+        name: stepNames.get(stepNameKey(payload.testIndex, stepIndex)) ?? `Step ${stepIndex + 1}`,
         status: payload.status ?? 'passed',
         duration: typeof payload.durationMs === 'number' ? payload.durationMs : 0,
         error: readString(payload.error),
@@ -365,6 +402,48 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     } catch {
       // Step rows are progress detail — a projection status the CHECK rejects must not
       // darken the run row (Pitfall 1 protects runs/run_artifacts, not steps).
+    }
+  }
+
+  function handleHookFinished(payload: HookFinishedLike): void {
+    // `skipped` hooks carry no output and the execution_logs CHECK only admits
+    // passed|failed — the deleted DashboardReporter had the same contract.
+    if (payload.status !== 'passed' && payload.status !== 'failed') return
+    const id = targetForTest(payload) ?? runId
+    if (!id) return
+    const kind = payload.kind
+    try {
+      db.insertExecutionLog({
+        id: readString(payload.hookExecutionId) ?? `${id}-hook-${now()}`,
+        runId: id,
+        type: kind === 'appium-script' || kind === 'runjs' ? kind : 'hook',
+        name: readString(payload.hookName) ?? 'hook',
+        hookId: readString(payload.hookId) ?? null,
+        phase: payload.phase === 'setup' || payload.phase === 'teardown' ? payload.phase : 'inline',
+        status: payload.status,
+        duration: typeof payload.durationMs === 'number' ? payload.durationMs : 0,
+        stdout: readString(payload.stdout) ?? null,
+        stderr: readString(payload.stderr) ?? null,
+        variables: payload.variables ?? null,
+      })
+    } catch {
+      // Hook rows are progress detail — same non-darkening rule as step rows.
+    }
+  }
+
+  function handleTestRetryScheduled(payload: TestRetryScheduledLike): void {
+    // Only the final attempt emits the authoritative testFinished; step rows from the
+    // abandoned attempt would otherwise duplicate the re-run stepIndexes (§2.2).
+    const id = targetForTest(payload)
+    if (!id) return
+    try {
+      db.deleteStepsForRun(id)
+    } catch {
+      // Same non-darkening rule.
+    }
+    const prefix = `${payload.testIndex ?? 0}:`
+    for (const key of stepNames.keys()) {
+      if (key.startsWith(prefix)) stepNames.delete(key)
     }
   }
 
@@ -396,8 +475,17 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
         case 'testFinished':
           handleTestFinished(envelope.payload as TestFinishedLike)
           break
+        case 'stepStarted':
+          handleStepStarted(envelope.payload as StepStartedLike)
+          break
         case 'stepFinalized':
           handleStepFinalized(envelope.payload as StepFinalizedLike)
+          break
+        case 'hookFinished':
+          handleHookFinished(envelope.payload as HookFinishedLike)
+          break
+        case 'testRetryScheduled':
+          handleTestRetryScheduled(envelope.payload as TestRetryScheduledLike)
           break
         case 'verdict':
           // Terminal aggregate; runFinished performs the finalize sweep.
@@ -409,7 +497,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           handleRunFinished((envelope.payload as RunFinishedLike).aggregateVerdict)
           break
         default:
-          // Unknown/unhandled envelope types (hooks, heartbeats, chips) are ignored.
+          // Unknown/unhandled envelope types (hookStarted, heartbeats, chips) are ignored.
           break
       }
     },

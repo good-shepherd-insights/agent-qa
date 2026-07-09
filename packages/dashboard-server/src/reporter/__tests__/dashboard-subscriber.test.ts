@@ -190,6 +190,85 @@ describe('createDashboardRunIngest', () => {
     }
   })
 
+  it('step rows carry the stepStarted instruction text, not a generic "Step N" label', () => {
+    const runId = 'r_named-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const ingest = createDashboardRunIngest({
+      db,
+      sourceSnapshot: testSource(),
+      attributes,
+      correlationEnv: { runId },
+      now: () => '2026-07-09T00:00:00.000Z',
+    })
+    ingest.handler(ev('run-bus', 'runStarted', {}))
+    ingest.handler(ev('run-bus', 'testStarted', { testIndex: 0 }))
+    ingest.handler(ev('run-bus', 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'Open Apple Maps' }))
+    ingest.handler(ev('run-bus', 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 100 }))
+    ingest.handler(ev('run-bus', 'stepFinalized', { testIndex: 0, stepIndex: 1, status: 'passed', durationMs: 50 }))
+
+    const steps = db.getSteps(runId)
+    expect(steps.map((s) => s.name)).toEqual(['Open Apple Maps', 'Step 2'])
+  })
+
+  it('hookFinished writes an execution_logs row with stdout/stderr/variables', () => {
+    const runId = 'r_hooked-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const ingest = createDashboardRunIngest({
+      db,
+      sourceSnapshot: testSource(),
+      attributes,
+      correlationEnv: { runId },
+      now: () => '2026-07-09T00:00:00.000Z',
+    })
+    ingest.handler(ev('run-bus', 'runStarted', {}))
+    ingest.handler(ev('run-bus', 'testStarted', { testIndex: 0 }))
+    ingest.handler(ev('run-bus', 'hookFinished', {
+      hookName: 'seed-db',
+      phase: 'setup',
+      hookExecutionId: 'hx-1',
+      scope: 'test',
+      testIndex: 0,
+      status: 'passed',
+      durationMs: 340,
+      stdout: 'seeded 3 rows',
+      stderr: '',
+      variables: { USER_ID: 'u-1' },
+    }))
+    // skipped hooks carry no output and are not persisted (CHECK admits passed|failed)
+    ingest.handler(ev('run-bus', 'hookFinished', {
+      hookName: 'optional-hook', phase: 'teardown', hookExecutionId: 'hx-2',
+      status: 'skipped', durationMs: 0, stdout: '', stderr: '', variables: {},
+    }))
+
+    const logs = db.getExecutionLogs({ runId })
+    expect(logs).toHaveLength(1)
+    expect(logs[0].name).toBe('seed-db')
+    expect(logs[0].stdout).toBe('seeded 3 rows')
+    expect(logs[0].variables).toEqual({ USER_ID: 'u-1' })
+  })
+
+  it('testRetryScheduled drops the abandoned attempt so step rows never duplicate', () => {
+    const runId = 'r_retried-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const ingest = createDashboardRunIngest({
+      db,
+      sourceSnapshot: testSource(),
+      attributes,
+      correlationEnv: { runId },
+      now: () => '2026-07-09T00:00:00.000Z',
+    })
+    ingest.handler(ev('run-bus', 'runStarted', {}))
+    ingest.handler(ev('run-bus', 'testStarted', { testIndex: 0 }))
+    ingest.handler(ev('run-bus', 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'Login' }))
+    ingest.handler(ev('run-bus', 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'failed', durationMs: 80 }))
+    ingest.handler(ev('run-bus', 'testRetryScheduled', { testId: 't-1', testIndex: 0, attempt: 2, maxAttempts: 2 }))
+    ingest.handler(ev('run-bus', 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'Login' }))
+    ingest.handler(ev('run-bus', 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 90 }))
+    ingest.handler(ev('run-bus', 'testFinished', { testIndex: 0, outcome: 'passed', durationMs: 400 }))
+
+    const steps = db.getSteps(runId)
+    expect(steps).toHaveLength(1)
+    expect(steps[0].status).toBe('passed')
+    expect(steps[0].name).toBe('Login')
+  })
+
   it('finalize is idempotent and safe when no run was ever started', async () => {
     const ingest = createDashboardRunIngest({ db, correlationEnv: { runId: 'r_never-started' } })
     await expect(ingest.finalize()).resolves.toBeUndefined()

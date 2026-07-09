@@ -460,6 +460,15 @@ export class DashboardDatabase {
     this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
   }
 
+  /** Drop a run's accumulated step rows (and their traces) — a scheduled retry re-runs the same stepIndexes. */
+  deleteStepsForRun(runId: string): void {
+    this.db.prepare(`
+      DELETE FROM reasoning_traces
+      WHERE step_id IN (SELECT id FROM steps WHERE run_id = ?)
+    `).run(runId)
+    this.db.prepare('DELETE FROM steps WHERE run_id = ?').run(runId)
+  }
+
   insertStep(step: {
     id?: string
     runId: string
