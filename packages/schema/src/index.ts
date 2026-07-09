@@ -94,12 +94,18 @@ export type { ServedBrief, BriefLine, ReadTrace, CautionLine } from './brief/ind
 export type {
   CompletedRunHandoff,
   CycleEvidence,
+  DeclaredModelProfile,
   LocalEffectEvidence,
+  ModelCallRecord,
+  ModelIdentity,
   PerTestOutcome,
+  PlanningFailureEvidence,
+  SamplingParams,
   StagnationClass,
   StagnationEvidence,
   StepEvidence,
   SubActionEvidence,
+  ToolExchangeEvidence,
 } from './handoff/index'
 // 360 termination-verb & AI-assertion evidence vocabulary (EXEC-05/EXEC-07)
 export type {
