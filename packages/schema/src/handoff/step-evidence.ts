@@ -2,8 +2,10 @@ import type { Action } from '../action/index'
 import type { ServedBrief } from '../brief/served-brief'
 import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
 import type { RecordedActionResult } from '../result/index'
+import type { DeclaredModelProfile, ModelIdentity } from './model-call-profile'
 import type { CycleEvidence, StagnationEvidence } from './progress-evidence'
 import type { SubActionEvidence } from './sub-action-evidence'
+import type { PlanningFailureEvidence } from './tool-exchange'
 import type {
   AiJudgmentEvidence,
   AssertValueEvidence,
@@ -33,10 +35,32 @@ export interface StepEvidence {
    * (WM-01, §12.15), masked. Planner INPUT recorded BESIDE the brief — never a
    * `ServedBrief` channel (§A11 stays exactly the three memidex channels). Ratified
    * 2026-07-03; the structured-entry shape lands with Phase 358.
-   */
+  */
   workingMemory?: WorkingMemoryEntry[]
+  /**
+   * The run's configured decision context, embedded per step including cache-hit steps
+   * (D-06). New runs populate it by construction; it remains optional only for structural
+   * absence in port-less harnesses under the D-04 version rule.
+   */
+  modelProfile?: DeclaredModelProfile
+  /**
+   * The deterministic 64-hex digest of the run platform's bound tool surface (INST-04,
+   * D-16). It is its own receipt component because tool surface and model identity are
+   * independent attribution inputs.
+   */
+  toolSchemaDigest?: string
   subActions: SubActionEvidence[]
   verifierVerdict: VerifierVerdict
+  /**
+   * The verifier's declared identity recorded beside its verdict (D-07), without widening
+   * the broadly constructed `VerifierVerdict` value.
+   */
+  verifierIdentity?: ModelIdentity
+  /**
+   * The failed planning-turn block (D-03). Present only when planning failed structurally,
+   * preserving that turn's exchanges instead of silently losing them.
+   */
+  planningFailure?: PlanningFailureEvidence
   /**
    * The stagnation tree state at a terminal `stepFailed` (CYCLE-02, D-07). Present only
    * when the step failed after the bounded per-element ladder exhausted.

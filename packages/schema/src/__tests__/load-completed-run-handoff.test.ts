@@ -41,16 +41,16 @@ function makeValidHandoff(): CompletedRunHandoff {
 }
 
 describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
-  it('returns a typed handoff for a valid schemaVersion 1 document', () => {
+  it('returns a typed handoff for a valid schemaVersion 2 document', () => {
     const doc = makeValidHandoff()
     const guarded = guardCompletedRunHandoff(doc)
-    expect(guarded.schemaVersion).toBe(1)
+    expect(guarded.schemaVersion).toBe(2)
     expect(guarded.runId).toBe('run-abc')
     expect(guarded.aggregateVerdict).toBe('passed')
   })
 
-  it('rejects a newer-than-known schemaVersion 2 with a typed HandoffVersionError', () => {
-    const doc = { ...makeValidHandoff(), schemaVersion: 2 }
+  it('rejects a pre-INST schemaVersion 1 with no migration registered', () => {
+    const doc = { ...makeValidHandoff(), schemaVersion: 1 }
     let thrown: unknown
     try {
       guardCompletedRunHandoff(doc)
@@ -59,9 +59,24 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     }
     expect(thrown).toBeInstanceOf(HandoffVersionError)
     const err = thrown as HandoffVersionError
-    // The typed error carries both the found and the supported version.
-    expect(err.foundVersion).toBe(2)
-    expect(err.supportedVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
+    expect(err.message).toContain('schemaVersion 1')
+    expect(err.message).toContain('supports 2')
+    expect(err.foundVersion).toBe(1)
+    expect(err.supportedVersion).toBe(2)
+  })
+
+  it('rejects a newer-than-known schemaVersion 3 with a typed HandoffVersionError', () => {
+    const doc = { ...makeValidHandoff(), schemaVersion: 3 }
+    let thrown: unknown
+    try {
+      guardCompletedRunHandoff(doc)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(HandoffVersionError)
+    const err = thrown as HandoffVersionError
+    expect(err.foundVersion).toBe(3)
+    expect(err.supportedVersion).toBe(2)
   })
 
   it('throws for a non-numeric schemaVersion', () => {
@@ -75,9 +90,8 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(() => guardCompletedRunHandoff(withoutVersion as CompletedRunHandoff)).toThrow()
   })
 
-  it('exposes an (empty at v1) migration table — the older-version seam, not a rewrite', () => {
+  it('leaves the migration table empty at v2 so schemaVersion 1 stays unreadable', () => {
     expect(HANDOFF_MIGRATIONS).toBeDefined()
-    // v1 is the first schema version: no older versions to migrate yet.
     expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
   })
 })
