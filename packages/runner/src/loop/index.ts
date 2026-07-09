@@ -850,7 +850,11 @@ export async function executeStep(
         const av = action as { source?: unknown; expr?: unknown; op?: unknown; expected?: unknown }
         const source = typeof av.source === 'string' ? av.source : (av.expr !== undefined ? 'expr-result' : 'unknown')
         const rawActual = read.result.data
-        const actual = rawActual === null || rawActual === undefined ? (rawActual as null | undefined) : String(rawActual)
+        // Object reads (storage map, network log array) stringify as JSON so `contains`
+        // has something honest to match — String() would collapse them to [object Object].
+        const actual = rawActual === null || rawActual === undefined
+          ? (rawActual as null | undefined)
+          : typeof rawActual === 'object' ? JSON.stringify(rawActual) : String(rawActual)
         const expected = typeof av.expected === 'string' ? av.expected : undefined
         const outcome = compareAssertValue({ source, op: av.op as AssertValueOp, expected, actual })
         recorder.recordAssertOutcome({

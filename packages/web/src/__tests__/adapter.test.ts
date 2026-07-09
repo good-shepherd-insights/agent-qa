@@ -222,6 +222,16 @@ describe('WebPlatformAdapter', () => {
     expect(page.goto).toHaveBeenCalledWith('https://example.com', { waitUntil: 'domcontentloaded' })
   })
 
+  it('execute() assertValue read returns the RAW value on data — never an envelope (D-10 contract)', async () => {
+    await adapter.setup({ platform: 'web' })
+
+    // The runner-side comparator does String(result.data); a `{ value }` wrapper
+    // collapses to "[object Object]" and fails every deterministic assert.
+    const result = await adapter.execute({ type: 'assertValue', source: 'url', op: 'equals', expected: 'https://example.com' })
+    expect(result.success).toBe(true)
+    expect(result.data).toBe('https://example.com')
+  })
+
   it('execute() handles click action with ref', async () => {
     await adapter.setup({ platform: 'web' })
 

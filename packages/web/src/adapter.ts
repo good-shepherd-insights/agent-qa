@@ -721,7 +721,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
               break
           }
         }
-        return { success: true, data: { value } }
+        return { success: true, data: value }
       }
 
       case 'clearText': {

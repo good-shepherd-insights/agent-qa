@@ -1193,7 +1193,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           }
           await this.ensureContext(webCtx!)
           const value = await driver.execute(`return (${action.expr});`)
-          return { success: true, data: { value } }
+          return { success: true, data: value }
         }
         switch (action.source) {
           case 'url': {
@@ -1205,7 +1205,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
             }
             await this.ensureContext(webCtx!)
             const value = await driver.execute('return window.location.href;')
-            return { success: true, data: { value } }
+            return { success: true, data: value }
           }
           case 'storage': {
             if (!inWeb) {
@@ -1218,7 +1218,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
             const value = await driver.execute(
               'return Object.fromEntries(Object.keys(localStorage).map(function(k){return [k, localStorage.getItem(k)];}));',
             )
-            return { success: true, data: { value } }
+            return { success: true, data: value }
           }
           case 'network':
             return {
@@ -1226,7 +1226,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
               error: 'assertValue {source:"network"} (HTTP log inspection) is not available on the iOS adapter. Use a web target for network assertions, or assert on visible UI text.',
             }
           case 'expr-result':
-            return { success: true, data: { value: undefined } }
+            return { success: true, data: undefined }
         }
       }
 
