@@ -8,9 +8,12 @@
 // action (a `ref`, never a descriptor). Adapters never see descriptors or unvalidated
 // refs/coords — grounding is NEVER duplicated into platform adapters. Every failure class
 // mints a structured §7.1 GroundingError; no path ever silently best-guesses a click:
-//   - exactly-one-of ref|target on a required-element field  ⇒ descriptor_invalid (D-04,
-//     gate-side, never a zod refine). Optional container fields (scroll/swipe/pinch/multiTap)
-//     may carry neither.
+//   - a required-element field carrying NEITHER a ref nor a target ⇒ descriptor_invalid
+//     (D-04, gate-side, never a zod refine). Optional container fields (scroll/swipe/pinch/
+//     multiTap) may carry neither. A field carrying BOTH a ref and a target is NOT rejected:
+//     the committed ref wins (exact handle), the target is dropped; an invalid ref with a
+//     target present falls back to the target lane. (Hard-rejecting "both" regressed real
+//     runs; exactly-one-of stays a prompt-side guidance ideal, not a gate hard-fail.)
 //   - a target descriptor: name-less ⇒ descriptor_invalid; near-bearing ⇒ descriptor_invalid;
 //     unresolved ⇒ descriptor_unresolved (§12.17 self-correcting form); >1 match ⇒
 //     descriptor_ambiguous. The tree-search (+ optional capability-gated visual) ladder runs;
@@ -211,10 +214,8 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
     const hasRef = has(draft, group.refKey)
     const hasTarget = has(draft, group.targetKey)
 
-    // (1) exactly-one-of (D-04): both populated, or neither on a required field.
-    if (hasRef && hasTarget) {
-      return fail(groundingError.descriptorInvalid(toolName, 'exactly-one'), attempts)
-    }
+    // (1) Neither handle: descriptor_invalid on a required field; a skip on an optional
+    // container (scroll/swipe/pinch/multiTap may ground nothing).
     if (!hasRef && !hasTarget) {
       if (group.required) {
         return fail(groundingError.descriptorInvalid(toolName, 'exactly-one'), attempts)
@@ -222,15 +223,27 @@ export function groundActionPlan(input: GroundActionPlanInput): GateResult {
       continue
     }
 
-    // (3) committed-ref lane: validate against the fresh refMap (first live raise site).
+    // (2) Committed-ref lane — the ref wins whenever present. A planner that supplies BOTH a
+    // ref and a redundant target is NOT ambiguous: the committed ref is the exact current-
+    // screen handle, so it takes precedence and the target is dropped. (Hard-rejecting "both"
+    // regressed real runs — a common belt-and-suspenders plan where the model both cites the
+    // ref it found AND re-describes it from the step wording; D-04's exactly-one-of is a
+    // guidance ideal, enforced in the prompt, not a reason to fail a groundable plan.) The ref
+    // is validated against the fresh refMap; if it does NOT resolve we fall back to the target
+    // descriptor when one was supplied, else raise ref_not_in_snapshot.
     if (hasRef) {
       const ref = String(draft[group.refKey])
-      if (!(ref in screenState.refMap)) {
+      if (ref in screenState.refMap) {
+        attempts.push({ stage: 'ref', outcome: 'resolved', resolvedRef: ref as Ref })
+        delete draft[group.targetKey]
+        continue
+      }
+      if (!hasTarget) {
         return fail(groundingError.refNotInSnapshot(toolName, ref), attempts)
       }
-      attempts.push({ stage: 'ref', outcome: 'resolved', resolvedRef: ref as Ref })
-      delete draft[group.targetKey]
-      continue
+      // Invalid ref but a target descriptor is also present — drop the stale ref and ground
+      // the target below.
+      delete draft[group.refKey]
     }
 
     // (2) descriptor lane: name/near pre-validation, then the tree-search(+visual) ladder.

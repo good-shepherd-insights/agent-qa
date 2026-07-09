@@ -33,6 +33,7 @@ const SCREENSHOT_UNAVAILABLE_NOTE =
 // bounds an accidentally-large error body so a swallowed catch never dumps an unbounded blob.
 const MAX_RESPONSE_BODY_CHARS = 500
 
+
 // RUNX-04 (planner half): duck-typed `@ai-sdk/provider` APICallError extraction — mirrors
 // `packages/cli/src/commands/auth.ts` `extractProviderError`. The runner stays provider-neutral
 // (no model/@ai-sdk import): it reads the structural `statusCode?: number` + `responseBody?:
@@ -221,14 +222,27 @@ export class LLMPlanner implements Planner {
       const banMessage = bannedSubstitutionMessage(parsed.action, screenState, context)
       if (banMessage !== undefined) return { ok: false, message: banMessage }
 
-      const gate = groundActionPlan({
-        toolName: typeof parsed.action.type === 'string' ? parsed.action.type : 'action',
-        action: parsed.action,
-        screenState,
-      })
+      const toolName = typeof parsed.action.type === 'string' ? parsed.action.type : 'action'
+      const gate = groundActionPlan({ toolName, action: parsed.action, screenState })
       if (gate.ok) {
         return { ok: true, action: gate.action, attempts: gate.attempts }
       }
+
+      // The gate rejected the planned action. Surface a diagnostic so an ungroundable action
+      // is never opaque again (this is how the "both ref+target" live regression was found):
+      // the tool, the failure code, and which grounding handles the planner actually supplied.
+      // Element identifiers only (ref/target/elementDescription) — never the text/value fields
+      // a fill/type could carry. The §7.1 error text + hint is fed back to the model unchanged
+      // (the one-shot retry contract is untouched).
+      this.logger?.warn('planner emitted an ungroundable action', {
+        tool: toolName,
+        code: gate.error.code,
+        hasRef: parsed.action.ref !== undefined && parsed.action.ref !== null,
+        hasTarget: parsed.action.target !== undefined && parsed.action.target !== null,
+        ref: parsed.action.ref,
+        elementDescription: parsed.action.elementDescription,
+        target: parsed.action.target,
+      })
       return { ok: false, message: `${gate.error.message} ${gate.error.hint}` }
     }
 

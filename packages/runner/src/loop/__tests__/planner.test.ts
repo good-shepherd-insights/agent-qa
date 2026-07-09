@@ -119,6 +119,27 @@ describe('LLMPlanner', () => {
     expect(result.plan.action.ref).toBe('e2')
   })
 
+  // 363-15 checkpoint fix (grounding regression): an ungroundable action must self-describe
+  // in the logs — the diagnostic that revealed the "both ref+target" live regression. Element
+  // handles only (ref/target), never a fill's text/value.
+  it('logs a diagnostic warn (tool + which handles were supplied) when an action fails grounding', async () => {
+    const { generateText } = await import('ai')
+    vi.mocked(generateText).mockResolvedValue({
+      toolCalls: [{ toolName: 'web_click', input: { target: { role: 'button', name: 'Nonexistent' }, ...CLICK_ENVELOPE } }],
+      usage: { inputTokens: 40, outputTokens: 8 },
+    } as never)
+
+    const logger = makeSpyLogger()
+    const planner = new LLMPlanner({} as never, 'web', logger, undefined, makeFakeTokenAccounting())
+    await planner.plan('Click a missing element', screen, makeContext()).catch(() => {})
+
+    const diag = logger.warnCalls.find((c) => c.message === 'planner emitted an ungroundable action')
+    expect(diag).toBeDefined()
+    expect(diag?.meta?.tool).toBe('click')
+    expect(diag?.meta?.hasRef).toBe(false)
+    expect(diag?.meta?.hasTarget).toBe(true)
+  })
+
   // Phase 355-01 (CTXB-04 / D-10) — RED until Plan 05 injects the TokenAccounting port
   // into LLMPlanner and feeds recordUsage(result.usage, messages) after each response.
   it('feeds the injected TokenAccounting recordUsage exactly once per response (D-10)', async () => {

@@ -4,9 +4,10 @@
 // failure IS the intended RED.
 //
 // Contract pinned here (spec §7.1/§12.17 / 357-RESEARCH Pattern 5, Pitfall 10):
-//   exactly-one-of ref|target (both/neither ⇒ descriptor_invalid); a committed ref
-//   absent from the fresh refMap ⇒ ref_not_in_snapshot (the dormant factory, now
-//   raised); coordSpace-aware bounds (viewport vs metadata.viewportWidth/Height, content
+//   ref/target precedence: neither-on-required ⇒ descriptor_invalid; BOTH ⇒ prefer the
+//   committed ref (target dropped), falling back to the target when the ref is stale; a
+//   committed ref absent from the fresh refMap ⇒ ref_not_in_snapshot (the dormant factory,
+//   now raised); coordSpace-aware bounds (viewport vs metadata.viewportWidth/Height, content
 //   vs metadata.scroll.contentWidth/Height, screen unchecked) ⇒ coords_out_of_bounds; a
 //   resolvable target returns a fully-grounded action (ref set, target stripped) plus a
 //   per-rung attempts trail; ref+tree-search exhaustion appends {stage:'visual',
@@ -57,15 +58,32 @@ function expectError(result: GateResult, code: string): GroundingError {
   return result.error
 }
 
-describe('groundActionPlan — exactly-one-of ref|target (D-04)', () => {
-  it('rejects an action carrying BOTH ref and target with descriptor_invalid', async () => {
+describe('groundActionPlan — ref/target precedence (D-04)', () => {
+  it('prefers the committed ref when an action carries BOTH ref and target (target dropped)', async () => {
     const result = await gate({
       toolName: 'web_click',
       action: { type: 'click', ref: 'e2', target: { role: 'button', name: 'Log in' } } as never,
       screenState: makeScreenState(),
     })
 
-    expectError(result, 'descriptor_invalid')
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected success')
+    expect(result.action.ref).toBe('e2')
+    expect(result.action.target).toBeUndefined()
+    expect(result.attempts).toEqual([{ stage: 'ref', outcome: 'resolved', resolvedRef: 'e2' }])
+  })
+
+  it('falls back to the target descriptor when BOTH are present but the ref is stale', async () => {
+    const result = await gate({
+      toolName: 'web_click',
+      action: { type: 'click', ref: 'e999', target: { role: 'button', name: 'Log in' } } as never,
+      screenState: makeScreenState(),
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected success')
+    expect(result.action.ref).toBe('e2')
+    expect(result.action.target).toBeUndefined()
   })
 
   it('rejects a ref-requiring tool carrying NEITHER ref nor target with descriptor_invalid', async () => {
