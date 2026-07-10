@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { FsEventLog, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { FsEventLog, RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { getActiveMaskingContext } from '@vostride/agent-qa-safety'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
 import {
   computeRunConfigDigests,
   buildRunPorts,
+  buildMemberRunConfig,
   createSuiteLifecycle,
   resolveRunExecutionContext,
   sensitiveEnvSlice,
@@ -95,6 +96,87 @@ describe('buildRunPorts (roots under .agent-qa)', () => {
       payload: { code: 'root-check', message: 'root-check' },
     } as never)
     expect(existsSync(join(configDir, '.agent-qa', 'runs'))).toBe(true)
+  })
+})
+
+// CASS-02 (Plan 13): buildRunPorts constructs ONE run-scoped FsEvidenceArtifactStore beside the
+// event/handoff/artifact adapters from the SAME persistence root + runId, and buildMemberRunConfig
+// copies the exact neutral store port into MemberRunConfig without wrapping it. The CLI consumes
+// runner-local's public layout constants rather than duplicating slug/directory policy.
+describe('buildRunPorts — run-scoped evidence artifact store (CASS-02, Plan 13)', () => {
+  it('persists sentinel bytes through the neutral port and reads them back by returned sha under the run/blob namespace', () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-evidence-'))
+    const runId = 'r_evidence-roundtrip'
+    const store = buildRunPorts({ configDir, runId }).evidenceArtifacts
+
+    const bytes = new Uint8Array([1, 2, 3, 4, 5, 250])
+    const ref = store.persistDecisionScreenshot(bytes)
+    expect(ref.sha).toMatch(/^[0-9a-f]{64}$/)
+    expect(ref.id).toBe(`decision-screenshot:${ref.sha}`)
+
+    // Round-trips through the returned neutral port.
+    expect(store.getBlob(ref.sha)).toEqual(bytes)
+
+    // Durable placement beneath the current run namespace — consume the runner-local layout
+    // constants rather than re-deriving the slug/directory algorithm in the CLI.
+    const blobPath = join(
+      resolve(configDir, '.agent-qa'),
+      RUNS_SUBDIR,
+      slugBranch(runId),
+      RUN_EVIDENCE_BLOBS_SUBDIR,
+      ref.sha,
+    )
+    expect(existsSync(blobPath)).toBe(true)
+    expect(new Uint8Array(readFileSync(blobPath))).toEqual(bytes)
+  })
+
+  it('scopes blobs per run — a second runId cannot resolve the first run blob (cross-run isolation)', () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-evidence-iso-'))
+    const first = buildRunPorts({ configDir, runId: 'r_first' }).evidenceArtifacts
+    const second = buildRunPorts({ configDir, runId: 'r_second' }).evidenceArtifacts
+
+    const ref = first.persistDecisionScreenshot(new Uint8Array([9, 8, 7, 6]))
+    expect(first.getBlob(ref.sha)).toBeDefined()
+    expect(second.getBlob(ref.sha)).toBeUndefined()
+  })
+})
+
+// buildMemberRunConfig maps the resolved host impls into a MemberRunConfig; the run-scoped evidence
+// store must cross into member execution by strict identity (no wrapping) so Plan 12's loop producer
+// sees the exact run store.
+describe('buildMemberRunConfig — evidence store identity (CASS-02, Plan 13)', () => {
+  it('copies the exact supplied evidenceArtifacts store into MemberRunConfig', () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-evidence-mc-'))
+    const store = buildRunPorts({ configDir, runId: 'r_member-config' }).evidenceArtifacts
+
+    const config = buildMemberRunConfig({
+      adapter: { platform: 'web' } as never,
+      planner: {} as never,
+      plannerModel: {} as never,
+      verifierModel: {} as never,
+      sink: {} as never,
+      testIndex: 0,
+      abortSignal: new AbortController().signal,
+      filePath: 'checkout.test.ts',
+      evidenceArtifacts: store,
+    })
+
+    expect(config.evidenceArtifacts).toBe(store)
+  })
+
+  it('leaves evidenceArtifacts undefined when no store is supplied', () => {
+    const config = buildMemberRunConfig({
+      adapter: { platform: 'web' } as never,
+      planner: {} as never,
+      plannerModel: {} as never,
+      verifierModel: {} as never,
+      sink: {} as never,
+      testIndex: 0,
+      abortSignal: new AbortController().signal,
+      filePath: 'checkout.test.ts',
+    })
+
+    expect(config.evidenceArtifacts).toBeUndefined()
   })
 })
 
