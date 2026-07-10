@@ -1975,6 +1975,7 @@ async function executeSuites(
             filePath,
           }), {
             modelProfiles: prepared.modelProfiles,
+            onEvidenceContext: ctx.setEvidenceContext,
           })
           const result = await runMemberTest(toMemberTest(patched, filePath), memberRunConfig)
 
@@ -3089,6 +3090,7 @@ export function createRunCommand(): Command {
               filePath,
             }), {
               modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
+              onEvidenceContext: ctx.setEvidenceContext,
             })
             const result = await runMemberTest(toMemberTest(testDef, filePath), memberRunConfig)
 

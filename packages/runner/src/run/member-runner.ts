@@ -48,7 +48,7 @@ import type {
   VariableExtractor,
   Verifier,
 } from '../loop/types.js'
-import type { ConfigDigests, HookExecutorPort, MemberEventSink } from './ports.js'
+import type { ConfigDigests, HookExecutorPort, MemberEventSink, MemberEvidenceContext } from './ports.js'
 import type { HookDefinition } from '../hooks/types.js'
 import { VariableStore } from '../variables/store.js'
 import { interpolateVariables, findUnresolvedTemplates } from '../variables/interpolate.js'
@@ -125,6 +125,7 @@ export interface MemberRunConfig {
     planner: DeclaredModelProfile
     verifier?: DeclaredModelProfile
   }
+  onEvidenceContext?: (context: MemberEvidenceContext) => void
   workingMemory?: WorkingMemoryPort
   storageState?: StorageStatePort
   compressor?: ScreenshotCompressor
@@ -916,6 +917,16 @@ export async function runMemberTest(
   const toolSchemaDigest = computeToolSchemaDigest(describeBoundSurface(defaultRegistry, {
     platform: config.adapter.platform,
   }))
+  const verifierProfile = config.modelProfiles?.verifier
+  config.onEvidenceContext?.({
+    ...(config.modelProfiles?.planner !== undefined
+      ? { modelProfile: config.modelProfiles.planner }
+      : {}),
+    ...(verifierProfile !== undefined
+      ? { verifierIdentity: { provider: verifierProfile.provider, modelId: verifierProfile.modelId } }
+      : {}),
+    toolSchemaDigest,
+  })
   const maxRetries = (member.meta?.retries as number | undefined) ?? 0
   let lastResult: TestResult | undefined
   let previousFailureSummary: string | undefined

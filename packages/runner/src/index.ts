@@ -174,6 +174,7 @@ export type {
   RunTimerPort,
   RunMemberDescriptor,
   MemberEventSink,
+  MemberEvidenceContext,
   MemberTestRunContext,
   MemberTestExecutor,
   RunConfig,

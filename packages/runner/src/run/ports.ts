@@ -15,6 +15,8 @@ import type {
   CompletedRunHandoff,
   HookStartedPayload,
   HookFinishedPayload,
+  DeclaredModelProfile,
+  ModelIdentity,
   TestRetryScheduledPayload,
   RunArtifactStageInput,
   RunArtifactFinalizeInput,
@@ -169,11 +171,19 @@ export interface MemberEventSink {
   testRetryScheduled(input: TestRetryScheduledPayload): void
 }
 
+/** Immutable member-start decision context used when the shell must synthesize step evidence. */
+export interface MemberEvidenceContext {
+  modelProfile?: DeclaredModelProfile
+  verifierIdentity?: ModelIdentity
+  toolSchemaDigest?: string
+}
+
 /** The per-member execution context threaded into the injected {@link MemberTestExecutor}. */
 export interface MemberTestRunContext {
   abortSignal: AbortSignal
   testIndex: number
   events: MemberEventSink
+  setEvidenceContext(context: MemberEvidenceContext): void
 }
 
 /**

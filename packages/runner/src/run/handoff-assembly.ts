@@ -15,7 +15,9 @@
 
 import type {
   CompletedRunHandoff,
+  DeclaredModelProfile,
   MemberTestOutcome,
+  ModelIdentity,
   PerTestOutcome,
   RunStatus,
   ScopeKey,
@@ -31,6 +33,9 @@ interface SynthDeps {
   scope: ScopeKey
   buildOrdinal: number
   mask: MaskFn
+  modelProfile?: DeclaredModelProfile
+  verifierIdentity?: ModelIdentity
+  toolSchemaDigest?: string
 }
 
 /**
@@ -53,6 +58,9 @@ function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: Synth
       pass: passed,
       reasoning: deps.mask(reasoning),
     },
+    ...(deps.modelProfile !== undefined ? { modelProfile: deps.modelProfile } : {}),
+    ...(deps.verifierIdentity !== undefined ? { verifierIdentity: deps.verifierIdentity } : {}),
+    ...(deps.toolSchemaDigest !== undefined ? { toolSchemaDigest: deps.toolSchemaDigest } : {}),
   }
 }
 
@@ -66,9 +74,24 @@ export function assemblePerTestOutcome(
   member: RunMemberDescriptor,
   result: TestResult,
   outcome: MemberTestOutcome,
-  deps: { testIndex: number; scope: ScopeKey; buildOrdinal: number; mask: MaskFn },
+  deps: {
+    testIndex: number
+    scope: ScopeKey
+    buildOrdinal: number
+    mask: MaskFn
+    modelProfile?: DeclaredModelProfile
+    verifierIdentity?: ModelIdentity
+    toolSchemaDigest?: string
+  },
 ): PerTestOutcome {
-  const synthDeps: SynthDeps = { scope: deps.scope, buildOrdinal: deps.buildOrdinal, mask: deps.mask }
+  const synthDeps: SynthDeps = {
+    scope: deps.scope,
+    buildOrdinal: deps.buildOrdinal,
+    mask: deps.mask,
+    modelProfile: deps.modelProfile,
+    verifierIdentity: deps.verifierIdentity,
+    toolSchemaDigest: deps.toolSchemaDigest,
+  }
   const steps: StepEvidence[] = result.steps.map((step, index) =>
     step.evidence !== undefined
       ? { ...step.evidence, stepIndex: index }

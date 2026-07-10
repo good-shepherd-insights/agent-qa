@@ -28,7 +28,7 @@ import { createRunEventBus } from './bus.js'
 import { deriveAggregateVerdict, deriveMemberOutcome } from './verdict.js'
 import { createMemberEventSink } from './event-sink.js'
 import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from './handoff-assembly.js'
-import type { RunConfig } from './ports.js'
+import type { MemberEvidenceContext, RunConfig } from './ports.js'
 import type { TestResult } from '../result.js'
 
 // Re-export the port contracts the Wave-0 `run-shell.test.ts` imports through `../shell.js`.
@@ -168,6 +168,7 @@ export function startRun(config: RunConfig): RunSession {
       else runController.signal.addEventListener('abort', onRunAbort, { once: true })
 
       const events = createMemberEventSink({ bus, masking, testIndex })
+      let evidenceContext: MemberEvidenceContext | undefined
 
       // Race the executor against member-abort (SESSION-04). A member wedged on a genuinely-
       // pending async op that never observes `ctx.abortSignal` (the planner's retry-without-image
@@ -185,7 +186,14 @@ export function startRun(config: RunConfig): RunSession {
       // synchronously, so a member that settles (or rejects) AFTER the run raced past it can never
       // surface as an unhandled rejection — the swallow is structural, no extra `.catch` needed.
       const executorRaced: Promise<RaceOutcome> = config
-        .executor(member, { abortSignal: memberController.signal, testIndex, events })
+        .executor(member, {
+          abortSignal: memberController.signal,
+          testIndex,
+          events,
+          setEvidenceContext(context) {
+            evidenceContext = context
+          },
+        })
         .then(
           (r): RaceOutcome => ({ kind: 'result', result: r }),
           (error): RaceOutcome => ({ kind: 'error', error }),
@@ -249,6 +257,7 @@ export function startRun(config: RunConfig): RunSession {
         scope: config.scope,
         buildOrdinal: config.buildOrdinal,
         mask,
+        ...evidenceContext,
       })
       outcomes.push(perTest)
       memberOutcomes.push(outcome)
