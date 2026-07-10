@@ -37,5 +37,11 @@ export function projectInputLeg({
     ...(step.workingMemory === undefined ? {} : { workingMemory: step.workingMemory }),
     exchanges: [...subAction.exchanges],
     ...(step.modelProfile === undefined ? {} : { modelProfile: step.modelProfile }),
+    ...(subAction.decisionScreenshotRef === undefined
+      ? {}
+      : { decisionScreenshotRef: subAction.decisionScreenshotRef }),
+    ...(subAction.artifactRefs === undefined
+      ? {}
+      : { auxiliaryArtifactRefs: [...subAction.artifactRefs] }),
   }
 }
