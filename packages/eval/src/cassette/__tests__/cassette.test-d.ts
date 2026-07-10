@@ -1,0 +1,49 @@
+import type {
+  Action,
+  ActionAnnotation,
+  DeclaredModelProfile,
+  SamplingParams,
+  ScreenState,
+  ServedBrief,
+  ToolExchangeEvidence,
+  VerifierVerdict,
+  Verdict,
+  WorkingMemoryEntry,
+} from '@vostride/agent-qa-schema'
+import { expectTypeOf } from 'vitest'
+import type {
+  CassetteInputLeg,
+  CassetteJudgeReceipt,
+  CassetteLabelLeg,
+  CassetteReceipt,
+  CassetteSidecarLeg,
+  ContrastivePairing,
+  GoldAnchorDescriptor,
+} from '../../index'
+
+expectTypeOf<CassetteLabelLeg['pairing']>().toEqualTypeOf<
+  ContrastivePairing | undefined
+>()
+expectTypeOf<CassetteLabelLeg['rootCause']>().toEqualTypeOf<Verdict | undefined>()
+expectTypeOf<CassetteJudgeReceipt['tier4JudgeId']>().toEqualTypeOf<string | undefined>()
+expectTypeOf<CassetteInputLeg['workingMemory']>().toEqualTypeOf<
+  WorkingMemoryEntry[] | undefined
+>()
+expectTypeOf<CassetteSidecarLeg['goldAnchor']>().toEqualTypeOf<
+  GoldAnchorDescriptor | undefined
+>()
+
+expectTypeOf<CassetteInputLeg['stateBefore']>().toEqualTypeOf<ScreenState>()
+expectTypeOf<CassetteInputLeg['servedBrief']>().toEqualTypeOf<ServedBrief>()
+expectTypeOf<CassetteInputLeg['exchanges']>().toEqualTypeOf<ToolExchangeEvidence[]>()
+expectTypeOf<CassetteInputLeg['modelProfile']>().toEqualTypeOf<
+  DeclaredModelProfile | undefined
+>()
+expectTypeOf<CassetteSidecarLeg['goldAction']>().toEqualTypeOf<Action>()
+expectTypeOf<CassetteSidecarLeg['annotation']>().toEqualTypeOf<
+  ActionAnnotation | undefined
+>()
+expectTypeOf<CassetteLabelLeg['verdict']>().toEqualTypeOf<VerifierVerdict | undefined>()
+expectTypeOf<CassetteReceipt['sampling']['declared']>().toEqualTypeOf<
+  SamplingParams | undefined
+>()
