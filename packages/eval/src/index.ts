@@ -5,6 +5,13 @@ export { canonicalJson, canonicalValue } from './canonical-json'
 export { computeReplayDrift } from './replay/drift'
 export type { ReplayDrift } from './replay/drift'
 
+export {
+  computeDecisionIdentity,
+  decisionIdentityKey,
+  normalizeIdentityValue,
+} from './replay/identity'
+export type { DecisionIdentity } from './replay/identity'
+
 export type { CassetteInputLeg } from './cassette/input-leg'
 export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'
 export type {
