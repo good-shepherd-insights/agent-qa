@@ -14,3 +14,6 @@ export {
   FsCassetteStore,
 } from './cassette-store.js'
 export type { FsCassetteStoreConfig, WrittenCassette } from './cassette-store.js'
+
+export { loadCassetteBundle } from './cassette-loader.js'
+export type { CassetteBundleLoad } from './cassette-loader.js'
