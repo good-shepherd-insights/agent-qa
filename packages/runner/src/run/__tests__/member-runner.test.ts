@@ -8,7 +8,7 @@ import type { LanguageModel } from 'ai'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { PlatformAdapter } from '../../platform.js'
 import type { StepResult } from '../../result.js'
-import type { LoopPorts } from '../../loop/ports.js'
+import type { EvidenceArtifactStorePort, LoopPorts } from '../../loop/ports.js'
 import type { StepContext, VariableExtractor } from '../../loop/types.js'
 import type { HookExecutorPort } from '../ports.js'
 import type { HookDefinition } from '../../hooks/types.js'
@@ -342,6 +342,41 @@ describe('runMemberTest — per-test responsibilities', () => {
     expect(result.failureSummary).toContain('failed: element not found')
     expect(sink.stepStarted).toEqual([{ stepIndex: 0, stepText: 'Click OK' }])
     expect(sink.stepFinalized).toBe(1)
+  })
+
+  it('threads the run-scoped evidenceArtifacts store into every step LoopPorts by identity', async () => {
+    const store: EvidenceArtifactStorePort = {
+      persistDecisionScreenshot: () => ({ id: 'decision-screenshot:x', sha: 'a'.repeat(64) }),
+      getBlob: () => undefined,
+    }
+    const captured: LoopPorts[] = []
+    const capturing: (i: string, p: LoopPorts, c: StepContext) => Promise<StepResult> = async (_i, p) => {
+      captured.push(p)
+      p.events?.stepFinalized({} as never, { status: 'passed', durationMs: 1 })
+      return stepResult()
+    }
+    const result = await runMemberTest(
+      member({ steps: ['first', 'second'] }),
+      baseConfig({ executeStep: capturing, evidenceArtifacts: store }),
+    )
+    expect(result.status).toBe('passed')
+    expect(captured).toHaveLength(2)
+    expect(captured[0].evidenceArtifacts).toBe(store)
+    expect(captured[1].evidenceArtifacts).toBe(store)
+  })
+
+  it('passes undefined evidenceArtifacts when no store is bound', async () => {
+    const captured: LoopPorts[] = []
+    const capturing: (i: string, p: LoopPorts, c: StepContext) => Promise<StepResult> = async (_i, p) => {
+      captured.push(p)
+      p.events?.stepFinalized({} as never, { status: 'passed', durationMs: 1 })
+      return stepResult()
+    }
+    await runMemberTest(
+      member({ steps: ['only'] }),
+      baseConfig({ executeStep: capturing }),
+    )
+    expect(captured[0].evidenceArtifacts).toBeUndefined()
   })
 
   it('runs an inline appium directive through the injected appiumScript handler', async () => {
