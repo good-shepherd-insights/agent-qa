@@ -21,6 +21,7 @@ import type {
   RunMemberDescriptor,
 } from '../shell.js'
 import type { EventLogPort, HandoffStorePort, RunTimerPort } from '../ports.js'
+import type { EvidenceArtifactStorePort } from '../../loop/ports.js'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunArtifactStageInput, RunArtifactFinalizeInput } from '@vostride/agent-qa-schema'
 import type { StepResult, TestResult } from '../../result.js'
@@ -618,6 +619,63 @@ describe('run-artifact store lifecycle (D-08, 363-06)', () => {
     const warnings = events.filter(e => e.type === 'runWarning').map(e => (e.payload as { code: string }).code)
     expect(warnings).toContain('artifact-stage-failed')
     expect(warnings).toContain('artifact-finalize-failed')
+  })
+})
+
+// ---- CASS-02 run-scoped evidence artifact store threading (Plan 13) ------
+//
+// The shell holds one run-scoped EvidenceArtifactStorePort on RunPorts (constructed run-scoped at
+// the CLI composition root) and must hand THAT EXACT instance to every member context so Plan 12's
+// screenshot producer sees a single durable store across the whole run. An absent store stays
+// undefined for host-neutral tests and embedders.
+
+function makeFakeEvidenceArtifactStore(): EvidenceArtifactStorePort {
+  return {
+    persistDecisionScreenshot: () => ({ id: 'decision-screenshot:sha', sha: 'sha' }),
+    getBlob: () => undefined,
+  }
+}
+
+describe('CASS-02 — run-scoped evidence artifact store threading (Plan 13)', () => {
+  it('hands the exact config.ports.evidenceArtifacts to every member context (strict identity, multi-member)', async () => {
+    const store = makeFakeEvidenceArtifactStore()
+    const seen: Array<EvidenceArtifactStorePort | undefined> = []
+    const executor: MemberTestExecutor = async (member, ctx) => {
+      seen.push(ctx.evidenceArtifacts)
+      return passResult(member.testId)
+    }
+    const session = startRun(
+      baseConfig({
+        members: [{ testId: 'a' }, { testId: 'b' }],
+        executor,
+        ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog(), evidenceArtifacts: store },
+      }),
+    )
+    drain(session)
+    await done(session)
+
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).toBe(store)
+    expect(seen[1]).toBe(store)
+  })
+
+  it('leaves the member context store undefined when no run-scoped store is supplied', async () => {
+    let seen: EvidenceArtifactStorePort | undefined | 'unset' = 'unset'
+    const executor: MemberTestExecutor = async (member, ctx) => {
+      seen = ctx.evidenceArtifacts
+      return passResult(member.testId)
+    }
+    const session = startRun(
+      baseConfig({
+        members: [{ testId: 'a' }],
+        executor,
+        ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
+      }),
+    )
+    drain(session)
+    await done(session)
+
+    expect(seen).toBeUndefined()
   })
 })
 
