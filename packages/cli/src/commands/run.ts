@@ -1964,6 +1964,8 @@ async function executeSuites(
             sink: ctx.events,
             testIndex: ctx.testIndex,
             abortSignal: ctx.abortSignal,
+            // CASS-02: bind the run-scoped screenshot store the shell threaded onto the member ctx.
+            evidenceArtifacts: ctx.evidenceArtifacts,
             captureScreenshots: suiteConfig.captureScreenshots,
             accessibility: suiteConfig.accessibility,
             timeouts: suiteConfig.timeouts,
@@ -3078,6 +3080,8 @@ export function createRunCommand(): Command {
               sink: ctx.events,
               testIndex: ctx.testIndex,
               abortSignal: ctx.abortSignal,
+              // CASS-02: bind the run-scoped screenshot store the shell threaded onto the member ctx.
+              evidenceArtifacts: ctx.evidenceArtifacts,
               captureScreenshots,
               accessibility: config.services?.accessibility,
               timeouts: testTimeouts,
