@@ -1,7 +1,13 @@
 import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
-import type { ArtifactSource, Cassette, LeafCassette, ProcedureCassette } from '../../index'
-import { guardCassette } from '../../index'
+import type {
+  ArtifactSource,
+  Cassette,
+  DecisionRecord,
+  LeafCassette,
+  ProcedureCassette,
+} from '../../index'
+import { buildProcedureCassette, deriveRunSlug, guardCassette } from '../../index'
 import { describe, expect, it } from 'vitest'
 import {
   FIXTURE_ARTIFACT_SHA,
@@ -320,5 +326,168 @@ describe('367-16 leaf typed evidence closure', () => {
     const leaf = firstStepLeaf(result)
 
     expect(leaf?.completeness).toEqual({ status: 'complete' })
+  })
+})
+
+describe('367-16 procedure missing-evidence aggregation', () => {
+  it('aggregates every decision missing-evidence fact into full/no-ref procedures in order', () => {
+    const [passing, failing] = proceduresOf(
+      extractRunCassettes({ handoff: makeV2Handoff(), artifacts: mapSource() }),
+    )
+
+    expect(passing!.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingEvidence: [
+        { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+        { kind: 'decision-screenshot-ref', stepIndex: 1, decisionOrdinal: 1 },
+      ],
+    })
+    expect(failing!.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingEvidence: [
+        { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+        { kind: 'decision-screenshot-ref', stepIndex: 2, decisionOrdinal: 0 },
+      ],
+    })
+    expect(guardCassette(passing!)).toEqual(passing)
+  })
+
+  it('stays evidence-incomplete for missing identity even when all blobs resolve', () => {
+    const handoff = makeV2Handoff()
+    handoff.tests[0]!.steps[0]!.subActions[0]!.decisionScreenshotRef = {
+      id: 'decision-shot',
+      sha: FIXTURE_SCREENSHOT_SHA,
+      evidenceIncomplete: true,
+    }
+
+    const [passing] = proceduresOf(
+      extractRunCassettes({
+        handoff,
+        artifacts: mapSource(new Map([[FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])]])),
+      }),
+    )
+
+    expect(passing!.completeness.status).toBe('evidence-incomplete')
+    expect(passing!.completeness.missingEvidence).toEqual([
+      { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+      { kind: 'decision-screenshot-ref', stepIndex: 1, decisionOrdinal: 1 },
+    ])
+    expect(Object.hasOwn(passing!.completeness, 'missingBlobShas')).toBe(false)
+  })
+
+  it('combines unresolved anchor and missing screenshot identity in one procedure cassette', () => {
+    const handoff = makeV2Handoff()
+    handoff.tests[0]!.steps[0]!.subActions[0]!.plannedAction = {
+      type: 'click',
+      ref: asRef('e-missing'),
+    }
+
+    const [passing] = proceduresOf(extractRunCassettes({ handoff, artifacts: mapSource() }))
+
+    expect(passing!.completeness).toEqual({
+      status: 'evidence-incomplete',
+      unresolvedAnchorRef: 'e-missing',
+      missingEvidence: [
+        { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+        { kind: 'decision-screenshot-ref', stepIndex: 1, decisionOrdinal: 1 },
+      ],
+    })
+    expect(guardCassette(passing!)).toEqual(passing)
+  })
+
+  it('reports typed refs with one missing blob without inventing identity facts', () => {
+    const [passing] = proceduresOf(
+      extractRunCassettes({
+        handoff: makeArtifactRefV2Handoff(),
+        artifacts: mapSource(new Map([[FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])]])),
+      }),
+    )
+
+    expect(passing!.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingBlobShas: [FIXTURE_ARTIFACT_SHA],
+    })
+  })
+
+  it('keeps a textOnly/no-ref procedure complete', () => {
+    const handoff = makeV2Handoff()
+    for (const test of handoff.tests) {
+      for (const step of test.steps) {
+        for (const sub of step.subActions) {
+          sub.stateBefore = {
+            ...sub.stateBefore,
+            metadata: { ...sub.stateBefore.metadata, captureMode: 'textOnly' },
+          }
+        }
+      }
+    }
+
+    const [passing] = proceduresOf(extractRunCassettes({ handoff, artifacts: mapSource() }))
+
+    expect(passing!.completeness).toEqual({ status: 'complete' })
+  })
+
+  it('shares the same typed screenshot ref between a leaf and its procedure decision sibling', () => {
+    const result = extractRunCassettes({
+      handoff: makeArtifactRefV2Handoff(),
+      artifacts: mapSource(
+        new Map([
+          [FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])],
+          [FIXTURE_ARTIFACT_SHA, new Uint8Array([4, 5])],
+        ]),
+      ),
+    })
+    const leaf = firstStepLeaf(result)
+    const [passing] = proceduresOf(result)
+    const decision = passing!.steps.find(
+      (step) => step.kind === 'decision' && step.stepIndex === 0,
+    )
+    if (decision?.kind !== 'decision') throw new Error('expected a decision step')
+
+    expect(decision.record.input.decisionScreenshotRef).toEqual(leaf!.input.decisionScreenshotRef)
+    expect(decision.record.input.auxiliaryArtifactRefs).toEqual(leaf!.input.auxiliaryArtifactRefs)
+  })
+
+  it('deduplicates exact missing-evidence tuples by first procedure order', () => {
+    const handoff = makeV2Handoff()
+    const soloTest = { ...handoff.tests[0]!, steps: [handoff.tests[0]!.steps[0]!] }
+    const soloHandoff: CompletedRunHandoff = { ...handoff, tests: [soloTest] }
+
+    const leaf = cassettesOf(
+      extractRunCassettes({ handoff: soloHandoff, artifacts: mapSource() }),
+    ).find((cassette): cassette is LeafCassette => cassette.granularity === 'leaf')!
+    const record: DecisionRecord = {
+      input: leaf.input,
+      sidecar: leaf.sidecar,
+      label: leaf.label,
+      receipt: leaf.receipt,
+    }
+    const fact = {
+      kind: 'decision-screenshot-ref',
+      stepIndex: 0,
+      decisionOrdinal: 0,
+    } as const
+
+    const built = buildProcedureCassette({
+      handoff: soloHandoff,
+      handoffTest: soloTest,
+      runSlug: deriveRunSlug(soloHandoff.runId),
+      decisions: [
+        {
+          stepIndex: 0,
+          decisionOrdinal: 0,
+          record,
+          blobShas: [],
+          missingEvidence: [fact, { ...fact }],
+          anchorUnresolved: false,
+        },
+      ],
+      artifacts: mapSource(),
+    })
+
+    expect(built.cassette.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingEvidence: [fact],
+    })
   })
 })
