@@ -15,6 +15,7 @@ import type { ArtifactSource } from '../ports'
 import {
   buildCompleteness,
   collectBlobShas,
+  missingRequiredEvidence,
   resolveBlobClosure,
   type ExtractedBlob,
 } from './blob-closure'
@@ -107,8 +108,9 @@ export function extractRunCassettes({
             handoff,
           }),
         }
-        const blobShas = collectBlobShas(selection.subAction)
+        const blobShas = collectBlobShas(input)
         const closure = resolveBlobClosure(blobShas, artifacts)
+        const missingEvidence = missingRequiredEvidence(input)
         const unresolvedAnchorRef = projectedSidecar.anchorUnresolved
           ? actionRef(selection.subAction)
           : undefined
@@ -128,6 +130,7 @@ export function extractRunCassettes({
             missingShas: closure.missingShas,
             anchorUnresolved: projectedSidecar.anchorUnresolved,
             unresolvedAnchorRef,
+            missingEvidence,
           }),
           granularity: 'leaf',
           stepIndex: selection.stepIndex,
@@ -149,6 +152,7 @@ export function extractRunCassettes({
           decisionOrdinal: selection.decisionOrdinal,
           record,
           blobShas,
+          missingEvidence,
           anchorUnresolved: projectedSidecar.anchorUnresolved,
           ...(unresolvedAnchorRef === undefined ? {} : { unresolvedAnchorRef }),
         })

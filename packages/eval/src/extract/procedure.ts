@@ -9,6 +9,7 @@ import {
   type ProcedureEndState,
   type ProcedureStepRecord,
 } from '../cassette/cassette'
+import type { MissingCassetteEvidence } from '../cassette/completeness'
 import { guardCassette } from '../cassette/guard'
 import type { ArtifactSource } from '../ports'
 import {
@@ -24,6 +25,7 @@ export interface ProcedureDecisionInput {
   decisionOrdinal: number
   record: DecisionRecord
   blobShas: readonly string[]
+  missingEvidence: readonly MissingCassetteEvidence[]
   anchorUnresolved: boolean
   unresolvedAnchorRef?: string
 }

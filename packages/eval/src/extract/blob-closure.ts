@@ -1,4 +1,3 @@
-import type { SubActionEvidence } from '@vostride/agent-qa-schema'
 import type { CassetteCompleteness, MissingCassetteEvidence } from '../cassette/completeness'
 import type { CassetteInputLeg } from '../cassette/input-leg'
 import type { ArtifactSource } from '../ports'
@@ -41,8 +40,8 @@ export function missingRequiredEvidence(input: CassetteInputLeg): MissingCassett
   ]
 }
 
-/** Collect the ordered, deduplicated closure demanded by present artifact refs (D-11). */
-export function collectBlobShas(subAction: SubActionEvidence): string[] {
+/** Collect the ordered, deduplicated closure demanded by the projected typed input (D-11/D-14). */
+export function collectBlobShas(input: CassetteInputLeg): string[] {
   const shas: string[] = []
   const seen = new Set<string>()
   const append = (sha: string): void => {
@@ -51,10 +50,10 @@ export function collectBlobShas(subAction: SubActionEvidence): string[] {
     shas.push(sha)
   }
 
-  if (subAction.decisionScreenshotRef !== undefined) {
-    append(subAction.decisionScreenshotRef.sha)
+  if (input.decisionScreenshotRef !== undefined) {
+    append(input.decisionScreenshotRef.sha)
   }
-  for (const artifact of subAction.artifactRefs ?? []) append(artifact.sha)
+  for (const artifact of input.auxiliaryArtifactRefs ?? []) append(artifact.sha)
 
   return shas
 }
