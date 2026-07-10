@@ -28,6 +28,7 @@ import type {
   HookDefinition,
   MobilePlatform,
 } from '@vostride/agent-qa-core'
+import type { DeclaredModelProfile } from '@vostride/agent-qa-schema'
 import type {
   PlatformAdapter,
   PlatformConfig,
@@ -239,6 +240,7 @@ export class LiveSession {
   private adapter: PlatformAdapter | null = null
   private planner: LLMPlanner | null = null
   private verifier: LLMVerifier | null = null
+  private modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile } | null = null
   // D-14 (Phase 360): the run-scoped storage-state store, constructed lazily on first use and
   // rooted at the session's `.agent-qa` runtime dir (the FsStorageStateStore rooting idiom).
   private storageStateStore: StorageStatePort | null = null
@@ -627,13 +629,27 @@ export class LiveSession {
       authFromFetch(modelIdentity.provider, config.authFetch),
     )
     const { profile, auth } = toModelProfileAndAuth(modelIdentity, runtimeAuth)
+    const capabilities = resolveCapabilities(profile)
+    const plannerDeclared: DeclaredModelProfile = {
+      provider: profile.provider,
+      modelId: profile.model,
+      vision: capabilities.vision,
+      maxOutputTokens: capabilities.maxOutput,
+    }
+    const verifierDeclared: DeclaredModelProfile = {
+      provider: profile.provider,
+      modelId: profile.model,
+      vision: capabilities.vision,
+      maxOutputTokens: capabilities.maxOutput,
+    }
+    this.modelProfiles = { planner: plannerDeclared, verifier: verifierDeclared }
     this.model = createModel(profile, auth)
     // Both roles share this.model here, but hold separate accounting instances per role so
     // each owns its own cache anchor (D-11); the D-04 lazy thunk re-reads `profile` per call.
     const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
     const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
-    this.planner = new LLMPlanner(this.model, config.platform, undefined, config.agentRules, plannerAccounting)
-    this.verifier = new LLMVerifier(this.model, verifierAccounting)
+    this.planner = new LLMPlanner(this.model, config.platform, undefined, config.agentRules, plannerAccounting, plannerDeclared)
+    this.verifier = new LLMVerifier(this.model, verifierAccounting, verifierDeclared)
 
     this.status = 'idle'
     this.createdAt = Date.now()
@@ -907,6 +923,7 @@ export class LiveSession {
         adapter: this.adapter!,
         planner: this.planner!,
         verifier: this.verifier!,
+        modelProfiles: this.modelProfiles ?? undefined,
         plannerConfig: { maxSubActions: 50, previousStepCount: 5 },
         vision: this.vision,
         onSetVariable: (name, value) => this.variableStore!.set(name, value, 'step'),

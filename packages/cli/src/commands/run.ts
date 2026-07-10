@@ -12,6 +12,7 @@ import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type Reso
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
+import type { DeclaredModelProfile } from '@vostride/agent-qa-schema'
 import type { SecretStore, SecretRedactor, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
@@ -1083,6 +1084,7 @@ async function executeSuites(
     suite: SuiteDefinition
     suiteKey: string
     suiteConfig: RunSuiteConfig
+    modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile }
     testEntries: [TestDefinition, string][]
     suiteMembers: Array<Record<string, unknown>>
     suiteRunId: string
@@ -1435,6 +1437,20 @@ async function executeSuites(
     const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
     const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
     const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
+    const plannerCapabilities = resolveCapabilities(plannerProfile)
+    const verifierCapabilities = resolveCapabilities(verifierProfile)
+    const plannerDeclared: DeclaredModelProfile = {
+      provider: plannerProfile.provider,
+      modelId: plannerProfile.model,
+      vision: plannerCapabilities.vision,
+      maxOutputTokens: plannerCapabilities.maxOutput,
+    }
+    const verifierDeclared: DeclaredModelProfile = {
+      provider: verifierProfile.provider,
+      modelId: verifierProfile.model,
+      vision: verifierCapabilities.vision,
+      maxOutputTokens: verifierCapabilities.maxOutput,
+    }
     process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
     process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
 
@@ -1472,8 +1488,8 @@ async function executeSuites(
     if (suiteLogCapture?.network === false) {
       suiteEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
     }
-    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined, plannerAccounting)
-    const verifier = new LLMVerifier(verifierModel, verifierAccounting)
+    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined, plannerAccounting, plannerDeclared)
+    const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
 
     // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
     // subscribers (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are
@@ -1642,6 +1658,7 @@ async function executeSuites(
       suite,
       suiteKey: suiteFile,
       suiteConfig,
+      modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
       testEntries,
       suiteMembers,
       suiteRunId: preparedSuiteRunId,
@@ -1921,7 +1938,7 @@ async function executeSuites(
             }
           }
 
-          const memberRunConfig = buildMemberRunConfig({
+          const memberRunConfig = Object.assign(buildMemberRunConfig({
             adapter: suiteConfig.adapter,
             planner: suiteConfig.planner,
             verifier: suiteConfig.verifier,
@@ -1956,6 +1973,8 @@ async function executeSuites(
             visionGate: suiteConfig.visionGate,
             suiteContext: (prepared.suite as any).context,
             filePath,
+          }), {
+            modelProfiles: prepared.modelProfiles,
           })
           const result = await runMemberTest(toMemberTest(patched, filePath), memberRunConfig)
 
@@ -2832,6 +2851,20 @@ export function createRunCommand(): Command {
             const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
             const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
             const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
+            const plannerCapabilities = resolveCapabilities(plannerProfile)
+            const verifierCapabilities = resolveCapabilities(verifierProfile)
+            const plannerDeclared: DeclaredModelProfile = {
+              provider: plannerProfile.provider,
+              modelId: plannerProfile.model,
+              vision: plannerCapabilities.vision,
+              maxOutputTokens: plannerCapabilities.maxOutput,
+            }
+            const verifierDeclared: DeclaredModelProfile = {
+              provider: verifierProfile.provider,
+              modelId: verifierProfile.model,
+              vision: verifierCapabilities.vision,
+              maxOutputTokens: verifierCapabilities.maxOutput,
+            }
             process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
             process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
             if (effectiveLogLevel === 'debug') {
@@ -2855,8 +2888,8 @@ export function createRunCommand(): Command {
             if (testLogCapture?.network === false) {
               testEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
             }
-            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testEffectiveRules || undefined, plannerAccounting)
-            const verifier = new LLMVerifier(verifierModel, verifierAccounting)
+            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testEffectiveRules || undefined, plannerAccounting, plannerDeclared)
+            const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
 
             // Per-test timeouts from merged config
             const testTimeouts = {
@@ -3016,7 +3049,7 @@ export function createRunCommand(): Command {
             // runTest/runTestWithRetry wrapper is deleted; retry lives inside runMemberTest, and the
             // adapter-backed handlers (runJS/appium/a11y/failure-shot) + secret resolver are wired by
             // the shared buildMemberRunConfig helper (Pitfall 8 — the suite path uses the same helper).
-            const memberRunConfig = buildMemberRunConfig({
+            const memberRunConfig = Object.assign(buildMemberRunConfig({
               adapter: adapter!,
               planner,
               verifier,
@@ -3054,6 +3087,8 @@ export function createRunCommand(): Command {
               visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
               contextWindow: plannerCfg.contextWindow,
               filePath,
+            }), {
+              modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
             })
             const result = await runMemberTest(toMemberTest(testDef, filePath), memberRunConfig)
 
