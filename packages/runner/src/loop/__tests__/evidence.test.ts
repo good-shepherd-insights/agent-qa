@@ -2,7 +2,7 @@
 // produced by construction as schema DTOs; the legacy trace is projected from it.
 import { describe, it, expect } from 'vitest'
 import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
-import type { Action, Decision, ScopeKey, VerifierVerdict } from '@vostride/agent-qa-schema'
+import type { Action, ArtifactRef, Decision, ScopeKey, SubActionEvidence, VerifierVerdict } from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { Action as PlatformAction, ActionResult as PlatformActionResult } from '../../platform.js'
 import {
@@ -54,6 +54,87 @@ describe('EvidenceRecorder.recordSubAction', () => {
     expect('screenshot' in stored).toBe(false)
     expect(stored.success).toBe(true)
     expect(stored.data).toEqual({ ok: true })
+  })
+})
+
+describe('EvidenceRecorder.recordSubAction — artifact references (CASS-02)', () => {
+  const decisionRef: ArtifactRef = { id: 'decision-screenshot:abc', sha: 'a'.repeat(64) }
+  const auxRefs: ArtifactRef[] = [
+    { id: 'aux:1', sha: 'b'.repeat(64) },
+    { id: 'aux:2', sha: 'c'.repeat(64) },
+  ]
+
+  it('copies a supplied decisionScreenshotRef byte-for-byte into the recorded evidence', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.recordSubAction({
+      plan: 'click',
+      plannedAction: clickAction,
+      stateBefore: makeScreenState(),
+      result: { success: true },
+      decisionScreenshotRef: decisionRef,
+    })
+    const step = recorder.finalize(passVerdict, 0, 'click')
+    expect(step.subActions[0].decisionScreenshotRef).toEqual(decisionRef)
+  })
+
+  it('preserves supplied auxiliary artifactRefs order and identity', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.recordSubAction({
+      plan: 'click',
+      plannedAction: clickAction,
+      stateBefore: makeScreenState(),
+      result: { success: true },
+      artifactRefs: auxRefs,
+    })
+    const step = recorder.finalize(passVerdict, 0, 'click')
+    expect(step.subActions[0].artifactRefs).toEqual(auxRefs)
+    // shallow copy — a mutation of the stored array must not alias the input
+    expect(step.subActions[0].artifactRefs).not.toBe(auxRefs)
+  })
+
+  it('leaves both artifact fields structurally absent when not supplied', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.recordSubAction({
+      plan: 'click',
+      plannedAction: clickAction,
+      stateBefore: makeScreenState(),
+      result: { success: true },
+    })
+    const step = recorder.finalize(passVerdict, 0, 'click')
+    expect('decisionScreenshotRef' in step.subActions[0]).toBe(false)
+    expect('artifactRefs' in step.subActions[0]).toBe(false)
+  })
+
+  it('records the ArtifactRef while the inline result screenshot bytes stay excluded (T-353-06)', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.recordSubAction({
+      plan: 'tap submit',
+      plannedAction: clickAction,
+      stateBefore: makeScreenState(),
+      result: { success: true, screenshot: new Uint8Array([9, 9, 9]) },
+      decisionScreenshotRef: decisionRef,
+    })
+    const step = recorder.finalize(passVerdict, 0, 'submit')
+    expect('screenshot' in step.subActions[0].result).toBe(false)
+    expect(step.subActions[0].decisionScreenshotRef).toEqual(decisionRef)
+  })
+
+  it('emits the artifact-bearing evidence through onSubActionRecorded', () => {
+    const observed: SubActionEvidence[] = []
+    const recorder = new EvidenceRecorder({
+      onSubActionRecorded: (evidence) => observed.push(evidence),
+    })
+    recorder.recordSubAction({
+      plan: 'click',
+      plannedAction: clickAction,
+      stateBefore: makeScreenState(),
+      result: { success: true },
+      decisionScreenshotRef: decisionRef,
+      artifactRefs: auxRefs,
+    })
+    expect(observed).toHaveLength(1)
+    expect(observed[0].decisionScreenshotRef).toEqual(decisionRef)
+    expect(observed[0].artifactRefs).toEqual(auxRefs)
   })
 })
 
