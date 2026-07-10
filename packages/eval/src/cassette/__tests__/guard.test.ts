@@ -248,3 +248,173 @@ describe('guardCassette', () => {
     expect(() => guardCassette(wireRoundTrip(changed))).toThrow(/blobs\.0/)
   })
 })
+
+type LegName = 'input' | 'sidecar' | 'label' | 'receipt'
+
+const LEG_NAMES: LegName[] = ['input', 'sidecar', 'label', 'receipt']
+
+const LEG_CORRUPTIONS: Record<LegName, { path: string; corrupt: (leg: any) => void }> = {
+  input: { path: 'input.stateBefore.elements', corrupt: leg => (leg.stateBefore.elements = 'tampered') },
+  sidecar: { path: 'sidecar.opClass', corrupt: leg => (leg.opClass = 42) },
+  label: { path: 'label.sourceChannel', corrupt: leg => (leg.sourceChannel = 'bogus-channel') },
+  receipt: { path: 'receipt.promptInputHash', corrupt: leg => (leg.promptInputHash = 'not-a-valid-digest') },
+}
+
+function mutate(document: unknown, mutator: (doc: any) => void): unknown {
+  const clone = JSON.parse(JSON.stringify(document))
+  mutator(clone)
+  return clone
+}
+
+function pathMatcher(fullPath: string): RegExp {
+  return new RegExp(fullPath.replace(/\./g, '\\.'))
+}
+
+const invalidGoldActions: Array<{ name: string; action: unknown; relPath: string }> = [
+  { name: 'a truncated fill action', action: { type: 'fill' }, relPath: 'goldAction.text' },
+  {
+    name: 'fill missing ref',
+    action: { type: 'fill', text: 't', clearMode: 'replace', submit: false },
+    relPath: 'goldAction.ref',
+  },
+  {
+    name: 'fill missing clearMode',
+    action: { type: 'fill', ref: 'e1', text: 't', submit: false },
+    relPath: 'goldAction.clearMode',
+  },
+  {
+    name: 'fill missing submit',
+    action: { type: 'fill', ref: 'e1', text: 't', clearMode: 'replace' },
+    relPath: 'goldAction.submit',
+  },
+  { name: 'an unknown action type', action: { type: 'teleport' }, relPath: 'goldAction.type' },
+  {
+    name: 'wrong-typed fill.text',
+    action: { type: 'fill', ref: 'e1', text: 5, clearMode: 'replace', submit: false },
+    relPath: 'goldAction.text',
+  },
+  {
+    name: 'wrong-typed select.value',
+    action: { type: 'select', ref: 'e1', value: 5 },
+    relPath: 'goldAction.value',
+  },
+  {
+    name: 'wrong-typed paste.value',
+    action: { type: 'paste', ref: 'e1', value: 5 },
+    relPath: 'goldAction.value',
+  },
+  {
+    name: 'wrong-typed nativeSelect.value',
+    action: { type: 'nativeSelect', ref: 'e1', value: 5 },
+    relPath: 'goldAction.value',
+  },
+]
+
+const invalidGoldActionsLoose: Array<{ name: string; action: unknown }> = [
+  { name: 'wrong-typed pickerSelect.value', action: { type: 'pickerSelect', ref: 'e1', value: 5 } },
+  { name: 'malformed pickerSelect order', action: { type: 'pickerSelect', ref: 'e1', order: 'first' } },
+  { name: 'navigate to url without url', action: { type: 'navigate', to: 'url' } },
+]
+
+const validReplacementGoldActions: Array<{ name: string; action: unknown }> = [
+  { name: 'a valid fill action', action: { type: 'fill', ref: 'e1', text: 'x', clearMode: 'replace', submit: false } },
+  { name: 'a valid paste action', action: { type: 'paste', ref: 'e1', value: 'clip' } },
+]
+
+function setLeafGoldAction(action: unknown): unknown {
+  return mutate(validLeafDocument(), doc => {
+    doc.sidecar.goldAction = action
+  })
+}
+
+function setProcedureGoldAction(action: unknown): unknown {
+  return mutate(validProcedureDocument(), doc => {
+    doc.steps[0].record.sidecar.goldAction = action
+  })
+}
+
+describe('guardCassette four-leg structural matrix', () => {
+  for (const leg of LEG_NAMES) {
+    it(`rejects a leaf with a deleted ${leg} leg`, () => {
+      const document = mutate(validLeafDocument(), doc => {
+        delete doc[leg]
+      })
+
+      expect(() => guardCassette(document)).toThrow(pathMatcher(leg))
+    })
+
+    it(`rejects a procedure decision with a deleted ${leg} leg`, () => {
+      const document = mutate(validProcedureDocument(), doc => {
+        delete doc.steps[0].record[leg]
+      })
+
+      expect(() => guardCassette(document)).toThrow(pathMatcher(`steps.0.record.${leg}`))
+    })
+
+    it(`rejects a leaf with a corrupted ${leg} leg`, () => {
+      const { path, corrupt } = LEG_CORRUPTIONS[leg]
+      const document = mutate(validLeafDocument(), doc => {
+        corrupt(doc[leg])
+      })
+
+      expect(() => guardCassette(document)).toThrow(pathMatcher(path))
+    })
+
+    it(`rejects a procedure decision with a corrupted ${leg} leg`, () => {
+      const { path, corrupt } = LEG_CORRUPTIONS[leg]
+      const document = mutate(validProcedureDocument(), doc => {
+        corrupt(doc.steps[0].record[leg])
+      })
+
+      expect(() => guardCassette(document)).toThrow(pathMatcher(`steps.0.record.${path}`))
+    })
+  }
+})
+
+describe('guardCassette embedded gold action matrix', () => {
+  for (const { name, action } of validReplacementGoldActions) {
+    it(`accepts ${name} in a leaf cassette`, () => {
+      expect(guardCassette(setLeafGoldAction(action)).granularity).toBe('leaf')
+    })
+
+    it(`accepts ${name} in a procedure decision`, () => {
+      expect(guardCassette(setProcedureGoldAction(action)).granularity).toBe('procedure')
+    })
+  }
+
+  for (const { name, action, relPath } of invalidGoldActions) {
+    it(`rejects ${name} in a leaf cassette`, () => {
+      expect(() => guardCassette(setLeafGoldAction(action))).toThrow(
+        pathMatcher(`sidecar.${relPath}`),
+      )
+    })
+
+    it(`rejects ${name} in a procedure decision`, () => {
+      expect(() => guardCassette(setProcedureGoldAction(action))).toThrow(
+        pathMatcher(`steps.0.record.sidecar.${relPath}`),
+      )
+    })
+  }
+
+  for (const { name, action } of invalidGoldActionsLoose) {
+    it(`rejects ${name} in a leaf cassette`, () => {
+      expect(() => guardCassette(setLeafGoldAction(action))).toThrow(
+        pathMatcher('sidecar.goldAction'),
+      )
+    })
+
+    it(`rejects ${name} in a procedure decision`, () => {
+      expect(() => guardCassette(setProcedureGoldAction(action))).toThrow(
+        pathMatcher('steps.0.record.sidecar.goldAction'),
+      )
+    })
+  }
+
+  it('rejects a present platform member on the gold action', () => {
+    const action = { type: 'click', ref: 'e1', platform: 'web' }
+
+    expect(() => guardCassette(setLeafGoldAction(action))).toThrow(
+      pathMatcher('sidecar.goldAction.platform'),
+    )
+  })
+})
