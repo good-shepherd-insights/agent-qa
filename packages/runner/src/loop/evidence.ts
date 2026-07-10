@@ -196,6 +196,17 @@ export interface RecordSubActionInput {
    */
   grounding?: SubActionEvidence['grounding']
   /**
+   * The §A8 decision-screenshot ArtifactRef (CASS-02): the identity of the exact final image
+   * bytes the planner saw for this live decision, minted by the run-scoped artifact store.
+   * Absent on cache-served, text-only, unbound-store, or failed-store paths — never fabricated.
+   */
+  decisionScreenshotRef?: SubActionEvidence['decisionScreenshotRef']
+  /**
+   * Auxiliary §A8 ArtifactRefs already reserved by the schema DTO. Copied verbatim (order and
+   * identity preserved) so the recorder never drops artifact references present on the input.
+   */
+  artifactRefs?: SubActionEvidence['artifactRefs']
+  /**
    * Ordered exchanges from this live planning decision (D-01). The loop masks every
    * string leaf BEFORE passing them here (T-360-01); the recorder never sees raw values.
    * Present, possibly empty, for live turns and absent for cache replay.
@@ -275,6 +286,8 @@ export class EvidenceRecorder {
     if (input.callRecord !== undefined) evidence.callRecord = input.callRecord
     if (input.grounding) evidence.grounding = input.grounding
     if (input.localEffect) evidence.localEffect = input.localEffect
+    if (input.decisionScreenshotRef) evidence.decisionScreenshotRef = input.decisionScreenshotRef
+    if (input.artifactRefs) evidence.artifactRefs = [...input.artifactRefs]
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
     const index = this.subActions.length - 1
