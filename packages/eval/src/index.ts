@@ -23,6 +23,16 @@ export type {
 } from './replay/exchange-server'
 export { createNullAdapter, ReplayExecutionForbiddenError } from './replay/null-adapter'
 
+export {
+  MissingDecisionBlobError,
+  UnsupportedBriefError,
+  reconstructDecisionContext,
+} from './replay/reconstruct'
+export type {
+  ReconstructDecisionContextInput,
+  ReconstructedDecisionContext,
+} from './replay/reconstruct'
+
 export { neverEscalate } from './replay/ports'
 export type {
   ReplayClock,
