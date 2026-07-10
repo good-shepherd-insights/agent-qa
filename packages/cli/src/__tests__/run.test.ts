@@ -1088,10 +1088,9 @@ describe('run command — reduced flag surface and target resolution', () => {
       }),
       { kind: 'api-key', apiKey: 'test-key' },
     )
-    // 355-07: the planner ctor now takes a 5th injected TokenAccounting arg (D-15) and the
-    // verifier a 2nd — role-separated instances built via createTokenAccounting at the
-    // composition root. The accounting factory is unmocked, so a structural port check.
-    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(5)
+    // 355-07 supplies role-separated accounting ports. 366-07 adds each role's declared
+    // model profile and preserves that exact DTO reference through member-run recording.
+    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(6)
     expect(mockLLMPlanner.mock.calls[0][0]).toBe(mockCreateModel.mock.results[0].value)
     expect(mockLLMPlanner.mock.calls[0][1]).toBe('web')
     const plannerAccounting = mockLLMPlanner.mock.calls[0][4]
@@ -1101,7 +1100,16 @@ describe('run command — reduced flag surface and target resolution', () => {
       recordUsage: expect.any(Function),
       getCeilings: expect.any(Function),
     }))
-    expect(mockLLMVerifier.mock.calls[0]).toHaveLength(2)
+    const plannerDeclared = mockLLMPlanner.mock.calls[0][5]
+    expect(plannerDeclared).toEqual(expect.objectContaining({
+      provider: 'anthropic-compatible',
+      modelId: 'claude-sonnet-4-20250514',
+      vision: expect.any(Boolean),
+      maxOutputTokens: expect.any(Number),
+    }))
+    expect(plannerDeclared).not.toHaveProperty('sampling')
+
+    expect(mockLLMVerifier.mock.calls[0]).toHaveLength(3)
     expect(mockLLMVerifier.mock.calls[0][0]).toBe(mockCreateModel.mock.results[1].value)
     const verifierAccounting = mockLLMVerifier.mock.calls[0][1]
     expect(verifierAccounting).toEqual(expect.objectContaining({
@@ -1109,6 +1117,19 @@ describe('run command — reduced flag surface and target resolution', () => {
       recordUsage: expect.any(Function),
       getCeilings: expect.any(Function),
     }))
+    const verifierDeclared = mockLLMVerifier.mock.calls[0][2]
+    expect(verifierDeclared).toEqual(expect.objectContaining({
+      provider: 'anthropic-compatible',
+      modelId: 'claude-sonnet-4-20250514',
+      vision: expect.any(Boolean),
+      maxOutputTokens: expect.any(Number),
+    }))
+    expect(verifierDeclared).not.toHaveProperty('sampling')
+    expect(verifierDeclared).not.toBe(plannerDeclared)
+
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
+    expect(runConfig.modelProfiles.planner).toBe(plannerDeclared)
+    expect(runConfig.modelProfiles.verifier).toBe(verifierDeclared)
     // Role-separated instances — the planner and verifier must not share one accounting.
     expect(plannerAccounting).not.toBe(verifierAccounting)
   })

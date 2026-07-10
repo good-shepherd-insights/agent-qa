@@ -14,9 +14,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FsHandoffStore, loadCompletedRunHandoff } from '../handoff-store.js'
 import { slugBranch } from '../branch-resolver.js'
 import { RUNS_SUBDIR } from '../event-log.js'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 
-function makeHandoff(schemaVersion = 1): CompletedRunHandoff {
+function makeHandoff(schemaVersion = CURRENT_HANDOFF_SCHEMA_VERSION): CompletedRunHandoff {
   return {
     schemaVersion,
     runId: 'run-1' as CompletedRunHandoff['runId'],
@@ -42,7 +43,7 @@ describe('FsHandoffStore + loadCompletedRunHandoff (D-17/D-19)', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('save writes handoff.json beside events.jsonl and round-trips a v1 document', async () => {
+  it('save writes handoff.json beside events.jsonl and round-trips a v2 document', async () => {
     const store = new FsHandoffStore({ root, runId: 'run-1' })
     const handoff = makeHandoff()
     await store.save(handoff)
@@ -52,11 +53,11 @@ describe('FsHandoffStore + loadCompletedRunHandoff (D-17/D-19)', () => {
     expect(loaded).toEqual(handoff)
   })
 
-  it('loadCompletedRunHandoff rejects a schemaVersion 2 document with the typed schema guard error', async () => {
+  it('loadCompletedRunHandoff rejects a pre-instrumentation schemaVersion 1 document', async () => {
     const dir = join(root, RUNS_SUBDIR, slugBranch('run-1'))
     await mkdir(dir, { recursive: true })
     const file = join(dir, 'handoff.json')
-    await writeFile(file, JSON.stringify(makeHandoff(2)), 'utf8')
+    await writeFile(file, JSON.stringify(makeHandoff(1)), 'utf8')
 
     let thrown: unknown
     try {
@@ -66,6 +67,7 @@ describe('FsHandoffStore + loadCompletedRunHandoff (D-17/D-19)', () => {
     }
     expect(thrown).toBeDefined()
     expect((thrown as { name: string }).name).toBe('HandoffVersionError')
-    expect((thrown as { foundVersion: number }).foundVersion).toBe(2)
+    expect((thrown as { foundVersion: number }).foundVersion).toBe(1)
+    expect((thrown as { supportedVersion: number }).supportedVersion).toBe(2)
   })
 })
