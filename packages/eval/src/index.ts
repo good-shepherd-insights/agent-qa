@@ -33,6 +33,9 @@ export type {
   ReconstructedDecisionContext,
 } from './replay/reconstruct'
 
+export { replayCassette } from './replay/replay-run'
+export type { ReplayCassetteInput } from './replay/replay-run'
+
 export { neverEscalate } from './replay/ports'
 export type {
   ReplayClock,
