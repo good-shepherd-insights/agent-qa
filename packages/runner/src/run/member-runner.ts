@@ -29,6 +29,7 @@ import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult, PlatformAdapter, RuntimeAuthStateConfig } from '../platform.js'
 import type { AccessibilityViolation, StepResult, TestResult } from '../result.js'
 import type {
+  EvidenceArtifactStorePort,
   LoopLogger,
   LoopPorts,
   ScreenshotCompressor,
@@ -134,6 +135,7 @@ export interface MemberRunConfig {
   uniqueValueGenerator?: UniqueValueGenerator
   guardBlob?: (value: unknown) => string | undefined
   configDigests?: ConfigDigests
+  evidenceArtifacts?: EvidenceArtifactStorePort
 
   // --- models ---
   plannerModel: LanguageModel
@@ -655,6 +657,7 @@ async function runMemberAttempt(
       secretRedactor: config.secretRedactor,
       events: config.sink.loopEmitFor(stepIndex),
       configDigests: config.configDigests,
+      evidenceArtifacts: config.evidenceArtifacts,
     }
 
     let result: StepResult
