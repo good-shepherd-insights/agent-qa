@@ -1,5 +1,6 @@
 import { workingMemoryEntrySchema } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
+import { actionWireSchema } from './action-wire-schema'
 import { CASSETTE_SCHEMA_VERSION } from './cassette'
 
 const LOWER_HEX_64 = /^[0-9a-f]{64}$/
@@ -207,8 +208,6 @@ const toolExchangeSchema = z
     }
   })
 
-const actionSchema = z.object({ type: z.string().min(1) }).passthrough()
-
 const annotationBaseShape = {
   viewport: viewportSchema,
   direction: z.enum(['up', 'down', 'left', 'right']).optional(),
@@ -330,7 +329,7 @@ const goldAnchorSchema = z
 
 const sidecarLegSchema = z
   .object({
-    goldAction: actionSchema,
+    goldAction: actionWireSchema,
     opClass: z.string(),
     goldValue: z.string().optional(),
     goldAnchor: goldAnchorSchema.optional(),
