@@ -13,7 +13,12 @@
 // port. Zero non-action tools are bound (D-07), so executePlanningTurn behaves as v1's
 // one-shot per turn; the screenshot fallback and maxRetries:0 semantics are preserved.
 import type { LanguageModel, LanguageModelUsage, ModelMessage, SystemModelMessage } from 'ai'
-import type { ElementInfo, Platform, ScreenState } from '@vostride/agent-qa-schema'
+import type {
+  DeclaredModelProfile,
+  ElementInfo,
+  Platform,
+  ScreenState,
+} from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { LoopScopedLogger, TokenAccounting } from './ports.js'
 import { buildSystemPrompt, buildContextTier, buildVolatileTier, composeTurnMessages } from './prompts.js'
@@ -161,6 +166,7 @@ export class LLMPlanner implements Planner {
   private logger?: LoopScopedLogger
   private agentRules?: string
   private accounting: TokenAccounting
+  private profile?: DeclaredModelProfile
 
   // TokenAccounting is a required constructor dependency (D-15 constructor-injection):
   // it is the clamp/degrade/recordUsage seam every planning call rides. The composition
@@ -172,12 +178,14 @@ export class LLMPlanner implements Planner {
     logger: LoopScopedLogger | undefined,
     agentRules: string | undefined,
     accounting: TokenAccounting,
+    profile?: DeclaredModelProfile,
   ) {
     this.model = model
     this.platform = platform ?? 'web'
     this.logger = logger
     this.agentRules = agentRules
     this.accounting = accounting
+    this.profile = profile
   }
 
   // Cache-ordered [stable, context, volatile] system tiers (D-04/D-05/D-07). The single
@@ -271,6 +279,7 @@ export class LLMPlanner implements Planner {
             system,
             messages: fitted,
             maxOutputTokens,
+            sampling: this.profile?.sampling,
             abortSignal,
             logger: this.logger,
             groundability,

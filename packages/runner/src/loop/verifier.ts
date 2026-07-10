@@ -6,7 +6,7 @@
 import { generateText, Output } from 'ai'
 import type { LanguageModel, ModelMessage, SystemModelMessage } from 'ai'
 import { z } from 'zod'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { DeclaredModelProfile, ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { Verifier, VerifyResult } from './types.js'
 import type { LanguageModelUsage } from 'ai'
@@ -93,14 +93,16 @@ function buildExtractionSchema(fields: unknown): z.ZodType {
 export class LLMVerifier implements Verifier {
   private model: LanguageModel
   private accounting: TokenAccounting
+  private profile?: DeclaredModelProfile
 
   // TokenAccounting is a required constructor dependency (D-15 constructor-injection):
   // the verifier holds its OWN instance (not the planner's — distinct cache entry, D-11)
   // and rides the same clamp/degrade/recordUsage seam every verifier call goes through
   // (CTXB-04). Plan 07 constructs a distinct verifierAccounting at the composition root.
-  constructor(model: LanguageModel, accounting: TokenAccounting) {
+  constructor(model: LanguageModel, accounting: TokenAccounting, profile?: DeclaredModelProfile) {
     this.model = model
     this.accounting = accounting
+    this.profile = profile
   }
 
   async verify(
@@ -208,6 +210,14 @@ export class LLMVerifier implements Verifier {
           system,
           messages: fitted,
           maxOutputTokens,
+          ...(this.profile?.sampling?.temperature !== undefined
+            ? { temperature: this.profile.sampling.temperature }
+            : {}),
+          ...(this.profile?.sampling?.topP !== undefined ? { topP: this.profile.sampling.topP } : {}),
+          ...(this.profile?.sampling?.stop !== undefined
+            ? { stopSequences: this.profile.sampling.stop }
+            : {}),
+          ...(this.profile?.sampling?.seed !== undefined ? { seed: this.profile.sampling.seed } : {}),
         }),
       // recordUsage anchors on the observed input tokens (the port reads inputTokens
       // only); the `ai` result already carries the usage triad. The nested token-detail
@@ -339,6 +349,14 @@ export class LLMVerifier implements Verifier {
           system,
           messages: fitted,
           maxOutputTokens,
+          ...(this.profile?.sampling?.temperature !== undefined
+            ? { temperature: this.profile.sampling.temperature }
+            : {}),
+          ...(this.profile?.sampling?.topP !== undefined ? { topP: this.profile.sampling.topP } : {}),
+          ...(this.profile?.sampling?.stop !== undefined
+            ? { stopSequences: this.profile.sampling.stop }
+            : {}),
+          ...(this.profile?.sampling?.seed !== undefined ? { seed: this.profile.sampling.seed } : {}),
         }),
       recordFrom: (r) => (r.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }) as LanguageModelUsage,
     })
