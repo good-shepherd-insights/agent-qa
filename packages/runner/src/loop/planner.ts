@@ -16,14 +16,21 @@ import type { LanguageModel, LanguageModelUsage, ModelMessage, SystemModelMessag
 import type {
   DeclaredModelProfile,
   ElementInfo,
+  ModelCallRecord,
   Platform,
   ScreenState,
+  ToolExchangeEvidence,
 } from '@vostride/agent-qa-schema'
 import type { Planner, PlanResult, StepContext } from './types.js'
 import type { LoopScopedLogger, TokenAccounting } from './ports.js'
 import { buildSystemPrompt, buildContextTier, buildVolatileTier, composeTurnMessages } from './prompts.js'
 import { buildTools, defaultRegistry } from '../tools/index.js'
-import { executePlanningTurn, type PlanningTurnResult, type GroundabilityCallback } from './planning-turn.js'
+import {
+  executePlanningTurn,
+  type GroundabilityCallback,
+  type PlanningTurnFailureReason,
+  type PlanningTurnResult,
+} from './planning-turn.js'
 import { executeClampedCall, type ClampedCallResult } from './clamp.js'
 import { groundActionPlan } from '../grounding/gate.js'
 import { matchDescriptor } from '../grounding/matcher.js'
@@ -38,6 +45,28 @@ const SCREENSHOT_UNAVAILABLE_NOTE =
 // bounds an accidentally-large error body so a swallowed catch never dumps an unbounded blob.
 const MAX_RESPONSE_BODY_CHARS = 500
 
+/**
+ * Structured planning-turn failure used to preserve failed-turn evidence across
+ * the planner's throw-based public contract (D-03).
+ */
+export class PlanningTurnError extends Error {
+  readonly reason: PlanningTurnFailureReason
+  readonly exchanges: ToolExchangeEvidence[]
+  readonly callRecord?: ModelCallRecord
+
+  constructor(
+    reason: PlanningTurnFailureReason,
+    message: string,
+    exchanges: ToolExchangeEvidence[],
+    callRecord?: ModelCallRecord,
+  ) {
+    super(`Planning turn failed (${reason}): ${message}`)
+    this.name = 'PlanningTurnError'
+    this.reason = reason
+    this.exchanges = exchanges
+    this.callRecord = callRecord
+  }
+}
 
 // RUNX-04 (planner half): duck-typed `@ai-sdk/provider` APICallError extraction — mirrors
 // `packages/cli/src/commands/auth.ts` `extractProviderError`. The runner stays provider-neutral
@@ -367,9 +396,15 @@ export class LLMPlanner implements Planner {
 
     if (!turnResult.ok) {
       // D-08 replaces v1's `throw new Error('LLM did not call any action tool')` inside
-      // the turn with a structured failure. The loop consumes that failure to feed the
-      // replan path in wave 4; here we surface it to preserve v1's Planner contract.
-      throw new Error(`Planning turn failed (${turnResult.reason}): ${turnResult.message}`)
+      // the turn with a structured failure. Surface the failure through a typed error so
+      // the loop can recover failed-turn exchanges for D-03 while preserving the planner's
+      // throw-based contract and byte-identical display message.
+      throw new PlanningTurnError(
+        turnResult.reason,
+        turnResult.message,
+        turnResult.exchanges,
+        turnResult.callRecord,
+      )
     }
 
     const plan = turnResult.plan
@@ -386,6 +421,8 @@ export class LLMPlanner implements Planner {
     return {
       plan,
       tokenUsage: turnResult.tokenUsage,
+      exchanges: turnResult.exchanges,
+      ...(turnResult.callRecord !== undefined ? { callRecord: turnResult.callRecord } : {}),
     }
   }
 }

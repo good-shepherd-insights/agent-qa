@@ -7,7 +7,13 @@
 // absent here.
 
 import type { LanguageModel } from 'ai'
-import type { GroundingAttempt, ScreenState, WorkingMemoryEntry } from '@vostride/agent-qa-schema'
+import type {
+  GroundingAttempt,
+  ModelCallRecord,
+  ScreenState,
+  ToolExchangeEvidence,
+  WorkingMemoryEntry,
+} from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import type { TokenUsage } from '../result.js'
 
@@ -66,6 +72,16 @@ export interface PlannerConfig {
 export interface PlanResult {
   plan: ActionPlan
   tokenUsage?: TokenUsage
+  /**
+   * Ordered non-action exchanges from this live planning decision (D-01).
+   * Absent for cache-replay-produced results, which have no live planning turn.
+   */
+  exchanges?: ToolExchangeEvidence[]
+  /**
+   * Observed final-response metadata for this live planning decision (D-05/D-08).
+   * Absent when the provider exposes no call record or no live model call occurred.
+   */
+  callRecord?: ModelCallRecord
 }
 
 export interface VerificationResult {
