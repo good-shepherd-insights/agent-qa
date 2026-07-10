@@ -90,7 +90,7 @@ export type {
 
 // 314 async-seam
 export { asRunId } from './run/index'
-export { asRecordId, asIssueId, asEvidenceToken } from './ids/index'
+export { asRecordId, asIssueId, asEvidenceToken, slugBranch } from './ids/index'
 export { computeBriefDigest } from './brief/index'
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
 // 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).

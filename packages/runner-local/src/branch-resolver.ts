@@ -1,4 +1,4 @@
-// Injectable git-branch resolver + slug sanitizer for the local cache store.
+// Injectable git-branch resolver for the local cache store.
 //
 // This is the ONLY sanctioned home for node:fs / node:child_process git reads
 // (storageImplementation, D-01/D-02). The resolver degrades gracefully in a
@@ -15,10 +15,13 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { slugBranch } from '@vostride/agent-qa-schema'
+
+// Preserve runner-local's public surface while schema owns the ONE pure sanitizer.
+export { slugBranch }
+
 const HEAD_REF_RE = /^ref:\s*refs\/heads\/(.+?)\s*$/m
 const GITDIR_RE = /^gitdir:\s*(.+)$/m
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS_RE = /[\u0000-\u001f\u007f]/g
 
 export interface ResolvedBranch {
   /** The branch the run is on; falls back to defaultBranch when undetectable. */
@@ -52,23 +55,6 @@ export function resolveBranch(opts: BranchResolverOptions = {}): ResolvedBranch 
   const currentBranch = parseHeadBranch(safe(() => readHead(cwd))) ?? defaultBranch
 
   return { currentBranch, defaultBranch }
-}
-
-/**
- * Turn a branch name into a single safe path segment (security V5): strip control
- * characters, neutralize path separators and parent-dir `..` sequences, and reject
- * leading/trailing dots so a branch name can never traverse out of the cache root.
- */
-export function slugBranch(name: string): string {
-  const slug = name
-    .replace(CONTROL_CHARS_RE, '') // control chars
-    .replace(/\.\.+/g, '-') // parent-dir sequences
-    .replace(/[/\\]/g, '-') // path separators
-    .replace(/[^A-Za-z0-9._-]/g, '-') // anything else unsafe
-    .replace(/^[.\-]+/, '') // no leading dot/dash (., .., hidden dirs)
-    .replace(/[.\-]+$/, '') // no trailing dot/dash
-
-  return slug.length > 0 ? slug : 'default'
 }
 
 function parseHeadBranch(head: string | null): string | null {
