@@ -11,24 +11,13 @@ import type {
   CassetteReceipt,
   CassetteSamplingReceipt,
 } from '../cassette/receipt-leg'
+import { canonicalValue } from '../canonical-json'
 
 export interface AssembleReceiptInput {
   inputLeg: CassetteInputLeg
   step: StepEvidence
   subAction: SubActionEvidence
   handoff: CompletedRunHandoff
-}
-
-function canonicalValue(input: unknown): unknown {
-  if (Array.isArray(input)) return input.map(canonicalValue)
-  if (input === null || typeof input !== 'object') return input
-
-  const source = input as Record<string, unknown>
-  const sorted: Record<string, unknown> = {}
-  for (const key of Object.keys(source).sort()) {
-    sorted[key] = canonicalValue(source[key])
-  }
-  return sorted
 }
 
 /**
