@@ -157,6 +157,12 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   // 363-06: buildRunPorts constructs the run-artifact store; buildScreenshotCompressor constructs
   // the sharp compressor. Both are injected but their legs are never exercised in these unit runs.
   FsRunArtifactStore: class { stage(): void {} finalize(): void {} },
+  // 367-13 CASS-02: buildRunPorts also constructs the run-scoped evidence artifact store; its legs
+  // are never exercised in these mocked unit runs, but the constructor must exist.
+  FsEvidenceArtifactStore: class {
+    persistDecisionScreenshot(): { id: string; sha: string } { return { id: 'decision-screenshot:mock', sha: 'mock' } }
+    getBlob(): Uint8Array | undefined { return undefined }
+  },
   SharpScreenshotCompressor: class {
     async compress(buffer: Buffer): Promise<{ buffer: Buffer; imageWidth: number; imageHeight: number }> {
       return { buffer, imageWidth: 0, imageHeight: 0 }
