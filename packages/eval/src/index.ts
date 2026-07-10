@@ -12,6 +12,17 @@ export {
 } from './replay/identity'
 export type { DecisionIdentity } from './replay/identity'
 
+export {
+  ActionToolCollisionError,
+  UnservableDivergenceError,
+  buildRecordedExchangeServer,
+} from './replay/exchange-server'
+export type {
+  BuildRecordedExchangeServerInput,
+  RecordedExchangeServer,
+} from './replay/exchange-server'
+export { createNullAdapter, ReplayExecutionForbiddenError } from './replay/null-adapter'
+
 export { neverEscalate } from './replay/ports'
 export type {
   ReplayClock,
