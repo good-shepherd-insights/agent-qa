@@ -74,6 +74,7 @@ export type {
 export {
   buildCompleteness,
   collectBlobShas,
+  missingRequiredEvidence,
   resolveBlobClosure,
 } from './extract/blob-closure'
 export type {

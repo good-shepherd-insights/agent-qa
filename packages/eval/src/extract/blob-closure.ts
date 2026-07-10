@@ -1,5 +1,6 @@
 import type { SubActionEvidence } from '@vostride/agent-qa-schema'
-import type { CassetteCompleteness } from '../cassette/completeness'
+import type { CassetteCompleteness, MissingCassetteEvidence } from '../cassette/completeness'
+import type { CassetteInputLeg } from '../cassette/input-leg'
 import type { ArtifactSource } from '../ports'
 
 /** One content-addressed byte payload resolved in memory for a cassette bundle (D-08). */
@@ -17,6 +18,26 @@ export interface BuildCompletenessInput {
   missingShas: readonly string[]
   anchorUnresolved: boolean
   unresolvedAnchorRef?: string
+}
+
+/**
+ * Classify required screenshot identity from Plan 12's authoritative persisted modality.
+ * Only `stateBefore.metadata.captureMode === 'full'` proves image evidence was attached;
+ * a usable dedicated ref satisfies identity even when its bytes are later unavailable (T-367-20).
+ */
+export function missingRequiredEvidence(input: CassetteInputLeg): MissingCassetteEvidence[] {
+  if (input.stateBefore.metadata.captureMode !== 'full') return []
+
+  const ref = input.decisionScreenshotRef
+  if (ref !== undefined && ref.evidenceIncomplete !== true) return []
+
+  return [
+    {
+      kind: 'decision-screenshot-ref',
+      stepIndex: input.stepIndex,
+      decisionOrdinal: input.decisionOrdinal,
+    },
+  ]
 }
 
 /** Collect the ordered, deduplicated closure demanded by present artifact refs (D-11). */
