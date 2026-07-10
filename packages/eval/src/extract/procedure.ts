@@ -60,6 +60,22 @@ function orderedBlobShas(decisions: readonly ProcedureDecisionInput[]): string[]
   return shas
 }
 
+function orderedMissingEvidence(
+  decisions: readonly ProcedureDecisionInput[],
+): MissingCassetteEvidence[] {
+  const facts: MissingCassetteEvidence[] = []
+  const seen = new Set<string>()
+  for (const decision of decisions) {
+    for (const fact of decision.missingEvidence) {
+      const key = `${fact.kind}:${fact.stepIndex}:${fact.decisionOrdinal}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      facts.push(fact)
+    }
+  }
+  return facts
+}
+
 function procedureSteps(
   handoffTest: PerTestOutcome,
   decisions: readonly ProcedureDecisionInput[],
@@ -149,6 +165,7 @@ export function buildProcedureCassette({
     missingShas: closure.missingShas,
     anchorUnresolved: unresolved !== undefined,
     unresolvedAnchorRef: unresolved?.unresolvedAnchorRef,
+    missingEvidence: orderedMissingEvidence(decisions),
   })
   const cassette: ProcedureCassette = {
     schemaVersion: CASSETTE_SCHEMA_VERSION,
