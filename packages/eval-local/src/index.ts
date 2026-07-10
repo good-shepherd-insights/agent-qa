@@ -17,3 +17,13 @@ export type { FsCassetteStoreConfig, WrittenCassette } from './cassette-store.js
 
 export { loadCassetteBundle } from './cassette-loader.js'
 export type { CassetteBundleLoad } from './cassette-loader.js'
+
+export {
+  DEFAULT_EVAL_REPLAYS_SUBDIR,
+  FsReplayRecordStore,
+  REPLAY_RECORD_FILE,
+} from './replay-record-store.js'
+export type {
+  FsReplayRecordStoreConfig,
+  WrittenReplayRecord,
+} from './replay-record-store.js'

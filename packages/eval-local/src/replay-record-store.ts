@@ -1,0 +1,59 @@
+// Filesystem replay-record store (Phase 368, D-12).
+//
+// Persists each per-cassette replay outcome — a ReplayResult or a typed ReplayRefusal (refusals are
+// records too, never silent; Phase 372's baseline reader consumes them) — under an uncommitted
+// runtime staging root beside `eval/cassettes`:
+//
+//   <output-root>/<slugged cassette id segments>/replay.json
+//
+// The store mirrors FsCassetteStore's posture exactly: every id segment delegates to schema's
+// security-reviewed slugBranch sanitizer (path-traversal control, T-368-10), and each record is
+// recreated in full (rm + mkdir) before writing so a re-run leaves no stale files behind (idempotent
+// overwrite). The write is deterministic: the same outcome yields the same path and the same bytes —
+// no timestamps or random ids are minted here; timing data already lives inside the outcome from the
+// engine clock. Records land ONLY under this output root — never knowledge dirs or committed trees;
+// the committed corpus root with fail-closed egress (assertCommittedEgressSafe) is Phase 371's leg.
+
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import type { ReplayCassetteOutcome } from '@vostride/agent-qa-eval'
+import { slugBranch } from '@vostride/agent-qa-schema'
+
+export const DEFAULT_EVAL_REPLAYS_SUBDIR = 'eval/replays'
+export const REPLAY_RECORD_FILE = 'replay.json'
+
+export interface FsReplayRecordStoreConfig {
+  /** Runtime root (normally the workdir's `.agent-qa` directory). */
+  root: string
+  /** Optional retargeted root used by later committed-corpus composition. */
+  outputDir?: string
+}
+
+export interface WrittenReplayRecord {
+  cassetteId: string
+  dir: string
+  file: string
+}
+
+export class FsReplayRecordStore {
+  private readonly outputRoot: string
+
+  constructor(config: FsReplayRecordStoreConfig) {
+    this.outputRoot = config.outputDir ?? join(config.root, DEFAULT_EVAL_REPLAYS_SUBDIR)
+  }
+
+  save(outcome: ReplayCassetteOutcome): WrittenReplayRecord {
+    const dir = join(
+      this.outputRoot,
+      ...outcome.cassetteId.split('/').map(segment => slugBranch(segment)),
+    )
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+
+    const file = join(dir, REPLAY_RECORD_FILE)
+    writeFileSync(file, `${JSON.stringify(outcome, null, 2)}\n`, 'utf8')
+
+    return { cassetteId: outcome.cassetteId, dir, file }
+  }
+}
