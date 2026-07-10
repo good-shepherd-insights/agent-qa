@@ -171,6 +171,14 @@ export async function executeStep(
     onSubActionRecorded: ports.events
       ? (evidence, index) => ports.events?.subActionRecorded(evidence, index)
       : undefined,
+    modelProfile: ports.modelProfiles?.planner,
+    verifierIdentity: ports.modelProfiles?.verifier
+      ? {
+          provider: ports.modelProfiles.verifier.provider,
+          modelId: ports.modelProfiles.verifier.modelId,
+        }
+      : undefined,
+    toolSchemaDigest: ports.toolSchemaDigest,
   })
   const maskValue = ports.masking?.mask ?? ((value: string) => value)
   context.subActionHistory = []

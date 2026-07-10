@@ -21,7 +21,9 @@ import type {
   BoundingBox,
   CycleEvidence,
   Decision,
+  DeclaredModelProfile,
   LocalEffectEvidence,
+  ModelIdentity,
   ModelCallRecord,
   PlanningFailureEvidence,
   Point,
@@ -228,6 +230,12 @@ export class EvidenceRecorder {
   private aiJudgment?: AiJudgmentEvidence
   private assertOutcome?: AssertValueEvidence
   private verdictSource?: VerdictSource
+  /** D-06 run-declared planner context, copied onto every finalized step when bound. */
+  private readonly modelProfile?: DeclaredModelProfile
+  /** D-07 verifier identity copied beside every finalized verdict when bound. */
+  private readonly verifierIdentity?: ModelIdentity
+  /** D-16 once-per-member bound-surface digest copied onto every finalized step. */
+  private readonly toolSchemaDigest?: string
   /**
    * D-02 single sub-action chokepoint (Plan 361-08). When bound, invoked at the END of
    * every {@link recordSubAction} append with the recorded evidence and its index — so all
@@ -241,10 +249,16 @@ export class EvidenceRecorder {
     scope?: ScopeKey
     asOfBuild?: number
     onSubActionRecorded?: (evidence: SubActionEvidence, index: number) => void
+    modelProfile?: DeclaredModelProfile
+    verifierIdentity?: ModelIdentity
+    toolSchemaDigest?: string
   }) {
     this.servedBrief = options?.servedBrief
       ?? makeEmptyServedBrief(options?.scope ?? { tier: 'test', key: '' }, options?.asOfBuild ?? 0)
     this.onSubActionRecorded = options?.onSubActionRecorded
+    this.modelProfile = options?.modelProfile
+    this.verifierIdentity = options?.verifierIdentity
+    this.toolSchemaDigest = options?.toolSchemaDigest
   }
 
   /** Append a §A8 SubActionEvidence. Returns its index (for attachStateAfter). */
@@ -416,6 +430,9 @@ export class EvidenceRecorder {
     if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment
     if (this.assertOutcome) evidence.assertOutcome = this.assertOutcome
     if (this.verdictSource) evidence.verdictSource = this.verdictSource
+    if (this.modelProfile !== undefined) evidence.modelProfile = this.modelProfile
+    if (this.verifierIdentity !== undefined) evidence.verifierIdentity = this.verifierIdentity
+    if (this.toolSchemaDigest !== undefined) evidence.toolSchemaDigest = this.toolSchemaDigest
     return evidence
   }
 }
