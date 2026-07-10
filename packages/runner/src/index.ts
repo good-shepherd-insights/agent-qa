@@ -81,7 +81,11 @@ export type {
   CaptureResult,
   VariableExtractor,
 } from './loop/types.js'
-export { LLMPlanner } from './loop/planner.js'
+// PlanningTurnError is exported as a class value (not type-only): the Phase 368 replay
+// engine (plan 368-04) must instanceof-classify structured planner failures by identity,
+// never string-match the message (D-09). NonActionToolHandler/NonActionToolMap are already
+// re-exported from ./loop/planning-turn.js below (eval core's ports import them in 368-02).
+export { LLMPlanner, PlanningTurnError } from './loop/planner.js'
 export {
   executePlanningTurn,
   DEFAULT_NON_ACTION_TOOL_BUDGET,

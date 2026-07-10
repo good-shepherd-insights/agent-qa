@@ -11,7 +11,7 @@ import { z } from 'zod'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { StepContext } from '../types.js'
-import { LLMPlanner } from '../planner.js'
+import { LLMPlanner, PlanningTurnError } from '../planner.js'
 import type { NonActionToolHandler, NonActionToolMap } from '../planning-turn.js'
 import { makeFakeTokenAccounting } from './loop-harness.js'
 
@@ -147,5 +147,15 @@ describe('LLMPlanner nonActionTools seam (368-01)', () => {
     )
 
     await expect(planner.plan('Click log in', screen, makeContext())).rejects.toBe(miss)
+  })
+
+  it('Test 4: PlanningTurnError is the same class across the runner barrel (instanceof-classifiable, D-09)', async () => {
+    // The replay engine (plan 368-04) imports PlanningTurnError from the package entry and
+    // instanceof-classifies structured planner failures — this must be the SAME class the
+    // loop internals throw, or the classification silently misses.
+    const barrel = await import('../../index.js')
+    expect(barrel.PlanningTurnError).toBe(PlanningTurnError)
+    const err = new PlanningTurnError('no_action_tool_called', 'x', [])
+    expect(err instanceof barrel.PlanningTurnError).toBe(true)
   })
 })
