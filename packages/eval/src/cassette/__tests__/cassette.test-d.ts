@@ -73,3 +73,14 @@ expectTypeOf<MissingCassetteEvidence['stepIndex']>().toEqualTypeOf<number>()
 expectTypeOf<MissingCassetteEvidence['decisionOrdinal']>().toEqualTypeOf<number>()
 expectTypeOf<ArtifactRef['evidenceIncomplete']>().toEqualTypeOf<boolean | undefined>()
 expectTypeOf<ArtifactRef['evidenceIncomplete']>().not.toEqualTypeOf<boolean>()
+expectTypeOf<CassetteInputLeg['auxiliaryArtifactRefs']>().not.toEqualTypeOf<
+  readonly string[] | undefined
+>()
+expectTypeOf<CassetteInputLeg['auxiliaryArtifactRefs']>().not.toEqualTypeOf<
+  ArtifactRef | undefined
+>()
+expectTypeOf<CassetteInputLeg['decisionScreenshotRef']>().not.toEqualTypeOf<
+  { id: string } | undefined
+>()
+expectTypeOf<ArtifactRef['id']>().toEqualTypeOf<string>()
+expectTypeOf<ArtifactRef['sha']>().toEqualTypeOf<string>()

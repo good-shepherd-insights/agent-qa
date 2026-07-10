@@ -623,3 +623,90 @@ describe('guardCassette embedded gold action matrix', () => {
     )
   })
 })
+
+const AUX_SHA_A = 'd'.repeat(64)
+const AUX_SHA_B = 'e'.repeat(64)
+const SCREENSHOT_REF = { id: 'decision-shot', sha: SHA }
+const AUX_REF_A = { id: 'aux-a', sha: AUX_SHA_A }
+const AUX_REF_B = { id: 'aux-b', sha: AUX_SHA_B, evidenceIncomplete: true }
+
+function setLeafInput(patch: Record<string, unknown>): unknown {
+  return mutate(validLeafDocument(), doc => {
+    Object.assign(doc.input, patch)
+  })
+}
+
+function setProcedureInput(patch: Record<string, unknown>): unknown {
+  return mutate(validProcedureDocument(), doc => {
+    Object.assign(doc.steps[0].record.input, patch)
+  })
+}
+
+const invalidArtifactBindings: Array<{ name: string; patch: Record<string, unknown>; relPath: string }> = [
+  { name: 'a screenshot ref missing id', patch: { decisionScreenshotRef: { sha: SHA } }, relPath: 'input.decisionScreenshotRef.id' },
+  { name: 'a screenshot ref with an empty id', patch: { decisionScreenshotRef: { id: '', sha: SHA } }, relPath: 'input.decisionScreenshotRef.id' },
+  { name: 'a screenshot ref missing sha', patch: { decisionScreenshotRef: { id: 'x' } }, relPath: 'input.decisionScreenshotRef.sha' },
+  { name: 'a screenshot ref with uppercase sha', patch: { decisionScreenshotRef: { id: 'x', sha: 'A'.repeat(64) } }, relPath: 'input.decisionScreenshotRef.sha' },
+  { name: 'a screenshot ref with a short sha', patch: { decisionScreenshotRef: { id: 'x', sha: 'a'.repeat(63) } }, relPath: 'input.decisionScreenshotRef.sha' },
+  { name: 'a screenshot ref with a nonhex sha', patch: { decisionScreenshotRef: { id: 'x', sha: 'g'.repeat(64) } }, relPath: 'input.decisionScreenshotRef.sha' },
+  { name: 'a screenshot ref with a nonboolean evidenceIncomplete', patch: { decisionScreenshotRef: { id: 'x', sha: SHA, evidenceIncomplete: 'yes' } }, relPath: 'input.decisionScreenshotRef.evidenceIncomplete' },
+  { name: 'a screenshot ref supplied as a raw sha string', patch: { decisionScreenshotRef: SHA }, relPath: 'input.decisionScreenshotRef' },
+  { name: 'auxiliary refs supplied as a bare object', patch: { auxiliaryArtifactRefs: { id: 'x', sha: SHA } }, relPath: 'input.auxiliaryArtifactRefs' },
+  { name: 'an auxiliary ref missing sha', patch: { auxiliaryArtifactRefs: [{ id: 'x' }] }, relPath: 'input.auxiliaryArtifactRefs.0.sha' },
+  { name: 'an auxiliary ref with uppercase sha', patch: { auxiliaryArtifactRefs: [{ id: 'x', sha: 'A'.repeat(64) }] }, relPath: 'input.auxiliaryArtifactRefs.0.sha' },
+  { name: 'an auxiliary ref with a nonboolean evidenceIncomplete', patch: { auxiliaryArtifactRefs: [{ id: 'x', sha: SHA, evidenceIncomplete: 1 }] }, relPath: 'input.auxiliaryArtifactRefs.0.evidenceIncomplete' },
+  { name: 'an auxiliary ref supplied as a raw sha string', patch: { auxiliaryArtifactRefs: [SHA] }, relPath: 'input.auxiliaryArtifactRefs.0' },
+]
+
+describe('guardCassette typed artifact-ref matrix', () => {
+  it('accepts distinct screenshot and auxiliary roles in a leaf cassette', () => {
+    const cassette = guardCassette(
+      setLeafInput({ decisionScreenshotRef: SCREENSHOT_REF, auxiliaryArtifactRefs: [AUX_REF_A, AUX_REF_B] }),
+    ) as LeafCassette
+
+    expect(cassette.input.decisionScreenshotRef).toEqual(SCREENSHOT_REF)
+    expect(cassette.input.auxiliaryArtifactRefs).toEqual([AUX_REF_A, AUX_REF_B])
+    expect(cassette.input.auxiliaryArtifactRefs?.[1]?.evidenceIncomplete).toBe(true)
+  })
+
+  it('accepts distinct screenshot and auxiliary roles in a procedure decision', () => {
+    const cassette = guardCassette(
+      setProcedureInput({ decisionScreenshotRef: SCREENSHOT_REF, auxiliaryArtifactRefs: [AUX_REF_A, AUX_REF_B] }),
+    ) as ProcedureCassette
+    const record = cassette.steps.find(step => step.kind === 'decision')
+
+    expect(record?.kind === 'decision' && record.record.input.decisionScreenshotRef).toEqual(
+      SCREENSHOT_REF,
+    )
+    expect(record?.kind === 'decision' && record.record.input.auxiliaryArtifactRefs).toEqual([
+      AUX_REF_A,
+      AUX_REF_B,
+    ])
+  })
+
+  it('preserves an unknown future kernel field on an ArtifactRef through the guard', () => {
+    const cassette = guardCassette(
+      setLeafInput({ decisionScreenshotRef: { id: 'x', sha: SHA, futureKernelField: 'kept' } }),
+    ) as LeafCassette
+
+    expect(
+      (cassette.input.decisionScreenshotRef as unknown as Record<string, unknown>).futureKernelField,
+    ).toBe('kept')
+  })
+
+  it('rejects an unknown key on the strict eval-owned input envelope', () => {
+    expect(() => guardCassette(setLeafInput({ unexpectedInputKey: true }))).toThrow()
+  })
+
+  for (const { name, patch, relPath } of invalidArtifactBindings) {
+    it(`rejects ${name} in a leaf cassette`, () => {
+      expect(() => guardCassette(setLeafInput(patch))).toThrow(pathMatcher(relPath))
+    })
+
+    it(`rejects ${name} in a procedure decision`, () => {
+      expect(() => guardCassette(setProcedureInput(patch))).toThrow(
+        pathMatcher(`steps.0.record.${relPath}`),
+      )
+    })
+  }
+})
