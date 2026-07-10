@@ -5,6 +5,8 @@ import { AGENT_QA_CLI_OWNERSHIP_CONTRACT } from '../../cli/src/ownership-contrac
 import { AGENT_QA_CORE_OWNERSHIP_CONTRACT } from '../../core/src/ownership-contract.js'
 import { AGENT_QA_DASHBOARD_OWNERSHIP_CONTRACT } from '../../dashboard-server/src/ownership-contract.js'
 import { AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT } from '../../dashboard-ui/src/ownership-contract.js'
+import { AGENT_QA_EVAL_OWNERSHIP_CONTRACT } from '../../eval/src/ownership-contract.js'
+import { AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT } from '../../eval-local/src/ownership-contract.js'
 import { AGENT_QA_IDS_OWNERSHIP_CONTRACT } from '../../ids/src/ownership-contract.js'
 import { AGENT_QA_IOS_OWNERSHIP_CONTRACT } from '../../ios/src/ownership-contract.js'
 import { AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT } from '../../knowledge-local/src/ownership-contract.js'
@@ -43,6 +45,8 @@ export const ARCH_MANIFEST = {
     AGENT_QA_TOOLS_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_DASHBOARD_OWNERSHIP_CONTRACT,
     AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT,
+    AGENT_QA_EVAL_OWNERSHIP_CONTRACT,
+    AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT,
   ],
   taxonomy: PACKAGE_CLASS_RULES,
 } as const satisfies {

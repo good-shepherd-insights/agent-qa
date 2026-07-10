@@ -43,6 +43,8 @@ const expectedPackageDirs = [
   'packages/tools-local',
   'packages/dashboard-server',
   'packages/dashboard-ui',
+  'packages/eval',
+  'packages/eval-local',
 ] as const
 
 const stalePrototypeDirs = [] as const
