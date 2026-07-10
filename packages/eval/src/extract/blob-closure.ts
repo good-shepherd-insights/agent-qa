@@ -18,6 +18,7 @@ export interface BuildCompletenessInput {
   missingShas: readonly string[]
   anchorUnresolved: boolean
   unresolvedAnchorRef?: string
+  missingEvidence?: readonly MissingCassetteEvidence[]
 }
 
 /**
@@ -78,7 +79,8 @@ export function resolveBlobClosure(
 /** Fold independent missing-evidence facts into the single D-11 status vocabulary. */
 export function buildCompleteness(input: BuildCompletenessInput): CassetteCompleteness {
   const hasMissingBlobs = input.missingShas.length > 0
-  const status = hasMissingBlobs
+  const hasMissingEvidence = (input.missingEvidence?.length ?? 0) > 0
+  const status = hasMissingBlobs || hasMissingEvidence
     ? 'evidence-incomplete'
     : input.anchorUnresolved
       ? 'anchor-unresolved'
@@ -90,5 +92,6 @@ export function buildCompleteness(input: BuildCompletenessInput): CassetteComple
     ...(input.anchorUnresolved && input.unresolvedAnchorRef !== undefined
       ? { unresolvedAnchorRef: input.unresolvedAnchorRef }
       : {}),
+    ...(hasMissingEvidence ? { missingEvidence: [...input.missingEvidence!] } : {}),
   }
 }
