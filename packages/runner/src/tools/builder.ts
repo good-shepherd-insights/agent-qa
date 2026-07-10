@@ -1,6 +1,7 @@
 import { tool } from 'ai'
+import type { Tool } from 'ai'
 import { z } from 'zod'
-import type { Platform } from '@vostride/agent-qa-schema'
+import type { Platform, ToolSurfaceEntry } from '@vostride/agent-qa-schema'
 import { workingMemoryEntrySchema } from '@vostride/agent-qa-schema'
 import { groundingError } from './errors.js'
 import type { ToolRegistry } from './registry.js'
@@ -79,6 +80,30 @@ export function buildTools(
   }
 
   return tools
+}
+
+/**
+ * Describe the complete model-visible bound surface for deterministic attribution (D-14).
+ * This shares `withPlanFields` with `buildTools`; it never serializes live `tool()` objects,
+ * whose Zod internals are not the JSON Schema presented to the model.
+ */
+export function describeBoundSurface(
+  registry: ToolRegistry,
+  options: { platform: Platform; nonActionTools?: Record<string, Tool> },
+): ToolSurfaceEntry[] {
+  const conversionOptions = { io: 'input', unrepresentable: 'any' } as const
+  const actionSurface = registry.getForPlatform(options.platform).map(definition => ({
+    name: definition.id,
+    description: definition.description,
+    parameters: z.toJSONSchema(withPlanFields(definition.schema), conversionOptions),
+  }))
+  const nonActionSurface = Object.entries(options.nonActionTools ?? {}).map(([name, boundTool]) => ({
+    name,
+    description: boundTool.description ?? '',
+    parameters: z.toJSONSchema(boundTool.inputSchema as z.ZodType, conversionOptions),
+  }))
+
+  return [...actionSurface, ...nonActionSurface]
 }
 
 export function toolCallToActionPlan(
