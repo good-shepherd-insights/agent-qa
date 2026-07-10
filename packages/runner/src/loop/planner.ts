@@ -28,6 +28,7 @@ import { buildTools, defaultRegistry } from '../tools/index.js'
 import {
   executePlanningTurn,
   type GroundabilityCallback,
+  type NonActionToolMap,
   type PlanningTurnFailureReason,
   type PlanningTurnResult,
 } from './planning-turn.js'
@@ -196,11 +197,20 @@ export class LLMPlanner implements Planner {
   private agentRules?: string
   private accounting: TokenAccounting
   private profile?: DeclaredModelProfile
+  private nonActionTools?: NonActionToolMap
 
   // TokenAccounting is a required constructor dependency (D-15 constructor-injection):
   // it is the clamp/degrade/recordUsage seam every planning call rides. The composition
   // roots (CLI/dashboard) inject it in Plan 07. Positional order is preserved so existing
   // call sites keep model/platform/logger/agentRules; `accounting` is the new final arg.
+  //
+  // Phase 368 (D-01): `nonActionTools` is the ONE sanctioned runner seam — an optional
+  // final positional param defaulting undefined so every existing call site stays byte-
+  // compatible. When present it is threaded into executePlanningTurn (the existing but
+  // previously-unreachable ExecutePlanningTurnOptions.nonActionTools option); the recorded-
+  // exchange server (plan 368-03) registers handlers here so the null adapter serves
+  // recorded exchanges through production planner code paths. No production composition
+  // root passes it (only the eval-local sanctioned helper, plan 368-06).
   constructor(
     model: LanguageModel,
     platform: Platform | undefined,
@@ -208,6 +218,7 @@ export class LLMPlanner implements Planner {
     agentRules: string | undefined,
     accounting: TokenAccounting,
     profile?: DeclaredModelProfile,
+    nonActionTools?: NonActionToolMap,
   ) {
     this.model = model
     this.platform = platform ?? 'web'
@@ -215,6 +226,7 @@ export class LLMPlanner implements Planner {
     this.agentRules = agentRules
     this.accounting = accounting
     this.profile = profile
+    this.nonActionTools = nonActionTools
   }
 
   // Cache-ordered [stable, context, volatile] system tiers (D-04/D-05/D-07). The single
@@ -312,6 +324,11 @@ export class LLMPlanner implements Planner {
             abortSignal,
             logger: this.logger,
             groundability,
+            // Phase 368 D-01 seam: undefined for every existing caller (byte-compatible);
+            // replay injects recorded-exchange handlers here. runTurn is the single helper
+            // behind all three plan() call paths (screenshot, fallback retry, no-screenshot),
+            // so this one thread-through covers every path.
+            nonActionTools: this.nonActionTools,
           }),
         // recordUsage anchors on the observed input tokens (prompt only, per the clamp
         // contract); the turn result's accumulated TokenUsage supplies the triad. The `ai`
