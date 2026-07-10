@@ -10,7 +10,6 @@ import { describe, expect, it } from 'vitest'
 import {
   FIXTURE_ARTIFACT_SHA,
   FIXTURE_SCREENSHOT_SHA,
-  makeArtifactRefV2Handoff,
   makeV2Handoff,
 } from '../../__tests__/fixtures/handoff-fixtures'
 import { projectInputLeg } from '../input-leg'
@@ -244,21 +243,27 @@ describe('buildCompleteness missing-evidence folding precedence', () => {
 })
 
 describe('D-11 blob closure and completeness', () => {
-  it('collects screenshot then artifact shas in recorded order and deduplicates them', () => {
-    const source = makeArtifactRefV2Handoff().tests[0]!.steps[0]!.subActions[0]!
-    const subAction = {
-      ...source,
-      artifactRefs: [
-        ...source.artifactRefs!,
+  it('collects screenshot then auxiliary shas in recorded order and deduplicates them', () => {
+    const leg = buildLeg({
+      captureMode: 'full',
+      screenshot: { id: 'decision-shot', sha: FIXTURE_SCREENSHOT_SHA },
+      auxiliary: [
+        { id: 'artifact', sha: FIXTURE_ARTIFACT_SHA },
         { id: 'duplicate-artifact', sha: FIXTURE_ARTIFACT_SHA },
         { id: 'duplicate-screenshot', sha: FIXTURE_SCREENSHOT_SHA },
       ],
-    }
+    })
 
-    expect(collectBlobShas(subAction)).toEqual([
-      FIXTURE_SCREENSHOT_SHA,
-      FIXTURE_ARTIFACT_SHA,
-    ])
+    expect(collectBlobShas(leg)).toEqual([FIXTURE_SCREENSHOT_SHA, FIXTURE_ARTIFACT_SHA])
+  })
+
+  it('collects only auxiliary shas when no screenshot ref is present', () => {
+    const leg = buildLeg({
+      captureMode: 'full',
+      auxiliary: [{ id: 'aux', sha: FIXTURE_ARTIFACT_SHA }],
+    })
+
+    expect(collectBlobShas(leg)).toEqual([FIXTURE_ARTIFACT_SHA])
   })
 
   it('resolves every served blob without reporting missing evidence', () => {
@@ -291,8 +296,8 @@ describe('D-11 blob closure and completeness', () => {
   })
 
   it('treats absent refs as a legitimately complete text-only closure', () => {
-    const subAction = makeV2Handoff().tests[0]!.steps[0]!.subActions[0]!
-    const shas = collectBlobShas(subAction)
+    const leg = buildLeg({ captureMode: 'textOnly' })
+    const shas = collectBlobShas(leg)
     const resolved = resolveBlobClosure(shas, mapSource(new Map()))
 
     expect(shas).toEqual([])

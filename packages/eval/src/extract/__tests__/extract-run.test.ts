@@ -235,3 +235,90 @@ describe('D-12 one-pass run extraction', () => {
     )
   })
 })
+
+function firstStepLeaf(result: ReturnType<typeof extractRunCassettes>): LeafCassette | undefined {
+  return cassettesOf(result).find(
+    (cassette): cassette is LeafCassette =>
+      cassette.granularity === 'leaf' && cassette.id.includes('test-00-step-00'),
+  )
+}
+
+describe('367-16 leaf typed evidence closure', () => {
+  it('marks a full-capture leaf with no screenshot ref evidence-incomplete at its coordinates', () => {
+    const result = extractRunCassettes({ handoff: makeV2Handoff(), artifacts: mapSource() })
+    const leaf = firstStepLeaf(result)
+
+    expect(leaf?.blobs).toEqual([])
+    expect(leaf?.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingEvidence: [{ kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 }],
+    })
+    expect(guardCassette(leaf!)).toEqual(leaf)
+  })
+
+  it('marks a usable typed-ref leaf complete and retains its typed input refs when bytes resolve', () => {
+    const result = extractRunCassettes({
+      handoff: makeArtifactRefV2Handoff(),
+      artifacts: mapSource(
+        new Map([
+          [FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])],
+          [FIXTURE_ARTIFACT_SHA, new Uint8Array([4, 5])],
+        ]),
+      ),
+    })
+    const leaf = firstStepLeaf(result)
+
+    expect(leaf?.completeness).toEqual({ status: 'complete' })
+    expect(leaf?.blobs).toEqual([FIXTURE_SCREENSHOT_SHA, FIXTURE_ARTIFACT_SHA])
+    expect(leaf?.input.decisionScreenshotRef?.sha).toBe(FIXTURE_SCREENSHOT_SHA)
+    expect(leaf?.input.auxiliaryArtifactRefs?.map((ref) => ref.sha)).toEqual([FIXTURE_ARTIFACT_SHA])
+  })
+
+  it('reports a usable-ref leaf with missing bytes as missing shas without a screenshot fact', () => {
+    const result = extractRunCassettes({
+      handoff: makeArtifactRefV2Handoff(),
+      artifacts: mapSource(new Map([[FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])]])),
+    })
+    const leaf = firstStepLeaf(result)
+
+    expect(leaf?.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingBlobShas: [FIXTURE_ARTIFACT_SHA],
+    })
+    expect(leaf?.input.decisionScreenshotRef?.sha).toBe(FIXTURE_SCREENSHOT_SHA)
+  })
+
+  it('marks a full-capture leaf with an evidenceIncomplete screenshot ref evidence-incomplete', () => {
+    const handoff = makeV2Handoff()
+    handoff.tests[0]!.steps[0]!.subActions[0]!.decisionScreenshotRef = {
+      id: 'decision-shot',
+      sha: FIXTURE_SCREENSHOT_SHA,
+      evidenceIncomplete: true,
+    }
+
+    const result = extractRunCassettes({
+      handoff,
+      artifacts: mapSource(new Map([[FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])]])),
+    })
+    const leaf = firstStepLeaf(result)
+
+    expect(leaf?.completeness).toEqual({
+      status: 'evidence-incomplete',
+      missingEvidence: [{ kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 }],
+    })
+  })
+
+  it('keeps a text-only no-ref leaf complete', () => {
+    const handoff = makeV2Handoff()
+    const sub = handoff.tests[0]!.steps[0]!.subActions[0]!
+    sub.stateBefore = {
+      ...sub.stateBefore,
+      metadata: { ...sub.stateBefore.metadata, captureMode: 'textOnly' },
+    }
+
+    const result = extractRunCassettes({ handoff, artifacts: mapSource() })
+    const leaf = firstStepLeaf(result)
+
+    expect(leaf?.completeness).toEqual({ status: 'complete' })
+  })
+})
