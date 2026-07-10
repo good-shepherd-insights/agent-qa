@@ -22,7 +22,7 @@ import type {
   RunArtifactFinalizeInput,
 } from '@vostride/agent-qa-schema'
 import type { TestResult } from '../result.js'
-import type { LoopEventEmitPort, SecretRedactorPort } from '../loop/ports.js'
+import type { EvidenceArtifactStorePort, LoopEventEmitPort, SecretRedactorPort } from '../loop/ports.js'
 import type { HookDefinition, HookResult } from '../hooks/types.js'
 import type { RuntimeAuthStateConfig } from '../platform.js'
 
@@ -184,6 +184,12 @@ export interface MemberTestRunContext {
   testIndex: number
   events: MemberEventSink
   setEvidenceContext(context: MemberEvidenceContext): void
+  /**
+   * CASS-02 run-scoped decision-screenshot byte store (the same instance the shell holds on
+   * {@link RunPorts}). The member threads it onto `LoopPorts.evidenceArtifacts`; absent ⇒ a
+   * memory-only run with no screenshot persistence.
+   */
+  evidenceArtifacts?: EvidenceArtifactStorePort
 }
 
 /**
@@ -225,6 +231,13 @@ export interface RunPorts {
    * decorator feeds this (plan 362-06); absent ⇒ budget expiry aborts exactly as before.
    */
   confirmPausedMs?: () => number
+  /**
+   * The CASS-02 run-scoped decision-screenshot artifact store (Plan 11). The runner-local
+   * `FsEvidenceArtifactStore` is constructed run-scoped at the CLI composition root and injected
+   * here; the shell hands the same instance to every member. Absent ⇒ no screenshot bytes are
+   * persisted (memory-only run, byte-identical pre-Plan-11 behavior).
+   */
+  evidenceArtifacts?: EvidenceArtifactStorePort
 }
 
 /**

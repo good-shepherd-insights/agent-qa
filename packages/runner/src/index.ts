@@ -134,6 +134,7 @@ export type {
   LoopScopedLogger,
   LoopLogger,
   LoopPorts,
+  EvidenceArtifactStorePort,
   WorkingMemoryPort,
   TokenAccounting,
   RunnerDegradeOptions,

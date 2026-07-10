@@ -7,6 +7,7 @@
 
 import type { LanguageModelUsage, ModelMessage } from 'ai'
 import type {
+  ArtifactRef,
   DeclaredModelProfile,
   MaskingContext,
   ScreenState,
@@ -150,6 +151,19 @@ export interface LoopEventEmitPort {
 }
 
 /**
+ * Run-scoped content-addressed evidence artifact store (CASS-02). Storage-neutral: a
+ * runner-local `FsEvidenceArtifactStore` owns the sha-keyed blob persistence; the runner
+ * declares only the shape. `persistDecisionScreenshot` returns the identity for the exact
+ * byte payload so a decision screenshot becomes addressable by `ArtifactRef.sha`; `getBlob`
+ * serves those bytes back, letting a host adapter satisfy eval's structurally identical
+ * `ArtifactSource` without a runner-to-eval dependency. Both legs are synchronous.
+ */
+export interface EvidenceArtifactStorePort {
+  persistDecisionScreenshot(bytes: Uint8Array): ArtifactRef
+  getBlob(sha: string): Uint8Array | undefined
+}
+
+/**
  * The runner-owned port bundle the loop executes against — successor to v1's
  * AgentLoopConfig (core types.ts:66-104), minus the D-10 healing/attempt-limit
  * fields and minus the v1 cache-key inputs (those move behind the cache port).
@@ -245,4 +259,10 @@ export interface LoopPorts {
    * is used unchanged.
    */
   configDigests?: ConfigDigests
+  /**
+   * CASS-02 run-scoped decision-screenshot byte store. The shell hands one store instance to
+   * every member; the loop mints an `ArtifactRef` for captured screenshot bytes through it.
+   * Absent ⇒ a legal memory-only / test-harness state (no persistence), never throws (D-05).
+   */
+  evidenceArtifacts?: EvidenceArtifactStorePort
 }
