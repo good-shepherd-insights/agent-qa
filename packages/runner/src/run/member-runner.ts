@@ -23,7 +23,8 @@
 //   testFinished pair).
 
 import type { LanguageModel } from 'ai'
-import type { MaskingContext } from '@vostride/agent-qa-schema'
+import { computeToolSchemaDigest } from '@vostride/agent-qa-schema'
+import type { DeclaredModelProfile, MaskingContext } from '@vostride/agent-qa-schema'
 import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult, PlatformAdapter, RuntimeAuthStateConfig } from '../platform.js'
 import type { AccessibilityViolation, StepResult, TestResult } from '../result.js'
@@ -57,6 +58,8 @@ import { withAbort, createTimeoutAbortReason, getTimeoutAbortReason } from '../l
 import { redactSecretValue } from '../loop/secrets.js'
 import { parseHookInline, stripHookInline, parseRunJSInline, parseAppiumInline } from './inline-steps.js'
 import { generateFailureSummary } from './failure-summary.js'
+import { describeBoundSurface } from '../tools/builder.js'
+import { defaultRegistry } from '../tools/index.js'
 
 /** A single member-test step — a bare instruction or an object carrying per-step knobs. */
 export interface MemberStepSpec {
@@ -118,6 +121,10 @@ export interface MemberRunConfig {
   verifier?: Verifier
   cache?: ActionPlanCache
   masking?: MaskingContext
+  modelProfiles?: {
+    planner: DeclaredModelProfile
+    verifier?: DeclaredModelProfile
+  }
   workingMemory?: WorkingMemoryPort
   storageState?: StorageStatePort
   compressor?: ScreenshotCompressor
@@ -258,6 +265,7 @@ function createAbortedStepResult(
 async function runMemberAttempt(
   member: MemberTest,
   config: MemberRunConfig,
+  toolSchemaDigest: string,
   rerunContext?: RerunContext,
 ): Promise<TestResult> {
   const startTime = performance.now()
@@ -624,6 +632,8 @@ async function runMemberAttempt(
       verifier: config.verifier,
       cache: config.cache,
       masking: config.masking,
+      modelProfiles: config.modelProfiles,
+      toolSchemaDigest,
       workingMemory: config.workingMemory,
       storageState: config.storageState,
       compressor: config.compressor,
@@ -903,6 +913,9 @@ export async function runMemberTest(
   config: MemberRunConfig,
 ): Promise<TestResult> {
   const startTime = performance.now()
+  const toolSchemaDigest = computeToolSchemaDigest(describeBoundSurface(defaultRegistry, {
+    platform: config.adapter.platform,
+  }))
   const maxRetries = (member.meta?.retries as number | undefined) ?? 0
   let lastResult: TestResult | undefined
   let previousFailureSummary: string | undefined
@@ -918,7 +931,7 @@ export async function runMemberTest(
       })
     }
     const rerunContext: RerunContext | undefined = attempt > 0 ? { attempt, previousFailureSummary } : undefined
-    const result = await runMemberAttempt(member, config, rerunContext)
+    const result = await runMemberAttempt(member, config, toolSchemaDigest, rerunContext)
 
     if (result.status === 'passed') {
       return { ...result, duration: performance.now() - startTime, retryCount: attempt }

@@ -7,6 +7,7 @@
 
 import type { LanguageModelUsage, ModelMessage } from 'ai'
 import type {
+  DeclaredModelProfile,
   MaskingContext,
   ScreenState,
   WorkingMemoryEntry,
@@ -170,6 +171,22 @@ export interface LoopPorts {
    * schema `{ mask, unmask }` type only.
    */
   masking?: MaskingContext
+  /**
+   * D-05 declared decision context for both model roles. Composition roots pass the
+   * same profile objects to the planner/verifier constructors and this recording lane;
+   * the loop never derives model facts from a model handle. Absent preserves the
+   * provider-neutral degrade-when-absent contract.
+   */
+  modelProfiles?: {
+    planner: DeclaredModelProfile
+    verifier?: DeclaredModelProfile
+  }
+  /**
+   * D-16 once-per-member digest of the complete bound tool surface. It remains a
+   * separate optional port because tool attribution is distinct from model identity;
+   * absent callers continue without evidence stamping and never throw.
+   */
+  toolSchemaDigest?: string
   compressor?: ScreenshotCompressor
   /** D-05 optional L2 reader — the loop degrades gracefully when absent. */
   knowledgeReader?: KnowledgeHintReader
