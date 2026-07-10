@@ -1,4 +1,6 @@
-import type { ArtifactSource, Cassette, ProcedureCassette } from '../../index'
+import { asRef } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import type { ArtifactSource, Cassette, LeafCassette, ProcedureCassette } from '../../index'
 import { guardCassette } from '../../index'
 import { describe, expect, it } from 'vitest'
 import {
@@ -192,6 +194,36 @@ describe('D-12 one-pass run extraction', () => {
         }
       }
     }
+  })
+
+  it('copies a pre-masked value-bearing paste into leaf and procedure sidecars without restoring raw content', () => {
+    const marker = '[secret]'
+    const handoff: CompletedRunHandoff = makeV2Handoff()
+    handoff.tests[0]!.steps[0]!.subActions[0]!.plannedAction = {
+      type: 'paste',
+      ref: asRef('e-continue-1'),
+      value: marker,
+    }
+
+    const result = extractRunCassettes({ handoff, artifacts: mapSource() })
+
+    const leaf = cassettesOf(result).find(
+      (cassette): cassette is LeafCassette =>
+        cassette.granularity === 'leaf' && cassette.id.includes('test-00-step-00'),
+    )
+    expect(leaf?.sidecar.goldValue).toBe(marker)
+    expect(leaf?.sidecar.goldAction).toMatchObject({ type: 'paste', value: marker })
+
+    const [passing] = proceduresOf(result)
+    const decision = passing!.steps.find(
+      (step) => step.kind === 'decision' && step.stepIndex === 0,
+    )
+    if (decision?.kind !== 'decision') throw new Error('expected a decision step')
+    expect(decision.record.sidecar.goldValue).toBe(marker)
+    expect(decision.record.sidecar.goldAction).toMatchObject({ type: 'paste', value: marker })
+
+    expect(JSON.stringify(leaf)).not.toContain('sk-live')
+    expect(JSON.stringify(passing)).not.toContain('sk-live')
   })
 
   it('is deeply deterministic for repeated extraction of identical inputs', () => {
