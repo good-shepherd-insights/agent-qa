@@ -81,6 +81,13 @@ export type {
   ToolSurfaceEntry,
 } from './determinism/index'
 
+// 367 D-13: one shared version-guard rule for every versioned document contract.
+export { createVersionGuard, VersionGuardError } from './versioning/create-version-guard'
+export type {
+  MigrationRegistry,
+  VersionGuardConfig,
+} from './versioning/create-version-guard'
+
 // 314 async-seam
 export { asRunId } from './run/index'
 export { asRecordId, asIssueId, asEvidenceToken } from './ids/index'
