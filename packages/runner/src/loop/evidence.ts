@@ -22,6 +22,8 @@ import type {
   CycleEvidence,
   Decision,
   LocalEffectEvidence,
+  ModelCallRecord,
+  PlanningFailureEvidence,
   Point,
   RecordedActionResult,
   ReportedValueEvidence,
@@ -32,6 +34,7 @@ import type {
   StepEvidence,
   SubActionEvidence,
   TerminationEvidence,
+  ToolExchangeEvidence,
   VerdictSource,
   VerifierVerdict,
   Viewport,
@@ -191,6 +194,17 @@ export interface RecordSubActionInput {
    */
   grounding?: SubActionEvidence['grounding']
   /**
+   * Ordered exchanges from this live planning decision (D-01). The loop masks every
+   * string leaf BEFORE passing them here (T-360-01); the recorder never sees raw values.
+   * Present, possibly empty, for live turns and absent for cache replay.
+   */
+  exchanges?: ToolExchangeEvidence[]
+  /**
+   * Final-response enrichment for this live decision (D-05/D-08). The loop passes it
+   * conditionally; structural absence means no live call record was available.
+   */
+  callRecord?: ModelCallRecord
+  /**
    * The §A8 differential-observation oracle outcome (CYCLE-01, D-07). Recorded by
    * construction for every oracle-checked sub-action — usually attached one iteration late
    * (the oracle evaluates action N at the settled top of iteration N+1) via
@@ -208,6 +222,7 @@ export class EvidenceRecorder {
   private stagnation?: StagnationEvidence
   private cycle?: CycleEvidence
   private workingMemory?: WorkingMemoryEntry[]
+  private planningFailure?: PlanningFailureEvidence
   private reportedValue?: ReportedValueEvidence
   private termination?: TerminationEvidence
   private aiJudgment?: AiJudgmentEvidence
@@ -242,6 +257,8 @@ export class EvidenceRecorder {
       result,
     }
     if (input.stateAfter) evidence.stateAfter = input.stateAfter
+    if (input.exchanges !== undefined) evidence.exchanges = input.exchanges
+    if (input.callRecord !== undefined) evidence.callRecord = input.callRecord
     if (input.grounding) evidence.grounding = input.grounding
     if (input.localEffect) evidence.localEffect = input.localEffect
     this.subActions.push(evidence)
@@ -288,6 +305,14 @@ export class EvidenceRecorder {
    */
   recordWorkingMemory(entries: WorkingMemoryEntry[]): void {
     this.workingMemory = entries
+  }
+
+  /**
+   * Record the structurally failed planning turn (D-03). Exchanges and message arrive
+   * ALREADY masked by the loop; the recorder remains mask-agnostic.
+   */
+  recordPlanningFailure(evidence: PlanningFailureEvidence): void {
+    this.planningFailure = evidence
   }
 
   // -------------------------------------------------------------------------
@@ -385,6 +410,7 @@ export class EvidenceRecorder {
     if (this.stagnation) evidence.stagnation = this.stagnation
     if (this.cycle) evidence.cycle = this.cycle
     if (this.workingMemory) evidence.workingMemory = this.workingMemory
+    if (this.planningFailure) evidence.planningFailure = this.planningFailure
     if (this.reportedValue) evidence.reportedValue = this.reportedValue
     if (this.termination) evidence.termination = this.termination
     if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment

@@ -62,12 +62,15 @@ import type { CachedPlanValue, GroundedLocator } from '../cache/port.js'
 import type { LoopPorts, SecretRedactorPort } from './ports.js'
 import { guardActionData } from './blob-guard.js'
 import type { ActionPlan, PlanResult, StepContext } from './types.js'
+import { PlanningTurnError } from './planner.js'
 import { withAbort, getTimeoutAbortReason } from './abort.js'
 import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
+import type { RecordSubActionInput } from './evidence.js'
+import { maskToolExchanges } from './mask-exchanges.js'
 import { settle } from './settle.js'
 import { desiredStateSatisfied } from '../compound/idempotency.js'
 import {
@@ -131,6 +134,8 @@ const KNOWLEDGE_BRIEF_BUDGET = 512
 const DEFAULT_SETTLE_MAX_POLLS = 3
 const DEFAULT_SETTLE_INTERVAL_MS = 0
 
+type LiveDecisionEvidence = Pick<RecordSubActionInput, 'exchanges' | 'callRecord'>
+
 // The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
 //   1. planner stepFailed          → failed  (no execution)
 //   2. setVariable + stepComplete  → passed  (short-circuit, no verify)
@@ -167,6 +172,7 @@ export async function executeStep(
       ? (evidence, index) => ports.events?.subActionRecorded(evidence, index)
       : undefined,
   })
+  const maskValue = ports.masking?.mask ?? ((value: string) => value)
   context.subActionHistory = []
 
   // Phase 358 progress subsystem (CYCLE-01..03). Fresh per-step instances (the Plan 04
@@ -244,7 +250,6 @@ export async function executeStep(
     // StepEvidence.workingMemory with values masked (ports.masking.mask — identity pre-362),
     // BESIDE the brief. Unbound port ⇒ no snapshot (optional-port idiom).
     if (ports.workingMemory) {
-      const maskValue = ports.masking?.mask ?? ((value: string) => value)
       recorder.recordWorkingMemory(
         ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
       )
@@ -634,6 +639,14 @@ export async function executeStep(
       } catch (planError: unknown) {
         const abortDuringPlan = checkAbort()
         if (abortDuringPlan) return abortDuringPlan
+        if (planError instanceof PlanningTurnError) {
+          recorder.recordPlanningFailure({
+            reason: planError.reason,
+            message: maskValue(planError.message),
+            exchanges: maskToolExchanges(planError.exchanges, maskValue),
+            ...(planError.callRecord !== undefined ? { callRecord: planError.callRecord } : {}),
+          })
+        }
         const errorMsg = planError instanceof Error ? planError.message : String(planError)
         const isContextError = CONTEXT_ERROR_PATTERNS.some(p => new RegExp(p, 'i').test(errorMsg))
         const displayMsg = isContextError
@@ -647,6 +660,13 @@ export async function executeStep(
       totalPromptTokens += planResult!.tokenUsage.promptTokens
       totalCompletionTokens += planResult!.tokenUsage.completionTokens
     }
+
+    const liveDecisionEvidence: LiveDecisionEvidence | undefined = cached
+      ? undefined
+      : {
+          exchanges: maskToolExchanges(planResult!.exchanges ?? [], maskValue),
+          ...(planResult!.callRecord !== undefined ? { callRecord: planResult!.callRecord } : {}),
+        }
 
     const rawPlan = planResult!.plan
 
@@ -728,6 +748,7 @@ export async function executeStep(
         result: toSchemaResult({ success: false, error: `Planner signaled step failure: ${reasoning}` }),
         cached: false,
         grounding,
+        ...(liveDecisionEvidence ?? {}),
       })
       // D-04 fork (Phase 360): a `failureKind:'infeasible'` turn is a machine-distinguishable
       // terminal outcome — record the typed StepEvidence.termination block ({kind,reason}) and
@@ -758,7 +779,6 @@ export async function executeStep(
     // MASK-FUT-01 boundary (identity pre-362): value-bearing evidence is masked BEFORE record,
     // the recordWorkingMemory idiom. `action` is already secret-redacted at this point, so this
     // is the additional masking layer, not the secret guard.
-    const maskValue = ports.masking?.mask ?? ((value: string) => value)
     if (gateForcedError !== undefined) {
       execResult = { success: false, error: gateForcedError }
       execError = gateForcedError
@@ -982,6 +1002,7 @@ export async function executeStep(
         result: toSchemaResult(execResult),
         cached,
         grounding,
+        ...(liveDecisionEvidence ?? {}),
       })
       return failure(redactSecretValue(policyDenial.reason, ports.secretRedactor))
     }
@@ -1000,6 +1021,7 @@ export async function executeStep(
         result: toSchemaResult(execResult),
         cached,
         grounding,
+        ...(liveDecisionEvidence ?? {}),
       })
       context.failureContext = undefined
       pendingSelfHeal = undefined
@@ -1030,6 +1052,7 @@ export async function executeStep(
         result: toSchemaResult(execResult, annotation),
         cached,
         grounding,
+        ...(liveDecisionEvidence ?? {}),
       })
 
       context.subActionHistory!.push({
@@ -1076,7 +1099,17 @@ export async function executeStep(
         const verdictSource: VerdictSource = assertOutcome ? 'assert-value' : 'assert-ai'
         const pass = assertOutcome ? assertOutcome.passed : (aiJudgment?.verdict ?? true)
         recorder.recordVerdictSource(verdictSource)
-        const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+        const idx = recordSuccess(
+          recorder,
+          reasoning,
+          action,
+          screenState,
+          execResult,
+          annotation,
+          cached,
+          grounding,
+          liveDecisionEvidence,
+        )
         void idx
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
         pendingSelfHeal = undefined
@@ -1130,7 +1163,17 @@ export async function executeStep(
       if (abortAfterVerify) return abortAfterVerify
 
       if (verifyResult.verification.success) {
-        const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+        const idx = recordSuccess(
+          recorder,
+          reasoning,
+          action,
+          screenState,
+          execResult,
+          annotation,
+          cached,
+          grounding,
+          liveDecisionEvidence,
+        )
         recorder.attachStateAfter(idx, afterState)
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
         pendingSelfHeal = undefined
@@ -1146,6 +1189,7 @@ export async function executeStep(
           result: toSchemaResult(execResult, annotation),
           cached,
           grounding,
+          ...(liveDecisionEvidence ?? {}),
         })
         return failure(`Application error: ${verifyResult.verification.reasoning}`)
       }
@@ -1153,7 +1197,17 @@ export async function executeStep(
       // Verifier says not done — planner was wrong about stepComplete. Treat as a
       // self-heal boundary: replan with the verifier's reasoning as failure context
       // (D-12), and let the next observation land as this sub-action's stateAfter (D-15c).
-      const failedIdx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+      const failedIdx = recordSuccess(
+        recorder,
+        reasoning,
+        action,
+        screenState,
+        execResult,
+        annotation,
+        cached,
+        grounding,
+        liveDecisionEvidence,
+      )
       recorder.attachStateAfter(failedIdx, afterState)
       context.subActionHistory!.push({
         action: JSON.stringify(action),
@@ -1174,7 +1228,17 @@ export async function executeStep(
 
     // No verifier but the planner claims completion — trust the planner.
     if (rawPlan.stepComplete && !ports.verifier) {
-      const idx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+      const idx = recordSuccess(
+        recorder,
+        reasoning,
+        action,
+        screenState,
+        execResult,
+        annotation,
+        cached,
+        grounding,
+        liveDecisionEvidence,
+      )
       maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
       pendingSelfHeal = undefined
       void idx
@@ -1184,7 +1248,17 @@ export async function executeStep(
 
     // Sub-action succeeded but the goal is not yet met — record and continue (no
     // stateAfter: this is not a D-15 boundary).
-    const continuingIdx = recordSuccess(recorder, reasoning, action, screenState, execResult, annotation, cached, grounding)
+    const continuingIdx = recordSuccess(
+      recorder,
+      reasoning,
+      action,
+      screenState,
+      execResult,
+      annotation,
+      cached,
+      grounding,
+      liveDecisionEvidence,
+    )
     maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
     pendingSelfHeal = undefined
     context.subActionHistory!.push({
@@ -1438,6 +1512,7 @@ function recordSuccess(
   annotation: ActionAnnotation | undefined,
   cached: boolean,
   grounding: GroundingEvidence | undefined,
+  liveDecisionEvidence: LiveDecisionEvidence | undefined,
 ): number {
   const index = recorder.recordSubAction({
     plan: reasoning,
@@ -1446,6 +1521,7 @@ function recordSuccess(
     result: toSchemaResult(execResult, annotation),
     cached,
     grounding,
+    ...(liveDecisionEvidence ?? {}),
   })
   // D-16: a pre-dispatch idempotent no-op (D-14) never reaches the deferred effect oracle when it
   // is the step's completing sub-action — the step returns here. Its effect-achieved verdict is
