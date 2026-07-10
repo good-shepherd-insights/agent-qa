@@ -110,23 +110,49 @@ async function capturePlannerRequest(
 }
 
 describe('INST-03 sampling provider-boundary proof', () => {
-  it('preserves pinned sampling params and the clamp-owned output cap through createModel middleware', async () => {
-    const request = await capturePlannerRequest({
-      provider: 'openai-compatible',
-      modelId: 'sampling-boundary-stub',
-      vision: true,
-      sampling: {
-        temperature: 0,
-        topP: 1,
-        stop: ['<END>'],
-        seed: 42,
-      },
-    })
+  it(
+    'preserves pinned sampling params through createModel with a clamp-owned output cap',
+    async () => {
+      const request = await capturePlannerRequest({
+        provider: 'openai-compatible',
+        modelId: 'sampling-boundary-stub',
+        vision: true,
+        sampling: {
+          temperature: 0,
+          topP: 1,
+          stop: ['<END>'],
+          seed: 42,
+        },
+      })
 
-    expect(request.temperature).toBe(0)
-    expect(request.topP).toBe(1)
-    expect(request.stopSequences).toEqual(['<END>'])
-    expect(request.seed).toBe(42)
-    expect(request.maxOutputTokens).toBeGreaterThan(0)
-  })
+      expect(request.temperature).toBe(0)
+      expect(request.topP).toBe(1)
+      expect(request.stopSequences).toEqual(['<END>'])
+      expect(request.seed).toBe(42)
+      expect(request.maxOutputTokens).toBeGreaterThan(0)
+    },
+  )
+
+  it.each([
+    ['no declared profile', undefined],
+    [
+      'a declared profile with sampling omitted',
+      {
+        provider: 'openai-compatible',
+        modelId: 'sampling-boundary-stub',
+        vision: true,
+      } satisfies DeclaredModelProfile,
+    ],
+  ] as const)(
+    'omits sampling params for %s while retaining the clamp-owned output cap',
+    async (_label, profile) => {
+      const request = await capturePlannerRequest(profile)
+
+      expect(request.temperature).toBeUndefined()
+      expect(request.topP).toBeUndefined()
+      expect(request.stopSequences).toBeUndefined()
+      expect(request.seed).toBeUndefined()
+      expect(request.maxOutputTokens).toBeGreaterThan(0)
+    },
+  )
 })
