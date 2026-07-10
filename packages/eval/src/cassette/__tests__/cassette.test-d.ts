@@ -1,6 +1,7 @@
 import type {
   Action,
   ActionAnnotation,
+  ArtifactRef,
   DeclaredModelProfile,
   SamplingParams,
   ScreenState,
@@ -12,6 +13,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { expectTypeOf } from 'vitest'
 import type {
+  CassetteCompleteness,
   CassetteInputLeg,
   CassetteJudgeReceipt,
   CassetteLabelLeg,
@@ -19,6 +21,8 @@ import type {
   CassetteSidecarLeg,
   ContrastivePairing,
   GoldAnchorDescriptor,
+  MissingCassetteEvidence,
+  MissingCassetteEvidenceKind,
 } from '../../index'
 
 expectTypeOf<CassetteLabelLeg['pairing']>().toEqualTypeOf<
@@ -47,3 +51,25 @@ expectTypeOf<CassetteLabelLeg['verdict']>().toEqualTypeOf<VerifierVerdict | unde
 expectTypeOf<CassetteReceipt['sampling']['declared']>().toEqualTypeOf<
   SamplingParams | undefined
 >()
+
+expectTypeOf<CassetteInputLeg['decisionScreenshotRef']>().toEqualTypeOf<
+  ArtifactRef | undefined
+>()
+expectTypeOf<CassetteInputLeg['auxiliaryArtifactRefs']>().toEqualTypeOf<
+  readonly ArtifactRef[] | undefined
+>()
+expectTypeOf<CassetteInputLeg['decisionScreenshotRef']>().not.toEqualTypeOf<
+  string | undefined
+>()
+expectTypeOf<CassetteCompleteness['missingEvidence']>().toEqualTypeOf<
+  readonly MissingCassetteEvidence[] | undefined
+>()
+expectTypeOf<CassetteCompleteness['missingEvidence']>().not.toEqualTypeOf<
+  MissingCassetteEvidence[] | undefined
+>()
+expectTypeOf<MissingCassetteEvidence['kind']>().toEqualTypeOf<MissingCassetteEvidenceKind>()
+expectTypeOf<MissingCassetteEvidenceKind>().toEqualTypeOf<'decision-screenshot-ref'>()
+expectTypeOf<MissingCassetteEvidence['stepIndex']>().toEqualTypeOf<number>()
+expectTypeOf<MissingCassetteEvidence['decisionOrdinal']>().toEqualTypeOf<number>()
+expectTypeOf<ArtifactRef['evidenceIncomplete']>().toEqualTypeOf<boolean | undefined>()
+expectTypeOf<ArtifactRef['evidenceIncomplete']>().not.toEqualTypeOf<boolean>()

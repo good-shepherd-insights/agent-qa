@@ -3,9 +3,46 @@ import {
   CASSETTE_SCHEMA_VERSION,
   CassetteVersionError,
   guardCassette,
+  type LeafCassette,
+  type ProcedureCassette,
 } from '../../index'
 
 const SHA = 'a'.repeat(64)
+const BLOB_SHA = 'b'.repeat(64)
+
+function fullCaptureMetadata() {
+  return {
+    captureMode: 'full',
+    coordSpace: 'viewport',
+    viewportWidth: 1280,
+    viewportHeight: 720,
+    scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 },
+    imageWidth: 1280,
+    imageHeight: 720,
+  }
+}
+
+function fullCaptureInput(stepIndex: number) {
+  const leaf = validLeafDocument()
+  return {
+    ...leaf.input,
+    stepIndex,
+    stateBefore: { ...leaf.input.stateBefore, metadata: fullCaptureMetadata() },
+  }
+}
+
+function v1LeafDocument(overrides: Record<string, unknown> = {}) {
+  return { ...validLeafDocument(), schemaVersion: 1, ...overrides }
+}
+
+function v1FullLeafDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    ...validLeafDocument(),
+    schemaVersion: 1,
+    input: fullCaptureInput(0),
+    ...overrides,
+  }
+}
 
 function validLeafDocument() {
   return {
@@ -194,13 +231,22 @@ describe('guardCassette', () => {
   it('rejects a newer schema version with typed diagnostics', () => {
     expect.assertions(3)
 
+    const newer = CASSETTE_SCHEMA_VERSION + 1
+
     try {
-      guardCassette(wireRoundTrip({ ...validLeafDocument(), schemaVersion: 2 }))
+      guardCassette(wireRoundTrip({ ...validLeafDocument(), schemaVersion: newer }))
     } catch (error) {
       expect(error).toBeInstanceOf(CassetteVersionError)
-      expect((error as CassetteVersionError).foundVersion).toBe(2)
-      expect((error as CassetteVersionError).supportedVersion).toBe(1)
+      expect((error as CassetteVersionError).foundVersion).toBe(newer)
+      expect((error as CassetteVersionError).supportedVersion).toBe(CASSETTE_SCHEMA_VERSION)
     }
+  })
+
+  it('parses a current version-2 document directly without migration', () => {
+    const cassette = guardCassette(wireRoundTrip(validLeafDocument())) as LeafCassette
+
+    expect(cassette.schemaVersion).toBe(CASSETTE_SCHEMA_VERSION)
+    expect(cassette.completeness.missingEvidence).toBeUndefined()
   })
 
   it('rejects an older version when the migration registry has no path', () => {
@@ -246,6 +292,165 @@ describe('guardCassette', () => {
     const changed = { ...validLeafDocument(), blobs: ['NOT-A-DIGEST'] }
 
     expect(() => guardCassette(wireRoundTrip(changed))).toThrow(/blobs\.0/)
+  })
+})
+
+describe('guardCassette version-1 to version-2 migration', () => {
+  it('migrates a full-capture leaf to evidence-incomplete with one coordinate fact', () => {
+    const migrated = guardCassette(wireRoundTrip(v1FullLeafDocument())) as LeafCassette
+
+    expect(migrated.schemaVersion).toBe(CASSETTE_SCHEMA_VERSION)
+    expect(migrated.completeness.status).toBe('evidence-incomplete')
+    expect(migrated.completeness.missingEvidence).toEqual([
+      { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+    ])
+  })
+
+  it('never guesses anonymous version-1 blobs into typed artifact refs', () => {
+    const migrated = guardCassette(
+      wireRoundTrip(v1FullLeafDocument({ blobs: [SHA, BLOB_SHA] })),
+    ) as LeafCassette
+
+    expect(migrated.input.decisionScreenshotRef).toBeUndefined()
+    expect(migrated.input.auxiliaryArtifactRefs).toBeUndefined()
+    expect(migrated.blobs).toEqual([SHA, BLOB_SHA])
+  })
+
+  it('migrates a textOnly leaf preserving its prior status and details', () => {
+    const migrated = guardCassette(
+      wireRoundTrip(
+        v1LeafDocument({
+          completeness: { status: 'anchor-unresolved', unresolvedAnchorRef: 'e9' },
+        }),
+      ),
+    ) as LeafCassette
+
+    expect(migrated.schemaVersion).toBe(CASSETTE_SCHEMA_VERSION)
+    expect(migrated.completeness.status).toBe('anchor-unresolved')
+    expect(migrated.completeness.unresolvedAnchorRef).toBe('e9')
+    expect(migrated.completeness.missingEvidence).toBeUndefined()
+  })
+
+  it('preserves missing blob and anchor details while evidence-incomplete wins', () => {
+    const migrated = guardCassette(
+      wireRoundTrip(
+        v1FullLeafDocument({
+          completeness: {
+            status: 'anchor-unresolved',
+            missingBlobShas: [BLOB_SHA],
+            unresolvedAnchorRef: 'e9',
+          },
+        }),
+      ),
+    ) as LeafCassette
+
+    expect(migrated.completeness.status).toBe('evidence-incomplete')
+    expect(migrated.completeness.missingBlobShas).toEqual([BLOB_SHA])
+    expect(migrated.completeness.unresolvedAnchorRef).toBe('e9')
+    expect(migrated.completeness.missingEvidence).toHaveLength(1)
+  })
+
+  it('emits one fact per full decision in procedure order and skips other entries', () => {
+    const leaf = validLeafDocument()
+    const decisionRecord = (input: unknown) => ({
+      input,
+      sidecar: leaf.sidecar,
+      label: leaf.label,
+      receipt: leaf.receipt,
+    })
+    const document = {
+      ...validProcedureDocument(),
+      schemaVersion: 1,
+      steps: [
+        {
+          kind: 'decision',
+          stepIndex: 0,
+          decisionOrdinal: 0,
+          record: decisionRecord(fullCaptureInput(0)),
+        },
+        {
+          kind: 'decision',
+          stepIndex: 1,
+          decisionOrdinal: 0,
+          record: decisionRecord({ ...leaf.input, stepIndex: 1 }),
+        },
+        {
+          kind: 'decision',
+          stepIndex: 2,
+          decisionOrdinal: 0,
+          record: decisionRecord(fullCaptureInput(2)),
+        },
+        { kind: 'cache-served', stepIndex: 3, decisionOrdinal: 0 },
+        { kind: 'synthesized', stepIndex: 4 },
+      ],
+    }
+
+    const migrated = guardCassette(wireRoundTrip(document)) as ProcedureCassette
+
+    expect(migrated.schemaVersion).toBe(CASSETTE_SCHEMA_VERSION)
+    expect(migrated.completeness.status).toBe('evidence-incomplete')
+    expect(migrated.completeness.missingEvidence).toEqual([
+      { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+      { kind: 'decision-screenshot-ref', stepIndex: 2, decisionOrdinal: 0 },
+    ])
+  })
+
+  it('deduplicates identical full-decision coordinates in a procedure migration', () => {
+    const leaf = validLeafDocument()
+    const decisionRecord = (input: unknown) => ({
+      input,
+      sidecar: leaf.sidecar,
+      label: leaf.label,
+      receipt: leaf.receipt,
+    })
+    const document = {
+      ...validProcedureDocument(),
+      schemaVersion: 1,
+      steps: [
+        {
+          kind: 'decision',
+          stepIndex: 0,
+          decisionOrdinal: 0,
+          record: decisionRecord(fullCaptureInput(0)),
+        },
+        {
+          kind: 'decision',
+          stepIndex: 0,
+          decisionOrdinal: 0,
+          record: decisionRecord(fullCaptureInput(0)),
+        },
+      ],
+    }
+
+    const migrated = guardCassette(wireRoundTrip(document)) as ProcedureCassette
+
+    expect(migrated.completeness.missingEvidence).toEqual([
+      { kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 },
+    ])
+  })
+
+  it('leaves an all-textOnly procedure complete with no migration facts', () => {
+    const migrated = guardCassette(
+      wireRoundTrip({ ...validProcedureDocument(), schemaVersion: 1 }),
+    ) as ProcedureCassette
+
+    expect(migrated.completeness.status).toBe('complete')
+    expect(migrated.completeness.missingEvidence).toBeUndefined()
+  })
+
+  it('produces a version-2 document that re-guards directly', () => {
+    const migrated = guardCassette(wireRoundTrip(v1FullLeafDocument()))
+    const reguarded = guardCassette(wireRoundTrip(migrated)) as LeafCassette
+
+    expect(reguarded.schemaVersion).toBe(CASSETTE_SCHEMA_VERSION)
+    expect(reguarded.completeness.missingEvidence).toHaveLength(1)
+  })
+
+  it('rejects a malformed version-1 document under post-migration structural validation', () => {
+    const { sidecar: _removed, ...truncated } = v1FullLeafDocument()
+    void _removed
+
+    expect(() => guardCassette(wireRoundTrip(truncated))).toThrow(/sidecar/)
   })
 })
 
