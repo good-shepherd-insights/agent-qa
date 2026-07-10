@@ -18,7 +18,10 @@ export const AGENT_QA_EVAL_FORBIDDEN_RESPONSIBILITIES = [
   'interpretation or execution of recorded tool exchanges, which remain opaque evidence data',
 ] as const
 export const AGENT_QA_EVAL_EXTERNAL_DEPENDENCIES = ['zod'] as const
-export const AGENT_QA_EVAL_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
+export const AGENT_QA_EVAL_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-runner',
+  '@vostride/agent-qa-schema',
+] as const
 
 export const AGENT_QA_EVAL_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_EVAL_PACKAGE_NAME,

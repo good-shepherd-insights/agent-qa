@@ -12,6 +12,27 @@ export {
 } from './replay/identity'
 export type { DecisionIdentity } from './replay/identity'
 
+export { neverEscalate } from './replay/ports'
+export type {
+  ReplayClock,
+  ReplayEscalationPredicate,
+  ReplayPlannerFactory,
+  ReplayPlannerHandle,
+} from './replay/ports'
+export type {
+  DecisionReplayResult,
+  LeafReplayResult,
+  ProcedureReplayResult,
+  ProcedureStepReplay,
+  ReplayAgreement,
+  ReplayCassetteOutcome,
+  ReplayRefusal,
+  ReplayResult,
+  ReplaySample,
+  ReplaySampleOutcome,
+  UnconsumedExchange,
+} from './replay/result'
+
 export type { CassetteInputLeg } from './cassette/input-leg'
 export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'
 export type {
