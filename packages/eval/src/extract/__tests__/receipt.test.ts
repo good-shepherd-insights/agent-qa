@@ -1,8 +1,15 @@
 import { screenStateHash, sha256hex } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, SubActionEvidence } from '@vostride/agent-qa-schema'
+import type {
+  ArtifactRef,
+  CompletedRunHandoff,
+  SubActionEvidence,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import type { CassetteInputLeg } from '../../cassette/input-leg'
-import { makeV2Handoff } from '../../__tests__/fixtures/handoff-fixtures'
+import {
+  makeArtifactRefV2Handoff,
+  makeV2Handoff,
+} from '../../__tests__/fixtures/handoff-fixtures'
 import { projectInputLeg } from '../input-leg'
 import { assembleReceipt, canonicalizeInputLeg } from '../receipt'
 
@@ -118,5 +125,87 @@ describe('assembleReceipt', () => {
     const input = fixtureDecision()
 
     expect(assembleReceipt(input)).toEqual(assembleReceipt(input))
+  })
+})
+
+describe('assembleReceipt artifact-role binding', () => {
+  const screenshot: ArtifactRef = { id: 'decision-shot', sha: 'a'.repeat(64) }
+  const auxA: ArtifactRef = { id: 'aux-a', sha: 'b'.repeat(64) }
+  const auxB: ArtifactRef = { id: 'aux-b', sha: 'c'.repeat(64) }
+
+  function artifactDecision() {
+    const { handoff, step, subAction, inputLeg } = fixtureDecision(makeArtifactRefV2Handoff())
+    const baseLeg: CassetteInputLeg = {
+      ...inputLeg,
+      decisionScreenshotRef: screenshot,
+      auxiliaryArtifactRefs: [auxA, auxB],
+    }
+    return { handoff, step, subAction, baseLeg }
+  }
+
+  function hashFor(inputLeg: CassetteInputLeg) {
+    const { handoff, step, subAction } = artifactDecision()
+    return assembleReceipt({ inputLeg, step, subAction, handoff }).promptInputHash
+  }
+
+  const mutations: Array<{ name: string; mutate: (leg: CassetteInputLeg) => CassetteInputLeg }> = [
+    {
+      name: 'a changed screenshot id',
+      mutate: leg => ({ ...leg, decisionScreenshotRef: { ...screenshot, id: 'other-shot' } }),
+    },
+    {
+      name: 'a changed screenshot sha',
+      mutate: leg => ({ ...leg, decisionScreenshotRef: { ...screenshot, sha: 'f'.repeat(64) } }),
+    },
+    {
+      name: 'a screenshot evidenceIncomplete marker',
+      mutate: leg => ({
+        ...leg,
+        decisionScreenshotRef: { ...screenshot, evidenceIncomplete: true },
+      }),
+    },
+    {
+      name: 'a changed auxiliary id',
+      mutate: leg => ({ ...leg, auxiliaryArtifactRefs: [{ ...auxA, id: 'aux-x' }, auxB] }),
+    },
+    {
+      name: 'a changed auxiliary sha',
+      mutate: leg => ({ ...leg, auxiliaryArtifactRefs: [{ ...auxA, sha: 'd'.repeat(64) }, auxB] }),
+    },
+    {
+      name: 'a reordered auxiliary array',
+      mutate: leg => ({ ...leg, auxiliaryArtifactRefs: [auxB, auxA] }),
+    },
+    {
+      name: 'a ref moved from screenshot into auxiliary role',
+      mutate: leg => ({
+        ...leg,
+        decisionScreenshotRef: auxA,
+        auxiliaryArtifactRefs: [screenshot, auxB],
+      }),
+    },
+  ]
+
+  it('produces a stable promptInputHash for identical artifact bindings', () => {
+    const { baseLeg } = artifactDecision()
+
+    expect(hashFor(baseLeg)).toBe(hashFor(baseLeg))
+    expect(hashFor(baseLeg)).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  for (const { name, mutate } of mutations) {
+    it(`changes promptInputHash under ${name}`, () => {
+      const { baseLeg } = artifactDecision()
+
+      expect(hashFor(mutate(baseLeg))).not.toBe(hashFor(baseLeg))
+    })
+  }
+
+  it('keeps the typed screenshot binding as hash material regardless of blob bytes', () => {
+    const { baseLeg } = artifactDecision()
+    const { decisionScreenshotRef: _dropped, ...withoutScreenshot } = baseLeg
+    void _dropped
+
+    expect(hashFor(withoutScreenshot as CassetteInputLeg)).not.toBe(hashFor(baseLeg))
   })
 })
