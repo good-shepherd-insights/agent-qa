@@ -54,3 +54,5 @@ export type {
   ProjectSidecarLegInput,
   ProjectSidecarLegResult,
 } from './extract/sidecar-leg'
+export { assembleReceipt, canonicalizeInputLeg } from './extract/receipt'
+export type { AssembleReceiptInput } from './extract/receipt'
