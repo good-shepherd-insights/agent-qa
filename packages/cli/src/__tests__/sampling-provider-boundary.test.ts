@@ -1,0 +1,132 @@
+import type { DeclaredModelProfile } from '@vostride/agent-qa-schema'
+import { createModel } from '@vostride/agent-qa-model'
+import type { ResolvedModelAuth } from '@vostride/agent-qa-model'
+import { LLMPlanner, makeScreenState } from '@vostride/agent-qa-runner'
+import type { StepContext, TokenAccounting } from '@vostride/agent-qa-runner'
+import { describe, expect, it } from 'vitest'
+
+type StubLanguageModel = ReturnType<typeof createModel>
+type CapturedCallOptions = Parameters<StubLanguageModel['doGenerate']>[0]
+type StubGenerateResult = Awaited<ReturnType<StubLanguageModel['doGenerate']>>
+
+const noneAuth: ResolvedModelAuth = { kind: 'none' }
+
+function stubGenerateResult(): StubGenerateResult {
+  return {
+    content: [
+      {
+        type: 'tool-call',
+        toolCallId: 'provider-boundary-action',
+        toolName: 'web_click',
+        input: JSON.stringify({
+          ref: 'e2',
+          reasoning: 'Click the requested Log in button',
+          confidence: 0.95,
+          stepComplete: true,
+          doesActionAdvanceUsTowardsGoal: true,
+        }),
+      },
+    ],
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 2, text: 0, reasoning: 0 },
+    },
+    warnings: [],
+  }
+}
+
+function createCapturingModel(): {
+  captured: () => CapturedCallOptions | undefined
+  model: StubLanguageModel
+} {
+  let captured: CapturedCallOptions | undefined
+  const stub: StubLanguageModel = {
+    specificationVersion: 'v3',
+    provider: 'sampling-boundary-stub',
+    modelId: 'sampling-boundary-stub',
+    supportedUrls: {},
+    async doGenerate(params) {
+      captured = params
+      return stubGenerateResult()
+    },
+    async doStream() {
+      return { stream: new ReadableStream() }
+    },
+  }
+
+  // openai-compatible declares no unsupported sampling params, so the provider-scoped
+  // stripUnsupportedParams middleware leaves temperature/topP/stop/seed intact. Capturing
+  // doGenerate therefore observes the post-middleware provider boundary required by D-13.
+  const model = createModel(
+    {
+      provider: 'openai-compatible',
+      model: 'sampling-boundary-stub',
+      baseURL: 'http://localhost:11434/v1',
+      auth: { mode: 'none' },
+    },
+    noneAuth,
+    { languageModels: { 'sampling-boundary-stub': stub } },
+  )
+
+  return { captured: () => captured, model }
+}
+
+function createAccounting(): TokenAccounting {
+  return {
+    estimate: () => 100,
+    recordUsage() {},
+    getCeilings: () => ({ contextWindow: 200_000, maxOutput: 768 }),
+    degrade: (messages) => ({ ok: true, messages }),
+  }
+}
+
+function createStepContext(model: StubLanguageModel): StepContext {
+  return {
+    stepInstruction: 'Click the Log in button',
+    testName: 'sampling provider boundary',
+    previousSteps: [],
+    plannerModel: model,
+    verifierModel: model,
+  }
+}
+
+async function capturePlannerRequest(
+  profile?: DeclaredModelProfile,
+): Promise<CapturedCallOptions> {
+  const { captured, model } = createCapturingModel()
+  const planner = new LLMPlanner(model, 'web', undefined, undefined, createAccounting(), profile)
+
+  await planner.plan(
+    'Click the Log in button',
+    makeScreenState(),
+    createStepContext(model),
+  )
+
+  const request = captured()
+  expect(request).toBeDefined()
+  if (request === undefined) throw new Error('expected a captured provider-boundary request')
+  return request
+}
+
+describe('INST-03 sampling provider-boundary proof', () => {
+  it('preserves pinned sampling params and the clamp-owned output cap through createModel middleware', async () => {
+    const request = await capturePlannerRequest({
+      provider: 'openai-compatible',
+      modelId: 'sampling-boundary-stub',
+      vision: true,
+      sampling: {
+        temperature: 0,
+        topP: 1,
+        stop: ['<END>'],
+        seed: 42,
+      },
+    })
+
+    expect(request.temperature).toBe(0)
+    expect(request.topP).toBe(1)
+    expect(request.stopSequences).toEqual(['<END>'])
+    expect(request.seed).toBe(42)
+    expect(request.maxOutputTokens).toBeGreaterThan(0)
+  })
+})
