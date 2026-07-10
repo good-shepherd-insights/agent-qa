@@ -193,6 +193,7 @@ export function startRun(config: RunConfig): RunSession {
           setEvidenceContext(context) {
             evidenceContext = context
           },
+          evidenceArtifacts: ports.evidenceArtifacts,
         })
         .then(
           (r): RaceOutcome => ({ kind: 'result', result: r }),
