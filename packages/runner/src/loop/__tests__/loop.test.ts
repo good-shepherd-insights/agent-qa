@@ -356,6 +356,211 @@ describe('executeStep — vision gate (D-11 / SCREEN-03)', () => {
   })
 })
 
+describe('executeStep — decision screenshot persistence (CASS-02)', () => {
+  interface Store {
+    calls: Uint8Array[]
+    persistDecisionScreenshot: (bytes: Uint8Array) => { id: string; sha: string }
+    getBlob: (sha: string) => Uint8Array | undefined
+  }
+  const REF = { id: 'decision-screenshot:sentinel', sha: 's'.repeat(64) }
+  function makeStore(opts?: { throws?: boolean }): Store {
+    const calls: Uint8Array[] = []
+    return {
+      calls,
+      persistDecisionScreenshot: vi.fn((bytes: Uint8Array) => {
+        if (opts?.throws) throw new Error('host store write failed')
+        calls.push(bytes)
+        return REF
+      }),
+      getBlob: () => undefined,
+    }
+  }
+
+  interface Capture { screenshot?: Uint8Array; captureMode?: string; imageWidth?: number }
+  function capturingPlanner(capture: Capture, plan = makeActionPlan()): Planner {
+    return {
+      async plan(_step, screen, context) {
+        capture.screenshot = context.screenshot
+        capture.captureMode = screen.metadata.captureMode
+        capture.imageWidth = (screen.metadata as { imageWidth?: number }).imageWidth
+        return { plan }
+      },
+    }
+  }
+
+  function visionState(): ScreenState {
+    return makeScreenState({ metadata: { captureMode: 'textOnly', coordSpace: 'viewport', viewportWidth: 1280, viewportHeight: 720, scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 } } })
+  }
+
+  function makeCompressor(): ScreenshotCompressor {
+    return {
+      compress: vi.fn(async () => ({ buffer: Buffer.from('compressed'), imageWidth: 800, imageHeight: 600 })),
+      dimensions: vi.fn(async () => ({ width: 640, height: 480 })),
+    }
+  }
+
+  it('compressed live decision: persists the exact compressed bytes once and records the ref', async () => {
+    const capture: Capture = {}
+    const store = makeStore()
+    const compressor = makeCompressor()
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({ observeResults: [visionState()], screenshot: async () => Buffer.from('raw') }),
+      planner: capturingPlanner(capture),
+      compressor,
+      vision: { effectiveResolution: 1024, screenshotSize: 100_000 },
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(capture.captureMode).toBe('full')
+    expect(store.calls).toHaveLength(1)
+    // the persisted bytes are exactly what the planner received (the compressed buffer)
+    expect(store.calls[0]).toBe(capture.screenshot)
+    expect(store.calls[0]?.toString()).toBe('compressed')
+    expect(result.evidence?.subActions[0]?.decisionScreenshotRef).toEqual(REF)
+  })
+
+  it('raw / no-sizing live decision: attaches raw bytes, stamps full, persists those bytes once', async () => {
+    const capture: Capture = {}
+    const store = makeStore()
+    const rawShot = Buffer.from('rawshot')
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({ observeResults: [visionState()], screenshot: async () => rawShot }),
+      planner: capturingPlanner(capture),
+      compressor: makeCompressor(),
+      // no vision sizing → compression is skipped, the raw bytes are attached
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(capture.captureMode).toBe('full')
+    expect(capture.imageWidth).toBe(640)
+    expect(capture.screenshot).toBe(rawShot)
+    expect(store.calls).toHaveLength(1)
+    expect(store.calls[0]).toBe(rawShot)
+    expect(result.evidence?.subActions[0]?.decisionScreenshotRef).toEqual(REF)
+  })
+
+  it('raw / no-sizing with an unbound store: truthful full modality, no fabricated ref', async () => {
+    const capture: Capture = {}
+    const rawShot = Buffer.from('rawshot')
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({ observeResults: [visionState()], screenshot: async () => rawShot }),
+      planner: capturingPlanner(capture),
+      compressor: makeCompressor(),
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      // evidenceArtifacts unbound
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(capture.captureMode).toBe('full')
+    expect(capture.screenshot).toBe(rawShot)
+    expect('decisionScreenshotRef' in (result.evidence?.subActions[0] ?? {})).toBe(false)
+  })
+
+  it('raw / no-sizing with a throwing store: warns, records no ref, completes the run', async () => {
+    const capture: Capture = {}
+    const store = makeStore({ throws: true })
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({ observeResults: [visionState()], screenshot: async () => Buffer.from('rawshot') }),
+      planner: capturingPlanner(capture),
+      compressor: makeCompressor(),
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(capture.captureMode).toBe('full')
+    expect('decisionScreenshotRef' in (result.evidence?.subActions[0] ?? {})).toBe(false)
+  })
+
+  it('planner-declared stepFailed carries the decision screenshot ref', async () => {
+    const capture: Capture = {}
+    const store = makeStore()
+    const result = await executeStep('Verify blue', ports({
+      adapter: makeAdapter({ observeResults: [visionState()], screenshot: async () => Buffer.from('rawshot') }),
+      planner: capturingPlanner(capture, makeActionPlan({ stepComplete: false, stepFailed: true })),
+      compressor: makeCompressor(),
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('failed')
+    expect(store.calls).toHaveLength(1)
+    expect(result.evidence?.subActions[0]?.decisionScreenshotRef).toEqual(REF)
+  })
+
+  it('execution failure branch carries the decision screenshot ref', async () => {
+    const store = makeStore()
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({
+        observeResults: [visionState(), visionState(), visionState()],
+        executeResults: [{ success: false, error: 'Element not found' }, { success: true }],
+        screenshot: async () => Buffer.from('rawshot'),
+      }),
+      planner: makePlanner([
+        makeActionPlan({ action: { type: 'click', ref: 'e1' } }),
+        makeActionPlan({ action: { type: 'click', ref: 'e2' } }),
+      ]),
+      compressor: makeCompressor(),
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(result.evidence?.subActions[0]?.decisionScreenshotRef).toEqual(REF)
+  })
+
+  it('cache hit mints no decision screenshot ref (no live model decision)', async () => {
+    const store = makeStore()
+    const cachedLogin: CachedPlanValue = {
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
+      groundedLocator: [{ role: 'button', nameNormalized: 'log in', ordinal: 0 }],
+      verificationOutcome: 'passed',
+    }
+    const cache: ActionPlanCache = {
+      async get() { return cachedLogin },
+      async set() {},
+      async invalidate() {},
+    }
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({ screenshot: async () => Buffer.from('rawshot') }),
+      planner: makePlanner(),
+      compressor: makeCompressor(),
+      vision: { effectiveResolution: 1024, screenshotSize: 100_000 },
+      visionGate: { attachImage: true, captureMode: 'full', promptNote: '' },
+      cache,
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(result.evidence?.cacheStatus).toBe('hit')
+    expect(store.calls).toHaveLength(0)
+    expect('decisionScreenshotRef' in (result.evidence?.subActions[0] ?? {})).toBe(false)
+  })
+
+  it('text-only decision: textOnly modality, no store call, no ref', async () => {
+    const capture: Capture = {}
+    const store = makeStore()
+    const result = await executeStep('Click Log in', ports({
+      adapter: makeAdapter({ observeResults: [visionState()], screenshot: async () => Buffer.from('rawshot') }),
+      planner: capturingPlanner(capture),
+      compressor: makeCompressor(),
+      vision: { effectiveResolution: 1024, screenshotSize: 100_000 },
+      visionGate: { attachImage: false, captureMode: 'textOnly', promptNote: 'Rely on the tree.' },
+      evidenceArtifacts: store,
+    }), makeStepContext())
+
+    expect(result.status).toBe('passed')
+    expect(capture.captureMode).toBe('textOnly')
+    expect(capture.screenshot).toBeUndefined()
+    expect(store.calls).toHaveLength(0)
+    expect('decisionScreenshotRef' in (result.evidence?.subActions[0] ?? {})).toBe(false)
+  })
+})
+
 describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
   it('redacts a registered raw secret from the recorded planned action before evidence records it', async () => {
     const rawSecret = 'sk-live-super-secret-value'
