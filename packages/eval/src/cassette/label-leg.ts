@@ -1,0 +1,45 @@
+import type { VerifierVerdict, Verdict } from '@vostride/agent-qa-schema'
+
+/** Quality vocabulary reserved for every current and later label source (D-16). */
+export type LabelTier = 'gold' | 'near-gold' | 'silver'
+
+/** Channel that supplied the cassette label (D-16). */
+export type LabelSourceChannel =
+  | 'recorded-verdict'
+  | 'user-mark'
+  | 'overturned-verdict'
+  | 'self-heal-pair'
+
+/** Optional relationship to the sibling in a contrastive example (D-17). */
+export interface ContrastivePairing {
+  /** Deterministic cassette identity of the paired example (D-17). */
+  pairedCassetteId: string
+  /** Whether this member is the successful or unsuccessful side of the pair (D-17). */
+  relation: 'contrastive-positive' | 'contrastive-negative'
+}
+
+/** Recorded failure-only context available without synthesizing new facts (D-16). */
+export interface RecordedFailureContext {
+  /** Verifier-authored reasoning copied from recorded evidence when present (D-16). */
+  verifierReasoning?: string
+  /** Structured planning failure message copied when a turn failed (D-16). */
+  planningFailureReason?: string
+  /** Typed termination reason copied when the runner recorded infeasibility (D-16). */
+  termination?: string
+}
+
+/** Outcome label and provenance for one recorded decision (D-16/D-17). */
+export interface CassetteLabelLeg {
+  /** Recorded verifier outcome; structurally absent when no verdict was recorded (D-16). */
+  verdict?: VerifierVerdict
+  /** Provenance channel for this label (D-16). */
+  sourceChannel: LabelSourceChannel
+  /** Confidence tier assigned from the channel vocabulary (D-16). */
+  tier: LabelTier
+  /** Recorded failure projections only; unavailable fields remain absent (D-16). */
+  recordedFailure?: RecordedFailureContext
+  /** Reserved schema root-cause slot; the current handoff does not populate it (D-16). */
+  rootCause?: Verdict
+  /** Reserved contrastive-pair slot populated by the later label factory (D-17). */
+  pairing?: ContrastivePairing
+}

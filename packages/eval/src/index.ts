@@ -1,1 +1,31 @@
 export type { ArtifactSource, HandoffSource } from './ports'
+
+export type { CassetteInputLeg } from './cassette/input-leg'
+export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'
+export type {
+  CassetteLabelLeg,
+  ContrastivePairing,
+  LabelSourceChannel,
+  LabelTier,
+  RecordedFailureContext,
+} from './cassette/label-leg'
+export type {
+  CassetteJudgeReceipt,
+  CassetteModelReceipt,
+  CassetteReceipt,
+  CassetteSamplingReceipt,
+} from './cassette/receipt-leg'
+export type { CassetteCompleteness, CompletenessStatus } from './cassette/completeness'
+export { CASSETTE_SCHEMA_VERSION } from './cassette/cassette'
+export type {
+  Cassette,
+  CassetteGranularity,
+  DecisionRecord,
+  LeafCassette,
+  ProcedureCacheServedStepRecord,
+  ProcedureCassette,
+  ProcedureDecisionStepRecord,
+  ProcedureEndState,
+  ProcedureStepRecord,
+  ProcedureSynthesizedStepRecord,
+} from './cassette/cassette'
