@@ -47,3 +47,5 @@ export type {
 } from './extract/select'
 export { projectInputLeg } from './extract/input-leg'
 export type { ProjectInputLegInput } from './extract/input-leg'
+export { projectLabelLeg } from './extract/label-leg'
+export type { ProjectLabelLegInput } from './extract/label-leg'
