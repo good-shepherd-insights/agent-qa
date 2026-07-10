@@ -12,6 +12,7 @@ export const AGENT_QA_RUNNER_LOCAL_ALLOWED_RESPONSIBILITIES = [
   'project-local per-product buildOrdinal counter persistence',
   'Docker sandbox hook execution behind the runner HookExecutorPort',
   'local filesystem run-artifact store behind the runner RunArtifactStorePort',
+  'local content-addressed decision-evidence persistence behind the runner EvidenceArtifactStorePort',
   'sharp screenshot compression + image utilities behind the runner ScreenshotCompressor port',
 ] as const
 export const AGENT_QA_RUNNER_LOCAL_FORBIDDEN_RESPONSIBILITIES = [

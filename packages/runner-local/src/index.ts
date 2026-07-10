@@ -38,6 +38,12 @@ export type { FsHandoffStoreConfig } from './handoff-store.js'
 export { FsRunArtifactStore, ARTIFACT_FILE } from './run-artifact-store.js'
 export type { FsRunArtifactStoreConfig } from './run-artifact-store.js'
 
+// Phase 367 CASS-02 — the content-addressed evidence artifact store behind the runner
+// EvidenceArtifactStorePort. Writes decision-screenshot bytes to blobs/<sha> in the SAME
+// <root>/runs/<slug(runId)>/ family as events.jsonl / handoff.json / artifact.json.
+export { FsEvidenceArtifactStore, RUN_EVIDENCE_BLOBS_SUBDIR } from './evidence-artifact-store.js'
+export type { FsEvidenceArtifactStoreConfig } from './evidence-artifact-store.js'
+
 // Phase 363 D-08 / Q10 — the sharp screenshot compressor behind the runner ScreenshotCompressor
 // port (sharp's host-adapter home; banned in the storage-neutral runner). `alignToWindow` /
 // `getImageDimensions` are host-side sharp utilities the mobile adapters call directly.
