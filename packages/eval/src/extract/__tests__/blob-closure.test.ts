@@ -3,6 +3,7 @@ import type {
   ScreenStateMetadata,
   SubActionEvidence,
 } from '@vostride/agent-qa-schema'
+import type { MissingCassetteEvidence } from '../../cassette/completeness'
 import type { CassetteInputLeg } from '../../cassette/input-leg'
 import type { ArtifactSource } from '../../ports'
 import { describe, expect, it } from 'vitest'
@@ -144,6 +145,101 @@ describe('missingRequiredEvidence authoritative modality policy', () => {
         }),
       ),
     ).toEqual([{ kind: 'decision-screenshot-ref', stepIndex: 0, decisionOrdinal: 0 }])
+  })
+})
+
+describe('buildCompleteness missing-evidence folding precedence', () => {
+  const screenshotFact: MissingCassetteEvidence = {
+    kind: 'decision-screenshot-ref',
+    stepIndex: 2,
+    decisionOrdinal: 1,
+  }
+
+  it('forces evidence-incomplete on nonempty missingEvidence and copies it defensively', () => {
+    const facts = [{ ...screenshotFact }]
+    const result = buildCompleteness({
+      missingShas: [],
+      anchorUnresolved: false,
+      missingEvidence: facts,
+    })
+
+    expect(result).toEqual({
+      status: 'evidence-incomplete',
+      missingEvidence: [screenshotFact],
+    })
+    expect(result.missingEvidence).not.toBe(facts)
+  })
+
+  it('omits missingEvidence structurally when empty and stays text-only complete', () => {
+    const result = buildCompleteness({
+      missingShas: [],
+      anchorUnresolved: false,
+      missingEvidence: [],
+    })
+
+    expect(result).toEqual({ status: 'complete' })
+    expect(Object.hasOwn(result, 'missingEvidence')).toBe(false)
+  })
+
+  it('retains missing identity, missing bytes, and unresolved anchor together', () => {
+    expect(
+      buildCompleteness({
+        missingShas: [FIXTURE_ARTIFACT_SHA],
+        anchorUnresolved: true,
+        unresolvedAnchorRef: 'e-missing',
+        missingEvidence: [screenshotFact],
+      }),
+    ).toEqual({
+      status: 'evidence-incomplete',
+      missingBlobShas: [FIXTURE_ARTIFACT_SHA],
+      unresolvedAnchorRef: 'e-missing',
+      missingEvidence: [screenshotFact],
+    })
+  })
+
+  it('outranks anchor-unresolved with only missing evidence present', () => {
+    expect(
+      buildCompleteness({
+        missingShas: [],
+        anchorUnresolved: true,
+        unresolvedAnchorRef: 'e-missing',
+        missingEvidence: [screenshotFact],
+      }),
+    ).toEqual({
+      status: 'evidence-incomplete',
+      unresolvedAnchorRef: 'e-missing',
+      missingEvidence: [screenshotFact],
+    })
+  })
+
+  it('reports only missingBlobShas for a usable full-capture ref whose bytes are absent', () => {
+    const leg = buildLeg({ captureMode: 'full', screenshot: usableScreenshot })
+    const missingEvidence = missingRequiredEvidence(leg)
+    const resolved = resolveBlobClosure([FIXTURE_SCREENSHOT_SHA], mapSource(new Map()))
+
+    expect(missingEvidence).toEqual([])
+    expect(
+      buildCompleteness({
+        missingShas: resolved.missingShas,
+        anchorUnresolved: false,
+        missingEvidence,
+      }),
+    ).toEqual({
+      status: 'evidence-incomplete',
+      missingBlobShas: [FIXTURE_SCREENSHOT_SHA],
+    })
+  })
+
+  it('keeps a text-only no-ref decision complete when no other detail is missing', () => {
+    const leg = buildLeg({ captureMode: 'textOnly' })
+
+    expect(
+      buildCompleteness({
+        missingShas: [],
+        anchorUnresolved: false,
+        missingEvidence: missingRequiredEvidence(leg),
+      }),
+    ).toEqual({ status: 'complete' })
   })
 })
 
