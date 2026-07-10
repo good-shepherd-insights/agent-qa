@@ -35,3 +35,15 @@ export {
   CassetteVersionError,
   guardCassette,
 } from './cassette/guard'
+
+export { classifySubAction, collectStepSelections } from './extract/select'
+export type {
+  CollectStepSelectionsInput,
+  SelectionSkip,
+  SelectionSkipReason,
+  StepSelections,
+  SubActionClassification,
+  SubActionSelection,
+} from './extract/select'
+export { projectInputLeg } from './extract/input-leg'
+export type { ProjectInputLegInput } from './extract/input-leg'
