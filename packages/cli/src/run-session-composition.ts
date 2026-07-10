@@ -45,6 +45,7 @@ import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { MaskingContext, RunEventEnvelope } from '@vostride/agent-qa-schema'
 import {
   FsEventLog,
+  FsEvidenceArtifactStore,
   FsHandoffStore,
   FsRunArtifactStore,
   nextBuildOrdinal,
@@ -65,6 +66,7 @@ import type {
   AppiumScriptHandler,
   ConfigDigests,
   EventLogPort,
+  EvidenceArtifactStorePort,
   FailureScreenshotWriter,
   HandoffStorePort,
   HookDefinition,
@@ -191,12 +193,19 @@ export interface RunPersistencePorts {
   eventLog: EventLogPort
   handoffStore: HandoffStorePort
   runArtifactStore: RunArtifactStorePort
+  /**
+   * CASS-02 run-scoped decision-screenshot store (Plan 13). Constructed once here from the SAME
+   * persistence root + runId as the other adapters; the shell hands this exact instance to every
+   * member so Plan 12's live-decision producer persists into one durable, run-addressable namespace.
+   */
+  evidenceArtifacts: EvidenceArtifactStorePort
 }
 
 /**
  * Construct the runner-local persistence ports rooted at the run's `.agent-qa` runtime dir (the
- * FsActionCache rooting idiom). `FsEventLog`/`FsHandoffStore`/`FsRunArtifactStore` all write under
- * the SAME `<configDir>/.agent-qa/runs/<slug(runId)>/…` family (D-08 — one self-contained run dir).
+ * FsActionCache rooting idiom). `FsEventLog`/`FsHandoffStore`/`FsRunArtifactStore`/
+ * `FsEvidenceArtifactStore` all write under the SAME `<configDir>/.agent-qa/runs/<slug(runId)>/…`
+ * family (D-08 — one self-contained run dir).
  */
 export function buildRunPorts(input: { configDir: string; runId: string }): RunPersistencePorts {
   const root = resolve(input.configDir, '.agent-qa')
@@ -204,6 +213,7 @@ export function buildRunPorts(input: { configDir: string; runId: string }): RunP
     eventLog: new FsEventLog({ root, runId: input.runId }),
     handoffStore: new FsHandoffStore({ root, runId: input.runId }),
     runArtifactStore: new FsRunArtifactStore({ root, runId: input.runId }),
+    evidenceArtifacts: new FsEvidenceArtifactStore({ root, runId: input.runId }),
   }
 }
 
@@ -784,6 +794,8 @@ export interface BuildMemberRunConfigInput {
   sink: MemberEventSink
   testIndex: number
   abortSignal: AbortSignal
+  /** CASS-02 run-scoped evidence store the shell threads onto the member ctx (Plan 13). */
+  evidenceArtifacts?: EvidenceArtifactStorePort
   // run config
   captureScreenshots?: boolean
   accessibility?: MemberRunConfig['accessibility']
@@ -850,6 +862,7 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     sink: input.sink,
     testIndex: input.testIndex,
     abortSignal: input.abortSignal,
+    evidenceArtifacts: input.evidenceArtifacts,
 
     captureScreenshots: input.captureScreenshots,
     accessibility: input.accessibility,
