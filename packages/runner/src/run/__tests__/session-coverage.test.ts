@@ -22,6 +22,7 @@ import { dirname, resolve } from 'node:path'
 
 import {
   CURRENT_BUS_SCHEMA_VERSION,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   RUN_EVENT_TYPES,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -523,7 +524,7 @@ describe('SESSION-05 — exactly one CompletedRunHandoff per run, §A8 header fi
     expect(store.saveCalls).toBe(1)
     expect(store.saved[0]).toBe(handoff)
     // §A8 header fields are copied verbatim from the resolved RunConfig (D-04/D-20 — never re-derived).
-    expect(handoff.schemaVersion).toBe(1)
+    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(handoff.runId).toBe(RID)
     expect(handoff.scope).toEqual(SCOPE)
     expect(handoff.buildOrdinal).toBe(7)

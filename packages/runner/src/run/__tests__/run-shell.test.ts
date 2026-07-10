@@ -21,6 +21,7 @@ import type {
   RunMemberDescriptor,
 } from '../shell.js'
 import type { EventLogPort, HandoffStorePort, RunTimerPort } from '../ports.js'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunArtifactStageInput, RunArtifactFinalizeInput } from '@vostride/agent-qa-schema'
 import type { StepResult, TestResult } from '../../result.js'
 import type {
@@ -395,7 +396,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
     const session = startRun(baseConfig({ ports: { handoffStore: store, eventLog: makeFakeEventLog() } }))
     drain(session)
     const { handoff } = await done(session)
-    expect(handoff.schemaVersion).toBe(1)
+    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(handoff.runId).toBe('run-1')
     expect(handoff.scope).toEqual({ tier: 'suite', key: 'checkout' })
     expect(handoff.buildOrdinal).toBe(7)
