@@ -252,7 +252,11 @@ const verifierVerdictSchema = z
   .passthrough()
 
 const artifactRefSchema = z
-  .object({ id: z.string(), sha: z.string(), evidenceIncomplete: z.boolean().optional() })
+  .object({
+    id: z.string().min(1),
+    sha: digestSchema,
+    evidenceIncomplete: z.boolean().optional(),
+  })
   .passthrough()
 
 const verdictEvidenceSchema = z
@@ -315,6 +319,8 @@ const inputLegSchema = z
     workingMemory: z.array(workingMemoryEntrySchema).optional(),
     exchanges: z.array(toolExchangeSchema),
     modelProfile: declaredModelProfileSchema.optional(),
+    decisionScreenshotRef: artifactRefSchema.optional(),
+    auxiliaryArtifactRefs: z.array(artifactRefSchema).optional(),
   })
   .strict()
 
@@ -404,11 +410,20 @@ const receiptSchema = z
   })
   .strict()
 
+const missingEvidenceSchema = z
+  .object({
+    kind: z.literal('decision-screenshot-ref'),
+    stepIndex: z.number().int().nonnegative(),
+    decisionOrdinal: z.number().int().nonnegative(),
+  })
+  .strict()
+
 const completenessSchema = z
   .object({
     status: z.enum(['complete', 'evidence-incomplete', 'anchor-unresolved']),
     missingBlobShas: z.array(digestSchema).optional(),
     unresolvedAnchorRef: z.string().optional(),
+    missingEvidence: z.array(missingEvidenceSchema).nonempty().optional(),
   })
   .strict()
 

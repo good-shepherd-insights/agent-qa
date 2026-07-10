@@ -1,4 +1,5 @@
 import type {
+  ArtifactRef,
   DeclaredModelProfile,
   ScreenState,
   ServedBrief,
@@ -31,4 +32,8 @@ export interface CassetteInputLeg {
   exchanges: ToolExchangeEvidence[]
   /** Declared model and sampling intent; unavailable values remain absent (D-03). */
   modelProfile?: DeclaredModelProfile
+  /** Typed planner-screenshot identity; absent until later phases mint it (D-14/T-367-23). */
+  decisionScreenshotRef?: ArtifactRef
+  /** Ordered non-screenshot evidence refs kept distinct from the screenshot role (D-14). */
+  auxiliaryArtifactRefs?: readonly ArtifactRef[]
 }

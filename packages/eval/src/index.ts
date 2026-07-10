@@ -15,7 +15,12 @@ export type {
   CassetteReceipt,
   CassetteSamplingReceipt,
 } from './cassette/receipt-leg'
-export type { CassetteCompleteness, CompletenessStatus } from './cassette/completeness'
+export type {
+  CassetteCompleteness,
+  CompletenessStatus,
+  MissingCassetteEvidence,
+  MissingCassetteEvidenceKind,
+} from './cassette/completeness'
 export { CASSETTE_SCHEMA_VERSION } from './cassette/cassette'
 export type {
   Cassette,

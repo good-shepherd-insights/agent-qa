@@ -10,7 +10,7 @@ import type { CassetteReceipt } from './receipt-leg'
 import type { CassetteSidecarLeg } from './sidecar-leg'
 
 /** The single schema version shared by the envelope and all four legs (D-14). */
-export const CASSETTE_SCHEMA_VERSION = 1
+export const CASSETTE_SCHEMA_VERSION = 2
 
 /** One complete live planner decision assembled from the four cassette legs (D-03). */
 export interface DecisionRecord {
