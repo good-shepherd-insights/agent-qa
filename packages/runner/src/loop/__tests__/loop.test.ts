@@ -9,6 +9,7 @@ import type { LoopPorts, ScreenshotCompressor } from '../ports.js'
 import type { ActionPlanCache, CacheablePlannedAction, CachedPlanValue } from '../../cache/port.js'
 import type { Planner, StepContext, Verifier } from '../types.js'
 import { executeStep } from '../index.js'
+import { SecretRedactor, SecretStore } from '../secrets.js'
 import { projectLegacyTrace } from '../evidence.js'
 import { createTimeoutAbortReason } from '../abort.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -352,5 +353,51 @@ describe('executeStep — vision gate (D-11 / SCREEN-03)', () => {
     expect(captured.hadScreenshot).toBe(false)
     expect(captured.promptNote).toBe('Rely on the accessibility tree.')
     expect(shotSpy).toHaveBeenCalled()
+  })
+})
+
+describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
+  it('redacts a registered raw secret from the recorded planned action before evidence records it', async () => {
+    const rawSecret = 'sk-live-super-secret-value'
+    const secretRedactor = new SecretRedactor(new SecretStore({ TOKEN: rawSecret }))
+    const planner = makePlanner([
+      makeActionPlan({
+        reasoning: 'Fill the token field with the provisioned credential',
+        action: { type: 'fill', ref: 'e2', text: rawSecret, clearMode: 'replace', submit: false },
+      }),
+    ])
+
+    const result = await executeStep(
+      'Fill the API token field',
+      ports({ adapter: makeAdapter(), planner, secretRedactor }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('passed')
+    const planned = result.evidence?.subActions[0]?.plannedAction
+    expect(planned).toMatchObject({ type: 'fill', text: '[secret]' })
+    expect(JSON.stringify(result.evidence)).not.toContain(rawSecret)
+  })
+
+  it('redacts a registered raw secret from a value-bearing paste planned action', async () => {
+    const rawSecret = 'sk-live-paste-secret-value'
+    const secretRedactor = new SecretRedactor(new SecretStore({ TOKEN: rawSecret }))
+    const planner = makePlanner([
+      makeActionPlan({
+        reasoning: 'Paste the provisioned credential into the token field',
+        action: { type: 'paste', ref: 'e2', value: rawSecret },
+      }),
+    ])
+
+    const result = await executeStep(
+      'Paste the API token',
+      ports({ adapter: makeAdapter(), planner, secretRedactor }),
+      makeStepContext(),
+    )
+
+    expect(result.status).toBe('passed')
+    const planned = result.evidence?.subActions[0]?.plannedAction
+    expect(planned).toMatchObject({ type: 'paste', value: '[secret]' })
+    expect(JSON.stringify(result.evidence)).not.toContain(rawSecret)
   })
 })

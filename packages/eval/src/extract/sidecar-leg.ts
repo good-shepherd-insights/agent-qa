@@ -1,4 +1,4 @@
-import type { Action, ElementInfo, SubActionEvidence } from '@vostride/agent-qa-schema'
+import type { Action, ElementInfo, Ref, SubActionEvidence } from '@vostride/agent-qa-schema'
 import type {
   CassetteSidecarLeg,
   GoldAnchorDescriptor,
@@ -13,22 +13,46 @@ export interface ProjectSidecarLegResult {
   anchorUnresolved: boolean
 }
 
-function actionRef(action: Action): string | undefined {
-  return 'ref' in action && typeof action.ref === 'string' ? action.ref : undefined
+// The §B4 value axis: every recorded Action whose scoring payload is a typed/selected string
+// against a ref target, plus fill's text payload. Control metadata (wait text, urls, script
+// bodies, runner mint values) is intentionally excluded — it carries no ref-targeted value.
+type RefTargetedStringValueAction = Extract<Action, { ref: Ref; value: string }>
+export type ScoringValueAction =
+  | Extract<Action, { type: 'fill' }>
+  | RefTargetedStringValueAction
+export type ScoringValueActionType = ScoringValueAction['type']
+
+type ValueProjector<T extends ScoringValueActionType> = (
+  action: Extract<ScoringValueAction, { type: T }>,
+) => string | undefined
+
+// Exact keyed handler table. Adding a new ref-targeted string-value Action widens
+// ScoringValueActionType and breaks this mapped type until a projector key is supplied,
+// so a value arm can never fall through silently.
+const VALUE_PROJECTORS: { [T in ScoringValueActionType]: ValueProjector<T> } = {
+  fill: (action) => action.text,
+  select: (action) => action.value,
+  paste: (action) => action.value,
+  nativeSelect: (action) => action.value,
+  pickerSelect: (action) => action.value,
 }
 
-function actionValue(action: Action): string | undefined {
-  switch (action.type) {
-    case 'fill':
-      return action.text
-    case 'select':
-    case 'nativeSelect':
-      return action.value
-    case 'pickerSelect':
-      return 'value' in action ? action.value : undefined
-    default:
-      return undefined
-  }
+export const SCORING_VALUE_ACTION_TYPES: ReadonlySet<ScoringValueActionType> = new Set(
+  Object.keys(VALUE_PROJECTORS) as ScoringValueActionType[],
+)
+
+function isScoringValueActionType(type: Action['type']): type is ScoringValueActionType {
+  return SCORING_VALUE_ACTION_TYPES.has(type as ScoringValueActionType)
+}
+
+export function projectActionGoldValue(action: Action): string | undefined {
+  if (!isScoringValueActionType(action.type)) return undefined
+  const projector = VALUE_PROJECTORS[action.type] as (action: Action) => string | undefined
+  return projector(action)
+}
+
+function actionRef(action: Action): string | undefined {
+  return 'ref' in action && typeof action.ref === 'string' ? action.ref : undefined
 }
 
 function anchorDescriptor(
@@ -93,7 +117,7 @@ export function projectSidecarLeg({
   const goldAnchor = goldElement === undefined
     ? undefined
     : anchorDescriptor(goldElement, subAction.stateBefore.elements)
-  const goldValue = actionValue(subAction.plannedAction)
+  const goldValue = projectActionGoldValue(subAction.plannedAction)
   const annotation = subAction.result.annotation
 
   return {
