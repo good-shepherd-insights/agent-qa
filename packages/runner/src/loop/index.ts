@@ -134,7 +134,7 @@ const KNOWLEDGE_BRIEF_BUDGET = 512
 const DEFAULT_SETTLE_MAX_POLLS = 3
 const DEFAULT_SETTLE_INTERVAL_MS = 0
 
-type LiveDecisionEvidence = Pick<RecordSubActionInput, 'exchanges' | 'callRecord'>
+type LiveDecisionEvidence = Pick<RecordSubActionInput, 'exchanges' | 'callRecord' | 'decisionScreenshotRef'>
 
 // The 8 surviving return paths (v1 had 9; the exec-fail-limit path is deleted, D-10):
 //   1. planner stepFailed          → failed  (no execution)
@@ -538,9 +538,13 @@ export async function executeStep(
     const abortAfterObserve = checkAbort()
     if (abortAfterObserve) return abortAfterObserve
 
-    // Compress the LLM-bound screenshot through the port and re-stamp captureMode to
-    // `full` runner-side (Pitfall 9). Text-only gate skips all LLM image work; the
-    // artifact screenshot above still ran (SCREEN-03).
+    // Derive the ONE finalized planner attachment and its capture stamp from a single source
+    // (T-367-17). The configured compression branch owns compressed bytes + returned dims; when
+    // an image is attached but no vision sizing is configured, the RAW bytes are the attachment
+    // and dims come from the dimension port (host-neutral viewport fallback when unbound). The
+    // captureMode is then stamped ONCE from the actual attachment, so `full`/`textOnly` describes
+    // the real planner call on both the compressed and raw/no-sizing paths (Pitfall 9).
+    let captureDims: { imageWidth: number; imageHeight: number } | undefined
     if (gate.attachImage && screenshot && ports.compressor && (ports.vision?.screenshotSize || ports.vision?.effectiveResolution)) {
       if (!ports.vision?.effectiveResolution) {
         throw new Error('effectiveResolution is required in LLM config when screenshot compression is enabled')
@@ -558,11 +562,26 @@ export async function executeStep(
           ports.abortSignal,
         )
         screenshot = compressed.buffer
-        screenState = stampCaptureMode(screenState, {
-          mode: 'full',
-          imageWidth: compressed.imageWidth,
-          imageHeight: compressed.imageHeight,
-        })
+        captureDims = { imageWidth: compressed.imageWidth, imageHeight: compressed.imageHeight }
+      } catch (err) {
+        const abortResult = checkAbort()
+        if (abortResult) return abortResult
+        throw err
+      }
+    } else if (gate.attachImage && screenshot) {
+      // Raw / no-sizing attachment: the exact raw bytes reach the planner unmodified. Dimensions
+      // come from the compressor port when bound, else the recorded viewport is the explicit
+      // host-neutral fallback (no host image decode inside the runner).
+      try {
+        if (ports.compressor) {
+          const dims = await withAbort(ports.compressor.dimensions(screenshot), ports.abortSignal)
+          captureDims = { imageWidth: dims.width, imageHeight: dims.height }
+        } else {
+          captureDims = {
+            imageWidth: (screenState.metadata.viewportWidth as number | undefined) ?? 0,
+            imageHeight: (screenState.metadata.viewportHeight as number | undefined) ?? 0,
+          }
+        }
       } catch (err) {
         const abortResult = checkAbort()
         if (abortResult) return abortResult
@@ -574,6 +593,13 @@ export async function executeStep(
     // image block and leans on the tree/DOM via the prompt note.
     context.screenshot = gate.attachImage && screenshot ? screenshot : undefined
     context.promptNote = gate.promptNote
+
+    // One authoritative modality stamp over the finalized attachment: `full` (with the selected
+    // dims) when an image is attached, otherwise `textOnly`. This is the single source of the
+    // recorded stateBefore.metadata.captureMode for every planner call.
+    screenState = context.screenshot && captureDims
+      ? stampCaptureMode(screenState, { mode: 'full', imageWidth: captureDims.imageWidth, imageHeight: captureDims.imageHeight })
+      : stampCaptureMode(screenState, { mode: 'textOnly' })
 
     // 2. PLAN — the replay → re-ground → replan hit ladder (D-13), then the planning turn.
     let planResult: PlanResult
@@ -675,6 +701,22 @@ export async function executeStep(
           exchanges: maskToolExchanges(planResult!.exchanges ?? [], maskValue),
           ...(planResult!.callRecord !== undefined ? { callRecord: planResult!.callRecord } : {}),
         }
+
+    // §A8 decision-screenshot persistence (CASS-02, T-367-17). For a LIVE model decision that
+    // attached an image, persist the EXACT bytes the planner received (context.screenshot — never
+    // the step-level artifact shot, raw pre-compression bytes, or a later shot) exactly once and
+    // record the returned ref ON liveDecisionEvidence, so every terminal evidence branch this
+    // iteration carries it through the one existing spread (recordSubAction / recordSuccess).
+    // Cache replays (liveDecisionEvidence absent) and text-only turns (no context.screenshot) mint
+    // no ref. A host-store failure is caught and warned bytes-free (T-367-17-I/D): the ref stays
+    // absent so downstream completeness can classify the missing evidence — the run never fails.
+    if (liveDecisionEvidence && context.screenshot && ports.evidenceArtifacts) {
+      try {
+        liveDecisionEvidence.decisionScreenshotRef = ports.evidenceArtifacts.persistDecisionScreenshot(context.screenshot)
+      } catch {
+        ports.logger?.createScopedLogger('evidence')?.warn('Failed to persist decision screenshot')
+      }
+    }
 
     const rawPlan = planResult!.plan
 
