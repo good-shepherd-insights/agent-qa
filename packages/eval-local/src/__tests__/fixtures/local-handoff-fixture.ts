@@ -5,6 +5,7 @@ import {
   computeBriefDigest,
 } from '@vostride/agent-qa-schema'
 import type {
+  ArtifactRef,
   CompletedRunHandoff,
   ScreenState,
   ServedBrief,
@@ -22,6 +23,11 @@ export const LOCAL_FIXTURE_BLOB_BYTES = Uint8Array.from([
 
 const scope = { tier: 'suite', key: 'eval-local' } as const
 const buttonRef = asRef('e-continue')
+
+const DEFAULT_SCREENSHOT_REF: ArtifactRef = {
+  id: 'eval-local-fixture-screenshot',
+  sha: LOCAL_FIXTURE_BLOB_SHA,
+}
 
 function emptyBrief(): ServedBrief {
   const unstamped: ServedBrief = {
@@ -86,7 +92,9 @@ function step(
   stepIndex: number,
   cacheStatus: StepEvidence['cacheStatus'],
   live: boolean,
+  screenshotRef: ArtifactRef | null | undefined,
 ): StepEvidence {
+  const resolvedRef = screenshotRef === undefined ? DEFAULT_SCREENSHOT_REF : screenshotRef
   return {
     stepIndex,
     stepText: live ? 'Click Continue' : 'Replay Continue from cache',
@@ -120,10 +128,7 @@ function step(
         ...(live
           ? {
               exchanges: [],
-              decisionScreenshotRef: {
-                id: 'eval-local-fixture-screenshot',
-                sha: LOCAL_FIXTURE_BLOB_SHA,
-              },
+              ...(resolvedRef === null ? {} : { decisionScreenshotRef: resolvedRef }),
               callRecord: {
                 resolvedModelId: 'eval-local-fixture-planner-2026-07-10',
                 fingerprint: 'fp_eval_local_fixture',
@@ -144,6 +149,7 @@ function step(
 
 export function makeLocalV2Handoff(
   overrides: Partial<CompletedRunHandoff> = {},
+  screenshotRef?: ArtifactRef | null,
 ): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -163,7 +169,7 @@ export function makeLocalV2Handoff(
         testId: LOCAL_FIXTURE_TEST_ID,
         testIndex: 0,
         outcome: 'passed',
-        steps: [step(0, 'miss', true), step(1, 'hit', false)],
+        steps: [step(0, 'miss', true, screenshotRef), step(1, 'hit', false, undefined)],
       },
     ],
     ...overrides,
