@@ -75,3 +75,17 @@ export type {
   ExtractedBlob,
   ResolvedBlobClosure,
 } from './extract/blob-closure'
+export { buildProcedureCassette } from './extract/procedure'
+export type {
+  BuildProcedureCassetteInput,
+  BuiltProcedureCassette,
+  ProcedureDecisionInput,
+} from './extract/procedure'
+export { extractRunCassettes } from './extract/extract-run'
+export type {
+  EmittedCassetteSummary,
+  ExtractedCassette,
+  ExtractionReport,
+  ExtractionResult,
+  ExtractRunCassettesInput,
+} from './extract/extract-run'
