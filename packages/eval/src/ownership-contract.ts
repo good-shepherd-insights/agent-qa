@@ -17,7 +17,7 @@ export const AGENT_QA_EVAL_FORBIDDEN_RESPONSIBILITIES = [
   'agent planning, platform-adapter execution, or runner execution side effects',
   'interpretation or execution of recorded tool exchanges, which remain opaque evidence data',
 ] as const
-export const AGENT_QA_EVAL_EXTERNAL_DEPENDENCIES = [] as const
+export const AGENT_QA_EVAL_EXTERNAL_DEPENDENCIES = ['zod'] as const
 export const AGENT_QA_EVAL_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
 
 export const AGENT_QA_EVAL_OWNERSHIP_CONTRACT = {

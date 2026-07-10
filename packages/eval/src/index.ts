@@ -29,3 +29,9 @@ export type {
   ProcedureStepRecord,
   ProcedureSynthesizedStepRecord,
 } from './cassette/cassette'
+export { cassetteSchema } from './cassette/schema'
+export {
+  CASSETTE_MIGRATIONS,
+  CassetteVersionError,
+  guardCassette,
+} from './cassette/guard'

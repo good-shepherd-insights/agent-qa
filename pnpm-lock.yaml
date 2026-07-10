@@ -484,6 +484,9 @@ importers:
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema
+      zod:
+        specifier: 4.4.2
+        version: 4.4.2
     devDependencies:
       '@types/node':
         specifier: ~24.12.2
