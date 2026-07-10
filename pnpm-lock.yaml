@@ -509,6 +509,12 @@ importers:
       '@vostride/agent-qa-eval':
         specifier: workspace:*
         version: link:../eval
+      '@vostride/agent-qa-runner-local':
+        specifier: workspace:*
+        version: link:../runner-local
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
     devDependencies:
       '@types/node':
         specifier: ~24.12.2

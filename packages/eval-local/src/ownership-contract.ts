@@ -17,6 +17,8 @@ export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
 export const AGENT_QA_EVAL_LOCAL_EXTERNAL_DEPENDENCIES = [] as const
 export const AGENT_QA_EVAL_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-eval',
+  '@vostride/agent-qa-runner-local',
+  '@vostride/agent-qa-schema',
 ] as const
 
 export const AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT = {
