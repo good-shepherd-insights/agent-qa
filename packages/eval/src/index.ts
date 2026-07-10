@@ -56,3 +56,22 @@ export type {
 } from './extract/sidecar-leg'
 export { assembleReceipt, canonicalizeInputLeg } from './extract/receipt'
 export type { AssembleReceiptInput } from './extract/receipt'
+export {
+  deriveLeafCassetteId,
+  deriveProcedureCassetteId,
+  deriveRunSlug,
+} from './extract/ids'
+export type {
+  DeriveLeafCassetteIdInput,
+  DeriveProcedureCassetteIdInput,
+} from './extract/ids'
+export {
+  buildCompleteness,
+  collectBlobShas,
+  resolveBlobClosure,
+} from './extract/blob-closure'
+export type {
+  BuildCompletenessInput,
+  ExtractedBlob,
+  ResolvedBlobClosure,
+} from './extract/blob-closure'
