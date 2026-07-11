@@ -22,7 +22,7 @@ export { createMaskingProviderRequestHook } from './masking/egress-hook'
 export { getActiveMaskingContext, setActiveMaskingContextResolver } from './masking/resolver'
 export { getActiveAuditSink, setActiveAuditSinkResolver } from './policy/audit-sink-resolver'
 export { unmaskForHumanOutput } from './masking/human-output'
-export { classifyRisk } from './policy/risk-classifier'
+export { classifyRisk, TIER_ORDER } from './policy/risk-classifier'
 export { evaluate } from './policy/gate'
 export {
   getActiveExecutionContext,
