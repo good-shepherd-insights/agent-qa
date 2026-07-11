@@ -233,3 +233,96 @@ describe('collectSelfHealPairs (D-05/D-06/D-07)', () => {
     )
   })
 })
+
+/** Retarget a live sub-action clone and stamp selfHeal onto an arbitrary step. */
+function addSelfHealToStep(
+  handoff: CompletedRunHandoff,
+  testIdx: number,
+  stepIdx: number,
+): void {
+  const step = handoff.tests[testIdx]!.steps[stepIdx]!
+  const failedSub = step.subActions[0]!
+  const recoveringSub = structuredClone(failedSub)
+  recoveringSub.plannedAction = { type: 'click', ref: asRef('e-continue-2') }
+  step.subActions = [failedSub, recoveringSub]
+  step.selfHeal = {
+    failedDecision: decisionFor(failedSub),
+    recoveringDecision: decisionFor(recoveringSub),
+  }
+}
+
+describe('collectSelfHealPairs structural walk (371-01 task 2)', () => {
+  it('emits pairs in handoff order across multiple tests — test order then step order', () => {
+    const handoff = makeArtifactRefV2Handoff()
+    addSelfHealToStep(handoff, 0, 0)
+    addSelfHealToStep(handoff, 1, 0)
+    const cassettes = extract(handoff)
+
+    const { pairs, skips } = collectSelfHealPairs({ handoff, cassettes })
+
+    expect(skips).toEqual([])
+    expect(pairs.map((pair) => [pair.testIndex, pair.stepIndex])).toEqual([
+      [0, 0],
+      [1, 0],
+    ])
+    expect(pairs.map((pair) => pair.testId)).toEqual([
+      'checkout::happy-path',
+      'checkout::failure-path',
+    ])
+    expect(pairs[1]!.failedCassetteId).toBe(
+      'run---checkout-suite-42/test-01-step-00-d00-leaf',
+    )
+    expect(pairs[1]!.recoveringCassetteId).toBe(
+      'run---checkout-suite-42/test-01-step-00-d01-leaf',
+    )
+  })
+
+  it('locates a blocked second self-heal step precisely while the first still mints', () => {
+    const handoff = healedHandoff()
+    const blockedStep = handoff.tests[0]!.steps[1]!
+    const cacheHitSub = blockedStep.subActions[0]!
+    blockedStep.subActions = [cacheHitSub]
+    blockedStep.selfHeal = {
+      failedDecision: decisionFor(cacheHitSub),
+      recoveringDecision: decisionFor(cacheHitSub),
+    }
+    const cassettes = extract(handoff)
+
+    const { pairs, skips } = collectSelfHealPairs({ handoff, cassettes })
+
+    expect(pairs).toHaveLength(1)
+    expect(pairs[0]!.stepIndex).toBe(0)
+    expect(skips).toEqual([
+      {
+        testId: 'checkout::happy-path',
+        testIndex: 0,
+        stepIndex: 1,
+        reason: 'cache-hit-no-cassette',
+      },
+    ])
+    expect(skips[0]!.stepIndex).toBe(blockedStep.stepIndex)
+  })
+
+  it('never mints a half-pair when only the failed member resolves', () => {
+    const handoff = healedHandoff()
+    handoff.tests[0]!.steps[0]!.selfHeal!.recoveringDecision.plannedAction = {
+      type: 'click',
+      ref: asRef('e-nowhere'),
+    }
+    const cassettes = extract(handoff)
+
+    const { pairs, skips } = collectSelfHealPairs({ handoff, cassettes })
+
+    expect(pairs).toEqual([])
+    expect(skips).toEqual([
+      { testId: 'checkout::happy-path', testIndex: 0, stepIndex: 0, reason: 'no-match' },
+    ])
+  })
+
+  it('ignores steps without selfHeal entirely — no pairs, no skips', () => {
+    const handoff = makeArtifactRefV2Handoff()
+    const cassettes = extract(handoff)
+
+    expect(collectSelfHealPairs({ handoff, cassettes })).toEqual({ pairs: [], skips: [] })
+  })
+})
