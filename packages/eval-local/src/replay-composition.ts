@@ -21,6 +21,8 @@
 //     replay output dir (D-06 / T-368-12 / T-368-13). The masking context is disposed in `finally`.
 
 import {
+  adjudicateCassetteScore,
+  assessJudgeEligibility,
   buildDecisionDiff,
   neverEscalate,
   replayCassette,
@@ -54,6 +56,7 @@ import type { DeclaredModelProfile, ScreenState } from '@vostride/agent-qa-schem
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 
+import { bindJudgePort } from './judge-binding.js'
 import type { FsReplayRecordStore } from './replay-record-store.js'
 import type { FsScoreStore } from './score-store.js'
 
@@ -84,6 +87,17 @@ export interface RunCassetteReplayInput {
    * eval core and saved AFTER recordStore.save (record-then-score ordering, OQ-2).
    */
   scoreStore?: FsScoreStore
+  /**
+   * Optional D-06 tier-4 judge bag: an EXPLICIT second ModelProfile plus its auth and stub seam
+   * (372's CLI surfaces it as config). No auto-pick from configured models, no fallback scanning —
+   * absence is a first-class configuration, in which case every unresolved tie is stamped
+   * not-invoked{no-judge-configured} whenever the score leg runs (D-05/D-10).
+   */
+  judge?: {
+    profile: ModelProfile
+    auth: ResolvedModelAuth
+    modelOverrides?: ModelProviderOverrides
+  }
 }
 
 /** The platform the action-tool slice is derived for — the cassette's recorded observation platform. */
@@ -118,6 +132,26 @@ function scoreMatcherVersion(score: CassetteScore): number {
   // Unreachable through this composition: refusal outcomes are guarded before scoring, and every
   // extracted cassette carries at least one decision entry.
   throw new Error('cassette score carries no matcher-version stamp')
+}
+
+/**
+ * The recorded model identity from the cassette's reproducibility receipt — the D-14 recorded-side
+ * eligibility input. Declared identity wins over the provider-resolved id; a procedure reads its
+ * first decision record's receipt; absence is typed (the recorded side of the family check is then
+ * skipped, D-14 "when resolvable").
+ */
+function recordedReceiptModelId(cassette: Cassette): string | undefined {
+  if (cassette.granularity === 'leaf') {
+    return cassette.receipt.model.declared?.modelId ?? cassette.receipt.model.resolvedModelId
+  }
+  for (const step of cassette.steps) {
+    if (step.kind === 'decision') {
+      return (
+        step.record.receipt.model.declared?.modelId ?? step.record.receipt.model.resolvedModelId
+      )
+    }
+  }
+  return undefined
 }
 
 /**
@@ -275,18 +309,60 @@ export async function runCassetteReplay(
     input.recordStore.save(outcome)
   }
 
-  // Record-then-score ordering is load-bearing (OQ-2): the record store recreates the cassette dir
-  // in full (rm + mkdir), so the file-scoped score write MUST land after it — never before —
-  // or a re-run would wipe the fresh score.json. Refusals save a record but never a score
-  // (they are counted in reports instead). Score + diffs are computed in eval core (F9);
-  // this composition only orchestrates and saves.
+  // Write ordering is strict and load-bearing (OQ-2/D-05, Pitfall 2): recordStore.save → score
+  // (sync, eval core) → adjudicate (async, its OWN safety scope) → diffs over the FINAL score →
+  // exactly ONE scoreStore.save. The record store recreates the cassette dir in full (rm + mkdir),
+  // so the file-scoped score write MUST land after it — never before — or a re-run would wipe the
+  // fresh score.json. Refusals save a record but never a score (they are counted in reports
+  // instead). Score, adjudication, and diffs are computed in eval core (F9); this composition
+  // only orchestrates and saves.
   if (input.scoreStore !== undefined && isReplayResult(outcome)) {
     const score = scoreCassetteReplay(input.cassette, outcome)
+
+    // D-12/D-14 two-sided family eligibility, assessed ONCE at composition time against BOTH the
+    // replayed profile's model and the cassette receipt's recorded identity. Ineligible ⇒ the
+    // judge port never binds and the batch proceeds deterministically (soft-but-loud: the refusal
+    // is data on every tie's stamp, never a thrown error).
+    const recordedModelId = recordedReceiptModelId(input.cassette)
+    const eligibility = assessJudgeEligibility({
+      ...(input.judge !== undefined ? { judgeModelId: input.judge.profile.model } : {}),
+      replayedModelId: input.profile.model,
+      ...(recordedModelId !== undefined ? { recordedModelId } : {}),
+    })
+    const port =
+      eligibility.eligible && input.judge !== undefined ? bindJudgePort(input.judge) : undefined
+
+    // The judge safety scope (Pitfall 1): the replay scope closed before scoring, so adjudication
+    // gets its OWN fresh masking context and a replay-scoped JsonlAuditSink — the ALS-resolved
+    // mask/guardrail/audit machinery covers every judge egress call, and its audit rows land
+    // under the replay output dir (JUDGE-03). Adjudication runs UNCONDITIONALLY so every tie is
+    // stamped with its disposition even when no port exists (D-06/D-10/D-12); the pure
+    // scoreCassetteReplay output itself stays untouched.
+    const judgeMaskingContext = createMaskingContext()
+    const judgeAuditSink = new JsonlAuditSink(input.replayOutputBaseDir)
+    let adjudicated
+    try {
+      adjudicated = await runSafetyScope(
+        { maskingContext: judgeMaskingContext, auditSink: judgeAuditSink },
+        () =>
+          adjudicateCassetteScore({
+            cassette: input.cassette,
+            outcome,
+            score,
+            eligibility,
+            ...(port !== undefined ? { port } : {}),
+          }),
+      )
+    } finally {
+      judgeMaskingContext.dispose()
+    }
+
     input.scoreStore.save({
       cassetteId: input.cassette.id,
-      matcherVersion: scoreMatcherVersion(score),
-      score,
-      diffs: decisionDiffs(input.cassette, outcome, score),
+      matcherVersion: scoreMatcherVersion(adjudicated.score),
+      score: adjudicated.score,
+      diffs: decisionDiffs(input.cassette, outcome, adjudicated.score),
+      ...(adjudicated.judge !== undefined ? { judge: adjudicated.judge } : {}),
     })
   }
 
