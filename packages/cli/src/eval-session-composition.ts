@@ -25,6 +25,7 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  buildSeedingPlan,
   computeBatchKey,
   extractRunCassettes,
   resolveJudgeFamily,
@@ -42,8 +43,9 @@ import {
   loadCassetteBundle,
   loadScoreRecord,
   runCassetteReplay,
+  seedCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
-import type { CassetteBundleLoad } from '@vostride/agent-qa-eval-local'
+import type { CassetteBundleLoad, SeedingRefusal } from '@vostride/agent-qa-eval-local'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   ModelProfile,
@@ -590,6 +592,145 @@ export async function resolveReplayPlanner(
     )
   }
   return resolveNamedProfile(plannerName, session.configPath)
+}
+
+// ---- the seed verb (372-07, D-01/D-12/D-16/D-17) -----------------------------------------------
+
+/** The seed verb's one DTO — per-handoff SeedingReports aggregated field-wise (D-04). */
+export interface SeedVerbResult {
+  /** Run dirs (with a handoff document) that entered the sweep after `--run` narrowing. */
+  runsSwept: number
+  /** Per-run typed skips: unreadable / version-refused handoffs (D-02, never batch errors). */
+  runsSkipped: { runSlug: string; reason: string }[]
+  /** Runs whose product partition differed from `--product`. */
+  runsFiltered: number
+  /** Handoffs whose SeedingPlan executed against the committed root. */
+  handoffsSeeded: number
+  /** Cases with at least one newly written file, summed across reports. */
+  seededCount: number
+  /** Cases whose every file was byte-identical (D-17 idempotent no-op), summed. */
+  unchangedCount: number
+  /** Typed per-case refusals concatenated verbatim — never silent (T-371-18). */
+  refusals: SeedingRefusal[]
+  /** Matcher skips counted across reports — never silent (T-371-18). */
+  pairSkips: number
+  /** Sampler exclusions counted across reports — never silent. */
+  silverExclusions: number
+  /** Both pair classes summed so a starved channel is visible (D-07). */
+  pairCounts: { total: number; sameState: number; differingState: number }
+  /** D-04 contracts-projection outcomes folded by kind (written/unchanged/write-conflict). */
+  contracts: Record<string, number>
+  /** D-15 scaffold outcomes (gitignore + root marker) folded by kind. */
+  scaffold: Record<string, number>
+  /** ALWAYS `<configDir>/agent-qa-eval` (spec §B7 target-project posture, D-12). */
+  committedRoot: string
+}
+
+/**
+ * The seed verb pipeline (D-01's explicit fourth verb): enumerate handoffs exactly like
+ * runExtractVerb (same `--run`/`--product` vocabulary, same typed named-input error, same
+ * version-guarded loads with typed skips); per handoff, RE-extract via extractRunCassettes
+ * (deterministic — same ids/bytes as the extract verb, D-02; never reconstructed from staged
+ * bundles), let buildSeedingPlan decide (eval core is the ONLY decision-maker, D-16), and hand
+ * the plan verbatim to seedCommittedCorpus — the CLI adds NO selection or labeling logic.
+ * The committed root is ALWAYS `<configDir>/agent-qa-eval`; no flag can retarget it (D-12).
+ * Guardrail audit rows land under the D-07 per-run seed audit dirs via the helper's own sink.
+ */
+export async function runSeedVerb(
+  session: EvalSession,
+  filters: { run?: string; product?: string } = {},
+  params: { silverPerTestCap?: number } = {},
+): Promise<SeedVerbResult> {
+  const agentQaRoot = resolve(session.configDir, '.agent-qa')
+  const runsRoot = resolve(agentQaRoot, RUNS_SUBDIR)
+  let runSlugs = listRunSlugsWithHandoff(runsRoot)
+
+  if (filters.run !== undefined) {
+    const named = filters.run
+    runSlugs = runSlugs.filter(slug => slug === named || slug === slugBranch(named))
+    if (runSlugs.length === 0) {
+      throw new EvalNamedInputError('run', named, runsRoot, 'seed')
+    }
+  }
+
+  const committedRoot = resolve(session.configDir, 'agent-qa-eval')
+  // D-03: the explicit param wins over the config/flag-merged eval block, field-wise.
+  const silverPerTestCap =
+    params.silverPerTestCap ?? session.evalConfig.seeding?.silverPerTestCap
+
+  const result: SeedVerbResult = {
+    runsSwept: runSlugs.length,
+    runsSkipped: [],
+    runsFiltered: 0,
+    handoffsSeeded: 0,
+    seededCount: 0,
+    unchangedCount: 0,
+    refusals: [],
+    pairSkips: 0,
+    silverExclusions: 0,
+    pairCounts: { total: 0, sameState: 0, differingState: 0 },
+    contracts: {},
+    scaffold: {},
+    committedRoot,
+  }
+
+  for (const runSlug of runSlugs) {
+    let report: ReturnType<typeof seedCommittedCorpus>
+    try {
+      const handoffPath = resolve(runsRoot, runSlug, HANDOFF_FILE)
+      // The version-guarded loader is the ONE handoff read path (D-02 typed per-run skips).
+      const handoff = loadCompletedRunHandoff(handoffPath)
+      if (
+        filters.product !== undefined
+        && resolveProductPartition(handoff.scope) !== filters.product
+      ) {
+        result.runsFiltered++
+        continue
+      }
+      const extraction = extractRunCassettes({
+        handoff,
+        artifacts: new FsRunArtifactSource({ root: agentQaRoot, runId: handoff.runId }),
+      })
+      // eval core is the ONLY decision-maker (D-16); the CLI executes the plan verbatim.
+      const plan = buildSeedingPlan({
+        handoff,
+        cassettes: extraction.cassettes,
+        handoffPath,
+        params: {
+          ...(silverPerTestCap !== undefined ? { silverPerTestCap } : {}),
+        },
+      })
+      report = seedCommittedCorpus({
+        plan,
+        cassettes: extraction.cassettes,
+        committedRoot,
+        seedingOutputBaseDir: evalAuditDir(session.configDir, 'seed', runSlug),
+      })
+    } catch (err) {
+      result.runsSkipped.push({
+        runSlug,
+        reason: err instanceof Error ? err.message : String(err),
+      })
+      continue
+    }
+
+    result.handoffsSeeded++
+    result.seededCount += report.seededCount
+    result.unchangedCount += report.unchangedCount
+    result.refusals.push(...report.refusals)
+    result.pairSkips += report.pairSkips.length
+    result.silverExclusions += report.silverExclusions.length
+    result.pairCounts.total += report.pairCounts.total
+    result.pairCounts.sameState += report.pairCounts.sameState
+    result.pairCounts.differingState += report.pairCounts.differingState
+    for (const contract of report.contracts) {
+      bumpCounter(result.contracts, contract.outcome)
+    }
+    bumpCounter(result.scaffold, report.scaffold.gitignore)
+    bumpCounter(result.scaffold, report.scaffold.marker)
+  }
+
+  return result
 }
 
 // ---- internals --------------------------------------------------------------------------------
