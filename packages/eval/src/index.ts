@@ -99,6 +99,8 @@ export type {
   DecisionDiffReplayContext,
 } from './match/diff'
 export { tiersSettlePredicate } from './match/predicate'
+export { buildEvalReport, computeBatchKey } from './match/metrics'
+export type { EvalBatchReport, ScoredBatchEntry } from './match/metrics'
 
 export type { CassetteInputLeg } from './cassette/input-leg'
 export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'
