@@ -12,6 +12,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { computeBatchKey } from '@vostride/agent-qa-eval'
+import type { JudgeIdentityBlock } from '@vostride/agent-qa-eval'
 import type { createModel, ModelProviderOverrides } from '@vostride/agent-qa-model'
 import {
   FsEvidenceArtifactStore,
@@ -40,6 +41,7 @@ import {
   resolveEvalSession,
   runExtractVerb,
   runReplayVerb,
+  runReportVerb,
   runSeedVerb,
 } from '../../eval-session-composition.js'
 import type {
@@ -632,6 +634,175 @@ describe('runReplayVerb — offline sweep through the sanctioned composition (D-
       notInvoked: 0,
     })
     expect(result.notices.some(notice => notice.includes('no judge configured'))).toBe(true)
+  })
+})
+
+// ---- 372-07 Task 2: runReportVerb — whole-corpus assembly from persisted records (D-13/D-14) --
+
+/** Extract + replay one recorded run so real replay.json/score.json records exist on disk. */
+async function scoredRecordsFixture(): Promise<{
+  dir: string
+  configPath: string
+  session: EvalSession
+  ids: string[]
+}> {
+  const { dir, configPath } = await writeReplayFixture()
+  saveRun(dir, 'run-alpha')
+  const session = await sessionFor(configPath)
+  await runExtractVerb(session)
+  await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+  const ids = await stagedCassetteIds(dir)
+  return { dir, configPath, session, ids }
+}
+
+/** Hand-write a persisted refusal replay record — refusal outcomes ARE entries (Pitfall 4). */
+async function writeRefusalReplayRecord(dir: string, cassetteId: string): Promise<void> {
+  const recordDir = join(dir, '.agent-qa', 'eval', 'replays', slugBranch(cassetteId))
+  await mkdir(recordDir, { recursive: true })
+  await writeFile(
+    join(recordDir, 'replay.json'),
+    JSON.stringify(
+      {
+        kind: 'integrity-refusal',
+        cassetteId,
+        reason: 'missing-blob',
+        detail: 'fixture: blob absent from bundle',
+      },
+      null,
+      2,
+    ),
+  )
+}
+
+/** Stamp a contrastive pairing onto a staged bundle's label leg (the D-08 exclusion input). */
+async function setStagedLabelPairing(
+  dir: string,
+  cassetteId: string,
+  relation: 'contrastive-negative' | 'contrastive-positive',
+  pairedCassetteId: string,
+): Promise<void> {
+  const bundleFile = join(
+    dir,
+    '.agent-qa',
+    'eval',
+    'cassettes',
+    ...cassetteId.split('/').map(segment => slugBranch(segment)),
+    'cassette.json',
+  )
+  const document = JSON.parse(await readFile(bundleFile, 'utf-8')) as {
+    label: Record<string, unknown>
+  }
+  document.label = { ...document.label, pairing: { pairedCassetteId, relation } }
+  await writeFile(bundleFile, `${JSON.stringify(document, null, 2)}\n`)
+}
+
+/** Set or clear the persisted ScoreRecord judge identity block (D-16 receipt). */
+async function setScoreJudgeBlock(
+  dir: string,
+  cassetteId: string,
+  judge: JudgeIdentityBlock | undefined,
+): Promise<void> {
+  const scoreFile = join(replayDirFor(dir, cassetteId), 'score.json')
+  const document = JSON.parse(await readFile(scoreFile, 'utf-8')) as Record<string, unknown>
+  if (judge === undefined) delete document.judge
+  else document.judge = judge
+  await writeFile(scoreFile, `${JSON.stringify(document, null, 2)}\n`)
+}
+
+const JUDGE_BLOCK_A: JudgeIdentityBlock = {
+  judgeModelId: 'judge-fixture-a',
+  judgeFamily: 'family-a',
+  judgeVersion: 1,
+  confidenceThreshold: 'high',
+}
+
+const JUDGE_BLOCK_B: JudgeIdentityBlock = {
+  judgeModelId: 'judge-fixture-b',
+  judgeFamily: 'family-b',
+  judgeVersion: 1,
+  confidenceThreshold: 'high',
+}
+
+describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', () => {
+  it('assembles ONE whole-corpus report from every persisted replay record (the Wave 0 gap)', async () => {
+    const { dir, session, ids } = await scoredRecordsFixture()
+    expect(ids).toHaveLength(2)
+    const leafId = ids.find(id => id.endsWith('-leaf'))!
+    const procedureId = ids.find(id => !id.endsWith('-leaf'))!
+    await writeRefusalReplayRecord(dir, 'refusal-fixture')
+    // The leaf carries a contrastive-negative label leg: its full-match decision must move OUT
+    // of the headline and INTO the negative buckets (D-08) — proof the pairing reached
+    // buildEvalReport through the staged-label join.
+    await setStagedLabelPairing(dir, leafId, 'contrastive-negative', procedureId)
+
+    const result = await runReportVerb(session)
+
+    expect(result.entries).toBe(3)
+    expect(result.batchKey).toBe(computeBatchKey([...ids, 'refusal-fixture']))
+    expect(result.report.batchKey).toBe(result.batchKey)
+    // The persisted refusal outcome IS an entry — counted, never dropped (Pitfall 4).
+    expect(result.report.honesty.refusalCounts['missing-blob']).toBe(1)
+    // Scored entries carried their persisted scores; the labeled leaf's decision is negative.
+    expect(result.report.recovery.negativeDecisionCount).toBe(1)
+    expect(result.report.recovery.negativeFullMatchCount).toBe(1)
+    // The staged report landed at the batchKey-derived path.
+    expect(result.stagedFile).toBe(
+      join(dir, '.agent-qa', 'eval', 'reports', `${slugBranch(result.batchKey)}.json`),
+    )
+    expect(existsSync(result.stagedFile)).toBe(true)
+  })
+
+  it('threads judge identity honestly: present / absent / mixed, never fabricated (Pitfall 4)', async () => {
+    const { dir, session, ids } = await scoredRecordsFixture()
+    const [firstId, secondId] = [ids[0]!, ids[1]!]
+
+    // No judge blocks anywhere ⇒ 'absent' with an honest notice, no block passed through.
+    const absent = await runReportVerb(session)
+    expect(absent.judgeIdentity).toBe('absent')
+    expect(absent.report.judge).toBeUndefined()
+    expect(absent.notices.some(notice => notice.includes('judge'))).toBe(true)
+
+    // Identical blocks on every scored record ⇒ 'present' and the block passes to the report.
+    await setScoreJudgeBlock(dir, firstId, JUDGE_BLOCK_A)
+    await setScoreJudgeBlock(dir, secondId, JUDGE_BLOCK_A)
+    const present = await runReportVerb(session)
+    expect(present.judgeIdentity).toBe('present')
+    expect(present.report.judge).toEqual(JUDGE_BLOCK_A)
+
+    // Two DIFFERING blocks ⇒ 'mixed': buildEvalReport called WITHOUT a judge block, notice
+    // emitted — an identity is never synthesized (T-372-20).
+    await setScoreJudgeBlock(dir, secondId, JUDGE_BLOCK_B)
+    const mixed = await runReportVerb(session)
+    expect(mixed.judgeIdentity).toBe('mixed')
+    expect(mixed.report.judge).toBeUndefined()
+    expect(mixed.notices.some(notice => notice.includes('mixed'))).toBe(true)
+  })
+
+  it('--commit routes through commitEvalReport; an identical regeneration reports unchanged (D-13/D-17)', async () => {
+    const { dir, session } = await scoredRecordsFixture()
+
+    const first = await runReportVerb(session, {}, { commit: true })
+    expect(first.committed).toMatchObject({
+      kind: 'committed',
+      json: 'written',
+      markdown: 'written',
+    })
+    const reportDir = join(
+      dir,
+      'agent-qa-eval',
+      'reports',
+      slugBranch(first.batchKey),
+    )
+    expect(first.committed).toMatchObject({ reportDir })
+    expect(existsSync(join(reportDir, 'report.json'))).toBe(true)
+    expect(existsSync(join(reportDir, 'report.md'))).toBe(true)
+
+    const second = await runReportVerb(session, {}, { commit: true })
+    expect(second.committed).toMatchObject({
+      kind: 'committed',
+      json: 'unchanged',
+      markdown: 'unchanged',
+    })
   })
 })
 
