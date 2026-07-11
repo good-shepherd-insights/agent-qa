@@ -58,6 +58,47 @@ export type {
   UnconsumedExchange,
 } from './replay/result'
 
+export {
+  collectProcedurePriorIdentities,
+  computeLoopVerdict,
+} from './match/loop'
+export type {
+  LoopHistory,
+  LoopVerdict,
+  ProcedurePriorIdentity,
+} from './match/loop'
+export { runMatchTiers } from './match/tiers'
+export type {
+  ElementIdentityVerdict,
+  MatchTierCandidate,
+  OpClassVerdict,
+  TierMatchResult,
+} from './match/tiers'
+export {
+  representativeDecisionSample,
+  scoreCassetteReplay,
+  scoreDecision,
+} from './match/score'
+export type {
+  CassetteScore,
+  DecisionAxes,
+  DecisionPartialBreakdown,
+  DecisionScore,
+  DecisionScoreEntry,
+  NeverScoredDecision,
+  ProcedureScoreSummary,
+  ScoreDecisionContext,
+  ScoreDecisionOutcome,
+  TieCause,
+  ValueAxisVerdict,
+} from './match/score'
+export { buildDecisionDiff } from './match/diff'
+export type {
+  BuildDecisionDiffInput,
+  DecisionDiff,
+  DecisionDiffReplayContext,
+} from './match/diff'
+
 export type { CassetteInputLeg } from './cassette/input-leg'
 export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'
 export type {
