@@ -48,6 +48,8 @@ import type {
   EvalSession,
   ExtractVerbResult,
   ReplayVerbResult,
+  ReportVerbResult,
+  SeedVerbResult,
 } from '../../eval-session-composition.js'
 import { createEvalCommand } from '../eval.js'
 
@@ -947,10 +949,10 @@ function captureConsole(): { logs: string[]; errors: string[] } {
 }
 
 describe('createEvalCommand — family skeleton and registration shape (D-01)', () => {
-  it('names the family "eval" with the extract and replay subcommands', () => {
+  it('names the family "eval" with exactly the four D-01 verbs: extract, replay, seed, report', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    expect(cmd.commands.map(sub => sub.name())).toEqual(['extract', 'replay'])
+    expect(cmd.commands.map(sub => sub.name())).toEqual(['extract', 'replay', 'seed', 'report'])
   })
 
   it('declares the D-02 filter vocabulary on extract: --run, --product, --json', () => {
@@ -973,6 +975,98 @@ describe('createEvalCommand — family skeleton and registration shape (D-01)', 
         '--json',
       ]),
     )
+  })
+
+  it('declares the seed flag vocabulary: --run, --product, --silver-cap, --json', () => {
+    const seed = createEvalCommand().commands.find(sub => sub.name() === 'seed')
+    const flags = seed?.options.map(option => option.long) ?? []
+    expect(flags).toEqual(
+      expect.arrayContaining(['--run', '--product', '--silver-cap', '--json']),
+    )
+  })
+
+  it('declares the report flag vocabulary: --run, --cassette, --product, --commit, --json', () => {
+    const report = createEvalCommand().commands.find(sub => sub.name() === 'report')
+    const flags = report?.options.map(option => option.long) ?? []
+    expect(flags).toEqual(
+      expect.arrayContaining(['--run', '--cassette', '--product', '--commit', '--json']),
+    )
+  })
+})
+
+describe('agent-qa eval seed / report — rendering and exit semantics (372-07, D-04/D-08)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('seed --json emits exactly one JSON DTO on stdout and nothing else (Pitfall 11)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'seed', '--json'], {
+      from: 'user',
+    })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    expect(logs).toHaveLength(1)
+    const dto = JSON.parse(logs[0] ?? '') as SeedVerbResult
+    expect(dto.handoffsSeeded).toBe(1)
+    expect(dto.seededCount).toBe(1)
+    expect(dto.committedRoot).toBe(resolve(dir, 'agent-qa-eval'))
+  })
+
+  it('seed renders the human summary from the DTO fields only (D-04)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'seed'], { from: 'user' })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const rendered = logs.join('\n')
+    expect(rendered).toContain('1 handoff(s) seeded')
+    expect(rendered).toContain('cases: 1 seeded, 0 unchanged')
+    expect(rendered).toContain(resolve(dir, 'agent-qa-eval'))
+    expect(() => JSON.parse(rendered)).toThrow()
+  })
+
+  it('report --json emits exactly one JSON DTO on stdout (Pitfall 11)', async () => {
+    const { configPath } = await scoredRecordsFixture()
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'report', '--json'], {
+      from: 'user',
+    })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    expect(logs).toHaveLength(1)
+    const dto = JSON.parse(logs[0] ?? '') as ReportVerbResult
+    expect(dto.entries).toBe(2)
+    expect(dto.judgeIdentity).toBe('absent')
+    expect(dto.report.batchKey).toBe(dto.batchKey)
+  })
+
+  it('report --commit exits 0 and renders the committed outcome — unchanged on regeneration (D-08/D-17)', async () => {
+    const { configPath } = await scoredRecordsFixture()
+
+    const first = captureConsole()
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'report', '--commit'], {
+      from: 'user',
+    })
+    expect(process.exitCode).not.toBe(1)
+    expect(first.logs.join('\n')).toContain('committed: json written, markdown written')
+    vi.restoreAllMocks()
+
+    const second = captureConsole()
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'report', '--commit'], {
+      from: 'user',
+    })
+    expect(process.exitCode).not.toBe(1)
+    expect(second.logs.join('\n')).toContain('committed: json unchanged, markdown unchanged')
   })
 })
 

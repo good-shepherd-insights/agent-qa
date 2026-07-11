@@ -7,7 +7,12 @@
 
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
-import type { ExtractVerbResult, ReplayVerbResult } from '../eval-session-composition.js'
+import type {
+  ExtractVerbResult,
+  ReplayVerbResult,
+  ReportVerbResult,
+  SeedVerbResult,
+} from '../eval-session-composition.js'
 
 // The auth.ts parent-opts idiom: the global `--config` lives on the program two levels above a
 // nested subcommand (program > eval > extract).
@@ -59,6 +64,92 @@ function renderReplaySummary(result: ReplayVerbResult): void {
     console.log(pc.dim(notice))
   }
   console.log(pc.dim(`replays root: ${result.replaysRoot}`))
+}
+
+/** Compact seed summary rendered from the DTO fields only — a faithful projection (D-04). */
+function renderSeedSummary(result: SeedVerbResult): void {
+  console.log(
+    pc.bold(`seed: ${result.handoffsSeeded} handoff(s) seeded`)
+      + pc.dim(
+        ` (swept ${result.runsSwept}, ${result.runsSkipped.length} skipped, `
+          + `${result.runsFiltered} filtered)`,
+      ),
+  )
+  for (const skip of result.runsSkipped) {
+    console.log(pc.yellow(`  skipped ${skip.runSlug}: ${skip.reason}`))
+  }
+  console.log(`cases: ${result.seededCount} seeded, ${result.unchangedCount} unchanged`)
+  const refusalsByKind: Record<string, number> = {}
+  for (const refusal of result.refusals) {
+    refusalsByKind[refusal.kind] = (refusalsByKind[refusal.kind] ?? 0) + 1
+  }
+  console.log(`refusals: ${renderCounters(refusalsByKind)}`)
+  console.log(
+    `pairs: ${result.pairCounts.total} total (${result.pairCounts.sameState} same-state, `
+      + `${result.pairCounts.differingState} differing-state), ${result.pairSkips} pair skips`,
+  )
+  console.log(`silver exclusions: ${result.silverExclusions}`)
+  console.log(`contracts: ${renderCounters(result.contracts)}`)
+  console.log(`scaffold: ${renderCounters(result.scaffold)}`)
+  console.log(pc.dim(`committed root: ${result.committedRoot}`))
+}
+
+/** Sum a per-TieCause disposition group into one scalar for the compact summary line (D-04). */
+function sumCounts(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((total, count) => total + count, 0)
+}
+
+/** Compact report summary rendered from the DTO fields only — a faithful projection (D-04). */
+function renderReportSummary(result: ReportVerbResult): void {
+  const report = result.report
+  console.log(
+    pc.bold(`report: batch ${result.batchKey}`) + pc.dim(` (${result.entries} entries)`),
+  )
+  const accuracy = report.headline.firstAttemptDecisionAccuracy
+  console.log(
+    'headline: firstAttemptDecisionAccuracy '
+      + `${accuracy.numerator}/${accuracy.denominator}`
+      + (accuracy.rate === undefined ? ' (rate: n/a)' : ` (rate: ${accuracy.rate})`),
+  )
+  const cost = report.headline.perDecisionCost
+  console.log(
+    `per-decision cost: decisions=${cost.decisionCount} promptTokens=${cost.promptTokens} `
+      + `completionTokens=${cost.completionTokens} totalTokens=${cost.totalTokens} `
+      + `durationMs=${cost.durationMs}`,
+  )
+  console.log(`ties: ${renderCounters(report.honesty.tieCounts)}`)
+  console.log(`refusals: ${renderCounters(report.honesty.refusalCounts)}`)
+  const judge = report.honesty.judge
+  console.log(
+    `judge: ${sumCounts(judge.invoked)} invoked, ${sumCounts(judge.settled)} settled, `
+      + `${sumCounts(judge.abstained)} abstained, ${sumCounts(judge.errors)} errors, `
+      + `${sumCounts(judge.notInvoked)} not-invoked`,
+  )
+  console.log(`judge identity: ${result.judgeIdentity}`)
+  for (const notice of result.notices) {
+    console.log(pc.dim(notice))
+  }
+  console.log(pc.dim(`staged file: ${result.stagedFile}`))
+  if (result.committed !== undefined) {
+    // D-08: egress blocks and write conflicts are DATA — rendered loudly, never exit 1.
+    if (result.committed.kind === 'committed') {
+      console.log(
+        `committed: json ${result.committed.json}, markdown ${result.committed.markdown}`,
+      )
+      console.log(pc.dim(`report dir: ${result.committed.reportDir}`))
+    } else if (result.committed.kind === 'egress-blocked') {
+      console.log(
+        pc.red(
+          'commit egress-blocked: '
+            + result.committed.detections
+              .map(detection => `${detection.label} (${detection.detector})`)
+              .join(', '),
+        ),
+      )
+    } else {
+      console.log(pc.red(`commit write-conflict: ${result.committed.path}`))
+    }
+  }
 }
 
 /** Compact picocolors summary rendered from the DTO fields only — a faithful projection (D-04). */
@@ -175,6 +266,105 @@ export function createEvalCommand(): Command {
           } catch (err) {
             // D-08: typed named-input/config/auth errors are the only failure modes — refusal
             // counters and judge errors are data and never reach this catch.
+            console.error(pc.red(err instanceof Error ? err.message : String(err)))
+            process.exitCode = 1
+          }
+        },
+      ),
+  )
+
+  cmd.addCommand(
+    new Command('seed')
+      .description('Commit measurement corpus cases into the reviewed committed root (explicit, D-01)')
+      .option('--run <slug>', 'narrow to one recorded run')
+      .option('--product <slug>', 'narrow by product scope')
+      .option('--silver-cap <n>', 'per-test silver cap override', parseIntegerFlag('--silver-cap'))
+      .option('--json', 'emit the typed result DTO to stdout')
+      .action(
+        async (
+          opts: { run?: string; product?: string; silverCap?: number; json?: boolean },
+          command: Command,
+        ) => {
+          try {
+            const configPath = getGlobalConfigPath(command)
+            const { resolveEvalSession, runSeedVerb } = await import(
+              '../eval-session-composition.js'
+            )
+            // D-03: --silver-cap flows into the session's field-wise flag merge — the verb reads
+            // it from session.evalConfig.seeding, exactly like judge/k/seed on replay.
+            const session = await resolveEvalSession({
+              ...(configPath === undefined ? {} : { configPath }),
+              flags: {
+                ...(opts.silverCap === undefined ? {} : { silverCap: opts.silverCap }),
+              },
+            })
+            const result = await runSeedVerb(session, {
+              ...(opts.run === undefined ? {} : { run: opts.run }),
+              ...(opts.product === undefined ? {} : { product: opts.product }),
+            })
+            if (opts.json) {
+              // D-04/Pitfall 11: exactly one JSON document on stdout — refusals and skips are
+              // DATA inside the DTO, never separate stream noise.
+              console.log(JSON.stringify(result, null, 2))
+            } else {
+              renderSeedSummary(result)
+            }
+          } catch (err) {
+            // D-08: typed named-input/config errors are the only failure modes — seeding
+            // refusals are data and never reach this catch.
+            console.error(pc.red(err instanceof Error ? err.message : String(err)))
+            process.exitCode = 1
+          }
+        },
+      ),
+  )
+
+  cmd.addCommand(
+    new Command('report')
+      .description('Assemble the whole-corpus baseline report from persisted replay records')
+      .option('--run <slug>', 'narrow to records extracted from one recorded run')
+      .option('--cassette <id>', 'report over exactly one persisted record by cassette id')
+      .option('--product <slug>', 'narrow by product scope')
+      .option('--commit', 'also write report.json + report.md into the committed root (D-13)')
+      .option('--json', 'emit the typed result DTO to stdout')
+      .action(
+        async (
+          opts: {
+            run?: string
+            cassette?: string
+            product?: string
+            commit?: boolean
+            json?: boolean
+          },
+          command: Command,
+        ) => {
+          try {
+            const configPath = getGlobalConfigPath(command)
+            const { resolveEvalSession, runReportVerb } = await import(
+              '../eval-session-composition.js'
+            )
+            const session = await resolveEvalSession(
+              configPath === undefined ? {} : { configPath },
+            )
+            const result = await runReportVerb(
+              session,
+              {
+                ...(opts.run === undefined ? {} : { run: opts.run }),
+                ...(opts.cassette === undefined ? {} : { cassette: opts.cassette }),
+                ...(opts.product === undefined ? {} : { product: opts.product }),
+              },
+              { ...(opts.commit === undefined ? {} : { commit: opts.commit }) },
+            )
+            if (opts.json) {
+              // D-04/Pitfall 11: exactly one JSON document on stdout — the committed outcome
+              // (incl. egress blocks and write conflicts) is DATA inside the DTO (D-08).
+              console.log(JSON.stringify(result, null, 2))
+            } else {
+              renderReportSummary(result)
+            }
+          } catch (err) {
+            // D-08: typed named-input/config errors are the only failure modes — egress-blocked
+            // and write-conflict committed outcomes are data and never reach this catch.
             console.error(pc.red(err instanceof Error ? err.message : String(err)))
             process.exitCode = 1
           }
