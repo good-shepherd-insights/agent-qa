@@ -40,7 +40,11 @@ import {
   runExtractVerb,
   runReplayVerb,
 } from '../../eval-session-composition.js'
-import type { EvalSession, ExtractVerbResult } from '../../eval-session-composition.js'
+import type {
+  EvalSession,
+  ExtractVerbResult,
+  ReplayVerbResult,
+} from '../../eval-session-composition.js'
 import { createEvalCommand } from '../eval.js'
 
 const BLOB_BYTES = Uint8Array.from(Buffer.from('agent-qa eval extract fixture blob\n', 'utf8'))
@@ -653,16 +657,32 @@ function captureConsole(): { logs: string[]; errors: string[] } {
 }
 
 describe('createEvalCommand — family skeleton and registration shape (D-01)', () => {
-  it('names the family "eval" with exactly the extract subcommand in this plan', () => {
+  it('names the family "eval" with the extract and replay subcommands', () => {
     const cmd = createEvalCommand()
     expect(cmd.name()).toBe('eval')
-    expect(cmd.commands.map(sub => sub.name())).toEqual(['extract'])
+    expect(cmd.commands.map(sub => sub.name())).toEqual(['extract', 'replay'])
   })
 
   it('declares the D-02 filter vocabulary on extract: --run, --product, --json', () => {
     const extract = createEvalCommand().commands.find(sub => sub.name() === 'extract')
     const flags = extract?.options.map(option => option.long) ?? []
     expect(flags).toEqual(expect.arrayContaining(['--run', '--product', '--json']))
+  })
+
+  it('declares the full replay flag vocabulary: --run, --cassette, --product, --judge, --k, --seed, --json', () => {
+    const replay = createEvalCommand().commands.find(sub => sub.name() === 'replay')
+    const flags = replay?.options.map(option => option.long) ?? []
+    expect(flags).toEqual(
+      expect.arrayContaining([
+        '--run',
+        '--cassette',
+        '--product',
+        '--judge',
+        '--k',
+        '--seed',
+        '--json',
+      ]),
+    )
   })
 })
 
@@ -748,5 +768,77 @@ describe('agent-qa eval extract — rendering and exit semantics (D-04/D-08)', (
 
     expect(process.exitCode).toBe(1)
     expect(errors.join('\n')).toContain('.env.secrets.local')
+  })
+})
+
+describe('agent-qa eval replay — rendering and exit semantics (372-06, D-04/D-08)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('--json emits exactly one JSON DTO on stdout; an empty sweep is data with batchKey "empty" (Pitfall 11/D-02)', async () => {
+    const { configPath } = await writeReplayFixture()
+    const { logs } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'replay', '--json'], {
+      from: 'user',
+    })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(logs).toHaveLength(1)
+    const dto = JSON.parse(logs[0] ?? '') as ReplayVerbResult
+    expect(dto.batchKey).toBe('empty')
+    expect(dto.swept).toBe(0)
+    expect(dto.replayed).toBe(0)
+    expect(dto.judge.configured).toBe(false)
+  })
+
+  it('renders the human summary from the DTO fields only, "0 ties" honestly (D-04)', async () => {
+    const { configPath } = await writeReplayFixture()
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'replay'], { from: 'user' })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const rendered = logs.join('\n')
+    expect(rendered).toContain('batch empty')
+    expect(rendered).toContain('swept 0')
+    expect(rendered).toContain('judge: not configured')
+    expect(rendered).toContain('0 ties')
+    expect(rendered).toContain(join('.agent-qa', 'eval', 'replays'))
+    expect(() => JSON.parse(rendered)).toThrow()
+  })
+
+  it('a named --cassette with no staged match sets exitCode 1 (D-08)', async () => {
+    const { configPath } = await writeReplayFixture()
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'replay', '--cassette', 'no-such-cassette'],
+      { from: 'user' },
+    )
+
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('no-such-cassette')
+    expect(logs).toEqual([])
+  })
+
+  it('a sweep containing only load refusals exits 0 — refusal counters are data, not errors (D-08)', async () => {
+    const { dir, configPath } = await writeReplayFixture()
+    const corruptDir = join(dir, '.agent-qa', 'eval', 'cassettes', 'corrupt-bundle')
+    await mkdir(corruptDir, { recursive: true })
+    await writeFile(join(corruptDir, 'cassette.json'), 'not json at all')
+    const { logs } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'replay', '--json'], {
+      from: 'user',
+    })
+
+    expect(process.exitCode).not.toBe(1)
+    const dto = JSON.parse(logs.join('\n')) as ReplayVerbResult
+    expect(dto.swept).toBe(1)
+    expect(dto.loadRefusals).toEqual({ 'parse-failed': 1 })
+    expect(dto.replayed).toBe(0)
   })
 })
