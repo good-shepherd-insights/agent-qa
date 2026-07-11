@@ -23,6 +23,14 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // artifact under eval/reports/, keyed by the deterministic replay-batch key. Uncommitted runtime
   // staging beside eval/replays; committed placement is Phase 371/372's concern.
   'aggregated eval batch-report persistence under the runtime staging root',
+  // Phase 370 D-05/D-06: the tier-4 judge leg — bindJudgePort routes every judge call through
+  // createModel (the pinned-last mask/guardrail middleware stack, JUDGE-03) at temperature 0,
+  // maxRetries 0, one structured Output.object verdict per order-tagged request, parsed against
+  // a closed zod schema with typed call-error degradation (the port never throws, D-11). Prompt
+  // content arrives fully built from eval core (D-15) — the binding transports, never assembles.
+  // Invoked only inside the single sanctioned replay-composition helper's flow (370-07 composes
+  // it); the forbidden provider-invocation clause below still holds.
+  'the tier-4 judge-port binding through createModel inside the sanctioned replay-composition flow',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
@@ -35,7 +43,7 @@ export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'platform-adapter execution',
   'cassette extraction, scoring, or projection logic owned by eval core',
 ] as const
-export const AGENT_QA_EVAL_LOCAL_EXTERNAL_DEPENDENCIES = [] as const
+export const AGENT_QA_EVAL_LOCAL_EXTERNAL_DEPENDENCIES = ['ai', 'zod'] as const
 export const AGENT_QA_EVAL_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-eval',
   '@vostride/agent-qa-model',

@@ -21,6 +21,9 @@ export type { CassetteBundleLoad } from './cassette-loader.js'
 export { runCassetteReplay } from './replay-composition.js'
 export type { RunCassetteReplayInput } from './replay-composition.js'
 
+export { bindJudgePort } from './judge-binding.js'
+export type { JudgeBindingInput } from './judge-binding.js'
+
 export {
   DEFAULT_EVAL_REPLAYS_SUBDIR,
   FsReplayRecordStore,
