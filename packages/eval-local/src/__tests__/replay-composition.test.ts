@@ -10,6 +10,8 @@ import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { FsCassetteStore } from '../cassette-store.js'
+import { loadCassetteBundle } from '../cassette-loader.js'
 import { runCassetteReplay } from '../replay-composition.js'
 import { FsReplayRecordStore } from '../replay-record-store.js'
 import {
@@ -299,6 +301,166 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
       replayOutputBaseDir: noStoreReplayDir,
     })
     expect(findReplayRecords(noStoreRoot)).toHaveLength(0)
+  })
+})
+
+// ─── Task 2: end-to-end composition proof over the production round trip (D-05/D-12) ───
+
+const RECORDED_LOOKUP_MARKER = 'RECORDED-LOOKUP-RESULT-XYZ'
+
+function extractStoreLoad(
+  handoff: CompletedRunHandoff,
+  artifacts: ArtifactSource,
+  bundleRoot: string,
+): ReturnType<typeof loadCassetteBundle> {
+  const { cassettes } = extractRunCassettes({ handoff, artifacts })
+  const extracted = cassettes.find((entry) => entry.cassette.granularity === 'leaf')
+  if (extracted === undefined) throw new Error('expected a leaf cassette from the local fixture')
+  const written = new FsCassetteStore({ root: bundleRoot }).write(extracted)
+  return loadCassetteBundle(written.dir)
+}
+
+describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)', () => {
+  const tempRoots: string[] = []
+
+  async function tempRoot(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix))
+    tempRoots.push(root)
+    return root
+  }
+
+  afterEach(async () => {
+    safetyHooks.disposeCalls = 0
+    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  })
+
+  it('extract → store → load → replay → persist, all on temp dirs with a captured stub', async () => {
+    const bundleRoot = await tempRoot('replay-e2e-bundles-')
+    const storeRoot = await tempRoot('replay-e2e-store-')
+    const replayDir = await tempRoot('replay-e2e-audit-')
+
+    const load = extractStoreLoad(makeLocalV2Handoff(), memArtifacts(), bundleRoot)
+    expect(load.kind).toBe('loaded')
+    if (load.kind !== 'loaded') throw new Error('expected a loaded bundle')
+
+    const stub = capturingStub(() => actionGenerateResult())
+    const outcome = await runCassetteReplay({
+      cassette: load.cassette,
+      artifacts: load.artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: storeRoot }),
+    })
+
+    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
+    expect(outcome.granularity).toBe('leaf')
+    const leaf = outcome as LeafReplayResult
+    const sample = leaf.samples[0]!
+    expect(sample.outcome.kind).toBe('decision')
+    if (sample.outcome.kind !== 'decision') throw new Error('expected a decision sample')
+    // Identity resolves against the recorded elements (grounded ref → role/nameNormalized/ordinal).
+    expect(sample.outcome.identity.target?.nameNormalized).toBe('continue')
+    // Same build recorded and replayed ⇒ no drift (the canonical input-leg hash matches the receipt).
+    expect(leaf.promptDrift.drift).toBe(false)
+
+    // The persisted record is deep-equal to the returned outcome.
+    const records = findReplayRecords(join(storeRoot, 'eval', 'replays'))
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(readFileSync(records[0]!, 'utf8'))).toEqual(JSON.parse(JSON.stringify(outcome)))
+  })
+
+  it('flows an evidence-incomplete cassette into a persisted refusal without invoking the planner', async () => {
+    const bundleRoot = await tempRoot('replay-e2e-incomplete-bundles-')
+    const storeRoot = await tempRoot('replay-e2e-incomplete-store-')
+    const replayDir = await tempRoot('replay-e2e-incomplete-audit-')
+
+    // No blob bytes available at extraction ⇒ the full-capture leaf is evidence-incomplete.
+    const emptyArtifacts: ArtifactSource = { getBlob: () => undefined }
+    const load = extractStoreLoad(makeLocalV2Handoff(), emptyArtifacts, bundleRoot)
+    expect(load.kind).toBe('loaded')
+    if (load.kind !== 'loaded') throw new Error('expected a loaded bundle')
+
+    // A throwing stub proves the planner factory is never reached — a completeness refusal is
+    // filtered before any sample runs (RPLY-02: a missing recorded observation is a hard error).
+    let doGenerateCalls = 0
+    const throwingStub: StubLanguageModel = {
+      specificationVersion: 'v3',
+      provider: 'replay-composition-stub',
+      modelId: STUB_MODEL_ID,
+      supportedUrls: {},
+      async doGenerate() {
+        doGenerateCalls++
+        throw new Error('planner must not be invoked for an incomplete cassette')
+      },
+      async doStream() {
+        return { stream: new ReadableStream() }
+      },
+    }
+
+    const outcome = await runCassetteReplay({
+      cassette: load.cassette,
+      artifacts: load.artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: { [STUB_MODEL_ID]: throwingStub } },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: storeRoot }),
+    })
+
+    expect('kind' in outcome && outcome.kind === 'integrity-refusal').toBe(true)
+    if (!('kind' in outcome)) throw new Error('expected a refusal')
+    expect(outcome.reason).toBe('completeness')
+    expect(doGenerateCalls).toBe(0)
+
+    // The refusal is persisted too — refusals are never silent (D-08/D-12).
+    const records = findReplayRecords(join(storeRoot, 'eval', 'replays'))
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(readFileSync(records[0]!, 'utf8'))).toEqual(JSON.parse(JSON.stringify(outcome)))
+  })
+
+  it('serves a recorded exchange through the real plan() tool-loop (368-01 seam + exchange server)', async () => {
+    const bundleRoot = await tempRoot('replay-e2e-exchange-bundles-')
+    const replayDir = await tempRoot('replay-e2e-exchange-audit-')
+
+    // Extend the recorded live decision with a non-action exchange (opaque evidence data).
+    const handoff = makeLocalV2Handoff()
+    const live = handoff.tests[0]!.steps[0]!.subActions[0]! as {
+      exchanges?: { tool: string; args: Record<string, unknown>; result: unknown }[]
+    }
+    live.exchanges = [
+      { tool: 'recorded_lookup', args: {}, result: { note: RECORDED_LOOKUP_MARKER } },
+    ]
+
+    const load = extractStoreLoad(handoff, memArtifacts(), bundleRoot)
+    expect(load.kind).toBe('loaded')
+    if (load.kind !== 'loaded') throw new Error('expected a loaded bundle')
+
+    // Two-round scripted stub: round 1 requests the recorded non-action tool, round 2 grounds.
+    const stub = capturingStub((call) =>
+      call === 0 ? nonActionGenerateResult('recorded_lookup') : actionGenerateResult(),
+    )
+
+    const outcome = await runCassetteReplay({
+      cassette: load.cassette,
+      artifacts: load.artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+    })
+
+    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
+    const leaf = outcome as LeafReplayResult
+    expect(leaf.samples[0]!.outcome.kind).toBe('decision')
+
+    // The exchange server served the recorded result, and the second-round request carried it back
+    // to the model — proving the 368-01 seam + exchange server work through production planner code.
+    expect(stub.captured).toHaveLength(2)
+    expect(JSON.stringify(stub.captured[1]!)).toContain(RECORDED_LOOKUP_MARKER)
+    // No recorded exchange left unconsumed.
+    expect(leaf.unconsumedExchanges).toHaveLength(0)
   })
 })
 
