@@ -1,6 +1,7 @@
 import { asRef } from '@vostride/agent-qa-schema'
 import type { Action, ElementInfo } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
+import * as identityModule from '../identity'
 import {
   computeDecisionIdentity,
   decisionIdentityKey,
@@ -87,15 +88,62 @@ describe('decisionIdentityKey', () => {
     expect(decisionIdentityKey(base)).not.toBe(decisionIdentityKey(otherTarget))
     expect(decisionIdentityKey(base)).not.toBe(decisionIdentityKey(withValue))
   })
+
+  it('produces equal keys when action values differ only by casing and whitespace', () => {
+    const elements = [el('e1', 'textbox', 'Email')]
+    const noisy = computeDecisionIdentity(
+      {
+        type: 'fill',
+        ref: asRef('e1'),
+        text: '  Hello   World  ',
+        clearMode: 'replace',
+        submit: false,
+      } as unknown as Action,
+      elements,
+    )
+    const normalized = computeDecisionIdentity(
+      {
+        type: 'fill',
+        ref: asRef('e1'),
+        text: 'hello world',
+        clearMode: 'replace',
+        submit: false,
+      } as unknown as Action,
+      elements,
+    )
+
+    expect(decisionIdentityKey(noisy)).toBe(decisionIdentityKey(normalized))
+  })
 })
 
 describe('normalizeIdentityValue', () => {
-  it('trims value-bearing fields and returns undefined for non-value ops', () => {
-    const fill = { type: 'fill', ref: asRef('e1'), text: '  hi  ', clearMode: 'replace', submit: false } as unknown as Action
-    const select = { type: 'select', ref: asRef('e1'), value: ' opt ' } as unknown as Action
+  it('exports the shared casefold, trim, and whitespace-collapse primitive', () => {
+    const normalizeValueText = (
+      identityModule as typeof identityModule & {
+        normalizeValueText?: (raw: string) => string
+      }
+    ).normalizeValueText
+
+    expect(normalizeValueText).toBeTypeOf('function')
+    expect(normalizeValueText?.('  Hello   World  ')).toBe('hello world')
+  })
+
+  it('normalizes value-bearing fields and returns undefined for non-value ops', () => {
+    const fill = {
+      type: 'fill',
+      ref: asRef('e1'),
+      text: 'Hello  World',
+      clearMode: 'replace',
+      submit: false,
+    } as unknown as Action
+    const select = {
+      type: 'select',
+      ref: asRef('e1'),
+      value: ' opt ',
+    } as unknown as Action
     const click = clickAction('e1')
 
-    expect(normalizeIdentityValue(fill)).toBe('hi')
+    expect(normalizeIdentityValue(fill)).toBe('hello world')
     expect(normalizeIdentityValue(select)).toBe('opt')
     expect(normalizeIdentityValue(click)).toBeUndefined()
   })

@@ -135,6 +135,47 @@ describe('replayCassette — k-sample agreement', () => {
     expect(outcome.agreement.noConsensus).toBe(false)
     expect('modalDecision' in outcome).toBe(false)
   })
+
+  it('F5: value casing and whitespace noise share one agreement class', async () => {
+    const probe = actionsFactory([
+      {
+        type: 'fill',
+        ref: 'e1',
+        text: '  Hello   World  ',
+        clearMode: 'replace',
+        submit: false,
+      },
+      {
+        type: 'fill',
+        ref: 'e1',
+        text: 'hello world',
+        clearMode: 'replace',
+        submit: false,
+      },
+      {
+        type: 'fill',
+        ref: 'e1',
+        text: 'goodbye',
+        clearMode: 'replace',
+        submit: false,
+      },
+    ])
+    const outcome = (await replayCassette({
+      cassette: leafCassette(),
+      artifacts: emptyArtifacts,
+      plannerFactory: probe.factory,
+      actionToolNames: new Set(),
+      clock: fixedIncrementClock(),
+      k: 3,
+      escalationPredicate: alwaysEscalate,
+    })) as DecisionReplayResult
+
+    // Phase 369 F5: identity normalization deliberately changes k-sample agreement classes.
+    expect(outcome.agreement.noConsensus).toBe(false)
+    expect(outcome.agreement.modal?.count).toBe(2)
+    expect(outcome.agreement.modal?.identity.value).toBe('hello world')
+    expect(outcome.agreement.agreementRate).toBeCloseTo(2 / 3)
+  })
 })
 
 describe('replayCassette — procedure teacher-forcing', () => {
