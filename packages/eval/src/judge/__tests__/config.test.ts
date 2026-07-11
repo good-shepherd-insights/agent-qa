@@ -10,7 +10,7 @@ const PINNED_CONFIG_MATERIAL_HASHES: Readonly<Record<number, string>> = Object.f
   // Bump procedure: increment judgeVersion and add the new material hash; never replace
   // an existing entry, because every persisted judge verdict stamps the judgeVersion it
   // was decided under and historical scores remain bound to that constitution.
-  1: 'PENDING-PINNED-AFTER-V1-CONTENT-FINALIZED',
+  1: 'b89e9dad4e1837d84ba93187e9299bb7dd4df12d584078dd4788ea5158bbc51d',
 })
 
 const JUDGE_FAMILY_NAMES: { [F in JudgeFamily]: true } = {
