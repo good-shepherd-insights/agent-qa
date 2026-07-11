@@ -320,6 +320,29 @@ export function actionGenerateResult(
   }
 }
 
+/**
+ * A structured tier-4 judge verdict as TEXT-JSON (Phase 370). Output.object consumes text
+ * content parts, NOT tool-call parts — a tool-call-shaped stub (actionGenerateResult) would
+ * silently exercise only the unparseable-output path. Reuses the actionGenerateResult
+ * usage/finishReason/warnings skeleton (input total 10 / output total 2) so usage mapping
+ * stays assertable at the port result.
+ */
+export function judgeGenerateResult(
+  verdict: 'equivalent' | 'different' | 'unsure',
+  confidence: 'high' | 'medium' | 'low',
+  rationale = 'the framed items describe the same recorded control',
+): StubGenerateResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ verdict, confidence, rationale }) }],
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 2, text: 2, reasoning: 0 },
+    },
+    warnings: [],
+  }
+}
+
 /** A non-action tool-call requesting a recorded exchange (first round of the tool-loop). */
 export function nonActionGenerateResult(toolName: string): StubGenerateResult {
   return {
