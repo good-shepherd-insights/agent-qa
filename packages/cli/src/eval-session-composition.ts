@@ -14,10 +14,27 @@
 // The CLI is a surface / composition root with full host access (spec §4), so this module uses
 // node builtins directly.
 
+import { existsSync, readdirSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { slugBranch } from '@vostride/agent-qa-runner-local'
-import { resolveJudgeFamily } from '@vostride/agent-qa-eval'
+import {
+  HANDOFF_FILE,
+  RUNS_SUBDIR,
+  loadCompletedRunHandoff,
+  slugBranch,
+} from '@vostride/agent-qa-runner-local'
+import {
+  extractRunCassettes,
+  resolveJudgeFamily,
+  resolveProductPartition,
+} from '@vostride/agent-qa-eval'
+import {
+  DEFAULT_EVAL_CASSETTES_SUBDIR,
+  FsCassetteStore,
+  FsRunArtifactSource,
+} from '@vostride/agent-qa-eval-local'
+import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
@@ -27,9 +44,9 @@ import {
 } from './run-session-composition.js'
 import type { RunExecutionContext, RunMaskingContext } from './run-session-composition.js'
 
-// Type-only re-export anchors the @vostride/agent-qa-eval-local workspace edge declared by the
-// ownership contract + package.json (G5) until the verb plans (372-05/06/07) import its record
-// loaders directly. Erased at build — no runtime coupling.
+// The @vostride/agent-qa-eval-local workspace edge (G5) is now anchored by the real store/source
+// value imports above (372-05); this type re-export stays for the replay/report verb plans
+// (372-06/07) that consume record loads. Erased at build — no runtime coupling.
 export type { ReplayRecordLoad } from '@vostride/agent-qa-eval-local'
 
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
@@ -93,6 +110,158 @@ export async function resolveEvalSession(input: {
 // so path shapes never fork.
 export function evalAuditDir(configDir: string, verb: string, key: string): string {
   return resolve(configDir, '.agent-qa', 'eval', 'audit', verb, slugBranch(key))
+}
+
+/**
+ * Typed named-input-not-found rejection (D-08): a `--run <slug>` (and later `--cassette <id>`)
+ * naming nothing on disk is the ONLY sweep-shape failure — the command layer maps it to exit 1.
+ * Per-run load failures inside a sweep are DATA (`runsSkipped`), never errors.
+ */
+export class EvalNamedInputError extends Error {
+  readonly inputKind: string
+  readonly inputName: string
+  readonly searchRoot: string
+
+  constructor(inputKind: string, inputName: string, searchRoot: string) {
+    super(`No recorded ${inputKind} named "${inputName}" under ${searchRoot} — nothing to extract.`)
+    this.name = 'EvalNamedInputError'
+    this.inputKind = inputKind
+    this.inputName = inputName
+    this.searchRoot = searchRoot
+  }
+}
+
+/** The extract verb's one DTO — the console renders FROM this, never around it (D-04). */
+export interface ExtractVerbResult {
+  /** Run dirs (with a handoff document) that entered the sweep after `--run` narrowing. */
+  runsSwept: number
+  /** Per-run typed skips: unreadable / version-refused handoffs (D-02, never batch errors). */
+  runsSkipped: { runSlug: string; reason: string }[]
+  /** Runs whose product partition differed from `--product`. */
+  runsFiltered: number
+  cassettesWritten: number
+  /**
+   * ExtractionReport counters folded verbatim: emitted-cassette completeness statuses and
+   * per-decision selection-skip reasons, keyed by the engine's own names (D-04).
+   */
+  completeness: Record<string, number>
+  cassettesRoot: string
+}
+
+/**
+ * The extract verb pipeline (D-01/D-02): sweep every handoff under `.agent-qa/runs/` (or the one
+ * `--run` names), load each through the version-guarded runner-local loader (typed skips on
+ * refusal — pre-366 documents surface here, never as batch errors), and hand every survivor to
+ * the sanctioned engines: `extractRunCassettes` selects/projects, `FsCassetteStore` stages
+ * idempotently (rm+mkdir recreate). The CLI adds NO selection, completeness, or dedup logic.
+ * The whole body runs inside `runSafetyScope` with the session's seeded masking context and a
+ * D-07 eval-scoped audit sink — extract has no model egress, the discipline is uniform anyway.
+ */
+export async function runExtractVerb(
+  session: EvalSession,
+  filters: { run?: string; product?: string } = {},
+): Promise<ExtractVerbResult> {
+  const maskingContext = session.maskingContextFactory()
+  const auditSink = new JsonlAuditSink(
+    evalAuditDir(session.configDir, 'extract', filters.run ?? 'sweep'),
+  )
+  try {
+    return await runSafetyScope(
+      { maskingContext, auditSink, executionContext: session.executionContext },
+      async () => sweepAndExtract(resolve(session.configDir, '.agent-qa'), filters),
+    )
+  } finally {
+    maskingContext.dispose()
+  }
+}
+
+// ---- internals --------------------------------------------------------------------------------
+
+function sweepAndExtract(
+  agentQaRoot: string,
+  filters: { run?: string; product?: string },
+): ExtractVerbResult {
+  const runsRoot = resolve(agentQaRoot, RUNS_SUBDIR)
+  let runSlugs = listRunSlugsWithHandoff(runsRoot)
+
+  if (filters.run !== undefined) {
+    const named = filters.run
+    runSlugs = runSlugs.filter(slug => slug === named || slug === slugBranch(named))
+    if (runSlugs.length === 0) {
+      throw new EvalNamedInputError('run', named, runsRoot)
+    }
+  }
+
+  const store = new FsCassetteStore({ root: agentQaRoot })
+  const runsSkipped: { runSlug: string; reason: string }[] = []
+  const completeness: Record<string, number> = {}
+  let runsFiltered = 0
+  let cassettesWritten = 0
+
+  for (const runSlug of runSlugs) {
+    let extraction: ReturnType<typeof extractRunCassettes>
+    try {
+      // The version-guarded loader is the ONE handoff read path (never raw JSON.parse here):
+      // unreadable documents and version-guard refusals become typed per-run skips (D-02).
+      const handoff = loadCompletedRunHandoff(resolve(runsRoot, runSlug, HANDOFF_FILE))
+      if (
+        filters.product !== undefined
+        && resolveProductPartition(handoff.scope) !== filters.product
+      ) {
+        runsFiltered++
+        continue
+      }
+      extraction = extractRunCassettes({
+        handoff,
+        artifacts: new FsRunArtifactSource({ root: agentQaRoot, runId: handoff.runId }),
+      })
+    } catch (err) {
+      runsSkipped.push({ runSlug, reason: err instanceof Error ? err.message : String(err) })
+      continue
+    }
+
+    for (const extracted of extraction.cassettes) {
+      store.write(extracted)
+      cassettesWritten++
+    }
+    for (const emitted of extraction.report.emitted) {
+      bumpCounter(completeness, emitted.completenessStatus)
+    }
+    for (const skip of extraction.report.skips) {
+      bumpCounter(completeness, skip.reason)
+    }
+  }
+
+  return {
+    runsSwept: runSlugs.length,
+    runsSkipped,
+    runsFiltered,
+    cassettesWritten,
+    completeness,
+    cassettesRoot: resolve(agentQaRoot, DEFAULT_EVAL_CASSETTES_SUBDIR),
+  }
+}
+
+/**
+ * Enumerate child run dirs carrying a handoff document (the cache.ts sweep precedent:
+ * ENOENT ⇒ empty sweep, never an error). Sorted for a deterministic sweep order.
+ */
+function listRunSlugsWithHandoff(runsRoot: string): string[] {
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(runsRoot, { withFileTypes: true })
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw err
+  }
+  return entries
+    .filter(entry => entry.isDirectory() && existsSync(resolve(runsRoot, entry.name, HANDOFF_FILE)))
+    .map(entry => entry.name)
+    .sort()
+}
+
+function bumpCounter(counters: Record<string, number>, key: string): void {
+  counters[key] = (counters[key] ?? 0) + 1
 }
 
 /**

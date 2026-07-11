@@ -246,7 +246,7 @@ async function snapshotTree(root: string): Promise<Record<string, string>> {
 beforeEach(async () => {
   tmpRoot = await mkdtemp(join(tmpdir(), 'agent-qa-eval-cli-'))
   savedXdgDataHome = process.env.XDG_DATA_HOME
-  savedExitCode = process.exitCode
+  savedExitCode = process.exitCode ?? undefined
   // Point the auth store at an empty temp location so nothing reads the host auth store.
   process.env.XDG_DATA_HOME = join(tmpRoot, 'xdg-data')
 })
