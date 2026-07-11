@@ -228,3 +228,50 @@ export type {
   ExtractionResult,
   ExtractRunCassettesInput,
 } from './extract/extract-run'
+
+export { collectSelfHealPairs } from './labels/pair-matching'
+export type {
+  CollectSelfHealPairsInput,
+  MintedContrastivePair,
+  PairSkip,
+  PairSkipReason,
+} from './labels/pair-matching'
+export { DEFAULT_SILVER_PER_TEST_CAP, selectSilverCassettes } from './labels/silver-sampling'
+export type {
+  SilverExclusion,
+  SilverExclusionReason,
+  SilverSamplingInput,
+  SilverSelection,
+} from './labels/silver-sampling'
+export {
+  LABEL_RECORD_SCHEMA_VERSION,
+  projectPairLabelRecords,
+  projectSilverLabelRecord,
+} from './labels/label-record'
+export type {
+  LabelProvenance,
+  PairStateStamp,
+  StandaloneLabelRecord,
+} from './labels/label-record'
+export {
+  CORPUS_ENTRY_SCHEMA_VERSION,
+  projectCorpusEntry,
+  resolveProductPartition,
+} from './labels/corpus-entry'
+export type { CorpusEntry, CorpusRunLinks, CorpusSplit } from './labels/corpus-entry'
+export { committedFileText } from './labels/committed-file'
+export { buildSeedingPlan } from './labels/seeding-plan'
+export type {
+  BuildSeedingPlanInput,
+  SeedingParams,
+  SeedingPlan,
+  SeedingPlanCase,
+} from './labels/seeding-plan'
+
+export {
+  CONTRACT_PROJECTION_SCHEMA_VERSION,
+  contractFileName,
+  projectJudgeConfigContract,
+  projectMatcherConfigContract,
+} from './contracts/projection'
+export type { ContractProjection } from './contracts/projection'

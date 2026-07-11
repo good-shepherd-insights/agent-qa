@@ -10,6 +10,15 @@ export const AGENT_QA_EVAL_PACKAGE_CLASSES = [
 export const AGENT_QA_EVAL_ALLOWED_RESPONSIBILITIES = [
   'versioned four-leg cassette DTOs, schemaVersion discipline, and load guards',
   'pure deterministic cassette extraction from in-memory completed-run handoff evidence',
+  // Phase 371 D-09/D-16 (LABEL-01..03, ROOT-03): the pure label factory (self-heal pair
+  // matching, deterministic silver sampling, standalone label-record and corpus-entry
+  // projections) and the corpus-seeding planner — deterministic projections over handoff
+  // evidence and extracted cassette ids; every byte is written by eval-local, selection
+  // never leaves core.
+  'pure label-factory projections and deterministic corpus-seeding plans over extracted cassettes',
+  // Phase 371 D-04: versioned frozen-config contract projections (matcher/judge
+  // constitutions) for the committed eval root — snapshot, never an injection point.
+  'versioned frozen-config contract projections for the committed eval root',
 ] as const
 export const AGENT_QA_EVAL_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem or host IO, which belongs exclusively to @vostride/agent-qa-eval-local',
