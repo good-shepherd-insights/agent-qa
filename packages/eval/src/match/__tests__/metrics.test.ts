@@ -468,4 +468,88 @@ describe('buildEvalReport', () => {
     expect(report.matcherVersion).toBe(MATCHER_CONFIG.matcherVersion)
     expect(report.batchKey).toBe(first)
   })
+
+  describe('D-08 contrastive-negative headline exclusion', () => {
+    const negativeLabel = (pairedCassetteId: string): CassetteLabelLeg => ({
+      sourceChannel: 'self-heal-pair',
+      tier: 'near-gold',
+      pairing: { pairedCassetteId, relation: 'contrastive-negative' },
+    })
+    const positiveLabel = (pairedCassetteId: string): CassetteLabelLeg => ({
+      sourceChannel: 'self-heal-pair',
+      tier: 'near-gold',
+      pairing: { pairedCassetteId, relation: 'contrastive-positive' },
+    })
+
+    it('excludes a fully matching negative from both headline sides and buckets it', () => {
+      const report = buildEvalReport([
+        scoredEntry('negative-1', settledScore(), {}, negativeLabel('positive-1')),
+        scoredEntry('unlabeled', settledScore()),
+      ])
+
+      expect(report.headline.firstAttemptDecisionAccuracy).toEqual({
+        numerator: 1,
+        denominator: 1,
+        rate: 1,
+      })
+      expect(report.recovery.negativeDecisionCount).toBe(1)
+      expect(report.recovery.negativeFullMatchCount).toBe(1)
+    })
+
+    it('excludes a negative miss-by-failure from the denominator without a full-match count', () => {
+      const report = buildEvalReport([
+        scoredEntry(
+          'negative-1',
+          {
+            kind: 'miss-by-failure',
+            reason: 'step_failed',
+            matcherVersion: MATCHER_CONFIG.matcherVersion,
+          },
+          {},
+          negativeLabel('positive-1'),
+        ),
+      ])
+
+      expect(report.headline.firstAttemptDecisionAccuracy).toEqual({
+        numerator: 0,
+        denominator: 0,
+      })
+      expect(report.honesty.missByFailureCounts).toEqual({ step_failed: 1 })
+      expect(report.recovery.negativeDecisionCount).toBe(1)
+      expect(report.recovery.negativeFullMatchCount).toBe(0)
+    })
+
+    it('keeps the scored pair and recovery accuracy exactly as before the exclusion', () => {
+      const report = buildEvalReport([
+        scoredEntry('positive-1', settledScore(), {}, positiveLabel('negative-1')),
+        scoredEntry('negative-1', settledScore(), {}, negativeLabel('positive-1')),
+      ])
+
+      expect(report.recovery.selfHealPairCount).toBe(1)
+      expect(report.recovery.eligiblePositiveCount).toBe(1)
+      expect(report.recovery.recoveredPositiveCount).toBe(1)
+      expect(report.recovery.recoveryAccuracy).toBe(1)
+    })
+
+    it('keeps contrastive-positive decisions inside the headline', () => {
+      const report = buildEvalReport([
+        scoredEntry('positive-1', settledScore(), {}, positiveLabel('negative-1')),
+      ])
+
+      expect(report.headline.firstAttemptDecisionAccuracy).toEqual({
+        numerator: 1,
+        denominator: 1,
+        rate: 1,
+      })
+      expect(report.recovery.negativeDecisionCount).toBe(0)
+      expect(report.recovery.negativeFullMatchCount).toBe(0)
+    })
+
+    it('states zero for the negative bucket on label-free batches', () => {
+      const report = buildEvalReport([scoredEntry('unpaired', settledScore())])
+
+      expect(report.recovery.negativeDecisionCount).toBe(0)
+      expect(report.recovery.negativeFullMatchCount).toBe(0)
+    })
+  })
 })
