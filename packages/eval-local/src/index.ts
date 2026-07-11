@@ -18,6 +18,14 @@ export type { FsCassetteStoreConfig, WrittenCassette } from './cassette-store.js
 export { loadCassetteBundle } from './cassette-loader.js'
 export type { CassetteBundleLoad } from './cassette-loader.js'
 
+export {
+  listCassetteBundleDirs,
+  listReplayRecordDirs,
+  loadReplayRecord,
+  loadScoreRecord,
+} from './replay-read.js'
+export type { ReplayRecordLoad, ScoreRecordLoad } from './replay-read.js'
+
 export { runCassetteReplay } from './replay-composition.js'
 export type { RunCassetteReplayInput } from './replay-composition.js'
 

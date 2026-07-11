@@ -8,11 +8,12 @@
 // scored, the report verb counts them instead. eval-local serializes/deserializes only (F9) —
 // no scoring or aggregation logic lives here; deep validation stays with eval core's guards.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'node:fs'
 import { basename, join } from 'node:path'
 
 import type { ReplayCassetteOutcome, ReplayRefusal } from '@vostride/agent-qa-eval'
 
+import { CASSETTE_FILE } from './cassette-store.js'
 import { REPLAY_RECORD_FILE } from './replay-record-store.js'
 import { SCORE_FILE, type ScoreRecord } from './score-store.js'
 
@@ -89,4 +90,39 @@ export function loadScoreRecord(dir: string): ScoreRecordLoad {
   const read = readDocument(path, basename(dir))
   if (read.kind === 'refused') return read
   return { kind: 'loaded', record: read.document as ScoreRecord }
+}
+
+// Recursive walk collecting every directory that directly contains the marker file. Cassette ids
+// are multi-segment slugged paths, so staged dirs nest at arbitrary depth — the walk must recurse,
+// not glob one level. The root read is ENOENT-safe (a missing root is an empty sweep, D-02) and
+// the result is sorted lexicographically before returning: deterministic sweep order, no
+// readdir-ordering leaks (the eval determinism law).
+function listMarkerDirs(root: string, markerFile: string): string[] {
+  const found: string[] = []
+
+  function walk(dir: string): void {
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    if (entries.some(entry => entry.isFile() && entry.name === markerFile)) found.push(dir)
+    for (const entry of entries) {
+      if (entry.isDirectory()) walk(join(dir, entry.name))
+    }
+  }
+
+  walk(root)
+  return found.sort()
+}
+
+/** Enumerate every staged replay-record dir (contains replay.json) under the replays root, sorted. */
+export function listReplayRecordDirs(replaysRoot: string): string[] {
+  return listMarkerDirs(replaysRoot, REPLAY_RECORD_FILE)
+}
+
+/** Enumerate every staged cassette-bundle dir (contains cassette.json) under the cassettes root, sorted. */
+export function listCassetteBundleDirs(cassettesRoot: string): string[] {
+  return listMarkerDirs(cassettesRoot, CASSETTE_FILE)
 }

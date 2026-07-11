@@ -44,6 +44,12 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // labeling stay in eval core — this helper executes, never decides. 372's CLI wraps exactly
   // this function.
   'the single sanctioned corpus-seeding composition helper writing the committed eval root through the egress checkpoint',
+  // Phase 372 G2/D-02/D-08: the read legs inverting the replay-record, score, and cassette-bundle
+  // write legs — loadReplayRecord/loadScoreRecord mirror the loader's typed-refusal posture (every
+  // read/parse failure is a returned ReplayRefusal, absence of score.json is typed, never a
+  // throw), plus deterministic sorted sweep enumeration (ENOENT ⇒ empty) so every CLI verb sweeps
+  // staged trees and the report verb rebuilds its inputs integrity-checked from disk.
+  'replay-record, score, and staged-bundle read legs with typed refusals and sweep enumeration',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
