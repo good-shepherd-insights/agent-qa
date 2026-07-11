@@ -23,6 +23,8 @@ describe('operation classes', () => {
     expect(classifyOpClass('unknownVerb')).toBe('unknownVerb')
     expect(opClassEquivalent('unknownVerb', 'click')).toBe(false)
     expect(opClassEquivalent('unknownVerb', 'anotherUnknownVerb')).toBe(false)
+    expect(opClassEquivalent('activate', 'click')).toBe(false)
+    expect(opClassEquivalent('value-entry', 'fill')).toBe(false)
   })
 
   it('covers the complete frozen action catalog', () => {
