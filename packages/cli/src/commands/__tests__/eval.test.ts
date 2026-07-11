@@ -1,12 +1,18 @@
 // Phase 372-05 — the eval command family's first verb: extract (D-01), sweep-by-default with the
 // D-02 filter vocabulary, typed per-run skips (never batch errors), D-04 DTO-faithful rendering,
 // and D-08 exit semantics. Task 1 pins runExtractVerb; Task 2 pins the commander wiring.
+// Phase 372-06 adds the replay verb: sweep staged cassette bundles through runCassetteReplay with
+// the session's seeded masking factory (D-06), the D-03 judge bag, typed refusal counters, and
+// the deterministic batchKey audit dir (D-07).
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { Command } from 'commander'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { computeBatchKey } from '@vostride/agent-qa-eval'
+import type { createModel, ModelProviderOverrides } from '@vostride/agent-qa-model'
 import {
   FsEvidenceArtifactStore,
   FsHandoffStore,
@@ -32,6 +38,7 @@ import {
   EvalNamedInputError,
   resolveEvalSession,
   runExtractVerb,
+  runReplayVerb,
 } from '../../eval-session-composition.js'
 import type { EvalSession, ExtractVerbResult } from '../../eval-session-composition.js'
 import { createEvalCommand } from '../eval.js'
@@ -129,10 +136,11 @@ function step(input: {
   scope: ScopeKey
   live: boolean
   screenshotRef?: ArtifactRef
+  stepText?: string
 }): StepEvidence {
   return {
     stepIndex: input.stepIndex,
-    stepText: input.live ? 'Click Continue' : 'Replay Continue from cache',
+    stepText: input.stepText ?? (input.live ? 'Click Continue' : 'Replay Continue from cache'),
     cacheStatus: input.live ? 'miss' : 'hit',
     servedBrief: emptyBrief(input.scope),
     modelProfile: {
@@ -181,10 +189,17 @@ function buildHandoff(input: {
   screenshotRef: ArtifactRef
   withCachedStep?: boolean
   schemaVersion?: number
+  stepText?: string
 }): CompletedRunHandoff {
   const scope = input.scope ?? SUITE_SCOPE
   const steps = [
-    step({ stepIndex: 0, scope, live: true, screenshotRef: input.screenshotRef }),
+    step({
+      stepIndex: 0,
+      scope,
+      live: true,
+      screenshotRef: input.screenshotRef,
+      ...(input.stepText === undefined ? {} : { stepText: input.stepText }),
+    }),
     ...(input.withCachedStep ? [step({ stepIndex: 1, scope, live: false })] : []),
   ]
   return {
@@ -212,7 +227,7 @@ function buildHandoff(input: {
 function saveRun(
   dir: string,
   runId: string,
-  options: { scope?: ScopeKey; withCachedStep?: boolean } = {},
+  options: { scope?: ScopeKey; withCachedStep?: boolean; stepText?: string } = {},
 ): void {
   const root = join(dir, '.agent-qa')
   const ref = new FsEvidenceArtifactStore({ root, runId }).persistDecisionScreenshot(BLOB_BYTES)
@@ -357,6 +372,260 @@ describe('runExtractVerb — sweep-by-default over the sanctioned engines (D-01/
     const second = await runExtractVerb(session)
     expect(second).toEqual(first)
     expect(await snapshotTree(second.cassettesRoot)).toEqual(firstTree)
+  })
+})
+
+// ---- 372-06 Task 1: runReplayVerb — sweep, seeded masking, judge bag (D-02/D-06/D-08) ---------
+
+/** The config-registry model id the captured-boundary stub keys off (createModel passthrough). */
+const REPLAY_STUB_MODEL_ID = 'replay-cli-stub'
+
+// A registered fake secret embedded in recorded step text — long enough for the ≥4-char register
+// guard, shaped to trip NO guardrail detector (no Bearer prefix, no email).
+const FAKE_REPLAY_SECRET = 'raw-fake-replay-secret-9001'
+
+const REPLAY_CONFIG_YAML = [
+  'workspace:',
+  '  testMatch: ["tests/**/*.yaml"]',
+  '  suiteMatch: ["suites/**/*.suite.yaml"]',
+  '  hooksFile: hooks.yaml',
+  '  agentRules: ./agent-rules.md',
+  '  envFile: .env',
+  '  secretsFile: .env.secrets.local',
+  'registry:',
+  '  llms:',
+  '    - name: planner',
+  '      provider: openai-compatible',
+  `      model: ${REPLAY_STUB_MODEL_ID}`,
+  '      baseURL: http://localhost:9999/v1',
+  'use:',
+  '  mobile:',
+  '    appState: preserve',
+  '  llm: planner',
+  '',
+].join('\n')
+
+async function writeReplayFixture(
+  secretsContent = '',
+): Promise<{ dir: string; configPath: string }> {
+  const dir = await mkdtemp(join(tmpRoot, 'replay-fixture-'))
+  const configPath = join(dir, 'agent-qa.config.yaml')
+  await writeFile(configPath, REPLAY_CONFIG_YAML)
+  await writeFile(join(dir, '.env.secrets.local'), secretsContent)
+  return { dir, configPath }
+}
+
+type StubLanguageModel = ReturnType<typeof createModel>
+type CapturedCallOptions = Parameters<StubLanguageModel['doGenerate']>[0]
+type StubGenerateResult = Awaited<ReturnType<StubLanguageModel['doGenerate']>>
+
+/** A grounded web_click tool-call on the recorded ref — a full-match replay decision. */
+function clickGenerateResult(): StubGenerateResult {
+  return {
+    content: [
+      {
+        type: 'tool-call',
+        toolCallId: 'replay-action',
+        toolName: 'web_click',
+        input: JSON.stringify({
+          ref: 'e-continue',
+          reasoning: 'Click the recorded Continue button',
+          confidence: 0.95,
+          stepComplete: true,
+          doesActionAdvanceUsTowardsGoal: true,
+        }),
+      },
+    ],
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 2, text: 0, reasoning: 0 },
+    },
+    warnings: [],
+  }
+}
+
+/**
+ * The captured-boundary stub seam (the replay-composition test recipe): a scripted language model
+ * injected through createModel's overrides so every doGenerate params object is captured POST the
+ * pinned-last mask/guardrail middleware — the exact provider boundary.
+ */
+function replayStub(): { captured: CapturedCallOptions[]; overrides: ModelProviderOverrides } {
+  const captured: CapturedCallOptions[] = []
+  const stub: StubLanguageModel = {
+    specificationVersion: 'v3',
+    provider: 'replay-cli-stub-provider',
+    modelId: REPLAY_STUB_MODEL_ID,
+    supportedUrls: {},
+    async doGenerate(params) {
+      captured.push(params)
+      return clickGenerateResult()
+    },
+    async doStream() {
+      return { stream: new ReadableStream() }
+    },
+  }
+  return { captured, overrides: { languageModels: { [REPLAY_STUB_MODEL_ID]: stub } } }
+}
+
+/** Read every staged cassette id back from the bundle documents, sorted. */
+async function stagedCassetteIds(dir: string): Promise<string[]> {
+  const root = join(dir, '.agent-qa', 'eval', 'cassettes')
+  const entries = (await readdir(root, { recursive: true })) as string[]
+  const ids: string[] = []
+  for (const entry of entries) {
+    if (!entry.endsWith('cassette.json')) continue
+    const document = JSON.parse(await readFile(join(root, entry), 'utf-8')) as { id: string }
+    ids.push(document.id)
+  }
+  return ids.sort()
+}
+
+/** The slugged replay-record dir FsReplayRecordStore derives for one cassette id. */
+function replayDirFor(dir: string, id: string): string {
+  return join(dir, '.agent-qa', 'eval', 'replays', ...id.split('/').map(segment => slugBranch(segment)))
+}
+
+describe('runReplayVerb — offline sweep through the sanctioned composition (D-02/D-06/D-08)', () => {
+  it('replays every staged bundle, persists replay.json + score.json, and stamps the deterministic batchKey', async () => {
+    const { dir, configPath } = await writeReplayFixture()
+    saveRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runExtractVerb(session)
+    const ids = await stagedCassetteIds(dir)
+    expect(ids).toHaveLength(2)
+
+    const stub = replayStub()
+    const result = await runReplayVerb(session, {}, { plannerOverrides: stub.overrides })
+
+    expect(result.swept).toBe(2)
+    expect(result.replayed).toBe(2)
+    expect(result.loadRefusals).toEqual({})
+    expect(result.replayRefusals).toEqual({})
+    expect(result.batchKey).toBe(computeBatchKey(ids))
+    expect(result.scored).toBe(2)
+    expect(result.replaysRoot).toBe(join(dir, '.agent-qa', 'eval', 'replays'))
+    for (const id of ids) {
+      expect(existsSync(join(replayDirFor(dir, id), 'replay.json'))).toBe(true)
+      expect(existsSync(join(replayDirFor(dir, id), 'score.json'))).toBe(true)
+    }
+
+    // Idempotent re-run over the same staging: the record store recreates dirs, the score store
+    // writes file-scoped — a second sweep is green with the same counters (Pitfall 5).
+    const second = await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+    expect(second.replayed).toBe(2)
+    expect(second.scored).toBe(2)
+    expect(second.batchKey).toBe(result.batchKey)
+  })
+
+  it('threads the session-seeded masking factory: a secrets-file value crosses the boundary as a placeholder (D-06)', async () => {
+    const { dir, configPath } = await writeReplayFixture(`EVAL_FIXTURE_TOKEN=${FAKE_REPLAY_SECRET}\n`)
+    saveRun(dir, 'run-secret', {
+      stepText: `Use the token ${FAKE_REPLAY_SECRET} then click Continue`,
+    })
+    const session = await sessionFor(configPath)
+    await runExtractVerb(session)
+
+    const stub = replayStub()
+    const result = await runReplayVerb(session, {}, { plannerOverrides: stub.overrides })
+
+    expect(result.replayed).toBe(2)
+    expect(stub.captured.length).toBeGreaterThan(0)
+    // Captured POST the pinned-last mask middleware: the secrets-file value reaches the provider
+    // boundary as a <SECRET_n> placeholder, never as raw bytes — end-to-end proof the CLI passes
+    // the 372-01 seam into runCassetteReplay.
+    const boundaryPayload = JSON.stringify(stub.captured)
+    expect(boundaryPayload).toContain('<SECRET_')
+    expect(boundaryPayload).not.toContain(FAKE_REPLAY_SECRET)
+  })
+
+  it('folds a corrupt bundle into loadRefusals by reason and still replays the rest (D-08)', async () => {
+    const { dir, configPath } = await writeReplayFixture()
+    saveRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runExtractVerb(session)
+
+    const corruptDir = join(dir, '.agent-qa', 'eval', 'cassettes', 'corrupt-bundle')
+    await mkdir(corruptDir, { recursive: true })
+    await writeFile(join(corruptDir, 'cassette.json'), 'not json at all')
+
+    const result = await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+
+    // The refusal is data (never a batch abort): the corrupt dir entered the sweep and folded
+    // into loadRefusals by reason while both valid cassettes replayed normally.
+    expect(result.swept).toBe(3)
+    expect(result.loadRefusals).toEqual({ 'parse-failed': 1 })
+    expect(result.replayed).toBe(2)
+    expect(result.scored).toBe(2)
+  })
+
+  it('applies the ONE filter vocabulary on the loaded set: --cassette, --run, --product (D-02)', async () => {
+    const { dir, configPath } = await writeReplayFixture()
+    saveRun(dir, 'run-shop', { scope: { tier: 'product', key: 'shop' } })
+    saveRun(dir, 'run-plain')
+    const session = await sessionFor(configPath)
+    await runExtractVerb(session)
+    const ids = await stagedCassetteIds(dir)
+    expect(ids).toHaveLength(4)
+    const shopIds = ids.filter(id => id.startsWith(slugBranch('run-shop')))
+    const shopLeafId = shopIds.find(id => id.endsWith('-leaf'))
+    if (shopLeafId === undefined) throw new Error('expected a staged run-shop leaf cassette')
+
+    const named = await runReplayVerb(
+      session,
+      { cassette: shopLeafId },
+      { plannerOverrides: replayStub().overrides },
+    )
+    expect(named.replayed).toBe(1)
+    expect(named.batchKey).toBe(computeBatchKey([shopLeafId]))
+
+    await expect(
+      runReplayVerb(session, { cassette: 'no-such-cassette' }, { plannerOverrides: replayStub().overrides }),
+    ).rejects.toBeInstanceOf(EvalNamedInputError)
+
+    const byRun = await runReplayVerb(
+      session,
+      { run: 'run-plain' },
+      { plannerOverrides: replayStub().overrides },
+    )
+    expect(byRun.replayed).toBe(2)
+    expect(byRun.batchKey).toBe(
+      computeBatchKey(ids.filter(id => id.startsWith(slugBranch('run-plain')))),
+    )
+
+    await expect(
+      runReplayVerb(session, { run: 'no-such-run' }, { plannerOverrides: replayStub().overrides }),
+    ).rejects.toBeInstanceOf(EvalNamedInputError)
+
+    const byProduct = await runReplayVerb(
+      session,
+      { product: 'shop' },
+      { plannerOverrides: replayStub().overrides },
+    )
+    expect(byProduct.replayed).toBe(2)
+    expect(byProduct.batchKey).toBe(computeBatchKey(shopIds))
+  })
+
+  it('completes without a judge: configured false with the notice riding the DTO (D-03/370)', async () => {
+    const { dir, configPath } = await writeReplayFixture()
+    saveRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+    await runExtractVerb(session)
+
+    const result = await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
+
+    // Absence is first-class configuration (370): the batch completes, the judge block is honest
+    // zeros, and the no-judge notice is DTO data — any tie would record not-invoked downstream.
+    expect(result.replayed).toBe(2)
+    expect(result.judge).toEqual({
+      configured: false,
+      invoked: 0,
+      settled: 0,
+      abstained: 0,
+      errors: 0,
+      notInvoked: 0,
+    })
+    expect(result.notices.some(notice => notice.includes('no judge configured'))).toBe(true)
   })
 })
 
