@@ -1,7 +1,7 @@
 import { PlanningTurnError } from '@vostride/agent-qa-runner'
 import { describe, expect, it } from 'vitest'
 import type { ArtifactSource } from '../../ports'
-import type { ReplayEscalationPredicate } from '../ports'
+import type { ReplayEscalationContext, ReplayEscalationPredicate } from '../ports'
 import type { DecisionReplayResult, ProcedureReplayResult } from '../result'
 import { replayCassette } from '../replay-run'
 import {
@@ -15,7 +15,7 @@ import {
 } from './fixtures'
 
 const emptyArtifacts: ArtifactSource = { getBlob: () => undefined }
-const alwaysEscalate: ReplayEscalationPredicate = () => true
+const alwaysEscalate: ReplayEscalationPredicate = (_firstSample, _context) => true
 
 describe('replayCassette — k-sample agreement', () => {
   it('Test 1: the default (neverEscalate) predicate runs exactly one sample even at k=3', async () => {
@@ -38,7 +38,35 @@ describe('replayCassette — k-sample agreement', () => {
     expect(outcome.agreement.agreementRate).toBe(1)
   })
 
-  it('Test 2: a forced always-escalate predicate at k=3 runs three fresh samples', async () => {
+  it("Test 2: a leaf predicate receives the cassette's own sidecar and no stepIndex", async () => {
+    const contexts: ReplayEscalationContext[] = []
+    const recordContext: ReplayEscalationPredicate = (_firstSample, context) => {
+      contexts.push(context)
+      return false
+    }
+    const cassette = leafCassette()
+
+    await replayCassette({
+      cassette,
+      artifacts: emptyArtifacts,
+      plannerFactory: actionsFactory([{ type: 'click', ref: 'e2' }]).factory,
+      actionToolNames: new Set(),
+      clock: fixedIncrementClock(),
+      k: 3,
+      escalationPredicate: recordContext,
+    })
+
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]).toMatchObject({
+      cassetteId: cassette.id,
+      decisionOrdinal: cassette.decisionOrdinal,
+    })
+    expect(contexts[0].sidecar).toBe(cassette.sidecar)
+    expect(contexts[0].receipt).toBe(cassette.receipt)
+    expect(Object.hasOwn(contexts[0], 'stepIndex')).toBe(false)
+  })
+
+  it('a forced always-escalate predicate at k=3 runs three fresh samples', async () => {
     const probe = makeFactory(() => decisionPlan({ type: 'click', ref: 'e2' }))
     await replayCassette({
       cassette: leafCassette({
@@ -57,7 +85,7 @@ describe('replayCassette — k-sample agreement', () => {
     expect(creates[1].nonActionTools).not.toBe(creates[2].nonActionTools)
   })
 
-  it('Test 3: identities A/A/B yield modal A (count 2), agreementRate 2/3, noConsensus false', async () => {
+  it('Test 4: escalation preserves modal count, agreement rate, and consensus semantics', async () => {
     const probe = actionsFactory([
       { type: 'click', ref: 'e2' },
       { type: 'click', ref: 'e2' },
@@ -79,7 +107,7 @@ describe('replayCassette — k-sample agreement', () => {
     expect(outcome.modalDecision?.opClass).toBe('click')
   })
 
-  it('Test 4: all-distinct samples yield noConsensus true, modal absent, agreementRate 1/3', async () => {
+  it('Test 5: all-distinct samples yield noConsensus true, modal absent, agreementRate 1/3', async () => {
     const probe = actionsFactory([
       { type: 'click', ref: 'e2' },
       { type: 'click', ref: 'e1' },
@@ -100,7 +128,7 @@ describe('replayCassette — k-sample agreement', () => {
     expect(outcome.agreement.agreementRate).toBeCloseTo(1 / 3)
   })
 
-  it('Test 5: k=1 yields agreementRate 1 with modal = the single sample identity class', async () => {
+  it('Test 6: k=1 yields agreementRate 1 with modal = the single sample identity class', async () => {
     const probe = actionsFactory([{ type: 'click', ref: 'e2' }])
     const outcome = (await replayCassette({
       cassette: leafCassette(),
@@ -115,7 +143,7 @@ describe('replayCassette — k-sample agreement', () => {
     expect(outcome.modalDecision?.opClass).toBe('click')
   })
 
-  it('Test 6: planner-failure samples group by reason; harness-errors are counted, never modal', async () => {
+  it('Test 7: planner-failure samples group by reason; harness-errors are counted, never modal', async () => {
     const probe = makeFactory(callIndex => {
       if (callIndex < 2) throw new PlanningTurnError('no_action_tool_called', `fail ${callIndex}`, [])
       throw new Error('infra down')
@@ -179,7 +207,45 @@ describe('replayCassette — k-sample agreement', () => {
 })
 
 describe('replayCassette — procedure teacher-forcing', () => {
-  it('Test 7: procedure steps replay independently; non-decision steps skip; endState untouched', async () => {
+  it("Test 3: a procedure predicate receives each decision step's own sidecar in order", async () => {
+    const contexts: ReplayEscalationContext[] = []
+    const recordContext: ReplayEscalationPredicate = (_firstSample, context) => {
+      contexts.push(context)
+      return false
+    }
+    const cassette = procedureCassette()
+    const firstDecision = cassette.steps[0]
+    const secondDecision = cassette.steps[3]
+    if (firstDecision.kind !== 'decision' || secondDecision.kind !== 'decision') {
+      throw new Error('expected decision fixtures')
+    }
+    expect(firstDecision.record.sidecar).not.toBe(secondDecision.record.sidecar)
+
+    await replayCassette({
+      cassette,
+      artifacts: emptyArtifacts,
+      plannerFactory: actionsFactory([
+        { type: 'click', ref: 'e2' },
+        { type: 'click', ref: 'e1' },
+      ]).factory,
+      actionToolNames: new Set(),
+      clock: fixedIncrementClock(),
+      k: 3,
+      escalationPredicate: recordContext,
+    })
+
+    expect(contexts).toHaveLength(2)
+    expect(contexts.map(context => [context.stepIndex, context.decisionOrdinal])).toEqual([
+      [firstDecision.stepIndex, firstDecision.decisionOrdinal],
+      [secondDecision.stepIndex, secondDecision.decisionOrdinal],
+    ])
+    expect(contexts[0].sidecar).toBe(firstDecision.record.sidecar)
+    expect(contexts[1].sidecar).toBe(secondDecision.record.sidecar)
+    expect(contexts[0].receipt).toBe(firstDecision.record.receipt)
+    expect(contexts[1].receipt).toBe(secondDecision.record.receipt)
+  })
+
+  it('Test 8: procedure steps replay independently; non-decision steps skip; endState untouched', async () => {
     const probe = actionsFactory([
       { type: 'click', ref: 'e2' },
       { type: 'click', ref: 'e1' },
