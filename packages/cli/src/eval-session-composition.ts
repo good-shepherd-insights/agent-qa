@@ -17,7 +17,7 @@
 import { existsSync, readdirSync } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
@@ -25,17 +25,31 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  computeBatchKey,
   extractRunCassettes,
   resolveJudgeFamily,
   resolveProductPartition,
 } from '@vostride/agent-qa-eval'
+import type { Cassette, CassetteScore, DecisionScoreEntry } from '@vostride/agent-qa-eval'
 import {
   DEFAULT_EVAL_CASSETTES_SUBDIR,
+  DEFAULT_EVAL_REPLAYS_SUBDIR,
   FsCassetteStore,
+  FsReplayRecordStore,
   FsRunArtifactSource,
+  FsScoreStore,
+  listCassetteBundleDirs,
+  loadCassetteBundle,
+  loadScoreRecord,
+  runCassetteReplay,
 } from '@vostride/agent-qa-eval-local'
+import type { CassetteBundleLoad } from '@vostride/agent-qa-eval-local'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
-import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
+import type {
+  ModelProfile,
+  ModelProviderOverrides,
+  ResolvedModelAuth,
+} from '@vostride/agent-qa-model'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
 import {
@@ -44,9 +58,9 @@ import {
 } from './run-session-composition.js'
 import type { RunExecutionContext, RunMaskingContext } from './run-session-composition.js'
 
-// The @vostride/agent-qa-eval-local workspace edge (G5) is now anchored by the real store/source
-// value imports above (372-05); this type re-export stays for the replay/report verb plans
-// (372-06/07) that consume record loads. Erased at build — no runtime coupling.
+// The @vostride/agent-qa-eval-local workspace edge (G5) is anchored by the real store/loader
+// value imports above (372-05/06); this type re-export stays for the report verb plan (372-07)
+// that consumes record loads. Erased at build — no runtime coupling.
 export type { ReplayRecordLoad } from '@vostride/agent-qa-eval-local'
 
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
@@ -113,17 +127,19 @@ export function evalAuditDir(configDir: string, verb: string, key: string): stri
 }
 
 /**
- * Typed named-input-not-found rejection (D-08): a `--run <slug>` (and later `--cassette <id>`)
- * naming nothing on disk is the ONLY sweep-shape failure — the command layer maps it to exit 1.
- * Per-run load failures inside a sweep are DATA (`runsSkipped`), never errors.
+ * Typed named-input-not-found rejection (D-08): a `--run <slug>` or `--cassette <id>` naming
+ * nothing on disk is the ONLY sweep-shape failure — the command layer maps it to exit 1.
+ * Per-item load failures inside a sweep are DATA (`runsSkipped` / `loadRefusals`), never errors.
  */
 export class EvalNamedInputError extends Error {
   readonly inputKind: string
   readonly inputName: string
   readonly searchRoot: string
 
-  constructor(inputKind: string, inputName: string, searchRoot: string) {
-    super(`No recorded ${inputKind} named "${inputName}" under ${searchRoot} — nothing to extract.`)
+  constructor(inputKind: string, inputName: string, searchRoot: string, verb = 'extract') {
+    super(
+      `No recorded ${inputKind} named "${inputName}" under ${searchRoot} — nothing to ${verb}.`,
+    )
     this.name = 'EvalNamedInputError'
     this.inputKind = inputKind
     this.inputName = inputName
@@ -262,6 +278,264 @@ function listRunSlugsWithHandoff(runsRoot: string): string[] {
 
 function bumpCounter(counters: Record<string, number>, key: string): void {
   counters[key] = (counters[key] ?? 0) + 1
+}
+
+// ---- the replay verb (372-06, D-02/D-06/D-07/D-08) --------------------------------------------
+
+/** D-04 judge honesty counters folded from the PERSISTED score records, never recomputed. */
+export interface ReplayJudgeCounters {
+  /** Whether a judge resolved from `eval.judge` / `--judge` entered the batch (D-03). */
+  configured: boolean
+  invoked: number
+  settled: number
+  abstained: number
+  errors: number
+  notInvoked: number
+}
+
+/** The replay verb's one DTO — the console renders FROM this, never around it (D-04). */
+export interface ReplayVerbResult {
+  /** sha256hex over the sorted replayed cassette ids ('empty' literal for a zero batch, D-02). */
+  batchKey: string
+  /** Bundle dirs that entered the sweep (pre-load, pre-filter). */
+  swept: number
+  /** Cassettes that replayed to a ReplayResult through the sanctioned composition. */
+  replayed: number
+  /** Typed loadCassetteBundle refusals folded by reason — data, never batch errors (D-08). */
+  loadRefusals: Record<string, number>
+  /** Typed replay refusals (plus harness errors) folded by reason — the batch never aborts. */
+  replayRefusals: Record<string, number>
+  /** Persisted score.json records read back after the loop (refusals are never scored). */
+  scored: number
+  /** Judge dispositions read from the persisted tie/settled stamps (D-04). */
+  judge: ReplayJudgeCounters
+  /** The staged replay-records root the persisted outcomes landed under. */
+  replaysRoot: string
+  /** Stderr-destined notices: no-judge / family-preflight warnings, harness errors, empty sweep. */
+  notices: string[]
+}
+
+/**
+ * The replay verb pipeline (D-01/D-02): sweep every staged cassette bundle (or the ones the
+ * filters name), load each through loadCassetteBundle (typed refusals as data), and drive
+ * runCassetteReplay — production planner profile, D-06 session-seeded maskingContextFactory,
+ * D-03 judge bag, D-07 batchKey-scoped audit dir, replay + score stores. After the loop the
+ * judge counters are folded from the PERSISTED ScoreRecords (render from disk, never recompute,
+ * D-04). Pitfall 1: runCassetteReplay opens its OWN safety scopes with the injected factory, so
+ * no outer runSafetyScope wraps the model legs here. `opts` is the TEST-ONLY captured-boundary
+ * stub seam (createModel overrides passthrough) — judge/k/seed are NOT verb parameters, they
+ * arrive flag-merged on `session.evalConfig` (D-03).
+ */
+export async function runReplayVerb(
+  session: EvalSession,
+  filters: { run?: string; cassette?: string; product?: string } = {},
+  opts: {
+    plannerOverrides?: ModelProviderOverrides
+    judgeOverrides?: ModelProviderOverrides
+  } = {},
+): Promise<ReplayVerbResult> {
+  const agentQaRoot = resolve(session.configDir, '.agent-qa')
+  const cassettesRoot = join(agentQaRoot, DEFAULT_EVAL_CASSETTES_SUBDIR)
+  const replaysRoot = join(agentQaRoot, DEFAULT_EVAL_REPLAYS_SUBDIR)
+
+  // (1)+(2) sweep + load: every bundle dir enters; refusals fold by reason (D-02/D-08).
+  const bundleDirs = listCassetteBundleDirs(cassettesRoot)
+  const loadRefusals: Record<string, number> = {}
+  const loaded: Extract<CassetteBundleLoad, { kind: 'loaded' }>[] = []
+  for (const bundleDir of bundleDirs) {
+    const load = loadCassetteBundle(bundleDir)
+    if (load.kind === 'refused') {
+      bumpCounter(loadRefusals, load.refusal.reason)
+      continue
+    }
+    loaded.push(load)
+  }
+
+  // (3) filters on the LOADED set — the ONE D-02 vocabulary; a named miss is the only throw.
+  let selected = loaded
+  if (filters.cassette !== undefined) {
+    const named = filters.cassette
+    selected = selected.filter(entry => entry.cassette.id === named)
+    if (selected.length === 0) {
+      throw new EvalNamedInputError('cassette', named, cassettesRoot, 'replay')
+    }
+  }
+  if (filters.run !== undefined) {
+    const named = filters.run
+    selected = selected.filter(entry => {
+      const head = entry.cassette.id.split('/')[0]
+      return head === named || head === slugBranch(named)
+    })
+    if (selected.length === 0) {
+      throw new EvalNamedInputError('run', named, cassettesRoot, 'replay')
+    }
+  }
+  if (filters.product !== undefined) {
+    const named = filters.product
+    selected = selected.filter(entry => cassetteProductPartition(entry.cassette) === named)
+  }
+  selected.sort((a, b) => (a.cassette.id < b.cassette.id ? -1 : a.cassette.id > b.cassette.id ? 1 : 0))
+
+  const notices: string[] = []
+  const zeroJudge = (configured: boolean): ReplayJudgeCounters => ({
+    configured,
+    invoked: 0,
+    settled: 0,
+    abstained: 0,
+    errors: 0,
+    notInvoked: 0,
+  })
+
+  // (4) empty batch: exit-0 data, no planner/judge resolution spend (D-02).
+  if (selected.length === 0) {
+    notices.push('empty sweep — no staged cassette bundles matched')
+    return {
+      batchKey: 'empty',
+      swept: bundleDirs.length,
+      replayed: 0,
+      loadRefusals,
+      replayRefusals: {},
+      scored: 0,
+      judge: zeroJudge(session.evalConfig.judge !== undefined),
+      replaysRoot,
+      notices,
+    }
+  }
+
+  const batchKey = computeBatchKey(selected.map(entry => entry.cassette.id))
+
+  // (5) planner + judge through the run-parity named-LLM chain (D-03). resolveEvalJudge takes
+  // ONE argument: any `--judge` flag was already field-wise merged into session.evalConfig.
+  const planner = await resolveReplayPlanner(session)
+  const judgeResolution = await resolveEvalJudge(session)
+  if (judgeResolution.notice !== undefined) notices.push(judgeResolution.notice)
+
+  // (6) the replay loop, in sorted id order, everything under the ONE batchKey audit dir (D-07).
+  const replayBaseDir = evalAuditDir(session.configDir, 'replay', batchKey)
+  const recordStore = new FsReplayRecordStore({ root: agentQaRoot })
+  const scoreStore = new FsScoreStore({ root: agentQaRoot })
+  const replayRefusals: Record<string, number> = {}
+  const replayedDirs: string[] = []
+  let replayed = 0
+
+  for (const entry of selected) {
+    // Progress ALWAYS rides stderr — stdout stays reserved for the rendered DTO.
+    process.stderr.write(`replay: ${entry.cassette.id}\n`)
+    let outcome: Awaited<ReturnType<typeof runCassetteReplay>>
+    try {
+      outcome = await runCassetteReplay({
+        cassette: entry.cassette,
+        artifacts: entry.artifacts,
+        profile: planner.profile,
+        auth: planner.auth,
+        ...(opts.plannerOverrides !== undefined ? { modelOverrides: opts.plannerOverrides } : {}),
+        ...(session.evalConfig.k !== undefined ? { k: session.evalConfig.k } : {}),
+        ...(session.evalConfig.seed !== undefined ? { seed: session.evalConfig.seed } : {}),
+        ...(judgeResolution.judge !== undefined
+          ? {
+              judge: {
+                ...judgeResolution.judge,
+                ...(opts.judgeOverrides !== undefined
+                  ? { modelOverrides: opts.judgeOverrides }
+                  : {}),
+              },
+            }
+          : {}),
+        maskingContextFactory: session.maskingContextFactory,
+        replayOutputBaseDir: replayBaseDir,
+        recordStore,
+        scoreStore,
+      })
+    } catch (err) {
+      // A helper-thrown harness error on one cassette is DATA — the loop continues (D-08,
+      // the 368 never-batch-abort law extended to the CLI batch).
+      bumpCounter(replayRefusals, 'harness-error')
+      notices.push(
+        `harness error replaying ${entry.cassette.id}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+      continue
+    }
+    if (!('granularity' in outcome)) {
+      bumpCounter(replayRefusals, outcome.reason)
+      continue
+    }
+    replayed++
+    replayedDirs.push(
+      join(replaysRoot, ...entry.cassette.id.split('/').map(segment => slugBranch(segment))),
+    )
+  }
+
+  // (7) fold judge dispositions FROM the persisted score records — never recomputed (D-04).
+  const judge = zeroJudge(judgeResolution.judge !== undefined)
+  let scored = 0
+  for (const recordDir of replayedDirs) {
+    const load = loadScoreRecord(recordDir)
+    if (load.kind === 'absent') continue
+    if (load.kind === 'refused') {
+      notices.push(`score read refused under ${recordDir}: ${load.refusal.detail}`)
+      continue
+    }
+    scored++
+    foldJudgeDispositions(load.record.score, judge)
+  }
+
+  return {
+    batchKey,
+    swept: bundleDirs.length,
+    replayed,
+    loadRefusals,
+    replayRefusals,
+    scored,
+    judge,
+    replaysRoot,
+    notices,
+  }
+}
+
+/**
+ * Resolve the D-02 `--product` partition key from a cassette's recorded scope — the served
+ * brief's ScopeKey is the one scope stamp every cassette carries (a procedure reads its first
+ * decision record). A cassette with no decision entry maps to the typed 'default' partition.
+ */
+function cassetteProductPartition(cassette: Cassette): string {
+  if (cassette.granularity === 'leaf') {
+    return resolveProductPartition(cassette.input.servedBrief.scope)
+  }
+  for (const step of cassette.steps) {
+    if (step.kind === 'decision') {
+      return resolveProductPartition(step.record.input.servedBrief.scope)
+    }
+  }
+  return 'default'
+}
+
+/**
+ * Fold one persisted CassetteScore's judge stamps into the DTO counters — the exact
+ * buildEvalReport disposition read (metrics.ts), scalar-summed for the summary surface (D-04).
+ */
+function foldJudgeDispositions(score: CassetteScore, judge: ReplayJudgeCounters): void {
+  const entries: readonly DecisionScoreEntry[] =
+    score.kind === 'leaf' ? [score.entry] : score.kind === 'procedure' ? score.entries : []
+  for (const entry of entries) {
+    if (entry.kind !== 'decision') continue
+    const decision = entry.score
+    if (decision.kind === 'unresolved-tie') {
+      const outcome = decision.judgeOutcome
+      if (outcome === undefined) continue
+      if (outcome.kind === 'abstained') {
+        judge.abstained++
+        judge.invoked++
+      } else if (outcome.kind === 'judge-error') {
+        judge.errors++
+        judge.invoked++
+      } else {
+        judge.notInvoked++
+      }
+    } else if (decision.kind === 'scored' && decision.judgeSettled !== undefined) {
+      judge.settled++
+      judge.invoked++
+    }
+  }
 }
 
 /**
