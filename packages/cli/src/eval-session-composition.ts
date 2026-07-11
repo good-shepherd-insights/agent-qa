@@ -25,27 +25,45 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  buildEvalReport,
   buildSeedingPlan,
+  canonicalJson,
   computeBatchKey,
   extractRunCassettes,
   resolveJudgeFamily,
   resolveProductPartition,
 } from '@vostride/agent-qa-eval'
-import type { Cassette, CassetteScore, DecisionScoreEntry } from '@vostride/agent-qa-eval'
+import type {
+  Cassette,
+  CassetteLabelLeg,
+  CassetteScore,
+  DecisionScoreEntry,
+  EvalBatchReport,
+  JudgeIdentityBlock,
+  ScoredBatchEntry,
+} from '@vostride/agent-qa-eval'
 import {
   DEFAULT_EVAL_CASSETTES_SUBDIR,
   DEFAULT_EVAL_REPLAYS_SUBDIR,
   FsCassetteStore,
   FsReplayRecordStore,
+  FsReportStore,
   FsRunArtifactSource,
   FsScoreStore,
+  commitEvalReport,
   listCassetteBundleDirs,
+  listReplayRecordDirs,
   loadCassetteBundle,
+  loadReplayRecord,
   loadScoreRecord,
   runCassetteReplay,
   seedCommittedCorpus,
 } from '@vostride/agent-qa-eval-local'
-import type { CassetteBundleLoad, SeedingRefusal } from '@vostride/agent-qa-eval-local'
+import type {
+  CassetteBundleLoad,
+  CommitEvalReportOutcome,
+  SeedingRefusal,
+} from '@vostride/agent-qa-eval-local'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   ModelProfile,
@@ -54,6 +72,7 @@ import type {
 } from '@vostride/agent-qa-model'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { resolveConfig } from './config.js'
+import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
   buildRunMaskingContext,
   resolveRunExecutionContext,
@@ -731,6 +750,181 @@ export async function runSeedVerb(
   }
 
   return result
+}
+
+// ---- the report verb (372-07, D-13/D-14) -------------------------------------------------------
+
+/** The report verb's one DTO — the console renders FROM this, never around it (D-04). */
+export interface ReportVerbResult {
+  /** sha256hex over the sorted assembled cassette ids — minted by buildEvalReport (D-13). */
+  batchKey: string
+  /** Persisted replay records that entered the ONE batch (refusal outcomes included). */
+  entries: number
+  /** The ONE whole-corpus EvalBatchReport — one buildEvalReport call, one headline (D-14). */
+  report: EvalBatchReport
+  /** The staged report file FsReportStore derived from the batchKey. */
+  stagedFile: string
+  /** The typed commitEvalReport outcome when `--commit` ran — egress blocks are DATA (D-08). */
+  committed?: CommitEvalReportOutcome
+  /** Batch-level judge identity: consistent blocks pass through; mixed/absent surface honestly. */
+  judgeIdentity: 'present' | 'absent' | 'mixed'
+  /** Stderr-destined notices: read refusals, missing bundles, judge identity honesty. */
+  notices: string[]
+}
+
+/**
+ * The report verb pipeline (D-13/D-14): assemble ONE whole-corpus batch from every persisted
+ * replay record under `.agent-qa/eval/replays/` via the 372-02 read legs — entries joined as
+ * { cassetteId, outcome, score?, label? } from replay.json / score.json / the staged cassette's
+ * label leg. A persisted refusal outcome IS an entry (Pitfall 4 — never dropped). Judge identity
+ * threads from the persisted ScoreRecord.judge blocks: consistent blocks pass to buildEvalReport,
+ * mixed or absent surfaces honestly — never fabricated (T-372-20). Exactly ONE buildEvalReport
+ * call aggregates (the CLI never re-sums scores); the staged report always lands via
+ * FsReportStore, and `--commit` additionally routes through commitEvalReport's egress
+ * checkpoint into the committed root (D-13/D-17).
+ */
+export async function runReportVerb(
+  session: EvalSession,
+  filters: { run?: string; cassette?: string; product?: string } = {},
+  opts: { commit?: boolean } = {},
+): Promise<ReportVerbResult> {
+  const agentQaRoot = resolve(session.configDir, '.agent-qa')
+  const replaysRoot = join(agentQaRoot, DEFAULT_EVAL_REPLAYS_SUBDIR)
+  const cassettesRoot = join(agentQaRoot, DEFAULT_EVAL_CASSETTES_SUBDIR)
+  const notices: string[] = []
+
+  // (1) Label join index from the staged bundles: cassette id → label leg + product partition.
+  // Bundle load refusals are notices — the report still assembles from the replay records.
+  // Only LEAF cassettes carry a label leg (pair members are leaves, D-08); procedures join
+  // with partition only.
+  const labelsById = new Map<string, CassetteLabelLeg>()
+  const partitionsById = new Map<string, string>()
+  for (const bundleDir of listCassetteBundleDirs(cassettesRoot)) {
+    const load = loadCassetteBundle(bundleDir)
+    if (load.kind === 'refused') {
+      notices.push(`staged bundle read refused under ${bundleDir}: ${load.refusal.detail}`)
+      continue
+    }
+    if (load.cassette.granularity === 'leaf') {
+      labelsById.set(load.cassette.id, load.cassette.label)
+    }
+    partitionsById.set(load.cassette.id, cassetteProductPartition(load.cassette))
+  }
+
+  // (2) Every persisted replay record is an entry: a loaded outcome verbatim, or — for an
+  // unreadable record — the typed read refusal itself (a ReplayRefusal IS a ReplayCassetteOutcome).
+  const assembled: ScoredBatchEntry[] = []
+  const judgeBlocks: JudgeIdentityBlock[] = []
+  let missingBundleCount = 0
+  for (const recordDir of listReplayRecordDirs(replaysRoot)) {
+    const load = loadReplayRecord(recordDir)
+    const outcome = load.kind === 'loaded' ? load.outcome : load.refusal
+    if (load.kind === 'refused') {
+      notices.push(`replay record read refused under ${recordDir}: ${load.refusal.detail}`)
+    }
+    const cassetteId = outcome.cassetteId
+
+    let score: CassetteScore | undefined
+    const scoreLoad = loadScoreRecord(recordDir)
+    if (scoreLoad.kind === 'loaded') {
+      score = scoreLoad.record.score
+      if (scoreLoad.record.judge !== undefined) judgeBlocks.push(scoreLoad.record.judge)
+    } else if (scoreLoad.kind === 'refused') {
+      notices.push(`score read refused under ${recordDir}: ${scoreLoad.refusal.detail}`)
+    }
+
+    const label = labelsById.get(cassetteId)
+    if (!partitionsById.has(cassetteId)) missingBundleCount++
+
+    assembled.push({
+      cassetteId,
+      outcome,
+      ...(score !== undefined ? { score } : {}),
+      ...(label !== undefined ? { label } : {}),
+    })
+  }
+  if (missingBundleCount > 0) {
+    notices.push(
+      `${missingBundleCount} replay record(s) have no staged cassette bundle — label legs absent`,
+    )
+  }
+
+  // (3) The ONE D-02 filter vocabulary, replay semantics: a named miss is the only throw.
+  let entries = assembled
+  if (filters.cassette !== undefined) {
+    const named = filters.cassette
+    entries = entries.filter(entry => entry.cassetteId === named)
+    if (entries.length === 0) {
+      throw new EvalNamedInputError('cassette', named, replaysRoot, 'report')
+    }
+  }
+  if (filters.run !== undefined) {
+    const named = filters.run
+    entries = entries.filter(entry => {
+      const head = entry.cassetteId.split('/')[0]
+      return head === named || head === slugBranch(named)
+    })
+    if (entries.length === 0) {
+      throw new EvalNamedInputError('run', named, replaysRoot, 'report')
+    }
+  }
+  if (filters.product !== undefined) {
+    const named = filters.product
+    entries = entries.filter(entry => partitionsById.get(entry.cassetteId) === named)
+  }
+  entries.sort((a, b) => (a.cassetteId < b.cassetteId ? -1 : a.cassetteId > b.cassetteId ? 1 : 0))
+
+  // (4) Batch judge identity from the persisted blocks only (T-372-20): all defined blocks
+  // canonicalJson-equal ⇒ the identity passes through; none ⇒ honest absence; differing ⇒
+  // 'mixed' and the report carries NO judge block — an identity is never synthesized.
+  let judgeIdentity: ReportVerbResult['judgeIdentity']
+  let judgeForReport: JudgeIdentityBlock | undefined
+  if (judgeBlocks.length === 0) {
+    judgeIdentity = 'absent'
+    notices.push('no judge identity on any persisted score record — the report carries no judge block')
+  } else {
+    const first = canonicalJson(judgeBlocks[0])
+    if (judgeBlocks.every(block => canonicalJson(block) === first)) {
+      judgeIdentity = 'present'
+      judgeForReport = judgeBlocks[0]
+    } else {
+      judgeIdentity = 'mixed'
+      notices.push(
+        'mixed judge identities across persisted score records — the report carries no judge '
+          + 'block (never fabricated)',
+      )
+    }
+  }
+
+  // (5) Exactly ONE buildEvalReport call — one batch, one report, one headline (D-14). The CLI
+  // never sums scores; every counter and rate is the aggregator's.
+  const report = buildEvalReport(entries, judgeForReport)
+
+  // (6) The staged report ALWAYS lands (uncommitted runtime staging, batchKey-derived filename).
+  const staged = new FsReportStore({ root: agentQaRoot }).save(report)
+
+  // (7) `--commit`: render the deterministic markdown projection and route BOTH parts through
+  // commitEvalReport's egress checkpoint into the committed root (D-13) — the typed outcome
+  // (committed / egress-blocked / write-conflict) folds into the DTO as data (D-08).
+  let committed: CommitEvalReportOutcome | undefined
+  if (opts.commit === true) {
+    committed = commitEvalReport({
+      report,
+      markdown: renderEvalReportMarkdown(report),
+      committedRoot: resolve(session.configDir, 'agent-qa-eval'),
+      reportOutputBaseDir: evalAuditDir(session.configDir, 'report', report.batchKey),
+    })
+  }
+
+  return {
+    batchKey: report.batchKey,
+    entries: entries.length,
+    report,
+    stagedFile: staged.file,
+    ...(committed !== undefined ? { committed } : {}),
+    judgeIdentity,
+    notices,
+  }
 }
 
 // ---- internals --------------------------------------------------------------------------------
