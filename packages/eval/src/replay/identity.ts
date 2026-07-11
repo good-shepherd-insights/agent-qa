@@ -34,9 +34,17 @@ function resolveTarget(
 }
 
 /**
- * Normalize a value-bearing action's payload to its identity value (trim only). Deeper
- * value equivalence is Phase 369's token-level matcher — exported so 369 evolves it in ONE
- * place. Returns undefined for non-value-bearing ops (typed-absent, never fabricated).
+ * The ONE D-03 value normalization shared by identity grouping and the matcher value axis:
+ * trim, casefold, then collapse internal whitespace. Tokenization and F1 remain in
+ * match/value.ts so this primitive owns vocabulary normalization only.
+ */
+export function normalizeValueText(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/**
+ * Normalize a value-bearing action's payload through the shared D-03 value vocabulary.
+ * Returns undefined for non-value-bearing ops (typed-absent, never fabricated).
  */
 export function normalizeIdentityValue(action: Action): string | undefined {
   const view = action as unknown as Record<string, unknown>
@@ -46,7 +54,7 @@ export function normalizeIdentityValue(action: Action): string | undefined {
       : typeof view.text === 'string'
         ? view.text
         : undefined
-  return raw === undefined ? undefined : raw.trim()
+  return raw === undefined ? undefined : normalizeValueText(raw)
 }
 
 /**
