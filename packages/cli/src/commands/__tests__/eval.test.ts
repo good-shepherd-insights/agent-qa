@@ -34,11 +34,13 @@ import type {
   ServedBrief,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
+import { committedCassettePath, committedLabelPath } from '@vostride/agent-qa-eval-local'
 import {
   EvalNamedInputError,
   resolveEvalSession,
   runExtractVerb,
   runReplayVerb,
+  runSeedVerb,
 } from '../../eval-session-composition.js'
 import type {
   EvalSession,
@@ -630,6 +632,123 @@ describe('runReplayVerb — offline sweep through the sanctioned composition (D-
       notInvoked: 0,
     })
     expect(result.notices.some(notice => notice.includes('no judge configured'))).toBe(true)
+  })
+})
+
+// ---- 372-07 Task 1: runSeedVerb — per-handoff plan-then-execute, wrapped 1:1 (D-01/D-16) ------
+
+/**
+ * Seed fixture: the extract fixture with Luhn-safe state timestamps. The committed egress
+ * checkpoint's credit-card detector Luhn-checks every 13-19 digit run and the extract fixture's
+ * 1725000000100 stateBefore timestamp happens to pass — a 10-digit epoch keeps the committed
+ * cassette text free of card-shaped numbers (the seeding-composition test precedent).
+ */
+function saveSeedRun(
+  dir: string,
+  runId: string,
+  options: { withPairSkipStep?: boolean } = {},
+): void {
+  const root = join(dir, '.agent-qa')
+  const ref = new FsEvidenceArtifactStore({ root, runId }).persistDecisionScreenshot(BLOB_BYTES)
+  const handoff = buildHandoff({ runId, screenshotRef: ref })
+  for (const test of handoff.tests) {
+    for (const testStep of test.steps) {
+      for (const subAction of testStep.subActions) {
+        subAction.stateBefore = { ...subAction.stateBefore, timestamp: 1_725_000_000 }
+      }
+      if (options.withPairSkipStep) {
+        // A selfHeal block whose failed action matches NO recorded sub-action mints exactly one
+        // typed 'no-match' pair skip — never silent (T-371-18), carried verbatim by the verb.
+        const recorded = testStep.subActions[0]!
+        testStep.selfHeal = {
+          failedDecision: {
+            plan: 'Click a button that was never recorded',
+            plannedAction: { type: 'click', ref: asRef('e-nonexistent') },
+            result: structuredClone(recorded.result),
+          },
+          recoveringDecision: {
+            plan: recorded.plan,
+            plannedAction: structuredClone(recorded.plannedAction),
+            result: structuredClone(recorded.result),
+          },
+        }
+      }
+    }
+  }
+  new FsHandoffStore({ root, runId }).save(handoff)
+}
+
+describe('runSeedVerb — corpus committing wraps seedCommittedCorpus 1:1 (D-01/D-16/D-17)', () => {
+  it('re-extracts per handoff, plans, seeds the committed root, and sums the reports (D-16)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-beta')
+    const session = await sessionFor(configPath)
+    await runExtractVerb(session)
+    const ids = await stagedCassetteIds(dir)
+    const leafIds = ids.filter(id => id.endsWith('-leaf'))
+    expect(leafIds).toHaveLength(2)
+
+    const result = await runSeedVerb(session)
+
+    // The committedRoot is ALWAYS <configDir>/agent-qa-eval (spec §B7, D-12) — no flag retargets it.
+    expect(result.committedRoot).toBe(resolve(dir, 'agent-qa-eval'))
+    expect(result.handoffsSeeded).toBe(2)
+    // Each run's single verified-pass live decision is one silver case (D-10/D-11).
+    expect(result.seededCount).toBe(2)
+    expect(result.unchangedCount).toBe(0)
+    expect(result.refusals).toEqual([])
+    expect(result.pairSkips).toBe(0)
+    expect(result.pairCounts).toEqual({ total: 0, sameState: 0, differingState: 0 })
+    // Committed files land under the product partition — cassette + label per admitted case.
+    for (const leafId of leafIds) {
+      expect(existsSync(join(result.committedRoot, committedCassettePath('default', leafId)))).toBe(true)
+      expect(existsSync(join(result.committedRoot, committedLabelPath('default', leafId)))).toBe(true)
+    }
+    expect(existsSync(join(result.committedRoot, 'eval-root.json'))).toBe(true)
+  })
+
+  it('re-seeds idempotently: the second sweep reports every case unchanged (D-17)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    saveSeedRun(dir, 'run-beta')
+    const session = await sessionFor(configPath)
+
+    const first = await runSeedVerb(session)
+    expect(first.seededCount).toBe(2)
+    expect(first.refusals).toEqual([])
+
+    const second = await runSeedVerb(session)
+    expect(second.unchangedCount).toBe(first.seededCount)
+    expect(second.seededCount).toBe(0)
+    expect(second.refusals).toEqual([])
+  })
+
+  it('threads params.silverPerTestCap into buildSeedingPlan — cap 0 admits nothing (D-11)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-alpha')
+    const session = await sessionFor(configPath)
+
+    const capped = await runSeedVerb(session, {}, { silverPerTestCap: 0 })
+    expect(capped.seededCount).toBe(0)
+    // The excluded candidate is a typed 'cap-exceeded' exclusion, never silently dropped.
+    expect(capped.silverExclusions).toBeGreaterThan(0)
+
+    const uncapped = await runSeedVerb(session)
+    expect(uncapped.seededCount).toBe(1)
+  })
+
+  it('carries typed pair skips verbatim from the SeedingReport (T-371-18)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveSeedRun(dir, 'run-skips', { withPairSkipStep: true })
+    const session = await sessionFor(configPath)
+
+    const result = await runSeedVerb(session)
+
+    expect(result.pairSkips).toBe(1)
+    // The selfHeal step's decision belongs to the pair channel, so silver excludes it too.
+    expect(result.seededCount).toBe(0)
+    expect(result.silverExclusions).toBeGreaterThan(0)
   })
 })
 
