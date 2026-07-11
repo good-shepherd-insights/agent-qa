@@ -36,6 +36,14 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // paths, byte-compare idempotence, typed write-conflict refusal; content policy (the
   // committed-egress checkpoint) lives in the seeding composition helper, never here.
   'the write-once committed eval-root store scaffolding and refusing under agent-qa-eval/',
+  // Phase 371 D-14/D-16 (ROOT-02): the ONE sanctioned corpus-seeding composition helper
+  // (seedCommittedCorpus) executing eval-core SeedingPlans — every committed text write through
+  // assertCommittedEgressSafe (fail-closed, JsonlAuditSink-audited, channel 'eval-seeding'),
+  // per-case atomic refusal on block or write-conflict, batch never aborts; blob bytes bypass
+  // the checkpoint and land only under ignore-covered blobs/ paths (D-15). Selection and
+  // labeling stay in eval core — this helper executes, never decides. 372's CLI wraps exactly
+  // this function.
+  'the single sanctioned corpus-seeding composition helper writing the committed eval root through the egress checkpoint',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
