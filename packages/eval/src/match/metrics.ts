@@ -135,6 +135,14 @@ export interface EvalBatchReport {
     recoveredPositiveCount: number
     eligiblePositiveCount: number
     recoveryAccuracy?: number
+    /**
+     * D-08 bucket: a full match on a contrastive-negative repeats the recorded mistake and is
+     * excluded from the headline accuracy numerator AND denominator; counted here so the
+     * channel is never invisible. Always present; label-free batches state zero.
+     */
+    negativeDecisionCount: number
+    /** Excluded negative decisions whose replay fully matched the recorded mistaken action. */
+    negativeFullMatchCount: number
   }
   totalCost: TotalCost
   /** D-16 report-level judge identity receipt; absent when no judge existed for the batch. */
@@ -276,11 +284,16 @@ export function buildEvalReport(
 
   let accuracyNumerator = 0
   let accuracyDenominator = 0
+  let negativeDecisionCount = 0
+  let negativeFullMatchCount = 0
 
   for (const entry of entries) {
     if (isReplayRefusal(entry.outcome)) {
       refusalCounts[entry.outcome.reason]++
     }
+    // D-08: pair members are leaf cassettes carrying exactly one decision, so the per-entry
+    // relation read is exact for every decision the entry contributes.
+    const isContrastiveNegative = entry.label?.pairing?.relation === 'contrastive-negative'
 
     for (const scoreEntry of scoreEntries(entry.score)) {
       if (scoreEntry.kind === 'never-scored') {
@@ -294,7 +307,8 @@ export function buildEvalReport(
 
       const score = scoreEntry.score
       if (score.kind === 'miss-by-failure') {
-        accuracyDenominator++
+        if (isContrastiveNegative) negativeDecisionCount++
+        else accuracyDenominator++
         missByFailure.set(score.reason, (missByFailure.get(score.reason) ?? 0) + 1)
       } else if (score.kind === 'unresolved-tie') {
         tieCounts[score.cause]++
@@ -320,8 +334,13 @@ export function buildEvalReport(
           addJudgeUsage(judgeHonesty.cost, settledStamp.usage)
         }
         if (score.axes.elementIdentity.kind !== 'unscorable') {
-          accuracyDenominator++
-          if (isDecisionFullMatch(score)) accuracyNumerator++
+          if (isContrastiveNegative) {
+            negativeDecisionCount++
+            if (isDecisionFullMatch(score)) negativeFullMatchCount++
+          } else {
+            accuracyDenominator++
+            if (isDecisionFullMatch(score)) accuracyNumerator++
+          }
         }
       }
 
@@ -410,6 +429,8 @@ export function buildEvalReport(
     selfHealPairCount: scoredPairs.size,
     recoveredPositiveCount,
     eligiblePositiveCount,
+    negativeDecisionCount,
+    negativeFullMatchCount,
     ...(eligiblePositiveCount === 0
       ? {}
       : { recoveryAccuracy: recoveredPositiveCount / eligiblePositiveCount }),

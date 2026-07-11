@@ -442,6 +442,8 @@ describe('buildEvalReport', () => {
       recoveredPositiveCount: 1,
       eligiblePositiveCount: 2,
       recoveryAccuracy: 0.5,
+      negativeDecisionCount: 2,
+      negativeFullMatchCount: 2,
     })
 
     const pairless = buildEvalReport([scoredEntry('unpaired', settledScore())])
@@ -449,6 +451,8 @@ describe('buildEvalReport', () => {
       selfHealPairCount: 0,
       recoveredPositiveCount: 0,
       eligiblePositiveCount: 0,
+      negativeDecisionCount: 0,
+      negativeFullMatchCount: 0,
     })
     expect(Object.hasOwn(pairless.recovery, 'recoveryAccuracy')).toBe(false)
   })
