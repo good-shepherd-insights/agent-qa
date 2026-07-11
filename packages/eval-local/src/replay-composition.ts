@@ -21,18 +21,23 @@
 //     replay output dir (D-06 / T-368-12 / T-368-13). The masking context is disposed in `finally`.
 
 import {
+  buildDecisionDiff,
   neverEscalate,
   replayCassette,
+  scoreCassetteReplay,
 } from '@vostride/agent-qa-eval'
 import type {
   ArtifactSource,
   Cassette,
+  CassetteScore,
+  DecisionDiff,
   ReplayCassetteInput,
   ReplayCassetteOutcome,
   ReplayClock,
   ReplayEscalationPredicate,
   ReplayPlannerFactory,
   ReplayPlannerHandle,
+  ReplayResult,
 } from '@vostride/agent-qa-eval'
 import {
   createModel,
@@ -50,6 +55,7 @@ import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 
 import type { FsReplayRecordStore } from './replay-record-store.js'
+import type { FsScoreStore } from './score-store.js'
 
 export interface RunCassetteReplayInput {
   /** A loaded, guarded cassette (leaf or procedure) — normally from loadCassetteBundle. */
@@ -72,6 +78,12 @@ export interface RunCassetteReplayInput {
   replayOutputBaseDir: string
   /** Optional persistence: when supplied, the outcome is saved after the safety scope closes (D-12). */
   recordStore?: FsReplayRecordStore
+  /**
+   * Optional D-13 score persistence: when supplied and the outcome is a ReplayResult (refusals are
+   * never scored — reports count them instead), the score + per-decision diffs are computed in
+   * eval core and saved AFTER recordStore.save (record-then-score ordering, OQ-2).
+   */
+  scoreStore?: FsScoreStore
 }
 
 /** The platform the action-tool slice is derived for — the cassette's recorded observation platform. */
@@ -85,6 +97,86 @@ function cassettePlatform(cassette: Cassette): ScreenState['platform'] {
     }
   }
   return 'web'
+}
+
+function isReplayResult(outcome: ReplayCassetteOutcome): outcome is ReplayResult {
+  return 'granularity' in outcome
+}
+
+/**
+ * The matcher-constitution stamp already minted inside the eval-core score — read for the persisted
+ * record's attribution field, never computed here (F9).
+ */
+function scoreMatcherVersion(score: CassetteScore): number {
+  if (score.kind === 'shape-mismatch') return score.matcherVersion
+  const entries =
+    score.kind === 'leaf' ? [score.entry] : score.kind === 'procedure' ? score.entries : []
+  for (const entry of entries) {
+    if (entry.kind === 'decision') return entry.score.matcherVersion
+    if (entry.kind === 'never-scored') return entry.matcherVersion
+  }
+  // Unreachable through this composition: refusal outcomes are guarded before scoring, and every
+  // extracted cassette carries at least one decision entry.
+  throw new Error('cassette score carries no matcher-version stamp')
+}
+
+/**
+ * Orchestrate eval core's buildDecisionDiff over every scored decision entry — joining each entry
+ * back to its recorded sidecar/elements and its replayed decision result. Pure plumbing: the diff
+ * content itself is computed entirely in eval core (F9).
+ */
+function decisionDiffs(
+  cassette: Cassette,
+  outcome: ReplayResult,
+  score: CassetteScore,
+): DecisionDiff[] {
+  if (score.kind === 'leaf') {
+    if (cassette.granularity !== 'leaf' || outcome.granularity !== 'leaf') return []
+    const entry = score.entry
+    if (entry.kind !== 'decision') return []
+    return [
+      buildDecisionDiff({
+        cassetteId: cassette.id,
+        decisionOrdinal: entry.decisionOrdinal,
+        sidecar: cassette.sidecar,
+        elements: cassette.input.stateBefore.elements,
+        result: outcome,
+        score: entry.score,
+      }),
+    ]
+  }
+
+  if (score.kind !== 'procedure') return []
+  if (cassette.granularity !== 'procedure' || outcome.granularity !== 'procedure') return []
+  const diffs: DecisionDiff[] = []
+  for (const entry of score.entries) {
+    if (entry.kind !== 'decision') continue
+    const step = outcome.steps.find(
+      candidate =>
+        candidate.kind === 'decision' &&
+        candidate.stepIndex === entry.stepIndex &&
+        candidate.decisionOrdinal === entry.decisionOrdinal,
+    )
+    const record = cassette.steps.find(
+      candidate =>
+        candidate.kind === 'decision' &&
+        candidate.stepIndex === entry.stepIndex &&
+        candidate.decisionOrdinal === entry.decisionOrdinal,
+    )
+    if (step?.kind !== 'decision' || record?.kind !== 'decision') continue
+    diffs.push(
+      buildDecisionDiff({
+        cassetteId: cassette.id,
+        ...(entry.stepIndex === undefined ? {} : { stepIndex: entry.stepIndex }),
+        decisionOrdinal: entry.decisionOrdinal,
+        sidecar: record.record.sidecar,
+        elements: record.record.input.stateBefore.elements,
+        result: step.result,
+        score: entry.score,
+      }),
+    )
+  }
+  return diffs
 }
 
 /**
@@ -181,6 +273,21 @@ export async function runCassetteReplay(
 
   if (input.recordStore !== undefined) {
     input.recordStore.save(outcome)
+  }
+
+  // Record-then-score ordering is load-bearing (OQ-2): the record store recreates the cassette dir
+  // in full (rm + mkdir), so the file-scoped score write MUST land after it — never before —
+  // or a re-run would wipe the fresh score.json. Refusals save a record but never a score
+  // (they are counted in reports instead). Score + diffs are computed in eval core (F9);
+  // this composition only orchestrates and saves.
+  if (input.scoreStore !== undefined && isReplayResult(outcome)) {
+    const score = scoreCassetteReplay(input.cassette, outcome)
+    input.scoreStore.save({
+      cassetteId: input.cassette.id,
+      matcherVersion: scoreMatcherVersion(score),
+      score,
+      diffs: decisionDiffs(input.cassette, outcome, score),
+    })
   }
 
   return outcome

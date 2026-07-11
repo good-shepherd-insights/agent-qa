@@ -30,3 +30,9 @@ export type {
   FsReplayRecordStoreConfig,
   WrittenReplayRecord,
 } from './replay-record-store.js'
+
+export { FsScoreStore, SCORE_FILE } from './score-store.js'
+export type { FsScoreStoreConfig, ScoreRecord, WrittenScoreRecord } from './score-store.js'
+
+export { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore } from './report-store.js'
+export type { FsReportStoreConfig, WrittenReport } from './report-store.js'

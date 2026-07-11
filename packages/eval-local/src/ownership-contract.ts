@@ -13,6 +13,16 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // persistence. This deliberately makes eval-local the SECOND package (after cli) importing both
   // model and runner; Phase 372's CLI wraps exactly this helper.
   'the single sanctioned replay-composition helper wiring createModel + LLMPlanner + runSafetyScope',
+  // Phase 369 D-13: per-cassette score persistence — score.json written BESIDE its replay.json in
+  // the same slugged cassette dir, FILE-scoped overwrite (never a dir recreate: Pitfall 5) so the
+  // composition's record-then-score ordering keeps both files alive across re-runs (OQ-2).
+  // Serialization only: every score and diff arrives computed from eval core (F9) — the
+  // forbidden-scoring clause below stays true.
+  'per-cassette score and diff persistence beside replay records',
+  // Phase 369 D-13/D-14: batch-report persistence — the aggregated EvalBatchReport as its own
+  // artifact under eval/reports/, keyed by the deterministic replay-batch key. Uncommitted runtime
+  // staging beside eval/replays; committed placement is Phase 371/372's concern.
+  'aggregated eval batch-report persistence under the runtime staging root',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
