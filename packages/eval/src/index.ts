@@ -75,6 +75,7 @@ export type {
   TierMatchResult,
 } from './match/tiers'
 export {
+  isDecisionFullMatch,
   representativeDecisionSample,
   scoreCassetteReplay,
   scoreDecision,
@@ -85,6 +86,14 @@ export type {
   DecisionPartialBreakdown,
   DecisionScore,
   DecisionScoreEntry,
+  JudgeAbstentionCause,
+  JudgeConfidence,
+  JudgeErrorReason,
+  JudgeIdentityBlock,
+  JudgeNotInvokedReason,
+  JudgeOutcome,
+  JudgeSettled,
+  JudgeTokenUsage,
   NeverScoredDecision,
   ProcedureScoreSummary,
   ScoreDecisionContext,
@@ -101,6 +110,27 @@ export type {
 export { tiersSettlePredicate } from './match/predicate'
 export { buildEvalReport, computeBatchKey } from './match/metrics'
 export type { EvalBatchReport, ScoredBatchEntry } from './match/metrics'
+
+export type {
+  JudgeCallRequest,
+  JudgeCallResult,
+  JudgeOrder,
+  JudgePort,
+  JudgeVerdictCategory,
+} from './judge/port'
+export { JUDGE_CONFIG } from './judge/config'
+export type { JudgeConfig } from './judge/config'
+export { JUDGE_FAMILY_MAP, resolveJudgeFamily } from './judge/family'
+export type { JudgeFamily } from './judge/family'
+export { buildJudgePrompt } from './judge/prompt'
+export type {
+  JudgeElementEvidence,
+  JudgePromptPayload,
+  JudgeQuestion,
+  JudgeTieEvidence,
+} from './judge/prompt'
+export { adjudicateCassetteScore, assessJudgeEligibility } from './judge/adjudicate'
+export type { AdjudicationResult, JudgeEligibility } from './judge/adjudicate'
 
 export type { CassetteInputLeg } from './cassette/input-leg'
 export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'
