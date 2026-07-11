@@ -53,9 +53,21 @@ function decisionFor(subAction: SubActionEvidence): Decision {
  * The seeding composition fixture: test 0 stays the fixture's verified-pass
  * test (one live decision → one silver case); test 1 becomes a fully
  * resolvable self-heal pair (two live decisions → two near-gold cases).
+ * Both pair decisions share a byte-identical stateBefore carrying BOTH
+ * anchors, so each cassette is complete and the pair stamps sameState.
  */
 function seedingHandoff(): CompletedRunHandoff {
   const handoff = makeLocalV2Handoff()
+  // Luhn-proof the fixture timestamps: the default guardrail's credit-card detector
+  // Luhn-checks every 13-19 digit run, and the fixture's 1725000000100 happens to
+  // pass — a 10-digit epoch keeps the committed text free of card-shaped numbers.
+  for (const test of handoff.tests) {
+    for (const step of test.steps) {
+      for (const subAction of step.subActions) {
+        subAction.stateBefore = { ...subAction.stateBefore, timestamp: 1_725_000_000 }
+      }
+    }
+  }
   const silverTest = handoff.tests[0]!
   const pairTest = structuredClone(silverTest)
   pairTest.testId = 'eval-local::self-heal'
@@ -63,8 +75,24 @@ function seedingHandoff(): CompletedRunHandoff {
   pairTest.steps = [structuredClone(silverTest.steps[0]!)]
   const step = pairTest.steps[0]!
   const failedSub = step.subActions[0]!
+  const continueRef2 = asRef('e-continue-2')
+  const primaryElement = failedSub.stateBefore.elements[0]!
+  failedSub.stateBefore.elements = [
+    primaryElement,
+    {
+      ...structuredClone(primaryElement),
+      ref: continueRef2,
+      name: 'Continue again',
+      nameNormalized: 'continue again',
+      labels: { ariaLabel: 'Continue again' },
+    },
+  ]
+  failedSub.stateBefore.refMap = {
+    ...failedSub.stateBefore.refMap,
+    [continueRef2]: structuredClone(failedSub.stateBefore.refMap[primaryElement.ref]!),
+  }
   const recoveringSub = structuredClone(failedSub)
-  recoveringSub.plannedAction = { type: 'click', ref: asRef('e-continue-2') }
+  recoveringSub.plannedAction = { type: 'click', ref: continueRef2 }
   step.subActions = [failedSub, recoveringSub]
   step.selfHeal = {
     failedDecision: decisionFor(failedSub),
