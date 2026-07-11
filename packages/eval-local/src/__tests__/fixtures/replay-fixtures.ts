@@ -290,6 +290,21 @@ export function stubProfile(baseURL = 'http://localhost:1/v1'): ModelProfile {
   }
 }
 
+/**
+ * A stub profile whose model id is CALLER-SUPPLIED and family-resolvable (Phase 370): the default
+ * STUB_MODEL_ID resolves to NO judge family, which would make every judge ineligible under the
+ * D-12 two-sided disjointness check (RESEARCH Pitfall 6). Pair it with the same id as the
+ * languageModels override key on capturingStub/throwingStub so createModel serves the stub.
+ */
+export function familyStubProfile(modelId: string, baseURL = 'http://localhost:1/v1'): ModelProfile {
+  return {
+    provider: 'openai-compatible',
+    model: modelId,
+    baseURL,
+    auth: { mode: 'none' },
+  }
+}
+
 /** A grounded action tool-call for the recorded ref: web_click on web, mobile_tap on android. */
 export function actionGenerateResult(
   platform: FixturePlatform = 'web',
@@ -366,12 +381,15 @@ export interface CapturingStub {
  * doGenerate params object is captured POST the pinned-last mask/guardrail middleware — the exact
  * provider boundary. `script(callIndex)` returns the response for that round.
  */
-export function capturingStub(script: (call: number) => StubGenerateResult): CapturingStub {
+export function capturingStub(
+  script: (call: number) => StubGenerateResult,
+  modelId: string = STUB_MODEL_ID,
+): CapturingStub {
   const captured: CapturedCallOptions[] = []
   const stub: StubLanguageModel = {
     specificationVersion: 'v3',
     provider: 'replay-proof-stub',
-    modelId: STUB_MODEL_ID,
+    modelId,
     supportedUrls: {},
     async doGenerate(params) {
       const call = captured.length
@@ -382,16 +400,18 @@ export function capturingStub(script: (call: number) => StubGenerateResult): Cap
       return { stream: new ReadableStream() }
     },
   }
-  return { captured, languageModels: { [STUB_MODEL_ID]: stub } }
+  return { captured, languageModels: { [modelId]: stub } }
 }
 
 /** A stub whose doGenerate throws + counts calls — proves the planner is never reached. */
-export function throwingStub(): { languageModels: Record<string, StubLanguageModel>; calls: () => number } {
+export function throwingStub(
+  modelId: string = STUB_MODEL_ID,
+): { languageModels: Record<string, StubLanguageModel>; calls: () => number } {
   let calls = 0
   const stub: StubLanguageModel = {
     specificationVersion: 'v3',
     provider: 'replay-proof-stub',
-    modelId: STUB_MODEL_ID,
+    modelId,
     supportedUrls: {},
     async doGenerate() {
       calls++
@@ -401,7 +421,7 @@ export function throwingStub(): { languageModels: Record<string, StubLanguageMod
       return { stream: new ReadableStream() }
     },
   }
-  return { languageModels: { [STUB_MODEL_ID]: stub }, calls: () => calls }
+  return { languageModels: { [modelId]: stub }, calls: () => calls }
 }
 
 // ─── Boundary inspection helpers ────────────────────────────────────────────────────────────────

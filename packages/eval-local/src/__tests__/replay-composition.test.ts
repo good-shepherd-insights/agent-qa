@@ -3,17 +3,19 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { extractRunCassettes } from '@vostride/agent-qa-eval'
-import type { ArtifactSource, Cassette, LeafReplayResult } from '@vostride/agent-qa-eval'
+import { JUDGE_CONFIG, extractRunCassettes } from '@vostride/agent-qa-eval'
+import type { ArtifactSource, Cassette, DecisionScore, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
+import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FsCassetteStore } from '../cassette-store.js'
 import { loadCassetteBundle } from '../cassette-loader.js'
 import { runCassetteReplay } from '../replay-composition.js'
-import { FsReplayRecordStore } from '../replay-record-store.js'
+import type { RunCassetteReplayInput } from '../replay-composition.js'
+import { FsReplayRecordStore, REPLAY_RECORD_FILE } from '../replay-record-store.js'
 import { FsScoreStore, SCORE_FILE } from '../score-store.js'
 import type { ScoreRecord } from '../score-store.js'
 import {
@@ -21,6 +23,12 @@ import {
   LOCAL_FIXTURE_BLOB_SHA,
   makeLocalV2Handoff,
 } from './fixtures/local-handoff-fixture.js'
+import {
+  capturingStub as keyedCapturingStub,
+  familyStubProfile,
+  judgeGenerateResult,
+  throwingStub as keyedThrowingStub,
+} from './fixtures/replay-fixtures.js'
 
 // Instrument @vostride/agent-qa-safety so the D-06 masking context's dispose() is observable
 // without changing production code. The wrapper returns the REAL empty-seeded context (masking +
@@ -550,6 +558,296 @@ describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)',
       (entry) => entry.isFile() && entry.name === SCORE_FILE,
     )
     expect(scoreFiles).toHaveLength(0)
+  })
+})
+
+// ─── Task 3 (370-07): the tier-4 judge leg through the sanctioned composition (JUDGE-01/03/04) ───
+
+// Family-resolvable model ids (RESEARCH Pitfall 6): the default stub ids resolve to NO judge
+// family, which would forbid every judge under D-12 — the judge leg needs explicit families.
+const REPLAY_MODEL_ID = 'gpt-replay-stub' // openai family
+const JUDGE_MODEL_ID = 'claude-judge-stub' // claude family — disjoint from replay AND recorded
+const SAME_FAMILY_JUDGE_MODEL_ID = 'gpt-judge-stub' // openai family — same as the replay profile
+const RECORDED_MODEL_ID = 'gemini-recorded-fixture' // recorded-side family, set explicitly
+
+const GOLD_FILL_TEXT = 'hello world foo'
+// Shares 2 of 3 gold tokens ⇒ token-F1 = 2/3, inside the mid band [0.4, 0.9) on a full
+// element-identity match ⇒ the deterministic matcher mints unresolved-tie{value-mid-band}.
+const CANDIDATE_FILL_TEXT = 'hello world bar'
+
+/**
+ * A handoff staged to produce a value-mid-band tie: the recorded gold decision is a fill with
+ * GOLD_FILL_TEXT on the recorded control; the replay stub answers with a fill on the SAME ref
+ * carrying CANDIDATE_FILL_TEXT. The recorded model identity is set explicitly so the D-14
+ * recorded-side family input is deterministic (the default fixture planner id resolves to no
+ * family, which would forbid every judge).
+ */
+function midBandHandoff(stepText = 'Fill the checkout note field'): CompletedRunHandoff {
+  const handoff = makeLocalV2Handoff()
+  const step = handoff.tests[0]!.steps[0]!
+  step.stepText = stepText
+  step.modelProfile!.modelId = RECORDED_MODEL_ID
+  step.subActions[0]!.plannedAction = {
+    type: 'fill',
+    ref: asRef('e-continue'),
+    text: GOLD_FILL_TEXT,
+    clearMode: 'replace',
+    submit: false,
+  }
+  return handoff
+}
+
+/** A grounded web_fill tool-call on the recorded ref carrying the candidate value. */
+function fillGenerateResult(text: string): StubGenerateResult {
+  return {
+    content: [
+      {
+        type: 'tool-call',
+        toolCallId: 'replay-action',
+        toolName: 'web_fill',
+        input: JSON.stringify({
+          ref: 'e-continue',
+          text,
+          reasoning: 'Fill the recorded field with the candidate value',
+          confidence: 0.95,
+          stepComplete: true,
+          doesActionAdvanceUsTowardsGoal: true,
+        }),
+      },
+    ],
+    finishReason: { unified: 'stop', raw: 'stop' },
+    usage: {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 2, text: 0, reasoning: 0 },
+    },
+    warnings: [],
+  }
+}
+
+/** Narrow the persisted record to its single leaf decision score. */
+function leafDecisionScore(record: ScoreRecord): DecisionScore {
+  if (record.score.kind !== 'leaf') throw new Error('expected a leaf cassette score')
+  const entry = record.score.entry
+  if (entry.kind !== 'decision') throw new Error('expected a decision score entry')
+  return entry.score
+}
+
+/** Guardrail audit rows landed under a replay output dir (0 when the file never materialized). */
+function guardrailRowCount(replayDir: string): number {
+  const path = join(replayDir, 'guardrail_audit.jsonl')
+  if (!existsSync(path)) return 0
+  return readFileSync(path, 'utf8').split('\n').filter(Boolean).length
+}
+
+describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () => {
+  const tempRoots: string[] = []
+
+  async function tempRoot(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix))
+    tempRoots.push(root)
+    return root
+  }
+
+  afterEach(async () => {
+    safetyHooks.disposeCalls = 0
+    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  })
+
+  interface MidBandRun {
+    replayDir: string
+    replayStub: ReturnType<typeof keyedCapturingStub>
+    scoreFiles: string[]
+    persisted: ScoreRecord
+  }
+
+  /** One offline mid-band replay through the sanctioned helper, judge bag optional. */
+  async function runMidBandReplay(
+    options: { stepText?: string; judge?: RunCassetteReplayInput['judge'] } = {},
+  ): Promise<MidBandRun> {
+    const storeRoot = await tempRoot('replay-judge-store-')
+    const replayDir = await tempRoot('replay-judge-audit-')
+    const { cassette, artifacts } = extractLeaf(midBandHandoff(options.stepText))
+    const replayStub = keyedCapturingStub(
+      () => fillGenerateResult(CANDIDATE_FILL_TEXT),
+      REPLAY_MODEL_ID,
+    )
+
+    const outcome = await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: familyStubProfile(REPLAY_MODEL_ID),
+      auth: noneAuth,
+      modelOverrides: { languageModels: replayStub.languageModels },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: storeRoot }),
+      scoreStore: new FsScoreStore({ root: storeRoot }),
+      ...(options.judge !== undefined ? { judge: options.judge } : {}),
+    })
+    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
+
+    const scoreFiles = readdirSync(storeRoot, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name === SCORE_FILE)
+      .map((entry) => join(entry.parentPath, entry.name))
+    if (scoreFiles.length === 0) throw new Error('expected a persisted score.json')
+    const persisted = JSON.parse(readFileSync(scoreFiles[0]!, 'utf8')) as ScoreRecord
+    return { replayDir, replayStub, scoreFiles, persisted }
+  }
+
+  it('stamps ties not-invoked{no-judge-configured} on the no-judge path, 369 behavior otherwise unchanged (D-05/D-06)', async () => {
+    const { persisted, replayStub } = await runMidBandReplay()
+
+    const score = leafDecisionScore(persisted)
+    if (score.kind !== 'unresolved-tie') throw new Error('expected an unresolved tie')
+    expect(score.cause).toBe('value-mid-band')
+    // The staged fill landed in the mid band: token-F1 2/3 within [0.4, 0.9).
+    expect(score.partial?.axes.value).toMatchObject({ kind: 'scored', band: 'mid' })
+    if (score.partial?.axes.value.kind === 'scored') {
+      expect(score.partial.axes.value.f1).toBeCloseTo(2 / 3, 5)
+    }
+    // The ONLY 370 delta on the no-judge path: the honest not-invoked stamp.
+    expect(score.judgeOutcome).toEqual({ kind: 'not-invoked', reason: 'no-judge-configured' })
+    // No judge walk ran ⇒ no identity block key on the persisted record (369 byte-compatible).
+    expect('judge' in persisted).toBe(false)
+    // The replay planner leg is untouched: one provider-boundary call, exactly as in 369.
+    expect(replayStub.captured).toHaveLength(1)
+  })
+
+  it('never binds an ineligible same-family judge: not-invoked{no-eligible-judge} carries the family resolutions (D-12)', async () => {
+    const judgeStub = keyedThrowingStub(SAME_FAMILY_JUDGE_MODEL_ID)
+    const { persisted } = await runMidBandReplay({
+      judge: {
+        profile: familyStubProfile(SAME_FAMILY_JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+    })
+
+    // Soft-but-loud: the run completed normally and the judge model was NEVER invoked.
+    expect(judgeStub.calls()).toBe(0)
+    const score = leafDecisionScore(persisted)
+    if (score.kind !== 'unresolved-tie') throw new Error('expected an unresolved tie')
+    expect(score.judgeOutcome).toEqual({
+      kind: 'not-invoked',
+      reason: 'no-eligible-judge',
+      families: { judge: 'openai', replayed: 'openai', recorded: 'gemini' },
+    })
+    expect('judge' in persisted).toBe(false)
+  })
+
+  it('settles the mid-band tie end-to-end: judgeSettled stamp and the D-16 identity block read from disk (JUDGE-04)', async () => {
+    const judgeStub = keyedCapturingStub(
+      () => judgeGenerateResult('equivalent', 'high'),
+      JUDGE_MODEL_ID,
+    )
+    const { persisted } = await runMidBandReplay({
+      judge: {
+        profile: familyStubProfile(JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+    })
+
+    const score = leafDecisionScore(persisted)
+    if (score.kind !== 'scored') throw new Error('expected a judge-settled scored decision')
+    expect(score.judgeSettled).toEqual({
+      axis: 'value',
+      resolution: 'equivalent',
+      cause: 'value-mid-band',
+      judgeId: JUDGE_MODEL_ID,
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
+      confidence: 'high',
+      usage: { calls: 2, inputTokens: 20, outputTokens: 4 },
+    })
+    // The persisted reproducibility receipt of the scored decision (D-16).
+    expect(persisted.judge).toEqual({
+      judgeModelId: JUDGE_MODEL_ID,
+      judgeFamily: 'claude',
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
+      confidenceThreshold: 'high',
+    })
+    // Exactly the two physically order-swapped calls (D-08), each pinned to temperature 0.
+    expect(judgeStub.captured).toHaveLength(2)
+    for (const captured of judgeStub.captured) {
+      expect(captured.temperature).toBe(0)
+    }
+  })
+
+  it('carries the ALS bundle over judge egress: judge-run audit rows strictly exceed the paired no-judge run (JUDGE-03)', async () => {
+    // The bearer sentinel rides the recorded step text, so BOTH the replayed planner prompt and
+    // every judge prompt carry it — the guardrail detector fires wherever the scope covers.
+    const stepText = 'Authenticate with Bearer sk-replay-abcdefgh12345 then fill the checkout note'
+    const baseline = await runMidBandReplay({ stepText })
+
+    const judgeStub = keyedCapturingStub(
+      () => judgeGenerateResult('equivalent', 'high'),
+      JUDGE_MODEL_ID,
+    )
+    const judged = await runMidBandReplay({
+      stepText,
+      judge: {
+        profile: familyStubProfile(JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+    })
+
+    expect(judgeStub.captured).toHaveLength(2)
+    const baselineRows = guardrailRowCount(baseline.replayDir)
+    const judgedRows = guardrailRowCount(judged.replayDir)
+    // Paired-run comparison: the only difference between the runs is the 2-call judge egress,
+    // so the strict row delta is attributable to the judge scope carrying the audit sink.
+    expect(baselineRows).toBeGreaterThan(0)
+    expect(judgedRows).toBeGreaterThan(baselineRows)
+  })
+
+  it('persists exactly ONE adjudicated score.json with the replay record beside it (D-05, Pitfall 2)', async () => {
+    const judgeStub = keyedCapturingStub(
+      () => judgeGenerateResult('equivalent', 'high'),
+      JUDGE_MODEL_ID,
+    )
+    const { persisted, scoreFiles } = await runMidBandReplay({
+      judge: {
+        profile: familyStubProfile(JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+    })
+
+    // One write, and its content IS the adjudicated score: the settled entry persists as
+    // 'scored' — no deterministic-only intermediate is observable on disk.
+    expect(scoreFiles).toHaveLength(1)
+    expect(leafDecisionScore(persisted).kind).toBe('scored')
+    // Record-then-score held: replay.json sits beside the one score.json.
+    expect(existsSync(join(dirname(scoreFiles[0]!), REPLAY_RECORD_FILE))).toBe(true)
+  })
+
+  it('survives judge infra failure: the tie stands with judge-error{provider-error}, score persisted once (368 batch-survival law)', async () => {
+    const judgeStub = keyedThrowingStub(JUDGE_MODEL_ID)
+    const { persisted, scoreFiles } = await runMidBandReplay({
+      judge: {
+        profile: familyStubProfile(JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+      },
+    })
+
+    expect(scoreFiles).toHaveLength(1)
+    const score = leafDecisionScore(persisted)
+    if (score.kind !== 'unresolved-tie') throw new Error('expected the tie to survive')
+    expect(score.judgeOutcome).toMatchObject({
+      kind: 'judge-error',
+      reason: 'provider-error',
+      judgeId: JUDGE_MODEL_ID,
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
+      usage: { calls: 2 },
+    })
+    // The eligible walk ran, so the D-16 identity block still rides the record.
+    expect(persisted.judge).toEqual({
+      judgeModelId: JUDGE_MODEL_ID,
+      judgeFamily: 'claude',
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
+      confidenceThreshold: 'high',
+    })
   })
 })
 
