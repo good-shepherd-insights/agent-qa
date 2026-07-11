@@ -1,5 +1,7 @@
 import { PlanningTurnError } from '@vostride/agent-qa-runner'
+import type { ActionAnnotation } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
+import { guardCassette } from '../../cassette/guard'
 import type { ArtifactSource } from '../../ports'
 import type { ReplayEscalationContext, ReplayEscalationPredicate } from '../ports'
 import type { DecisionReplayResult, ProcedureReplayResult } from '../result'
@@ -11,11 +13,97 @@ import {
   fixedIncrementClock,
   leafCassette,
   makeFactory,
+  makeLabel,
+  makeSidecar,
   procedureCassette,
 } from './fixtures'
 
 const emptyArtifacts: ArtifactSource = { getBlob: () => undefined }
 const alwaysEscalate: ReplayEscalationPredicate = (_firstSample, _context) => true
+const DIGEST = 'a'.repeat(64)
+
+describe('replay fixture builders', () => {
+  it('mints a guard-legal real sidecar and label by default', () => {
+    const sidecar = makeSidecar()
+    const label = makeLabel()
+
+    expect(sidecar.goldAction).toEqual({ type: 'click', ref: 'e1' })
+    expect(sidecar.opClass).toBe(sidecar.goldAction.type)
+    expect(sidecar.goldAnchor).toEqual({
+      role: 'button',
+      nameNormalized: 'submit',
+      ordinal: 0,
+    })
+    const goldAnchor = sidecar.goldAnchor
+    if (goldAnchor === undefined) throw new Error('expected a default gold anchor')
+    expect(
+      sidecar.equivalenceSet.some(
+        member =>
+          member.role === goldAnchor.role &&
+          member.nameNormalized === goldAnchor.nameNormalized &&
+          member.ordinal === goldAnchor.ordinal,
+      ),
+    ).toBe(true)
+    expect(Object.hasOwn(sidecar, 'goldValue')).toBe(false)
+    expect(Object.hasOwn(sidecar, 'annotation')).toBe(false)
+    expect(label).toEqual({ sourceChannel: 'recorded-verdict', tier: 'silver' })
+
+    expect(
+      guardCassette(
+        leafCassette({
+          sidecar,
+          label,
+          receipt: { promptInputHash: DIGEST, screenStateHash: DIGEST },
+        }),
+      ),
+    ).toMatchObject({ sidecar, label })
+  })
+
+  it('carries point geometry and a synthetic contrastive pairing through overrides', () => {
+    const annotation: ActionAnnotation = {
+      kind: 'point',
+      viewport: { width: 1280, height: 720 },
+      point: { x: 50, y: 36, boundingBox: { x: 10, y: 20, width: 80, height: 32 } },
+    }
+    const pairing = {
+      pairedCassetteId: 'cassette-negative-1',
+      relation: 'contrastive-positive',
+    } as const
+
+    expect(makeSidecar({ annotation }).annotation).toBe(annotation)
+    expect(makeLabel({ pairing })).toEqual({
+      sourceChannel: 'self-heal-pair',
+      tier: 'near-gold',
+      pairing,
+    })
+  })
+
+  it('accepts leaf and ordered procedure-decision sidecar/label overrides', () => {
+    const leafSidecar = makeSidecar({ opClass: 'leaf-click' })
+    const leafLabel = makeLabel({ tier: 'gold' })
+    const leaf = leafCassette({ sidecar: leafSidecar, label: leafLabel })
+    expect(leaf.sidecar).toBe(leafSidecar)
+    expect(leaf.label).toBe(leafLabel)
+
+    const firstSidecar = makeSidecar({ opClass: 'first-click' })
+    const secondSidecar = makeSidecar({ opClass: 'second-click' })
+    const firstLabel = makeLabel({ tier: 'gold' })
+    const secondLabel = makeLabel({ tier: 'near-gold' })
+    const procedure = procedureCassette([
+      { sidecar: firstSidecar, label: firstLabel },
+      { sidecar: secondSidecar, label: secondLabel },
+    ])
+    const firstDecision = procedure.steps[0]
+    const secondDecision = procedure.steps[3]
+    if (firstDecision.kind !== 'decision' || secondDecision.kind !== 'decision') {
+      throw new Error('expected decision fixtures')
+    }
+    expect(firstDecision.record.sidecar).toBe(firstSidecar)
+    expect(firstDecision.record.label).toBe(firstLabel)
+    expect(secondDecision.record.sidecar).toBe(secondSidecar)
+    expect(secondDecision.record.label).toBe(secondLabel)
+  })
+})
 
 describe('replayCassette — k-sample agreement', () => {
   it('Test 1: the default (neverEscalate) predicate runs exactly one sample even at k=3', async () => {
