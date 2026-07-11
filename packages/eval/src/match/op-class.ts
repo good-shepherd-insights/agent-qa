@@ -75,13 +75,20 @@ export const OP_CLASS_MAP = Object.freeze({
   keypress: 'keypress',
 } satisfies { [T in Action['type']]: string })
 
+function isCatalogVerb(verb: string): verb is Action['type'] {
+  return Object.hasOwn(OP_CLASS_MAP, verb)
+}
+
 /** Classify a catalog verb through D-01; every unknown string remains its own class. */
 export function classifyOpClass(verb: string): string {
-  if (!Object.hasOwn(OP_CLASS_MAP, verb)) return verb
-  return OP_CLASS_MAP[verb as Action['type']]
+  if (!isCatalogVerb(verb)) return verb
+  return OP_CLASS_MAP[verb]
 }
 
 /** Compare two verb strings only through their versioned match-time operation classes. */
 export function opClassEquivalent(goldVerb: string, candidateVerb: string): boolean {
-  return classifyOpClass(goldVerb) === classifyOpClass(candidateVerb)
+  if (!isCatalogVerb(goldVerb) || !isCatalogVerb(candidateVerb)) {
+    return goldVerb === candidateVerb
+  }
+  return OP_CLASS_MAP[goldVerb] === OP_CLASS_MAP[candidateVerb]
 }
