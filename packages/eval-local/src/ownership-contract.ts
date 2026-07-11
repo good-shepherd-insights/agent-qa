@@ -50,6 +50,12 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // throw), plus deterministic sorted sweep enumeration (ENOENT ⇒ empty) so every CLI verb sweeps
   // staged trees and the report verb rebuilds its inputs integrity-checked from disk.
   'replay-record, score, and staged-bundle read legs with typed refusals and sweep enumeration',
+  // Phase 372 D-13 (BASE-02): commitEvalReport — the baseline report commits beside the corpus
+  // and contracts that produced it, one dir per batchKey; every byte through
+  // assertCommittedEgressSafe (fail-closed, JsonlAuditSink-audited, channel 'eval-report'),
+  // JSON + markdown as ONE atomic checkpoint unit, write-once (identical regen ⇒ 'unchanged',
+  // divergent bytes ⇒ typed 'write-conflict', never an overwrite).
+  'the single egress-checked committed-report writer placing report JSON and markdown under reports/ write-once',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single

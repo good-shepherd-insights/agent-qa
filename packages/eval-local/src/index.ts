@@ -56,11 +56,23 @@ export type {
 } from './seeding-composition.js'
 
 export {
+  REPORT_EGRESS_CHANNEL,
+  COMMITTED_REPORT_JSON_FILE,
+  COMMITTED_REPORT_MARKDOWN_FILE,
+  commitEvalReport,
+} from './report-committing.js'
+export type {
+  CommitEvalReportInput,
+  CommitEvalReportOutcome,
+} from './report-committing.js'
+
+export {
   COMMITTED_CASSETTES_DIR,
   COMMITTED_CONTRACTS_DIR,
   COMMITTED_CORPUS_DIR,
   COMMITTED_GITIGNORE_TEXT,
   COMMITTED_LABELS_DIR,
+  COMMITTED_REPORTS_DIR,
   COMMITTED_ROOT_MARKER_FILE,
   COMMITTED_ROOT_SCHEMA_VERSION,
   FsCommittedRootStore,
@@ -70,6 +82,7 @@ export {
   committedContractPath,
   committedCorpusPath,
   committedLabelPath,
+  committedReportPath,
 } from './committed-root-store.js'
 export type {
   CommittedRootStoreConfig,
