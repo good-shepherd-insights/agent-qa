@@ -8,11 +8,15 @@ import type {
   ReplayRefusal,
 } from '../replay/result'
 import { MATCHER_CONFIG } from './config'
+import { isDecisionFullMatch } from './score'
 import type {
   CassetteScore,
   DecisionPartialBreakdown,
   DecisionScore,
   DecisionScoreEntry,
+  JudgeIdentityBlock,
+  JudgeNotInvokedReason,
+  JudgeTokenUsage,
   TieCause,
 } from './score'
 import type { ElementIdentityVerdict } from './tiers'
@@ -48,6 +52,32 @@ interface PerDecisionCost {
   durationMs: number
 }
 
+/**
+ * D-04 distinct judge cost component. Judge calls are never replay samples, so their usage is
+ * aggregated from the outcome stamps alone (Pitfall 8) and stays typed-absent-honest: stamps
+ * lacking usage are counted in `outcomesMissingUsage` instead of being fabricated.
+ */
+interface JudgeCost {
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  outcomesMissingUsage: number
+}
+
+/**
+ * D-04/D-12 judge honesty counters: every judge disposition is a visible count per TieCause,
+ * errors stay distinct from calibrated abstentions (D-11), and not-invoked is counted per
+ * reason so the no-eligible-judge capability gap headlines loudly.
+ */
+interface JudgeHonesty {
+  invoked: Counts<TieCause>
+  settled: Counts<TieCause>
+  abstained: Counts<TieCause>
+  errors: Counts<TieCause>
+  notInvoked: Counts<JudgeNotInvokedReason>
+  cost: JudgeCost
+}
+
 /** One replay outcome plus its optional matcher and label projections (D-14/D-15). */
 export interface ScoredBatchEntry {
   cassetteId: string
@@ -75,6 +105,7 @@ export interface EvalBatchReport {
     harnessErrorCount: number
     neverScoredCounts: Counts<NeverScoredReason>
     skippedCounts: Counts<SkippedReason>
+    judge: JudgeHonesty
   }
   promptDriftRate: RateMetric
   kEscalation: {
@@ -106,6 +137,8 @@ export interface EvalBatchReport {
     recoveryAccuracy?: number
   }
   totalCost: TotalCost
+  /** D-16 report-level judge identity receipt; absent when no judge existed for the batch. */
+  judge?: JudgeIdentityBlock
 }
 
 function isReplayRefusal(outcome: ReplayCassetteOutcome): outcome is ReplayRefusal {
@@ -135,19 +168,22 @@ function breakdownFor(score: DecisionScore): DecisionPartialBreakdown | undefine
   return undefined
 }
 
-function isSettledFull(score: DecisionScore): boolean {
-  if (score.kind !== 'scored') return false
-  const valueFull =
-    score.axes.value.kind === 'not-applicable' ||
-    (score.axes.value.kind === 'scored' && score.axes.value.band === 'full')
-  return (
-    score.axes.opClass.kind === 'match' &&
-    score.axes.elementIdentity.kind === 'scored' &&
-    score.axes.elementIdentity.level === 'full' &&
-    valueFull &&
-    score.sideEffect.kind === 'none' &&
-    score.loop.kind !== 'flagged'
-  )
+function addJudgeUsage(cost: JudgeCost, usage: JudgeTokenUsage | undefined): void {
+  if (usage === undefined) {
+    cost.outcomesMissingUsage++
+    return
+  }
+  cost.calls += usage.calls
+  cost.inputTokens += usage.inputTokens ?? 0
+  cost.outputTokens += usage.outputTokens ?? 0
+}
+
+function zeroTieCauseCounts(): Counts<TieCause> {
+  return {
+    'partial-identity': 0,
+    'value-mid-band': 0,
+    'no-consensus': 0,
+  }
 }
 
 function rateMetric(numerator: number, denominator: number): RateMetric {
@@ -178,11 +214,22 @@ export function computeBatchKey(cassetteIds: readonly string[]): string {
 }
 
 /** Aggregate a scored replay batch without recomputing score, drift, or agreement signals. */
-export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatchReport {
+export function buildEvalReport(
+  entries: readonly ScoredBatchEntry[],
+  judge?: JudgeIdentityBlock,
+): EvalBatchReport {
   const tieCounts: Counts<TieCause> = {
     'partial-identity': 0,
     'value-mid-band': 0,
     'no-consensus': 0,
+  }
+  const judgeHonesty: JudgeHonesty = {
+    invoked: zeroTieCauseCounts(),
+    settled: zeroTieCauseCounts(),
+    abstained: zeroTieCauseCounts(),
+    errors: zeroTieCauseCounts(),
+    notInvoked: { 'no-judge-configured': 0, 'no-eligible-judge': 0 },
+    cost: { calls: 0, inputTokens: 0, outputTokens: 0, outcomesMissingUsage: 0 },
   }
   const unscorableIdentityCounts: Counts<UnscorableIdentityCause> = {
     'no-gold-evidence': 0,
@@ -251,9 +298,31 @@ export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatch
         missByFailure.set(score.reason, (missByFailure.get(score.reason) ?? 0) + 1)
       } else if (score.kind === 'unresolved-tie') {
         tieCounts[score.cause]++
-      } else if (score.axes.elementIdentity.kind !== 'unscorable') {
-        accuracyDenominator++
-        if (isSettledFull(score)) accuracyNumerator++
+        const outcome = score.judgeOutcome
+        if (outcome !== undefined) {
+          if (outcome.kind === 'abstained') {
+            judgeHonesty.abstained[score.cause]++
+            judgeHonesty.invoked[score.cause]++
+            addJudgeUsage(judgeHonesty.cost, outcome.usage)
+          } else if (outcome.kind === 'judge-error') {
+            judgeHonesty.errors[score.cause]++
+            judgeHonesty.invoked[score.cause]++
+            addJudgeUsage(judgeHonesty.cost, outcome.usage)
+          } else {
+            judgeHonesty.notInvoked[outcome.reason]++
+          }
+        }
+      } else {
+        const settledStamp = score.judgeSettled
+        if (settledStamp !== undefined) {
+          judgeHonesty.settled[settledStamp.cause]++
+          judgeHonesty.invoked[settledStamp.cause]++
+          addJudgeUsage(judgeHonesty.cost, settledStamp.usage)
+        }
+        if (score.axes.elementIdentity.kind !== 'unscorable') {
+          accuracyDenominator++
+          if (isDecisionFullMatch(score)) accuracyNumerator++
+        }
       }
 
       const breakdown = breakdownFor(score)
@@ -333,7 +402,7 @@ export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatch
       continue
     }
     eligiblePositiveCount++
-    if (decisionScores(entry.score).some(isSettledFull)) recoveredPositiveCount++
+    if (decisionScores(entry.score).some(isDecisionFullMatch)) recoveredPositiveCount++
   }
 
   const decisionCount = replayDecisions.length
@@ -346,6 +415,13 @@ export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatch
       : { recoveryAccuracy: recoveredPositiveCount / eligiblePositiveCount }),
   }
 
+  // D-04 fold: judge tokens enter the per-decision headline cost on top of the sample-derived
+  // sums, while totalCost stays sample-only (distinct-then-folded; never double-counted).
+  const foldedPromptTokens = totalCost.promptTokens + judgeHonesty.cost.inputTokens
+  const foldedCompletionTokens = totalCost.completionTokens + judgeHonesty.cost.outputTokens
+  const foldedTotalTokens =
+    totalCost.totalTokens + judgeHonesty.cost.inputTokens + judgeHonesty.cost.outputTokens
+
   return {
     matcherVersion: MATCHER_CONFIG.matcherVersion,
     batchKey: computeBatchKey(entries.map(entry => entry.cassetteId)),
@@ -353,9 +429,9 @@ export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatch
       firstAttemptDecisionAccuracy: rateMetric(accuracyNumerator, accuracyDenominator),
       perDecisionCost: {
         decisionCount,
-        promptTokens: decisionCount === 0 ? 0 : totalCost.promptTokens / decisionCount,
-        completionTokens: decisionCount === 0 ? 0 : totalCost.completionTokens / decisionCount,
-        totalTokens: decisionCount === 0 ? 0 : totalCost.totalTokens / decisionCount,
+        promptTokens: decisionCount === 0 ? 0 : foldedPromptTokens / decisionCount,
+        completionTokens: decisionCount === 0 ? 0 : foldedCompletionTokens / decisionCount,
+        totalTokens: decisionCount === 0 ? 0 : foldedTotalTokens / decisionCount,
         durationMs: decisionCount === 0 ? 0 : totalCost.durationMs / decisionCount,
       },
     },
@@ -367,6 +443,7 @@ export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatch
       harnessErrorCount,
       neverScoredCounts,
       skippedCounts,
+      judge: judgeHonesty,
     },
     promptDriftRate: rateMetric(driftedCount, decisionCount),
     kEscalation: {
@@ -381,5 +458,6 @@ export function buildEvalReport(entries: readonly ScoredBatchEntry[]): EvalBatch
     axisDistributions,
     recovery,
     totalCost,
+    ...(judge === undefined ? {} : { judge }),
   }
 }
