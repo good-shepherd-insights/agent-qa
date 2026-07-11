@@ -98,6 +98,7 @@ export type {
   DecisionDiff,
   DecisionDiffReplayContext,
 } from './match/diff'
+export { tiersSettlePredicate } from './match/predicate'
 
 export type { CassetteInputLeg } from './cassette/input-leg'
 export type { CassetteSidecarLeg, GoldAnchorDescriptor } from './cassette/sidecar-leg'

@@ -223,6 +223,51 @@ function firstDecisionSample(result: DecisionReplayResult): ReplaySample | undef
 }
 
 /**
+ * Score one replay sample through the same D-09 settled-versus-tie rules used by full replay
+ * results. The escalation predicate consumes this helper so the tie vocabulary has one owner.
+ */
+export function scoreReplaySample(
+  sidecar: CassetteSidecarLeg,
+  sample: ReplaySample,
+  context: ScoreDecisionContext = {
+    priorIdentities: 'leaf-no-history',
+    screenStateHash: '',
+  },
+): ScoreDecisionOutcome {
+  if (sample.outcome.kind === 'planner-failure') {
+    return {
+      kind: 'miss-by-failure',
+      reason: sample.outcome.reason,
+      matcherVersion: MATCHER_CONFIG.matcherVersion,
+    }
+  }
+  if (sample.outcome.kind === 'unservable-divergence') {
+    return {
+      kind: 'miss-by-failure',
+      reason: `unservable-divergence:${sample.outcome.tool}`,
+      matcherVersion: MATCHER_CONFIG.matcherVersion,
+    }
+  }
+  if (sample.outcome.kind === 'harness-error') {
+    return {
+      kind: 'never-scored',
+      reason: 'all-samples-harness-error',
+      matcherVersion: MATCHER_CONFIG.matcherVersion,
+    }
+  }
+
+  const breakdown = buildBreakdown(sidecar, sample, context)
+  if (breakdown === undefined) {
+    return {
+      kind: 'never-scored',
+      reason: 'modal-representative-missing',
+      matcherVersion: MATCHER_CONFIG.matcherVersion,
+    }
+  }
+  return scoreBreakdown(breakdown)
+}
+
+/**
  * Select the first real Action in the modal identity class (D-10/F2). Agreement identities do
  * not carry coordinate geometry or raw value payloads and are therefore never scored directly.
  */
@@ -282,37 +327,7 @@ export function scoreDecision(
     }
   }
 
-  if (selected.outcome.kind === 'planner-failure') {
-    return {
-      kind: 'miss-by-failure',
-      reason: selected.outcome.reason,
-      matcherVersion: MATCHER_CONFIG.matcherVersion,
-    }
-  }
-  if (selected.outcome.kind === 'unservable-divergence') {
-    return {
-      kind: 'miss-by-failure',
-      reason: `unservable-divergence:${selected.outcome.tool}`,
-      matcherVersion: MATCHER_CONFIG.matcherVersion,
-    }
-  }
-  if (selected.outcome.kind === 'harness-error') {
-    return {
-      kind: 'never-scored',
-      reason: 'all-samples-harness-error',
-      matcherVersion: MATCHER_CONFIG.matcherVersion,
-    }
-  }
-
-  const breakdown = buildBreakdown(sidecar, selected, context)
-  if (breakdown === undefined) {
-    return {
-      kind: 'never-scored',
-      reason: 'modal-representative-missing',
-      matcherVersion: MATCHER_CONFIG.matcherVersion,
-    }
-  }
-  return scoreBreakdown(breakdown)
+  return scoreReplaySample(sidecar, selected, context)
 }
 
 function decisionEntry(
