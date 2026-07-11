@@ -20,7 +20,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { CassetteScore, DecisionDiff } from '@vostride/agent-qa-eval'
+import type { CassetteScore, DecisionDiff, JudgeIdentityBlock } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 
 import { DEFAULT_EVAL_REPLAYS_SUBDIR } from './replay-record-store.js'
@@ -34,6 +34,15 @@ export interface ScoreRecord {
   matcherVersion: number
   score: CassetteScore
   diffs: readonly DecisionDiff[]
+  /**
+   * D-16 score-side reproducibility receipt: the full identity of the judge that produced any
+   * stamp on this score — judge model id, resolved family, judgeVersion, threshold. Computed
+   * entirely by eval-core adjudication and serialized verbatim here (F9: eval-local never
+   * computes, only writes). Typed-absent when no judge walk ran, keeping 369 records
+   * byte-compatible. The cassette's reserved tier4JudgeId is Phase 371 label territory —
+   * the scorer never writes back into the measurement.
+   */
+  judge?: JudgeIdentityBlock
 }
 
 export interface FsScoreStoreConfig {
