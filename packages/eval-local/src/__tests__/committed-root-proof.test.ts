@@ -116,6 +116,76 @@ function filesContaining(root: string, relPaths: readonly string[], needle: stri
 }
 
 // ---------------------------------------------------------------------------
+// D-15 partition + D-13 membership machinery.
+// ---------------------------------------------------------------------------
+
+/** An ignore-covered blob: .../blobs/<64-hex> — the ONLY legitimate ignored shape. */
+const BLOB_PATH_RE = /(?:^|\/)blobs\/[0-9a-f]{64}$/
+
+/** The known tracked text kinds — everything checkpointed and reviewable (D-15). */
+const TRACKED_TEXT_KINDS: readonly { kind: string; matches: (rel: string) => boolean }[] = [
+  { kind: 'gitignore', matches: (rel) => rel === '.gitignore' },
+  { kind: 'root-marker', matches: (rel) => rel === 'eval-root.json' },
+  { kind: 'cassette', matches: (rel) => /^cassettes\/.+\/cassette\.json$/.test(rel) },
+  { kind: 'label', matches: (rel) => /^labels\/.+\.json$/.test(rel) },
+  { kind: 'corpus', matches: (rel) => /^corpus\/.+\.json$/.test(rel) },
+  { kind: 'contract', matches: (rel) => /^contracts\/[^/]+\.v\d+\.json$/.test(rel) },
+]
+
+function trackedKindsFor(rel: string): string[] {
+  return TRACKED_TEXT_KINDS.filter((candidate) => candidate.matches(rel)).map(
+    (candidate) => candidate.kind,
+  )
+}
+
+interface MembershipCounts {
+  cassetteCount: number
+  labelCount: number
+  corpusCount: number
+}
+
+/**
+ * The D-13 invariant, both ways, derived from the exported path builders:
+ *  (a) every cassette.json implies its label + corpus files at the builder paths,
+ *      and its own id round-trips to its own path;
+ *  (b) every label record and corpus entry implies its cassette bundle;
+ *  (c) every label/corpus file's cassetteId round-trips to the file's own path.
+ */
+function assertMembershipInvariant(root: string, walk: CommittedWalk): MembershipCounts {
+  const tracked = new Set(walk.trackedPaths)
+  const cassettePaths = walk.trackedPaths.filter(
+    (rel) => rel.startsWith('cassettes/') && rel.endsWith('/cassette.json'),
+  )
+  const labelPaths = walk.trackedPaths.filter((rel) => rel.startsWith('labels/'))
+  const corpusPaths = walk.trackedPaths.filter((rel) => rel.startsWith('corpus/'))
+
+  for (const rel of cassettePaths) {
+    const cassette = JSON.parse(readFileSync(join(root, rel), 'utf8')) as { id: string }
+    expect(committedCassettePath(PRODUCT, cassette.id)).toBe(rel)
+    expect(tracked.has(committedLabelPath(PRODUCT, cassette.id))).toBe(true)
+    expect(tracked.has(committedCorpusPath(PRODUCT, cassette.id))).toBe(true)
+  }
+
+  for (const rel of labelPaths) {
+    const record = JSON.parse(readFileSync(join(root, rel), 'utf8')) as { cassetteId: string }
+    expect(committedLabelPath(PRODUCT, record.cassetteId)).toBe(rel)
+    expect(tracked.has(committedCassettePath(PRODUCT, record.cassetteId))).toBe(true)
+  }
+
+  for (const rel of corpusPaths) {
+    const entry = JSON.parse(readFileSync(join(root, rel), 'utf8')) as { cassetteId: string }
+    expect(committedCorpusPath(PRODUCT, entry.cassetteId)).toBe(rel)
+    expect(tracked.has(committedCassettePath(PRODUCT, entry.cassetteId))).toBe(true)
+  }
+
+  return {
+    cassetteCount: cassettePaths.length,
+    labelCount: labelPaths.length,
+    corpusCount: corpusPaths.length,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Fixtures — the 371-08 seeding fixture: 1 silver case + 1 same-state pair.
 // ---------------------------------------------------------------------------
 
@@ -307,5 +377,80 @@ describe('committed-root proofs (ROOT-02 / GUARD-FUT-04, D-13, D-15)', () => {
 
     // The masked placeholder DID land — proof the crafted evidence flowed through.
     expect(filesContaining(root, walk.trackedPaths, '<SECRET_0>').length).toBeGreaterThan(0)
+  })
+
+  it('text/blob partition is total and exclusive over every committed file (D-15)', () => {
+    const handoff = seedingHandoff()
+    const cassettes = extract(handoff)
+    const plan = planFor(handoff, cassettes)
+
+    const report = seed(plan, cassettes)
+    expect(report.refusals).toEqual([])
+
+    const walk = walkCommittedRoot(root)
+    // The tree exercises BOTH sides: at least one blob landed.
+    expect(walk.ignoredPaths.length).toBeGreaterThan(0)
+    expect(walk.trackedPaths.length).toBeGreaterThan(0)
+
+    // Ignored side: every ignored file is a blobs/<64-hex> blob and NOTHING else —
+    // an ignored file matching a tracked text kind would be a hidden measurement.
+    for (const rel of walk.ignoredPaths) {
+      expect(rel).toMatch(BLOB_PATH_RE)
+      expect(trackedKindsFor(rel)).toEqual([])
+    }
+
+    // Tracked side: every tracked file is exactly ONE known text kind, is NOT
+    // blob-shaped, and (except the gitignore) parses as JSON. No third category.
+    for (const rel of walk.trackedPaths) {
+      const kinds = trackedKindsFor(rel)
+      expect(kinds, `unclassified tracked file: ${rel}`).toHaveLength(1)
+      expect(BLOB_PATH_RE.test(rel)).toBe(false)
+      if (rel !== '.gitignore') {
+        expect(() => JSON.parse(readFileSync(join(root, rel), 'utf8'))).not.toThrow()
+      }
+    }
+  })
+
+  it('corpus membership invariant holds both ways after seeding, with consistent counts (D-13)', () => {
+    const handoff = seedingHandoff()
+    const cassettes = extract(handoff)
+    const plan = planFor(handoff, cassettes)
+
+    const report = seed(plan, cassettes)
+    expect(report.refusals).toEqual([])
+
+    const walk = walkCommittedRoot(root)
+    const counts = assertMembershipInvariant(root, walk)
+
+    // Count consistency on a fresh root: bundles === corpus entries === label
+    // records === report.seededCount.
+    expect(counts.cassetteCount).toBe(report.seededCount)
+    expect(counts.labelCount).toBe(report.seededCount)
+    expect(counts.corpusCount).toBe(report.seededCount)
+    expect(report.seededCount).toBe(3)
+  })
+
+  it('membership invariant survives refusals: the refused case is absent from all three trees (D-13 x D-14)', () => {
+    const handoff = seedingHandoff()
+    const cassettes = extract(handoff)
+    const plan = planFor(handoff, cassettes)
+    const { staged, plantedId } = plantSecret(cassettes, plan)
+
+    const report = seed(plan, staged)
+    expect(report.refusals).toHaveLength(1)
+    expect(report.refusals[0]!.cassetteId).toBe(plantedId)
+    expect(report.seededCount).toBe(2)
+
+    const walk = walkCommittedRoot(root)
+    // The refused case appears in NONE of the three trees.
+    expect(walk.trackedPaths).not.toContain(committedCassettePath(PRODUCT, plantedId))
+    expect(walk.trackedPaths).not.toContain(committedLabelPath(PRODUCT, plantedId))
+    expect(walk.trackedPaths).not.toContain(committedCorpusPath(PRODUCT, plantedId))
+
+    // And the invariant still holds both ways over what DID land.
+    const counts = assertMembershipInvariant(root, walk)
+    expect(counts.cassetteCount).toBe(report.seededCount)
+    expect(counts.labelCount).toBe(report.seededCount)
+    expect(counts.corpusCount).toBe(report.seededCount)
   })
 })
