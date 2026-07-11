@@ -1,6 +1,6 @@
 // Write-once committed eval-root store (Phase 371, ROOT-01/D-15/D-17).
 //
-// Owns the physical committed root: cassettes/ · corpus/ · labels/ · contracts/,
+// Owns the physical committed root: cassettes/ · corpus/ · labels/ · contracts/ · reports/,
 // product-partitioned, scaffolded on first seed with a .gitignore whose one rule covers
 // every blobs/ dir at any depth plus a schemaVersion root marker (D-15). Every text write
 // is write-once: a byte-identical re-write is a silent 'unchanged' no-op, the same path
@@ -29,6 +29,7 @@ export const COMMITTED_CASSETTES_DIR = 'cassettes'
 export const COMMITTED_CORPUS_DIR = 'corpus'
 export const COMMITTED_LABELS_DIR = 'labels'
 export const COMMITTED_CONTRACTS_DIR = 'contracts'
+export const COMMITTED_REPORTS_DIR = 'reports'
 
 export const COMMITTED_ROOT_MARKER_FILE = 'eval-root.json'
 export const COMMITTED_ROOT_SCHEMA_VERSION = 1
@@ -95,6 +96,15 @@ export function committedCorpusPath(product: string, cassetteId: string): string
 
 export function committedContractPath(fileName: string): string {
   return [COMMITTED_CONTRACTS_DIR, slugBranch(fileName)].join('/')
+}
+
+/**
+ * Phase 372 D-13: the baseline report commits beside the corpus/contracts that produced it —
+ * one dir per batchKey, so a changed corpus (⇒ changed key) gets a fresh dir under write-once
+ * while an identical regen byte-compares 'unchanged'. Every segment slugged (T-368-10).
+ */
+export function committedReportPath(batchKey: string, fileName: string): string {
+  return [COMMITTED_REPORTS_DIR, slugBranch(batchKey), slugBranch(fileName)].join('/')
 }
 
 function byteSha(bytes: Uint8Array): string {
