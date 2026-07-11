@@ -1,4 +1,8 @@
-import type { Action, ScreenStateMetadata } from '@vostride/agent-qa-schema'
+import type {
+  Action,
+  ActionAnnotation,
+  ScreenStateMetadata,
+} from '@vostride/agent-qa-schema'
 
 import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { DecisionIdentity } from '../replay/identity'
@@ -33,6 +37,12 @@ export interface MatchTierCandidate {
   action: Action
 }
 
+interface CandidatePoint {
+  x: number
+  y: number
+  coordSpace: 'viewport' | 'content' | 'screen'
+}
+
 function scoredIdentity(level: IdentityLadderLevel, tier: 2 | 3): ElementIdentityVerdict {
   return {
     kind: 'scored',
@@ -42,16 +52,80 @@ function scoredIdentity(level: IdentityLadderLevel, tier: 2 | 3): ElementIdentit
   }
 }
 
-function hasCandidatePoint(action: Action): boolean {
+function candidatePoint(action: Action): CandidatePoint | undefined {
   const view = action as unknown as Record<string, unknown>
-  return typeof view.x === 'number' && typeof view.y === 'number'
+  if (
+    typeof view.x !== 'number' ||
+    typeof view.y !== 'number' ||
+    !Number.isFinite(view.x) ||
+    !Number.isFinite(view.y) ||
+    (view.coordSpace !== 'viewport' &&
+      view.coordSpace !== 'content' &&
+      view.coordSpace !== 'screen')
+  ) {
+    return undefined
+  }
+  return { x: view.x, y: view.y, coordSpace: view.coordSpace }
 }
 
+function hasCandidatePoint(action: Action): boolean {
+  return candidatePoint(action) !== undefined
+}
+
+function pointInsideBounds(
+  point: CandidatePoint,
+  bounds: { x: number; y: number; width: number; height: number },
+): boolean {
+  return (
+    point.x >= bounds.x &&
+    point.x <= bounds.x + bounds.width &&
+    point.y >= bounds.y &&
+    point.y <= bounds.y + bounds.height
+  )
+}
+
+/**
+ * Score tier 3 only inside the recorded observation's coordinate space (A1/OQ-3). A
+ * coordinate-space disagreement is a counted verdict rather than a raw-number comparison.
+ * Point annotations check their gold bounds before the screen-relative distance fallback.
+ */
 function scoreTier3(
-  _action: Action,
-  _stateMetadata?: ScreenStateMetadata,
+  annotation: ActionAnnotation,
+  action: Action,
+  stateMetadata?: ScreenStateMetadata,
 ): ElementIdentityVerdict {
-  return { kind: 'unscorable', cause: 'no-candidate-geometry' }
+  const point = candidatePoint(action)
+  if (point === undefined) {
+    return { kind: 'unscorable', cause: 'no-candidate-geometry' }
+  }
+
+  if (stateMetadata !== undefined && point.coordSpace !== stateMetadata.coordSpace) {
+    return { kind: 'unscorable', cause: 'coordspace-mismatch' }
+  }
+
+  if (annotation.kind !== 'point') {
+    return { kind: 'unscorable', cause: 'no-gold-evidence' }
+  }
+
+  if (
+    annotation.point.boundingBox !== undefined &&
+    pointInsideBounds(point, annotation.point.boundingBox)
+  ) {
+    return scoredIdentity('full', 3)
+  }
+
+  const viewportDiagonal = Math.hypot(annotation.viewport.width, annotation.viewport.height)
+  if (viewportDiagonal === 0 || !Number.isFinite(viewportDiagonal)) {
+    return { kind: 'unscorable', cause: 'no-gold-evidence' }
+  }
+
+  const normalizedDistance =
+    Math.hypot(point.x - annotation.point.x, point.y - annotation.point.y) / viewportDiagonal
+  const level: IdentityLadderLevel =
+    normalizedDistance <= MATCHER_CONFIG.tier3.distanceToleranceRatio
+      ? 'within-tolerance'
+      : 'miss'
+  return scoredIdentity(level, 3)
 }
 
 /**
@@ -91,7 +165,7 @@ export function runMatchTiers(
       return {
         tierReached: 3,
         opClass,
-        elementIdentity: scoreTier3(candidate.action, stateMetadata),
+        elementIdentity: scoreTier3(sidecar.annotation, candidate.action, stateMetadata),
       }
     }
 
@@ -102,7 +176,7 @@ export function runMatchTiers(
     return {
       tierReached: 3,
       opClass,
-      elementIdentity: scoreTier3(candidate.action, stateMetadata),
+      elementIdentity: scoreTier3(sidecar.annotation, candidate.action, stateMetadata),
     }
   }
 

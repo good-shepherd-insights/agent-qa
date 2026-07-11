@@ -27,7 +27,10 @@ function pointAnnotation(options: { withBoundingBox?: boolean } = {}): ActionAnn
 }
 
 function stateMetadata(
-  overrides: Partial<ScreenStateMetadata> = {},
+  overrides: {
+    coordSpace?: ScreenStateMetadata['coordSpace']
+    scroll?: ScreenStateMetadata['scroll']
+  } = {},
 ): ScreenStateMetadata {
   return {
     coordSpace: 'viewport',
