@@ -15,6 +15,7 @@ import { PlanningTurnError } from '@vostride/agent-qa-runner'
 import type { Cassette, LeafCassette, ProcedureCassette } from '../cassette/cassette'
 import type { CassetteInputLeg } from '../cassette/input-leg'
 import type { CassetteReceipt } from '../cassette/receipt-leg'
+import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { ArtifactSource } from '../ports'
 import { computeReplayDrift } from './drift'
 import { computeDecisionIdentity, decisionIdentityKey } from './identity'
@@ -30,7 +31,12 @@ import {
   reconstructDecisionContext,
 } from './reconstruct'
 import { neverEscalate } from './ports'
-import type { ReplayClock, ReplayEscalationPredicate, ReplayPlannerFactory } from './ports'
+import type {
+  ReplayClock,
+  ReplayEscalationContext,
+  ReplayEscalationPredicate,
+  ReplayPlannerFactory,
+} from './ports'
 import type {
   DecisionReplayResult,
   LeafReplayResult,
@@ -62,7 +68,10 @@ export interface ReplayCassetteInput {
 
 interface DecisionReplayContext {
   cassetteId: string
+  decisionOrdinal: number
+  stepIndex?: number
   leg: CassetteInputLeg
+  sidecar: CassetteSidecarLeg
   receipt: CassetteReceipt
   artifacts: ArtifactSource
   plannerFactory: ReplayPlannerFactory
@@ -122,7 +131,9 @@ async function replayLeaf(
 ): Promise<LeafReplayResult | ReplayRefusal> {
   const outcome = await replayDecision({
     cassetteId: cassette.id,
+    decisionOrdinal: cassette.decisionOrdinal,
     leg: cassette.input,
+    sidecar: cassette.sidecar,
     receipt: cassette.receipt,
     artifacts: input.artifacts,
     plannerFactory: input.plannerFactory,
@@ -148,7 +159,10 @@ async function replayProcedure(
       // stateBefore. No cross-step state is synthesized (CASS-03 forbids free-running).
       const decision = await replayDecision({
         cassetteId: cassette.id,
+        decisionOrdinal: step.decisionOrdinal,
+        stepIndex: step.stepIndex,
         leg: step.record.input,
+        sidecar: step.record.sidecar,
         receipt: step.record.receipt,
         artifacts: input.artifacts,
         plannerFactory: input.plannerFactory,
@@ -204,7 +218,14 @@ async function replayDecision(
   replayedModel = first.replayedModel
   lastUnconsumed = first.unconsumed
 
-  if (context.k > 1 && context.escalationPredicate(first.sample)) {
+  const escalationContext: ReplayEscalationContext = {
+    cassetteId: context.cassetteId,
+    decisionOrdinal: context.decisionOrdinal,
+    ...(context.stepIndex === undefined ? {} : { stepIndex: context.stepIndex }),
+    sidecar: context.sidecar,
+    receipt: context.receipt,
+  }
+  if (context.k > 1 && context.escalationPredicate(first.sample, escalationContext)) {
     for (let sampleIndex = 1; sampleIndex < context.k; sampleIndex++) {
       const run = await runSample(context, sampleIndex)
       if (run.kind === 'refusal') return run.refusal

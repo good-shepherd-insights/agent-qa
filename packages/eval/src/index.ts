@@ -39,6 +39,7 @@ export type { ReplayCassetteInput } from './replay/replay-run'
 export { neverEscalate } from './replay/ports'
 export type {
   ReplayClock,
+  ReplayEscalationContext,
   ReplayEscalationPredicate,
   ReplayPlannerFactory,
   ReplayPlannerHandle,

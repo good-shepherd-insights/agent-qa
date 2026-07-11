@@ -5,6 +5,8 @@
 
 import type { NonActionToolMap, PlanResult, StepContext } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
+import type { CassetteReceipt } from '../cassette/receipt-leg'
+import type { CassetteSidecarLeg } from '../cassette/sidecar-leg'
 import type { ReplaySample } from './result'
 
 /**
@@ -30,14 +32,31 @@ export interface ReplayPlannerFactory {
   }): ReplayPlannerHandle
 }
 
-/**
- * The escalation seam (D-10): decides from the first sample whether to run more samples. 368
- * ships only the built-in `neverEscalate`; Phase 369 binds tiers-settle and Phase 370 binds
- * judge escalation onto this ONE seam.
- */
-export type ReplayEscalationPredicate = (firstSample: ReplaySample) => boolean
+/** Per-decision recorded context supplied to the ONE escalation seam (369 F1 / D-10). */
+export interface ReplayEscalationContext {
+  /** Cassette owning the replayed decision (369 F1). */
+  cassetteId: string
+  /** Live-decision position within the recorded step (369 F1). */
+  decisionOrdinal: number
+  /** Procedure-step position; structurally absent for leaf cassettes (369 F1). */
+  stepIndex?: number
+  /** This decision's own gold sidecar — never another procedure step's leg (369 F1). */
+  sidecar: CassetteSidecarLeg
+  /** This decision's reproducibility receipt (369 F1). */
+  receipt: CassetteReceipt
+}
 
-/** The 368 built-in escalation default: never escalate (single deterministic sample budget). */
+/**
+ * The ONE escalation seam (D-10): score the first sample against its positional decision
+ * context, then decide whether to run more samples. Phase 369 binds tiers-settle and Phase 370
+ * binds judge escalation onto this same breaking-signature seam; the legacy signature is removed.
+ */
+export type ReplayEscalationPredicate = (
+  firstSample: ReplaySample,
+  context: ReplayEscalationContext,
+) => boolean
+
+/** The built-in default under the evolved seam: still never spend beyond the first sample. */
 export const neverEscalate: ReplayEscalationPredicate = () => false
 
 /**
