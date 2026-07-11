@@ -515,9 +515,21 @@ importers:
       '@vostride/agent-qa-eval':
         specifier: workspace:*
         version: link:../eval
+      '@vostride/agent-qa-model':
+        specifier: workspace:*
+        version: link:../model
+      '@vostride/agent-qa-runner':
+        specifier: workspace:*
+        version: link:../runner
       '@vostride/agent-qa-runner-local':
         specifier: workspace:*
         version: link:../runner-local
+      '@vostride/agent-qa-safety':
+        specifier: workspace:*
+        version: link:../safety
+      '@vostride/agent-qa-safety-local':
+        specifier: workspace:*
+        version: link:../safety-local
       '@vostride/agent-qa-schema':
         specifier: workspace:*
         version: link:../schema

@@ -48,7 +48,11 @@
   },
   "dependencies": {
     "@vostride/agent-qa-eval": "workspace:*",
+    "@vostride/agent-qa-model": "workspace:*",
+    "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-runner-local": "workspace:*",
+    "@vostride/agent-qa-safety": "workspace:*",
+    "@vostride/agent-qa-safety-local": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*"
   },
   "devDependencies": {
