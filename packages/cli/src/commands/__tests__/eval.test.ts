@@ -1,7 +1,8 @@
 // Phase 372-05 — the eval command family's first verb: extract (D-01), sweep-by-default with the
 // D-02 filter vocabulary, typed per-run skips (never batch errors), D-04 DTO-faithful rendering,
 // and D-08 exit semantics. Task 1 pins runExtractVerb; Task 2 pins the commander wiring.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { Command } from 'commander'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -33,6 +34,7 @@ import {
   runExtractVerb,
 } from '../../eval-session-composition.js'
 import type { EvalSession, ExtractVerbResult } from '../../eval-session-composition.js'
+import { createEvalCommand } from '../eval.js'
 
 const BLOB_BYTES = Uint8Array.from(Buffer.from('agent-qa eval extract fixture blob\n', 'utf8'))
 const SUITE_SCOPE: ScopeKey = { tier: 'suite', key: 'eval-cli' }
@@ -355,5 +357,127 @@ describe('runExtractVerb — sweep-by-default over the sanctioned engines (D-01/
     const second = await runExtractVerb(session)
     expect(second).toEqual(first)
     expect(await snapshotTree(second.cassettesRoot)).toEqual(firstTree)
+  })
+})
+
+// ---- Task 2: the commander family, D-04 rendering purity, D-08 exit codes ---------------------
+
+/** Mirror of cli.ts: the global --config option on the program, eval as a direct child. */
+function buildProgram(): Command {
+  const program = new Command()
+  program.enablePositionalOptions()
+  program.option('--config <path>', 'config file path', 'agent-qa.config.yaml')
+  program.addCommand(createEvalCommand())
+  return program
+}
+
+function captureConsole(): { logs: string[]; errors: string[] } {
+  const logs: string[] = []
+  const errors: string[] = []
+  vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+    logs.push(args.map(String).join(' '))
+  })
+  vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+    errors.push(args.map(String).join(' '))
+  })
+  return { logs, errors }
+}
+
+describe('createEvalCommand — family skeleton and registration shape (D-01)', () => {
+  it('names the family "eval" with exactly the extract subcommand in this plan', () => {
+    const cmd = createEvalCommand()
+    expect(cmd.name()).toBe('eval')
+    expect(cmd.commands.map(sub => sub.name())).toEqual(['extract'])
+  })
+
+  it('declares the D-02 filter vocabulary on extract: --run, --product, --json', () => {
+    const extract = createEvalCommand().commands.find(sub => sub.name() === 'extract')
+    const flags = extract?.options.map(option => option.long) ?? []
+    expect(flags).toEqual(expect.arrayContaining(['--run', '--product', '--json']))
+  })
+})
+
+describe('agent-qa eval extract — rendering and exit semantics (D-04/D-08)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('--json emits exactly one JSON DTO on stdout and nothing else (Pitfall 11)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveRun(dir, 'run-alpha')
+    saveRun(dir, 'run-beta', { withCachedStep: true })
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'extract', '--json'], {
+      from: 'user',
+    })
+
+    expect(errors).toEqual([])
+    expect(logs).toHaveLength(1)
+    const dto = JSON.parse(logs[0] ?? '') as ExtractVerbResult
+    expect(dto.runsSwept).toBe(2)
+    expect(dto.cassettesWritten).toBe(4)
+    expect(dto.completeness).toEqual({ complete: 4, 'cache-hit': 1 })
+    expect(process.exitCode).not.toBe(1)
+  })
+
+  it('renders the human summary from the same DTO fields without --json (D-04)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'extract'], { from: 'user' })
+
+    expect(errors).toEqual([])
+    const rendered = logs.join('\n')
+    expect(rendered).toContain('swept 1 run')
+    expect(rendered).toContain('cassettes written: 2')
+    expect(rendered).toContain('complete=2')
+    expect(rendered).toContain(resolve(dir, '.agent-qa', 'eval', 'cassettes'))
+    expect(() => JSON.parse(rendered)).toThrow()
+  })
+
+  it('a named --run with no handoff sets process.exitCode 1 — the ONLY extract failure (D-08)', async () => {
+    const { dir, configPath } = await writeFixture()
+    saveRun(dir, 'run-alpha')
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(
+      ['--config', configPath, 'eval', 'extract', '--run', 'no-such-run'],
+      { from: 'user' },
+    )
+
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('no-such-run')
+    expect(logs).toEqual([])
+  })
+
+  it('an empty sweep is data, not an error: exit 0 with runsSwept 0', async () => {
+    const { configPath } = await writeFixture()
+    const { logs, errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'extract', '--json'], {
+      from: 'user',
+    })
+
+    expect(process.exitCode).not.toBe(1)
+    expect(errors).toEqual([])
+    const dto = JSON.parse(logs.join('\n')) as ExtractVerbResult
+    expect(dto.runsSwept).toBe(0)
+    expect(dto.cassettesWritten).toBe(0)
+    expect(dto.runsSkipped).toEqual([])
+  })
+
+  it('config/session resolution errors map to exit 1 with the message on stderr (D-08)', async () => {
+    const dir = await mkdtemp(join(tmpRoot, 'fixture-'))
+    const configPath = join(dir, 'agent-qa.config.yaml')
+    await writeFile(configPath, CONFIG_YAML)
+    // No secrets file: resolveEvalSession throws a typed error naming the path.
+    const { errors } = captureConsole()
+
+    await buildProgram().parseAsync(['--config', configPath, 'eval', 'extract'], { from: 'user' })
+
+    expect(process.exitCode).toBe(1)
+    expect(errors.join('\n')).toContain('.env.secrets.local')
   })
 })
