@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import type { CassetteScore, LeafReplayResult } from '@vostride/agent-qa-eval'
+import type { CassetteScore, JudgeIdentityBlock, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -144,6 +144,28 @@ describe('FsScoreStore (D-13, Pitfall 5)', () => {
 
     // Nothing escapes the temp root: it contains only the eval/ staging subtree.
     expect(await readdir(root)).toEqual(['eval'])
+  })
+
+  it('round-trips the D-16 judge identity block verbatim under the judge key', async () => {
+    const judge: JudgeIdentityBlock = {
+      judgeModelId: 'claude-judge-stub',
+      judgeFamily: 'claude',
+      judgeVersion: 1,
+      confidenceThreshold: 'high',
+    }
+    const written = new FsScoreStore({ root }).save({ ...scoreRecord(), judge })
+
+    const persisted = JSON.parse(await readFile(written.file, 'utf8')) as ScoreRecord
+    expect(persisted.judge).toEqual(judge)
+  })
+
+  it('persists no judge key when the record carries no judge block (369 byte-compatible)', async () => {
+    const written = new FsScoreStore({ root }).save(scoreRecord())
+
+    const raw = await readFile(written.file, 'utf8')
+    const persisted = JSON.parse(raw) as Record<string, unknown>
+    expect('judge' in persisted).toBe(false)
+    expect(raw).not.toContain('"judge"')
   })
 
   it('defaults outputRoot to the replays subdir and honors an explicit outputDir override', async () => {
