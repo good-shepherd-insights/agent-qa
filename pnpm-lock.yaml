@@ -150,6 +150,12 @@ importers:
       '@vostride/agent-qa-dashboard-ui':
         specifier: workspace:*
         version: link:../dashboard-ui
+      '@vostride/agent-qa-eval':
+        specifier: workspace:*
+        version: link:../eval
+      '@vostride/agent-qa-eval-local':
+        specifier: workspace:*
+        version: link:../eval-local
       '@vostride/agent-qa-ids':
         specifier: workspace:*
         version: link:../ids

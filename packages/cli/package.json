@@ -87,6 +87,8 @@
     "@vostride/agent-qa-core": "workspace:*",
     "@vostride/agent-qa-dashboard": "workspace:*",
     "@vostride/agent-qa-dashboard-ui": "workspace:*",
+    "@vostride/agent-qa-eval": "workspace:*",
+    "@vostride/agent-qa-eval-local": "workspace:*",
     "@vostride/agent-qa-ids": "workspace:*",
     "@vostride/agent-qa-ios": "workspace:*",
     "@vostride/agent-qa-mcp": "workspace:*",

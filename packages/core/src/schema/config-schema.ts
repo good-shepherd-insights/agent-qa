@@ -40,6 +40,16 @@ export const AgentQaConfigSchema = z.object({
   // D-15 config half: explicit opt-in trusted-ask mode (the CLI flag half is plan 362-06).
   // Strict so unknown safety subkeys are rejected — no implicit/unscoped trust channel (§2.3).
   safety: z.object({ trustMode: z.boolean().optional() }).strict().optional(),
+  // D-03 (Phase 372): eval substrate params. `judge` references a NAMED registry.llms entry;
+  // strict so unknown eval subkeys are rejected.
+  eval: z.object({
+    judge: z.string().optional(),
+    k: z.number().int().positive().optional(),
+    seed: z.number().int().optional(),
+    seeding: z.object({
+      silverPerTestCap: z.number().int().positive().optional(),
+    }).strict().optional(),
+  }).strict().optional(),
 }).strict()
 .superRefine((val, ctx) => {
   const llms = val.registry?.llms ?? []

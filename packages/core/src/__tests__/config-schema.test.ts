@@ -1139,3 +1139,50 @@ describe('AgentQaConfigSchema — safety.trustMode (D-15)', () => {
     expect(result.success).toBe(true)
   })
 })
+
+// D-03 (Phase 372): eval substrate params — judge names a registry.llms entry;
+// strict so unknown eval subkeys are rejected; optional so pre-372 configs still parse.
+describe('AgentQaConfigSchema — eval block (D-03)', () => {
+  it('accepts a full eval block', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: {
+        judge: 'gpt-judge',
+        k: 3,
+        seed: 42,
+        seeding: { silverPerTestCap: 5 },
+      },
+    }))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.eval?.judge).toBe('gpt-judge')
+      expect(result.data.eval?.k).toBe(3)
+      expect(result.data.eval?.seed).toBe(42)
+      expect(result.data.eval?.seeding?.silverPerTestCap).toBe(5)
+    }
+  })
+
+  it('rejects unknown eval subkeys (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { judg: 'x' },
+    }))
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects unknown eval.seeding subkeys (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { seeding: { silverPerTest: 5 } },
+    }))
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects non-positive k and non-integer seed', () => {
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { k: 0 } })).success).toBe(false)
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { seed: 1.5 } })).success).toBe(false)
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { seeding: { silverPerTestCap: 0 } } })).success).toBe(false)
+  })
+
+  it('parses a config WITHOUT the eval key (optional, additive)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+  })
+})
