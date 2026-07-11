@@ -63,7 +63,13 @@ describe('collectProcedurePriorIdentities', () => {
       },
       {
         sidecar: makeSidecar({
-          goldAction: { type: 'fill', ref: asRef('e1'), text: 'Person@example.test' },
+          goldAction: {
+            type: 'fill',
+            ref: asRef('e1'),
+            text: 'Person@example.test',
+            clearMode: 'replace',
+            submit: false,
+          },
         }),
         receipt: { screenStateHash: 'screen-b' },
       },
