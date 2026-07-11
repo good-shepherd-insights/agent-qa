@@ -4,7 +4,8 @@
 
 import { makeScreenState } from '@vostride/agent-qa-runner'
 import type { NonActionToolMap, PlanResult, StepContext } from '@vostride/agent-qa-runner'
-import type { Platform, ScreenState, ServedBrief } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
+import type { Action, Platform, ScreenState, ServedBrief } from '@vostride/agent-qa-schema'
 import type { CassetteInputLeg } from '../../cassette/input-leg'
 import type { CassetteLabelLeg } from '../../cassette/label-leg'
 import type { CassetteReceipt } from '../../cassette/receipt-leg'
@@ -78,8 +79,49 @@ export function makeReceipt(overrides: Partial<CassetteReceipt> = {}): CassetteR
   }
 }
 
+/** Real matcher gold with a ref action and stable semantic anchor (Phase 369 F1). */
+export function makeSidecar(
+  overrides: Partial<CassetteSidecarLeg> = {},
+): CassetteSidecarLeg {
+  const goldAction: Action = overrides.goldAction ?? { type: 'click', ref: asRef('e1') }
+  const defaultGoldAnchor = {
+    role: 'button',
+    nameNormalized: 'submit',
+    ordinal: 0,
+  }
+  const goldAnchor = overrides.goldAnchor ?? defaultGoldAnchor
+  const equivalenceSet = overrides.equivalenceSet ?? [{ ...goldAnchor, ref: 'e1' }]
+
+  return {
+    goldAction,
+    opClass: overrides.opClass ?? goldAction.type,
+    ...(overrides.goldValue === undefined ? {} : { goldValue: overrides.goldValue }),
+    goldAnchor,
+    equivalenceSet,
+    ...(overrides.annotation === undefined ? {} : { annotation: overrides.annotation }),
+  }
+}
+
+/** Honest label provenance, with pair-aware defaults for synthetic D-15 fixtures. */
+export function makeLabel(overrides: Partial<CassetteLabelLeg> = {}): CassetteLabelLeg {
+  const hasPairing = overrides.pairing !== undefined
+  return {
+    sourceChannel:
+      overrides.sourceChannel ?? (hasPairing ? 'self-heal-pair' : 'recorded-verdict'),
+    tier: overrides.tier ?? (hasPairing ? 'near-gold' : 'silver'),
+    ...(overrides.verdict === undefined ? {} : { verdict: overrides.verdict }),
+    ...(overrides.recordedFailure === undefined
+      ? {}
+      : { recordedFailure: overrides.recordedFailure }),
+    ...(overrides.rootCause === undefined ? {} : { rootCause: overrides.rootCause }),
+    ...(overrides.pairing === undefined ? {} : { pairing: overrides.pairing }),
+  }
+}
+
 export interface LeafCassetteOverrides {
   leg?: Partial<CassetteInputLeg>
+  sidecar?: CassetteSidecarLeg
+  label?: CassetteLabelLeg
   receipt?: Partial<CassetteReceipt>
   completeness?: LeafCassette['completeness']
   id?: string
@@ -99,29 +141,51 @@ export function leafCassette(overrides: LeafCassetteOverrides = {}): LeafCassett
     stepIndex: 0,
     decisionOrdinal: 0,
     input: leg,
-    sidecar: {} as CassetteSidecarLeg,
-    label: {} as CassetteLabelLeg,
+    sidecar: overrides.sidecar ?? makeSidecar(),
+    label: overrides.label ?? makeLabel(),
     receipt: makeReceipt(overrides.receipt),
   }
 }
 
-function decisionRecord(leg: CassetteInputLeg): DecisionRecord {
+export interface ProcedureDecisionOverrides {
+  leg?: Partial<CassetteInputLeg>
+  sidecar?: CassetteSidecarLeg
+  label?: CassetteLabelLeg
+  receipt?: Partial<CassetteReceipt>
+}
+
+function decisionRecord(
+  baseLeg: Partial<CassetteInputLeg>,
+  overrides: ProcedureDecisionOverrides = {},
+): DecisionRecord {
   return {
-    input: leg,
-    sidecar: {} as CassetteSidecarLeg,
-    label: {} as CassetteLabelLeg,
-    receipt: makeReceipt(),
+    input: makeLeg({ ...baseLeg, ...overrides.leg }),
+    sidecar: overrides.sidecar ?? makeSidecar(),
+    label: overrides.label ?? makeLabel(),
+    receipt: makeReceipt(overrides.receipt),
   }
 }
 
 export const PROCEDURE_END_STATE = { outcome: 'passed' } as unknown as ProcedureEndState
 
-export function procedureCassette(): ProcedureCassette {
+export function procedureCassette(
+  decisionOverrides: readonly ProcedureDecisionOverrides[] = [],
+): ProcedureCassette {
   const steps: ProcedureStepRecord[] = [
-    { kind: 'decision', stepIndex: 0, decisionOrdinal: 0, record: decisionRecord(makeLeg({ stepIndex: 0 })) },
+    {
+      kind: 'decision',
+      stepIndex: 0,
+      decisionOrdinal: 0,
+      record: decisionRecord({ stepIndex: 0 }, decisionOverrides[0]),
+    },
     { kind: 'cache-served', stepIndex: 1, decisionOrdinal: 0 },
     { kind: 'synthesized', stepIndex: 2 },
-    { kind: 'decision', stepIndex: 3, decisionOrdinal: 0, record: decisionRecord(makeLeg({ stepIndex: 3 })) },
+    {
+      kind: 'decision',
+      stepIndex: 3,
+      decisionOrdinal: 0,
+      record: decisionRecord({ stepIndex: 3 }, decisionOverrides[1]),
+    },
   ]
   return {
     schemaVersion: CASSETTE_SCHEMA_VERSION,
