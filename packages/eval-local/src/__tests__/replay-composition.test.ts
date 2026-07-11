@@ -9,6 +9,7 @@ import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FsCassetteStore } from '../cassette-store.js'
@@ -848,6 +849,120 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
       judgeVersion: JUDGE_CONFIG.judgeVersion,
       confidenceThreshold: 'high',
     })
+  })
+})
+
+// ─── Task 1 (372-01): the D-06 maskingContextFactory seam (G1) ───
+
+// A registered fake secret embedded in the recorded step text — long enough for the default
+// ≥4-char register guard, shaped to trip NO guardrail detector (no Bearer prefix, no email).
+const FAKE_REPLAY_SECRET = 'raw-fake-replay-secret-9001'
+
+describe('runCassetteReplay — D-06 maskingContextFactory seam (372-01, G1/BASE-01)', () => {
+  const tempRoots: string[] = []
+
+  async function tempRoot(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix))
+    tempRoots.push(root)
+    return root
+  }
+
+  afterEach(async () => {
+    safetyHooks.disposeCalls = 0
+    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  })
+
+  function secretHandoff(): CompletedRunHandoff {
+    const handoff = makeLocalV2Handoff()
+    handoff.tests[0]!.steps[0]!.stepText =
+      `Use the token ${FAKE_REPLAY_SECRET} then click Continue`
+    return handoff
+  }
+
+  it('masks a factory-registered secret to a placeholder in the replay egress (D-06)', async () => {
+    const { cassette, artifacts } = extractLeaf(secretHandoff())
+    const stub = capturingStub(() => actionGenerateResult())
+    const replayDir = await tempRoot('replay-mask-seeded-')
+
+    await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+      maskingContextFactory: () => {
+        const ctx = createMaskingContext()
+        ctx.register(FAKE_REPLAY_SECRET)
+        return ctx
+      },
+    })
+
+    // Captured POST the pinned-last mask middleware: the registered secret reaches the provider
+    // boundary as a <SECRET_n> placeholder, never as raw bytes.
+    expect(stub.captured).toHaveLength(1)
+    const boundaryPayload = JSON.stringify(stub.captured[0]!)
+    expect(boundaryPayload).toContain('<SECRET_')
+    expect(boundaryPayload).not.toContain(FAKE_REPLAY_SECRET)
+  })
+
+  it('invokes the factory once per internal scope — replay AND judge adjudication — and disposes each context (Pitfall 1)', async () => {
+    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
+    const stub = capturingStub(() => actionGenerateResult())
+    const storeRoot = await tempRoot('replay-mask-scopes-store-')
+    const replayDir = await tempRoot('replay-mask-scopes-audit-')
+
+    let invocations = 0
+    const disposed: boolean[] = []
+    const countingFactory = () => {
+      const index = invocations++
+      disposed.push(false)
+      const ctx = createMaskingContext()
+      const dispose = ctx.dispose.bind(ctx)
+      return Object.assign(ctx, {
+        dispose: () => {
+          disposed[index] = true
+          dispose()
+        },
+      })
+    }
+
+    const outcome = await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+      scoreStore: new FsScoreStore({ root: storeRoot }),
+      maskingContextFactory: countingFactory,
+    })
+
+    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
+    // The score leg ran, so BOTH internal safety scopes constructed their context from the
+    // injected factory — a shadowed inner empty scope would show as fewer than two invocations.
+    expect(invocations).toBe(2)
+    expect(disposed).toEqual([true, true])
+  })
+
+  it('preserves the empty-seeded default for library callers passing no factory (368 posture)', async () => {
+    const { cassette, artifacts } = extractLeaf(secretHandoff())
+    const stub = capturingStub(() => actionGenerateResult())
+    const replayDir = await tempRoot('replay-mask-default-')
+
+    await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: stub.languageModels },
+      replayOutputBaseDir: replayDir,
+    })
+
+    // No factory ⇒ no registration ever happened ⇒ the raw string rides the prompt untouched,
+    // byte-identical to pre-372 library-caller behavior.
+    expect(stub.captured).toHaveLength(1)
+    expect(JSON.stringify(stub.captured[0]!)).toContain(FAKE_REPLAY_SECRET)
   })
 })
 

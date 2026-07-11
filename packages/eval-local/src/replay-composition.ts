@@ -15,10 +15,11 @@
 //     server through unmodified production planner code.
 //   - Model selection derives ONLY from the caller-supplied profile, never the recorded id (D-03):
 //     recorded vs replayed ids are both stamped on the result, neither is enforced.
-//   - The ENTIRE replayCassette invocation runs inside runSafetyScope with an empty-seeded
-//     MaskingContext (cassette content is already placeholder-masked at extraction; the guardrail
-//     detectors still scan every replayed prompt) and a replay-scoped JsonlAuditSink under the
-//     replay output dir (D-06 / T-368-12 / T-368-13). The masking context is disposed in `finally`.
+//   - The ENTIRE replayCassette invocation runs inside runSafetyScope with a MaskingContext that
+//     is empty-seeded by default, CLI-seeded via the 372 maskingContextFactory seam (cassette
+//     content is already placeholder-masked at extraction; the guardrail detectors still scan
+//     every replayed prompt) and a replay-scoped JsonlAuditSink under the replay output dir
+//     (D-06 / T-368-12 / T-368-13). The masking context is disposed in `finally`.
 
 import {
   adjudicateCassetteScore,
@@ -98,6 +99,14 @@ export interface RunCassetteReplayInput {
     auth: ResolvedModelAuth
     modelOverrides?: ModelProviderOverrides
   }
+  /**
+   * Phase 372 D-06 seam (G1): the CLI injects a run-parity seeded masking-context factory
+   * (secret store + sensitive env + auth-state strings) so replayed prompts and judge calls see
+   * the SAME masking the live run did. Absence is a first-class configuration — library callers
+   * keep the 368 empty-seeded default. The factory is called once per internal safety scope
+   * (replay + judge adjudication) so each scope gets a fresh disposable context.
+   */
+  maskingContextFactory?: () => ReturnType<typeof createMaskingContext>
 }
 
 /** The platform the action-tool slice is derived for — the cassette's recorded observation platform. */
@@ -280,10 +289,11 @@ export async function runCassetteReplay(
   // Host wall-clock behind the eval-core ReplayClock port (eval core bans host time APIs).
   const clock: ReplayClock = { now: () => performance.now() }
 
-  // D-06 safety scope: empty-seeded masking (pass-through by construction; guardrails still scan
-  // every replayed prompt) + a replay-scoped JsonlAuditSink under the replay output dir. The
-  // executionContext is omitted so the live host detector resolves it.
-  const maskingContext = createMaskingContext()
+  // D-06 safety scope: factory-or-default masking (empty-seeded pass-through by default,
+  // CLI-seeded via the 372 maskingContextFactory seam; guardrails still scan every replayed
+  // prompt) + a replay-scoped JsonlAuditSink under the replay output dir. The executionContext
+  // is omitted so the live host detector resolves it.
+  const maskingContext = (input.maskingContextFactory ?? createMaskingContext)()
   const auditSink = new JsonlAuditSink(input.replayOutputBaseDir)
 
   const engineInput: ReplayCassetteInput = {
@@ -338,7 +348,7 @@ export async function runCassetteReplay(
     // under the replay output dir (JUDGE-03). Adjudication runs UNCONDITIONALLY so every tie is
     // stamped with its disposition even when no port exists (D-06/D-10/D-12); the pure
     // scoreCassetteReplay output itself stays untouched.
-    const judgeMaskingContext = createMaskingContext()
+    const judgeMaskingContext = (input.maskingContextFactory ?? createMaskingContext)()
     const judgeAuditSink = new JsonlAuditSink(input.replayOutputBaseDir)
     let adjudicated
     try {
