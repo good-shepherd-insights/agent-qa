@@ -39,3 +39,24 @@ export type { FsScoreStoreConfig, ScoreRecord, WrittenScoreRecord } from './scor
 
 export { DEFAULT_EVAL_REPORTS_SUBDIR, FsReportStore } from './report-store.js'
 export type { FsReportStoreConfig, WrittenReport } from './report-store.js'
+
+export {
+  COMMITTED_CASSETTES_DIR,
+  COMMITTED_CONTRACTS_DIR,
+  COMMITTED_CORPUS_DIR,
+  COMMITTED_GITIGNORE_TEXT,
+  COMMITTED_LABELS_DIR,
+  COMMITTED_ROOT_MARKER_FILE,
+  COMMITTED_ROOT_SCHEMA_VERSION,
+  FsCommittedRootStore,
+  buildRootMarkerValue,
+  committedBlobPath,
+  committedCassettePath,
+  committedContractPath,
+  committedCorpusPath,
+  committedLabelPath,
+} from './committed-root-store.js'
+export type {
+  CommittedRootStoreConfig,
+  CommittedWriteOutcome,
+} from './committed-root-store.js'

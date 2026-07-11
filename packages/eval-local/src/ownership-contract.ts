@@ -31,6 +31,11 @@ export const AGENT_QA_EVAL_LOCAL_ALLOWED_RESPONSIBILITIES = [
   // Invoked only inside the single sanctioned replay-composition helper's flow (370-07 composes
   // it); the forbidden provider-invocation clause below still holds.
   'the tier-4 judge-port binding through createModel inside the sanctioned replay-composition flow',
+  // Phase 371 ROOT-01/D-15/D-17: the write-once committed eval-root store under agent-qa-eval/ —
+  // scaffolded gitignore covering every blobs/ dir, schemaVersion root marker, per-segment slugged
+  // paths, byte-compare idempotence, typed write-conflict refusal; content policy (the
+  // committed-egress checkpoint) lives in the seeding composition helper, never here.
+  'the write-once committed eval-root store scaffolding and refusing under agent-qa-eval/',
 ] as const
 export const AGENT_QA_EVAL_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   // The composition carve-out is narrow: provider invocation is permitted ONLY through the single
