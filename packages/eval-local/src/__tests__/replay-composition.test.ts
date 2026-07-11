@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { extractRunCassettes } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, Cassette, LeafReplayResult } from '@vostride/agent-qa-eval'
@@ -14,6 +14,8 @@ import { FsCassetteStore } from '../cassette-store.js'
 import { loadCassetteBundle } from '../cassette-loader.js'
 import { runCassetteReplay } from '../replay-composition.js'
 import { FsReplayRecordStore } from '../replay-record-store.js'
+import { FsScoreStore, SCORE_FILE } from '../score-store.js'
+import type { ScoreRecord } from '../score-store.js'
 import {
   LOCAL_FIXTURE_BLOB_BYTES,
   LOCAL_FIXTURE_BLOB_SHA,
@@ -461,6 +463,93 @@ describe('runCassetteReplay — production round-trip spine (RPLY-02, D-05/D-12)
     expect(JSON.stringify(stub.captured[1]!)).toContain(RECORDED_LOOKUP_MARKER)
     // No recorded exchange left unconsumed.
     expect(leaf.unconsumedExchanges).toHaveLength(0)
+  })
+})
+
+// ─── Task 3 (369-08): optional score persistence through the sanctioned composition ───
+
+describe('runCassetteReplay — optional score persistence (369-08, D-13/OQ-2)', () => {
+  const tempRoots: string[] = []
+
+  async function tempRoot(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix))
+    tempRoots.push(root)
+    return root
+  }
+
+  afterEach(async () => {
+    safetyHooks.disposeCalls = 0
+    await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  })
+
+  it('scores the replay in eval core and persists score.json beside replay.json (record first)', async () => {
+    const { cassette, artifacts } = extractLeaf(makeLocalV2Handoff())
+    const storeRoot = await tempRoot('replay-comp-scored-')
+    const replayDir = await tempRoot('replay-comp-scored-audit-')
+
+    const outcome = await runCassetteReplay({
+      cassette,
+      artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: capturingStub(() => actionGenerateResult()).languageModels },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: storeRoot }),
+      scoreStore: new FsScoreStore({ root: storeRoot }),
+    })
+
+    if (!('granularity' in outcome)) throw new Error('expected a replay result, got a refusal')
+
+    // Both files landed in the SAME slugged cassette dir — record-then-score ordering means the
+    // record store's dir-recreate ran BEFORE the file-scoped score write (OQ-2).
+    const records = findReplayRecords(join(storeRoot, 'eval', 'replays'))
+    expect(records).toHaveLength(1)
+    const scoreFile = join(dirname(records[0]!), SCORE_FILE)
+    expect(existsSync(scoreFile)).toBe(true)
+
+    const persisted = JSON.parse(readFileSync(scoreFile, 'utf8')) as ScoreRecord
+    expect(persisted.cassetteId).toBe(cassette.id)
+    expect(typeof persisted.matcherVersion).toBe('number')
+    expect(persisted.score.kind).toBe('leaf')
+    // The grounded click on the recorded ref settles to a scored diff with a resolved gold identity.
+    expect(persisted.diffs).toHaveLength(1)
+    expect(persisted.diffs[0]!.kind).toBe('scored')
+    expect(persisted.diffs[0]!.goldIdentity).toBeDefined()
+    expect(persisted.diffs[0]!.matcherVersion).toBe(persisted.matcherVersion)
+  })
+
+  it('never scores a refusal: replay.json persists, no score.json is written', async () => {
+    const bundleRoot = await tempRoot('replay-comp-refusal-bundles-')
+    const storeRoot = await tempRoot('replay-comp-refusal-store-')
+    const replayDir = await tempRoot('replay-comp-refusal-audit-')
+
+    // No blob bytes at extraction ⇒ evidence-incomplete cassette ⇒ completeness refusal.
+    const emptyArtifacts: ArtifactSource = { getBlob: () => undefined }
+    const load = extractStoreLoad(makeLocalV2Handoff(), emptyArtifacts, bundleRoot)
+    expect(load.kind).toBe('loaded')
+    if (load.kind !== 'loaded') throw new Error('expected a loaded bundle')
+
+    const outcome = await runCassetteReplay({
+      cassette: load.cassette,
+      artifacts: load.artifacts,
+      profile: stubProfile(),
+      auth: noneAuth,
+      modelOverrides: { languageModels: capturingStub(() => actionGenerateResult()).languageModels },
+      replayOutputBaseDir: replayDir,
+      recordStore: new FsReplayRecordStore({ root: storeRoot }),
+      scoreStore: new FsScoreStore({ root: storeRoot }),
+    })
+
+    expect('kind' in outcome && outcome.kind === 'integrity-refusal').toBe(true)
+
+    // The refusal record persists (refusals are never silent), but no score.json exists anywhere —
+    // refusals are counted in reports, never scored.
+    const records = findReplayRecords(join(storeRoot, 'eval', 'replays'))
+    expect(records).toHaveLength(1)
+    const scoreFiles = readdirSync(storeRoot, { recursive: true, withFileTypes: true }).filter(
+      (entry) => entry.isFile() && entry.name === SCORE_FILE,
+    )
+    expect(scoreFiles).toHaveLength(0)
   })
 })
 
