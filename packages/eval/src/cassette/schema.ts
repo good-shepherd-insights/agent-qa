@@ -273,6 +273,9 @@ const verdictAttributionSchema = z
   .passthrough()
 
 const verdictBaseShape = {
+  // D-03 lockstep with schema verdict.ts: the minting-pipeline discriminator,
+  // closed to exactly two literals (D-06 mirror discipline).
+  producer: z.enum(['deterministic-classifier', 'analyze-run']),
   confidence: z.number(),
   evidence: verdictEvidenceSchema,
   attribution: verdictAttributionSchema.optional(),
@@ -295,6 +298,8 @@ const verdictSchema = z.discriminatedUnion('class', [
   z.object({ ...verdictBaseShape, class: z.literal('flake') }).passthrough(),
   z.object({ ...verdictBaseShape, class: z.literal('config_error') }).passthrough(),
   z.object({ ...verdictBaseShape, class: z.literal('llm_error') }).passthrough(),
+  z.object({ ...verdictBaseShape, class: z.literal('unknown') }).passthrough(),
+  z.object({ ...verdictBaseShape, class: z.literal('timeout') }).passthrough(),
 ])
 
 const assertValueSchema = z
