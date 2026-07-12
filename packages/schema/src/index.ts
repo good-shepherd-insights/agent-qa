@@ -72,6 +72,7 @@ export {
   sha256hex16,
 } from './determinism/index'
 export type { ScopeKey, ScopeTier, Anchor } from './identity/index'
+export { normalizeAnchor } from './identity/index'
 export {
   screenIdentityHash,
   screenStateHash,
