@@ -24,7 +24,6 @@ export interface ResolvedWorkspacePaths {
   suiteMatch: string[]
   testPathIgnore: string[]
   hooksFile: ResolvedWorkspaceFile
-  agentRules: ResolvedWorkspaceFile
   envFile: ResolvedWorkspaceFile
   secretsFile: ResolvedWorkspaceFile
 }
@@ -156,15 +155,15 @@ export function resolveWorkspacePaths(input: ResolveWorkspacePathsInput): Resolv
     suiteMatch: assertNonEmptyArray(workspace.suiteMatch, 'workspace.suiteMatch'),
     testPathIgnore: workspace.testPathIgnore ?? [],
     hooksFile: resolveWorkspaceScalar(configDir, 'workspace.hooksFile', workspace.hooksFile),
-    agentRules: resolveWorkspaceScalar(configDir, 'workspace.agentRules', workspace.agentRules),
     envFile: resolveWorkspaceScalar(configDir, 'workspace.envFile', workspace.envFile),
     secretsFile: resolveWorkspaceScalar(configDir, 'workspace.secretsFile', workspace.secretsFile),
   }
 
   if (input.requireExistingFiles) {
+    // The workspace agent-rules file was retired in Phase 373 — rules return as
+    // committed agent-qa-knowledge/policies/ files via Reader L0 in Phase 380.
     for (const [key, file] of [
       ['workspace.hooksFile', resolved.hooksFile],
-      ['workspace.agentRules', resolved.agentRules],
       ['workspace.envFile', resolved.envFile],
       ['workspace.secretsFile', resolved.secretsFile],
     ] as const) {

@@ -384,8 +384,9 @@ function appendDiagnostics(result: ValidationResult, diagnostics: ValidationDiag
 
 function validateRequiredWorkspaceFiles(workspace: ResolvedWorkspacePaths): ValidationDiagnostic[] {
   const diagnostics: ValidationDiagnostic[] = []
+  // The workspace agent-rules file was retired in Phase 373 — rules return as
+  // committed agent-qa-knowledge/policies/ files via Reader L0 in Phase 380.
   for (const [key, file] of [
-    ['workspace.agentRules', workspace.agentRules],
     ['workspace.envFile', workspace.envFile],
     ['workspace.secretsFile', workspace.secretsFile],
   ] as const) {

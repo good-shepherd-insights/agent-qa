@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { WorkspaceSchema } from './workspace-schema.js'
 import { ServicesSchema } from './services-schema.js'
 import { KnowledgeConfigSchema } from './knowledge-schema.js'
+import { retiredKeyScan } from './retired-keys.js'
 import { RegistrySchema } from './registry-schema.js'
 import { MobileAppStateSchema, UseSchema } from './use-schema.js'
 import { AnalyticsSchema } from './analytics-schema.js'
@@ -31,7 +32,7 @@ export const PluginsSchema = z.object({
   providers: z.array(ProviderPluginDeclarationSchema).optional().default([]),
 }).strict()
 
-export const AgentQaConfigSchema = z.object({
+const AgentQaConfigSchemaInner = z.object({
   workspace: WorkspaceSchema,
   services: ServicesSchema.optional(),
   // D-08: slim replacement for the retired services.memory surface; prefaulted so parsed
@@ -95,6 +96,12 @@ export const AgentQaConfigSchema = z.object({
     })
   }
 })
+
+// D-07: retired-key pipe pre-scan — the scan MUST run before the strict object because
+// zod (4.4.2 verified) never runs refinements chained after a failed strict parse
+// (RESEARCH Pitfall 1). z.infer of the piped schema yields the stage-B output type,
+// so the exported AgentQaConfig type semantics are unchanged.
+export const AgentQaConfigSchema = retiredKeyScan.pipe(AgentQaConfigSchemaInner)
 
 export { WorkspaceSchema } from './workspace-schema.js'
 export { AuthStateConfigSchema, ServicesSchema } from './services-schema.js'
