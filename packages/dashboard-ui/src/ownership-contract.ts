@@ -20,7 +20,6 @@ export const AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES = [
   'class-variance-authority',
   'clsx',
   'cmdk',
-  'dompurify',
   'lucide-react',
   'marked',
   'monaco-editor',
