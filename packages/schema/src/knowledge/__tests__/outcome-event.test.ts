@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import { asEvidenceToken, asRecordId } from '../../ids/record-id'
 import {
   BundleOutcomeEventSchema,
   dedupeEvents,
@@ -9,7 +10,7 @@ import {
 } from '../outcome-event'
 
 const baseEvent = {
-  evidenceToken: 'evidence-a',
+  evidenceToken: asEvidenceToken('evidence-a'),
   curationJobId: 'curation-a',
   buildOrdinal: 42,
   observationOrdinal: 7,
@@ -28,7 +29,7 @@ describe('BundleOutcomeEventSchema (D-08/D-09/D-10)', () => {
     { ...baseEvent, type: 'contradicted', origin: 'agent-verified' },
     { ...baseEvent, type: 'helpful', origin: 'agent-observed' },
     { ...baseEvent, type: 'harmful', origin: 'import' },
-    { ...baseEvent, type: 'superseded', byRecordId: 'record-successor' },
+    { ...baseEvent, type: 'superseded', byRecordId: asRecordId('record-successor') },
     { ...baseEvent, type: 'deprecated', reason: 'superseded by product behavior' },
     { ...baseEvent, type: 'promoted' },
     { ...baseEvent, type: 'window-close', closedAtOrdinal: 51 },

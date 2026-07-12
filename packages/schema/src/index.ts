@@ -254,6 +254,10 @@ export { computeEvidenceToken } from './ids/index'
 export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch } from './reader/index'
 export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
 
+// 374 D-03/BNDL-03: pure event vocabulary and derivations stay storage-neutral.
+export { BundleOutcomeEventSchema, dedupeEvents, eventDedupKey } from './knowledge/index'
+export type { BundleOutcomeEvent, OriginClass } from './knowledge/index'
+
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
 export type {
