@@ -93,11 +93,15 @@ export interface RunCassetteReplayInput {
    * (372's CLI surfaces it as config). No auto-pick from configured models, no fallback scanning —
    * absence is a first-class configuration, in which case every unresolved tie is stamped
    * not-invoked{no-judge-configured} whenever the score leg runs (D-05/D-10).
+   * allowSameFamily (owner override of D-10, 2026-07-12): explicit default-off opt-in threaded
+   * verbatim into assessJudgeEligibility — it lifts ONLY known-same-family refusal and stamps
+   * the D-16 identity block with familyOverride; unknown families stay forbidden.
    */
   judge?: {
     profile: ModelProfile
     auth: ResolvedModelAuth
     modelOverrides?: ModelProviderOverrides
+    allowSameFamily?: boolean
   }
   /**
    * Phase 372 D-06 seam (G1): the CLI injects a run-parity seeded masking-context factory
@@ -338,6 +342,9 @@ export async function runCassetteReplay(
       ...(input.judge !== undefined ? { judgeModelId: input.judge.profile.model } : {}),
       replayedModelId: input.profile.model,
       ...(recordedModelId !== undefined ? { recordedModelId } : {}),
+      ...(input.judge?.allowSameFamily !== undefined
+        ? { allowSameFamily: input.judge.allowSameFamily }
+        : {}),
     })
     const port =
       eligibility.eligible && input.judge !== undefined ? bindJudgePort(input.judge) : undefined

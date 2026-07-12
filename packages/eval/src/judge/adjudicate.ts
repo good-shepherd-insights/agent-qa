@@ -16,6 +16,12 @@
 // ('openai-compatible' serves Llama, Qwen, and DeepSeek alike) and can never establish
 // family; unknown resolves undefined and is treated as same-family, therefore forbidden —
 // never a guess.
+// Owner override of D-10 (2026-07-12): an EXPLICIT allowSameFamily opt-in lifts ONLY the
+// known-equal-family refusal arms (judge===replayed; recorded===judge) and stamps the
+// eligible result — and thence the D-16 identity block — with familyOverride:
+// 'same-family-allowed' so the self-preference bias condition is disclosed on every scored
+// entry. The DEFAULT is unchanged (opt-in absent/false refuses exactly as ratified), and
+// the unknown-family arms are NEVER relaxed: unknown ⇒ forbidden, never a guess.
 
 import type {
   Cassette,
@@ -74,7 +80,13 @@ import type {
  * is loud enough to reconstruct exactly why the judge was refused.
  */
 export type JudgeEligibility =
-  | { eligible: true; judgeModelId: string; judgeFamily: JudgeFamily }
+  | {
+      eligible: true
+      judgeModelId: string
+      judgeFamily: JudgeFamily
+      /** Present ONLY when the allowSameFamily opt-in lifted a refusal that would have fired. */
+      familyOverride?: 'same-family-allowed'
+    }
   | { eligible: false; reason: 'no-judge-configured' }
   | {
       eligible: false
@@ -87,13 +99,20 @@ export type JudgeEligibility =
  * input combination. Forbidden when the judge family is unknown, the replayed family is
  * unknown, the two are equal, or a supplied recorded model resolves unknown or equal to the
  * judge family. An absent recorded model skips that side entirely (D-14 "when resolvable").
+ *
+ * allowSameFamily (owner override of D-10, 2026-07-12): an EXPLICIT default-off opt-in that
+ * bypasses ONLY the known-equal-family arms; when it lifts a refusal that would otherwise
+ * have fired, the eligible result carries familyOverride: 'same-family-allowed' so the
+ * disclosure rides the D-16 identity block. The unknown arms (judge, replayed, or a supplied
+ * recorded model resolving undefined) remain forbidden regardless — never a guess.
  */
 export function assessJudgeEligibility(input: {
   judgeModelId?: string
   replayedModelId: string
   recordedModelId?: string
+  allowSameFamily?: boolean
 }): JudgeEligibility {
-  const { judgeModelId, replayedModelId, recordedModelId } = input
+  const { judgeModelId, replayedModelId, recordedModelId, allowSameFamily } = input
   if (judgeModelId === undefined) {
     return { eligible: false, reason: 'no-judge-configured' }
   }
@@ -103,25 +122,39 @@ export function assessJudgeEligibility(input: {
   const recorded =
     recordedModelId === undefined ? undefined : resolveJudgeFamily(recordedModelId)
 
-  const forbidden =
+  const refusal = (): JudgeEligibility => ({
+    eligible: false,
+    reason: 'no-eligible-judge',
+    families: {
+      ...(judge === undefined ? {} : { judge }),
+      ...(replayed === undefined ? {} : { replayed }),
+      ...(recorded === undefined ? {} : { recorded }),
+    },
+  })
+
+  // Unknown arms: NEVER relaxed by the opt-in (unknown ⇒ forbidden, never a guess).
+  if (
     judge === undefined ||
     replayed === undefined ||
-    judge === replayed ||
-    (recordedModelId !== undefined && (recorded === undefined || recorded === judge))
-
-  if (forbidden) {
-    return {
-      eligible: false,
-      reason: 'no-eligible-judge',
-      families: {
-        ...(judge === undefined ? {} : { judge }),
-        ...(replayed === undefined ? {} : { replayed }),
-        ...(recorded === undefined ? {} : { recorded }),
-      },
-    }
+    (recordedModelId !== undefined && recorded === undefined)
+  ) {
+    return refusal()
   }
 
-  return { eligible: true, judgeModelId, judgeFamily: judge }
+  // Known-equal arms: the ONLY refusals the explicit opt-in may lift.
+  const knownSameFamily =
+    judge === replayed || (recorded !== undefined && recorded === judge)
+  if (knownSameFamily && allowSameFamily !== true) {
+    return refusal()
+  }
+
+  return {
+    eligible: true,
+    judgeModelId,
+    judgeFamily: judge,
+    // The marker appears ONLY when the override changed the outcome.
+    ...(knownSameFamily ? { familyOverride: 'same-family-allowed' as const } : {}),
+  }
 }
 
 /** The adjudicated score plus the D-16 identity block when the eligible path ran. */
@@ -766,6 +799,10 @@ export async function adjudicateCassetteScore(input: {
       judgeFamily: eligibility.judgeFamily,
       judgeVersion: JUDGE_CONFIG.judgeVersion,
       confidenceThreshold: JUDGE_CONFIG.confidenceThreshold,
+      // Owner override of D-10 (2026-07-12): the disclosure rides every scored entry.
+      ...(eligibility.familyOverride === undefined
+        ? {}
+        : { familyOverride: eligibility.familyOverride }),
     },
   }
 }

@@ -122,6 +122,12 @@ export interface JudgeIdentityBlock {
   judgeFamily: string
   judgeVersion: number
   confidenceThreshold: JudgeConfidence
+  /**
+   * Owner override of D-10 (2026-07-12): present ONLY when the explicit allowSameFamily
+   * opt-in lifted a known-same-family refusal — the persisted score and the committed report
+   * disclose the self-preference bias condition instead of silently claiming disjoint judging.
+   */
+  familyOverride?: 'same-family-allowed'
 }
 
 /** The three primary score axes. No combined numeric field exists (MATCH-04). */
