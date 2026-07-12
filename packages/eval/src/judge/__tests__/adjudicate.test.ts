@@ -129,6 +129,127 @@ describe('assessJudgeEligibility', () => {
   })
 })
 
+describe('assessJudgeEligibility — allowSameFamily opt-in (owner override of D-10, 2026-07-12)', () => {
+  it('lifts a KNOWN-same-family replayed refusal and stamps the override marker (Test A)', () => {
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'gpt-5.6-sol',
+        replayedModelId: 'gpt-5.6-terra',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: true,
+      judgeModelId: 'gpt-5.6-sol',
+      judgeFamily: 'openai',
+      familyOverride: 'same-family-allowed',
+    })
+  })
+
+  it('does NOT relax unknown families — unknown ⇒ forbidden, never a guess (Test B)', () => {
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'mystery-model-1',
+        replayedModelId: 'gpt-5',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: false,
+      reason: 'no-eligible-judge',
+      families: { replayed: 'openai' },
+    })
+
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'claude-sonnet-4-5',
+        replayedModelId: 'mystery-planner-model',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: false,
+      reason: 'no-eligible-judge',
+      families: { judge: 'claude' },
+    })
+
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'claude-sonnet-4-5',
+        replayedModelId: 'gpt-5',
+        recordedModelId: 'mystery-recorded-model',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: false,
+      reason: 'no-eligible-judge',
+      families: { judge: 'claude', replayed: 'openai' },
+    })
+  })
+
+  it('lifts the KNOWN-same recorded-side refusal with the marker; unknown recorded stays forbidden (Test C)', () => {
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'gpt-5.6-sol',
+        replayedModelId: 'claude-opus-4',
+        recordedModelId: 'gpt-5.6-terra',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: true,
+      judgeModelId: 'gpt-5.6-sol',
+      judgeFamily: 'openai',
+      familyOverride: 'same-family-allowed',
+    })
+
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'gpt-5.6-sol',
+        replayedModelId: 'claude-opus-4',
+        recordedModelId: 'unknown-family-recorded',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: false,
+      reason: 'no-eligible-judge',
+      families: { judge: 'openai', replayed: 'claude' },
+    })
+  })
+
+  it('omits the marker when the override changed nothing: disjoint families stay unmarked (Test D)', () => {
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'claude-sonnet-4-5',
+        replayedModelId: 'gpt-5',
+        recordedModelId: 'gemini-2.5-pro',
+        allowSameFamily: true,
+      }),
+    ).toStrictEqual({
+      eligible: true,
+      judgeModelId: 'claude-sonnet-4-5',
+      judgeFamily: 'claude',
+    })
+  })
+
+  it('keeps the default UNCHANGED: absent or false opt-in still refuses same-family (Test E)', () => {
+    const refusal = {
+      eligible: false,
+      reason: 'no-eligible-judge',
+      families: { judge: 'openai', replayed: 'openai' },
+    }
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'gpt-5.6-sol',
+        replayedModelId: 'gpt-5.6-terra',
+      }),
+    ).toStrictEqual(refusal)
+    expect(
+      assessJudgeEligibility({
+        judgeModelId: 'gpt-5.6-sol',
+        replayedModelId: 'gpt-5.6-terra',
+        allowSameFamily: false,
+      }),
+    ).toStrictEqual(refusal)
+  })
+})
+
 // --- adjudication fixtures --------------------------------------------------
 
 const JUDGE_ID = 'claude-sonnet-4-5'

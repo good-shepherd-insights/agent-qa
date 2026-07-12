@@ -735,6 +735,35 @@ describe('runCassetteReplay — tier-4 judge leg (370-07, JUDGE-01/03/04)', () =
     expect('judge' in persisted).toBe(false)
   })
 
+  it('threads allowSameFamily to the eligibility law: the opted-in same-family judge runs and the identity block discloses the override (owner override of D-10, 2026-07-12)', async () => {
+    const judgeStub = keyedCapturingStub(
+      () => judgeGenerateResult('equivalent', 'high'),
+      SAME_FAMILY_JUDGE_MODEL_ID,
+    )
+    const { persisted } = await runMidBandReplay({
+      judge: {
+        profile: familyStubProfile(SAME_FAMILY_JUDGE_MODEL_ID),
+        auth: noneAuth,
+        modelOverrides: { languageModels: judgeStub.languageModels },
+        allowSameFamily: true,
+      },
+    })
+
+    // The override lifted the known-same-family refusal: the judge actually ran (D-08 pair).
+    expect(judgeStub.captured).toHaveLength(2)
+    const score = leafDecisionScore(persisted)
+    if (score.kind !== 'scored') throw new Error('expected a judge-settled scored decision')
+    expect(score.judgeSettled).toMatchObject({ judgeId: SAME_FAMILY_JUDGE_MODEL_ID })
+    // The persisted D-16 identity block carries the honest override marker.
+    expect(persisted.judge).toEqual({
+      judgeModelId: SAME_FAMILY_JUDGE_MODEL_ID,
+      judgeFamily: 'openai',
+      judgeVersion: JUDGE_CONFIG.judgeVersion,
+      confidenceThreshold: JUDGE_CONFIG.confidenceThreshold,
+      familyOverride: 'same-family-allowed',
+    })
+  })
+
   it('settles the mid-band tie end-to-end: judgeSettled stamp and the D-16 identity block read from disk (JUDGE-04)', async () => {
     const judgeStub = keyedCapturingStub(
       () => judgeGenerateResult('equivalent', 'high'),
