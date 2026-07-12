@@ -204,7 +204,7 @@ function checkSecretsFile(config: Record<string, unknown> | null, configPath: st
 function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
   return {
     name: 'Workspace files',
-    fixInstructions: 'Create the files configured by workspace.hooksFile, workspace.agentRules, and workspace.envFile.',
+    fixInstructions: 'Create the files configured by workspace.hooksFile and workspace.envFile.',
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config' }
@@ -217,7 +217,6 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
 
       const missing = [
         ['workspace.hooksFile', resolved.workspace.hooksFile],
-        ['workspace.agentRules', resolved.workspace.agentRules],
         ['workspace.envFile', resolved.workspace.envFile],
       ] as const
       const missingFiles = missing.filter(([, file]) => !existsSync(file.absolutePath))
@@ -229,7 +228,7 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
         }
       }
 
-      return { status: 'pass', message: 'hooks, agent rules, and env file found' }
+      return { status: 'pass', message: 'hooks and env file found' }
     },
   }
 }

@@ -435,10 +435,20 @@ vi.mock('@vostride/agent-qa-core', () => {
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
   createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   createMemoryProvider: mockCreateMemoryProvider,
-  resolveMemoryRoot: vi.fn((config: any, configDir: string) => {
-    const memoryDir = config?.services?.memory?.dir ?? 'agent-qa-memory'
-    return memoryDir.startsWith('/') ? memoryDir : resolve(configDir, memoryDir)
-  }),
+  // Mirrors the real resolveMemoryRoot with the retired config surface gone (KDIR-03):
+  // callers pass undefined, so the root is always the internal default under configDir.
+  resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => resolve(configDir, 'agent-qa-memory')),
+  V1_MEMORY_DEFAULTS: {
+    enabled: true,
+    provider: 'local',
+    dir: 'agent-qa-memory',
+    minTrust: 0.3,
+    maxInjections: 3,
+    curatorEnabled: true,
+    curatorLockTimeout: 120000,
+    trustConfirmDelta: 0.05,
+    trustContradictDelta: 0.1,
+  },
   generateRunId: mockGenerateRunId,
   isPathInsideDir: vi.fn((candidatePath: string) => !candidatePath.includes('..')),
   BetterSqlite3AbiMismatchError: MockBetterSqlite3AbiMismatchError,
@@ -452,7 +462,7 @@ vi.mock('@vostride/agent-qa-core', () => {
     const configDir = String(configPath).includes('/')
       ? String(configPath).split('/').slice(0, -1).join('/')
       : process.cwd()
-    for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'agentRules', 'envFile', 'secretsFile']) {
+    for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'envFile', 'secretsFile']) {
       if (config.workspace[key] === undefined) {
         throw new Error(`workspace.${key} is required`)
       }
@@ -468,11 +478,6 @@ vi.mock('@vostride/agent-qa-core', () => {
         configuredPath: config.workspace.hooksFile,
         absolutePath: resolveConfigured(config.workspace.hooksFile),
         workspaceRelativePath: config.workspace.hooksFile,
-      },
-      agentRules: {
-        configuredPath: config.workspace.agentRules,
-        absolutePath: resolveConfigured(config.workspace.agentRules),
-        workspaceRelativePath: config.workspace.agentRules,
       },
       envFile: {
         configuredPath: config.workspace.envFile,
@@ -603,7 +608,6 @@ import { createRunCommand } from '../commands/run.js'
 let defaultSecretsFilePath: string | undefined
 let defaultEnvFilePath: string | undefined
 let defaultHooksFilePath: string | undefined
-let defaultAgentRulesFilePath: string | undefined
 
 function defaultConfig() {
   return {
@@ -612,7 +616,6 @@ function defaultConfig() {
       suiteMatch: ['suites/**/*.suite.yaml'],
       testPathIgnore: [] as string[],
       hooksFile: defaultHooksFilePath ?? 'hooks.yaml',
-      agentRules: defaultAgentRulesFilePath ?? './agent-rules.md',
       envFile: defaultEnvFilePath ?? '.env',
       secretsFile: defaultSecretsFilePath ?? '.env.secrets.local',
     },
@@ -673,11 +676,9 @@ beforeEach(() => {
   defaultSecretsFilePath = join(secretsDir, '.env.secrets.local')
   defaultEnvFilePath = join(secretsDir, '.env')
   defaultHooksFilePath = join(secretsDir, 'hooks.yaml')
-  defaultAgentRulesFilePath = join(secretsDir, 'agent-rules.md')
   writeFileSync(defaultSecretsFilePath, '')
   writeFileSync(defaultEnvFilePath, '')
   writeFileSync(defaultHooksFilePath, 'hooks: []\n')
-  writeFileSync(defaultAgentRulesFilePath, '# rules\n')
   mockResolveConfig.mockResolvedValue(defaultConfig())
   mockDashboardDatabase.mockImplementation(function () { return { close: vi.fn() } })
   mockDashboardReporter.mockImplementation(function () { return {} })
@@ -773,7 +774,6 @@ afterEach(async () => {
   defaultSecretsFilePath = undefined
   defaultEnvFilePath = undefined
   defaultHooksFilePath = undefined
-  defaultAgentRulesFilePath = undefined
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   tempDirs.length = 0
 })
@@ -3542,17 +3542,10 @@ describe('run command — runtime memory override', () => {
     expect(mockCreateMemoryProvider).not.toHaveBeenCalled()
   })
 
-  it('resolves services.memory.dir from the config directory for runtime memory', async () => {
+  it('resolves the internal default memory root from the config directory (config surface retired, KDIR-03)', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-memory-config-'))
     tempDirs.push(configDir)
     const cfg = defaultConfig()
-    ;(cfg.services as any).memory = {
-      enabled: true,
-      provider: 'local',
-      dir: '.agent-qa/custom-memory',
-      curatorEnabled: false,
-      ablationEnabled: false,
-    }
     mockResolveConfig.mockResolvedValue(cfg)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -3572,7 +3565,7 @@ describe('run command — runtime memory override', () => {
 
     await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
 
-    const expectedRoot = join(configDir, '.agent-qa/custom-memory')
+    const expectedRoot = join(configDir, 'agent-qa-memory')
     expect(mockCreateMemoryProvider).toHaveBeenCalledWith(expect.objectContaining({
       provider: 'local',
       memoryRoot: expectedRoot,

@@ -55,7 +55,7 @@ vi.mock('@vostride/agent-qa-core', async () => {
       const configDir = String(configPath).includes('/')
         ? String(configPath).split('/').slice(0, -1).join('/')
         : process.cwd()
-      for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'agentRules', 'envFile', 'secretsFile']) {
+      for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'envFile', 'secretsFile']) {
         if (config.workspace?.[key] === undefined) {
           throw new Error(`Missing required workspace config key: workspace.${key}`)
         }
@@ -71,11 +71,6 @@ vi.mock('@vostride/agent-qa-core', async () => {
           configuredPath: config.workspace.hooksFile,
           absolutePath: resolveConfigured(config.workspace.hooksFile),
           workspaceRelativePath: config.workspace.hooksFile,
-        },
-        agentRules: {
-          configuredPath: config.workspace.agentRules,
-          absolutePath: resolveConfigured(config.workspace.agentRules),
-          workspaceRelativePath: config.workspace.agentRules,
         },
         envFile: {
           configuredPath: config.workspace.envFile,
@@ -261,7 +256,6 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
-  agentRules: agent-rules.md
   envFile: .env
   secretsFile: .secrets.local
 registry:
@@ -290,7 +284,6 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
-  agentRules: agent-rules.md
   envFile: .env
 registry:
   llms:
@@ -692,7 +685,6 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
-  agentRules: agent-rules.md
   envFile: .env
   secretsFile: .env.secrets.local
 registry:
@@ -820,7 +812,6 @@ targets:
         testMatch: ['tests/**/*.yaml'],
         suiteMatch: ['suites/**/*.suite.yaml'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'agent-rules.md',
         envFile: '.env',
         secretsFile: '.secrets.local',
       },

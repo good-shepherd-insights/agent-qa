@@ -12,7 +12,6 @@ function makeValidConfig(overrides: Record<string, unknown> = {}): Record<string
       testMatch: ['tests/**/*.yaml'],
       suiteMatch: ['suites/**/*.suite.yaml'],
       hooksFile: 'hooks.yaml',
-      agentRules: './agent-rules.md',
       envFile: '.env',
       secretsFile: '.env.secrets.local',
     },

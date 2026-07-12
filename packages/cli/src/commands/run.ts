@@ -3,7 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveMemoryRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveMemoryRoot, resolveMobileRunConfig, V1_MEMORY_DEFAULTS, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
@@ -1472,23 +1472,16 @@ async function executeSuites(
       redactor: variableContext?.secretRedactor,
     })
 
-    let agentRulesContent: string | undefined
-    const agentRulesPath = (config as any).workspace?.agentRules
-    if (agentRulesPath) {
-      const { readFile: readFileAsync } = await import('node:fs/promises')
-      const resolvedRulesPath = path.resolve(configDir, agentRulesPath)
-      try {
-        agentRulesContent = await readFileAsync(resolvedRulesPath, 'utf-8')
-      } catch { /* agent rules file not found — ignore */ }
-    }
-    let suiteEffectiveRules = agentRulesContent ?? ''
+    // Workspace agent-rules injection removed in Phase 373 (KDIR-03); policy serving returns
+    // via Reader L0 policies in Phase 380. Only CLI-internal capability notes remain.
+    let suiteCapabilityNotes = ''
     if (suiteLogCapture?.console === false) {
-      suiteEffectiveRules += '\nConsole log capture is DISABLED for this test run. The readConsoleLogs action will return no data. If a test step explicitly requires reading console logs, use stepFailed to fail the step — do not silently pass with empty data.'
+      suiteCapabilityNotes += '\nConsole log capture is DISABLED for this test run. The readConsoleLogs action will return no data. If a test step explicitly requires reading console logs, use stepFailed to fail the step — do not silently pass with empty data.'
     }
     if (suiteLogCapture?.network === false) {
-      suiteEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
+      suiteCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
     }
-    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteEffectiveRules || undefined, plannerAccounting, plannerDeclared)
+    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteCapabilityNotes.trim() || undefined, plannerAccounting, plannerDeclared)
     const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
 
     // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
@@ -1522,16 +1515,18 @@ async function executeSuites(
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     let suiteMemoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
-    const suiteMemoryConfig = config.services?.memory
-    const suiteMemoryRoot = resolveMemoryRoot(config, configDir)
+    // v1 memory config surface retired in Phase 373 (KDIR-03); subsystem runs on
+    // V1_MEMORY_DEFAULTS until Phase 382 deletes it.
+    const suiteMemoryConfig = V1_MEMORY_DEFAULTS
+    const suiteMemoryRoot = resolveMemoryRoot(undefined, configDir)
 
-    if (opts.memory !== false && suiteMemoryConfig?.enabled !== false) {
+    if (opts.memory !== false) {
       try {
         const { createMemoryProvider } = await import('@vostride/agent-qa-core')
         suiteMemoryProvider = await createMemoryProvider({
-          provider: suiteMemoryConfig?.provider ?? 'local',
+          provider: suiteMemoryConfig.provider,
           memoryRoot: suiteMemoryRoot,
-          curatorLockTimeout: suiteMemoryConfig?.curatorLockTimeout,
+          curatorLockTimeout: suiteMemoryConfig.curatorLockTimeout,
         })
       } catch (err) {
         console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
@@ -1563,10 +1558,10 @@ async function executeSuites(
         ttl: config.services?.cache?.ttl,
       },
       memory: {
-        enabled: opts.memory !== false && suiteMemoryConfig?.enabled !== false,
-        curatorEnabled: suiteMemoryConfig?.curatorEnabled,
-        provider: suiteMemoryConfig?.provider ?? 'local',
-        dir: suiteMemoryConfig?.dir,
+        enabled: opts.memory !== false,
+        curatorEnabled: suiteMemoryConfig.curatorEnabled,
+        provider: suiteMemoryConfig.provider,
+        dir: suiteMemoryConfig.dir,
       },
       source: {
         kind: 'suite',
@@ -2308,14 +2303,8 @@ export function createRunCommand(): Command {
           process.exit(1)
         }
 
-        let agentRulesContent: string | undefined
-        const { readFile: readFileAsync } = await import('node:fs/promises')
-        try {
-          agentRulesContent = await readFileAsync(workspacePaths.agentRules.absolutePath, 'utf-8')
-        } catch {
-          console.error(pc.red(`Error: Agent rules file not found: ${workspacePaths.agentRules.absolutePath}`))
-          process.exit(1)
-        }
+        // Workspace agent-rules loading removed in Phase 373 (KDIR-03); policy serving
+        // returns via Reader L0 policies in Phase 380.
 
         // Resolve effective log level: CLI flag > --verbose/--quiet > config > fallback
         const effectiveLogLevel = globalOpts.logLevel
@@ -2623,8 +2612,7 @@ export function createRunCommand(): Command {
 
         const results: TestResult[] = []
 
-        const memoryGlobalConfig = config.services?.memory
-        const runtimeMemoryRoot = resolveMemoryRoot(config, configDir)
+        const runtimeMemoryRoot = resolveMemoryRoot(undefined, configDir)
 
         // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
         // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
@@ -2884,14 +2872,14 @@ export function createRunCommand(): Command {
             }
 
             const testLogCapture = (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture
-            let testEffectiveRules = agentRulesContent ?? ''
+            let testCapabilityNotes = ''
             if (testLogCapture?.console === false) {
-              testEffectiveRules += '\nConsole log capture is DISABLED for this test run. The readConsoleLogs action will return no data. If a test step explicitly requires reading console logs, use stepFailed to fail the step — do not silently pass with empty data.'
+              testCapabilityNotes += '\nConsole log capture is DISABLED for this test run. The readConsoleLogs action will return no data. If a test step explicitly requires reading console logs, use stepFailed to fail the step — do not silently pass with empty data.'
             }
             if (testLogCapture?.network === false) {
-              testEffectiveRules += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
+              testCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
             }
-            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testEffectiveRules || undefined, plannerAccounting, plannerDeclared)
+            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testCapabilityNotes.trim() || undefined, plannerAccounting, plannerDeclared)
             const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
 
             // Per-test timeouts from merged config
@@ -2941,9 +2929,9 @@ export function createRunCommand(): Command {
                 ttl: config.services?.cache?.ttl,
               },
               memory: {
-                enabled: opts.memory !== false && config.services?.memory?.enabled !== false,
-                curatorEnabled: config.services?.memory?.curatorEnabled,
-                provider: config.services?.memory?.provider ?? 'local',
+                enabled: opts.memory !== false,
+                curatorEnabled: V1_MEMORY_DEFAULTS.curatorEnabled,
+                provider: V1_MEMORY_DEFAULTS.provider,
               },
               source: {
                 kind: 'test',
@@ -3019,16 +3007,16 @@ export function createRunCommand(): Command {
             // Memory provider setup (best-effort)
             let memoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
             let memoryInitParams: import('@vostride/agent-qa-core').MemoryIndexParams | undefined
-            const memoryConfig = config.services?.memory
+            const memoryConfig = V1_MEMORY_DEFAULTS
             let memoryRoot: string | undefined
-            if (opts.memory !== false && memoryConfig?.enabled !== false) {
+            if (opts.memory !== false) {
               try {
                 const { createMemoryProvider } = await import('@vostride/agent-qa-core')
                 memoryRoot = runtimeMemoryRoot
                 memoryProvider = await createMemoryProvider({
-                  provider: memoryConfig?.provider ?? 'local',
+                  provider: memoryConfig.provider,
                   memoryRoot,
-                  curatorLockTimeout: memoryConfig?.curatorLockTimeout,
+                  curatorLockTimeout: memoryConfig.curatorLockTimeout,
                 })
                 const product = testResolvedTarget.product
                 const testId = testDef['test-id'] ?? testDef.name
@@ -3175,7 +3163,7 @@ export function createRunCommand(): Command {
             const authStateCaptureFailed = result.metadata?.phase === 'auth-state-capture'
 
             // Memory curator: inline blocking after teardown hooks (D-02)
-            if (memoryProvider && memoryConfig?.curatorEnabled !== false) {
+            if (memoryProvider && memoryConfig.curatorEnabled) {
               try {
                 const { runCurator } = await import('@vostride/agent-qa-core')
                 const injectedObservationIds = new Map<number, string[]>()
@@ -3193,8 +3181,8 @@ export function createRunCommand(): Command {
                   product: curatorProduct,
                   testId,
                   injectedObservationIds,
-                  trustConfirmDelta: memoryConfig?.trustConfirmDelta,
-                  trustContradictDelta: memoryConfig?.trustContradictDelta,
+                  trustConfirmDelta: memoryConfig.trustConfirmDelta,
+                  trustContradictDelta: memoryConfig.trustContradictDelta,
                 });
                 (result as any).memoryLog = memoryLog
                 printMemoryStatus(memoryLog)

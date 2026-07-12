@@ -105,7 +105,9 @@ export function createCleanMemoryCommand(): Command {
         } catch { /* skip unparseable files */ }
       }
 
-      const memoryRoot = resolveMemoryRoot(config, workspace.configDir)
+      // v1 memory config surface retired in Phase 373 (KDIR-03) — the parsed config no
+      // longer carries a memory dir; the subsystem root is the internal default until 382.
+      const memoryRoot = resolveMemoryRoot(undefined, workspace.configDir)
       if (!existsSync(memoryRoot)) {
         console.log(pc.dim('No memory directory found.'))
         return

@@ -22,7 +22,7 @@ afterEach(async () => {
 })
 
 describe('clean-memory command', () => {
-  it('cleans orphaned directories from configured services.memory.dir only', async () => {
+  it('cleans orphaned directories from the internal default memory root — the config dir surface is retired (Phase 373, KDIR-03)', async () => {
     const root = await mkdtemp(join(tmpdir(), 'agent-qa-clean-memory-'))
     tempDirs.push(root)
     const configPath = join(root, 'agent-qa.config.yaml')
@@ -31,15 +31,8 @@ describe('clean-memory command', () => {
       '  testMatch: ["tests/**/*.yaml"]',
       '  suiteMatch: ["suites/**/*.suite.yaml"]',
       '  hooksFile: hooks.yaml',
-      '  agentRules: agent-rules.md',
       '  envFile: .env',
       '  secretsFile: .env.secrets.local',
-      'services:',
-      '  memory:',
-      '    enabled: true',
-      '    provider: local',
-      '    curatorEnabled: true',
-      '    dir: .agent-qa/custom-memory',
       'use:',
       '  mobile:',
       '    appState: preserve',
@@ -53,17 +46,16 @@ describe('clean-memory command', () => {
     ].join('\n'))
     await Promise.all([
       writeFile(join(root, 'hooks.yaml'), 'hooks: []\n'),
-      writeFile(join(root, 'agent-rules.md'), '# rules\n'),
       writeFile(join(root, '.env'), ''),
       writeFile(join(root, '.env.secrets.local'), ''),
       mkdir(join(root, 'agent-qa-memory/products/stale-default'), { recursive: true }),
-      mkdir(join(root, '.agent-qa/custom-memory/products/stale-custom'), { recursive: true }),
+      mkdir(join(root, '.agent-qa/custom-memory/products/stale-stray'), { recursive: true }),
     ])
     vi.spyOn(console, 'log').mockImplementation(() => {})
 
     await runCleanMemory(configPath)
 
-    expect(existsSync(join(root, '.agent-qa/custom-memory/products/stale-custom'))).toBe(false)
-    expect(existsSync(join(root, 'agent-qa-memory/products/stale-default'))).toBe(true)
+    expect(existsSync(join(root, 'agent-qa-memory/products/stale-default'))).toBe(false)
+    expect(existsSync(join(root, '.agent-qa/custom-memory/products/stale-stray'))).toBe(true)
   })
 })

@@ -99,7 +99,6 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
-  agentRules: agent-rules.md
   envFile: .env
   secretsFile: .env.secrets.local
 use:

@@ -228,12 +228,23 @@ vi.mock('@vostride/agent-qa-core', () => ({
   createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   createMemoryProvider: vi.fn(),
   resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => `${configDir}/agent-qa-memory`),
+  V1_MEMORY_DEFAULTS: {
+    enabled: true,
+    provider: 'local',
+    dir: 'agent-qa-memory',
+    minTrust: 0.3,
+    maxInjections: 3,
+    curatorEnabled: true,
+    curatorLockTimeout: 120000,
+    trustConfirmDelta: 0.05,
+    trustContradictDelta: 0.1,
+  },
   generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
   resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
     const configDir = String(configPath).includes('/')
       ? String(configPath).split('/').slice(0, -1).join('/')
       : process.cwd()
-    for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'agentRules', 'envFile', 'secretsFile']) {
+    for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'envFile', 'secretsFile']) {
       if (config.workspace?.[key] === undefined) {
         throw new Error(`Missing required workspace config key: workspace.${key}`)
       }
@@ -249,11 +260,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
         configuredPath: config.workspace.hooksFile,
         absolutePath: resolveConfigured(config.workspace.hooksFile),
         workspaceRelativePath: config.workspace.hooksFile,
-      },
-      agentRules: {
-        configuredPath: config.workspace.agentRules,
-        absolutePath: resolveConfigured(config.workspace.agentRules),
-        workspaceRelativePath: config.workspace.agentRules,
       },
       envFile: {
         configuredPath: config.workspace.envFile,
@@ -360,7 +366,6 @@ function defaultConfig() {
       suiteMatch: ['suites/**/*.suite.yaml'],
       testPathIgnore: [] as string[],
       hooksFile: 'hooks.yaml',
-      agentRules: 'agent-rules.md',
       envFile: '.env',
       secretsFile: '.secrets.local',
     },
