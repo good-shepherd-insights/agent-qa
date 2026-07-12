@@ -14,6 +14,12 @@ export type {
   CopiedArtifact,
   SkippedArtifact,
 } from './artifact-copy.js'
+export { renderBundleParts } from './bundle-parts.js'
+export type {
+  BundleProvenanceInput,
+  RenderBundlePartsInput,
+  RenderedBundlePart,
+} from './bundle-parts.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
