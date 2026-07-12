@@ -18,6 +18,9 @@ export const AGENT_QA_KNOWLEDGE_LOCAL_EXTERNAL_DEPENDENCIES = [] as const
 export const AGENT_QA_KNOWLEDGE_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-agent',
   '@vostride/agent-qa-runner',
+  '@vostride/agent-qa-schema',
+  '@vostride/agent-qa-safety',
+  '@vostride/agent-qa-safety-local',
 ] as const
 
 export const AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT = {

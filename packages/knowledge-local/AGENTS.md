@@ -4,15 +4,19 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 
 ## Scope
 
-This package is the storageImplementation home for the local memidex knowledge
-store. It binds the agent `KnowledgePort` write seam and runner
-`KnowledgeHintReader` read seam to future concrete local storage adapters.
+This package implements the local memidex bundle store. Phase 374 establishes
+the event-sourced bundle substrate beneath the agent and runner ports.
 
 ## Read First
 
 - `package.json`
 - `src/index.ts`
 - `src/ownership-contract.ts`
+- `src/bundle-egress.ts`
+- `src/artifact-copy.ts`
+- `src/bundle-publish.ts` (later Phase 374 plan)
+- `src/bundle-append.ts` (later Phase 374 plan)
+- `src/bundle-read.ts` (later Phase 374 plan)
 
 ## Commands
 
@@ -27,8 +31,14 @@ store. It binds the agent `KnowledgePort` write seam and runner
   into those neutral packages.
 - Keep the read face aligned with `KnowledgeHintReader` and the write face
   aligned with `KnowledgePort`.
-- Do not add memidex, index, filesystem, or sqlite implementation code until the
-  milestone that fills the local knowledge store.
+- Route every committed knowledge-root text write through the bundle-egress
+  checkpoint before bytes reach the tree (KDIR-02).
+- Rewrite mutable committed files through a same-directory temp file and atomic
+  rename; never use filesystem append APIs for committed bundle state.
+- This package does not implement `KnowledgePort`: the Phase 374 API is the
+  bundle-store layer beneath it, and `LocalKnowledgeStore` remains a type alias
+  until Phase 378 (D-04).
+- Keep sqlite and derived-index code out until Phase 375.
 - Keep provider invocation, platform execution, and agent planning semantics out
   of this package.
 - Keep knowledge writes local to this storageImplementation package or the

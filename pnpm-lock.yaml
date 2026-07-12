@@ -626,6 +626,15 @@ importers:
       '@vostride/agent-qa-runner':
         specifier: workspace:*
         version: link:../runner
+      '@vostride/agent-qa-safety':
+        specifier: workspace:*
+        version: link:../safety
+      '@vostride/agent-qa-safety-local':
+        specifier: workspace:*
+        version: link:../safety-local
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
     devDependencies:
       '@types/node':
         specifier: ~24.12.2

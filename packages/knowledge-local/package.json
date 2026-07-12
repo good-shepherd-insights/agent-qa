@@ -42,13 +42,16 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
     "@vostride/agent-qa-agent": "workspace:*",
-    "@vostride/agent-qa-runner": "workspace:*"
+    "@vostride/agent-qa-runner": "workspace:*",
+    "@vostride/agent-qa-safety": "workspace:*",
+    "@vostride/agent-qa-safety-local": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "~24.12.2",
