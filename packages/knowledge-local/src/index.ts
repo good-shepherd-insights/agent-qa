@@ -28,6 +28,8 @@ export type {
 } from './bundle-publish.js'
 export { appendOutcomeEvent, appendRelation } from './bundle-append.js'
 export type { AppendOutcome } from './bundle-append.js'
+export { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
+export type { IntegrityReport, LoadedBundle, LoadBundleOutcome } from './bundle-read.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader

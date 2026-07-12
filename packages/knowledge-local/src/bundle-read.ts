@@ -1,0 +1,254 @@
+// The D-03 read face is the self-sufficiency oracle for committed bundles and Phase 375's
+// projection source. It strictly parses disk-owned contracts, verifies every committed digest,
+// and composes the schema fold; the LLM never supplies trust, counters, status, or validity.
+
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { basename, join } from 'node:path'
+
+import {
+  BundleOutcomeEventSchema,
+  VersionGuardError,
+  computeMutableStateHash,
+  foldBundleTrust,
+  guardArtifactsIndex,
+  guardBundleManifest,
+  guardBundleProvenance,
+  guardBundleRelations,
+  parseRecordMarkdown,
+} from '@vostride/agent-qa-schema'
+import type {
+  ArtifactsIndex,
+  BundleManifest,
+  BundleOutcomeEvent,
+  BundleProvenance,
+  BundleRelations,
+  DerivedTrustState,
+  RecordFrontmatter,
+  ScreenState,
+} from '@vostride/agent-qa-schema'
+
+export interface LoadedBundle {
+  frontmatter: RecordFrontmatter
+  summary: string
+  body: string
+  manifest: BundleManifest
+  provenance: BundleProvenance
+  relations: BundleRelations
+  events: BundleOutcomeEvent[]
+  artifactsIndex: ArtifactsIndex
+  screenStates: ScreenState[]
+}
+
+export type LoadBundleOutcome =
+  | { kind: 'loaded'; bundle: LoadedBundle }
+  | { kind: 'not-found' }
+  | { kind: 'incomplete' }
+  | { kind: 'version-error'; reason: string }
+  | { kind: 'invalid'; reason: string }
+
+export interface IntegrityReport {
+  ok: boolean
+  violations: string[]
+}
+
+const OUTCOMES_REL_PATH = 'evidence/outcomes.jsonl'
+const RELATIONS_REL_PATH = 'relations.json'
+const ARTIFACTS_INDEX_REL_PATH = 'artifacts.index.json'
+const SNAPSHOT_REL_PATH = /^evidence\/screenstates\/step-(\d+)\.json$/
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function snapshotPaths(manifest: BundleManifest): string[] {
+  return Object.keys(manifest.contentHashes)
+    .flatMap((relPath) => {
+      const match = SNAPSHOT_REL_PATH.exec(relPath)
+      return match === null ? [] : [{ relPath, stepIndex: Number(match[1]) }]
+    })
+    .sort((left, right) => left.stepIndex - right.stepIndex)
+    .map(({ relPath }) => relPath)
+}
+
+function parseOutcomeLog(
+  text: string,
+  setCurrentFile: (file: string) => void,
+): BundleOutcomeEvent[] {
+  if (text === '') return []
+  if (!text.endsWith('\n')) {
+    throw new SyntaxError(`${OUTCOMES_REL_PATH} must end with a newline`)
+  }
+
+  return text
+    .slice(0, -1)
+    .split('\n')
+    .map((line, index) => {
+      setCurrentFile(`${OUTCOMES_REL_PATH} line ${index + 1}`)
+      return BundleOutcomeEventSchema.parse(JSON.parse(line))
+    })
+}
+
+export function loadBundle(bundleDir: string): LoadBundleOutcome {
+  if (basename(bundleDir).startsWith('.')) return { kind: 'not-found' }
+  try {
+    if (!existsSync(bundleDir) || !statSync(bundleDir).isDirectory()) {
+      return { kind: 'not-found' }
+    }
+  } catch {
+    return { kind: 'not-found' }
+  }
+
+  const manifestPath = join(bundleDir, 'manifest.json')
+  if (!existsSync(manifestPath)) return { kind: 'not-found' }
+
+  let currentFile = 'manifest.json'
+  try {
+    const manifest = guardBundleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')))
+    if (manifest.complete !== true) return { kind: 'incomplete' }
+
+    currentFile = 'record.md'
+    const record = parseRecordMarkdown(readFileSync(join(bundleDir, currentFile), 'utf8'))
+
+    currentFile = 'provenance.json'
+    const provenance = guardBundleProvenance(
+      JSON.parse(readFileSync(join(bundleDir, currentFile), 'utf8')),
+    )
+
+    currentFile = RELATIONS_REL_PATH
+    const relations = guardBundleRelations(
+      JSON.parse(readFileSync(join(bundleDir, currentFile), 'utf8')),
+    )
+
+    currentFile = ARTIFACTS_INDEX_REL_PATH
+    const artifactsIndex = guardArtifactsIndex(
+      JSON.parse(readFileSync(join(bundleDir, currentFile), 'utf8')),
+    )
+
+    currentFile = OUTCOMES_REL_PATH
+    const events = parseOutcomeLog(
+      readFileSync(join(bundleDir, currentFile), 'utf8'),
+      (file) => {
+        currentFile = file
+      },
+    )
+
+    const screenStates = snapshotPaths(manifest).map((relPath) => {
+      currentFile = relPath
+      return JSON.parse(readFileSync(join(bundleDir, relPath), 'utf8')) as ScreenState
+    })
+
+    return {
+      kind: 'loaded',
+      bundle: {
+        frontmatter: record.frontmatter,
+        summary: record.summary,
+        body: record.body,
+        manifest,
+        provenance,
+        relations,
+        events,
+        artifactsIndex,
+        screenStates,
+      },
+    }
+  } catch (error) {
+    const reason = `${currentFile}: ${errorMessage(error)}`
+    return error instanceof VersionGuardError
+      ? { kind: 'version-error', reason }
+      : { kind: 'invalid', reason }
+  }
+}
+
+function byteSha(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function readDigest(bundleDir: string, relPath: string, violations: string[]): string | null {
+  try {
+    return byteSha(readFileSync(join(bundleDir, relPath)))
+  } catch (error) {
+    violations.push(`${relPath}: missing or unreadable (${errorMessage(error)})`)
+    return null
+  }
+}
+
+export function verifyBundleIntegrity(bundleDir: string): IntegrityReport {
+  const violations: string[] = []
+  let manifest: BundleManifest
+
+  try {
+    manifest = guardBundleManifest(
+      JSON.parse(readFileSync(join(bundleDir, 'manifest.json'), 'utf8')),
+    )
+  } catch (error) {
+    return {
+      ok: false,
+      violations: [`manifest.json: invalid or unreadable (${errorMessage(error)})`],
+    }
+  }
+
+  if (manifest.complete !== true) {
+    violations.push('manifest.json: bundle is incomplete')
+  }
+
+  const actualDigests: Record<string, string> = {}
+  for (const [relPath, expectedDigest] of Object.entries(manifest.contentHashes).sort()) {
+    const actualDigest = readDigest(bundleDir, relPath, violations)
+    if (actualDigest === null) continue
+    actualDigests[relPath] = actualDigest
+    if (actualDigest !== expectedDigest) {
+      violations.push(`${relPath}: content hash mismatch`)
+    }
+  }
+
+  const mutableStateHash = computeMutableStateHash({
+    outcomes: actualDigests[OUTCOMES_REL_PATH] ?? null,
+    relations: actualDigests[RELATIONS_REL_PATH] ?? null,
+    artifactsIndex: actualDigests[ARTIFACTS_INDEX_REL_PATH] ?? null,
+  })
+  if (mutableStateHash !== manifest.mutableStateHash) {
+    violations.push('manifest.json: mutableStateHash mismatch')
+  }
+
+  try {
+    const artifactsIndex = guardArtifactsIndex(
+      JSON.parse(readFileSync(join(bundleDir, ARTIFACTS_INDEX_REL_PATH), 'utf8')),
+    )
+    for (const artifact of artifactsIndex.artifacts) {
+      const artifactPath = join(bundleDir, artifact.relPath)
+      if (!existsSync(artifactPath)) {
+        violations.push(`${artifact.relPath}: dangling artifact reference`)
+        continue
+      }
+      let bytes: Buffer
+      try {
+        bytes = readFileSync(artifactPath)
+      } catch (error) {
+        violations.push(`${artifact.relPath}: unreadable artifact (${errorMessage(error)})`)
+        continue
+      }
+      if (byteSha(bytes) !== artifact.sha) {
+        violations.push(`${artifact.relPath}: artifact byte hash mismatch`)
+      }
+      if (bytes.byteLength !== artifact.bytes) {
+        violations.push(`${artifact.relPath}: artifact byte length mismatch`)
+      }
+    }
+  } catch (error) {
+    violations.push(`${ARTIFACTS_INDEX_REL_PATH}: invalid or unreadable (${errorMessage(error)})`)
+  }
+
+  return { ok: violations.length === 0, violations }
+}
+
+/**
+ * Phase 375 consumes this exact disk-derived projection seam; no model-produced scalar enters it.
+ */
+export function deriveBundleTrust(loaded: LoadedBundle): DerivedTrustState {
+  return foldBundleTrust(loaded.events, {
+    originClass: loaded.provenance.originClass,
+    evidenceIncomplete: loaded.manifest.evidenceIncomplete,
+    createdAtOrdinal: loaded.manifest.createdAtOrdinal,
+  })
+}
