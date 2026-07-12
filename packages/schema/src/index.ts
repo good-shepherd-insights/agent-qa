@@ -284,6 +284,13 @@ export type {
   BundleRelations,
   MutableStateHashInput,
 } from './knowledge/index'
+export {
+  emitRecordMarkdown,
+  parseRecordMarkdown,
+  renderEmbeddingInput,
+  screenStateSnapshotRelPath,
+} from './knowledge/index'
+export type { RecordFrontmatter } from './knowledge/index'
 
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'

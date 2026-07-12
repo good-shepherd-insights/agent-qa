@@ -27,3 +27,6 @@ export type {
   BundleRelations,
   MutableStateHashInput,
 } from './bundle-files'
+export { emitRecordMarkdown, parseRecordMarkdown } from './record-frontmatter'
+export type { RecordFrontmatter } from './record-frontmatter'
+export { renderEmbeddingInput, screenStateSnapshotRelPath } from './embedding-input'
