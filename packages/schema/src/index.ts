@@ -226,7 +226,7 @@ export { asPatchId, patchSchema } from './patch/index'
 // 316 seam helpers
 export type { RecordedActionResult } from './result/index'
 export type { VerifierVerdict, Decision } from './handoff/index'
-export type { BundleKind, OriginStage } from './delta/index'
+export type { BundleKind, FactSubtype, OriginStage } from './delta/index'
 export { toRecordedActionResult } from './result/index'
 export { computeEvidenceToken } from './ids/index'
 

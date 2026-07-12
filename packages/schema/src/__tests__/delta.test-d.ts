@@ -1,6 +1,12 @@
 import { expectTypeOf } from 'vitest'
 import type { Delta } from '../delta/delta'
-import type { BundleDraft, CompareAndSet, DeltaEnvelope } from '../delta/envelope'
+import type {
+  BundleDraft,
+  BundleKind,
+  CompareAndSet,
+  DeltaEnvelope,
+  FactSubtype,
+} from '../delta/envelope'
 import type { IssueDelta } from '../delta/issue-delta'
 import type { ArtifactRef } from '../ids/artifact-ref'
 import type { EvidenceToken, IssueId, RecordId } from '../ids/record-id'
@@ -31,8 +37,8 @@ const envelope: DeltaEnvelope = {
 }
 
 const bundle: BundleDraft = {
-  kind: 'observed-flow' as BundleDraft['kind'],
-  subtype: 'checkout',
+  kind: 'fact',
+  subtype: 'behavioral',
   anchors: [anchor],
   scope,
   summary: 'Checkout submit is disabled until the card form validates.',
@@ -98,6 +104,15 @@ const acceptIssueId = (_: IssueId) => {}
 
 // @ts-expect-error RecordId and IssueId are distinct state-machine brands.
 acceptIssueId(recordId)
+
+const acceptBundleKind = (_: BundleKind) => {}
+
+acceptBundleKind('procedure')
+
+// @ts-expect-error BundleKind is closed; arbitrary strings cannot enter bundle identity.
+acceptBundleKind('observed-flow')
+
+expectTypeOf<BundleDraft['subtype']>().toEqualTypeOf<FactSubtype | undefined>()
 
 // This proof file intentionally covers only proposal types; ServedBrief read-back fields stay in 314-05.
 type ProposalKeys = keyof BundleDraft | keyof Delta | keyof IssueDelta

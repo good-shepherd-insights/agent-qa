@@ -23,6 +23,7 @@ import type {
   Decision,
   EvidenceToken,
   ExecutionContext,
+  FactSubtype,
   IssueDelta,
   IssueId,
   MemberTestOutcome,
@@ -88,6 +89,7 @@ expectTypeOf<DeltaEnvelope['citedIds']>().toEqualTypeOf<RecordId[]>()
 expectTypeOf<NonNullable<DeltaEnvelope['precondition']>[number]>().toEqualTypeOf<CompareAndSet>()
 expectTypeOf<BundleDraft['distilledEvidenceRef']>().toEqualTypeOf<ArtifactRef>()
 expectTypeOf<BundleDraft['kind']>().toEqualTypeOf<BundleKind>()
+expectTypeOf<BundleDraft['subtype']>().toEqualTypeOf<FactSubtype | undefined>()
 expectTypeOf<BundleDraft['originStage']>().toEqualTypeOf<OriginStage>()
 expectTypeOf<Extract<Delta, { kind: 'Confirm' }>['evidenceToken']>().toEqualTypeOf<
   EvidenceToken
