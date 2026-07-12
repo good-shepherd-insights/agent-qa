@@ -503,7 +503,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     expect(result.success).toBe(false)
   })
 
-  // KDIR-03 (Phase 373): the slim knowledge block replaced services.memory.
+  // KDIR-03 (Phase 373): the slim knowledge block replaced the retired v1 memory services block.
   it('materializes knowledge defaults when the block is omitted', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
     expect(result.success).toBe(true)
