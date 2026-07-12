@@ -603,6 +603,14 @@ vi.mock('../targets.js', () => ({
   resolveTarget: mockResolveTarget,
 }))
 
+// 373-07: the run-start baseline probe (D-04) does a REAL global-fetch GET against the resolved
+// web target at the composition root — stub it here so no unit test touches the network and the
+// run body starts immediately (the classifier consumes the value; probe behavior is pinned in
+// baseline-probe.test.ts).
+vi.mock('../commands/baseline-probe.js', () => ({
+  runBaselineProbe: vi.fn(async () => ({ status: 200, elapsedMs: 1 })),
+}))
+
 import { createRunCommand } from '../commands/run.js'
 
 let defaultSecretsFilePath: string | undefined
