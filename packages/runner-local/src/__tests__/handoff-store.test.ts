@@ -68,6 +68,9 @@ describe('FsHandoffStore + loadCompletedRunHandoff (D-17/D-19)', () => {
     expect(thrown).toBeDefined()
     expect((thrown as { name: string }).name).toBe('HandoffVersionError')
     expect((thrown as { foundVersion: number }).foundVersion).toBe(1)
-    expect((thrown as { supportedVersion: number }).supportedVersion).toBe(2)
+    // 373-01 bumped CURRENT_HANDOFF_SCHEMA_VERSION to 3; pin the constant, not a literal
+    expect((thrown as { supportedVersion: number }).supportedVersion).toBe(
+      CURRENT_HANDOFF_SCHEMA_VERSION,
+    )
   })
 })

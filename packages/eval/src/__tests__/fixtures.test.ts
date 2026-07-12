@@ -1,4 +1,4 @@
-import { guardCompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, guardCompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import {
   FIXTURE_ARTIFACT_SHA,
@@ -16,7 +16,8 @@ describe('schemaVersion-2 handoff fixtures', () => {
       makeArtifactRefV2Handoff(),
     ]) {
       expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
-      expect(handoff.schemaVersion).toBe(2)
+      // 373-01 bumped CURRENT_HANDOFF_SCHEMA_VERSION to 3; the builders track the constant
+      expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     }
   })
 
