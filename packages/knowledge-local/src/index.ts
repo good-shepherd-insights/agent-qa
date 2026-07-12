@@ -26,6 +26,8 @@ export type {
   PublishBundleInput,
   PublishBundleOutcome,
 } from './bundle-publish.js'
+export { appendOutcomeEvent, appendRelation } from './bundle-append.js'
+export type { AppendOutcome } from './bundle-append.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
+  asEvidenceToken,
   asRecordId,
   canonicalJson,
   committedFileText,
@@ -80,7 +81,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
       screenStates: [makeScreenStateFixture()],
       initialEvents: [
         event({
-          evidenceToken: 'publish-confirmed',
+          evidenceToken: asEvidenceToken('publish-confirmed'),
           curationJobId: 'publish-job',
           buildOrdinal: 42,
         }),
@@ -146,7 +147,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
 
   it('returns duplicate without changing event-log or manifest bytes', () => {
     const duplicate = event({
-      evidenceToken: 'publish-confirmed',
+      evidenceToken: asEvidenceToken('publish-confirmed'),
       curationJobId: 'publish-job',
       buildOrdinal: 999,
     })
@@ -220,9 +221,9 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
   })
 
   it('treats missing and incomplete bundles as not found', () => {
-    expect(appendOutcomeEvent(config, asRecordId('missing-bundle'), event())).toEqual<AppendOutcome>(
-      { kind: 'not-found' },
-    )
+    expect(
+      appendOutcomeEvent(config, asRecordId('missing-bundle'), event()),
+    ).toEqual<AppendOutcome>({ kind: 'not-found' })
 
     const manifestPath = join(bundleDir, 'manifest.json')
     writeFileSync(manifestPath, committedFileText({ ...manifest(), complete: false }))
