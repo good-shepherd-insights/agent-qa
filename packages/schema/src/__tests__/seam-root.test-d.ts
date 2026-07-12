@@ -72,7 +72,14 @@ expectTypeOf(toRecordedActionResult).parameter(0).toEqualTypeOf<ActionResult>()
 expectTypeOf(toRecordedActionResult).returns.toEqualTypeOf<RecordedActionResult>()
 
 expectTypeOf<Verdict['class']>().toEqualTypeOf<
-  'app_bug' | 'test_bug' | 'environment' | 'flake' | 'config_error' | 'llm_error'
+  | 'app_bug'
+  | 'test_bug'
+  | 'environment'
+  | 'flake'
+  | 'config_error'
+  | 'llm_error'
+  | 'unknown'
+  | 'timeout'
 >()
 expectTypeOf<Verdict['evidence']>().toEqualTypeOf<VerdictEvidence>()
 expectTypeOf<VerdictEvidence['citedArtifacts']>().toEqualTypeOf<ArtifactRef[]>()

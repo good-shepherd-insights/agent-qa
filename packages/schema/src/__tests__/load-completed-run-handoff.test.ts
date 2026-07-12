@@ -41,12 +41,23 @@ function makeValidHandoff(): CompletedRunHandoff {
 }
 
 describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
-  it('returns a typed handoff for a valid schemaVersion 2 document', () => {
+  it('returns a typed handoff for a valid schemaVersion 3 document', () => {
     const doc = makeValidHandoff()
     const guarded = guardCompletedRunHandoff(doc)
-    expect(guarded.schemaVersion).toBe(2)
+    expect(guarded.schemaVersion).toBe(3)
     expect(guarded.runId).toBe('run-abc')
     expect(guarded.aggregateVerdict).toBe('passed')
+  })
+
+  it('loads a stored schemaVersion 2 document through the registered identity migration', () => {
+    // RCC-01 / RESEARCH Pitfall 5: rootCause is optional-additive, so every
+    // pre-Phase-373 .agent-qa/runs/<slug>/handoff.json (written at v2) must keep
+    // loading — the HANDOFF_MIGRATIONS[2] identity entry carries it to v3 semantics.
+    const doc = { ...makeValidHandoff(), schemaVersion: 2 }
+    const guarded = guardCompletedRunHandoff(doc)
+    expect(guarded.runId).toBe('run-abc')
+    expect(guarded.aggregateVerdict).toBe('passed')
+    expect(guarded.tests).toEqual([])
   })
 
   it('rejects a pre-INST schemaVersion 1 with no migration registered', () => {
@@ -60,13 +71,13 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(thrown).toBeInstanceOf(HandoffVersionError)
     const err = thrown as HandoffVersionError
     expect(err.message).toContain('schemaVersion 1')
-    expect(err.message).toContain('supports 2')
+    expect(err.message).toContain('supports 3')
     expect(err.foundVersion).toBe(1)
-    expect(err.supportedVersion).toBe(2)
+    expect(err.supportedVersion).toBe(3)
   })
 
-  it('rejects a newer-than-known schemaVersion 3 with a typed HandoffVersionError', () => {
-    const doc = { ...makeValidHandoff(), schemaVersion: 3 }
+  it('rejects a newer-than-known schemaVersion 4 with a typed HandoffVersionError', () => {
+    const doc = { ...makeValidHandoff(), schemaVersion: 4 }
     let thrown: unknown
     try {
       guardCompletedRunHandoff(doc)
@@ -75,8 +86,8 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     }
     expect(thrown).toBeInstanceOf(HandoffVersionError)
     const err = thrown as HandoffVersionError
-    expect(err.foundVersion).toBe(3)
-    expect(err.supportedVersion).toBe(2)
+    expect(err.foundVersion).toBe(4)
+    expect(err.supportedVersion).toBe(3)
   })
 
   it('throws for a non-numeric schemaVersion', () => {
@@ -90,8 +101,8 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(() => guardCompletedRunHandoff(withoutVersion as CompletedRunHandoff)).toThrow()
   })
 
-  it('leaves the migration table empty at v2 so schemaVersion 1 stays unreadable', () => {
+  it('registers exactly the v2 identity migration so schemaVersion 1 stays unreadable', () => {
     expect(HANDOFF_MIGRATIONS).toBeDefined()
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2'])
   })
 })

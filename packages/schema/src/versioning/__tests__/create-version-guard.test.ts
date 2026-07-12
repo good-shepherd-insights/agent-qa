@@ -151,7 +151,7 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
   it('preserves the HandoffVersionError name, message, and version fields', () => {
     let thrown: unknown
     try {
-      guardCompletedRunHandoff({ schemaVersion: 3 })
+      guardCompletedRunHandoff({ schemaVersion: 4 })
     } catch (error) {
       thrown = error
     }
@@ -161,9 +161,9 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
     expect(thrown).toMatchObject({
       name: 'HandoffVersionError',
       message:
-        'CompletedRunHandoff schemaVersion 3 is not supported (this build supports 2)',
-      foundVersion: 3,
-      supportedVersion: 2,
+        'CompletedRunHandoff schemaVersion 4 is not supported (this build supports 3)',
+      foundVersion: 4,
+      supportedVersion: 3,
     })
   })
 })

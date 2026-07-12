@@ -10,6 +10,13 @@ export interface VerdictEvidence {
 }
 
 interface VerdictBase {
+  /**
+   * Which pipeline minted this verdict (D-03). M2 mints only
+   * 'deterministic-classifier'; M4's analyze-run supersedes it via ordinary
+   * supersession. Failure-side trust-keying switches on this field — it is a
+   * different axis from VerdictSource (verb-evidence.ts), never reuse that union.
+   */
+  producer: 'deterministic-classifier' | 'analyze-run'
   confidence: number
   evidence: VerdictEvidence
   attribution?: {
@@ -30,3 +37,7 @@ export type Verdict =
   | (VerdictBase & { class: 'flake' })
   | (VerdictBase & { class: 'config_error' })
   | (VerdictBase & { class: 'llm_error' })
+  /** LLM-judge abstention / unclassifiable — noop for learning; never files an issue (§A9 routing). */
+  | (VerdictBase & { class: 'unknown' })
+  /** Routes with environment/flake (flake management); never the issue path (§A9 routing). */
+  | (VerdictBase & { class: 'timeout' })

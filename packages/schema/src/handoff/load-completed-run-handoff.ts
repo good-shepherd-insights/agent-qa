@@ -20,11 +20,13 @@ export class HandoffVersionError extends VersionGuardError {
 
 /**
  * The older-version migration seam (D-19). Maps a source `schemaVersion` to a function
- * that upgrades a document of that version to the next. Empty at v1 — the first schema
- * version has no older versions to migrate — but the seam exists so every future consumer
- * imports the ONE guard instead of re-implementing the version rule.
+ * that upgrades a document of that version to the next. The seam exists so every future
+ * consumer imports the ONE guard instead of re-implementing the version rule.
  */
-export const HANDOFF_MIGRATIONS: MigrationRegistry = {}
+export const HANDOFF_MIGRATIONS: MigrationRegistry = {
+  /** v2 → v3 (D-01): rootCause is optional-additive; v2 handoffs load unchanged. */
+  2: (doc) => doc,
+}
 
 /**
  * The read side of the handoff version discipline (D-19): parse → version check →
