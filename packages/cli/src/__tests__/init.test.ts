@@ -107,6 +107,10 @@ function consoleOutput(): string {
   return stripVTControlCharacters(vi.mocked(console.log).mock.calls.flat().map(String).join('\n'))
 }
 
+function warnOutput(): string {
+  return stripVTControlCharacters(vi.mocked(console.warn).mock.calls.flat().map(String).join('\n'))
+}
+
 async function loadCoreYamlValidators() {
   const moduleUrl = (path: string) => pathToFileURL(resolve(repoRoot, path)).href
   const [yamlParser, suiteSchema, hooksSchema] = await Promise.all([
@@ -125,6 +129,7 @@ describe('init command', () => {
   beforeEach(() => {
     clearProviderRegistry()
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.clearAllMocks()
     mockExistsSync.mockReturnValue(false)
     mockReadFileSync.mockImplementation((path) => String(path).endsWith('package.json') ? '{"version":"0.1.1"}' : '')
@@ -1087,5 +1092,120 @@ describe('init command', () => {
     const content = configCall![1] as string
     // Android platform should NOT have browsers section
     expect(content).not.toContain('browsers:')
+  })
+
+  describe('knowledge root scaffold (KDIR-01)', () => {
+    const KNOWLEDGE_ROOT = '/tmp/test-project/agent-qa-knowledge'
+    const FUNCTIONAL_LINES = [
+      'memory/index/',
+      'memory/queue/',
+      '.lease',
+      '.epoch',
+      '**/artifacts/',
+      'skills/.staging/',
+    ]
+
+    function knowledgeWritePaths(): string[] {
+      return mockWriteFileSync.mock.calls
+        .map((call) => call[0] as string)
+        .filter((path) => path.includes('agent-qa-knowledge'))
+        .sort()
+    }
+
+    it('fresh init creates exactly README.md, .gitignore, and policies/global.md under the root', async () => {
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+      expect(knowledgeWritePaths()).toEqual([
+        `${KNOWLEDGE_ROOT}/.gitignore`,
+        `${KNOWLEDGE_ROOT}/README.md`,
+        `${KNOWLEDGE_ROOT}/policies/global.md`,
+      ])
+      expect(knowledgeWritePaths().some((path) => path.includes('.gitkeep'))).toBe(false)
+
+      const knowledgeMkdirs = mockMkdirSync.mock.calls
+        .map((call) => call[0] as string)
+        .filter((path) => path.includes('agent-qa-knowledge'))
+      expect(knowledgeMkdirs).toEqual([`${KNOWLEDGE_ROOT}/policies`])
+
+      const output = consoleOutput()
+      expect(output).toContain('agent-qa-knowledge/ (README.md, .gitignore, policies/global.md)')
+    })
+
+    it('scaffolded knowledge .gitignore carries all six functional lines', async () => {
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+      const gitignoreCall = findWriteCallEndingWith('agent-qa-knowledge/.gitignore')
+      expect(gitignoreCall).toBeDefined()
+
+      const content = gitignoreCall![1] as string
+      expect(content.startsWith('# agent-qa-knowledge/.gitignore\n')).toBe(true)
+      for (const line of FUNCTIONAL_LINES) {
+        expect(content).toContain(line)
+      }
+    })
+
+    it('scaffolded policies/global.md is comment-only — zero active rules', async () => {
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+      const policyCall = findWriteCallEndingWith('policies/global.md')
+      expect(policyCall).toBeDefined()
+
+      const content = policyCall![1] as string
+      expect(content.trimStart().startsWith('<!--')).toBe(true)
+      // Exactly one comment block; nothing non-blank may sit outside it.
+      const segments = content.split('-->')
+      expect(segments).toHaveLength(2)
+      const activeLines = segments[1].split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+      expect(activeLines).toEqual([])
+      // The example rule is taught INSIDE the comment.
+      expect(segments[0]).toContain('Always dismiss the cookie banner before asserting page content')
+    })
+
+    it('re-init never overwrites hand-edited README.md or policies/global.md, even with --force', async () => {
+      mockExistsSync.mockImplementation((p) => String(p).includes('agent-qa-knowledge'))
+
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--force', '--skip-install'])
+
+      expect(findWriteCallEndingWith('agent-qa-knowledge/README.md')).toBeUndefined()
+      expect(findWriteCallEndingWith('policies/global.md')).toBeUndefined()
+      expect(findWriteCallEndingWith('agent-qa-knowledge/.gitignore')).toBeUndefined()
+    })
+
+    it('warns naming the exact missing functional line of an existing knowledge .gitignore without rewriting it', async () => {
+      const degraded = `# agent-qa-knowledge/.gitignore
+memory/index/
+memory/queue/
+.lease
+**/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
+skills/.staging/
+`
+      mockExistsSync.mockImplementation((p) => String(p).endsWith('agent-qa-knowledge/.gitignore'))
+      mockReadFileSync.mockImplementation((p) => {
+        if (String(p).endsWith('package.json')) return '{"version":"0.1.1"}'
+        if (String(p).endsWith('agent-qa-knowledge/.gitignore')) return degraded
+        return ''
+      })
+
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+      expect(findWriteCallEndingWith('agent-qa-knowledge/.gitignore')).toBeUndefined()
+      expect(vi.mocked(console.warn)).toHaveBeenCalledTimes(1)
+      const warning = warnOutput()
+      expect(warning).toContain('".epoch"')
+      expect(warning).toContain('add it manually')
+    })
+
+    it('target-project .gitignore entries include .agent-qa/ and never the v1 memory directory', async () => {
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+      const gitignoreCall = mockWriteFileSync.mock.calls.find(
+        (call) => (call[0] as string) === '/tmp/test-project/.gitignore',
+      )
+      expect(gitignoreCall).toBeDefined()
+
+      const content = gitignoreCall![1] as string
+      expect(content).toContain('.agent-qa/')
+      expect(content).not.toContain('agent-qa-memory')
+    })
   })
 })
