@@ -7,7 +7,7 @@
 // loud typed refusal the engine maps to a distinct ReplayRefusal reason.
 //
 // Two fidelity caveats hold for ALL replays, consistently and by design:
-//   - agentRules are not recorded on the leg, so replay passes none (RESEARCH A1).
+//   - custom agent rules were never recorded on the leg (surface retired in Phase 373), so replay passes none (RESEARCH A1).
 //   - the live vision-gate prompt note is not recorded and is NOT synthesized here
 //     (RESEARCH A2) — text-only replays carry no promptNote.
 
