@@ -1,3 +1,6 @@
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { asRef } from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
@@ -15,6 +18,94 @@ export const BUNDLE_FIXTURE_ARTIFACT_BYTES = Uint8Array.from([
 
 const fixtureRef = asRef('e-sign-in')
 const stepNames = ['Email', 'Password', 'Sign in'] as const
+
+export const KNOWLEDGE_GITIGNORE_TEXT = `# agent-qa-knowledge/.gitignore
+memory/index/
+memory/queue/
+.lease
+.epoch
+**/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
+                     # (artifact inventories are committed and live OUTSIDE artifacts/)
+skills/.staging/
+`
+
+type KnowledgeIgnoreRule =
+  | { kind: 'path-prefix'; value: string }
+  | { kind: 'dir-name'; value: string }
+  | { kind: 'file-name'; value: string }
+
+export interface KnowledgeRootWalk {
+  trackedPaths: string[]
+  ignoredPaths: string[]
+}
+
+export function parseKnowledgeGitignoreRules(text: string): KnowledgeIgnoreRule[] {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/\s+#.*$/, '').trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .map((rule): KnowledgeIgnoreRule => {
+      const doubledWildcard = /^\*\*\/([^/*]+)\/$/.exec(rule)
+      if (doubledWildcard !== null) {
+        return { kind: 'dir-name', value: doubledWildcard[1]! }
+      }
+
+      if (rule.endsWith('/')) {
+        const value = rule.slice(0, -1)
+        if (
+          value === ''
+          || value.startsWith('/')
+          || value.includes('*')
+          || value.split('/').some((segment) => segment === '' || segment === '..')
+        ) {
+          throw new Error(`unsupported scaffolded ignore rule: ${rule}`)
+        }
+        return { kind: 'path-prefix', value }
+      }
+
+      if (!rule.includes('/') && !rule.includes('*') && !rule.startsWith('!')) {
+        return { kind: 'file-name', value: rule }
+      }
+
+      throw new Error(`unsupported scaffolded ignore rule: ${rule}`)
+    })
+}
+
+function ignoredByRule(relPath: string, rule: KnowledgeIgnoreRule): boolean {
+  const segments = relPath.split('/')
+  switch (rule.kind) {
+    case 'path-prefix':
+      return relPath === rule.value || relPath.startsWith(`${rule.value}/`)
+    case 'dir-name':
+      return segments.slice(0, -1).includes(rule.value)
+    case 'file-name':
+      return segments.includes(rule.value)
+  }
+}
+
+export function scaffoldKnowledgeRoot(root: string): void {
+  mkdirSync(root, { recursive: true })
+  writeFileSync(join(root, '.gitignore'), KNOWLEDGE_GITIGNORE_TEXT, 'utf8')
+}
+
+export function walkKnowledgeRoot(root: string): KnowledgeRootWalk {
+  const rules = parseKnowledgeGitignoreRules(readFileSync(join(root, '.gitignore'), 'utf8'))
+  const trackedPaths: string[] = []
+  const ignoredPaths: string[] = []
+
+  function visit(relDir: string, parentIgnored: boolean): void {
+    const dir = relDir === '' ? root : join(root, relDir)
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const relPath = relDir === '' ? entry.name : `${relDir}/${entry.name}`
+      const ignored = parentIgnored || rules.some((rule) => ignoredByRule(relPath, rule))
+      if (entry.isDirectory()) visit(relPath, ignored)
+      else (ignored ? ignoredPaths : trackedPaths).push(relPath)
+    }
+  }
+
+  visit('', false)
+  return { trackedPaths: trackedPaths.sort(), ignoredPaths: ignoredPaths.sort() }
+}
 
 export function makeArtifactFixture(): {
   bytes: Uint8Array
