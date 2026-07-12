@@ -64,7 +64,13 @@ export {
   useSchema,
   viewportSchema,
 } from './config/index'
-export { sha256hex, sha256hex16 } from './determinism/index'
+export {
+  canonicalJson,
+  canonicalValue,
+  committedFileText,
+  sha256hex,
+  sha256hex16,
+} from './determinism/index'
 export type { ScopeKey, ScopeTier, Anchor } from './identity/index'
 export {
   screenIdentityHash,

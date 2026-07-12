@@ -1,3 +1,4 @@
+import { canonicalJson } from './canonical-json'
 import { sha256hex } from './sha256'
 
 /**
@@ -13,27 +14,6 @@ export interface ToolSurfaceEntry {
 
 function text(input: string): string {
   return `${input.length}:${input}`
-}
-
-function canonicalValue(input: unknown): unknown {
-  if (Array.isArray(input)) {
-    return input.map(canonicalValue)
-  }
-
-  if (input === null || typeof input !== 'object') {
-    return input
-  }
-
-  const source = input as Record<string, unknown>
-  const sorted: Record<string, unknown> = {}
-  for (const key of Object.keys(source).sort()) {
-    sorted[key] = canonicalValue(source[key])
-  }
-  return sorted
-}
-
-function canonicalJson(input: unknown): string {
-  return JSON.stringify(canonicalValue(input))
 }
 
 function compareTool(left: ToolSurfaceEntry, right: ToolSurfaceEntry): number {

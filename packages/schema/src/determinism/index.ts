@@ -1,3 +1,4 @@
+export { canonicalValue, canonicalJson, committedFileText } from './canonical-json'
 export { sha256hex, sha256hex16 } from './sha256'
 export { screenIdentityHash, screenStateHash } from './screen-hash'
 export { relevantEnvDigest } from './env-digest'
