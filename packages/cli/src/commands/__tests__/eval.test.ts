@@ -652,6 +652,30 @@ async function scoredRecordsFixture(): Promise<{
   await runExtractVerb(session)
   await runReplayVerb(session, {}, { plannerOverrides: replayStub().overrides })
   const ids = await stagedCassetteIds(dir)
+  // The host replay clock is intentionally real in this composition test. Pin its persisted
+  // timing fields before report assembly so arbitrary performance.now() decimals cannot form a
+  // 13-19 digit Luhn-valid run and make the committed-egress credit-card detector flaky.
+  for (const id of ids) {
+    const replayFile = join(replayDirFor(dir, id), 'replay.json')
+    const replay = JSON.parse(await readFile(replayFile, 'utf-8')) as unknown
+    const pinTiming = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        for (const item of value) pinTiming(item)
+        return
+      }
+      if (value === null || typeof value !== 'object') return
+      const record = value as Record<string, unknown>
+      for (const [key, child] of Object.entries(record)) {
+        if (key === 'durationMs' || key === 'totalDurationMs') {
+          record[key] = 10
+        } else {
+          pinTiming(child)
+        }
+      }
+    }
+    pinTiming(replay)
+    await writeFile(replayFile, `${JSON.stringify(replay, null, 2)}\n`)
+  }
   return { dir, configPath, session, ids }
 }
 
