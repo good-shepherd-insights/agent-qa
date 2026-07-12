@@ -14,7 +14,6 @@ packages/core/src/analytics/posthog-project.ts
 .agent-qa/
 .agent-qa-cache/
 .agent-qa-screenshots/
-agent-qa-memory/
 
 # Test and report output
 coverage/

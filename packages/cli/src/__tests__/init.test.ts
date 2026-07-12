@@ -149,7 +149,7 @@ describe('init command', () => {
     const content = configCall![1] as string
     expect(content).toContain('workspace:')
     expect(content).toContain('hooksFile: hooks.yaml')
-    expect(content).toContain('agentRules: ./agent-rules.md')
+    expect(content).not.toContain('agentRules')
     expect(content).toContain('envFile: .env')
     expect(content).toContain('secretsFile: .env.secrets.local')
     expect(content).toContain('services:')
@@ -160,9 +160,10 @@ describe('init command', () => {
     expect(content).toContain('port: 3471')
     expect(content).toContain('path: /mcp')
     expect(content).toContain('recording:')
-    expect(content).toContain('memory:')
-    expect(content).toContain('provider: local')
-    expect(content).toContain('dir: agent-qa-memory')
+    expect(content).not.toContain('agent-qa-memory')
+    expect(content).toContain('# knowledge:')
+    expect(content).toContain('#   dir: agent-qa-knowledge')
+    expect(content).toContain('#   commitArtifacts: none')
     expect(content).toContain('authState:')
     expect(content).toContain('dir: .agent-qa/auth-states')
     expect(content).toContain('registry:')
@@ -326,7 +327,8 @@ describe('init command', () => {
     expect(config.use.parallel).toBe(false)
     expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
     expect(config.services.recording).toEqual({ enabled: true })
-    expect(config.services.memory).toEqual({ enabled: true, provider: 'local', dir: 'agent-qa-memory' })
+    expect(config.services).not.toHaveProperty('memory')
+    expect(config.workspace).not.toHaveProperty('agentRules')
   })
 
   it('builds anthropic-compatible config with exact baseURL and no authMethod or inline apiKey', () => {
@@ -356,7 +358,8 @@ describe('init command', () => {
     expect(config.use.parallel).toBe(false)
     expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
     expect(config.services.recording).toEqual({ enabled: true })
-    expect(config.services.memory).toEqual({ enabled: true, provider: 'local', dir: 'agent-qa-memory' })
+    expect(config.services).not.toHaveProperty('memory')
+    expect(config.workspace).not.toHaveProperty('agentRules')
   })
 
   it('builds Gemini config without subscription auth plugin or base URL', () => {
@@ -424,7 +427,8 @@ describe('init command', () => {
       expect(config.use.parallel).toBe(false)
       expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
       expect(config.services.recording).toEqual({ enabled: true })
-      expect(config.services.memory).toEqual({ enabled: true, provider: 'local', dir: 'agent-qa-memory' })
+      expect(config.services).not.toHaveProperty('memory')
+      expect(config.workspace).not.toHaveProperty('agentRules')
       expect(config.services.mcp).toEqual({
         enabled: true,
         transport: 'http',
@@ -851,7 +855,7 @@ describe('init command', () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
     expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('hooks.yaml'))).toBe(true)
-    expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('agent-rules.md'))).toBe(true)
+    expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('agent-rules.md'))).toBe(false)
     expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('.env'))).toBe(true)
     expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('.env.secrets.local'))).toBe(true)
   })

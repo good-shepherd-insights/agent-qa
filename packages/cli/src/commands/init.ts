@@ -403,7 +403,6 @@ export function buildDefaultConfig(
       testMatch: ['tests/**/*.yaml'],
       suiteMatch: ['suites/**/*.suite.yaml'],
       hooksFile: 'hooks.yaml',
-      agentRules: './agent-rules.md',
       envFile: '.env',
       secretsFile: '.env.secrets.local',
     },
@@ -424,7 +423,6 @@ export function buildDefaultConfig(
           }
         : {}),
       recording: { enabled: true },
-      memory: { enabled: true, provider: 'local', dir: 'agent-qa-memory' },
       logging: { level: 'warn' },
     },
     registry: {
@@ -462,6 +460,10 @@ function addYamlComments(yamlStr: string): string {
     } else if (line.startsWith('services:')) {
       result += '\n# Infrastructure services (dashboard, MCP, cache, auth state, logging)\n'
     } else if (line.startsWith('registry:')) {
+      result += '\n# Committed knowledge root (optional block; these defaults apply when absent)\n'
+      result += '# knowledge:\n'
+      result += '#   dir: agent-qa-knowledge\n'
+      result += '#   commitArtifacts: none\n'
       result += '\n# Named resource definitions (LLM configs, app targets)\n'
     } else if (line.startsWith('plugins:')) {
       result += '\n# Optional subscription auth plugin declarations\n'
@@ -514,7 +516,6 @@ function addYamlComments(yamlStr: string): string {
 }
 
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
-const DEFAULT_AGENT_RULES_FILE = 'agent-rules.md'
 const DEFAULT_ENV_FILE = '.env'
 const DEFAULT_SECRETS_FILE = '.env.secrets.local'
 const DEFAULT_LOCAL_CONFIG_FILE = 'agent-qa.local.yaml'
@@ -737,12 +738,6 @@ export function createInitCommand(): Command {
         console.log(pc.green(`✓ Created ${hooksPath}`))
       }
 
-      const agentRulesPath = join(dir, DEFAULT_AGENT_RULES_FILE)
-      if (force || !existsSync(agentRulesPath)) {
-        writeFileSync(agentRulesPath, '# agent-qa Rules\n')
-        console.log(pc.green(`✓ Created ${agentRulesPath}`))
-      }
-
       const localConfigPath = join(dir, DEFAULT_LOCAL_CONFIG_FILE)
       if (force || !existsSync(localConfigPath)) {
         writeFileSync(localConfigPath, buildLocalConfigTemplate())
@@ -811,7 +806,6 @@ export function createInitCommand(): Command {
         console.log(`    ${pc.dim('•')} ${PACKAGE_JSON_FILE} dependency for ${SUBSCRIPTION_AUTH_PACKAGE}@${subscriptionAuthDependency.range}`)
       }
       console.log(`    ${pc.dim('•')} ${DEFAULT_HOOKS_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_AGENT_RULES_FILE}`)
       console.log(`    ${pc.dim('•')} ${DEFAULT_ENV_FILE}`)
       console.log(`    ${pc.dim('•')} ${DEFAULT_SECRETS_FILE}`)
       console.log(`    ${pc.dim('•')} ${DEFAULT_LOCAL_CONFIG_FILE}`)
