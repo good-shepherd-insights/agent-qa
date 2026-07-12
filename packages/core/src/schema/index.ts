@@ -2,6 +2,7 @@ export {
   AgentQaConfigSchema,
   WorkspaceSchema,
   ServicesSchema,
+  KnowledgeConfigSchema,
   RegistrySchema,
   UseSchema,
   AuthStateUseSchema,

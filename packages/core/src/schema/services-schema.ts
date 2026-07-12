@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
 import { DurationString, SizeString } from './primitives.js'
 
 export const DashboardConfigSchema = z.object({
@@ -52,18 +51,6 @@ export const VisionServiceSchema = z.object({
   effectiveResolution: z.number().positive().int().optional(),
 }).strict()
 
-export const MemoryConfigSchema = z.object({
-  enabled: z.boolean().optional().default(true),
-  provider: z.enum(['local']).optional().default('local'),
-  dir: z.string().trim().min(1).optional().default(DEFAULT_MEMORY_DIR),
-  minTrust: z.number().min(0).max(1).optional().default(0.3),
-  maxInjections: z.number().int().min(0).optional().default(3),
-  curatorEnabled: z.boolean().optional().default(true),
-  curatorLockTimeout: z.number().int().min(1000).optional().default(120_000),
-  trustConfirmDelta: z.number().min(0).max(1).optional().default(0.05),
-  trustContradictDelta: z.number().min(0).max(1).optional().default(0.10),
-}).strict()
-
 export const ServicesSchema = z.object({
   dashboard: DashboardConfigSchema.optional(),
   mcp: McpConfigSchema.optional(),
@@ -73,5 +60,4 @@ export const ServicesSchema = z.object({
   recording: RecordingConfigSchema.optional(),
   accessibility: AccessibilityConfigSchema.optional(),
   vision: VisionServiceSchema.optional(),
-  memory: MemoryConfigSchema.optional(),
 }).strict()

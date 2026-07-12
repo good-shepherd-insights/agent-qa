@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { WorkspaceSchema } from './workspace-schema.js'
 import { ServicesSchema } from './services-schema.js'
+import { KnowledgeConfigSchema } from './knowledge-schema.js'
 import { RegistrySchema } from './registry-schema.js'
 import { MobileAppStateSchema, UseSchema } from './use-schema.js'
 import { AnalyticsSchema } from './analytics-schema.js'
@@ -33,6 +34,11 @@ export const PluginsSchema = z.object({
 export const AgentQaConfigSchema = z.object({
   workspace: WorkspaceSchema,
   services: ServicesSchema.optional(),
+  // D-08: slim replacement for the retired services.memory surface; prefaulted so parsed
+  // configs always materialize knowledge defaults (zod 4 .default() short-circuits without
+  // parsing — .prefault() runs the inner defaults) — matches the providers `.default([])`
+  // precedent in spirit.
+  knowledge: KnowledgeConfigSchema.prefault({}),
   registry: RegistrySchema.optional(),
   use: UseSchema.optional(),
   plugins: PluginsSchema.optional(),
@@ -92,6 +98,7 @@ export const AgentQaConfigSchema = z.object({
 
 export { WorkspaceSchema } from './workspace-schema.js'
 export { AuthStateConfigSchema, ServicesSchema } from './services-schema.js'
+export { KnowledgeConfigSchema } from './knowledge-schema.js'
 export { RegistrySchema } from './registry-schema.js'
 export {
   AuthStateUseSchema,
