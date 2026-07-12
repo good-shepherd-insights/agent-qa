@@ -61,6 +61,21 @@ export function makeBundleDraftFixture(
   }
 }
 
+export function makeProcedureBundleDraftFixture(
+  overrides: Partial<BundleDraft> = {},
+): BundleDraft {
+  return makeBundleDraftFixture({
+    kind: 'procedure',
+    anchors: [
+      { t: 'flow', name: 'Sign in flow' },
+      { t: 'page', route: '/login' },
+    ],
+    summary: 'Sign in with recorded credentials',
+    body: 'Enter email, enter password, and submit the sign-in form in order.',
+    ...overrides,
+  })
+}
+
 export function makeScreenStateFixture(
   stepIndex = 0,
   overrides: Partial<ScreenState> = {},
@@ -114,6 +129,10 @@ export function makeScreenStateFixture(
     },
     ...overrides,
   }
+}
+
+export function makeProcedureScreenStateSequenceFixture(): ScreenState[] {
+  return [0, 1, 2].map((stepIndex) => makeScreenStateFixture(stepIndex))
 }
 
 export function makeDiscriminantFixture(
