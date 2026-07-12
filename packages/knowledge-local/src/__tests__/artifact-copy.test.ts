@@ -143,6 +143,21 @@ describe('copyArtifacts', () => {
     expect(existsSync(join(destArtifactsDir, declaredSha))).toBe(false)
   })
 
+  it('rejects a malformed sha before it can escape the artifacts directory', () => {
+    const malformed = input('malformed-sha.bin', Buffer.from('safe source bytes'), 5, {
+      ref: { id: 'artifact-malformed-sha', sha: '../escaped-artifact' },
+    })
+
+    const result = copyArtifacts([malformed], destArtifactsDir)
+
+    expect(result.copied).toEqual([])
+    expect(result.skipped).toEqual([
+      { ref: malformed.ref, stepIndex: 5, reason: 'sha-mismatch' },
+    ])
+    expect(result.evidenceIncomplete).toBe(true)
+    expect(existsSync(join(root, 'escaped-artifact'))).toBe(false)
+  })
+
   it('deduplicates identical content while retaining both accepted inventory rows', () => {
     // Two physical copies would exceed the step cap. Both rows being accepted proves the
     // duplicate consumes no second byte allocation while still preserving per-input metadata.
