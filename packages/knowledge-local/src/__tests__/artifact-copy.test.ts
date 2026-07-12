@@ -144,9 +144,11 @@ describe('copyArtifacts', () => {
   })
 
   it('deduplicates identical content while retaining both accepted inventory rows', () => {
-    const bytes = Buffer.from('shared content-addressed artifact')
+    // Two physical copies would exceed the step cap. Both rows being accepted proves the
+    // duplicate consumes no second byte allocation while still preserving per-input metadata.
+    const bytes = Buffer.alloc(1_200_000, 9)
     const first = input('dedupe-a.bin', bytes, 0)
-    const second = input('dedupe-b.bin', bytes, 1)
+    const second = input('dedupe-b.bin', bytes, 0)
 
     const result = copyArtifacts([first, second], destArtifactsDir)
 
