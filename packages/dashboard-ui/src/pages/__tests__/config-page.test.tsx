@@ -32,9 +32,12 @@ const { sampleConfig } = vi.hoisted(() => ({
     suiteMatch: ['tests/**/*.suite.yaml'],
     testPathIgnore: ['**/draft/**'],
     hooksFile: 'tests/hooks.ts',
-    agentRules: 'AGENT_RULES.md',
     envFile: '.env.local',
     secretsFile: '.secrets.local',
+  },
+  knowledge: {
+    dir: 'agent-qa-knowledge',
+    commitArtifacts: 'none',
   },
   services: {
     dashboard: {
@@ -50,22 +53,6 @@ const { sampleConfig } = vi.hoisted(() => ({
       standard: 'wcag2aa',
       runAfter: 'test-end',
       failOnViolation: false,
-    },
-    memory: {
-      enabled: true,
-      provider: 'local',
-      dir: 'agent-qa-memory',
-      minTrust: 0.3,
-      maxInjections: 3,
-      curatorEnabled: true,
-      curatorLockTimeout: 120000,
-      trustConfirmDelta: 0.05,
-      trustContradictDelta: 0.1,
-      ablationEnabled: true,
-      circuitBreakerEnabled: true,
-      circuitBreakerWindowSize: 20,
-      circuitBreakerBaselineSize: 3,
-      circuitBreakerThreshold: 0.15,
     },
   },
   registry: {
@@ -134,12 +121,6 @@ vi.mock('@/lib/api', () => ({
   pollPluginAuthResult: vi.fn().mockResolvedValue({ status: 'pending' }),
   exchangePluginAuthCode: vi.fn().mockResolvedValue({ status: 'completed', saved: true }),
   deleteAuthCredential: vi.fn(),
-  fetchAgentRules: vi.fn().mockResolvedValue({
-    filePath: 'AGENT_RULES.md',
-    content: '# Rules',
-  }),
-  updateAgentRules: vi.fn(),
-  createAgentRulesFile: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -382,12 +363,9 @@ describe('ConfigPage schema-driven shell', () => {
     expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?bucket=workspace&item=files')
     expect(view.textContent).toContain('Files')
     expect(view.textContent).toContain('workspace.hooksFile')
-    expect(view.textContent).toContain('workspace.agentRules')
     expect(view.textContent).toContain('workspace.envFile')
     expect(view.textContent).toContain('workspace.secretsFile')
-    expect(view.textContent).toContain('Agent Rules File')
     expect(view.textContent).toContain('Secrets File')
-    expect((document.body.querySelector('#workspace-agent-rules') as HTMLInputElement | null)?.value).toBe('AGENT_RULES.md')
     expect((document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null)?.value).toBe('.secrets.local')
     expect(view.textContent).toContain('Required dotenv-style file for runtime-only secrets.')
     expect(view.textContent).toContain('Required dotenv file loaded before runs start.')
@@ -397,17 +375,14 @@ describe('ConfigPage schema-driven shell', () => {
     await renderAt('/config?bucket=workspace&item=files')
 
     const hooksInput = document.body.querySelector('#workspace-hooks-file') as HTMLInputElement | null
-    const agentRulesInput = document.body.querySelector('#workspace-agent-rules') as HTMLInputElement | null
     const envInput = document.body.querySelector('#workspace-env-file') as HTMLInputElement | null
     const secretsInput = document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null
     expect(hooksInput).not.toBeNull()
-    expect(agentRulesInput).not.toBeNull()
     expect(envInput).not.toBeNull()
     expect(secretsInput).not.toBeNull()
 
     await act(async () => {
       setInputValue(hooksInput!, 'tests/runtime-hooks.ts')
-      setInputValue(agentRulesInput!, 'runtime/agent-rules.md')
       setInputValue(envInput!, '.env.ci')
       setInputValue(secretsInput!, '.secrets.ci')
     })
@@ -419,7 +394,6 @@ describe('ConfigPage schema-driven shell', () => {
 
     expect(updateSettings).toHaveBeenCalledWith({
       'workspace.hooksFile': 'tests/runtime-hooks.ts',
-      'workspace.agentRules': 'runtime/agent-rules.md',
       'workspace.envFile': '.env.ci',
       'workspace.secretsFile': '.secrets.ci',
     })
@@ -429,17 +403,14 @@ describe('ConfigPage schema-driven shell', () => {
     await renderAt('/config?bucket=workspace&item=files')
 
     const hooksInput = document.body.querySelector('#workspace-hooks-file') as HTMLInputElement | null
-    const agentRulesInput = document.body.querySelector('#workspace-agent-rules') as HTMLInputElement | null
     const envInput = document.body.querySelector('#workspace-env-file') as HTMLInputElement | null
     const secretsInput = document.body.querySelector('#workspace-secrets-file') as HTMLInputElement | null
     expect(hooksInput).not.toBeNull()
-    expect(agentRulesInput).not.toBeNull()
     expect(envInput).not.toBeNull()
     expect(secretsInput).not.toBeNull()
 
     await act(async () => {
       setInputValue(hooksInput!, '')
-      setInputValue(agentRulesInput!, '')
       setInputValue(envInput!, '')
       setInputValue(secretsInput!, '')
     })
@@ -450,11 +421,9 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     expect(document.body.textContent).toContain('Hooks file is required.')
-    expect(document.body.textContent).toContain('Agent rules file is required.')
     expect(document.body.textContent).toContain('Environment file is required.')
     expect(document.body.textContent).toContain('Secrets file is required.')
     expect(hooksInput?.getAttribute('aria-invalid')).toBe('true')
-    expect(agentRulesInput?.getAttribute('aria-invalid')).toBe('true')
     expect(envInput?.getAttribute('aria-invalid')).toBe('true')
     expect(secretsInput?.getAttribute('aria-invalid')).toBe('true')
     expect(updateSettings).not.toHaveBeenCalled()
@@ -709,16 +678,16 @@ describe('ConfigPage schema-driven shell', () => {
     expect(view.textContent).not.toContain('metadata path leaked')
   })
 
-  it('exposes and saves the memory directory with the memory settings block', async () => {
-    await renderAt('/config?bucket=services&item=memory')
+  it('exposes and saves the knowledge directory with the knowledge settings block', async () => {
+    await renderAt('/config?bucket=knowledge&item=store')
 
-    const memoryDirInput = document.body.querySelector('#memory-dir') as HTMLInputElement | null
-    expect(memoryDirInput).not.toBeNull()
-    expect(memoryDirInput?.placeholder).toBe('agent-qa-memory')
-    expect(memoryDirInput?.value).toBe('agent-qa-memory')
+    const knowledgeDirInput = document.body.querySelector('#knowledge-dir') as HTMLInputElement | null
+    expect(knowledgeDirInput).not.toBeNull()
+    expect(knowledgeDirInput?.placeholder).toBe('agent-qa-knowledge')
+    expect(knowledgeDirInput?.value).toBe('agent-qa-knowledge')
 
     await act(async () => {
-      setInputValue(memoryDirInput!, '.agent-qa/custom-memory')
+      setInputValue(knowledgeDirInput!, 'docs/agent-qa-knowledge')
     })
     await flushRender()
 
@@ -728,21 +697,9 @@ describe('ConfigPage schema-driven shell', () => {
     await flushRender()
 
     expect(updateSettings).toHaveBeenCalledWith({
-      'services.memory': {
-        enabled: true,
-        provider: 'local',
-        dir: '.agent-qa/custom-memory',
-        minTrust: 0.3,
-        maxInjections: 3,
-        curatorEnabled: true,
-        curatorLockTimeout: 120000,
-        trustConfirmDelta: 0.05,
-        trustContradictDelta: 0.1,
-        ablationEnabled: true,
-        circuitBreakerEnabled: true,
-        circuitBreakerWindowSize: 20,
-        circuitBreakerBaselineSize: 3,
-        circuitBreakerThreshold: 0.15,
+      'knowledge': {
+        dir: 'docs/agent-qa-knowledge',
+        commitArtifacts: 'none',
       },
     })
   })

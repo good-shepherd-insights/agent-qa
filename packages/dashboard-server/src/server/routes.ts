@@ -14,7 +14,7 @@ import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -2916,7 +2916,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               'use.logCapture': LogCaptureConfigSchema,
               'use.browser': BrowserConfigSchema,
               'use.browser.headless': BrowserConfigSchema.shape.headless,
-              'services.memory': ServicesSchema.shape.memory,
+              'knowledge': KnowledgeConfigSchema,
               'services.vision': ServicesSchema.shape.vision,
               'services.cache': CacheConfigSchema,
               'services.logging': LoggingConfigSchema,
@@ -2931,7 +2931,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               'workspace.testMatch': WorkspaceSchema.shape.testMatch,
               'workspace.suiteMatch': WorkspaceSchema.shape.suiteMatch,
               'workspace.hooksFile': WorkspaceSchema.shape.hooksFile,
-              'workspace.agentRules': WorkspaceSchema.shape.agentRules,
               'workspace.envFile': WorkspaceSchema.shape.envFile,
               'workspace.secretsFile': WorkspaceSchema.shape.secretsFile,
               'use.mobile': UseSchema.shape.mobile,
@@ -2944,7 +2943,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               'use.logCapture',
               'use.browser',
               'use.mobile',
-              'services.memory',
+              'knowledge',
               'services.vision',
               'services.cache',
               'services.logging',
@@ -2959,7 +2958,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             ] as const
             const arraySections = ['workspace.testMatch', 'workspace.testPathIgnore', 'workspace.suiteMatch', 'registry.llms'] as const
             const scalarSections = [
-              'workspace.agentRules',
               'workspace.hooksFile',
               'workspace.envFile',
               'workspace.secretsFile',
@@ -3625,35 +3623,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // Agent Rules API
-    if (path === '/api/agent-rules' && req.method === 'GET') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      ;(async () => {
-        try {
-          if (!workspacePaths) {
-            json(res, { error: 'Workspace path resolution not available' }, 503)
-            return
-          }
-          let content: string
-          try {
-            content = await readFile(workspacePaths.agentRules.absolutePath, 'utf-8')
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-              json(res, { content: null, filePath: workspacePaths.agentRules.workspaceRelativePath, error: 'workspace.agentRules file_not_found' }, 500)
-              return
-            }
-            throw err
-          }
-          json(res, { content, filePath: workspacePaths.agentRules.workspaceRelativePath })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read agent rules' }, 500)
-        }
-      })()
-      return
-    }
+    // Agent Rules API removed: the workspace agent-rules config surface was retired in
+    // Phase 373 (KDIR-03); policy serving returns via Reader L0 policies in Phase 380.
 
     // Hooks API
     if (path === '/api/hooks' && req.method === 'GET') {
@@ -3859,71 +3830,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    if (path === '/api/agent-rules' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<{ content: string }>(req)
-        .then(async (body) => {
-          try {
-            if (typeof body.content !== 'string') {
-              json(res, { error: 'Missing required field: content' }, 400)
-              return
-            }
-            if (!workspacePaths) {
-              json(res, { error: 'Workspace path resolution not available' }, 503)
-              return
-            }
-            await writeFile(workspacePaths.agentRules.absolutePath, body.content, 'utf-8')
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to save agent rules' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
-    if (path === '/api/agent-rules/create' && req.method === 'POST') {
-      if (!configManager || !deps.configPath) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      const configPath = deps.configPath
-      readJsonBody<{ fileName?: string }>(req)
-        .then(async (body) => {
-          try {
-            const fileName = typeof body.fileName === 'string' && body.fileName.trim()
-              ? body.fileName.trim()
-              : 'agent-rules.md'
-            if (!isPlainFileName(fileName)) {
-              json(res, { error: 'fileName must be a plain file name' }, 400)
-              return
-            }
-
-            const configDir = dirname(configPath)
-            const resolvedPath = resolve(configDir, fileName)
-            if (!getPathInsideDir(resolvedPath, configDir)) {
-              json(res, { error: 'Invalid agent rules path' }, 400)
-              return
-            }
-
-            await writeFile(resolvedPath, '', { encoding: 'utf-8', flag: 'wx' })
-            await configManager!.replaceSectionRaw('workspace.agentRules', `./${fileName}`)
-            json(res, { created: true, filePath: `./${fileName}` })
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-              json(res, { error: 'Agent rules file already exists' }, 409)
-              return
-            }
-            json(res, { error: err instanceof Error ? err.message : 'Failed to create agent rules file' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
     // Variables API
     if (path === '/api/variables' && req.method === 'GET') {
       if (!configManager) {
@@ -4126,7 +4032,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               entityRef = { type: t, id }
             }
           }
-          let agentRules: string | undefined
           let envVars: Record<string, string> | undefined
           let secretStore: SecretStore | undefined
           let secretRedactor: SecretRedactor | undefined
@@ -4134,13 +4039,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           let hookRegistryError: string | undefined
           if (!workspacePaths) {
             json(res, { error: 'Workspace path resolution not available' }, 500)
-            return
-          }
-
-          try {
-            agentRules = await readFile(workspacePaths.agentRules.absolutePath, 'utf-8')
-          } catch {
-            json(res, { error: `workspace.agentRules file could not be loaded: ${workspacePaths.agentRules.workspaceRelativePath}` }, 400)
             return
           }
 
@@ -4170,7 +4068,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               targetName: typeof body?.targetName === 'string' ? body.targetName : undefined,
               llmConfig: runtimeLLM.llmConfig,
               authFetch: runtimeLLM.authFetch,
-              agentRules,
               envVars,
               secretStore,
               secretRedactor,
@@ -4368,11 +4265,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           }
 
           const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-          const cfg = configManager ? await configManager.read().catch(() => undefined) : undefined
-          const parsedConfig = AgentQaConfigSchema.safeParse(cfg ?? {})
-          const memoryRoot = parsedConfig.success
-            ? resolveMemoryRoot(parsedConfig.data, configDir)
-            : resolveMemoryRoot(undefined, configDir)
+          // v1 memory config surface retired in Phase 373 (KDIR-03) — the parsed config no
+          // longer carries a memory dir; the subsystem root is the internal default until 382.
+          const memoryRoot = resolveMemoryRoot(undefined, configDir)
           const testsRoot = join(memoryRoot, 'tests')
           const resolved = resolve(testsRoot, testId, `${obsId}.md`)
           if (!getPathInsideDir(resolved, testsRoot)) {

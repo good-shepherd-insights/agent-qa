@@ -32,10 +32,10 @@ describe('SuiteFileManager missing-id backfill', () => {
           testMatch: ['specs/web/**/*.yaml'],
           suiteMatch: ['cases/**/*.suite.yaml'],
           hooksFile: 'runtime/hooks/custom-hooks.yaml',
-          agentRules: 'agent-rules.md',
           envFile: '.env',
           secretsFile: '.env.secrets.local',
         },
+        knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
       },
       configPath: join(workspaceDir, 'agent-qa.config.yaml'),
     }))

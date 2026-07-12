@@ -35,14 +35,13 @@ import { BrowserSection } from "@/components/config-manager/browser-section"
 import { RecordingSection } from "@/components/config-manager/recording-section"
 import { AccessibilitySection } from "@/components/config-manager/accessibility-section"
 import { PlannerSection } from "@/components/config-manager/planner-section"
-import { AgentRulesSection } from "@/components/config-manager/agent-rules-section"
 import { DashboardSection } from "@/components/config-manager/dashboard-section"
 import { TestMatchSection } from "@/components/config-manager/test-match-section"
 import { FilesSection } from "@/components/config-manager/files-section"
 import { LogCaptureSection } from "@/components/config-manager/log-capture-section"
 import { ExecutionDefaultsSection } from "@/components/config-manager/execution-defaults-section"
 import { MobileSection } from "@/components/config-manager/mobile-section"
-import { MemorySection } from "@/components/config-manager/memory-section"
+import { KnowledgeSection } from "@/components/config-manager/knowledge-section"
 import { VisionSection } from "@/components/config-manager/vision-section"
 import { TargetsSection } from "@/components/config-manager/targets-section"
 import { DevicesSection } from "@/components/config-manager/devices-section"
@@ -57,14 +56,13 @@ interface SectionProps {
 const SECTION_COMPONENTS: Record<string, ComponentType<SectionProps>> = {
   'workspace:discovery': TestMatchSection,
   'workspace:files': FilesSection,
-  'workspace:agent-rules': AgentRulesSection,
+  'knowledge:store': KnowledgeSection,
   'services:dashboard': DashboardSection,
   'services:cache': CacheSection,
   'services:auth-states': AuthStatesSection,
   'services:logging': LoggingSection,
   'services:recording': RecordingSection,
   'services:accessibility': AccessibilitySection,
-  'services:memory': MemorySection,
   'services:vision': VisionSection,
   'registry:llms': LlmSection,
   'registry:targets': TargetsSection,

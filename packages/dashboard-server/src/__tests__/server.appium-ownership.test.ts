@@ -171,7 +171,6 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
-  agentRules: agent-rules.md
   envFile: .env
   secretsFile: .secrets.local
 concurrency: 2

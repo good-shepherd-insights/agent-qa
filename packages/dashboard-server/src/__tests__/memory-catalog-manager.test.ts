@@ -47,16 +47,8 @@ async function createWorkspace(options: { memoryDir?: string } = {}) {
       '  suiteMatch:',
       '    - suites/**/*.suite.yaml',
       '  hooksFile: hooks.yaml',
-      '  agentRules: agent-rules.md',
       '  envFile: .env',
       '  secretsFile: .env.secrets.local',
-      ...(options.memoryDir ? [
-        'services:',
-        '  memory:',
-        '    enabled: true',
-        '    provider: local',
-        `    dir: ${memoryDir}`,
-      ] : []),
       'registry:',
       '  targets:',
       '    alpha-android:',
@@ -336,11 +328,11 @@ describe('MemoryCatalogManager', () => {
     ])
   })
 
-  it('reads observations from configured services.memory.dir and ignores the default memory root', async () => {
+  it('always reads observations from the internal default memory root — the config dir surface is retired (Phase 373, KDIR-03)', async () => {
     const { configManager, configPath, workspaceDir } = await createWorkspace({ memoryDir: '.agent-qa/custom-memory' })
     await writeObservation(workspaceDir, 'products', PRODUCT_ALPHA, OBS_CUSTOM_ONLY, {
-      title: 'Default root should not leak into custom catalog',
-      content: 'This default-root observation should be ignored.',
+      title: 'Default root is the only root the catalog reads now',
+      content: 'This default-root observation is the one the catalog sees.',
       trust: 0.2,
       created: '2026-04-23T08:00:00.000Z',
       last_confirmed: '2026-04-23T08:00:00.000Z',
@@ -353,8 +345,9 @@ describe('MemoryCatalogManager', () => {
 
     const detail = await manager.readProductDetail(PRODUCT_ALPHA)
 
-    expect(detail?.observations.map((observation) => observation.id)).toContain(OBS_PRODUCT)
-    expect(detail?.observations.map((observation) => observation.id)).not.toContain(OBS_CUSTOM_ONLY)
+    // Observations seeded into the custom dir are invisible; only the default root is read.
+    expect(detail?.observations.map((observation) => observation.id)).toContain(OBS_CUSTOM_ONLY)
+    expect(detail?.observations.map((observation) => observation.id)).not.toContain(OBS_PRODUCT)
   })
 
   it('returns one canonical product detail payload with titled observations and structured invalid file details', async () => {

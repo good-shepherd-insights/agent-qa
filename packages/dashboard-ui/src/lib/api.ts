@@ -1082,18 +1082,6 @@ export async function deleteVariable(key: string): Promise<{ deleted: boolean }>
   return postJson(`/api/variables/${encodeURIComponent(key)}`, undefined, 'DELETE')
 }
 
-// Agent Rules API
-
-export interface AgentRulesResponse {
-  content: string | null
-  filePath: string | null
-  error?: string
-}
-
-export async function fetchAgentRules(): Promise<AgentRulesResponse> {
-  return request('/api/agent-rules')
-}
-
 export type HookRuntime = 'node' | 'bun' | 'python' | 'bash'
 export type HookFieldName = 'id' | 'name' | 'runtime' | 'file' | 'timeout' | 'network' | 'registry'
 
@@ -1227,14 +1215,6 @@ export async function deleteHook(
 
 export async function runHook(hookId: string, payload: HookRunRequest): Promise<HookRunResponse> {
   return postJson(`/api/hooks/${encodeURIComponent(hookId)}/run`, payload)
-}
-
-export async function updateAgentRules(content: string): Promise<{ updated: boolean }> {
-  return postJson('/api/agent-rules', { content }, 'PUT')
-}
-
-export async function createAgentRulesFile(fileName?: string): Promise<{ created: boolean; filePath: string }> {
-  return postJson('/api/agent-rules/create', { fileName })
 }
 
 // Execution Logs API

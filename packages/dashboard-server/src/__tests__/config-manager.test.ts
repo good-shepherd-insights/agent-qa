@@ -269,20 +269,16 @@ describe('ConfigManager', () => {
       expect(servicesIdx).toBeLessThan(useIdx)
     })
 
-    it('replaceSection persists services.memory dir with the rest of the memory block', async () => {
-      await manager.replaceSection('services.memory', {
-        enabled: true,
-        provider: 'local',
-        curatorEnabled: true,
-        dir: '.agent-qa/custom-memory',
+    it('replaceSection persists the knowledge block as one unit', async () => {
+      await manager.replaceSection('knowledge', {
+        dir: 'agent-qa-knowledge',
+        commitArtifacts: 'thumbnails',
       })
 
       const config = await manager.read()
-      expect((config.services as any)?.memory).toMatchObject({
-        enabled: true,
-        provider: 'local',
-        curatorEnabled: true,
-        dir: '.agent-qa/custom-memory',
+      expect(config.knowledge).toMatchObject({
+        dir: 'agent-qa-knowledge',
+        commitArtifacts: 'thumbnails',
       })
     })
 

@@ -136,19 +136,13 @@ describe('turn content rich previous step format (was step-prompt)', () => {
   })
 })
 
-describe('buildSystemPrompt agentRules injection', () => {
-  it('appends custom rules when agentRules provided', () => {
-    const result = buildSystemPrompt(undefined, 'custom rule 1')
-    expect(result).toContain('Custom rules:\ncustom rule 1')
+describe('buildSystemPrompt custom-rules removal (Phase 373, KDIR-03 / T-373-07)', () => {
+  it('never renders a Custom rules block', () => {
+    expect(buildSystemPrompt(undefined)).not.toContain('Custom rules:')
+    expect(buildSystemPrompt('web')).not.toContain('Custom rules:')
   })
 
-  it('does not include Custom rules when agentRules is undefined', () => {
-    const result = buildSystemPrompt(undefined, undefined)
-    expect(result).not.toContain('Custom rules:')
-  })
-
-  it('preserves platform and appends agentRules with markdown content', () => {
-    const result = buildSystemPrompt('web', '# My Rules\n- rule A')
-    expect(result).toContain('Custom rules:\n# My Rules\n- rule A')
+  it('accepts no second argument — the injection path is gone', () => {
+    expect(buildSystemPrompt.length).toBeLessThanOrEqual(1)
   })
 })

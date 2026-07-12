@@ -13,14 +13,13 @@ describe('config navigation inventory', () => {
     expect(CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)).toEqual([
       'workspace:discovery',
       'workspace:files',
-      'workspace:agent-rules',
+      'knowledge:store',
       'services:dashboard',
       'services:cache',
       'services:auth-states',
       'services:logging',
       'services:recording',
       'services:accessibility',
-      'services:memory',
       'services:vision',
       'registry:llms',
       'registry:targets',
@@ -77,7 +76,7 @@ describe('config navigation inventory', () => {
     const dashboardItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'dashboard')
     const cacheItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'cache')
     const authStatesItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'auth-states')
-    const memoryItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'memory')
+    const knowledgeItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'knowledge' && item.item === 'store')
     const visionItem = CONFIG_NAVIGATION_ITEMS.find((item) => item.bucket === 'services' && item.item === 'vision')
 
     expect(dashboardItem?.fieldPaths).toEqual(expect.arrayContaining([
@@ -94,18 +93,18 @@ describe('config navigation inventory', () => {
       'services.authState',
       'services.authState.dir',
     ]))
-    expect(memoryItem?.fieldPaths).toEqual(expect.arrayContaining([
-      'services.memory',
-      'services.memory.dir',
-      'services.memory.provider',
-      'services.memory.curatorEnabled',
+    expect(knowledgeItem?.fieldPaths).toEqual(expect.arrayContaining([
+      'knowledge',
+      'knowledge.dir',
+      'knowledge.commitArtifacts',
+      'knowledge.contextBudgetTokens',
     ]))
     expect(visionItem?.fieldPaths).toEqual(expect.arrayContaining([
       'services.vision',
       'services.vision.screenshotSize',
       'services.vision.effectiveResolution',
     ]))
-    expect(searchConfigNavigationItems('memory directory').map((item) => item.item)).toEqual(['memory'])
+    expect(searchConfigNavigationItems('knowledge dir').map((item) => item.item)).toEqual(['store'])
     expect(searchConfigNavigationItems('screenshot size').map((item) => item.item)).toEqual(['vision'])
   })
 

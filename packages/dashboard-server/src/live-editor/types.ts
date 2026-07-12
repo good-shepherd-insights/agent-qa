@@ -199,7 +199,6 @@ export interface LiveSessionConfig {
   targetName?: string
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
-  agentRules?: string
   envVars?: Record<string, string>
   secretStore?: SecretStore
   secretRedactor?: SecretRedactor

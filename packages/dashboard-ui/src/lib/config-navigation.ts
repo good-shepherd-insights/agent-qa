@@ -1,4 +1,4 @@
-export const CONFIG_BUCKETS = ['workspace', 'services', 'registry', 'use', 'analytics'] as const
+export const CONFIG_BUCKETS = ['workspace', 'knowledge', 'services', 'registry', 'use', 'analytics'] as const
 
 export type ConfigBucket = typeof CONFIG_BUCKETS[number]
 
@@ -35,19 +35,24 @@ const CONFIG_ITEMS = [
     item: 'files',
     itemLabel: 'Files',
     title: 'Files',
-    description: 'Set shared workspace file paths for hooks, agent rules, environment variables, and runtime secrets.',
-    fieldPaths: ['workspace.hooksFile', 'workspace.agentRules', 'workspace.envFile', 'workspace.secretsFile'],
-    aliases: ['hooks file', 'agent rules file', 'env file', 'environment file', 'secrets file', 'files'],
+    description: 'Set shared workspace file paths for hooks, environment variables, and runtime secrets.',
+    fieldPaths: ['workspace.hooksFile', 'workspace.envFile', 'workspace.secretsFile'],
+    aliases: ['hooks file', 'env file', 'environment file', 'secrets file', 'files'],
   },
   {
-    bucket: 'workspace',
-    bucketLabel: 'Workspace',
-    item: 'agent-rules',
-    itemLabel: 'Agent Rules',
-    title: 'Agent Rules',
-    description: 'Manage the markdown rules file appended to the agent system prompt.',
-    fieldPaths: ['workspace.agentRules'],
-    aliases: ['agent rules', 'rules', 'system prompt'],
+    bucket: 'knowledge',
+    bucketLabel: 'Knowledge',
+    item: 'store',
+    itemLabel: 'Knowledge Store',
+    title: 'Knowledge',
+    description: 'Configure the repo-relative knowledge root, artifact commit policy, and the optional context budget.',
+    fieldPaths: [
+      'knowledge',
+      'knowledge.dir',
+      'knowledge.commitArtifacts',
+      'knowledge.contextBudgetTokens',
+    ],
+    aliases: ['knowledge', 'knowledge store', 'knowledge dir', 'memidex', 'commit artifacts', 'context budget'],
   },
   {
     bucket: 'services',
@@ -114,23 +119,6 @@ const CONFIG_ITEMS = [
       'services.accessibility.failOnViolation',
     ],
     aliases: ['accessibility', 'a11y'],
-  },
-  {
-    bucket: 'services',
-    bucketLabel: 'Services',
-    item: 'memory',
-    itemLabel: 'Memory',
-    title: 'Memory',
-    description: 'Configure runtime memory injection, trust thresholds, and curator behavior.',
-    fieldPaths: [
-      'services.memory',
-      'services.memory.dir',
-      'services.memory.provider',
-      'services.memory.curatorEnabled',
-      'services.memory.minTrust',
-      'services.memory.maxInjections',
-    ],
-    aliases: ['memory', 'memory dir', 'memory directory', 'memory path', 'curator', 'trust'],
   },
   {
     bucket: 'services',

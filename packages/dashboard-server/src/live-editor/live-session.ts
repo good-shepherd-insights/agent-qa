@@ -648,7 +648,7 @@ export class LiveSession {
     // each owns its own cache anchor (D-11); the D-04 lazy thunk re-reads `profile` per call.
     const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
     const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
-    this.planner = new LLMPlanner(this.model, config.platform, undefined, config.agentRules, plannerAccounting, plannerDeclared)
+    this.planner = new LLMPlanner(this.model, config.platform, undefined, undefined, plannerAccounting, plannerDeclared)
     this.verifier = new LLMVerifier(this.model, verifierAccounting, verifierDeclared)
 
     this.status = 'idle'

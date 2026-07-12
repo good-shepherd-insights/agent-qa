@@ -159,12 +159,19 @@ function tierTextContent(tier: SystemModelMessage): string {
 // breakpoint on a retained context tier) byte-for-byte. Pure + exported so the regression
 // test drives it directly; LLMPlanner.buildSystemTiers delegates here unchanged in behavior
 // except for the drop.
+// Phase 373 (KDIR-03): the workspace agent-rules → "Custom rules:" injection path is deleted
+// end-to-end; policy serving returns via Reader L0 policies in Phase 380. `capabilityNotes`
+// is NOT user-authored config — it carries only composition-root-internal runtime capability
+// notes (e.g. the CLI's log-capture-disabled warnings), appended to the stable tier.
 export function assemblePlannerSystemTiers(
   context: StepContext,
-  options: { platform: Platform; agentRules?: string },
+  options: { platform: Platform; capabilityNotes?: string },
 ): SystemModelMessage[] {
+  const stableContent = options.capabilityNotes
+    ? `${buildSystemPrompt(options.platform)}\n\nRuntime capability notes:\n${options.capabilityNotes}`
+    : buildSystemPrompt(options.platform)
   const tiers: SystemModelMessage[] = [
-    { role: 'system', content: buildSystemPrompt(options.platform, options.agentRules) },
+    { role: 'system', content: stableContent },
     buildContextTier(context),
     buildVolatileTier(context),
   ]
@@ -194,7 +201,7 @@ export class LLMPlanner implements Planner {
   private model: LanguageModel
   private platform: Platform
   private logger?: LoopScopedLogger
-  private agentRules?: string
+  private capabilityNotes?: string
   private accounting: TokenAccounting
   private profile?: DeclaredModelProfile
   private nonActionTools?: NonActionToolMap
@@ -202,7 +209,7 @@ export class LLMPlanner implements Planner {
   // TokenAccounting is a required constructor dependency (D-15 constructor-injection):
   // it is the clamp/degrade/recordUsage seam every planning call rides. The composition
   // roots (CLI/dashboard) inject it in Plan 07. Positional order is preserved so existing
-  // call sites keep model/platform/logger/agentRules; `accounting` is the new final arg.
+  // call sites keep model/platform/logger/capabilityNotes; `accounting` is the new final arg.
   //
   // Phase 368 (D-01): `nonActionTools` is the ONE sanctioned runner seam — an optional
   // final positional param defaulting undefined so every existing call site stays byte-
@@ -215,7 +222,7 @@ export class LLMPlanner implements Planner {
     model: LanguageModel,
     platform: Platform | undefined,
     logger: LoopScopedLogger | undefined,
-    agentRules: string | undefined,
+    capabilityNotes: string | undefined,
     accounting: TokenAccounting,
     profile?: DeclaredModelProfile,
     nonActionTools?: NonActionToolMap,
@@ -223,7 +230,7 @@ export class LLMPlanner implements Planner {
     this.model = model
     this.platform = platform ?? 'web'
     this.logger = logger
-    this.agentRules = agentRules
+    this.capabilityNotes = capabilityNotes
     this.accounting = accounting
     this.profile = profile
     this.nonActionTools = nonActionTools
@@ -236,7 +243,7 @@ export class LLMPlanner implements Planner {
   // enters these tiers — it rides composeTurnMessages after the system region. Non-Anthropic
   // providers never parse the `anthropic` namespace, so the breakpoint is a transparent no-op.
   private buildSystemTiers(context: StepContext): SystemModelMessage[] {
-    return assemblePlannerSystemTiers(context, { platform: this.platform, agentRules: this.agentRules })
+    return assemblePlannerSystemTiers(context, { platform: this.platform, capabilityNotes: this.capabilityNotes })
   }
 
   async plan(

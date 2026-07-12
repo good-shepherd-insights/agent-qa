@@ -47,9 +47,12 @@ const { sampleConfig } = vi.hoisted(() => ({
     suiteMatch: ['tests/**/*.suite.yaml'],
     testPathIgnore: ['**/draft/**'],
     hooksFile: 'tests/hooks.ts',
-    agentRules: 'AGENT_RULES.md',
     envFile: '.env.local',
     secretsFile: '.env.secrets.local',
+  },
+  knowledge: {
+    dir: 'agent-qa-knowledge',
+    commitArtifacts: 'none',
   },
   services: {
     dashboard: {
@@ -65,22 +68,6 @@ const { sampleConfig } = vi.hoisted(() => ({
       standard: 'wcag2aa',
       runAfter: 'test-end',
       failOnViolation: false,
-    },
-    memory: {
-      enabled: true,
-      provider: 'local',
-      dir: 'agent-qa-memory',
-      minTrust: 0.3,
-      maxInjections: 3,
-      curatorEnabled: true,
-      curatorLockTimeout: 120000,
-      trustConfirmDelta: 0.05,
-      trustContradictDelta: 0.1,
-      ablationEnabled: true,
-      circuitBreakerEnabled: true,
-      circuitBreakerWindowSize: 20,
-      circuitBreakerBaselineSize: 3,
-      circuitBreakerThreshold: 0.15,
     },
     vision: {
       screenshotSize: '256k',
@@ -163,12 +150,6 @@ vi.mock('@/lib/api', () => ({
   pollPluginAuthResult: vi.fn(),
   exchangePluginAuthCode: vi.fn(),
   deleteAuthCredential: vi.fn(),
-  fetchAgentRules: vi.fn().mockResolvedValue({
-    filePath: 'AGENT_RULES.md',
-    content: '# Rules',
-  }),
-  updateAgentRules: vi.fn(),
-  createAgentRulesFile: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -177,14 +158,13 @@ vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
 const EXPECTED_DESTINATIONS = [
   'workspace:discovery',
   'workspace:files',
-  'workspace:agent-rules',
+  'knowledge:store',
   'services:dashboard',
   'services:cache',
   'services:auth-states',
   'services:logging',
   'services:recording',
   'services:accessibility',
-  'services:memory',
   'services:vision',
   'registry:llms',
   'registry:targets',
@@ -202,14 +182,13 @@ const EXPECTED_DESTINATIONS = [
 const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'workspace:discovery': { title: 'Discovery', marker: 'Test Match Patterns' },
   'workspace:files': { title: 'Files', marker: 'Hooks File' },
-  'workspace:agent-rules': { title: 'Agent Rules', marker: 'Change Path' },
+  'knowledge:store': { title: 'Knowledge', marker: 'Knowledge Directory' },
   'services:dashboard': { title: 'Dashboard', marker: 'Database Path' },
   'services:cache': { title: 'Cache', marker: 'Cache Directory' },
   'services:auth-states': { title: 'Auth States', marker: 'No auth states saved' },
   'services:logging': { title: 'Logging', marker: 'Log Level' },
   'services:recording': { title: 'Recording', marker: 'Record video of test execution' },
   'services:accessibility': { title: 'Accessibility', marker: 'Run After' },
-  'services:memory': { title: 'Memory', marker: 'Memory Directory' },
   'services:vision': { title: 'Vision', marker: 'Screenshot Size' },
   'registry:llms': { title: 'LLMs', marker: 'Add Configuration' },
   'registry:targets': { title: 'Targets', marker: 'Add Target' },
@@ -520,10 +499,9 @@ describe('ConfigPage schema coverage', () => {
     ])
   })
 
-  it('Config section shells: Agent Rules and Memory sections', async () => {
+  it('Config section shells: Knowledge section', async () => {
     await assertConfigSectionShells([
-      'workspace:agent-rules',
-      'services:memory',
+      'knowledge:store',
     ])
   })
 

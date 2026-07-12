@@ -100,7 +100,6 @@ export interface StepContext {
   testName: string
   testContext?: string
   suiteContext?: string
-  agentRules?: string
   previousSteps: { instruction: string; outcome: string; reasoning?: string; plannedAction?: string; verifierResponse?: string }[]
   contextWindow?: number
   plannerModel: LanguageModel

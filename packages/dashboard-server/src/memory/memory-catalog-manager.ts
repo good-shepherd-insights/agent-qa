@@ -320,9 +320,9 @@ export class MemoryCatalogManager {
     const targetToProduct = getTargetToProductMap(config)
     const productToTargets = getProductToTargetsMap(targetToProduct)
     const configResult = AgentQaConfigSchema.safeParse(config)
-    const memoryRoot = configResult.success
-      ? resolveMemoryRoot(configResult.data, workspaceDir)
-      : resolveMemoryRoot(undefined, workspaceDir)
+    // v1 memory config surface retired in Phase 373 (KDIR-03) — the parsed config no
+    // longer carries a memory dir; the subsystem root is the internal default until 382.
+    const memoryRoot = resolveMemoryRoot(undefined, workspaceDir)
     const workspacePaths = configResult.success
       ? resolveWorkspacePaths({
           config: configResult.data,

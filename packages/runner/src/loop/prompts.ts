@@ -173,7 +173,7 @@ function completionRules(platform?: PromptPlatform): string {
 // Rule composer — joins groups into the Rules: block
 // ---------------------------------------------------------------------------
 
-function buildRules(platform?: PromptPlatform, agentRules?: string): string {
+function buildRules(platform?: PromptPlatform): string {
   const groups = [
     actionSelectionRules(platform),
     scrollRules(),
@@ -185,11 +185,7 @@ function buildRules(platform?: PromptPlatform, agentRules?: string): string {
     recoveryRules(),
     completionRules(platform),
   ]
-  let rules = 'Rules:\n' + groups.join('\n')
-  if (agentRules) {
-    rules += `\n\nCustom rules:\n${agentRules}`
-  }
-  return rules
+  return 'Rules:\n' + groups.join('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -350,8 +346,10 @@ function appendPromptNote(parts: string[], promptNote?: string): void {
 // Exported prompt composers
 // ---------------------------------------------------------------------------
 
-export function buildSystemPrompt(platform?: PromptPlatform, agentRules?: string): string {
-  const rulesBlock = buildRules(platform, agentRules)
+// custom-rules injection removed with the workspace agent-rules config surface
+// (Phase 373, KDIR-03); policy serving returns via Reader L0 policies in Phase 380.
+export function buildSystemPrompt(platform?: PromptPlatform): string {
+  const rulesBlock = buildRules(platform)
 
   return `You are the agent-qa test automation agent. Your job is to determine the correct action to execute for a given test step based on the current screen state.
 

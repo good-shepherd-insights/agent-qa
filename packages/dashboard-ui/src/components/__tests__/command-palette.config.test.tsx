@@ -157,13 +157,13 @@ describe('command palette config navigation', () => {
     expect(container.textContent).toContain('Config: Analytics / Pass Rate Scope')
   })
 
-  it('matches audited service field paths for runtime storage and memory', async () => {
+  it('matches audited service field paths for runtime storage and knowledge', async () => {
     await renderPalette()
-    await typeSearch('services.memory.dir')
+    await typeSearch('knowledge.dir')
     let items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    let configItem = items.find((item) => item.textContent?.includes('Config: Services / Memory'))
+    let configItem = items.find((item) => item.textContent?.includes('Config: Knowledge / Knowledge Store'))
     expect(configItem).toBeDefined()
-    expect(configItem?.getAttribute('data-value')).toContain('services.memory.dir')
+    expect(configItem?.getAttribute('data-value')).toContain('knowledge.dir')
 
     await typeSearch('artifactsDir')
     items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]

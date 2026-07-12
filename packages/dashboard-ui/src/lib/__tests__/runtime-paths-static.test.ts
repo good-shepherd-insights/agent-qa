@@ -48,9 +48,9 @@ describe('runtime path static contract', () => {
     expect(demoConfig).toContain('dir: .agent-qa/cache')
   })
 
-  it('keeps the demo config memory root explicit and separate from runtime artifacts', () => {
-    expect(demoConfig).toContain('memory:')
-    expect(demoConfig).toContain('dir: agent-qa-memory')
+  it('keeps the retired memory config surface out of the demo configs (Phase 373, KDIR-03)', () => {
+    expect(demoConfig).not.toContain('memory:')
+    expect(releaseConfig).not.toContain('memory:')
   })
 
   it('keeps the demo config on the canonical workspace sample', () => {
@@ -59,7 +59,7 @@ describe('runtime path static contract', () => {
     expect(demoConfig).toContain('tests/farm/**/*.yaml')
     expect(demoConfig).toContain('suites/**/*.suite.yaml')
     expect(demoConfig).toContain('hooksFile: hooks.yaml')
-    expect(demoConfig).toContain('agentRules: ./agent-rules.md')
+    expect(demoConfig).not.toContain('agentRules')
     expect(demoConfig).toContain('envFile: .env')
     expect(demoConfig).toContain('secretsFile: .env.secrets.local')
   })
@@ -110,16 +110,16 @@ describe('runtime path static contract', () => {
       'services.dashboard.artifactsDir',
       'services.cache.dir',
       'services.cache.ttl',
-      'services.memory.dir',
-      'services.memory.provider',
-      'services.memory.curatorEnabled',
+      'knowledge.dir',
+      'knowledge.commitArtifacts',
+      'knowledge.contextBudgetTokens',
     ]) {
       expect(uiSource).toContain(path)
     }
     expect(uiSource).toContain('routes.testNew')
     expect(uiSource).toContain('routes.suiteNew')
     expect(uiSource).toContain('routes.hookNew')
-    expect(uiSource).toContain('Memory Directory')
+    expect(uiSource).toContain('Knowledge Directory')
   })
 
   it('keeps UI source copy aligned with required env files', () => {

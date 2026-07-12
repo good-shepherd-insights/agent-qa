@@ -77,9 +77,18 @@ describe('assemblePlannerSystemTiers — empty-tier drop (RUNX-01 / D2)', () => 
   })
 
   it('always keeps the stable and volatile tiers (both non-empty by construction)', () => {
-    const system = assemblePlannerSystemTiers(makeContext(), { platform: 'web', agentRules: 'be careful' })
+    const system = assemblePlannerSystemTiers(makeContext(), { platform: 'web' })
     // Stable tier carries the agent identity prose; volatile carries the date stamp.
     expect(contentText(system[0].content)).toContain('agent-qa test automation agent')
     expect(contentText(system.at(-1)!.content)).toContain('Current date:')
+  })
+
+  it('appends composition-root capability notes to the stable tier and never a Custom rules block (KDIR-03)', () => {
+    const system = assemblePlannerSystemTiers(makeContext(), {
+      platform: 'web',
+      capabilityNotes: 'Console log capture is DISABLED for this test run.',
+    })
+    expect(contentText(system[0].content)).toContain('Runtime capability notes:\nConsole log capture is DISABLED for this test run.')
+    expect(contentText(system[0].content)).not.toContain('Custom rules:')
   })
 })

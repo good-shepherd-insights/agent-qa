@@ -61,7 +61,7 @@ function buildPlannerSystem(
   ctx: StepContext,
   platform: 'web' | 'android' | 'ios' = 'web',
 ): SystemModelMessage[] {
-  const stable: SystemModelMessage = { role: 'system', content: buildSystemPrompt(platform, ctx.agentRules) }
+  const stable: SystemModelMessage = { role: 'system', content: buildSystemPrompt(platform) }
   const context = buildContextTier(ctx) as SystemModelMessage
   const volatile = buildVolatileTier(ctx) as SystemModelMessage
   return [stable, context, volatile]

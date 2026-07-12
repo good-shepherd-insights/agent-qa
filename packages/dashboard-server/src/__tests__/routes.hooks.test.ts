@@ -168,7 +168,6 @@ function withRequiredWorkspaceConfig(configContent: string): string {
   const entries = [
     ['testMatch', '  testMatch:\n    - specs/web/**/*.yaml'],
     ['suiteMatch', '  suiteMatch:\n    - cases/**/*.suite.yaml'],
-    ['agentRules', '  agentRules: ./agent-rules.md'],
     ['envFile', '  envFile: .env'],
     ['secretsFile', '  secretsFile: .env.secrets.local'],
   ]

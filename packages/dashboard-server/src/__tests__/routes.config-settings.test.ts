@@ -83,7 +83,6 @@ vi.mock('@vostride/agent-qa-core', async () => {
     suiteMatch: z.array(z.string().min(1)).min(1),
     testPathIgnore: z.array(z.string()).optional(),
     hooksFile: z.string().min(1, 'hooksFile is required.'),
-    agentRules: z.string().min(1, 'agentRules is required.'),
     envFile: z.string().min(1, 'envFile is required.'),
     secretsFile: z.string().min(1, 'secretsFile is required.'),
   }).strict()
@@ -265,7 +264,6 @@ function buildResolvedWorkspacePaths(configPath: string) {
     suiteMatch: ['suites/**/*.suite.yaml'],
     testPathIgnore: [],
     hooksFile: file('hooks.yaml'),
-    agentRules: file('agent-rules.md'),
     envFile: file('.env'),
     secretsFile: file('.env.secrets.local'),
   }
@@ -275,7 +273,6 @@ async function writeWorkspaceSupportFiles(configPath: string): Promise<void> {
   const configDir = dirname(configPath)
   await Promise.all([
     writeFile(join(configDir, 'hooks.yaml'), 'hooks: []\n', 'utf-8'),
-    writeFile(join(configDir, 'agent-rules.md'), '# agent-qa rules\n', 'utf-8'),
     writeFile(join(configDir, '.env'), '', 'utf-8'),
     writeFile(join(configDir, '.env.secrets.local'), '', 'utf-8'),
   ])
@@ -498,15 +495,12 @@ describe('PUT /api/config/settings', () => {
         'workspace.hooksFile': './hooks.yaml',
         'workspace.testMatch': ['tests/**/*.yaml'],
         'workspace.suiteMatch': ['suites/**/*.suite.yaml'],
-        'workspace.agentRules': './agent-rules.md',
         'workspace.envFile': './.env.local',
         'workspace.secretsFile': './.env.secrets.local',
-        'services.memory': {
-          enabled: true,
-          provider: 'local',
-          dir: '.agent-qa/custom-memory',
-          minTrust: 0.4,
-          maxInjections: 4,
+        'knowledge': {
+          dir: 'agent-qa-knowledge',
+          commitArtifacts: 'thumbnails',
+          contextBudgetTokens: 4096,
         },
         'services.vision': {
           screenshotSize: '512k',
@@ -554,18 +548,15 @@ describe('PUT /api/config/settings', () => {
     expect(config).toMatchObject({
       workspace: {
         hooksFile: './hooks.yaml',
-        agentRules: './agent-rules.md',
         envFile: './.env.local',
         secretsFile: './.env.secrets.local',
       },
+      knowledge: {
+        dir: 'agent-qa-knowledge',
+        commitArtifacts: 'thumbnails',
+        contextBudgetTokens: 4096,
+      },
       services: {
-        memory: {
-          enabled: true,
-          provider: 'local',
-          dir: '.agent-qa/custom-memory',
-          minTrust: 0.4,
-          maxInjections: 4,
-        },
         vision: {
           screenshotSize: '512k',
           effectiveResolution: 768,
@@ -857,7 +848,6 @@ describe('PUT /api/config/settings', () => {
 
   it.each([
     ['workspace.hooksFile', 'hooksFile is required'],
-    ['workspace.agentRules', 'agentRules is required'],
     ['workspace.envFile', 'envFile is required'],
     ['workspace.secretsFile', 'secretsFile is required'],
   ])('rejects an empty %s value', async (field, message) => {
@@ -910,14 +900,12 @@ describe('PUT /api/config/settings', () => {
     expect(data.details.join('\n')).toContain('testsDir')
   })
 
-  it('rejects empty services.memory.dir', async () => {
+  it('rejects empty knowledge.dir', async () => {
     const res = await invokeRoute('/api/config/settings', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        'services.memory': {
-          enabled: true,
-          provider: 'local',
+        'knowledge': {
           dir: '',
         },
       }),
@@ -926,7 +914,24 @@ describe('PUT /api/config/settings', () => {
     expect(res.status).toBe(400)
     const data = JSON.parse(res.body) as { error: string; details: string[] }
     expect(data.error).toBe('Validation failed')
-    expect(data.details.some((detail) => detail.startsWith('services.memory.dir:'))).toBe(true)
+    expect(data.details.some((detail) => detail.startsWith('knowledge.dir:'))).toBe(true)
+  })
+
+  it('rejects an absolute knowledge.dir (repo-relative refine, T-373-06)', async () => {
+    const res = await invokeRoute('/api/config/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        'knowledge': {
+          dir: '/etc/knowledge',
+        },
+      }),
+    })
+
+    expect(res.status).toBe(400)
+    const data = JSON.parse(res.body) as { error: string; details: string[] }
+    expect(data.error).toBe('Validation failed')
+    expect(data.details.some((detail) => detail.startsWith('knowledge.dir:'))).toBe(true)
   })
 
   it('rejects invalid analytics pass rate scope predicates', async () => {
@@ -1591,7 +1596,6 @@ describe('dashboard LLM auth and test routes', () => {
       '  suiteMatch:',
       '    - suites/**/*.suite.yaml',
       '  hooksFile: hooks.yaml',
-      '  agentRules: agent-rules.md',
       '  envFile: .env',
       '  secretsFile: .env.secrets.local',
       'services:',

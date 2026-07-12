@@ -374,10 +374,10 @@ function createWorkspacePaths(
         testMatch: options.testMatch ?? ['**/*.yaml'],
         suiteMatch: options.suiteMatch ?? ['**/*.suite.yaml'],
         hooksFile: 'runtime/hooks/custom-hooks.yaml',
-        agentRules: 'agent-rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
     },
     configPath: join(workspaceDir, 'agent-qa.config.yaml'),
   })
@@ -2550,7 +2550,7 @@ describe('API Routes', () => {
   })
 
   describe('DELETE /api/memory/observations/:testId/:obsId', () => {
-    it('deletes observations from configured services.memory.dir without touching the default root', async () => {
+    it('deletes observations from the internal default memory root — the config dir surface is retired (Phase 373, KDIR-03)', async () => {
       const obsId = 'obs_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
       const configContent = [
         'workspace:',
@@ -2559,14 +2559,8 @@ describe('API Routes', () => {
         '  suiteMatch:',
         '    - suites/**/*.suite.yaml',
         '  hooksFile: hooks.yaml',
-        '  agentRules: agent-rules.md',
         '  envFile: .env',
         '  secretsFile: .env.secrets.local',
-        'services:',
-        '  memory:',
-        '    enabled: true',
-        '    provider: local',
-        '    dir: .agent-qa/custom-memory',
         'use:',
         '  mobile:',
         '    appState: preserve',
@@ -2575,11 +2569,11 @@ describe('API Routes', () => {
       const { configManager, configPath } = await createConfigWorkspace(configContent)
       const configDir = dirname(configPath)
       const defaultObservationPath = join(configDir, 'agent-qa-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
-      const customObservationPath = join(configDir, '.agent-qa/custom-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
+      const strayObservationPath = join(configDir, '.agent-qa/custom-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
       await mkdir(join(defaultObservationPath, '..'), { recursive: true })
-      await mkdir(join(customObservationPath, '..'), { recursive: true })
+      await mkdir(join(strayObservationPath, '..'), { recursive: true })
       await writeFile(defaultObservationPath, 'default-root observation', 'utf-8')
-      await writeFile(customObservationPath, 'custom-root observation', 'utf-8')
+      await writeFile(strayObservationPath, 'stray non-default observation', 'utf-8')
 
       router = createRouter({
         db: db as any,
@@ -2593,8 +2587,8 @@ describe('API Routes', () => {
 
       expect(res.status).toBe(200)
       expect(JSON.parse(res.body)).toEqual({ deleted: true })
-      await expect(stat(customObservationPath)).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(readFile(defaultObservationPath, 'utf-8')).resolves.toBe('default-root observation')
+      await expect(stat(defaultObservationPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(strayObservationPath, 'utf-8')).resolves.toBe('stray non-default observation')
     })
   })
 
