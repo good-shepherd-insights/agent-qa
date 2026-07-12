@@ -558,6 +558,162 @@ providers:
 `
 }
 
+const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
+// The committed/derived split every knowledge writer relies on (knowledge-store.md §4).
+const KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES = [
+  'memory/index/',
+  'memory/queue/',
+  '.lease',
+  '.epoch',
+  '**/artifacts/',
+  'skills/.staging/',
+] as const
+
+// Verbatim from spec/v2/knowledge-store.md §4 — do not paraphrase. Future-shelf
+// lines (skills/.staging/) ship now so the split never needs a later edit (D-13).
+function buildKnowledgeGitignore(): string {
+  return `# agent-qa-knowledge/.gitignore
+memory/index/
+memory/queue/
+.lease
+.epoch
+**/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
+                     # (artifact inventories are committed and live OUTSIDE artifacts/)
+skills/.staging/
+`
+}
+
+// D-12: comment-only — zero active rules. An un-authored active rule would be
+// sovereign prompt bytes on every run. HTML comments are stripped at serve time,
+// so this scaffold is an empty policy until a human writes a rule below it.
+function buildGlobalPolicyTemplate(): string {
+  return `<!--
+agent-qa policies — global scope
+
+Write one rule per line, in plain imperative English. Every active (non-comment)
+line in this file becomes a QA rule the agent follows.
+
+Example (inactive — it lives inside this comment):
+Always dismiss the cookie banner before asserting page content
+
+Scoping: this file is the global scope. Add sibling files named <product>.md
+next to it for product-scoped rules.
+
+Sovereignty: policies are human-asserted and win every conflict. Once policy
+serving lands, every active line here is served to the agent verbatim on every
+run — never summarized, never budgeted out — so keep rules few and deliberate.
+
+HTML comments are stripped at serve time: a comment-only file like this one is
+an empty policy. Add rules below this comment block to activate them.
+-->
+`
+}
+
+// D-14: the substantive human entry point for the committed knowledge root.
+function buildKnowledgeReadme(): string {
+  return `# agent-qa-knowledge
+
+The committed knowledge root for this project's QA agent. Everything the agent
+learns and everything you author for it lives under this one directory.
+
+## Two shelves
+
+- **Learned shelf** (\`memory/\`, created by the first record write): durable
+  records the agent distills from runs — facts, cautions, selectors, flows.
+  Each record is a self-sufficient bundle directory: the fact, its evidence,
+  and its provenance travel together.
+- **Authored shelf** (\`policies/\` now; \`issues/\` and \`skills/\` arrive with
+  their features): content humans write or approve — QA rules, filed issues,
+  agent skills.
+
+Only \`policies/\` exists after init; the other directories are created on
+first use.
+
+## How to review a knowledge PR
+
+- \`record.md\` is the fact: what the agent now believes, in reviewable prose.
+- \`evidence/outcomes.jsonl\` is the evidence: the append-only outcome log the
+  belief rests on.
+- Trust is derived by code from the outcome log — never hand-edit trust
+  counters or status fields. Edit the fact or the evidence; the derivation
+  follows.
+
+## Committed vs. gitignored
+
+\`git diff\` shows exactly what the agent learned. The \`.gitignore\` in this
+directory enforces the split:
+
+- \`memory/index/\` — derived search index; rebuildable from records, never committed.
+- \`memory/queue/\`, \`.lease\`, \`.epoch\` — machine-local curation runtime state.
+- \`**/artifacts/\` — binary blobs (screenshots, DOM snapshots, HAR). Excluded
+  from git by default; artifact *inventories* are text, live outside
+  \`artifacts/\`, and are committed. Set \`knowledge.commitArtifacts: thumbnails\`
+  in the agent-qa config to commit small thumbnails for in-PR visual context.
+- \`skills/.staging/\` — pending skill writes awaiting approval.
+
+Everything else — every \`*.md\` and \`*.json\`/\`*.jsonl\` of distilled or
+authored text — is committed and PR-reviewable.
+
+## How to write policies
+
+QA rules live in \`policies/\` as plain markdown — one rule per line, in
+imperative English. Start with \`policies/global.md\` (its header comment
+teaches the format); add \`policies/<product>.md\` siblings for product-scoped
+rules. Policies are sovereign: served to the agent verbatim on every run.
+
+## Spec pointers
+
+The layout, the committed/derived split, and the config surface are specified
+in the agent-qa design docs: \`spec/v2/knowledge-store.md\` §3–§6.
+`
+}
+
+function knowledgeGitignoreFunctionalLines(content: string): Set<string> {
+  return new Set(
+    content
+      .split(/\r?\n/)
+      .map(line => {
+        const hashIndex = line.indexOf('#')
+        return (hashIndex === -1 ? line : line.slice(0, hashIndex)).trim()
+      })
+      .filter(Boolean),
+  )
+}
+
+function scaffoldKnowledgeRoot(dir: string): void {
+  const knowledgeDir = join(dir, KNOWLEDGE_ROOT_DIR)
+  mkdirSync(join(knowledgeDir, 'policies'), { recursive: true })
+
+  // Sovereign files: --force never clobbers these — create-missing only (D-15).
+  const readmePath = join(knowledgeDir, 'README.md')
+  if (!existsSync(readmePath)) {
+    writeFileSync(readmePath, buildKnowledgeReadme())
+    console.log(pc.green(`✓ Created ${readmePath}`))
+  }
+
+  const globalPolicyPath = join(knowledgeDir, 'policies', 'global.md')
+  if (!existsSync(globalPolicyPath)) {
+    writeFileSync(globalPolicyPath, buildGlobalPolicyTemplate())
+    console.log(pc.green(`✓ Created ${globalPolicyPath}`))
+  }
+
+  const knowledgeGitignorePath = join(knowledgeDir, '.gitignore')
+  if (!existsSync(knowledgeGitignorePath)) {
+    writeFileSync(knowledgeGitignorePath, buildKnowledgeGitignore())
+    console.log(pc.green(`✓ Created ${knowledgeGitignorePath}`))
+  } else {
+    // Never rewrite an existing knowledge .gitignore (the user may have customized
+    // it deliberately, D-15) — verify the functional split and warn per missing line.
+    const existingLines = knowledgeGitignoreFunctionalLines(readFileSync(knowledgeGitignorePath, 'utf-8'))
+    for (const requiredLine of KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES) {
+      if (existingLines.has(requiredLine)) continue
+      console.warn(pc.yellow(
+        `⚠ ${knowledgeGitignorePath} is missing the required line "${requiredLine}" — add it manually to keep the committed/derived split intact.`,
+      ))
+    }
+  }
+}
+
 function appendGitignore(dir: string): void {
   const gitignorePath = join(dir, '.gitignore')
   let existing = ''
@@ -744,6 +900,9 @@ export function createInitCommand(): Command {
         console.log(pc.green(`✓ Created ${localConfigPath}`))
       }
 
+      // Committed knowledge root (KDIR-01) — create-missing, never overwrite.
+      scaffoldKnowledgeRoot(dir)
+
       // Write example tests
       const examplePassPath = join(testsDir, 'example-pass.yaml')
       writeFileSync(examplePassPath, buildExampleTest(platform, 'pass'))
@@ -809,6 +968,7 @@ export function createInitCommand(): Command {
       console.log(`    ${pc.dim('•')} ${DEFAULT_ENV_FILE}`)
       console.log(`    ${pc.dim('•')} ${DEFAULT_SECRETS_FILE}`)
       console.log(`    ${pc.dim('•')} ${DEFAULT_LOCAL_CONFIG_FILE}`)
+      console.log(`    ${pc.dim('•')} ${KNOWLEDGE_ROOT_DIR}/ (README.md, .gitignore, policies/global.md)`)
       console.log(`    ${pc.dim('•')} tests/example-pass.yaml`)
       console.log(`    ${pc.dim('•')} tests/example-fail.yaml`)
       if (hasWeb(platform)) {
