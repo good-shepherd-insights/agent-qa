@@ -32,10 +32,10 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
       testMatch: ['specs/web/**/*.yaml', 'specs/mobile/**/*.yaml'],
       suiteMatch: ['cases/**/*.suite.yaml'],
       hooksFile: 'runtime/hooks/custom-hooks.yaml',
-      agentRules: 'config/agent-rules.md',
       envFile: 'config/env/public.env',
       secretsFile: 'config/env/secrets.local',
     },
+    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
     services: {
       dashboard: {
         port: 3470,
@@ -54,17 +54,6 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
       accessibility: {
         enabled: false,
       },
-      memory: {
-        enabled: true,
-        provider: 'local',
-        dir: '.agent-qa/custom-memory',
-        minTrust: 0.3,
-        maxInjections: 3,
-        curatorEnabled: true,
-        curatorLockTimeout: 120_000,
-        trustConfirmDelta: 0.05,
-        trustContradictDelta: 0.10,
-      },
     },
   }
 
@@ -74,7 +63,6 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
     writeFixtureFile(root, 'cases/smoke.suite.yaml', 'name: Smoke\ntests: []\n'),
     writeFixtureFile(root, 'runtime/hooks/custom-hooks.yaml', 'hooks: []\n'),
     writeFixtureFile(root, 'runtime/hooks/set-env.js', 'export default async function setup() {}\n'),
-    writeFixtureFile(root, 'config/agent-rules.md', '# Rules\n'),
     writeFixtureFile(root, 'config/env/public.env', 'PUBLIC_VALUE=1\n'),
     writeFixtureFile(root, 'config/env/secrets.local', 'SECRET_VALUE=1\n'),
     writeFixtureFile(root, 'tests/legacy.yaml', 'name: Legacy\n'),
@@ -105,7 +93,6 @@ describe('workspace path resolver', () => {
     expect(workspace.configDir).toBe(fixture.root)
     expect(workspace.hooksFile.absolutePath).toBe(path.join(fixture.root, 'runtime/hooks/custom-hooks.yaml'))
     expect(workspace.hooksFile.workspaceRelativePath).toBe('runtime/hooks/custom-hooks.yaml')
-    expect(workspace.agentRules.absolutePath).toBe(path.join(fixture.root, 'config/agent-rules.md'))
     expect(workspace.envFile.absolutePath).toBe(path.join(fixture.root, 'config/env/public.env'))
     expect(workspace.secretsFile.absolutePath).toBe(path.join(fixture.root, 'config/env/secrets.local'))
   })
@@ -119,9 +106,6 @@ describe('workspace path resolver', () => {
     expect(fixture.config.services?.logging?.level).toBe('warn')
     expect(fixture.config.services?.recording?.enabled).toBe(false)
     expect(fixture.config.services?.accessibility?.enabled).toBe(false)
-    expect(fixture.config.services?.memory?.provider).toBe('local')
-    expect(fixture.config.services?.memory?.curatorEnabled).toBe(true)
-    expect(fixture.config.services?.memory?.dir).toBe('.agent-qa/custom-memory')
   })
 
   it('discovers test files from non-default testMatch patterns only', async () => {

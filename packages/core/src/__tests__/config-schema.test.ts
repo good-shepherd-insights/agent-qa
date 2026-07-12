@@ -13,7 +13,6 @@ import {
   AccessibilityConfigSchema,
   CacheConfigSchema,
   AuthStateConfigSchema,
-  MemoryConfigSchema,
   ServicesSchema,
   VisionServiceSchema,
 } from '../schema/services-schema.js'
@@ -23,7 +22,6 @@ const validWorkspace = {
   suiteMatch: ['suites/**/*.suite.yaml'],
   testPathIgnore: ['tests/skip/**'],
   hooksFile: 'hooks.yaml',
-  agentRules: './agent-rules.md',
   envFile: '.env',
   secretsFile: '.env.secrets.local',
 }
@@ -64,7 +62,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         suiteMatch: ['suites/**/*.suite.yaml'],
         testPathIgnore: ['tests/skip/**'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
@@ -79,12 +76,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
           standard: 'wcag2aa' as const,
           runAfter: 'every-step' as const,
           failOnViolation: false,
-        },
-        memory: {
-          enabled: true,
-          provider: 'local' as const,
-          curatorEnabled: true,
-          dir: '.agent-qa/custom-memory',
         },
         mcp: {
           enabled: true,
@@ -283,12 +274,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         accessibility: {
           enabled: false,
         },
-        memory: {
-          enabled: true,
-          provider: 'local',
-          curatorEnabled: true,
-          dir: '.agent-qa/custom-memory',
-        },
       },
     }))
 
@@ -301,9 +286,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
       expect(result.data.services?.logging?.level).toBe('warn')
       expect(result.data.services?.recording?.enabled).toBe(false)
       expect(result.data.services?.accessibility?.enabled).toBe(false)
-      expect(result.data.services?.memory?.provider).toBe('local')
-      expect(result.data.services?.memory?.curatorEnabled).toBe(true)
-      expect(result.data.services?.memory?.dir).toBe('.agent-qa/custom-memory')
     }
   })
 
@@ -351,7 +333,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         suiteMatch: ['**/*.suite.yaml'],
         testPathIgnore: ['node_modules'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
@@ -360,7 +341,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
   })
 
   it('rejects workspace config that omits each required workspace key', () => {
-    const requiredKeys = ['testMatch', 'suiteMatch', 'hooksFile', 'agentRules', 'envFile', 'secretsFile'] as const
+    const requiredKeys = ['testMatch', 'suiteMatch', 'hooksFile', 'envFile', 'secretsFile'] as const
     for (const key of requiredKeys) {
       const workspace = { ...validWorkspace }
       delete workspace[key]
@@ -390,7 +371,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
   })
 
   it('rejects empty workspace scalar file keys', () => {
-    const requiredKeys = ['hooksFile', 'agentRules', 'envFile', 'secretsFile'] as const
+    const requiredKeys = ['hooksFile', 'envFile', 'secretsFile'] as const
     for (const key of requiredKeys) {
       const result = AgentQaConfigSchema.safeParse({
         workspace: {
@@ -520,6 +501,29 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     })
 
     expect(result.success).toBe(false)
+  })
+
+  // KDIR-03 (Phase 373): the slim knowledge block replaced services.memory.
+  it('materializes knowledge defaults when the block is omitted', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.knowledge.dir).toBe('agent-qa-knowledge')
+      expect(result.data.knowledge.commitArtifacts).toBe('none')
+      expect(result.data.knowledge.contextBudgetTokens).toBeUndefined()
+    }
+  })
+
+  it('accepts an explicit knowledge block', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      knowledge: { dir: 'docs/knowledge', commitArtifacts: 'thumbnails', contextBudgetTokens: 4096 },
+    }))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.knowledge.dir).toBe('docs/knowledge')
+      expect(result.data.knowledge.commitArtifacts).toBe('thumbnails')
+      expect(result.data.knowledge.contextBudgetTokens).toBe(4096)
+    }
   })
 
   it('rejects stale global use.actionProofs', () => {
@@ -807,12 +811,6 @@ describe('Sub-schemas — primitives', () => {
     expect(AuthStateConfigSchema.safeParse({}).success).toBe(false)
     expect(AuthStateConfigSchema.safeParse({ dir: '.agent-qa/auth-states' }).success).toBe(true)
     expect(AuthStateConfigSchema.safeParse({ dir: '.agent-qa/auth-states', ttlSeconds: 3600 }).success).toBe(false)
-  })
-
-  it('MemoryConfigSchema defaults and validates dir', () => {
-    expect(MemoryConfigSchema.parse({}).dir).toBe('agent-qa-memory')
-    expect(MemoryConfigSchema.safeParse({ dir: '.agent-qa/custom-memory' }).success).toBe(true)
-    expect(MemoryConfigSchema.safeParse({ dir: '' }).success).toBe(false)
   })
 
   it('PlannerConfigSchema requires all fields', () => {

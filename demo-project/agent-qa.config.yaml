@@ -7,7 +7,6 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
-  agentRules: ./agent-rules.md
   envFile: .env
   secretsFile: .env.secrets.local
 services:
@@ -19,8 +18,6 @@ services:
     standard: wcag2aa
     runAfter: every-step
     failOnViolation: false
-  memory:
-    dir: agent-qa-memory
 registry:
   targets:
     wai-bad:

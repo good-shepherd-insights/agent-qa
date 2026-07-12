@@ -31,7 +31,6 @@ async function makeFixture(): Promise<{ config: AgentQaConfig; configPath: strin
       testMatch: ['tests/**/*.yaml'],
       suiteMatch: ['suites/**/*.suite.yaml'],
       hooksFile: 'hooks.yaml',
-      agentRules: 'agent-rules.md',
       envFile: '.env',
       secretsFile: '.env.secrets.local',
     },
@@ -40,7 +39,6 @@ async function makeFixture(): Promise<{ config: AgentQaConfig; configPath: strin
   // Exactly one matching test file (mirrors the demo's `run tests/example-pass.yaml` target).
   await writeFile_(root, 'tests/example-pass.yaml', 'name: Example\nsteps: []\n')
   await writeFile_(root, 'hooks.yaml', '')
-  await writeFile_(root, 'agent-rules.md', '')
   await writeFile_(root, '.env', '')
   await writeFile_(root, '.env.secrets.local', '')
 
