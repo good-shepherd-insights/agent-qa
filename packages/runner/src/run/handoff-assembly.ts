@@ -10,8 +10,9 @@
 //     executionContext/configDigests on the handoff are the exact values the run keyed on, so run
 //     identity and handoff identity cannot fork by construction.
 //
-// This module carries the EXECUTION verdict (RunStatus) only — it never imports or references the
-// root-cause Verdict type (§A9 boundary). No fs, no providers.
+// This module carries the EXECUTION verdict (RunStatus) and ATTACHES a caller-supplied root-cause
+// Verdict onto PerTestOutcome (373-07) — it never DERIVES one (§A9 boundary): all root-cause logic
+// lives in run/root-cause.ts behind the shell's classify call (D-05). No fs, no providers.
 
 import type {
   CompletedRunHandoff,
@@ -22,6 +23,7 @@ import type {
   RunStatus,
   ScopeKey,
   StepEvidence,
+  Verdict,
 } from '@vostride/agent-qa-schema'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { MaskFn } from '@vostride/agent-qa-schema'
@@ -69,6 +71,10 @@ function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: Synth
  * {@link PerTestOutcome}. Steps are built from `result.steps`: a step with §A8 evidence carries it
  * (with `stepIndex` OVERRIDDEN to its array position); an evidence-less step gets a synthesized
  * minimal StepEvidence. `testIndex` is the shell-owned array position.
+ *
+ * `rootCause` is the shell-classified §A9 verdict (373-07): attached ONLY when defined so clean
+ * passes/skipped/cancelled members stay rootCause-free in the persisted JSON (the D-01 presence
+ * rule — the key is absent, never undefined-valued).
  */
 export function assemblePerTestOutcome(
   member: RunMemberDescriptor,
@@ -83,6 +89,7 @@ export function assemblePerTestOutcome(
     verifierIdentity?: ModelIdentity
     toolSchemaDigest?: string
   },
+  rootCause?: Verdict,
 ): PerTestOutcome {
   const synthDeps: SynthDeps = {
     scope: deps.scope,
@@ -102,6 +109,7 @@ export function assemblePerTestOutcome(
     testIndex: deps.testIndex,
     outcome,
     steps,
+    ...(rootCause !== undefined ? { rootCause } : {}),
   }
 }
 

@@ -5,6 +5,7 @@ import type {
   ModelIdentity,
   RunId,
   ScopeKey,
+  Verdict,
 } from '@vostride/agent-qa-schema'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import type { TestResult } from '../../result.js'
@@ -100,5 +101,79 @@ describe('handoff assembly instrumentation parity', () => {
     const handoff = assembleHandoff(config, [], 'passed', { startedAt: 1, endedAt: 2 })
 
     expect(handoff.schemaVersion).toBe(3)
+  })
+})
+
+describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
+  const environmentVerdict: Verdict = {
+    class: 'environment',
+    producer: 'deterministic-classifier',
+    confidence: 1,
+    evidence: {
+      citedSteps: [0],
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: 'health probe: 503 in 230ms',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest: 0,
+  }
+
+  it('carries a supplied verdict verbatim onto the assembled outcome', () => {
+    const outcome = assemblePerTestOutcome(
+      member,
+      resultWithoutEvidence(),
+      'failed',
+      { testIndex: 0, scope, buildOrdinal: 7, mask: (text) => text },
+      environmentVerdict,
+    )
+
+    expect(outcome.rootCause).toBe(environmentVerdict)
+  })
+
+  it('leaves the rootCause key ABSENT (not undefined-valued) when no verdict is supplied', () => {
+    const outcome = assemblePerTestOutcome(member, resultWithoutEvidence(), 'passed', {
+      testIndex: 0,
+      scope,
+      buildOrdinal: 7,
+      mask: (text) => text,
+    })
+
+    expect('rootCause' in outcome).toBe(false)
+    expect(JSON.stringify(outcome)).not.toContain('rootCause')
+  })
+
+  it('keeps the handoff top-level shape unchanged — rootCause rides tests[] only (D-01)', () => {
+    const config = {
+      runId: 'run-1' as RunId,
+      scope,
+      executionContext: 'local-headless',
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      buildOrdinal: 7,
+      members: [member],
+      executor: async () => resultWithoutEvidence(),
+    } satisfies RunConfig
+    const perTest = assemblePerTestOutcome(
+      member,
+      resultWithoutEvidence(),
+      'failed',
+      { testIndex: 0, scope, buildOrdinal: 7, mask: (text) => text },
+      environmentVerdict,
+    )
+
+    const handoff = assembleHandoff(config, [perTest], 'failed', { startedAt: 1, endedAt: 2 })
+
+    expect(Object.keys(handoff).sort()).toEqual([
+      'aggregateVerdict',
+      'buildOrdinal',
+      'configDigests',
+      'endedAt',
+      'executionContext',
+      'runId',
+      'schemaVersion',
+      'scope',
+      'startedAt',
+      'tests',
+    ])
   })
 })

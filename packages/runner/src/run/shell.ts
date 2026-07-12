@@ -3,7 +3,8 @@
 // iteration, group-scoped fail-fast skip production (absorbed from suite/runner.ts:530-554),
 // run-level cancel + wall-clock budget (D-03), the aggregate-verdict emission, and the one-per-run
 // handoff assembly + persistence (D-17). It carries ZERO verdict logic (deriveMemberOutcome/
-// deriveAggregateVerdict own it) and ZERO fs/provider access (validate:arch storageNeutral) —
+// deriveAggregateVerdict/classifyRootCause own it) and ZERO fs/provider access (validate:arch
+// storageNeutral) —
 // per-test execution stays behind the injected `executor` port, every I/O leg behind a run port.
 //
 // Terminal sequence is owned by ONE code path (RESEARCH Pitfall 7): compute the aggregate verdict,
@@ -26,6 +27,7 @@ import type {
 import { CURRENT_BUS_SCHEMA_VERSION, projectTestFinished } from '@vostride/agent-qa-schema'
 import { createRunEventBus } from './bus.js'
 import { deriveAggregateVerdict, deriveMemberOutcome } from './verdict.js'
+import { classifyRootCause } from './root-cause.js'
 import { createMemberEventSink } from './event-sink.js'
 import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from './handoff-assembly.js'
 import type { MemberEvidenceContext, RunConfig } from './ports.js'
@@ -253,13 +255,25 @@ export function startRun(config: RunConfig): RunSession {
         poisonedGroups.add(member.failFastGroup)
       }
 
-      const perTest = assemblePerTestOutcome(member, result, outcome, {
-        testIndex,
-        scope: config.scope,
-        buildOrdinal: config.buildOrdinal,
-        mask,
-        ...evidenceContext,
-      })
+      // 373-07 §A9 root-cause classification (D-05, RCC-02) — this is the ONE seam where `result`
+      // (the TestResult, carrying retryCount), `outcome`, and `testIndex` coexist (RESEARCH
+      // Pitfall 3): classify HERE, never against the assembled PerTestOutcome. The shell carries
+      // zero verdict logic — this call is the only addition; root-cause.ts owns every branch.
+      const rootCause = classifyRootCause({ result, outcome, testIndex, baselineProbe: config.baselineProbe })
+
+      const perTest = assemblePerTestOutcome(
+        member,
+        result,
+        outcome,
+        {
+          testIndex,
+          scope: config.scope,
+          buildOrdinal: config.buildOrdinal,
+          mask,
+          ...evidenceContext,
+        },
+        rootCause,
+      )
       outcomes.push(perTest)
       memberOutcomes.push(outcome)
       // 363 D-01: enrich testFinished with the TestResult the shell already holds at assembly —

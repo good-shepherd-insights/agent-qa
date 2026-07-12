@@ -679,5 +679,56 @@ describe('CASS-02 — run-scoped evidence artifact store threading (Plan 13)', (
   })
 })
 
+describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-02)', () => {
+  it('persists a producer-stamped deterministic verdict for a failing member (round-trip)', async () => {
+    const store = makeFakeHandoffStore()
+    const session = startRun(
+      baseConfig({
+        members: [{ testId: 'a' }, { testId: 'b' }],
+        executor: scriptedExecutor({ a: failResult('a', 'assertion mismatch'), b: passResult('b') }, []),
+        ports: { handoffStore: store, eventLog: makeFakeEventLog() },
+      }),
+    )
+    await done(session)
+
+    expect(store.saved).toHaveLength(1)
+    const rootCause = store.saved[0].tests[0].rootCause
+    expect(rootCause?.producer).toBe('deterministic-classifier')
+    expect(['timeout', 'environment', 'flake', 'unknown']).toContain(rootCause?.class)
+  })
+
+  it('classifies a failed member environment from a 503 baseline probe threaded via RunConfig (D-04)', async () => {
+    const store = makeFakeHandoffStore()
+    const session = startRun(
+      baseConfig({
+        members: [{ testId: 'a' }],
+        executor: scriptedExecutor({ a: failResult('a', 'assertion mismatch') }, []),
+        baselineProbe: { status: 503, elapsedMs: 230 },
+        ports: { handoffStore: store, eventLog: makeFakeEventLog() },
+      }),
+    )
+    const { handoff } = await done(session)
+
+    expect(handoff.tests[0].rootCause?.class).toBe('environment')
+    expect(handoff.tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
+    expect(store.saved[0].tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
+  })
+
+  it('leaves an all-passing run rootCause-free everywhere in the serialized handoff (presence rule)', async () => {
+    const store = makeFakeHandoffStore()
+    const session = startRun(
+      baseConfig({
+        members: [{ testId: 'a' }, { testId: 'b' }],
+        executor: scriptedExecutor({ a: passResult('a'), b: passResult('b') }, []),
+        ports: { handoffStore: store, eventLog: makeFakeEventLog() },
+      }),
+    )
+    await done(session)
+
+    expect(store.saved).toHaveLength(1)
+    expect(JSON.stringify(store.saved[0])).not.toContain('rootCause')
+  })
+})
+
 // Keep vi referenced (fake-timer discipline utility) so lint does not flag the import.
 void vi
