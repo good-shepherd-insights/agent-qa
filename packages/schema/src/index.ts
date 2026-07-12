@@ -264,6 +264,26 @@ export {
   foldBundleTrust,
 } from './knowledge/index'
 export type { BundleStatus, DerivedTrustState } from './knowledge/index'
+export {
+  ArtifactsIndexSchema,
+  BUNDLE_SCHEMA_VERSION,
+  BundleManifestSchema,
+  BundleProvenanceSchema,
+  BundleRelationsSchema,
+  computeMutableStateHash,
+  guardArtifactsIndex,
+  guardBundleManifest,
+  guardBundleProvenance,
+  guardBundleRelations,
+} from './knowledge/index'
+export type {
+  ArtifactsIndex,
+  BundleManifest,
+  BundleProvenance,
+  BundleRelation,
+  BundleRelations,
+  MutableStateHashInput,
+} from './knowledge/index'
 
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'

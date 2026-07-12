@@ -7,3 +7,23 @@ export {
   foldBundleTrust,
 } from './trust-fold'
 export type { BundleStatus, DerivedTrustState } from './trust-fold'
+export {
+  ArtifactsIndexSchema,
+  BUNDLE_SCHEMA_VERSION,
+  BundleManifestSchema,
+  BundleProvenanceSchema,
+  BundleRelationsSchema,
+  computeMutableStateHash,
+  guardArtifactsIndex,
+  guardBundleManifest,
+  guardBundleProvenance,
+  guardBundleRelations,
+} from './bundle-files'
+export type {
+  ArtifactsIndex,
+  BundleManifest,
+  BundleProvenance,
+  BundleRelation,
+  BundleRelations,
+  MutableStateHashInput,
+} from './bundle-files'
