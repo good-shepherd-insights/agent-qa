@@ -121,11 +121,11 @@ describe('foldBundleTrust replay and merge laws (BNDL-03)', () => {
 describe('foldBundleTrust lifecycle derivation', () => {
   it('defaults to candidate and maps each lifecycle event to its status', () => {
     expect(fold([]).status).toBe('candidate')
-    expect(fold([event('superseded', 'superseded', 2, { byRecordId: 'record-next' })]).status)
+    expect(fold([event('superseded', 'superseded', 6, { byRecordId: 'record-next' })]).status)
       .toBe('superseded')
-    expect(fold([event('deprecated', 'deprecated', 2, { reason: 'obsolete' })]).status)
+    expect(fold([event('deprecated', 'deprecated', 6, { reason: 'obsolete' })]).status)
       .toBe('deprecated')
-    expect(fold([event('promoted', 'promoted', 2)]).status).toBe('active')
+    expect(fold([event('promoted', 'promoted', 6)]).status).toBe('active')
   })
 
   it('lets the latest build ordinal win between conflicting lifecycle events', () => {
@@ -140,6 +140,8 @@ describe('foldBundleTrust lifecycle derivation', () => {
     const superseded = event('superseded', 'superseded', 12, { byRecordId: 'record-next' })
     const promoted = event('promoted', 'promoted', 12)
 
+    expect(fold([event('superseded', 'birth-tie', 5, { byRecordId: 'record-next' })]).status)
+      .toBe('candidate')
     expect(fold([deprecated, superseded]).status).toBe('superseded')
     expect(fold([promoted, deprecated, superseded]).status).toBe('active')
   })

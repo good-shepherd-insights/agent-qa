@@ -257,6 +257,13 @@ export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './re
 // 374 D-03/BNDL-03: pure event vocabulary and derivations stay storage-neutral.
 export { BundleOutcomeEventSchema, dedupeEvents, eventDedupKey } from './knowledge/index'
 export type { BundleOutcomeEvent, OriginClass } from './knowledge/index'
+export {
+  EVIDENCE_INCOMPLETE_ALPHA_DISCOUNT,
+  ORIGIN_PRIORS,
+  SERVING_ATTRIBUTION_WEIGHT,
+  foldBundleTrust,
+} from './knowledge/index'
+export type { BundleStatus, DerivedTrustState } from './knowledge/index'
 
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
