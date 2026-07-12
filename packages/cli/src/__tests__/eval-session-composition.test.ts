@@ -218,6 +218,51 @@ describe('resolveEvalJudge — named-LLM chain + family preflight (D-03/D-10)', 
   })
 })
 
+describe('resolveEvalJudge — judgeAllowSameFamily opt-in (owner override of D-10, 2026-07-12)', () => {
+  it('carries allowSameFamily on the judge bundle and yields the override advisory for known-same families', async () => {
+    const { configPath } = await writeFixture({
+      evalBlock: 'eval:\n  judge: same-family\n  judgeAllowSameFamily: true',
+    })
+    const session = await resolveEvalSession({ configPath })
+    expect(session.evalConfig.judgeAllowSameFamily).toBe(true)
+
+    const resolved = await resolveEvalJudge(session)
+    expect(resolved.judge?.allowSameFamily).toBe(true)
+    expect(resolved.notice).toContain('D-10 override')
+    expect(resolved.notice).toContain('same-family')
+    expect(resolved.notice).not.toContain('will refuse')
+  })
+
+  it('keeps the refusal-style notice for unknown families even when the opt-in is true', async () => {
+    const { configPath } = await writeFixture({
+      evalBlock: 'eval:\n  judge: unknown-family\n  judgeAllowSameFamily: true',
+    })
+    const session = await resolveEvalSession({ configPath })
+
+    const resolved = await resolveEvalJudge(session)
+    expect(resolved.judge).toBeDefined()
+    expect(resolved.notice).toContain('will refuse')
+    expect(resolved.notice).not.toContain('D-10 override')
+  })
+
+  it('leaves current behavior identical when the flag is absent or false', async () => {
+    const { configPath } = await writeFixture({ evalBlock: 'eval:\n  judge: same-family' })
+    const session = await resolveEvalSession({ configPath })
+    const resolved = await resolveEvalJudge(session)
+    expect(resolved.judge?.allowSameFamily).toBeUndefined()
+    expect(resolved.notice).toContain('resolve to the same or unknown family')
+    expect(resolved.notice).not.toContain('D-10 override')
+
+    const { configPath: falsePath } = await writeFixture({
+      evalBlock: 'eval:\n  judge: same-family\n  judgeAllowSameFamily: false',
+    })
+    const falseSession = await resolveEvalSession({ configPath: falsePath })
+    const falseResolved = await resolveEvalJudge(falseSession)
+    expect(falseResolved.judge?.allowSameFamily).toBeUndefined()
+    expect(falseResolved.notice).toContain('resolve to the same or unknown family')
+  })
+})
+
 describe('resolveReplayPlanner — use.llm named entry', () => {
   it('resolves the use.llm planner entry through the same chain', async () => {
     const { configPath } = await writeFixture()

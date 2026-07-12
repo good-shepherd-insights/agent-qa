@@ -109,3 +109,25 @@ describe('renderEvalReportMarkdown — deterministic projection (D-13/Open Q3)',
     expect(markdown).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)
   })
 })
+
+describe('renderEvalReportMarkdown — judge family override honesty line (owner override of D-10, 2026-07-12)', () => {
+  it('renders exactly ONE honesty line when the judge block carries familyOverride, byte-identical on re-render', () => {
+    const report = buildEvalReport([], { ...JUDGE, familyOverride: 'same-family-allowed' })
+    const markdown = renderEvalReportMarkdown(report)
+
+    const occurrences = markdown.split('judge family override: same-family-allowed').length - 1
+    expect(occurrences).toBe(1)
+    // The disclosure is derived ONLY from the DTO — double-render stays byte-identical.
+    expect(renderEvalReportMarkdown(report)).toBe(markdown)
+  })
+
+  it('renders NO override line when the judge block carries no marker', () => {
+    const markdown = renderEvalReportMarkdown(fixtureReport())
+    expect(markdown).not.toContain('judge family override')
+  })
+
+  it('renders NO override line when the report has no judge block at all', () => {
+    const markdown = renderEvalReportMarkdown(buildEvalReport([]))
+    expect(markdown).not.toContain('judge family override')
+  })
+})

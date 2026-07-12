@@ -1185,4 +1185,22 @@ describe('AgentQaConfigSchema — eval block (D-03)', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
     expect(result.success).toBe(true)
   })
+
+  // Owner override of D-10 (2026-07-12): the explicit same-family judging opt-in.
+  it('accepts eval.judgeAllowSameFamily as a boolean (D-10 owner override)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { judge: 'judge', judgeAllowSameFamily: true },
+    }))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.eval?.judgeAllowSameFamily).toBe(true)
+    }
+  })
+
+  it('rejects a non-boolean eval.judgeAllowSameFamily (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { judge: 'judge', judgeAllowSameFamily: 'yes' },
+    }))
+    expect(result.success).toBe(false)
+  })
 })
