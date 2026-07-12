@@ -86,7 +86,7 @@ describe('handoff assembly instrumentation parity', () => {
     expect(evidence.toolSchemaDigest).toBe('digest-1')
   })
 
-  it('stamps assembled handoffs with schemaVersion 2', () => {
+  it('stamps assembled handoffs with schemaVersion 3 (373-01 rootCause bump)', () => {
     const config = {
       runId: 'run-1' as RunId,
       scope,
@@ -99,6 +99,6 @@ describe('handoff assembly instrumentation parity', () => {
 
     const handoff = assembleHandoff(config, [], 'passed', { startedAt: 1, endedAt: 2 })
 
-    expect(handoff.schemaVersion).toBe(2)
+    expect(handoff.schemaVersion).toBe(3)
   })
 })
