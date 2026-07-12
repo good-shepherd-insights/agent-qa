@@ -20,6 +20,12 @@ export type {
   RenderBundlePartsInput,
   RenderedBundlePart,
 } from './bundle-parts.js'
+export { publishBundle } from './bundle-publish.js'
+export type {
+  BundleStoreConfig,
+  PublishBundleInput,
+  PublishBundleOutcome,
+} from './bundle-publish.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader

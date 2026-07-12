@@ -132,8 +132,8 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
     if (outcome.kind !== 'published') throw new Error('expected published outcome')
     expect(outcome.evidenceIncomplete).toBe(false)
     expect(walkFiles(outcome.dir)).toEqual([
-      `artifacts/${makeArtifactFixture().sha}`,
       'artifacts.index.json',
+      `artifacts/${makeArtifactFixture().sha}`,
       'evidence/evidence.md',
       'evidence/outcomes.jsonl',
       'evidence/screenstates/step-0.json',

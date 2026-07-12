@@ -97,7 +97,7 @@ export function makeScreenStateFixture(
       },
     } as ScreenState['refMap'],
     url: 'https://example.test/login',
-    timestamp: 1_725_000_000_100 + stepIndex,
+    timestamp: 1_725_000_000_101 + stepIndex,
     metadata: {
       captureMode: 'full',
       coordSpace: 'viewport',
