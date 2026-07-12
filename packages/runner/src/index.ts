@@ -173,6 +173,7 @@ export type {
 export { createRunEventBus, ReplayIncompleteError } from './run/bus.js'
 export type { RunEventBus, CreateRunEventBusOptions } from './run/bus.js'
 export type {
+  BaselineProbeResult,
   ConfigDigests,
   EventLogPort,
   HandoffStorePort,

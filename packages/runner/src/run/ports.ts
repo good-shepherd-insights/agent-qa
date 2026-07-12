@@ -37,6 +37,19 @@ export interface ConfigDigests {
 }
 
 /**
+ * The run-start baseline health-probe outcome (D-04, RCC-02): ONE GET against the web
+ * target's base URL, executed at the CLI composition root (the runner bans node:* — only
+ * the RESULT crosses this seam). ALL probe failures arrive as values on `error`; a probe
+ * never aborts the run. Consumed by the deterministic root-cause classifier's environment
+ * branch (run/root-cause.ts).
+ */
+export interface BaselineProbeResult {
+  status?: number
+  elapsedMs: number
+  error?: string
+}
+
+/**
  * The JSONL event-log seam (D-05/D-06). BOTH legs are SYNC and fire-and-forget — the bus
  * NEVER awaits telemetry (the JsonlAuditSink discipline; D-06/D-07). `append` persists one
  * envelope per emitted event; a throw degrades the bus to memory-only with a single
@@ -261,6 +274,13 @@ export interface RunConfig {
   masking?: MaskingContext
   runBudgetMs?: number
   ports?: RunPorts
+  /**
+   * Run-start health baseline for the deterministic root-cause classifier (D-04); recorded
+   * in-memory only — persistence is the environment verdict's rationale template (never a
+   * handoff field, Pitfall 8). Web targets only; absent on mobile targets, where the
+   * device-session-create failure is the existing equivalent environment signal.
+   */
+  baselineProbe?: BaselineProbeResult
   /**
    * The D-08 config + source artifact snapshot the CLI composition root assembles (the
    * `buildRunArtifactContext` document). Staged verbatim into `artifact.json` after `runStarted`

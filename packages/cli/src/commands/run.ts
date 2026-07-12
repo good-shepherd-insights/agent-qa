@@ -17,7 +17,8 @@ import type { SecretStore, SecretRedactor, HookDefinition, SandboxRunnerOptions 
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
-import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor } from '@vostride/agent-qa-runner'
+import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, BaselineProbeResult } from '@vostride/agent-qa-runner'
+import { runBaselineProbe } from './baseline-probe.js'
 import {
   computeRunConfigDigests,
   resolveRunExecutionContext,
@@ -2054,6 +2055,23 @@ async function executeSuites(
   const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct })
   const runPorts = buildRunPorts({ configDir, runId })
 
+  // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
+  // RunConfig into the deterministic root-cause classifier. A probe failure is a value (its own
+  // environment signal), never a run abort. Mobile targets skip the probe entirely — the
+  // device-session-create failure is the existing equivalent signal.
+  let baselineProbe: BaselineProbeResult | undefined
+  for (const prepared of preparedSuites) {
+    const probeTargetName = prepared.suite.target ?? prepared.testEntries[0]?.[0].target
+    if (!probeTargetName) continue
+    try {
+      const probeTarget = resolveTarget(config, probeTargetName)
+      if (probeTarget.platform === 'web' && probeTarget.url) {
+        baselineProbe = await runBaselineProbe(probeTarget.url)
+        break
+      }
+    } catch { /* pre-run target-resolution errors surface on the member path, not here */ }
+  }
+
   // SEAM-01/03/04 (362-06): construct the run's real seeded MaskingContext (D-05/06/07), the per-run
   // stamped audit sink (D-12/13), and the per-run SafetyHookRunner (D-01/15/10) — then run the whole
   // run body inside runSafetyScope so every createModel egress masks and every tool call is gated +
@@ -2120,6 +2138,7 @@ async function executeSuites(
         executor,
         masking: maskingContext,
         ports: { ...runPorts, confirmPausedMs },
+        ...(baselineProbe !== undefined ? { baselineProbe } : {}),
       })
       activeRunSession = session
 
@@ -3304,8 +3323,15 @@ export function createRunCommand(): Command {
 
         const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
         let singleRunProduct = 'unknown'
+        let singleBaselineProbe: BaselineProbeResult | undefined
         try {
-          singleRunProduct = resolveTarget(config, filtered[0].target!).product ?? 'unknown'
+          const singleResolvedTarget = resolveTarget(config, filtered[0].target!)
+          singleRunProduct = singleResolvedTarget.product ?? 'unknown'
+          // D-04: run-start baseline probe — web targets only; result threads in-memory via
+          // RunConfig (mobile: device-session-create failure is the equivalent signal, no probe).
+          if (singleResolvedTarget.platform === 'web' && singleResolvedTarget.url) {
+            singleBaselineProbe = await runBaselineProbe(singleResolvedTarget.url)
+          }
         } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
         const singleExecutionContext = resolveRunExecutionContext()
         const singleBuildOrdinal = await resolveRunBuildOrdinal({ configDir, product: singleRunProduct })
@@ -3387,6 +3413,7 @@ export function createRunCommand(): Command {
               executor,
               masking: maskingContext,
               ports: { ...singleRunPorts, confirmPausedMs },
+              ...(singleBaselineProbe !== undefined ? { baselineProbe: singleBaselineProbe } : {}),
             })
             activeRunSession = session
 
