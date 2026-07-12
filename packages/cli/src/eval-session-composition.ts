@@ -87,6 +87,8 @@ export type { ReplayRecordLoad } from '@vostride/agent-qa-eval-local'
 /** The user-facing eval params (config `eval:` block merged with per-invocation flags, D-03). */
 export interface EvalCliConfig {
   judge?: string
+  /** Owner override of D-10 (2026-07-12): explicit default-off same-family judging opt-in. */
+  judgeAllowSameFamily?: boolean
   k?: number
   seed?: number
   seeding?: { silverPerTestCap?: number }
@@ -565,9 +567,14 @@ function foldJudgeDispositions(score: CassetteScore, judge: ReplayJudgeCounters)
  * a judge whose model family equals the planner's family — or resolves to no family at all —
  * carries a stderr-destined warning notice. The preflight is SOFT: assessJudgeEligibility inside
  * runCassetteReplay stays the per-cassette authority (D-10).
+ *
+ * eval.judgeAllowSameFamily (owner override of D-10, 2026-07-12): when true, the flag is
+ * threaded verbatim onto the judge bundle's allowSameFamily; a KNOWN-same-family pair then
+ * yields an override-active ADVISORY instead of the refusal warning. Unknown families keep
+ * the refusal-style notice regardless — the opt-in never relaxes unknown ⇒ forbidden.
  */
 export async function resolveEvalJudge(session: EvalSession): Promise<{
-  judge?: { profile: ModelProfile; auth: ResolvedModelAuth }
+  judge?: { profile: ModelProfile; auth: ResolvedModelAuth; allowSameFamily?: boolean }
   notice?: string
 }> {
   if (!session.evalConfig.judge) {
@@ -576,16 +583,30 @@ export async function resolveEvalJudge(session: EvalSession): Promise<{
     }
   }
 
-  const judge = await resolveNamedProfile(session.evalConfig.judge, session.configPath)
+  const resolved = await resolveNamedProfile(session.evalConfig.judge, session.configPath)
   const planner = await resolveReplayPlanner(session)
-  const judgeFamily = resolveJudgeFamily(judge.profile.model)
+  const judgeFamily = resolveJudgeFamily(resolved.profile.model)
   const plannerFamily = resolveJudgeFamily(planner.profile.model)
+  const overrideActive = session.evalConfig.judgeAllowSameFamily === true
+  const judge = overrideActive ? { ...resolved, allowSameFamily: true } : resolved
+
+  if (judgeFamily !== undefined && plannerFamily !== undefined && judgeFamily === plannerFamily
+    && overrideActive) {
+    return {
+      judge,
+      notice:
+        `D-10 override active (eval.judgeAllowSameFamily, owner decision 2026-07-12): judge model ` +
+        `"${resolved.profile.model}" and planner model "${planner.profile.model}" share the ` +
+        `judge family '${judgeFamily}' — same-family judging runs and every scored entry ` +
+        'discloses familyOverride: same-family-allowed',
+    }
+  }
 
   if (judgeFamily === undefined || plannerFamily === undefined || judgeFamily === plannerFamily) {
     return {
       judge,
       notice:
-        `judge model "${judge.profile.model}" and planner model "${planner.profile.model}" ` +
+        `judge model "${resolved.profile.model}" and planner model "${planner.profile.model}" ` +
         'resolve to the same or unknown family — per-cassette judge eligibility will refuse ' +
         'self-judging and ties may record not-invoked',
     }
@@ -1011,12 +1032,14 @@ function mergeEvalConfig(
   flags?: { judge?: string; k?: number; seed?: number; silverCap?: number },
 ): EvalCliConfig {
   const judge = flags?.judge ?? fromConfig?.judge
+  const judgeAllowSameFamily = fromConfig?.judgeAllowSameFamily
   const k = flags?.k ?? fromConfig?.k
   const seed = flags?.seed ?? fromConfig?.seed
   const silverPerTestCap = flags?.silverCap ?? fromConfig?.seeding?.silverPerTestCap
 
   return {
     ...(judge !== undefined ? { judge } : {}),
+    ...(judgeAllowSameFamily !== undefined ? { judgeAllowSameFamily } : {}),
     ...(k !== undefined ? { k } : {}),
     ...(seed !== undefined ? { seed } : {}),
     ...(silverPerTestCap !== undefined ? { seeding: { silverPerTestCap } } : {}),

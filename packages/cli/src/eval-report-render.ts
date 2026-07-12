@@ -51,6 +51,15 @@ export function renderEvalReportMarkdown(report: EvalBatchReport): string {
         + `judgeVersion=${report.judge.judgeVersion} `
         + `confidenceThreshold=${report.judge.confidenceThreshold}`,
     )
+    // Owner override of D-10 (2026-07-12): when the identity block carries the marker, the
+    // committed projection discloses the same-family judging condition — derived verbatim
+    // from the DTO, exactly one line, never from a clock or locale.
+    if (report.judge.familyOverride !== undefined) {
+      lines.push(
+        `- judge family override: ${report.judge.familyOverride} `
+          + '(self-preference bias condition disclosed; owner override of D-10, 2026-07-12)',
+      )
+    }
   }
   lines.push('')
 

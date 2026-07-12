@@ -44,6 +44,11 @@ export const AgentQaConfigSchema = z.object({
   // strict so unknown eval subkeys are rejected.
   eval: z.object({
     judge: z.string().optional(),
+    // Owner override of D-10 (2026-07-12): explicit default-off opt-in that lets a
+    // KNOWN-same-family judge run; the eligibility law discloses the override on every
+    // scored entry (familyOverride) and the report projection renders one honesty line.
+    // Unknown families stay forbidden regardless.
+    judgeAllowSameFamily: z.boolean().optional(),
     k: z.number().int().positive().optional(),
     seed: z.number().int().optional(),
     seeding: z.object({
