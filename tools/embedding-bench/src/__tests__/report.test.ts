@@ -199,7 +199,7 @@ describe('embedding bench report', () => {
       for (const rule of DECISION_RULE) expect(markdown).toContain(rule)
       expect(raw.decisionRule).toEqual(DECISION_RULE)
       expect(raw.calibration.proposals[0]?.tauDense).toBe(0.6)
-      expect(markdown).toMatch(/## Ratification\n\s*$/u)
+      expect(markdown).toMatch(/## Ratification\n$/u)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -243,6 +243,7 @@ describe('embedding bench report', () => {
       expect(merged.markdown).toContain('## Authored Slice hit@k')
       expect(merged.markdown).toContain('## Cosine Distributions and τ_dense Proposals')
       expect(merged.markdown).toContain('Pending human review in Plan 376-11.')
+      expect(merged.markdown).toMatch(/Pending human review in Plan 376-11\.\n$/u)
       for (const rule of DECISION_RULE) expect(merged.markdown).toContain(rule)
     } finally {
       await rm(directory, { recursive: true, force: true })

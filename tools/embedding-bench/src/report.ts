@@ -583,7 +583,7 @@ function renderMarkdown(
     '',
     ...(options.ratification === undefined ? [] : [options.ratification, '']),
   )
-  return `${lines.join('\n')}\n`
+  return `${lines.join('\n').trimEnd()}\n`
 }
 
 export async function emitReport(options: EmitReportOptions): Promise<{
