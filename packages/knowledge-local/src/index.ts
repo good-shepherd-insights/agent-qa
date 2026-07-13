@@ -53,6 +53,7 @@ export {
   openIndexWriter,
   probeIndexHealth,
   READER_BUSY_TIMEOUT_MS,
+  REQUIRED_INDEX_TABLES,
   resolveVecCapability,
   vecTableName,
   WRITER_BUSY_TIMEOUT_MS,

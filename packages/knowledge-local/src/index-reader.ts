@@ -1,9 +1,10 @@
 /**
  * D-06/D-07/D-08 degrading reader facade for IDX-02 and memory.md §8.2.
  *
- * Index health is resolved once at open. Every unhealthy state becomes an authoritative bundle
- * scan plus a durable rebuild request, while healthy readers stay read-only and query-only through
- * openIndexReaderConnection. This module never acquires the writer role or rebuilds inline.
+ * Index health is resolved at open and every later index operation is guarded. Any unhealthy state
+ * permanently swaps the facade to an authoritative bundle scan plus a durable rebuild request,
+ * while healthy readers stay read-only and query-only through openIndexReaderConnection. This
+ * module never acquires the writer role or rebuilds inline.
  */
 import { existsSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -45,7 +46,9 @@ export interface DenseSearchOptions extends KnowledgeSearchOptions {
 export type DenseHit = KnowledgeHit & { distance: number }
 
 export interface KnowledgeReader {
+  /** Current serving face; permanently changes to scan after an index operation failure. */
   readonly source: 'index' | 'scan'
+  /** Current vector capability; changes to none when the serving face degrades to scan. */
   readonly vec: VecCapability | 'none'
   getById(bundleId: string): KnowledgeHit | undefined
   searchLexical(text: string, opts?: KnowledgeSearchOptions): KnowledgeHit[]
@@ -440,6 +443,68 @@ function indexReader(
   }
 }
 
+/**
+ * Keep index failures behind a live facade so callers retain one reader while
+ * its source and vector capability permanently degrade to authoritative scans.
+ */
+function operationDegradingReader(
+  knowledgeRoot: string,
+  connection: IndexReaderConnection,
+): KnowledgeReader {
+  let delegate = indexReader(knowledgeRoot, connection)
+  let closed = false
+
+  function invoke<TResult>(operation: (reader: KnowledgeReader) => TResult): TResult {
+    if (delegate.source === 'scan') return operation(delegate)
+
+    try {
+      return operation(delegate)
+    } catch (error) {
+      closeBestEffort(connection)
+      requestRebuildBestEffort(
+        knowledgeRoot,
+        'corrupt',
+        `derived index operation failed: ${errorMessage(error)}`,
+      )
+      delegate = scanReader(knowledgeRoot)
+      return operation(delegate)
+    }
+  }
+
+  return {
+    get source(): 'index' | 'scan' {
+      return delegate.source
+    },
+    get vec(): VecCapability | 'none' {
+      return delegate.vec
+    },
+    getById(bundleId): KnowledgeHit | undefined {
+      return invoke((reader) => reader.getById(bundleId))
+    },
+    searchLexical(text, opts = {}): KnowledgeHit[] {
+      return invoke((reader) => reader.searchLexical(text, opts))
+    },
+    lookupAnchor(anchor, opts = {}): KnowledgeHit[] {
+      return invoke((reader) => reader.lookupAnchor(anchor, opts))
+    },
+    searchDense(embedding, opts): DenseHit[] {
+      return invoke((reader) => reader.searchDense(embedding, opts))
+    },
+    recheck(hits): KnowledgeHit[] {
+      return invoke((reader) => reader.recheck(hits))
+    },
+    close(): void {
+      if (closed) return
+      closed = true
+      try {
+        delegate.close()
+      } catch {
+        closeBestEffort(connection)
+      }
+    },
+  }
+}
+
 function degrade(
   knowledgeRoot: string,
   reason: RebuildReason,
@@ -468,13 +533,16 @@ export function openKnowledgeReader(
   const health = probeIndexHealth(connection.db)
   if (!health.ok) {
     closeBestEffort(connection)
-    const reason: RebuildReason = health.probe === 'schema-version'
-      ? 'schema-version'
-      : lockedReason(health.reason)
-        ? 'locked'
-        : 'corrupt'
+    let reason: RebuildReason
+    if (health.probe === 'schema-version') {
+      reason = 'schema-version'
+    } else if (health.probe === 'projection-schema') {
+      reason = 'corrupt'
+    } else {
+      reason = lockedReason(health.reason) ? 'locked' : 'corrupt'
+    }
     return degrade(knowledgeRoot, reason, health.reason)
   }
 
-  return indexReader(knowledgeRoot, connection)
+  return operationDegradingReader(knowledgeRoot, connection)
 }

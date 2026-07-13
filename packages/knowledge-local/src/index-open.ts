@@ -26,6 +26,22 @@ export const MIN_READABLE_INDEX_SCHEMA_VERSION = 1
 export const INDEX_RENDERING_SCHEMA_VERSION = 1
 
 /**
+ * Projection tables every readable index must expose.
+ *
+ * Per-profile vec tables are deliberately excluded: vec0 is a conditional
+ * capability, while operation-time failover and the next rebuild heal a lost
+ * capability-specific table.
+ */
+export const REQUIRED_INDEX_TABLES = [
+  'records',
+  'fts_records',
+  'anchors',
+  'graph_nodes',
+  'graph_edges',
+  'meta',
+] as const
+
+/**
  * Writer busy timeout in milliseconds.
  *
  * PROVISIONAL 2000 pending Phase 375 contention measurements. The value may be
@@ -67,7 +83,7 @@ export type IndexHealth =
   | { ok: true }
   | {
       ok: false
-      probe: 'quick-check' | 'schema-version'
+      probe: 'quick-check' | 'projection-schema' | 'schema-version'
       reason: string
     }
 
@@ -278,6 +294,27 @@ export function probeIndexHealth(db: DatabaseSync): IndexHealth {
     return {
       ok: false,
       probe: 'quick-check',
+      reason: error instanceof Error ? error.message : String(error),
+    }
+  }
+
+  try {
+    const rows = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+    const present = new Set(rows.map((row) => String(row.name)))
+    const missing = REQUIRED_INDEX_TABLES.filter((table) => !present.has(table))
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        probe: 'projection-schema',
+        reason: `required projection tables missing: ${missing.join(', ')}`,
+      }
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      probe: 'projection-schema',
       reason: error instanceof Error ? error.message : String(error),
     }
   }
