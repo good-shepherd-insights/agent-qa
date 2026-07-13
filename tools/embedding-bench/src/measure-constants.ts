@@ -175,7 +175,7 @@ async function measureChild(candidate: BenchCandidate): Promise<CandidateConstan
         SELECT record_rowid, distance
         FROM ${tableName}
         WHERE embedding MATCH ? AND product = ? AND k = ?
-        ORDER BY distance, record_rowid
+        ORDER BY distance
       `)
       const queryBlob = vectorBlob(query)
       vec0TopKMs = averageDurationMs(() => {
