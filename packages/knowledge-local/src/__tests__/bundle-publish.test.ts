@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -12,6 +13,7 @@ import { join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
+  committedFileText,
   guardArtifactsIndex,
   guardBundleManifest,
   parseRecordMarkdown,
@@ -25,6 +27,7 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../bundle-publish.js'
+import { renderBundleParts } from '../bundle-parts.js'
 import {
   makeArtifactFixture,
   makeBundleDraftFixture,
@@ -187,6 +190,78 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
 
     expect(publishBundle(config(), input())).toEqual({ kind: 'already-exists', id: first.id })
     expect(readdirSync(bundlesDir())).toEqual([first.id])
+  })
+
+  it('refuses a schema-valid but self-inconsistent existing identity hash', () => {
+    const first = publishBundle(config(), input())
+    expect(first.kind).toBe('published')
+    if (first.kind !== 'published') throw new Error('expected first publish')
+    const manifestPath = join(first.dir, 'manifest.json')
+    const manifest = guardBundleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')))
+    const replacementFirstHex = manifest.identityHash.startsWith('0') ? '1' : '0'
+    const tamperedText = committedFileText({
+      ...manifest,
+      identityHash: `${replacementFirstHex}${manifest.identityHash.slice(1)}`,
+    })
+    writeFileSync(manifestPath, tamperedText, 'utf8')
+
+    const outcome = publishBundle(config(), input())
+
+    expect(outcome.kind).toBe('identity-collision')
+    if (outcome.kind !== 'identity-collision') throw new Error('expected identity collision')
+    expect(outcome.reason).toBe('existing-manifest-corrupt')
+    expect(readFileSync(manifestPath, 'utf8')).toBe(tamperedText)
+    expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
+  it('refuses a self-consistent foreign bundle at the truncated target id', () => {
+    const first = publishBundle(config(), input())
+    expect(first.kind).toBe('published')
+    if (first.kind !== 'published') throw new Error('expected first publish')
+    const foreignInput = input({
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Check out' },
+          { t: 'page', route: '/checkout' },
+        ],
+      }),
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: 'Button', name: 'Check out' },
+      },
+    })
+    const foreign = publishBundle(config(), foreignInput)
+    expect(foreign.kind).toBe('published')
+    if (foreign.kind !== 'published') throw new Error('expected foreign publish')
+    const foreignManifest = guardBundleManifest(
+      JSON.parse(readFileSync(join(foreign.dir, 'manifest.json'), 'utf8')),
+    )
+    rmSync(first.dir, { recursive: true, force: true })
+    cpSync(foreign.dir, first.dir, { recursive: true })
+    const occupiedManifestPath = join(first.dir, 'manifest.json')
+    const occupiedManifestText = readFileSync(occupiedManifestPath, 'utf8')
+
+    const outcome = publishBundle(config(), input())
+
+    expect(outcome.kind).toBe('identity-collision')
+    if (outcome.kind !== 'identity-collision') throw new Error('expected identity collision')
+    expect(outcome.reason).toBe('identity-hash-mismatch')
+    expect(outcome.existingIdentityHash).toBe(foreignManifest.identityHash)
+    expect(readFileSync(occupiedManifestPath, 'utf8')).toBe(occupiedManifestText)
+    expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
+  it('returns the canonical identityCore rendered into the manifest', () => {
+    const { artifacts: _artifacts, ...renderInput } = input()
+    const rendered = renderBundleParts({
+      ...renderInput,
+      copiedArtifacts: { copied: [], skipped: [], evidenceIncomplete: false },
+      evidenceIncomplete: false,
+    })
+    const manifest = guardBundleManifest(JSON.parse(rendered.parts.at(-1)!.text))
+
+    expect(rendered.identityCore).toEqual(manifest.identityCore)
   })
 
   it('mints artifact overflow into both immutable markers with no dangling row', () => {
