@@ -4,8 +4,9 @@
  * D-02 keeps an absent embedder as a successful all-pending posture; D-05 indexes the bundle's
  * committed embeddingInput; D-10 stores every vector canonically in records before optionally
  * accelerating it through vec0. Per 374 D-03, loadBundle + deriveBundleTrust are the only bundle
- * projection faces. Relation edges are emitted in a second pass so bundle ordering cannot change
- * dangling-target behavior.
+ * projection faces. Relation edges are emitted from the complete integrity-valid walk in a second
+ * pass so bundle ordering cannot change dangling-target behavior and late targets heal without
+ * re-projecting an unchanged source.
  */
 import { basename } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -313,9 +314,15 @@ function projectBundle(
   })
 }
 
-function emitRelationEdges(db: DatabaseSync, projected: readonly ProjectedBundle[]): void {
+/**
+ * Reconcile relations from every integrity-valid bundle in the current walk, including sources
+ * skipped by mutable-state hashing. INSERT OR IGNORE keeps unchanged re-emission idempotent, while
+ * relations already participate in mutableStateHash, so only target membership can require healing
+ * without a source re-projection.
+ */
+function emitRelationEdges(db: DatabaseSync, relationSources: readonly ProjectedBundle[]): void {
   transaction(db, () => {
-    for (const { bundle, product } of projected) {
+    for (const { bundle, product } of relationSources) {
       const sourceRow = db
         .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
         .get(bundle.manifest.id)
@@ -488,6 +495,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     vec: writer.vec,
   }
   const projected: ProjectedBundle[] = []
+  const relationSources: ProjectedBundle[] = []
   const seenBundleIds = new Set<string>()
   let processedBundles = 0
 
@@ -512,6 +520,8 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         report.scanIssues.push(`${entry.dir}: integrity: ${integrity.violations.join('; ')}`)
         continue
       }
+      const item = { bundle: outcome.bundle, product: entry.product }
+      relationSources.push(item)
       const current = writer.db
         .prepare(`
           SELECT mutable_state_hash, embed_status
@@ -539,7 +549,6 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         }
       }
 
-      const item = { bundle: outcome.bundle, product: entry.product }
       projectBundle(writer.db, writer.vec, item, vector)
       projected.push(item)
       report.projected += 1
@@ -549,7 +558,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     }
 
     report.removed = removeMissingBundles(writer.db, writer.vec, seenBundleIds)
-    emitRelationEdges(writer.db, projected)
+    emitRelationEdges(writer.db, relationSources)
     report.backfilled = await backfillPendingEmbeddings(
       writer.db,
       writer.vec,
