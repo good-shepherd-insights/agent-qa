@@ -57,6 +57,16 @@ export type {
 } from './screenshot-compressor.js'
 export { nextBuildOrdinal, BUILD_ORDINALS_FILE } from './build-ordinal.js'
 export type { NextBuildOrdinalOptions } from './build-ordinal.js'
+// Phase 375 D-14/D-16/D-17 — sibling durable tag truth uses first-seen ordinals; latest ordinal is
+// exposed as a pure read so derived-index consumers never advance the run-start counter.
+export {
+  BUILD_TAGS_FILE,
+  latestBuildOrdinal,
+  readBuildTagMap,
+  recordBuildTag,
+  resolveBuildTag,
+} from './build-tag-map.js'
+export type { BuildTagMap } from './build-tag-map.js'
 
 // Phase 363 D-06 — the Docker hook-execution impl behind the runner HookExecutorPort.
 // The sandbox-runner body (node:child_process + node:fs) lives here; the runner stays

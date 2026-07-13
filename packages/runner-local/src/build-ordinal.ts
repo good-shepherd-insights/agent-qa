@@ -9,10 +9,10 @@
 // incremented at run start. Read → increment the product key → write-temp → atomic same-dir rename.
 // The rename is the ONE deliberate step up from a plain writeFile (a reader never observes a
 // half-written map); there is NO lockfile / flock machinery. Best-effort semantics: a corrupt or
-// missing state file restarts the product at 1 without throwing (D-18). Monotonic under realistic
-// M1 concurrency — two TRULY simultaneous run starts may read the same prior value and share an
-// ordinal, which monotonicity-only M1 consumers tolerate. Documented best-effort, upgraded when
-// M2's stricter consumers arrive.
+// missing state file restarts the product at 1 without throwing (D-18). Concurrent same-product
+// runs may read the same prior value and share an ordinal. D-15 ratifies that as correct semantics:
+// ordinals identify builds, not runs; conflicting observations at one ordinal route to MintUnknown
+// through the strictly-greater supersession rule.
 
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
