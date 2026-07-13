@@ -49,6 +49,7 @@ import {
   FsHandoffStore,
   FsRunArtifactStore,
   nextBuildOrdinal,
+  recordBuildTag,
   RUNS_SUBDIR,
   slugBranch,
   SharpScreenshotCompressor,
@@ -226,13 +227,40 @@ export function buildScreenshotCompressor(logger?: ScreenshotCompressorLogger): 
   return new SharpScreenshotCompressor(logger)
 }
 
+/** Resolve D-16 build-tag precedence without reading ambient process state. */
+export function resolveBuildTagSetting(input: {
+  flag?: string
+  env?: string
+  use?: { buildTag?: string }
+}): string | undefined {
+  for (const value of [input.flag, input.env, input.use?.buildTag]) {
+    const trimmed = value?.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
 /**
- * Advance the per-product buildOrdinal counter under the same `.agent-qa` root (D-18). Async
- * (the runner-local counter reads → increments → atomic-renames). The resolved value rides
- * `RunConfig.buildOrdinal` into the handoff header.
+ * Advance the per-product buildOrdinal counter under the same `.agent-qa` root (D-18), then
+ * record D-14/D-16's first-seen tag mapping beside it when supplied. Both files are lock-free,
+ * best-effort runtime truth; the resolved ordinal rides `RunConfig.buildOrdinal` into the handoff.
  */
-export function resolveRunBuildOrdinal(input: { configDir: string; product: string }): Promise<number> {
-  return nextBuildOrdinal({ root: resolve(input.configDir, '.agent-qa'), product: input.product })
+export async function resolveRunBuildOrdinal(input: {
+  configDir: string
+  product: string
+  buildTag?: string
+}): Promise<number> {
+  const root = resolve(input.configDir, '.agent-qa')
+  const ordinal = await nextBuildOrdinal({ root, product: input.product })
+  if (input.buildTag !== undefined) {
+    await recordBuildTag({
+      root,
+      product: input.product,
+      tag: input.buildTag,
+      ordinal,
+    })
+  }
+  return ordinal
 }
 
 // ---- (5) createSuiteLifecycle — lazy per-suite setup/teardown --------------------------------

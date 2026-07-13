@@ -62,6 +62,11 @@ export const UseSchema = z.object({
   logCapture: LogCaptureConfigSchema.optional(),
   cache: z.boolean().optional(),
   llm: z.string().optional(),
+  /**
+   * Names the app-under-test build for the DCAY-01 buildTag-to-ordinal mapping.
+   * Precedence: CLI --build-tag > AGENT_QA_BUILD_TAG > this config key.
+   */
+  buildTag: z.string().trim().min(1).optional(),
   parallel: z.boolean().optional(),
 }).strict()
 
