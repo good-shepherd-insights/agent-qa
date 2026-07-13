@@ -144,6 +144,7 @@ export function renderBundleParts(input: RenderBundlePartsInput): {
   parts: RenderedBundlePart[]
   id: RecordId
   identityHash: string
+  identityCore: BundleIdentityCore
 } {
   const subtype = validateIdentityInputs(input.draft, input.discriminant)
   const primaryAnchor = input.draft.anchors[0]!
@@ -240,5 +241,5 @@ export function renderBundleParts(input: RenderBundlePartsInput): {
   }
 
   parts.push(part('manifest.json', committedFileText(manifest)))
-  return { parts, id, identityHash }
+  return { parts, id, identityHash, identityCore }
 }
