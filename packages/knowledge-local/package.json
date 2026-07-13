@@ -47,6 +47,8 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@huggingface/tokenizers": "0.1.3",
+    "@huggingface/transformers": "4.2.0",
     "@vostride/agent-qa-agent": "workspace:*",
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-safety": "workspace:*",
