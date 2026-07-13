@@ -76,6 +76,11 @@ export type {
 } from './index-reader.js'
 export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
+export { setActiveEmbeddingProfile } from './profile-migration.js'
+export type {
+  MigrationOutcome,
+  SetActiveEmbeddingProfileOptions,
+} from './profile-migration.js'
 export {
   dropEmbedCacheForModel,
   ensureEmbedCacheTable,
