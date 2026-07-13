@@ -83,3 +83,28 @@ export const DEFAULT_EMBEDDING_PROFILE = {
   },
   tau_dense: 0.6,
 } as const satisfies EmbeddingProfile
+
+/**
+ * Bundled pure-TypeScript degradation floor (D-12/D-13).
+ *
+ * A floor that must be fetched isn't a floor — the hosts that need it are
+ * exactly the hosts that can't download it.
+ */
+export const STATIC_FLOOR_EMBEDDING_PROFILE = {
+  model_id: 'minishlab/potion-retrieval-32M',
+  revision: '6fc8051fab2a1e0ee76689cf08c853792ac285e7',
+  dim: 512,
+  dtype: 'q8',
+  pooling: 'mean',
+  normalize: true,
+  query_prefix: '',
+  doc_prefix: '',
+  backend: 'static',
+  /** ORT session options are inert for the static backend. */
+  session_options: {},
+  /**
+   * PROVISIONAL 0.6 pending the Phase 376 bench calibration (D-08).
+   * The bench updates the value, never the shape.
+   */
+  tau_dense: 0.6,
+} as const satisfies EmbeddingProfile

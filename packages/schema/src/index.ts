@@ -35,7 +35,10 @@ export type { TargetDescriptor, GroundingAttempt, GroundingEvidence } from './sc
 export type { ModelCapabilities } from './capability/index'
 export type { ModelProfile, ModelProviderId, ModelAuthDeclaration } from './model-profile/index'
 export type { EmbeddingProfile } from './embedding-profile/index'
-export { DEFAULT_EMBEDDING_PROFILE } from './embedding-profile/index'
+export {
+  DEFAULT_EMBEDDING_PROFILE,
+  STATIC_FLOOR_EMBEDDING_PROFILE,
+} from './embedding-profile/index'
 export type {
   AndroidPlatformConfig,
   BrowserConfig,
