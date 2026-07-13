@@ -7,12 +7,14 @@ import type { Anchor, BundleRelation } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { appendOutcomeEvent, appendRelation } from '../bundle-append.js'
+import { loadBundle, verifyBundleIntegrity } from '../bundle-read.js'
 import {
   publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
 } from '../bundle-publish.js'
+import { openKnowledgeReader } from '../index-reader.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
@@ -206,6 +208,51 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
       { product: 'manifest-source', dir: source.dir },
       { product: 'partial', dir: incompleteDir },
     ])
+  })
+
+  it('refuses a parseable digest tamper across every degraded scan face', async () => {
+    const { scanBundleById, scanBundles } = await scanApi()
+    const tampered = publish('integrity-product', {
+      draft: makeBundleDraftFixture({
+        anchors: [{ t: 'selector', literal: '#integrity-alpha' }],
+        summary: 'Shared integrity alpha control',
+        body: 'Shared integrity alpha remains parseable after mutation.',
+      }),
+    })
+    const healthy = publish('integrity-product', {
+      draft: makeBundleDraftFixture({
+        anchors: [{ t: 'selector', literal: '#integrity-beta' }],
+        summary: 'Shared integrity beta control',
+        body: 'Shared integrity beta remains authoritative.',
+      }),
+    })
+    const recordPath = join(tampered.dir, 'record.md')
+    writeFileSync(
+      recordPath,
+      readFileSync(recordPath, 'utf8').replace(
+        'Shared integrity alpha control',
+        'Shared integrity altered control',
+      ),
+      'utf8',
+    )
+
+    expect(loadBundle(tampered.dir).kind).toBe('loaded')
+    expect(verifyBundleIntegrity(tampered.dir).ok).toBe(false)
+    expect(scanBundles({ knowledgeRoot, text: 'shared integrity' }).map((hit) => hit.bundleId))
+      .toEqual([healthy.id])
+    expect(scanBundleById({ knowledgeRoot, bundleId: tampered.id })).toBeUndefined()
+    expect(scanBundleById({ knowledgeRoot, bundleId: healthy.id })).toMatchObject({
+      bundleId: healthy.id,
+    })
+
+    const reader = openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(reader.source).toBe('scan')
+      expect(reader.getById(tampered.id)).toBeUndefined()
+      expect(reader.getById(healthy.id)).toMatchObject({ bundleId: healthy.id })
+    } finally {
+      reader.close()
+    }
   })
 
   it('sorts bundle directories and resolves ids across products', async () => {
