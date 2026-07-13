@@ -51,7 +51,8 @@
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-safety": "workspace:*",
     "@vostride/agent-qa-safety-local": "workspace:*",
-    "@vostride/agent-qa-schema": "workspace:*"
+    "@vostride/agent-qa-schema": "workspace:*",
+    "sqlite-vec": "0.1.9"
   },
   "devDependencies": {
     "@types/node": "~24.12.2",
