@@ -63,6 +63,14 @@ export type {
   IndexWriterHandle,
   VecCapability,
 } from './index-open.js'
+export { openKnowledgeReader } from './index-reader.js'
+export type {
+  DenseHit,
+  DenseSearchOptions,
+  KnowledgeReader,
+  KnowledgeSearchOptions,
+  OpenKnowledgeReaderOptions,
+} from './index-reader.js'
 export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
 export type { EmbedderPort } from './embedder-port.js'
