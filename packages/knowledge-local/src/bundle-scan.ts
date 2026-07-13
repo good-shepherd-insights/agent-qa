@@ -1,9 +1,12 @@
 /**
  * IDX-02's authoritative degraded read leg over committed bundles.
  *
- * The scan is lexical + anchor only. Status and ordinal validity come exclusively from the
- * bundle's own event stream through loadBundle + deriveBundleTrust (memory.md §8.2). Per 374
- * D-03, this module consumes those read faces and never re-parses committed bundle files.
+ * The scan is lexical + anchor only. Authority requires loadBundle's strict parse,
+ * verifyBundleIntegrity's committed-byte digest and identity checks, and deriveBundleTrust's
+ * status and ordinal validity (memory.md §8.2). A parseable payload whose manifest digest no
+ * longer matches is not authoritative. Per-bundle digest work is deliberate on this degraded
+ * face: correctness outranks scan cost at QA scale. Per 374 D-03, this module consumes those
+ * read faces and never re-parses committed bundle files.
  */
 import { readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -15,7 +18,7 @@ import type {
   DerivedTrustState,
 } from '@vostride/agent-qa-schema'
 
-import { deriveBundleTrust, loadBundle } from './bundle-read.js'
+import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 
 export interface KnowledgeHit {
@@ -126,6 +129,7 @@ function anchorMatches(bundle: LoadedBundle, queryAnchor: string | undefined): b
 function servableHit(dir: EnumeratedBundleDir): KnowledgeHit | undefined {
   const outcome = loadBundle(dir.dir)
   if (outcome.kind !== 'loaded') return undefined
+  if (!verifyBundleIntegrity(dir.dir).ok) return undefined
   const trustState = deriveBundleTrust(outcome.bundle)
   return isServable(trustState)
     ? toHit(outcome.bundle, trustState, dir.product)
@@ -146,6 +150,7 @@ export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
     if (opts.product !== undefined && entry.product !== opts.product) continue
     const outcome = loadBundle(entry.dir)
     if (outcome.kind !== 'loaded') continue
+    if (!verifyBundleIntegrity(entry.dir).ok) continue
 
     const trustState = deriveBundleTrust(outcome.bundle)
     if (!isServable(trustState)) continue
