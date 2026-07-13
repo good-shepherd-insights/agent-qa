@@ -43,6 +43,16 @@ function flipFirstByte(file: string): void {
   writeFileSync(file, bytes)
 }
 
+function differentHexDigest(digest: string): string {
+  return `${digest[0] === '0' ? '1' : '0'}${digest.slice(1)}`
+}
+
+function differentIdentitySuffix(id: string): string {
+  return id.replace(/[0-9a-f]{16}$/, (suffix) =>
+    [...suffix].map((character) => (character === 'f' ? '0' : 'f')).join(''),
+  )
+}
+
 function expectLoaded(outcome: LoadBundleOutcome): LoadedBundle {
   expect(outcome.kind).toBe('loaded')
   if (outcome.kind !== 'loaded') throw new Error(`expected loaded bundle, got ${outcome.kind}`)
@@ -160,6 +170,117 @@ describe('bundle read, integrity, and disk-driven trust (D-03/D-08)', () => {
       ok: false,
       violations: expect.arrayContaining([expect.stringContaining(snapshotRelPath)]),
     })
+  })
+
+  it('rejects a schema-valid manifest identityHash swap', () => {
+    const current = manifest()
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({
+        ...current,
+        identityHash: differentHexDigest(current.identityHash),
+      }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(
+      expect.arrayContaining([expect.stringContaining('identityHash')]),
+    )
+  })
+
+  it('rejects a schema-valid manifest id suffix swap', () => {
+    const current = manifest()
+    const changedId = differentIdentitySuffix(current.id)
+    expect(changedId).not.toBe(current.id)
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({ ...current, id: changedId }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(expect.arrayContaining([expect.stringContaining('id')]))
+  })
+
+  it('rejects a schema-valid evidenceIncomplete flip', () => {
+    const current = manifest()
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({
+        ...current,
+        evidenceIncomplete: !current.evidenceIncomplete,
+      }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(
+      expect.arrayContaining([expect.stringContaining('evidenceIncomplete')]),
+    )
+  })
+
+  it('rejects a schema-valid originClass edit against record and provenance', () => {
+    const current = manifest()
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({ ...current, originClass: 'import' }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/record\.md:.*originClass/),
+        expect.stringMatching(/provenance\.json:.*originClass/),
+      ]),
+    )
+  })
+
+  it('rejects a schema-valid identityCore scope edit', () => {
+    const current = manifest()
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({
+        ...current,
+        identityCore: {
+          ...current.identityCore,
+          scope: {
+            ...current.identityCore.scope,
+            key: `${current.identityCore.scope.key}-tampered`,
+          },
+        },
+      }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(
+      expect.arrayContaining([expect.stringContaining('scope')]),
+    )
+  })
+
+  it('rejects a schema-valid embeddingInput edit', () => {
+    const current = manifest()
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({
+        ...current,
+        embeddingInput: `${current.embeddingInput}\nforged`,
+      }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(
+      expect.arrayContaining([expect.stringContaining('embeddingInput')]),
+    )
   })
 
   it('reports a deleted copied artifact as a dangling reference', () => {
