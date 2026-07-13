@@ -1,3 +1,5 @@
 export type { ScopeKey, ScopeTier } from './scope-key'
 export type { Anchor } from './anchor'
 export { normalizeAnchor } from './normalize-anchor'
+export type { GraphNodeType, GraphEdgeType, GraphNodeNaturalKey } from './graph-node'
+export { graphNodeId, anchorGraphNode, recordGraphNode } from './graph-node'
