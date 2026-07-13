@@ -510,11 +510,11 @@ function renderMarkdown(
     '',
     '### Candidate Pins',
     '',
-    '| Candidate | Model | Revision | Backend | Dim | Dtype |',
-    '|---|---|---|---|---:|---|',
+    '| Candidate | Model | Revision | Backend | Dim | Dtype | Max tokens |',
+    '|---|---|---|---|---:|---|---:|',
     ...report.candidatePins.map(
       (candidate) =>
-        `| ${candidate.id} | ${candidate.model_id} | \`${candidate.revision}\` | ${candidate.backend} | ${candidate.dim} | ${candidate.dtype} |`,
+        `| ${candidate.id} | ${candidate.model_id} | \`${candidate.revision}\` | ${candidate.backend} | ${candidate.dim} | ${candidate.dtype} | ${candidate.max_tokens} |`,
     ),
     '',
     '## Recorded Slice hit@k',
@@ -864,13 +864,13 @@ async function runCli(): Promise<void> {
     throw new TypeError('candidates.json must contain at least one candidate')
   }
 
-  const runner = (await import(
-    new URL('./runner.ts', import.meta.url).href
-  )) as typeof import('./runner')
+  const isolatedBench = (await import(
+    new URL('./measure-bench.ts', import.meta.url).href
+  )) as typeof import('./measure-bench')
   const constants = (await import(
     new URL('./measure-constants.ts', import.meta.url).href
   )) as typeof import('./measure-constants')
-  const bench = await runner.runBench({
+  const bench = await isolatedBench.measureAllCandidates({
     candidates: candidateInput.value,
     corpus: corpusInput.value,
     authored: authoredInput.value,

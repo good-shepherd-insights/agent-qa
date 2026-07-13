@@ -88,6 +88,8 @@ export interface FloorAssets {
 export interface FloorAssetLoadOptions {
   /** Test-only injection seam. Production callers resolve the committed package asset. */
   assetsDir?: string
+  /** Optional caller-owned token cap for bounded benchmark/runtime work. */
+  maxTokens?: number
 }
 
 let memoizedDefaultAssets: FloorAssets | undefined
@@ -363,8 +365,13 @@ export function loadFloorAssets(options: FloorAssetLoadOptions = {}): FloorAsset
   return assets
 }
 
-function embed(assets: FloorAssets, rendering: string): Float32Array {
-  const tokenIds = assets.tokenizer.encode(rendering, { add_special_tokens: false }).ids
+function embed(
+  assets: FloorAssets,
+  rendering: string,
+  maxTokens: number | undefined,
+): Float32Array {
+  const encoded = assets.tokenizer.encode(rendering, { add_special_tokens: false }).ids
+  const tokenIds = maxTokens === undefined ? encoded : encoded.slice(0, maxTokens)
   if (tokenIds.length === 0) {
     throw new FloorEmbeddingError(
       'empty-token-set',
@@ -408,12 +415,16 @@ function embed(assets: FloorAssets, rendering: string): Float32Array {
  * share exactly the same token lookup, mean pooling, and L2-normalization implementation.
  */
 export function createFloorEmbedder(options: FloorAssetLoadOptions = {}): EmbedderPort {
+  const maxTokens = options.maxTokens
+  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)) {
+    throw new RangeError('maxTokens must be a positive safe integer')
+  }
   return {
     async embedDocument(rendering: string): Promise<Float32Array> {
-      return embed(loadFloorAssets(options), rendering)
+      return embed(loadFloorAssets(options), rendering, maxTokens)
     },
     async embedQuery(rendering: string): Promise<Float32Array> {
-      return embed(loadFloorAssets(options), rendering)
+      return embed(loadFloorAssets(options), rendering, maxTokens)
     },
   }
 }

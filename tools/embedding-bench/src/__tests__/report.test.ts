@@ -35,6 +35,7 @@ function candidate(
     dim,
     pooling: 'mean',
     normalize: true,
+    max_tokens: 512,
     query_prefix: '',
     doc_prefix: '',
   }

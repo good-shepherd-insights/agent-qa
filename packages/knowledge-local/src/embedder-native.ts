@@ -25,15 +25,24 @@ export class NativeEmbeddingDimensionError extends RangeError {
   }
 }
 
-function pipelineKey(profile: EmbeddingProfile): string {
-  return `${profile.model_id}@${profile.revision}:${profile.dtype}`
+function validateMaxTokens(maxTokens: number | undefined): number | undefined {
+  if (maxTokens === undefined) return undefined
+  if (!Number.isSafeInteger(maxTokens) || maxTokens <= 0) {
+    throw new RangeError('maxTokens must be a positive safe integer')
+  }
+  return maxTokens
+}
+
+function pipelineKey(profile: EmbeddingProfile, maxTokens: number | undefined): string {
+  return `${profile.model_id}@${profile.revision}:${profile.dtype}:max=${maxTokens ?? 'model'}`
 }
 
 function acquirePipeline(
   profile: EmbeddingProfile,
   allowDownload: boolean,
+  maxTokens: number | undefined,
 ): Promise<FeatureExtractionPipeline> {
-  const key = pipelineKey(profile)
+  const key = pipelineKey(profile, maxTokens)
   const existing = nativePipelines.get(key)
   if (existing) return existing
 
@@ -46,7 +55,7 @@ function acquirePipeline(
     }
     transformers.env.cacheDir = resolveModelCacheDir()
 
-    return transformers.pipeline('feature-extraction', profile.model_id, {
+    const extractor = await transformers.pipeline('feature-extraction', profile.model_id, {
       device: 'cpu',
       dtype: profile.dtype,
       revision: profile.revision,
@@ -54,6 +63,24 @@ function acquirePipeline(
         profile.session_options as PretrainedModelOptions['session_options'],
       local_files_only: !allowDownload,
     })
+    if (maxTokens !== undefined) {
+      const tokenizer = extractor.tokenizer
+      const tokenizerConfig = tokenizer._tokenizerConfig as
+        | Record<string, unknown>
+        | null
+        | undefined
+      const modelMaximum = Number(tokenizerConfig?.model_max_length)
+      // Transformers v4's feature-extraction pipeline hard-codes truncation and reads this
+      // getter-backed config value; some pinned tokenizers expose a null config, so initialize it.
+      tokenizer._tokenizerConfig = {
+        ...(tokenizerConfig ?? {}),
+        model_max_length:
+          Number.isSafeInteger(modelMaximum) && modelMaximum > 0
+            ? Math.min(modelMaximum, maxTokens)
+            : maxTokens,
+      }
+    }
+    return extractor
   })()
 
   nativePipelines.set(key, pending)
@@ -76,9 +103,12 @@ function toEmbedding(data: unknown, expectedDim: number): Float32Array {
 export async function createNativeEmbedder(options: {
   profile: EmbeddingProfile
   allowDownload: boolean
+  /** Optional caller-owned cap; a distinct pipeline preserves the process-lifetime session law. */
+  maxTokens?: number
 }): Promise<EmbedderPort> {
   const { profile, allowDownload } = options
-  const extractor = await acquirePipeline(profile, allowDownload)
+  const maxTokens = validateMaxTokens(options.maxTokens)
+  const extractor = await acquirePipeline(profile, allowDownload, maxTokens)
 
   async function embed(text: string, prefix: string): Promise<Float32Array> {
     const output = await extractor(`${prefix}${text}`, {

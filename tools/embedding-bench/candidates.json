@@ -9,6 +9,7 @@
     "dim": 384,
     "pooling": "mean",
     "normalize": true,
+    "max_tokens": 512,
     "query_prefix": "Represent this sentence for searching relevant passages: ",
     "doc_prefix": "",
     "prefixValidation": {
@@ -35,6 +36,7 @@
     "dim": 768,
     "pooling": "mean",
     "normalize": true,
+    "max_tokens": 512,
     "query_prefix": "",
     "doc_prefix": "",
     "prefixValidation": {
@@ -61,6 +63,7 @@
     "dim": 384,
     "pooling": "mean",
     "normalize": true,
+    "max_tokens": 512,
     "query_prefix": "",
     "doc_prefix": "",
     "prefixValidation": {
@@ -87,6 +90,7 @@
     "dim": 512,
     "pooling": "mean",
     "normalize": true,
+    "max_tokens": 512,
     "query_prefix": "",
     "doc_prefix": "",
     "prefixValidation": {

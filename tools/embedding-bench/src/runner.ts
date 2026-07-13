@@ -15,6 +15,7 @@ export interface BenchCandidate {
   dim: number
   pooling: 'mean'
   normalize: true
+  max_tokens: number
   query_prefix: string
   doc_prefix: string
 }
@@ -150,8 +151,12 @@ export async function createCandidateEmbedder(
   const { createFloorEmbedder, createNativeEmbedder } =
     await import('@vostride/agent-qa-knowledge-local')
   return candidate.backend === 'static'
-    ? createFloorEmbedder()
-    : createNativeEmbedder({ profile, allowDownload: true })
+    ? createFloorEmbedder({ maxTokens: candidate.max_tokens })
+    : createNativeEmbedder({
+        profile,
+        allowDownload: true,
+        maxTokens: candidate.max_tokens,
+      })
 }
 
 function errorEntry(candidate: BenchCandidate, error: unknown): CandidateBenchError {

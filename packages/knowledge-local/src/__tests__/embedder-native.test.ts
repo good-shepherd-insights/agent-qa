@@ -138,6 +138,64 @@ describe('createNativeEmbedder', () => {
     )
   })
 
+  it('uses a separately cached pipeline with a bounded tokenizer budget', async () => {
+    const uncappedTokenizerConfig = { model_max_length: 8_192 }
+    const cappedTokenizerConfig = { model_max_length: 8_192 }
+    const uncappedExtractor = Object.assign(
+      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      {
+        tokenizer: {
+          get model_max_length() {
+            return uncappedTokenizerConfig.model_max_length
+          },
+          _tokenizerConfig: uncappedTokenizerConfig,
+        },
+      },
+    )
+    const cappedExtractor = Object.assign(
+      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      {
+        tokenizer: {
+          get model_max_length() {
+            return cappedTokenizerConfig.model_max_length
+          },
+          _tokenizerConfig: cappedTokenizerConfig,
+        },
+      },
+    )
+    transformers.pipeline
+      .mockResolvedValueOnce(uncappedExtractor)
+      .mockResolvedValueOnce(cappedExtractor)
+    const selectedProfile = profile({ dim: 2 })
+
+    await createNativeEmbedder({ profile: selectedProfile, allowDownload: false })
+    await createNativeEmbedder({
+      profile: selectedProfile,
+      allowDownload: false,
+      maxTokens: 512,
+    })
+
+    expect(transformers.pipeline).toHaveBeenCalledTimes(2)
+    expect(uncappedTokenizerConfig.model_max_length).toBe(8_192)
+    expect(cappedExtractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
+  })
+
+  it('initializes a missing tokenizer config when applying the token budget', async () => {
+    const extractor = Object.assign(
+      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      { tokenizer: { _tokenizerConfig: null as Record<string, unknown> | null } },
+    )
+    transformers.pipeline.mockResolvedValue(extractor)
+
+    await createNativeEmbedder({
+      profile: profile({ dim: 2 }),
+      allowDownload: false,
+      maxTokens: 512,
+    })
+
+    expect(extractor.tokenizer._tokenizerConfig).toEqual({ model_max_length: 512 })
+  })
+
   it('applies document and query prefixes inside the frozen port', async () => {
     const extractor = vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) })
     transformers.pipeline.mockResolvedValue(extractor)

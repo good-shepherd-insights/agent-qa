@@ -19,6 +19,7 @@ const candidate = (id = 'fixture'): BenchCandidate => ({
   dim: 2,
   pooling: 'mean',
   normalize: true,
+  max_tokens: 512,
   query_prefix: '',
   doc_prefix: '',
 })
