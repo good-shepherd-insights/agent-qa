@@ -76,6 +76,56 @@ export type {
 } from './index-reader.js'
 export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
+export {
+  dropEmbedCacheForModel,
+  ensureEmbedCacheTable,
+  getCachedEmbedding,
+  putCachedEmbedding,
+  wrapEmbedderWithCache,
+} from './embed-cache.js'
+export type {
+  EmbedCacheLeg,
+  EmbedCacheLookup,
+  EmbedCacheMode,
+  EmbedCachePut,
+  EmbedCacheWrapperOptions,
+} from './embed-cache.js'
+export {
+  createFloorEmbedder,
+  FloorAssetLoadError,
+  FloorEmbeddingError,
+  loadFloorAssets,
+} from './embedder-floor.js'
+export type {
+  FloorAssetLoadErrorCode,
+  FloorAssetLoadOptions,
+  FloorAssets,
+  FloorEmbeddingErrorCode,
+} from './embedder-floor.js'
+export {
+  createNativeEmbedder,
+  NativeEmbeddingDimensionError,
+  NativeEmbeddingModuleLoadError,
+} from './embedder-native.js'
+export {
+  MODEL_CACHE_DIR_ENV_VAR,
+  resolveModelCacheDir,
+} from './model-cache-dir.js'
+export {
+  acquireEmbedder,
+  discoverEmbedderWorker,
+  EMBEDDER_MIN_AVAILABLE_BYTES,
+  resolveEmbedderCapability,
+} from './embedder-acquire.js'
+export type {
+  AcquireEmbedderOptions,
+  AcquireEmbedderOutcome,
+  DeferReason,
+  EmbedderProbes,
+  EmbedderRung,
+  ResolveEmbedderCapabilityOptions,
+  WorkerDiscoveryResult,
+} from './embedder-acquire.js'
 export type { EmbedderPort } from './embedder-port.js'
 export {
   clearRebuildRequest,

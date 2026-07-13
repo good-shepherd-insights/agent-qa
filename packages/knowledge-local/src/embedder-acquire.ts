@@ -1,0 +1,242 @@
+import type { DatabaseSync } from 'node:sqlite'
+
+import {
+  DEFAULT_EMBEDDING_PROFILE,
+  STATIC_FLOOR_EMBEDDING_PROFILE,
+  type EmbeddingProfile,
+} from '@vostride/agent-qa-schema'
+
+import {
+  type EmbedCacheMode,
+  wrapEmbedderWithCache,
+} from './embed-cache.js'
+import { createFloorEmbedder, loadFloorAssets } from './embedder-floor.js'
+import {
+  createNativeEmbedder,
+  NativeEmbeddingModuleLoadError,
+} from './embedder-native.js'
+import type { EmbedderPort } from './embedder-port.js'
+import { embeddingProfileKey } from './index-open.js'
+
+/**
+ * PROVISIONAL 1 GiB pending real-host telemetry from the Phase 376 bench.
+ *
+ * This internal, config-free pre-load check deliberately overrides memory.md §5.8's
+ * "configurable" letter (D-15). The static floor remains the no-budget escape hatch;
+ * see the dated reconciliation note in REQUIREMENTS.md.
+ */
+export const EMBEDDER_MIN_AVAILABLE_BYTES = 1_073_741_824
+
+export type WorkerDiscoveryResult = { kind: 'no-worker' } | { kind: 'worker' }
+export type EmbedderRung = 'native' | 'floor'
+export type DeferReason = 'ram-budget' | 'cold-artifact' | 'load-failure'
+
+export type AcquireEmbedderOutcome =
+  | {
+      kind: 'ready'
+      rung: EmbedderRung
+      profile: EmbeddingProfile
+      embedder: EmbedderPort
+    }
+  | { kind: 'deferred'; reason: DeferReason }
+  | { kind: 'lexical-only' }
+
+/**
+ * D-12/D-17 test-only capability injection seam.
+ *
+ * Production callers must omit this field so rung selection reflects host truth. No probe is a
+ * user-facing selector, configuration key, environment variable, or CLI switch.
+ */
+export interface EmbedderProbes {
+  discoverWorker?: () => Promise<WorkerDiscoveryResult>
+  availableMemory?: () => number
+  createNativeEmbedder?: (options: {
+    profile: EmbeddingProfile
+    allowDownload: boolean
+  }) => Promise<EmbedderPort>
+  createFloorEmbedder?: () => EmbedderPort | Promise<EmbedderPort>
+}
+
+export interface AcquireEmbedderOptions {
+  preferredProfile?: EmbeddingProfile
+  allowDownload: boolean
+  cache?: {
+    db: DatabaseSync
+    mode: EmbedCacheMode
+  }
+  /** D-12/D-17 test seam. Production callers resolve actual host capabilities. */
+  probes?: EmbedderProbes
+}
+
+export interface ResolveEmbedderCapabilityOptions {
+  preferredProfile?: EmbeddingProfile
+  allowDownload: boolean
+  /** D-12/D-17 test seam. Production callers resolve actual host capabilities. */
+  probes?: EmbedderProbes
+}
+
+type CapabilityOutcome = AcquireEmbedderOutcome
+
+const processCapabilities = new Map<string, Promise<CapabilityOutcome>>()
+const injectedCapabilities = new WeakMap<
+  EmbedderProbes,
+  Map<string, Promise<CapabilityOutcome>>
+>()
+
+/**
+ * D-09's typed worker-discovery seam.
+ *
+ * M2 deliberately has no worker, spawning, or IPC. M4 can fill the daemon-backed `worker` arm
+ * without changing the acquisition contract used by callers.
+ */
+export async function discoverEmbedderWorker(): Promise<WorkerDiscoveryResult> {
+  return { kind: 'no-worker' }
+}
+
+function errorRecord(error: unknown): Record<string, unknown> | undefined {
+  return typeof error === 'object' && error !== null
+    ? error as Record<string, unknown>
+    : undefined
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isNativeModuleUnavailable(error: unknown): boolean {
+  if (error instanceof NativeEmbeddingModuleLoadError) return true
+
+  const code = errorRecord(error)?.code
+  if (
+    code === 'ERR_MODULE_NOT_FOUND'
+    || code === 'MODULE_NOT_FOUND'
+    || code === 'ERR_DLOPEN_FAILED'
+  ) {
+    return true
+  }
+
+  const message = errorText(error).toLowerCase()
+  return message.includes('cannot find package')
+    || message.includes('cannot find module')
+    || message.includes('could not locate the bindings file')
+}
+
+function isColdArtifact(error: unknown, allowDownload: boolean): boolean {
+  if (allowDownload) return false
+
+  const code = errorRecord(error)?.code
+  if (code === 'ENOENT') return true
+
+  const message = errorText(error).toLowerCase()
+  return message.includes('local_files_only')
+    || message.includes('not found locally')
+    || message.includes('not present in the local cache')
+    || message.includes('not found in the local cache')
+}
+
+function cacheFor(probes: EmbedderProbes | undefined): Map<string, Promise<CapabilityOutcome>> {
+  if (probes === undefined) return processCapabilities
+
+  const existing = injectedCapabilities.get(probes)
+  if (existing !== undefined) return existing
+
+  const created = new Map<string, Promise<CapabilityOutcome>>()
+  injectedCapabilities.set(probes, created)
+  return created
+}
+
+async function probeFloor(
+  factory: NonNullable<EmbedderProbes['createFloorEmbedder']>,
+): Promise<CapabilityOutcome> {
+  try {
+    const embedder = await factory()
+    return {
+      kind: 'ready',
+      rung: 'floor',
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      embedder,
+    }
+  } catch {
+    return { kind: 'lexical-only' }
+  }
+}
+
+async function probeCapability({
+  preferredProfile,
+  allowDownload,
+  probes,
+}: Required<Pick<ResolveEmbedderCapabilityOptions, 'preferredProfile' | 'allowDownload'>> &
+  Pick<ResolveEmbedderCapabilityOptions, 'probes'>): Promise<CapabilityOutcome> {
+  const discoverWorker = probes?.discoverWorker ?? discoverEmbedderWorker
+  const availableMemory = probes?.availableMemory ?? (() => process.availableMemory())
+  const nativeFactory = probes?.createNativeEmbedder ?? createNativeEmbedder
+  const floorFactory = probes?.createFloorEmbedder ?? (() => {
+    loadFloorAssets()
+    return createFloorEmbedder()
+  })
+
+  try {
+    // In M2 both worker arms continue in-process: the `worker` arm reserves M4's contract shape.
+    await discoverWorker()
+    if (availableMemory() < EMBEDDER_MIN_AVAILABLE_BYTES) {
+      return { kind: 'deferred', reason: 'ram-budget' }
+    }
+  } catch {
+    return { kind: 'deferred', reason: 'load-failure' }
+  }
+
+  if (preferredProfile.backend === 'static') return probeFloor(floorFactory)
+
+  try {
+    const embedder = await nativeFactory({ profile: preferredProfile, allowDownload })
+    return { kind: 'ready', rung: 'native', profile: preferredProfile, embedder }
+  } catch (error) {
+    if (isNativeModuleUnavailable(error)) return probeFloor(floorFactory)
+    if (isColdArtifact(error, allowDownload)) {
+      return { kind: 'deferred', reason: 'cold-artifact' }
+    }
+    return { kind: 'deferred', reason: 'load-failure' }
+  }
+}
+
+/**
+ * Resolve the automatic ladder once per profile for this process (D-17).
+ *
+ * Every host/runtime failure collapses to a typed capability outcome; callers cannot select a
+ * rung. Injected test seams receive an isolated memo while production keys solely by the stable
+ * embedding profile identity.
+ */
+export function resolveEmbedderCapability(
+  options: ResolveEmbedderCapabilityOptions,
+): Promise<CapabilityOutcome> {
+  const preferredProfile = options.preferredProfile ?? DEFAULT_EMBEDDING_PROFILE
+  const capabilities = cacheFor(options.probes)
+  const key = embeddingProfileKey(preferredProfile)
+  const existing = capabilities.get(key)
+  if (existing !== undefined) return existing
+
+  const pending = probeCapability({
+    preferredProfile,
+    allowDownload: options.allowDownload,
+    probes: options.probes,
+  })
+  capabilities.set(key, pending)
+  return pending
+}
+
+export async function acquireEmbedder(
+  options: AcquireEmbedderOptions,
+): Promise<AcquireEmbedderOutcome> {
+  const outcome = await resolveEmbedderCapability(options)
+  if (outcome.kind !== 'ready' || options.cache === undefined) return outcome
+
+  return {
+    ...outcome,
+    embedder: wrapEmbedderWithCache({
+      embedder: outcome.embedder,
+      profile: outcome.profile,
+      db: options.cache.db,
+      mode: options.cache.mode,
+    }),
+  }
+}

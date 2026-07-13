@@ -6,6 +6,13 @@ import { resolveModelCacheDir } from './model-cache-dir.js'
 
 const nativePipelines = new Map<string, Promise<FeatureExtractionPipeline>>()
 
+export class NativeEmbeddingModuleLoadError extends Error {
+  constructor(cause: unknown) {
+    super('Native embedding module could not be loaded', { cause })
+    this.name = 'NativeEmbeddingModuleLoadError'
+  }
+}
+
 export class NativeEmbeddingDimensionError extends RangeError {
   readonly actualDim: number
   readonly expectedDim: number
@@ -31,7 +38,12 @@ function acquirePipeline(
   if (existing) return existing
 
   const pending = (async () => {
-    const transformers = await import('@huggingface/transformers')
+    let transformers: typeof import('@huggingface/transformers')
+    try {
+      transformers = await import('@huggingface/transformers')
+    } catch (error) {
+      throw new NativeEmbeddingModuleLoadError(error)
+    }
     transformers.env.cacheDir = resolveModelCacheDir()
 
     return transformers.pipeline('feature-extraction', profile.model_id, {
