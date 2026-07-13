@@ -107,12 +107,17 @@ function toHit(
   }
 }
 
+/**
+ * D-16 widens the no-dense scan authority to stored normalized anchor forms.
+ * Phase 377 generalizes this lexical behavior into the §5.5.8 query helper.
+ */
 function textMatches(bundle: LoadedBundle, queryTokens: readonly string[]): boolean {
   if (queryTokens.length === 0) return true
   const searchableText = [
     bundle.manifest.embeddingInput,
     bundle.summary,
     ...bundle.frontmatter.anchors.map(({ raw }) => canonicalJson(raw)),
+    ...bundle.frontmatter.anchors.map(({ normalized }) => canonicalJson(normalized)),
   ]
     .join('\n')
     .toLowerCase()
