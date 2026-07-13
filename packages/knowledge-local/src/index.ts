@@ -51,6 +51,19 @@ export type {
   IndexWriterHandle,
   VecCapability,
 } from './index-open.js'
+export type { EmbedderPort } from './embedder-port.js'
+export {
+  clearRebuildRequest,
+  readRebuildRequest,
+  REBUILD_MARKER_FILE,
+  requestRebuild,
+} from './rebuild-marker.js'
+export type {
+  ReadRebuildRequestOutcome,
+  RebuildReason,
+  RebuildRequest,
+  RequestRebuildOptions,
+} from './rebuild-marker.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader

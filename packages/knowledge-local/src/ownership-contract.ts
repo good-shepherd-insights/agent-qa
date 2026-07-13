@@ -14,8 +14,8 @@ export const AGENT_QA_KNOWLEDGE_LOCAL_FORBIDDEN_RESPONSIBILITIES = [
   'agent decision or planning logic',
   'platform-adapter execution',
 ] as const
-// D-11 pins the native vec0 accelerator as this package's first external dependency.
-export const AGENT_QA_KNOWLEDGE_LOCAL_EXTERNAL_DEPENDENCIES = ['sqlite-vec'] as const
+// D-11 pins the native vec0 accelerator; D-07 uses zod at the machine-local marker boundary.
+export const AGENT_QA_KNOWLEDGE_LOCAL_EXTERNAL_DEPENDENCIES = ['sqlite-vec', 'zod'] as const
 export const AGENT_QA_KNOWLEDGE_LOCAL_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-agent',
   '@vostride/agent-qa-runner',
