@@ -35,6 +35,7 @@
     }
   },
   "files": [
+    "assets",
     "dist",
     "LICENSE.md",
     "NOTICE.md"
