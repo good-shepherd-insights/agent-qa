@@ -1,0 +1,60 @@
+# Executed on the pbackup fork until the v2 release; never a PR gate (D-05).
+name: Embedding Bench
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: embedding-bench-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    name: Bench (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      AGENT_QA_MODEL_CACHE_DIR: ${{ github.workspace }}/.cache/agent-qa/models
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Restore pinned model artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.AGENT_QA_MODEL_CACHE_DIR }}
+          key: hf-models-${{ hashFiles('tools/embedding-bench/candidates.json') }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build benchmark dependencies
+        run: pnpm --filter embedding-bench... --if-present build
+
+      - name: Run embedding benchmark
+        run: pnpm --filter embedding-bench bench -- --report bench-report-${{ runner.os }}.json
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedding-bench-${{ runner.os }}
+          path: |
+            tools/embedding-bench/bench-report-${{ runner.os }}.json
+            tools/embedding-bench/REPORT.md
+          if-no-files-found: error
