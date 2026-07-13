@@ -275,6 +275,7 @@ export {
   guardBundleManifest,
   guardBundleProvenance,
   guardBundleRelations,
+  verifyManifestIdentity,
 } from './knowledge/index'
 export type {
   ArtifactsIndex,
