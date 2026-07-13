@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Anchor } from '../anchor'
 import {
   anchorGraphNode,
   graphNodeId,
@@ -15,44 +16,84 @@ describe('graph node identity', () => {
     expect(graphNodeId('flow', 'checkout')).toBe(first)
   })
 
-  it('normalizes element anchors before keying them', () => {
-    const raw = { t: 'el', role: 'Button', name: '  Sign In ' } as const
+  it('normalizes element, page, flow, and error anchors before keying them', () => {
+    const anchors: Anchor[] = [
+      { t: 'el', role: 'Button', name: '  Sign In ' },
+      { t: 'page', route: ' /Checkout/?Mode=FAST#receipt ' },
+      { t: 'flow', name: ' Checkout (42) ' },
+      { t: 'error', message: ' Timeout after 5000ms ' },
+    ]
 
-    expect(anchorGraphNode(raw, 'web')?.nodeId).toBe(
-      anchorGraphNode(normalizeAnchor(raw), 'web')?.nodeId,
-    )
+    for (const anchor of anchors) {
+      expect(anchorGraphNode(anchor, 'web')?.nodeId).toBe(
+        anchorGraphNode(normalizeAnchor(anchor), 'web')?.nodeId,
+      )
+    }
   })
 
-  it('discriminates element and page nodes by platform', () => {
+  it('uses normalized element identity fields and retains an explicit ordinal', () => {
+    expect(
+      anchorGraphNode({ t: 'el', role: ' Button ', name: ' Sign In ' }, 'web')?.naturalKey,
+    ).toEqual({ role: 'button', name: 'sign in' })
+    expect(
+      anchorGraphNode(
+        { t: 'el', role: ' Button ', name: ' Sign In ', ordinal: 2 },
+        'web',
+      )?.naturalKey,
+    ).toEqual({ role: 'button', name: 'sign in', ordinal: 2 })
+  })
+
+  it('discriminates element nodes across web, mobile, and unresolved platforms', () => {
     const element = { t: 'el', role: 'button', name: 'sign in' } as const
+
+    expect([
+      anchorGraphNode(element, 'web')?.type,
+      anchorGraphNode(element, 'android')?.type,
+      anchorGraphNode(element, 'ios')?.type,
+      anchorGraphNode(element)?.type,
+    ]).toEqual(['web-element', 'mobile-element', 'mobile-element', 'element'])
+  })
+
+  it('discriminates page nodes across web, mobile, and unresolved platforms', () => {
     const page = { t: 'page', route: '/login' } as const
 
-    expect(anchorGraphNode(element, 'web')?.type).toBe('web-element')
-    expect(anchorGraphNode(element, 'android')?.type).toBe('mobile-element')
-    expect(anchorGraphNode(element)?.type).toBe('element')
-    expect(anchorGraphNode(page, 'web')?.type).toBe('web-page')
-    expect(anchorGraphNode(page, 'ios')?.type).toBe('mobile-screen')
-    expect(anchorGraphNode(page)?.type).toBe('page')
+    expect([
+      anchorGraphNode(page, 'web')?.type,
+      anchorGraphNode(page, 'android')?.type,
+      anchorGraphNode(page, 'ios')?.type,
+      anchorGraphNode(page)?.type,
+    ]).toEqual(['web-page', 'mobile-screen', 'mobile-screen', 'page'])
   })
 
-  it('keeps unresolved selectors lexical-only and ignores platform anchors', () => {
+  it('maps selectors only when their platform is resolved', () => {
     const selector = { t: 'selector', literal: '#sign-in' } as const
 
-    expect(anchorGraphNode(selector)).toBeNull()
-    expect(anchorGraphNode(selector, 'web')?.type).toBe('web-locator')
-    expect(anchorGraphNode(selector, 'android')?.type).toBe('android-locator')
-    expect(anchorGraphNode(selector, 'ios')?.type).toBe('ios-locator')
+    expect([
+      anchorGraphNode(selector, 'web')?.type,
+      anchorGraphNode(selector, 'android')?.type,
+      anchorGraphNode(selector, 'ios')?.type,
+      anchorGraphNode(selector),
+    ]).toEqual(['web-locator', 'android-locator', 'ios-locator', null])
+  })
+
+  it('does not project platform anchors into graph nodes', () => {
     expect(anchorGraphNode({ t: 'platform', platform: 'web' })).toBeNull()
+    expect(anchorGraphNode({ t: 'platform', platform: 'android' }, 'android')).toBeNull()
   })
 
   it('maps every bundle kind directly to a record node type', () => {
     const kinds = ['fact', 'procedure', 'caution', 'unknown', 'policy'] as const
 
     for (const kind of kinds) {
-      expect(recordGraphNode(kind, 'r_abc')).toMatchObject({
+      expect(recordGraphNode(kind, 'r_abc')).toEqual({
         type: kind,
         naturalKey: 'r_abc',
+        nodeId: graphNodeId(kind, 'r_abc'),
       })
     }
+  })
+
+  it('includes the node type in identity when natural keys are equal', () => {
+    expect(graphNodeId('flow', 'checkout')).not.toBe(graphNodeId('test', 'checkout'))
   })
 })
