@@ -94,6 +94,7 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
         draft: makeBundleDraftFixture({
           anchors: [{ t: 'el', role: 'Button', name: 'Checkout now' }],
           summary: 'Checkout control on the cart page',
+          body: 'Selecting Checkout now opens the payment page.',
         }),
       })
 

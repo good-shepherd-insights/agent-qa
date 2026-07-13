@@ -31,6 +31,18 @@ export type { AppendOutcome } from './bundle-append.js'
 export { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 export type { IntegrityReport, LoadedBundle, LoadBundleOutcome } from './bundle-read.js'
 export {
+  enumerateBundleDirs,
+  isServable,
+  scanBundleById,
+  scanBundles,
+} from './bundle-scan.js'
+export type {
+  EnumeratedBundleDir,
+  KnowledgeHit,
+  ScanBundleByIdOptions,
+  ScanBundlesOptions,
+} from './bundle-scan.js'
+export {
   CHECKPOINT_EVERY_N_BUNDLES,
   INDEX_DB_FILE,
   INDEX_RENDERING_SCHEMA_VERSION,

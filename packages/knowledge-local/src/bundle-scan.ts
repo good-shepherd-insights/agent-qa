@@ -1,0 +1,173 @@
+/**
+ * IDX-02's authoritative degraded read leg over committed bundles.
+ *
+ * The scan is lexical + anchor only. Status and ordinal validity come exclusively from the
+ * bundle's own event stream through loadBundle + deriveBundleTrust (memory.md §8.2). Per 374
+ * D-03, this module consumes those read faces and never re-parses committed bundle files.
+ */
+import { readdirSync } from 'node:fs'
+import { basename, join } from 'node:path'
+
+import { canonicalJson, normalizeAnchor } from '@vostride/agent-qa-schema'
+import type {
+  Anchor,
+  BundleStatus,
+  DerivedTrustState,
+} from '@vostride/agent-qa-schema'
+
+import { deriveBundleTrust, loadBundle } from './bundle-read.js'
+import type { LoadedBundle } from './bundle-read.js'
+
+export interface KnowledgeHit {
+  bundleId: string
+  product: string
+  kind: LoadedBundle['frontmatter']['kind']
+  subtype: string | null
+  status: BundleStatus
+  trust: number
+  validity: DerivedTrustState['validity']
+  summary: string
+  embeddingInput: string
+}
+
+export interface ScanBundlesOptions {
+  knowledgeRoot: string
+  text?: string
+  anchor?: Anchor
+  product?: string
+  k?: number
+}
+
+export interface ScanBundleByIdOptions {
+  knowledgeRoot: string
+  bundleId: string
+}
+
+export interface EnumeratedBundleDir {
+  product: string
+  dir: string
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function childDirectories(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+/** Enumerate bundle directories in stable product-then-directory order. */
+export function enumerateBundleDirs(knowledgeRoot: string): EnumeratedBundleDir[] {
+  const memoryDir = join(knowledgeRoot, 'memory')
+  const products = childDirectories(memoryDir)
+    .filter((product) => !product.startsWith('.') && product !== 'index' && product !== 'queue')
+    .sort(compareText)
+
+  return products.flatMap((product) => {
+    const bundlesDir = join(memoryDir, product, 'bundles')
+    return childDirectories(bundlesDir)
+      .filter((bundleDir) => !bundleDir.startsWith('.'))
+      .sort(compareText)
+      .map((bundleDir) => ({ product, dir: join(bundlesDir, bundleDir) }))
+  })
+}
+
+/** The single withdrawn-fact firewall reused by degraded and indexed reader paths. */
+export function isServable(trust: DerivedTrustState): boolean {
+  return (
+    (trust.status === 'active' || trust.status === 'candidate')
+    && trust.validity.closedAtOrdinal === undefined
+  )
+}
+
+function toHit(
+  bundle: LoadedBundle,
+  trustState: DerivedTrustState,
+  product: string,
+): KnowledgeHit {
+  return {
+    bundleId: bundle.manifest.id,
+    product,
+    kind: bundle.frontmatter.kind,
+    subtype: bundle.frontmatter.subtype ?? null,
+    status: trustState.status,
+    trust: trustState.trust,
+    validity: trustState.validity,
+    summary: bundle.summary,
+    embeddingInput: bundle.manifest.embeddingInput,
+  }
+}
+
+function textMatches(bundle: LoadedBundle, queryTokens: readonly string[]): boolean {
+  if (queryTokens.length === 0) return true
+  const searchableText = [
+    bundle.manifest.embeddingInput,
+    bundle.summary,
+    ...bundle.frontmatter.anchors.map(({ raw }) => canonicalJson(raw)),
+  ]
+    .join('\n')
+    .toLowerCase()
+  return queryTokens.every((token) => searchableText.includes(token))
+}
+
+function anchorMatches(bundle: LoadedBundle, queryAnchor: string | undefined): boolean {
+  if (queryAnchor === undefined) return true
+  return bundle.frontmatter.anchors.some(
+    ({ normalized }) => canonicalJson(normalized) === queryAnchor,
+  )
+}
+
+function servableHit(dir: EnumeratedBundleDir): KnowledgeHit | undefined {
+  const outcome = loadBundle(dir.dir)
+  if (outcome.kind !== 'loaded') return undefined
+  const trustState = deriveBundleTrust(outcome.bundle)
+  return isServable(trustState)
+    ? toHit(outcome.bundle, trustState, dir.product)
+    : undefined
+}
+
+export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
+  const queryTokens = (opts.text ?? '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token !== '')
+  const queryAnchor = opts.anchor === undefined
+    ? undefined
+    : canonicalJson(normalizeAnchor(opts.anchor))
+
+  const hits: KnowledgeHit[] = []
+  for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
+    if (opts.product !== undefined && entry.product !== opts.product) continue
+    const outcome = loadBundle(entry.dir)
+    if (outcome.kind !== 'loaded') continue
+
+    const trustState = deriveBundleTrust(outcome.bundle)
+    if (!isServable(trustState)) continue
+    if (!textMatches(outcome.bundle, queryTokens)) continue
+    if (!anchorMatches(outcome.bundle, queryAnchor)) continue
+    hits.push(toHit(outcome.bundle, trustState, entry.product))
+  }
+
+  hits.sort(
+    (left, right) => compareText(left.product, right.product)
+      || compareText(left.bundleId, right.bundleId),
+  )
+  return opts.k === undefined
+    ? hits
+    : hits.slice(0, Math.max(0, Math.floor(opts.k)))
+}
+
+export function scanBundleById(opts: ScanBundleByIdOptions): KnowledgeHit | undefined {
+  for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
+    if (basename(entry.dir) !== opts.bundleId) continue
+    const hit = servableHit(entry)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
