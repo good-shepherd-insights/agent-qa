@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "convert-floor": "node src/convert-floor.ts",
-    "bench": "node -e \"console.log('Benchmark harness arrives in Phase 376 Plan 04')\"",
+    "bench": "node -e \"console.log('Benchmark runner arrives in Phase 376 Plan 09')\"",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
