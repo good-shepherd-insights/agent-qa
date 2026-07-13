@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -298,6 +298,75 @@ describe('IDX-01 derived-index rebuild projection', () => {
       )
     } finally {
       reader.db.close()
+    }
+  })
+
+  it('reconciles a relation edge when its target arrives after the source hash stabilizes', async () => {
+    const product = 'Late Relation Product'
+    const target = publishNamed(product, 'Late relation target')
+    const stashedTargetDir = join(root, 'late-relation-target-stash')
+    cpSync(target.dir, stashedTargetDir, { recursive: true })
+    rmSync(target.dir, { recursive: true, force: true })
+
+    const source = publish(product, {
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Late relation source' },
+          { t: 'page', route: '/late-relation-source' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'late-relation-source' },
+      }),
+      relations: [
+        {
+          type: 'relates-to',
+          targetId: target.id,
+          addedAtOrdinal: 52,
+          curationJobId: 'index-late-relation-job',
+        },
+      ],
+    })
+
+    expect(await rebuildApi().rebuildIndex({ knowledgeRoot })).toMatchObject({ projected: 1 })
+
+    const sourceNodeId = graphNodeId('fact', source.id)
+    const targetNodeId = graphNodeId('fact', target.id)
+    const firstReader = openReader()
+    try {
+      expect(
+        firstReader.db
+          .prepare(`
+            SELECT src_node_id, edge_type, dst_node_id
+            FROM graph_edges
+            WHERE src_node_id = ? AND edge_type = ? AND dst_node_id = ?
+          `)
+          .get(sourceNodeId, 'relates-to', targetNodeId),
+      ).toBeUndefined()
+    } finally {
+      firstReader.db.close()
+    }
+
+    cpSync(stashedTargetDir, target.dir, { recursive: true })
+    const second = await rebuildApi().rebuildIndex({ knowledgeRoot })
+    expect(second.projected).toBe(1)
+
+    const secondReader = openReader()
+    try {
+      expect(
+        secondReader.db
+          .prepare(`
+            SELECT src_node_id, edge_type, dst_node_id
+            FROM graph_edges
+            WHERE src_node_id = ? AND edge_type = ? AND dst_node_id = ?
+          `)
+          .get(sourceNodeId, 'relates-to', targetNodeId),
+      ).toEqual({
+        src_node_id: sourceNodeId,
+        edge_type: 'relates-to',
+        dst_node_id: targetNodeId,
+      })
+    } finally {
+      secondReader.db.close()
     }
   })
 
