@@ -264,6 +264,42 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
     expect(rendered.identityCore).toEqual(manifest.identityCore)
   })
 
+  it('returns a typed collision for a non-JSON existing manifest', () => {
+    const first = publishBundle(config(), input())
+    expect(first.kind).toBe('published')
+    if (first.kind !== 'published') throw new Error('expected first publish')
+    const manifestPath = join(first.dir, 'manifest.json')
+    const corruptText = 'not json'
+    writeFileSync(manifestPath, corruptText, 'utf8')
+
+    const outcome = publishBundle(config(), input())
+
+    expect(outcome.kind).toBe('identity-collision')
+    if (outcome.kind !== 'identity-collision') throw new Error('expected identity collision')
+    expect(outcome.reason).toBe('existing-manifest-corrupt')
+    expect(outcome.existingIdentityHash).toBeNull()
+    expect(readFileSync(manifestPath, 'utf8')).toBe(corruptText)
+    expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
+  it('returns a typed collision for an incomplete existing manifest', () => {
+    const first = publishBundle(config(), input())
+    expect(first.kind).toBe('published')
+    if (first.kind !== 'published') throw new Error('expected first publish')
+    const manifestPath = join(first.dir, 'manifest.json')
+    const manifest = guardBundleManifest(JSON.parse(readFileSync(manifestPath, 'utf8')))
+    const incompleteText = committedFileText({ ...manifest, complete: false })
+    writeFileSync(manifestPath, incompleteText, 'utf8')
+
+    const outcome = publishBundle(config(), input())
+
+    expect(outcome.kind).toBe('identity-collision')
+    if (outcome.kind !== 'identity-collision') throw new Error('expected identity collision')
+    expect(outcome.reason).toBe('existing-manifest-corrupt')
+    expect(readFileSync(manifestPath, 'utf8')).toBe(incompleteText)
+    expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
   it('mints artifact overflow into both immutable markers with no dangling row', () => {
     const bytes = new Uint8Array(ARTIFACT_STEP_CAP_BYTES + 1).fill(97)
     const sourcePath = join(root, 'oversized.bin')
