@@ -282,20 +282,23 @@ describe('IDX-02 degrading knowledge reader', () => {
     try {
       expect(reader.getById(signIn.id)).toMatchObject({
         bundleId: signIn.id,
-        product: 'storefront-product',
+        product: slugBranch('Storefront Product'),
         status: 'candidate',
       })
       expect(reader.getById('fact-unknown-0123456789abcdef')).toBeUndefined()
       expect(reader.searchLexical('checkout now', { k: 1 })).toMatchObject([
-        { bundleId: checkout.id, product: 'checkout-product' },
+        { bundleId: checkout.id, product: slugBranch('Checkout Product') },
       ])
-      expect(reader.searchLexical('control', { product: 'storefront-product', k: 5 })).toMatchObject([
-        { bundleId: signIn.id, product: 'storefront-product' },
+      expect(reader.searchLexical('control', {
+        product: slugBranch('Storefront Product'),
+        k: 5,
+      })).toMatchObject([
+        { bundleId: signIn.id, product: slugBranch('Storefront Product') },
       ])
       expect(
         reader.lookupAnchor(
           { t: 'el', role: '  button ', name: '  SIGN   IN  ' },
-          { product: 'storefront-product', k: 1 },
+          { product: slugBranch('Storefront Product'), k: 1 },
         ),
       ).toMatchObject([{ bundleId: signIn.id }])
     } finally {
@@ -312,12 +315,12 @@ describe('IDX-02 degrading knowledge reader', () => {
 
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
-      expect(reader.searchLexical('#submit', { product: 'fts-product' }).map((hit) => hit.bundleId))
+      expect(reader.searchLexical('#submit', { product: slugBranch('FTS Product') }).map((hit) => hit.bundleId))
         .toEqual([exact.id])
-      expect(reader.searchLexical('#submit-cancel', { product: 'fts-product' }).map((hit) => hit.bundleId))
+      expect(reader.searchLexical('#submit-cancel', { product: slugBranch('FTS Product') }).map((hit) => hit.bundleId))
         .toEqual([longer.id])
       expect(
-        reader.searchLexical('literal OR checkout', { product: 'fts-product' })
+        reader.searchLexical('literal OR checkout', { product: slugBranch('FTS Product') })
           .map((hit) => hit.bundleId),
       ).toEqual([literalOperator.id])
     } finally {
@@ -342,8 +345,14 @@ describe('IDX-02 degrading knowledge reader', () => {
     try {
       expect(vecReader).toMatchObject({ source: 'index', vec: 'vec0' })
       expect(bruteReader).toMatchObject({ source: 'index', vec: 'brute' })
-      const vecHits = vecReader.searchDense(query, { product: 'dense-product', k: 3 })
-      const bruteHits = bruteReader.searchDense(query, { product: 'dense-product', k: 3 })
+      const vecHits = vecReader.searchDense(query, {
+        product: slugBranch('Dense Product'),
+        k: 3,
+      })
+      const bruteHits = bruteReader.searchDense(query, {
+        product: slugBranch('Dense Product'),
+        k: 3,
+      })
 
       expect(vecHits.map((hit) => hit.bundleId)).toEqual(bruteHits.map((hit) => hit.bundleId))
       expect(vecHits.map((hit) => hit.bundleId)).toEqual(
@@ -360,7 +369,10 @@ describe('IDX-02 degrading knowledge reader', () => {
 
     const scanReader = readerApi().openKnowledgeReader(join(root, 'absent-knowledge-root'))
     try {
-      expect(scanReader.searchDense(query, { product: 'dense-product', k: 3 })).toEqual([])
+      expect(scanReader.searchDense(query, {
+        product: slugBranch('Dense Product'),
+        k: 3,
+      })).toEqual([])
     } finally {
       scanReader.close()
     }
@@ -393,14 +405,19 @@ describe('IDX-02 degrading knowledge reader', () => {
       ).toEqual({ kind: 'appended' })
 
       expect(reader.getById(published.id)).toBeUndefined()
-      expect(reader.searchLexical('withdraw stale', { product: 'withdrawn-product' })).toEqual([])
+      expect(reader.searchLexical('withdraw stale', {
+        product: slugBranch('Withdrawn Product'),
+      })).toEqual([])
       expect(
         reader.lookupAnchor(
           { t: 'selector', literal: '#withdraw-stale' },
-          { product: 'withdrawn-product' },
+          { product: slugBranch('Withdrawn Product') },
         ),
       ).toEqual([])
-      expect(reader.searchDense(query, { product: 'withdrawn-product', k: 1 })).toEqual([])
+      expect(reader.searchDense(query, {
+        product: slugBranch('Withdrawn Product'),
+        k: 1,
+      })).toEqual([])
       expect(reader.recheck([indexedHit!])).toEqual([])
     } finally {
       reader.close()
