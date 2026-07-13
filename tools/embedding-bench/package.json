@@ -5,7 +5,7 @@
   "scripts": {
     "build-corpus": "node src/corpus.ts",
     "convert-floor": "node src/convert-floor.ts",
-    "bench": "node -e \"console.log('Benchmark runner arrives in Phase 376 Plan 09')\"",
+    "bench": "node src/report.ts",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
