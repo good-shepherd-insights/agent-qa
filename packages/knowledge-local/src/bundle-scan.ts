@@ -119,11 +119,20 @@ function textMatches(bundle: LoadedBundle, queryTokens: readonly string[]): bool
   return queryTokens.every((token) => searchableText.includes(token))
 }
 
-function anchorMatches(bundle: LoadedBundle, queryAnchor: string | undefined): boolean {
+/**
+ * D-16's rung-3 fallback lives here because a bundle scan is always vec:none.
+ * Phase 377 generalizes the same normalized-name widening into the §5.5.8 query helper.
+ */
+function anchorMatches(bundle: LoadedBundle, queryAnchor: Anchor | undefined): boolean {
   if (queryAnchor === undefined) return true
-  return bundle.frontmatter.anchors.some(
-    ({ normalized }) => canonicalJson(normalized) === queryAnchor,
-  )
+  const canonicalQuery = canonicalJson(queryAnchor)
+  return bundle.frontmatter.anchors.some(({ normalized }) => {
+    if (canonicalJson(normalized) === canonicalQuery) return true
+    return normalized.t === 'el'
+      && queryAnchor.t === 'el'
+      && normalized.role === queryAnchor.role
+      && normalized.name === queryAnchor.name
+  })
 }
 
 function servableHit(dir: EnumeratedBundleDir): KnowledgeHit | undefined {
@@ -143,7 +152,7 @@ export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
     .filter((token) => token !== '')
   const queryAnchor = opts.anchor === undefined
     ? undefined
-    : canonicalJson(normalizeAnchor(opts.anchor))
+    : normalizeAnchor(opts.anchor)
 
   const hits: KnowledgeHit[] = []
   for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {

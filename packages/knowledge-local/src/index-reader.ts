@@ -242,7 +242,9 @@ function scanReader(knowledgeRoot: string): KnowledgeReader {
       return scanBundles({ knowledgeRoot, text, ...opts })
     },
     lookupAnchor(anchor, opts = {}): KnowledgeHit[] {
-      return scanBundles({ knowledgeRoot, anchor, ...opts })
+      // D-16: vec:none is the only reader rung allowed to widen beyond full identity.
+      // Normalize through the schema authority before the scan compares role + name.
+      return scanBundles({ knowledgeRoot, anchor: normalizeAnchor(anchor), ...opts })
     },
     searchDense(): DenseHit[] {
       return []
