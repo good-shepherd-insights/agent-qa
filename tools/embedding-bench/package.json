@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build-corpus": "node src/corpus.ts",
     "convert-floor": "node src/convert-floor.ts",
     "bench": "node -e \"console.log('Benchmark runner arrives in Phase 376 Plan 09')\"",
     "test": "vitest run --passWithNoTests",
