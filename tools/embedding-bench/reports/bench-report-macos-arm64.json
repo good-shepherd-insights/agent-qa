@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-13T20:01:54.407Z",
+  "generatedAt": "2026-07-13T21:13:43.533Z",
   "platform": "darwin",
   "arch": "arm64",
   "inputs": {
     "candidates": {
       "path": "tools/embedding-bench/candidates.json",
-      "sha256": "6f5f5d5647971f5e2e46ebc189021a29eacfa674ee443aea79f42e1364fe0800"
+      "sha256": "58e46bdeba42ede6c2421368179156da2df5642afad37d645714a89012537641"
     },
     "corpus": {
       "path": "tools/embedding-bench/corpus/corpus.json",
@@ -753,6 +753,7 @@
       "dim": 384,
       "pooling": "mean",
       "normalize": true,
+      "max_tokens": 512,
       "query_prefix": "Represent this sentence for searching relevant passages: ",
       "doc_prefix": "",
       "prefixValidation": {
@@ -788,6 +789,7 @@
       "dim": 768,
       "pooling": "mean",
       "normalize": true,
+      "max_tokens": 512,
       "query_prefix": "",
       "doc_prefix": "",
       "prefixValidation": {
@@ -823,6 +825,7 @@
       "dim": 384,
       "pooling": "mean",
       "normalize": true,
+      "max_tokens": 512,
       "query_prefix": "",
       "doc_prefix": "",
       "prefixValidation": {
@@ -855,6 +858,7 @@
       "dim": 512,
       "pooling": "mean",
       "normalize": true,
+      "max_tokens": 512,
       "query_prefix": "",
       "doc_prefix": "",
       "prefixValidation": {
@@ -1487,7 +1491,7 @@
               0.28617185747540513,
               0.2105055756976632,
               0.46631406513428797,
-              -0.07241244217734943,
+              -0.16875510595414395,
               0.4128519339946135,
               0.48671586107443315,
               0.24709335566270496,
@@ -1500,7 +1504,7 @@
               0.42325561218277136,
               0.2502381660933196,
               0.28276990938506497,
-              -0.23081699570856296,
+              -0.153881189911016,
               0.28778305589356623,
               0.4000887150400207,
               0.22667860614202465,
@@ -1549,7 +1553,7 @@
                 "queries": 12,
                 "hitAt1": 0,
                 "hitAt3": 0,
-                "hitAt5": 0.16666666666666666
+                "hitAt5": 0
               },
               "automation-exercise": {
                 "queries": 6,
@@ -1574,7 +1578,7 @@
               "queries": 49,
               "hitAt1": 0.375,
               "hitAt3": 0.3942307692307692,
-              "hitAt5": 0.43589743589743585
+              "hitAt5": 0.3942307692307692
             }
           },
           "authored": {
@@ -1594,7 +1598,7 @@
               "example-web": {
                 "queries": 8,
                 "hitAt1": 0.25,
-                "hitAt3": 0.625,
+                "hitAt3": 0.5,
                 "hitAt5": 0.875
               },
               "google-maps": {
@@ -1607,7 +1611,7 @@
             "macro": {
               "queries": 32,
               "hitAt1": 0.15625,
-              "hitAt3": 0.34375,
+              "hitAt3": 0.3125,
               "hitAt5": 0.46875
             }
           }
@@ -1803,7 +1807,7 @@
               0.668070687997691,
               0.6677625705611554,
               0.6999643730938735,
-              0.7027402185568652,
+              0.7083095302300852,
               0.6984153422112029,
               0.6843317371062905,
               0.7127841111437333,
@@ -1816,7 +1820,7 @@
               0.7306197447829308,
               0.6885748125254899,
               0.6834804181445931,
-              0.7202056960535165,
+              0.7405389406063724,
               0.7250470375475296,
               0.72595513666503,
               0.727961536110647,
@@ -2107,7 +2111,7 @@
               0.016005655298073452,
               0.05613371208592071,
               0.10674487590572398,
-              0.04206217380936203,
+              0.06097554204836327,
               0.09089527720178099,
               0.08506838876937282,
               0.012784347710608492,
@@ -2120,7 +2124,7 @@
               0.2504477063513251,
               -0.057889899134236145,
               -0.08066851542623572,
-              -0.023196889444927933,
+              -0.04448311062906351,
               0.012464705285779133,
               0.011676128388651709,
               -0.03359491932423273,
@@ -2150,12 +2154,12 @@
         "topK": 5,
         "topKIterations": 25
       },
-      "warmModelLoadMs": 608.314458,
-      "singleDocumentDocsPerSecond": 64.830006,
-      "batchedDocsPerSecond": 85.919515,
-      "rssBytes": 343212032,
-      "bruteTopKMs": 0.346728,
-      "vec0TopKMs": 0.122327
+      "warmModelLoadMs": 159.419333,
+      "singleDocumentDocsPerSecond": 69.244715,
+      "batchedDocsPerSecond": 91.144584,
+      "rssBytes": 336789504,
+      "bruteTopKMs": 0.332068,
+      "vec0TopKMs": 0.125105
     },
     {
       "candidateId": "gte-modernbert-base",
@@ -2170,12 +2174,12 @@
         "topK": 5,
         "topKIterations": 25
       },
-      "warmModelLoadMs": 792.7405,
-      "singleDocumentDocsPerSecond": 10.40672,
-      "batchedDocsPerSecond": 20.479298,
-      "rssBytes": 563511296,
-      "bruteTopKMs": 0.62132,
-      "vec0TopKMs": 0.260868
+      "warmModelLoadMs": 952.016375,
+      "singleDocumentDocsPerSecond": 17.496008,
+      "batchedDocsPerSecond": 21.17505,
+      "rssBytes": 648462336,
+      "bruteTopKMs": 0.613762,
+      "vec0TopKMs": 0.232487
     },
     {
       "candidateId": "granite-embedding-small-english-r2",
@@ -2190,12 +2194,12 @@
         "topK": 5,
         "topKIterations": 25
       },
-      "warmModelLoadMs": 542.095625,
-      "singleDocumentDocsPerSecond": 35.766728,
-      "batchedDocsPerSecond": 63.513619,
-      "rssBytes": 472399872,
-      "bruteTopKMs": 0.357492,
-      "vec0TopKMs": 0.151918
+      "warmModelLoadMs": 520.086458,
+      "singleDocumentDocsPerSecond": 54.518579,
+      "batchedDocsPerSecond": 71.504206,
+      "rssBytes": 389218304,
+      "bruteTopKMs": 0.33079,
+      "vec0TopKMs": 0.124387
     },
     {
       "candidateId": "potion-retrieval-32m-static-floor",
@@ -2210,12 +2214,12 @@
         "topK": 5,
         "topKIterations": 25
       },
-      "warmModelLoadMs": 67.573166,
-      "singleDocumentDocsPerSecond": 1649.29179,
-      "batchedDocsPerSecond": 2525.320282,
-      "rssBytes": 193527808,
-      "bruteTopKMs": 0.426135,
-      "vec0TopKMs": 0.163783
+      "warmModelLoadMs": 57.328708,
+      "singleDocumentDocsPerSecond": 1907.956915,
+      "batchedDocsPerSecond": 2791.025458,
+      "rssBytes": 186368000,
+      "bruteTopKMs": 0.415047,
+      "vec0TopKMs": 0.17692
     }
   ],
   "calibration": {
