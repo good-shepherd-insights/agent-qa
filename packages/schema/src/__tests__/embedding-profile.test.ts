@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_EMBEDDING_PROFILE } from '../index'
+import { DEFAULT_EMBEDDING_PROFILE, STATIC_FLOOR_EMBEDDING_PROFILE } from '../index'
 
 describe('DEFAULT_EMBEDDING_PROFILE', () => {
   it('pins the ratified v51 embedding defaults', () => {
@@ -43,5 +43,37 @@ describe('DEFAULT_EMBEDDING_PROFILE', () => {
 
   it('pins the provisional tau_dense admission floor', () => {
     expect(DEFAULT_EMBEDDING_PROFILE.tau_dense).toBe(0.6)
+  })
+})
+
+describe('STATIC_FLOOR_EMBEDDING_PROFILE', () => {
+  it('pins the bundled potion retrieval floor', () => {
+    expect(STATIC_FLOOR_EMBEDDING_PROFILE).toEqual({
+      model_id: 'minishlab/potion-retrieval-32M',
+      revision: '6fc8051fab2a1e0ee76689cf08c853792ac285e7',
+      dim: 512,
+      dtype: 'q8',
+      pooling: 'mean',
+      normalize: true,
+      query_prefix: '',
+      doc_prefix: '',
+      backend: 'static',
+      session_options: {},
+      tau_dense: 0.6,
+    })
+  })
+
+  it('has an embedding identity distinct from the native default', () => {
+    expect({
+      model_id: STATIC_FLOOR_EMBEDDING_PROFILE.model_id,
+      revision: STATIC_FLOOR_EMBEDDING_PROFILE.revision,
+      dtype: STATIC_FLOOR_EMBEDDING_PROFILE.dtype,
+      dim: STATIC_FLOOR_EMBEDDING_PROFILE.dim,
+    }).not.toEqual({
+      model_id: DEFAULT_EMBEDDING_PROFILE.model_id,
+      revision: DEFAULT_EMBEDDING_PROFILE.revision,
+      dtype: DEFAULT_EMBEDDING_PROFILE.dtype,
+      dim: DEFAULT_EMBEDDING_PROFILE.dim,
+    })
   })
 })
