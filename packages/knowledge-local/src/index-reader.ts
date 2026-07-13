@@ -12,7 +12,6 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import {
   canonicalJson,
-  DEFAULT_EMBEDDING_PROFILE,
   normalizeAnchor,
 } from '@vostride/agent-qa-schema'
 import type { Anchor } from '@vostride/agent-qa-schema'
@@ -28,6 +27,7 @@ import {
   indexDbPath,
   openIndexReaderConnection,
   probeIndexHealth,
+  resolveActiveProfile,
   vecTableName,
 } from './index-open.js'
 import type { IndexReaderConnection, VecCapability } from './index-open.js'
@@ -260,6 +260,7 @@ function indexReader(
 ): KnowledgeReader {
   let closed = false
   const { db } = connection
+  const activeProfile = resolveActiveProfile(db)
 
   function recheckCurrent<THit extends KnowledgeHit>(
     hits: readonly THit[],
@@ -284,7 +285,7 @@ function indexReader(
       embedding.byteOffset,
       embedding.byteLength,
     )
-    const tableName = vecTableName(DEFAULT_EMBEDDING_PROFILE)
+    const tableName = vecTableName(activeProfile)
     const knn = db.prepare(`
       SELECT record_rowid, distance
       FROM ${tableName}

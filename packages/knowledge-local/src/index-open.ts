@@ -14,6 +14,7 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   canonicalJson,
   DEFAULT_EMBEDDING_PROFILE,
+  STATIC_FLOOR_EMBEDDING_PROFILE,
 } from '@vostride/agent-qa-schema'
 import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 
@@ -118,7 +119,47 @@ export function vecTableName(profile: EmbeddingProfile): string {
   return `vec_${identity}`
 }
 
-function bootstrapSchema(db: DatabaseSync, vec: VecCapability): void {
+/** Stable identity persisted in meta and used to select a closed-list profile. */
+export function embeddingProfileKey(profile: EmbeddingProfile): string {
+  return canonicalJson({
+    model_id: profile.model_id,
+    revision: profile.revision,
+    dtype: profile.dtype,
+    dim: profile.dim,
+  })
+}
+
+/**
+ * Resolve the one active profile authority from the derived index's meta stamp.
+ *
+ * This is RESEARCH Pattern 5 step 1: Plan 07 flips this stamp atomically. D-18
+ * keeps M2 selection closed to schema-owned constants, so absent, unknown, or
+ * pre-bootstrap metadata always falls back to the ratified default.
+ */
+export function resolveActiveProfile(db: DatabaseSync): EmbeddingProfile {
+  let stamp: string | undefined
+  try {
+    const row = db
+      .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+      .get()
+    stamp = typeof row?.v === 'string' ? row.v : undefined
+  } catch {
+    return DEFAULT_EMBEDDING_PROFILE
+  }
+
+  const knownProfiles = [
+    DEFAULT_EMBEDDING_PROFILE,
+    STATIC_FLOOR_EMBEDDING_PROFILE,
+  ] as const
+  return knownProfiles.find((profile) => embeddingProfileKey(profile) === stamp)
+    ?? DEFAULT_EMBEDDING_PROFILE
+}
+
+function bootstrapSchema(
+  db: DatabaseSync,
+  vec: VecCapability,
+  activeProfile: EmbeddingProfile,
+): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS records (
       record_rowid INTEGER PRIMARY KEY,
@@ -182,31 +223,25 @@ function bootstrapSchema(db: DatabaseSync, vec: VecCapability): void {
   `)
 
   if (vec === 'vec0') {
-    const tableName = vecTableName(DEFAULT_EMBEDDING_PROFILE)
+    const tableName = vecTableName(activeProfile)
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS ${tableName} USING vec0(
         record_rowid integer primary key,
         product text partition key,
-        embedding float[${DEFAULT_EMBEDDING_PROFILE.dim}] distance_metric=cosine
+        embedding float[${activeProfile.dim}] distance_metric=cosine
       );
     `)
   }
 }
 
-function stampMeta(db: DatabaseSync): void {
-  const profileIdentity = {
-    model_id: DEFAULT_EMBEDDING_PROFILE.model_id,
-    revision: DEFAULT_EMBEDDING_PROFILE.revision,
-    dtype: DEFAULT_EMBEDDING_PROFILE.dtype,
-    dim: DEFAULT_EMBEDDING_PROFILE.dim,
-  }
+function stampMeta(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
   const upsert = db.prepare(`
     INSERT INTO meta (k, v) VALUES (?, ?)
     ON CONFLICT(k) DO UPDATE SET v = excluded.v
   `)
 
   upsert.run('index_schema_version', String(INDEX_SCHEMA_VERSION))
-  upsert.run('embedding_profile', canonicalJson(profileIdentity))
+  upsert.run('embedding_profile', embeddingProfileKey(activeProfile))
   upsert.run('rendering_schema_version', String(INDEX_RENDERING_SCHEMA_VERSION))
 }
 
@@ -232,9 +267,10 @@ export function openIndexWriter(
 
   try {
     const vec = resolveVecCapability(db, opts.vecLoadablePath)
+    const activeProfile = resolveActiveProfile(db)
     db.exec('PRAGMA journal_mode=WAL')
-    bootstrapSchema(db, vec)
-    stampMeta(db)
+    bootstrapSchema(db, vec, activeProfile)
+    stampMeta(db, activeProfile)
 
     let closed = false
     return {

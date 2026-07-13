@@ -44,6 +44,7 @@ export type {
 } from './bundle-scan.js'
 export {
   CHECKPOINT_EVERY_N_BUNDLES,
+  embeddingProfileKey,
   INDEX_DB_FILE,
   INDEX_RENDERING_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
@@ -54,6 +55,7 @@ export {
   probeIndexHealth,
   READER_BUSY_TIMEOUT_MS,
   REQUIRED_INDEX_TABLES,
+  resolveActiveProfile,
   resolveVecCapability,
   vecTableName,
   WRITER_BUSY_TIMEOUT_MS,

@@ -38,7 +38,7 @@ function deterministicUnitVector(rendering: string, dim: number): Float32Array {
 
 /** Deterministic sha256-seeded, L2-normalized EmbedderPort fixture for index tests. */
 export function makeFakeEmbedder(
-  dim = DEFAULT_EMBEDDING_PROFILE.dim,
+  dim: number = DEFAULT_EMBEDDING_PROFILE.dim,
 ): EmbedderPort {
   return {
     async embedDocument(rendering: string): Promise<Float32Array> {

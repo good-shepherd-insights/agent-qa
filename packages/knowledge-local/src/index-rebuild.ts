@@ -14,10 +14,9 @@ import type { DatabaseSync } from 'node:sqlite'
 import {
   anchorGraphNode,
   canonicalJson,
-  DEFAULT_EMBEDDING_PROFILE,
   recordGraphNode,
 } from '@vostride/agent-qa-schema'
-import type { Platform } from '@vostride/agent-qa-schema'
+import type { EmbeddingProfile, Platform } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
@@ -26,6 +25,7 @@ import type { EmbedderPort } from './embedder-port.js'
 import {
   CHECKPOINT_EVERY_N_BUNDLES,
   openIndexWriter,
+  resolveActiveProfile,
   vecTableName,
 } from './index-open.js'
 import type { VecCapability } from './index-open.js'
@@ -72,10 +72,10 @@ function transaction(db: DatabaseSync, operation: () => void): void {
   }
 }
 
-function embeddingBuffer(vector: Float32Array): Buffer {
-  if (vector.length !== DEFAULT_EMBEDDING_PROFILE.dim) {
+function embeddingBuffer(vector: Float32Array, activeProfile: EmbeddingProfile): Buffer {
+  if (vector.length !== activeProfile.dim) {
     throw new RangeError(
-      `embedder returned ${vector.length} dimensions; expected ${DEFAULT_EMBEDDING_PROFILE.dim}`,
+      `embedder returned ${vector.length} dimensions; expected ${activeProfile.dim}`,
     )
   }
   return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength)
@@ -280,8 +280,9 @@ function storeEmbedding(
   product: string,
   recordRowid: number,
   vector: Float32Array,
+  activeProfile: EmbeddingProfile,
 ): void {
-  const bytes = embeddingBuffer(vector)
+  const bytes = embeddingBuffer(vector, activeProfile)
   db.prepare(`
     UPDATE records
     SET embedding = ?, embed_status = 'present'
@@ -289,7 +290,7 @@ function storeEmbedding(
   `).run(bytes, recordRowid)
 
   if (vec === 'vec0') {
-    const tableName = vecTableName(DEFAULT_EMBEDDING_PROFILE)
+    const tableName = vecTableName(activeProfile)
     db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`).run(BigInt(recordRowid))
     db.prepare(`
       INSERT INTO ${tableName} (record_rowid, product, embedding)
@@ -303,13 +304,14 @@ function projectBundle(
   vec: VecCapability,
   projected: ProjectedBundle,
   vector: Float32Array | undefined,
+  activeProfile: EmbeddingProfile,
 ): void {
   transaction(db, () => {
     const recordRowid = upsertRecord(db, projected.bundle, projected.product)
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
     if (vector !== undefined) {
-      storeEmbedding(db, vec, projected.product, recordRowid, vector)
+      storeEmbedding(db, vec, projected.product, recordRowid, vector, activeProfile)
     }
   })
 }
@@ -363,6 +365,7 @@ function removeMissingBundles(
   db: DatabaseSync,
   vec: VecCapability,
   seenBundleIds: ReadonlySet<string>,
+  activeProfile: EmbeddingProfile,
 ): number {
   const missing = db
     .prepare('SELECT record_rowid, bundle_id, kind FROM records ORDER BY record_rowid')
@@ -379,7 +382,7 @@ function removeMissingBundles(
     `)
     const deleteRecord = db.prepare('DELETE FROM records WHERE record_rowid = ?')
     const tableName = vec === 'vec0'
-      ? vecTableName(DEFAULT_EMBEDDING_PROFILE)
+      ? vecTableName(activeProfile)
       : undefined
     const deleteVec = tableName === undefined
       ? undefined
@@ -405,6 +408,7 @@ async function backfillPendingEmbeddings(
   db: DatabaseSync,
   vec: VecCapability,
   embedder: EmbedderPort | undefined,
+  activeProfile: EmbeddingProfile,
 ): Promise<number> {
   if (embedder === undefined) return 0
 
@@ -434,6 +438,7 @@ async function backfillPendingEmbeddings(
         String(row.product),
         Number(row.record_rowid),
         vector,
+        activeProfile,
       )
     })
     backfilled += 1
@@ -441,9 +446,13 @@ async function backfillPendingEmbeddings(
   return backfilled
 }
 
-function reconcileVecRows(db: DatabaseSync, vec: VecCapability): void {
+function reconcileVecRows(
+  db: DatabaseSync,
+  vec: VecCapability,
+  activeProfile: EmbeddingProfile,
+): void {
   if (vec !== 'vec0') return
-  const tableName = vecTableName(DEFAULT_EMBEDDING_PROFILE)
+  const tableName = vecTableName(activeProfile)
   const vecRowids = new Set(
     db
       .prepare(`SELECT record_rowid FROM ${tableName}`)
@@ -486,6 +495,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       ? {}
       : { vecLoadablePath: opts.vecLoadablePath },
   )
+  const activeProfile = resolveActiveProfile(writer.db)
   const report: RebuildReport = {
     projected: 0,
     skippedIncomplete: 0,
@@ -549,7 +559,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         }
       }
 
-      projectBundle(writer.db, writer.vec, item, vector)
+      projectBundle(writer.db, writer.vec, item, vector, activeProfile)
       projected.push(item)
       report.projected += 1
       if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
@@ -557,14 +567,20 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       }
     }
 
-    report.removed = removeMissingBundles(writer.db, writer.vec, seenBundleIds)
+    report.removed = removeMissingBundles(
+      writer.db,
+      writer.vec,
+      seenBundleIds,
+      activeProfile,
+    )
     emitRelationEdges(writer.db, relationSources)
     report.backfilled = await backfillPendingEmbeddings(
       writer.db,
       writer.vec,
       opts.embedder,
+      activeProfile,
     )
-    reconcileVecRows(writer.db, writer.vec)
+    reconcileVecRows(writer.db, writer.vec, activeProfile)
     clearRebuildRequest(opts.knowledgeRoot)
     return report
   } finally {
