@@ -25,6 +25,7 @@ export const LANGUAGE_MIX_RECORD =
   'English-only validated; multilingual unbenched; granite-multilingual-r2 is the documented escape hatch, benched when a real non-English app arrives.'
 
 const BASELINE_CANDIDATE_ID = 'bge-small-en-v1.5'
+const EXPECTED_CANDIDATE_COUNT = 4
 const DISPLACEMENT_MARGIN = 0.03
 const FLOOR_MARGIN = 0.1
 const COMPARISON_TOLERANCE = 1e-12
@@ -120,6 +121,18 @@ export interface EmitReportOptions {
   references: ReportReferences
 }
 
+export interface MergeReportInput {
+  path: string
+  sha256: string
+  report: RawBenchReport
+}
+
+export interface MergeReportOptions {
+  outputPath?: string
+  generatedAt?: string
+  inputs: readonly MergeReportInput[]
+}
+
 interface DistributionSummary {
   count: number
   min: number | null
@@ -128,6 +141,27 @@ interface DistributionSummary {
   p95: number | null
   max: number | null
 }
+
+interface MarkdownRenderOptions {
+  generatedAt?: string
+  platformSummary?: string
+  preCorpusLines?: readonly string[]
+  constantsLines?: readonly string[]
+  constantsNote?: string
+  ratification?: string
+}
+
+interface ExpectedPlatform {
+  platform: NodeJS.Platform
+  arch: string
+  label: string
+}
+
+const EXPECTED_PLATFORMS: readonly ExpectedPlatform[] = [
+  { platform: 'darwin', arch: 'arm64', label: 'macos-arm64 (informative)' },
+  { platform: 'linux', arch: 'x64', label: 'ubuntu-latest/linux-x64 (canonical)' },
+  { platform: 'win32', arch: 'x64', label: 'windows-latest/win-x64 (canonical)' },
+]
 
 function percentile(values: readonly number[], fraction: number): number | null {
   if (values.length === 0) return null
@@ -337,6 +371,83 @@ function renderConstantsRow(result: CandidateConstantsSuccess): string {
   return `| ${markdownCell(result.candidateId)} | ${result.platform}/${result.arch} | ${result.warmModelLoadMs.toFixed(3)} | ${result.singleDocumentDocsPerSecond.toFixed(3)} | ${result.batchedDocsPerSecond.toFixed(3)} | ${rssMib.toFixed(2)} | ${result.bruteTopKMs.toFixed(6)} | ${result.vec0TopKMs === null ? 'unavailable' : result.vec0TopKMs.toFixed(6)} |`
 }
 
+function constantValue(
+  result: CandidateConstantsSuccess,
+  metricName:
+    | 'warmModelLoadMs'
+    | 'singleDocumentDocsPerSecond'
+    | 'batchedDocsPerSecond'
+    | 'rssMib'
+    | 'bruteTopKMs'
+    | 'vec0TopKMs',
+): string {
+  switch (metricName) {
+    case 'warmModelLoadMs':
+      return result.warmModelLoadMs.toFixed(3)
+    case 'singleDocumentDocsPerSecond':
+      return result.singleDocumentDocsPerSecond.toFixed(3)
+    case 'batchedDocsPerSecond':
+      return result.batchedDocsPerSecond.toFixed(3)
+    case 'rssMib':
+      return (result.rssBytes / (1024 * 1024)).toFixed(2)
+    case 'bruteTopKMs':
+      return result.bruteTopKMs.toFixed(6)
+    case 'vec0TopKMs':
+      return result.vec0TopKMs === null
+        ? 'unavailable'
+        : result.vec0TopKMs.toFixed(6)
+  }
+}
+
+function successfulConstant(
+  input: MergeReportInput,
+  candidateId: string,
+): CandidateConstantsSuccess {
+  const result = input.report.constants.find(
+    (constant) => constant.candidateId === candidateId,
+  )
+  if (result === undefined) {
+    throw new Error(`${input.path} is missing constants for ${candidateId}`)
+  }
+  if (result.status === 'error') {
+    throw new Error(
+      `${input.path} constants failed for ${candidateId}: ${result.error.message}`,
+    )
+  }
+  return result
+}
+
+function renderMergedConstantsTable(
+  candidates: readonly BenchCandidate[],
+  inputs: readonly MergeReportInput[],
+): string[] {
+  const labels = EXPECTED_PLATFORMS.map(({ label }) => label)
+  const lines = [
+    `| Candidate | Metric | ${labels.join(' | ')} |`,
+    `|---|---|${labels.map(() => '---:').join('|')}|`,
+  ]
+  const metrics = [
+    ['warmModelLoadMs', 'Warm load ms'],
+    ['singleDocumentDocsPerSecond', 'Single docs/s'],
+    ['batchedDocsPerSecond', 'Batch docs/s'],
+    ['rssMib', 'RSS MiB'],
+    ['bruteTopKMs', 'Brute top-k ms'],
+    ['vec0TopKMs', 'vec0 top-k ms'],
+  ] as const
+
+  for (const candidate of candidates) {
+    const results = inputs.map((input) => successfulConstant(input, candidate.id))
+    for (const [metricName, label] of metrics) {
+      lines.push(
+        `| ${candidate.id} | ${label} | ${results
+          .map((result) => constantValue(result, metricName))
+          .join(' | ')} |`,
+      )
+    }
+  }
+  return lines
+}
+
 function renderDistributionTable(
   slice: 'recorded' | 'authored',
   bench: BenchRunResult,
@@ -360,13 +471,18 @@ function renderDistributionTable(
   return lines
 }
 
-function renderMarkdown(report: RawBenchReport): string {
+function renderMarkdown(
+  report: RawBenchReport,
+  options: MarkdownRenderOptions = {},
+): string {
   const lines: string[] = [
     '# Embedding Benchmark Report',
     '',
-    `Generated: ${report.generatedAt}`,
+    `Generated: ${options.generatedAt ?? report.generatedAt}`,
     '',
-    `Platform: ${report.platform}/${report.arch}`,
+    `Platform: ${options.platformSummary ?? `${report.platform}/${report.arch}`}`,
+    '',
+    ...(options.preCorpusLines ?? []),
     '',
     '## Corpus Manifest Summary',
     '',
@@ -417,9 +533,10 @@ function renderMarkdown(report: RawBenchReport): string {
     '',
     '## §5.1 Constants',
     '',
-    ...renderConstantsTable(report.constants),
+    ...(options.constantsLines ?? renderConstantsTable(report.constants)),
     '',
-    'Each candidate was measured in its own child process. vec0 is reported only when the sqlite-vec prebuild loaded; brute-force top-k is always measured.',
+    options.constantsNote ??
+      'Each candidate was measured in its own child process. vec0 is reported only when the sqlite-vec prebuild loaded; brute-force top-k is always measured.',
     '',
     '## Cosine Distributions and τ_dense Proposals',
     '',
@@ -464,6 +581,7 @@ function renderMarkdown(report: RawBenchReport): string {
     '',
     '## Ratification',
     '',
+    ...(options.ratification === undefined ? [] : [options.ratification, '']),
   )
   return `${lines.join('\n')}\n`
 }
@@ -509,6 +627,164 @@ export async function emitReport(options: EmitReportOptions): Promise<{
   return { jsonPath, markdownPath, report }
 }
 
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function validateMergeInput(
+  input: MergeReportInput,
+  expected: ExpectedPlatform,
+  reference: RawBenchReport,
+): void {
+  const { report } = input
+  if (report.schemaVersion !== 1) throw new Error(`${input.path} has an unknown schema`)
+  if (report.platform !== expected.platform || report.arch !== expected.arch) {
+    throw new Error(
+      `${input.path} reports ${report.platform}/${report.arch}; expected ${expected.platform}/${expected.arch}`,
+    )
+  }
+  for (const [label, actual, wanted] of [
+    ['input references', report.inputs, reference.inputs],
+    ['corpus manifest', report.corpusManifest, reference.corpusManifest],
+    ['candidate pins', report.candidatePins, reference.candidatePins],
+    ['document count', report.benchmark.documents, reference.benchmark.documents],
+    ['query counts', report.benchmark.queries, reference.benchmark.queries],
+    ['authored query provenance', report.authoredQueries, reference.authoredQueries],
+    ['decision rule', report.decisionRule, DECISION_RULE],
+  ] as const) {
+    if (!sameJson(actual, wanted)) throw new Error(`${input.path} ${label} drifted`)
+  }
+  if (report.languageMix !== LANGUAGE_MIX_RECORD) {
+    throw new Error(`${input.path} language-mix record drifted`)
+  }
+  if (report.candidatePins.length !== EXPECTED_CANDIDATE_COUNT) {
+    throw new Error(`${input.path} does not contain the four locked candidate pins`)
+  }
+  const expectedCandidateIds = report.candidatePins.map(({ id }) => id)
+  const actualCandidateIds = report.benchmark.candidates.map(
+    ({ candidateId }) => candidateId,
+  )
+  if (!sameJson(actualCandidateIds, expectedCandidateIds)) {
+    throw new Error(`${input.path} does not cover every candidate`)
+  }
+  for (const candidate of report.benchmark.candidates) {
+    if (candidate.status === 'error') {
+      throw new Error(
+        `${input.path} benchmark failed for ${candidate.candidateId}: ${candidate.error.message}`,
+      )
+    }
+    for (const sliceName of ['recorded', 'authored'] as const) {
+      const slice = candidate.slices[sliceName]
+      for (const [scope, metrics] of [
+        ['macro', slice.macro],
+        ...Object.entries(slice.perApp),
+      ] as const) {
+        for (const metricName of ['queries', 'hitAt1', 'hitAt3', 'hitAt5'] as const) {
+          if (!Number.isFinite(metrics[metricName])) {
+            throw new Error(
+              `${input.path} has a non-finite ${candidate.candidateId} ${sliceName} ${scope} ${metricName}`,
+            )
+          }
+        }
+      }
+      for (const pairSet of ['goldPairCosines', 'randomPairCosines'] as const) {
+        const values = candidate.distributions[sliceName][pairSet]
+        if (!Array.isArray(values) || values.length === 0 || values.some((value) => !Number.isFinite(value))) {
+          throw new Error(
+            `${input.path} has an invalid ${candidate.candidateId} ${sliceName} ${pairSet} distribution`,
+          )
+        }
+      }
+    }
+  }
+  if (report.constants.length !== reference.candidatePins.length) {
+    throw new Error(`${input.path} does not cover every candidate constant`)
+  }
+  for (const candidate of reference.candidatePins) {
+    const result = successfulConstant(input, candidate.id)
+    if (result.platform !== report.platform || result.arch !== report.arch) {
+      throw new Error(`${input.path} constants platform drifted for ${candidate.id}`)
+    }
+  }
+  const expectedCalibration = {
+    percentile: 0.05,
+    rounding: 'down-to-2-decimals',
+    proposals: tauProposals(report.benchmark),
+  }
+  if (!sameJson(report.calibration, expectedCalibration)) {
+    throw new Error(`${input.path} calibration is not mechanically derived`)
+  }
+  if (!sameJson(report.verdict, applyDecisionRule(report.candidatePins, report.benchmark))) {
+    throw new Error(`${input.path} verdict is not mechanically derived`)
+  }
+}
+
+function orderMergeInputs(inputs: readonly MergeReportInput[]): MergeReportInput[] {
+  if (inputs.length !== EXPECTED_PLATFORMS.length) {
+    throw new Error(
+      `merge requires ${EXPECTED_PLATFORMS.length} raw reports; received ${inputs.length}`,
+    )
+  }
+  return EXPECTED_PLATFORMS.map((expected) => {
+    const matches = inputs.filter(
+      ({ report }) =>
+        report.platform === expected.platform && report.arch === expected.arch,
+    )
+    if (matches.length !== 1) {
+      throw new Error(
+        `merge requires exactly one ${expected.platform}/${expected.arch} raw report`,
+      )
+    }
+    return matches[0]!
+  })
+}
+
+export async function mergeReports(options: MergeReportOptions): Promise<{
+  markdownPath: string
+  markdown: string
+}> {
+  const inputs = orderMergeInputs(options.inputs)
+  const localReport = inputs[0]!.report
+  for (let index = 0; index < inputs.length; index += 1) {
+    validateMergeInput(inputs[index]!, EXPECTED_PLATFORMS[index]!, localReport)
+  }
+  const mergedReport: RawBenchReport = {
+    ...localReport,
+    calibration: {
+      percentile: 0.05,
+      rounding: 'down-to-2-decimals',
+      proposals: tauProposals(localReport.benchmark),
+    },
+    decisionRule: DECISION_RULE,
+    verdict: applyDecisionRule(localReport.candidatePins, localReport.benchmark),
+    languageMix: LANGUAGE_MIX_RECORD,
+  }
+  const markdownPath = resolve(options.outputPath ?? 'REPORT.md')
+  const rawReportLines = [
+    '### Raw Platform Reports',
+    '',
+    '| Environment | Path | SHA-256 | Generated |',
+    '|---|---|---|---|',
+    ...inputs.map(
+      (input, index) =>
+        `| ${EXPECTED_PLATFORMS[index]!.label} | ${markdownCell(input.path)} | \`${input.sha256}\` | ${input.report.generatedAt} |`,
+    ),
+  ]
+  const markdown = renderMarkdown(mergedReport, {
+    generatedAt: options.generatedAt ?? new Date().toISOString(),
+    platformSummary:
+      'merged evidence — macos-arm64 informative; ubuntu-latest/linux-x64 and windows-latest/win-x64 canonical',
+    preCorpusLines: rawReportLines,
+    constantsLines: renderMergedConstantsTable(mergedReport.candidatePins, inputs),
+    constantsNote:
+      'Every candidate was measured in its own child process on each platform. Linux x64 and Windows x64 are the canonical §5.1 environments; macOS arm64 is informative.',
+    ratification: 'Pending human review in Plan 376-11.',
+  })
+  await mkdir(dirname(markdownPath), { recursive: true })
+  await writeFile(markdownPath, markdown, 'utf8')
+  return { markdownPath, markdown }
+}
+
 function digest(raw: string): string {
   return createHash('sha256').update(raw).digest('hex')
 }
@@ -518,11 +794,21 @@ async function readJson<T>(url: URL): Promise<{ raw: string; value: T }> {
   return { raw, value: JSON.parse(raw) as T }
 }
 
-function parseOutputPath(args: readonly string[]): string | undefined {
+type CliOptions =
+  | { mode: 'run'; outputPath?: string }
+  | { mode: 'merge'; outputPath?: string; inputPaths: string[] }
+
+function parseCliOptions(args: readonly string[]): CliOptions {
   let outputPath: string | undefined
+  let merge = false
+  const inputPaths: string[] = []
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!
     if (argument === '--') continue
+    if (argument === '--merge') {
+      merge = true
+      continue
+    }
     if (argument === '--report') {
       outputPath = args[index + 1]
       if (outputPath === undefined) throw new TypeError('--report requires a path')
@@ -534,12 +820,34 @@ function parseOutputPath(args: readonly string[]): string | undefined {
       if (outputPath.length === 0) throw new TypeError('--report requires a path')
       continue
     }
+    if (merge && !argument.startsWith('--')) {
+      inputPaths.push(argument)
+      continue
+    }
     throw new TypeError(`unknown argument: ${argument}`)
   }
-  return outputPath
+  if (!merge) return { mode: 'run', outputPath }
+  if (inputPaths.length === 0) throw new TypeError('--merge requires raw report paths')
+  return { mode: 'merge', outputPath, inputPaths }
 }
 
 async function runCli(): Promise<void> {
+  const cli = parseCliOptions(process.argv.slice(2))
+  if (cli.mode === 'merge') {
+    const inputs = await Promise.all(
+      cli.inputPaths.map(async (path): Promise<MergeReportInput> => {
+        const raw = await readFile(resolve(path), 'utf8')
+        return {
+          path,
+          sha256: digest(raw),
+          report: JSON.parse(raw) as RawBenchReport,
+        }
+      }),
+    )
+    const merged = await mergeReports({ outputPath: cli.outputPath, inputs })
+    process.stdout.write(`${JSON.stringify({ markdown: merged.markdownPath })}\n`)
+    return
+  }
   const candidateInput = await readJson<BenchCandidate[]>(
     new URL('../candidates.json', import.meta.url),
   )
@@ -569,7 +877,7 @@ async function runCli(): Promise<void> {
   })
   const measured = await constants.measureAllConstants(candidateInput.value)
   const emitted = await emitReport({
-    outputPath: parseOutputPath(process.argv.slice(2)),
+    outputPath: cli.outputPath,
     candidates: candidateInput.value,
     bench,
     constants: measured,
