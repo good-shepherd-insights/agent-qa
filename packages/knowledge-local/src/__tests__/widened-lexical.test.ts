@@ -11,6 +11,7 @@ import {
   openKnowledgeReader,
   publishBundle,
   rebuildIndex,
+  scanBundles,
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
@@ -136,5 +137,18 @@ describe('D-16 widened lexical-only matching', () => {
       lexicalReader.close()
       denseReader.close()
     }
+  })
+
+  it('searches canonical normalized anchors without losing raw-anchor text', () => {
+    const published = publish()
+
+    // The normalized form drops the trailing badge; only its canonical JSON has this atom.
+    expect(
+      scanBundles({ knowledgeRoot, text: '"name":"badge"' }).map((hit) => hit.bundleId),
+    ).toEqual([published.id])
+
+    // The trailing badge survives only in the raw anchor and remains searchable.
+    expect(scanBundles({ knowledgeRoot, text: '(7)' }).map((hit) => hit.bundleId))
+      .toEqual([published.id])
   })
 })
