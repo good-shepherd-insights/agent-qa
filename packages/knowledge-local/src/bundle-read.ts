@@ -1,6 +1,7 @@
 // The D-03 read face is the self-sufficiency oracle for committed bundles and Phase 375's
 // projection source. It strictly parses disk-owned contracts, verifies every committed digest,
 // and composes the schema fold; the LLM never supplies trust, counters, status, or validity.
+// Manifest identity and immutable semantics are re-derived across files rather than trusted.
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -9,6 +10,7 @@ import { basename, join } from 'node:path'
 import {
   BundleOutcomeEventSchema,
   VersionGuardError,
+  canonicalJson,
   computeMutableStateHash,
   foldBundleTrust,
   guardArtifactsIndex,
@@ -16,6 +18,8 @@ import {
   guardBundleProvenance,
   guardBundleRelations,
   parseRecordMarkdown,
+  renderEmbeddingInput,
+  verifyManifestIdentity,
 } from '@vostride/agent-qa-schema'
 import type {
   ArtifactsIndex,
@@ -173,6 +177,71 @@ function readDigest(bundleDir: string, relPath: string, violations: string[]): s
   }
 }
 
+function verifyManifestBindings(
+  bundleDir: string,
+  manifest: BundleManifest,
+  violations: string[],
+): void {
+  try {
+    const record = parseRecordMarkdown(readFileSync(join(bundleDir, 'record.md'), 'utf8'))
+    const { frontmatter } = record
+
+    if (frontmatter.id !== manifest.id) {
+      violations.push('record.md: id mismatch with manifest.json')
+    }
+    if (frontmatter.kind !== manifest.identityCore.kind) {
+      violations.push('record.md: kind mismatch with manifest.identityCore')
+    }
+    if ((frontmatter.subtype ?? null) !== manifest.identityCore.subtype) {
+      violations.push('record.md: subtype mismatch with manifest.identityCore')
+    }
+    if (canonicalJson(frontmatter.scope) !== canonicalJson(manifest.identityCore.scope)) {
+      violations.push('record.md: scope mismatch with manifest.identityCore')
+    }
+
+    const primaryAnchor = frontmatter.anchors[0]?.normalized
+    if (
+      primaryAnchor === undefined ||
+      canonicalJson(primaryAnchor) !== canonicalJson(manifest.identityCore.primaryAnchor)
+    ) {
+      violations.push('record.md: primary anchor mismatch with manifest.identityCore')
+    }
+    if (frontmatter.createdAtOrdinal !== manifest.createdAtOrdinal) {
+      violations.push('record.md: createdAtOrdinal mismatch with manifest.json')
+    }
+    if (frontmatter.originClass !== manifest.originClass) {
+      violations.push('record.md: originClass mismatch with manifest.json')
+    }
+    if (frontmatter.evidenceIncomplete !== manifest.evidenceIncomplete) {
+      violations.push('record.md: evidenceIncomplete mismatch with manifest.json')
+    }
+
+    const embeddingInput = renderEmbeddingInput({
+      summary: record.summary,
+      body: record.body,
+      anchors: frontmatter.anchors.map(({ raw }) => raw),
+    })
+    if (embeddingInput !== manifest.embeddingInput) {
+      violations.push('record.md: embeddingInput mismatch with manifest.json')
+    }
+  } catch (error) {
+    violations.push(`record.md: immutable cross-checks unavailable (${errorMessage(error)})`)
+  }
+
+  try {
+    const provenance = guardBundleProvenance(
+      JSON.parse(readFileSync(join(bundleDir, 'provenance.json'), 'utf8')),
+    )
+    if (provenance.originClass !== manifest.originClass) {
+      violations.push('provenance.json: originClass mismatch with manifest.json')
+    }
+  } catch (error) {
+    violations.push(
+      `provenance.json: immutable cross-checks unavailable (${errorMessage(error)})`,
+    )
+  }
+}
+
 export function verifyBundleIntegrity(bundleDir: string): IntegrityReport {
   const violations: string[] = []
   let manifest: BundleManifest
@@ -187,6 +256,11 @@ export function verifyBundleIntegrity(bundleDir: string): IntegrityReport {
       violations: [`manifest.json: invalid or unreadable (${errorMessage(error)})`],
     }
   }
+
+  for (const violation of verifyManifestIdentity(manifest)) {
+    violations.push(`manifest.json: ${violation}`)
+  }
+  verifyManifestBindings(bundleDir, manifest, violations)
 
   if (manifest.complete !== true) {
     violations.push('manifest.json: bundle is incomplete')
