@@ -39,6 +39,8 @@ const ASSET_FILES = [
   'golden-vectors.json',
   'manifest.json',
 ] as const
+const GOLDEN_COSINE_FLOOR = 0.99
+const NORMALIZED_LENGTH_TOLERANCE = 1e-5
 
 const temporaryRoots: string[] = []
 
@@ -61,6 +63,14 @@ function cosine(left: ArrayLike<number>, right: ArrayLike<number>): number {
     rightSquared += rightValue * rightValue
   }
   return dot / Math.sqrt(leftSquared * rightSquared)
+}
+
+function vectorLength(vector: ArrayLike<number>): number {
+  let squaredLength = 0
+  for (let index = 0; index < vector.length; index += 1) {
+    squaredLength += vector[index]! * vector[index]!
+  }
+  return Math.sqrt(squaredLength)
 }
 
 function copyAssets(): string {
@@ -92,8 +102,12 @@ describe('static floor embedder', () => {
 
       expect(document).toHaveLength(golden.dimension)
       expect(query).toEqual(document)
-      expect(cosine(document, testCase.vector)).toBeGreaterThanOrEqual(0.99)
-      expect(cosine(document, document)).toBeCloseTo(1, 6)
+      expect(cosine(document, testCase.vector)).toBeGreaterThanOrEqual(
+        GOLDEN_COSINE_FLOOR,
+      )
+      expect(Math.abs(vectorLength(document) - 1)).toBeLessThanOrEqual(
+        NORMALIZED_LENGTH_TOLERANCE,
+      )
     }
   })
 
@@ -103,6 +117,16 @@ describe('static floor embedder', () => {
 
     expect(second).toBe(first)
     expect(first).toMatchObject({ vocabularySize: 63_091, dimension: 512 })
+  })
+
+  it('defers asset access until the first embedding call', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'knowledge-floor-lazy-'))
+    temporaryRoots.push(root)
+    const embedder = createFloorEmbedder({ assetsDir: join(root, 'missing') })
+
+    await expect(embedder.embedQuery('lazy floor')).rejects.toBeInstanceOf(
+      FloorAssetLoadError,
+    )
   })
 
   it('refuses a digest-corrupt binary with a typed load error', () => {
