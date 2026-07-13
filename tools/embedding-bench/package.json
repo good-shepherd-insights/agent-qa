@@ -1,0 +1,22 @@
+{
+  "name": "embedding-bench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "convert-floor": "node src/convert-floor.ts",
+    "bench": "node -e \"console.log('Benchmark harness arrives in Phase 376 Plan 04')\"",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "0.1.3",
+    "@vostride/agent-qa-eval": "workspace:*",
+    "@vostride/agent-qa-knowledge-local": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "~24.12.2",
+    "typescript": "~6.0.3",
+    "vitest": "~4.1.5"
+  }
+}
