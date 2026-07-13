@@ -30,6 +30,27 @@ export { appendOutcomeEvent, appendRelation } from './bundle-append.js'
 export type { AppendOutcome } from './bundle-append.js'
 export { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 export type { IntegrityReport, LoadedBundle, LoadBundleOutcome } from './bundle-read.js'
+export {
+  CHECKPOINT_EVERY_N_BUNDLES,
+  INDEX_DB_FILE,
+  INDEX_RENDERING_SCHEMA_VERSION,
+  INDEX_SCHEMA_VERSION,
+  indexDbPath,
+  MIN_READABLE_INDEX_SCHEMA_VERSION,
+  openIndexReaderConnection,
+  openIndexWriter,
+  probeIndexHealth,
+  READER_BUSY_TIMEOUT_MS,
+  resolveVecCapability,
+  vecTableName,
+  WRITER_BUSY_TIMEOUT_MS,
+} from './index-open.js'
+export type {
+  IndexHealth,
+  IndexReaderConnection,
+  IndexWriterHandle,
+  VecCapability,
+} from './index-open.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
