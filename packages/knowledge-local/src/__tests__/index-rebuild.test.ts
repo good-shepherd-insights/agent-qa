@@ -350,6 +350,29 @@ describe('IDX-01 derived-index rebuild projection', () => {
     }
   })
 
+  it('refuses syntactically valid bundle content whose committed digest no longer matches', async () => {
+    const published = publishNamed('Tamper Product', 'Digest guarded')
+    const recordPath = join(published.dir, 'record.md')
+    const recordText = readFileSync(recordPath, 'utf8')
+    writeFileSync(
+      recordPath,
+      recordText.replace('Digest guarded control', 'Tampered but parseable control'),
+      'utf8',
+    )
+
+    const report = await rebuildApi().rebuildIndex({ knowledgeRoot })
+    expect(report.projected).toBe(0)
+    expect(report.scanIssues).toHaveLength(1)
+    expect(report.scanIssues[0]).toContain('integrity')
+
+    const reader = openReader()
+    try {
+      expect(rows(reader.db, 'SELECT bundle_id FROM records')).toEqual([])
+    } finally {
+      reader.db.close()
+    }
+  })
+
   it('projects only a mutable-hash change, preserves rowids, and consumes the rebuild marker', async () => {
     const changed = publishNamed('Incremental Product', 'Incremental changed')
     const unchanged = publishNamed('Stable Product', 'Incremental stable')
