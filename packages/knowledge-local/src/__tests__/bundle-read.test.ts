@@ -223,6 +223,24 @@ describe('bundle read, integrity, and disk-driven trust (D-03/D-08)', () => {
     )
   })
 
+  it('rejects a schema-valid createdAtOrdinal edit', () => {
+    const current = manifest()
+    writeFileSync(
+      join(bundleDir, 'manifest.json'),
+      committedFileText({
+        ...current,
+        createdAtOrdinal: current.createdAtOrdinal + 1,
+      }),
+    )
+
+    const report = verifyBundleIntegrity(bundleDir)
+
+    expect(report.ok).toBe(false)
+    expect(report.violations).toEqual(
+      expect.arrayContaining([expect.stringContaining('createdAtOrdinal')]),
+    )
+  })
+
   it('rejects a schema-valid originClass edit against record and provenance', () => {
     const current = manifest()
     writeFileSync(
