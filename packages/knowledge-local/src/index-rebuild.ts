@@ -7,6 +7,7 @@
  * projection faces. Relation edges are emitted in a second pass so bundle ordering cannot change
  * dangling-target behavior.
  */
+import { basename } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -27,6 +28,7 @@ import {
   vecTableName,
 } from './index-open.js'
 import type { VecCapability } from './index-open.js'
+import { clearRebuildRequest } from './rebuild-marker.js'
 
 export interface RebuildReport {
   projected: number
@@ -350,7 +352,126 @@ function emitRelationEdges(db: DatabaseSync, projected: readonly ProjectedBundle
   })
 }
 
-/** Rebuild every currently loaded bundle projection; Task 2 adds the incremental selectors. */
+function removeMissingBundles(
+  db: DatabaseSync,
+  vec: VecCapability,
+  seenBundleIds: ReadonlySet<string>,
+): number {
+  const missing = db
+    .prepare('SELECT record_rowid, bundle_id, kind FROM records ORDER BY record_rowid')
+    .all()
+    .filter((row) => !seenBundleIds.has(String(row.bundle_id)))
+  if (missing.length === 0) return 0
+
+  transaction(db, () => {
+    const deleteFts = db.prepare('DELETE FROM fts_records WHERE rowid = ?')
+    const deleteAnchors = db.prepare('DELETE FROM anchors WHERE record_rowid = ?')
+    const deleteEdges = db.prepare(`
+      DELETE FROM graph_edges
+      WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
+    `)
+    const deleteRecord = db.prepare('DELETE FROM records WHERE record_rowid = ?')
+    const tableName = vec === 'vec0'
+      ? vecTableName(DEFAULT_EMBEDDING_PROFILE)
+      : undefined
+    const deleteVec = tableName === undefined
+      ? undefined
+      : db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`)
+
+    for (const row of missing) {
+      const recordRowid = Number(row.record_rowid)
+      const bundleId = String(row.bundle_id)
+      const kind = row.kind as LoadedBundle['frontmatter']['kind']
+      const recordNode = recordGraphNode(kind, bundleId)
+      deleteFts.run(recordRowid)
+      deleteAnchors.run(recordRowid)
+      deleteEdges.run(recordRowid, recordNode.nodeId, recordNode.nodeId)
+      deleteVec?.run(BigInt(recordRowid))
+      deleteRecord.run(recordRowid)
+    }
+  })
+
+  return missing.length
+}
+
+async function backfillPendingEmbeddings(
+  db: DatabaseSync,
+  vec: VecCapability,
+  embedder: EmbedderPort | undefined,
+): Promise<number> {
+  if (embedder === undefined) return 0
+
+  const pending = db
+    .prepare(`
+      SELECT record_rowid, product, bundle_id, embedding_input
+      FROM records
+      WHERE embed_status != 'present'
+      ORDER BY record_rowid
+    `)
+    .all()
+  let backfilled = 0
+  for (const row of pending) {
+    let vector: Float32Array
+    try {
+      vector = await embedder.embedDocument(String(row.embedding_input))
+    } catch (error) {
+      throw new Error(
+        `embedding ${String(row.bundle_id)} failed: ${errorMessage(error)}`,
+        { cause: error },
+      )
+    }
+    transaction(db, () => {
+      storeEmbedding(
+        db,
+        vec,
+        String(row.product),
+        Number(row.record_rowid),
+        vector,
+      )
+    })
+    backfilled += 1
+  }
+  return backfilled
+}
+
+function reconcileVecRows(db: DatabaseSync, vec: VecCapability): void {
+  if (vec !== 'vec0') return
+  const tableName = vecTableName(DEFAULT_EMBEDDING_PROFILE)
+  const vecRowids = new Set(
+    db
+      .prepare(`SELECT record_rowid FROM ${tableName}`)
+      .all()
+      .map((row) => Number(row.record_rowid)),
+  )
+  const canonical = db
+    .prepare(`
+      SELECT record_rowid, product, embedding
+      FROM records
+      WHERE embedding IS NOT NULL
+      ORDER BY record_rowid
+    `)
+    .all()
+  const canonicalRowids = new Set(canonical.map((row) => Number(row.record_rowid)))
+
+  transaction(db, () => {
+    const deleteVec = db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`)
+    for (const recordRowid of vecRowids) {
+      if (!canonicalRowids.has(recordRowid)) deleteVec.run(BigInt(recordRowid))
+    }
+
+    const insertVec = db.prepare(`
+      INSERT INTO ${tableName} (record_rowid, product, embedding)
+      VALUES (?, ?, ?)
+    `)
+    for (const row of canonical) {
+      const recordRowid = Number(row.record_rowid)
+      if (vecRowids.has(recordRowid)) continue
+      insertVec.run(BigInt(recordRowid), String(row.product), row.embedding as Uint8Array)
+    }
+  })
+}
+
+/** Hash-selected projection plus the independent D-02 backfill and D-10 reconciliation passes. */
 export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildReport> {
   const writer = openIndexWriter(
     opts.knowledgeRoot,
@@ -367,24 +488,40 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     vec: writer.vec,
   }
   const projected: ProjectedBundle[] = []
+  const seenBundleIds = new Set<string>()
   let processedBundles = 0
 
   try {
     for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
       const outcome = loadBundle(entry.dir)
       if (outcome.kind === 'incomplete') {
+        seenBundleIds.add(basename(entry.dir))
         report.skippedIncomplete += 1
         continue
       }
       if (outcome.kind !== 'loaded') {
+        seenBundleIds.add(basename(entry.dir))
         const reason = 'reason' in outcome ? `: ${outcome.reason}` : ''
         report.scanIssues.push(`${entry.dir}: ${outcome.kind}${reason}`)
         continue
       }
 
+      seenBundleIds.add(outcome.bundle.manifest.id)
       const current = writer.db
-        .prepare('SELECT embed_status FROM records WHERE bundle_id = ?')
+        .prepare(`
+          SELECT mutable_state_hash, embed_status
+          FROM records
+          WHERE bundle_id = ?
+        `)
         .get(outcome.bundle.manifest.id)
+      processedBundles += 1
+      if (current?.mutable_state_hash === outcome.bundle.manifest.mutableStateHash) {
+        if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
+          writer.checkpointPassive()
+        }
+        continue
+      }
+
       let vector: Float32Array | undefined
       if (opts.embedder !== undefined && current?.embed_status !== 'present') {
         try {
@@ -401,13 +538,20 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       projectBundle(writer.db, writer.vec, item, vector)
       projected.push(item)
       report.projected += 1
-      processedBundles += 1
       if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
         writer.checkpointPassive()
       }
     }
 
+    report.removed = removeMissingBundles(writer.db, writer.vec, seenBundleIds)
     emitRelationEdges(writer.db, projected)
+    report.backfilled = await backfillPendingEmbeddings(
+      writer.db,
+      writer.vec,
+      opts.embedder,
+    )
+    reconcileVecRows(writer.db, writer.vec)
+    clearRebuildRequest(opts.knowledgeRoot)
     return report
   } finally {
     writer.close()
