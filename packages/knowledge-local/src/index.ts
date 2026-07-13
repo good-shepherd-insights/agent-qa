@@ -78,6 +78,14 @@ export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
 export type { EmbedderPort } from './embedder-port.js'
 export {
+  createNativeEmbedder,
+  NativeEmbeddingDimensionError,
+} from './embedder-native.js'
+export {
+  MODEL_CACHE_DIR_ENV_VAR,
+  resolveModelCacheDir,
+} from './model-cache-dir.js'
+export {
   clearRebuildRequest,
   readRebuildRequest,
   REBUILD_MARKER_FILE,
