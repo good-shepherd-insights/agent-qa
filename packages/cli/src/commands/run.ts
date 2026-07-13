@@ -24,6 +24,7 @@ import {
   resolveRunExecutionContext,
   buildRunPorts,
   buildScreenshotCompressor,
+  resolveBuildTagSetting,
   resolveRunBuildOrdinal,
   createSuiteLifecycle,
   buildSuiteMemberExecutor,
@@ -296,6 +297,7 @@ function resolveDashboardVideoDir(
 interface RunOptions {
   browser?: string
   platform?: string
+  buildTag?: string
   headless?: boolean
   disableCache?: boolean
   saveCache?: boolean
@@ -2052,7 +2054,12 @@ async function executeSuites(
   const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
   const runProduct = preparedSuites.find((p) => p.product)?.product ?? 'unknown'
   const executionContext = resolveRunExecutionContext()
-  const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct })
+  const buildTag = resolveBuildTagSetting({
+    flag: opts.buildTag,
+    env: process.env.AGENT_QA_BUILD_TAG,
+    use: config.use,
+  })
+  const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct, buildTag })
   const runPorts = buildRunPorts({ configDir, runId })
 
   // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
@@ -2184,6 +2191,10 @@ export function createRunCommand(): Command {
     .argument('[patterns...]', 'glob patterns for test files')
     .option('--browser <name>', 'override browser (chromium, firefox, webkit)')
     .option('--platform <name>', 'filter by platform (web, android, ios)')
+    .option(
+      '--build-tag <tag>',
+      'name the app-under-test build for the buildTag-to-ordinal mapping (env: AGENT_QA_BUILD_TAG; config: use.buildTag)',
+    )
     .option('--headless', 'run in headless mode')
     .option('--no-headless', 'run in headed mode')
     .option('--disable-cache', 'bypass action cache for this run')
@@ -3334,7 +3345,16 @@ export function createRunCommand(): Command {
           }
         } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
         const singleExecutionContext = resolveRunExecutionContext()
-        const singleBuildOrdinal = await resolveRunBuildOrdinal({ configDir, product: singleRunProduct })
+        const singleBuildTag = resolveBuildTagSetting({
+          flag: opts.buildTag,
+          env: process.env.AGENT_QA_BUILD_TAG,
+          use: config.use,
+        })
+        const singleBuildOrdinal = await resolveRunBuildOrdinal({
+          configDir,
+          product: singleRunProduct,
+          buildTag: singleBuildTag,
+        })
         const singleRunPorts = buildRunPorts({ configDir, runId: singleRunId })
 
         const executor: MemberTestExecutor = async (member, ctx) => {
