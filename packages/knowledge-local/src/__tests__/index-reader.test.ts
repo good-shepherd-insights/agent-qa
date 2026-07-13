@@ -1,13 +1,18 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
+import {
+  BundleOutcomeEventSchema,
+  slugBranch,
+} from '@vostride/agent-qa-schema'
 import type { Anchor } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { appendOutcomeEvent } from '../bundle-append.js'
 import {
   publishBundle,
   type BundleStoreConfig,
@@ -20,6 +25,7 @@ import {
   makeScreenStateFixture,
   scaffoldKnowledgeRoot,
 } from './fixtures/bundle-fixture.js'
+import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 
 type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 
@@ -107,13 +113,41 @@ describe('IDX-02 degrading knowledge reader', () => {
     }
   }
 
-  function publish(overrides: Partial<PublishBundleInput> = {}): PublishedBundle {
-    const outcome = publishBundle(config(), input(overrides))
+  function publishFor(
+    productKey: string,
+    overrides: Partial<PublishBundleInput> = {},
+  ): PublishedBundle {
+    const outcome = publishBundle(config(productKey), input(overrides))
     expect(outcome.kind).toBe('published')
     if (outcome.kind !== 'published') {
       throw new Error(`expected publication, got ${outcome.kind}`)
     }
     return outcome
+  }
+
+  function publish(overrides: Partial<PublishBundleInput> = {}): PublishedBundle {
+    return publishFor('storefront', overrides)
+  }
+
+  function publishNamed(
+    productKey: string,
+    label: string,
+    selector = `#${slugBranch(label)}`,
+  ): PublishedBundle {
+    const key = slugBranch(label)
+    return publishFor(productKey, {
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: label },
+          { t: 'page', route: `/${key}` },
+          { t: 'selector', literal: selector },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: slugBranch(productKey) },
+        summary: `${label} control`,
+        body: `Selecting ${label} performs the recorded action.`,
+      }),
+    })
   }
 
   function expectMarker(reason: knowledgeLocal.RebuildReason): void {
@@ -237,5 +271,170 @@ describe('IDX-02 degrading knowledge reader', () => {
     expect(() => readerApi().openKnowledgeReader(knowledgeRoot).close()).not.toThrow()
     expect(() => readerApi().openKnowledgeReader(knowledgeRoot).close()).not.toThrow()
     expectMarker('absent')
+  })
+
+  it('serves indexed get-by-id, BM25 lexical, and canonical anchor lookups', async () => {
+    const signIn = publishNamed('Storefront Product', 'Sign in', '#sign-in')
+    const checkout = publishNamed('Checkout Product', 'Checkout now', '#checkout-now')
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(reader.getById(signIn.id)).toMatchObject({
+        bundleId: signIn.id,
+        product: 'storefront-product',
+        status: 'candidate',
+      })
+      expect(reader.getById('fact-unknown-0123456789abcdef')).toBeUndefined()
+      expect(reader.searchLexical('checkout now', { k: 1 })).toMatchObject([
+        { bundleId: checkout.id, product: 'checkout-product' },
+      ])
+      expect(reader.searchLexical('control', { product: 'storefront-product', k: 5 })).toMatchObject([
+        { bundleId: signIn.id, product: 'storefront-product' },
+      ])
+      expect(
+        reader.lookupAnchor(
+          { t: 'el', role: '  button ', name: '  SIGN   IN  ' },
+          { product: 'storefront-product', k: 1 },
+        ),
+      ).toMatchObject([{ bundleId: signIn.id }])
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('quotes every FTS token so identity atoms stay exact and MATCH syntax is inert', async () => {
+    const exact = publishNamed('FTS Product', 'Submit exact', '#submit')
+    const longer = publishNamed('FTS Product', 'Submit cancel', '#submit-cancel')
+    const literalOperator = publishNamed('FTS Product', 'Literal OR checkout', '#literal-or')
+    publishNamed('FTS Product', 'Literal checkout', '#literal-checkout')
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(reader.searchLexical('#submit', { product: 'fts-product' }).map((hit) => hit.bundleId))
+        .toEqual([exact.id])
+      expect(reader.searchLexical('#submit-cancel', { product: 'fts-product' }).map((hit) => hit.bundleId))
+        .toEqual([longer.id])
+      expect(
+        reader.searchLexical('literal OR checkout', { product: 'fts-product' })
+          .map((hit) => hit.bundleId),
+      ).toEqual([literalOperator.id])
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('returns the same dense ordering through vec0 and canonical-BLOB brute search', async () => {
+    const embedder = makeFakeEmbedder()
+    const first = publishNamed('Dense Product', 'Dense first')
+    const second = publishNamed('Dense Product', 'Dense second')
+    const third = publishNamed('Dense Product', 'Dense third')
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    const target = knowledgeLocal.scanBundleById({ knowledgeRoot, bundleId: second.id })
+    expect(target).toBeDefined()
+    const query = await embedder.embedQuery(target!.embeddingInput)
+
+    const vecReader = readerApi().openKnowledgeReader(knowledgeRoot)
+    const bruteReader = readerApi().openKnowledgeReader(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      expect(vecReader).toMatchObject({ source: 'index', vec: 'vec0' })
+      expect(bruteReader).toMatchObject({ source: 'index', vec: 'brute' })
+      const vecHits = vecReader.searchDense(query, { product: 'dense-product', k: 3 })
+      const bruteHits = bruteReader.searchDense(query, { product: 'dense-product', k: 3 })
+
+      expect(vecHits.map((hit) => hit.bundleId)).toEqual(bruteHits.map((hit) => hit.bundleId))
+      expect(vecHits.map((hit) => hit.bundleId)).toEqual(
+        expect.arrayContaining([first.id, second.id, third.id]),
+      )
+      expect(vecHits[0]?.bundleId).toBe(second.id)
+      for (let index = 0; index < vecHits.length; index += 1) {
+        expect(vecHits[index]!.distance).toBeCloseTo(bruteHits[index]!.distance, 5)
+      }
+    } finally {
+      vecReader.close()
+      bruteReader.close()
+    }
+
+    const scanReader = readerApi().openKnowledgeReader(join(root, 'absent-knowledge-root'))
+    try {
+      expect(scanReader.searchDense(query, { product: 'dense-product', k: 3 })).toEqual([])
+    } finally {
+      scanReader.close()
+    }
+  })
+
+  it('rechecks every indexed result path and drops a post-rebuild supersession', async () => {
+    const embedder = makeFakeEmbedder()
+    const published = publishNamed('Withdrawn Product', 'Withdraw stale fact', '#withdraw-stale')
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    const source = knowledgeLocal.scanBundleById({ knowledgeRoot, bundleId: published.id })
+    expect(source).toBeDefined()
+    const query = await embedder.embedQuery(source!.embeddingInput)
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+
+    try {
+      const indexedHit = reader.getById(published.id)
+      expect(indexedHit).toBeDefined()
+      expect(
+        appendOutcomeEvent(
+          config('Withdrawn Product'),
+          published.id,
+          BundleOutcomeEventSchema.parse({
+            type: 'superseded',
+            evidenceToken: 'index-reader-superseded',
+            curationJobId: 'index-reader-superseded-job',
+            buildOrdinal: 43,
+            byRecordId: 'fact-replacement-0123456789abcdef',
+          }),
+        ),
+      ).toEqual({ kind: 'appended' })
+
+      expect(reader.getById(published.id)).toBeUndefined()
+      expect(reader.searchLexical('withdraw stale', { product: 'withdrawn-product' })).toEqual([])
+      expect(
+        reader.lookupAnchor(
+          { t: 'selector', literal: '#withdraw-stale' },
+          { product: 'withdrawn-product' },
+        ),
+      ).toEqual([])
+      expect(reader.searchDense(query, { product: 'withdrawn-product', k: 1 })).toEqual([])
+      expect(reader.recheck([indexedHit!])).toEqual([])
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('refreshes bundle-derived fields and rejects an integrity-tampered bundle', async () => {
+    const published = publishNamed('Authority Product', 'Authoritative state')
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      writer.db.prepare(`
+        UPDATE records
+        SET status = 'active', trust = 0.99, opened_at_ordinal = 999
+        WHERE bundle_id = ?
+      `).run(published.id)
+    } finally {
+      writer.close()
+    }
+
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(reader.getById(published.id)).toMatchObject({
+        bundleId: published.id,
+        status: 'candidate',
+        validity: { openedAtOrdinal: 42 },
+      })
+      expect(reader.getById(published.id)?.trust).not.toBe(0.99)
+
+      const recordPath = join(published.dir, 'record.md')
+      writeFileSync(recordPath, `${readFileSync(recordPath, 'utf8')}\nunauthorized mutation\n`, 'utf8')
+      expect(reader.getById(published.id)).toBeUndefined()
+    } finally {
+      reader.close()
+    }
   })
 })
