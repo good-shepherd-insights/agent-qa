@@ -18,7 +18,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { Platform } from '@vostride/agent-qa-schema'
 
-import { deriveBundleTrust, loadBundle } from './bundle-read.js'
+import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
 import type { EmbedderPort } from './embedder-port.js'
@@ -507,6 +507,11 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       }
 
       seenBundleIds.add(outcome.bundle.manifest.id)
+      const integrity = verifyBundleIntegrity(entry.dir)
+      if (!integrity.ok) {
+        report.scanIssues.push(`${entry.dir}: integrity: ${integrity.violations.join('; ')}`)
+        continue
+      }
       const current = writer.db
         .prepare(`
           SELECT mutable_state_hash, embed_status
