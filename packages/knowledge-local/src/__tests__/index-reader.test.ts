@@ -182,6 +182,54 @@ describe('IDX-02 degrading knowledge reader', () => {
     }
   })
 
+  it('degrades a structurally incomplete index at open and serves from bundles', async () => {
+    const published = publish()
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const db = new DatabaseSync(knowledgeLocal.indexDbPath(knowledgeRoot))
+    try {
+      db.exec('DROP TABLE fts_records')
+    } finally {
+      db.close()
+    }
+
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(reader).toMatchObject({ source: 'scan', vec: 'none' })
+      expectMarker('corrupt')
+      expect(reader.searchLexical('sign in')).toMatchObject([
+        { bundleId: published.id, product: 'storefront' },
+      ])
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('permanently degrades a live reader when an index query fails', async () => {
+    const published = publish()
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+    expect(reader).toMatchObject({ source: 'index' })
+
+    const db = new DatabaseSync(knowledgeLocal.indexDbPath(knowledgeRoot))
+    try {
+      db.exec('DROP TABLE fts_records')
+    } finally {
+      db.close()
+    }
+
+    try {
+      expect(() => reader.searchLexical('sign in')).not.toThrow()
+      expect(reader.searchLexical('sign in')).toMatchObject([
+        { bundleId: published.id, product: 'storefront' },
+      ])
+      expectMarker('corrupt')
+      expect(reader).toMatchObject({ source: 'scan', vec: 'none' })
+      expect(reader.getById(published.id)).toMatchObject({ bundleId: published.id })
+    } finally {
+      expect(() => reader.close()).not.toThrow()
+    }
+  })
+
   it('degrades an absent index, requests rebuild, and serves from bundles', () => {
     const published = publish()
 
