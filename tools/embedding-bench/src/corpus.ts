@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { cassetteSchema } from '@vostride/agent-qa-eval'
@@ -31,8 +31,8 @@ export interface RecordedQuery {
 export interface CorpusSource {
   path: string
   sha256: string
-  app: string
-  granularity: 'leaf'
+  apps: string[]
+  granularity: 'leaf' | 'procedure'
   kind: 'canonical' | 'extracted' | 'fixture'
 }
 
@@ -247,22 +247,39 @@ export async function buildCorpus(options: {
       throw new TypeError(`invalid cassette JSON at ${sourcePath}`, { cause: error })
     }
     const cassette = cassetteSchema.parse(json)
-    if (cassette.granularity !== 'leaf') {
-      throw new TypeError(`corpus sources must be leaf cassettes: ${sourcePath}`)
+    const records =
+      cassette.granularity === 'leaf'
+        ? [{ id: cassette.id, record: cassette }]
+        : cassette.steps.flatMap((step) =>
+            step.kind === 'decision'
+              ? [
+                  {
+                    id: `${cassette.id}#step-${step.stepIndex}-d${step.decisionOrdinal}`,
+                    record: step.record,
+                  },
+                ]
+              : [],
+          )
+    if (records.length === 0) {
+      throw new TypeError(`cassette contains no recorded decisions: ${sourcePath}`)
     }
-    const app = inferApp(sourcePath, cassette.input)
-    processRecord(cassette, {
-      cassetteId: cassette.id,
-      sourcePath,
-      app,
-      documents,
-      queries,
-    })
+    const sourceApps = new Set<string>()
+    for (const entry of records) {
+      const app = inferApp(sourcePath, entry.record.input)
+      sourceApps.add(app)
+      processRecord(entry.record, {
+        cassetteId: entry.id,
+        sourcePath,
+        app,
+        documents,
+        queries,
+      })
+    }
     sources.push({
       path: sourcePath,
       sha256: sha256hex(raw),
-      app,
-      granularity: 'leaf',
+      apps: [...sourceApps].sort(),
+      granularity: cassette.granularity,
       kind: sourceKind(sourcePath),
     })
   }
@@ -284,7 +301,7 @@ export async function buildCorpus(options: {
       left.id.localeCompare(right.id),
   )
 
-  const appNames = new Set<string>(sources.map((source) => source.app))
+  const appNames = new Set<string>(sources.flatMap((source) => source.apps))
   const perApp: CorpusManifest['perApp'] = {}
   for (const app of [...appNames].sort()) {
     perApp[app] = {
@@ -309,7 +326,7 @@ export async function buildCorpus(options: {
   }
 }
 
-async function findLeafCassettes(root: string): Promise<string[]> {
+async function findCassettes(root: string): Promise<string[]> {
   const rootPath = resolve(root)
   const rootStat = await stat(rootPath)
   if (rootStat.isFile()) return [rootPath]
@@ -322,11 +339,7 @@ async function findLeafCassettes(root: string): Promise<string[]> {
       const path = join(directory, entry.name)
       if (entry.isDirectory()) {
         await visit(path)
-      } else if (
-        entry.isFile() &&
-        entry.name === 'cassette.json' &&
-        basename(dirname(path)).endsWith('-leaf')
-      ) {
+      } else if (entry.isFile() && entry.name === 'cassette.json') {
         found.push(path)
       }
     }
@@ -373,7 +386,7 @@ function parseCliArgs(args: readonly string[]): { cassetteRoots: string[]; outDi
 
 async function runCli(args: readonly string[]): Promise<void> {
   const { cassetteRoots, outDir } = parseCliArgs(args)
-  const paths = (await Promise.all(cassetteRoots.map(findLeafCassettes))).flat()
+  const paths = (await Promise.all(cassetteRoots.map(findCassettes))).flat()
   const built = await buildCorpus({ cassettePaths: paths })
   await mkdir(outDir, { recursive: true })
   await Promise.all([
@@ -391,7 +404,7 @@ async function runCli(args: readonly string[]): Promise<void> {
     ),
   ])
   console.log(
-    `built ${built.documents.length} documents and ${built.recordedQueries.length} recorded queries from ${built.manifest.sources.length} leaf cassettes`,
+    `built ${built.documents.length} documents and ${built.recordedQueries.length} recorded queries from ${built.manifest.sources.length} cassettes`,
   )
 }
 
