@@ -19,6 +19,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { appendOutcomeEvent } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import {
   publishBundle,
@@ -26,6 +27,7 @@ import {
   type PublishBundleInput,
   type PublishBundleOutcome,
 } from '../bundle-publish.js'
+import { readRebuildRequest, requestRebuild } from '../rebuild-marker.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
@@ -118,6 +120,22 @@ describe('IDX-01 derived-index rebuild projection', () => {
       throw new Error(`expected publication, got ${outcome.kind}`)
     }
     return outcome
+  }
+
+  function publishNamed(productKey: string, label: string): PublishedBundle {
+    const key = slugBranch(label)
+    return publish(productKey, {
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: label },
+          { t: 'page', route: `/${key}` },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key },
+        summary: `${label} control`,
+        body: `Selecting ${label} performs the recorded action.`,
+      }),
+    })
   }
 
   function openReader(): knowledgeLocal.IndexReaderConnection {
@@ -327,6 +345,233 @@ describe('IDX-01 derived-index rebuild projection', () => {
         ),
       )
       expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(Buffer.from(expected.buffer))
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('projects only a mutable-hash change, preserves rowids, and consumes the rebuild marker', async () => {
+    const changed = publishNamed('Incremental Product', 'Incremental changed')
+    const unchanged = publishNamed('Stable Product', 'Incremental stable')
+    expect(await rebuildApi().rebuildIndex({ knowledgeRoot })).toMatchObject({ projected: 2 })
+
+    const beforeReader = openReader()
+    const before = new Map(
+      rows(
+        beforeReader.db,
+        'SELECT bundle_id, record_rowid, mutable_state_hash FROM records',
+      ).map((row) => [String(row.bundle_id), row]),
+    )
+    beforeReader.db.close()
+
+    expect(
+      appendOutcomeEvent(
+        config('Incremental Product'),
+        changed.id,
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'index-incremental-confirmed',
+          curationJobId: 'index-incremental-confirmed-job',
+          buildOrdinal: 50,
+          origin: 'agent-verified',
+        }),
+      ),
+    ).toEqual({ kind: 'appended' })
+    requestRebuild({
+      knowledgeRoot,
+      reason: 'corrupt',
+      detail: 'fixture requests a successful rebuild',
+    })
+    expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+
+    const report = await rebuildApi().rebuildIndex({ knowledgeRoot })
+    expect(report).toMatchObject({ projected: 1, backfilled: 0, removed: 0 })
+    expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+
+    const afterReader = openReader()
+    try {
+      const after = new Map(
+        rows(
+          afterReader.db,
+          `SELECT bundle_id, record_rowid, mutable_state_hash, confirmed
+           FROM records`,
+        ).map((row) => [String(row.bundle_id), row]),
+      )
+      expect(after.get(changed.id)?.record_rowid).toBe(before.get(changed.id)?.record_rowid)
+      expect(after.get(unchanged.id)?.record_rowid).toBe(before.get(unchanged.id)?.record_rowid)
+      expect(after.get(changed.id)?.mutable_state_hash).not.toBe(
+        before.get(changed.id)?.mutable_state_hash,
+      )
+      expect(after.get(changed.id)?.confirmed).toBe(1)
+      expect(after.get(unchanged.id)?.mutable_state_hash).toBe(
+        before.get(unchanged.id)?.mutable_state_hash,
+      )
+    } finally {
+      afterReader.db.close()
+    }
+  })
+
+  it('backfills every pending vector independently when no bundle hash changed', async () => {
+    publishNamed('Backfill Product A', 'Backfill first')
+    publishNamed('Backfill Product B', 'Backfill second')
+    const first = await rebuildApi().rebuildIndex({ knowledgeRoot })
+    expect(first).toMatchObject({ projected: 2, backfilled: 0 })
+
+    const pendingReader = openReader()
+    const pendingRows = rows(
+      pendingReader.db,
+      'SELECT record_rowid, embed_status, embedding FROM records ORDER BY record_rowid',
+    )
+    pendingReader.db.close()
+    expect(pendingRows.map((row) => row.embed_status)).toEqual(['pending', 'pending'])
+    expect(pendingRows.every((row) => row.embedding === null)).toBe(true)
+
+    const base = makeFakeEmbedder()
+    let documentCalls = 0
+    const countingEmbedder: knowledgeLocal.EmbedderPort = {
+      async embedDocument(rendering) {
+        documentCalls += 1
+        return base.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => base.embedQuery(rendering),
+    }
+    const second = await rebuildApi().rebuildIndex({
+      knowledgeRoot,
+      embedder: countingEmbedder,
+    })
+    expect(second).toMatchObject({ projected: 0, backfilled: 2, removed: 0 })
+    expect(documentCalls).toBe(2)
+
+    const presentReader = openReader()
+    try {
+      const presentRows = rows(
+        presentReader.db,
+        'SELECT record_rowid, embed_status, embedding FROM records ORDER BY record_rowid',
+      )
+      expect(presentRows.map((row) => row.record_rowid)).toEqual(
+        pendingRows.map((row) => row.record_rowid),
+      )
+      expect(presentRows.every((row) => row.embed_status === 'present')).toBe(true)
+      expect(presentRows.every((row) => row.embedding instanceof Uint8Array)).toBe(true)
+      const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+      expect(rows(presentReader.db, `SELECT record_rowid FROM ${tableName}`)).toHaveLength(2)
+    } finally {
+      presentReader.db.close()
+    }
+  })
+
+  it('removes deleted bundle projections, incoming edges, vec rows, and orphan nodes', async () => {
+    const target = publishNamed('Removal Target Product', 'Removal target')
+    const source = publish('Removal Source Product', {
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Removal source' },
+          { t: 'page', route: '/removal-source' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'removal-source' },
+      }),
+      relations: [
+        {
+          type: 'relates-to',
+          targetId: target.id,
+          addedAtOrdinal: 51,
+          curationJobId: 'index-removal-relation-job',
+        },
+      ],
+    })
+    expect(
+      await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() }),
+    ).toMatchObject({ projected: 2, backfilled: 0, removed: 0 })
+
+    const beforeReader = openReader()
+    const targetRow = beforeReader.db
+      .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+      .get(target.id)
+    expect(targetRow).toBeDefined()
+    beforeReader.db.close()
+
+    rmSync(target.dir, { recursive: true, force: true })
+    const report = await rebuildApi().rebuildIndex({ knowledgeRoot })
+    expect(report).toMatchObject({ projected: 0, removed: 1, backfilled: 0 })
+
+    const afterReader = openReader()
+    try {
+      const targetNodeId = graphNodeId('fact', target.id)
+      expect(
+        afterReader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(target.id),
+      ).toBeUndefined()
+      expect(
+        afterReader.db
+          .prepare('SELECT 1 FROM fts_records WHERE rowid = ?')
+          .get(Number(targetRow?.record_rowid)),
+      ).toBeUndefined()
+      expect(
+        afterReader.db
+          .prepare('SELECT 1 FROM anchors WHERE record_rowid = ?')
+          .get(Number(targetRow?.record_rowid)),
+      ).toBeUndefined()
+      const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+      expect(
+        afterReader.db
+          .prepare(`SELECT 1 FROM ${tableName} WHERE record_rowid = ?`)
+          .get(BigInt(Number(targetRow?.record_rowid))),
+      ).toBeUndefined()
+      expect(
+        afterReader.db
+          .prepare(
+            `SELECT 1 FROM graph_edges
+             WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?`,
+          )
+          .get(Number(targetRow?.record_rowid), targetNodeId, targetNodeId),
+      ).toBeUndefined()
+      expect(
+        afterReader.db.prepare('SELECT 1 FROM graph_nodes WHERE node_id = ?').get(targetNodeId),
+      ).toBeUndefined()
+      expect(
+        afterReader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(source.id),
+      ).toBeDefined()
+    } finally {
+      afterReader.db.close()
+    }
+  })
+
+  it('reconciles canonical brute BLOBs into vec0 without calling the embedder again', async () => {
+    const published = publishNamed('Reconcile Product', 'Reconcile vector')
+    const brute = await rebuildApi().rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+      vecLoadablePath: '/nonexistent/forced-brute-vec0.dylib',
+    })
+    expect(brute).toMatchObject({ vec: 'brute', projected: 1, backfilled: 0 })
+
+    const throwingEmbedder: knowledgeLocal.EmbedderPort = {
+      async embedDocument() {
+        throw new Error('reconciliation must not call embedDocument')
+      },
+      async embedQuery() {
+        throw new Error('reconciliation must not call embedQuery')
+      },
+    }
+    const reconciled = await rebuildApi().rebuildIndex({
+      knowledgeRoot,
+      embedder: throwingEmbedder,
+    })
+    expect(reconciled).toMatchObject({ vec: 'vec0', projected: 0, backfilled: 0 })
+
+    const reader = openReader()
+    try {
+      const record = reader.db
+        .prepare('SELECT record_rowid, embed_status, embedding FROM records WHERE bundle_id = ?')
+        .get(published.id)
+      expect(record).toMatchObject({ embed_status: 'present' })
+      expect(record?.embedding).toBeInstanceOf(Uint8Array)
+      const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+      expect(
+        reader.db
+          .prepare(`SELECT product FROM ${tableName} WHERE record_rowid = ?`)
+          .get(BigInt(Number(record?.record_rowid))),
+      ).toEqual({ product: slugBranch('Reconcile Product') })
     } finally {
       reader.db.close()
     }
