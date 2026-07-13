@@ -63,6 +63,8 @@ export type {
   IndexWriterHandle,
   VecCapability,
 } from './index-open.js'
+export { rebuildIndex } from './index-rebuild.js'
+export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
 export type { EmbedderPort } from './embedder-port.js'
 export {
   clearRebuildRequest,
