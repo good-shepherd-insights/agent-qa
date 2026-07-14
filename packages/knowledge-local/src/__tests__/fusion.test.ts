@@ -107,6 +107,35 @@ describe('weighted reciprocal-rank fusion (D-06/D-07)', () => {
       rawScores: { bm25Positive: 0.75, cosine: 0.62, anchorExact: true },
     })
   })
+
+  it('keeps direct identity and strongest raw evidence when expansion finds the same bundle', () => {
+    const ranked = fuseWeightedRrf([
+      {
+        weight: 1,
+        ranked: [
+          candidate('r_shared', {
+            source: 'direct',
+            rawScores: { bm25Positive: 0.7, anchorExact: true },
+          }),
+        ],
+      },
+      {
+        weight: 1,
+        ranked: [
+          candidate('r_shared', {
+            source: 'expanded',
+            rawScores: { cosine: 0.4, anchorExact: false },
+          }),
+        ],
+      },
+    ])
+
+    expect(ranked[0]).toMatchObject({
+      source: 'direct',
+      rawScores: { bm25Positive: 0.7, cosine: 0.4, anchorExact: true },
+      fusedScore: 1 / 61 + 0.5 / 61,
+    })
+  })
 })
 
 describe('pre-fusion admission (D-06)', () => {
