@@ -27,6 +27,18 @@ export const MIN_READABLE_INDEX_SCHEMA_VERSION = 1
 export const INDEX_RENDERING_SCHEMA_VERSION = 1
 
 /**
+ * One-time derived-embedding invalidation epoch.
+ *
+ * Epoch 1 records the Phase 376 pre-lock-to-locked repair. The former writer could restamp an
+ * index to the locked profile while preserving same-dimension bytes from the old revision, which
+ * destroyed the mismatch evidence needed to prove their provenance. An absent or stale epoch
+ * therefore forces invalidation before the marker's first upsert in the same transaction; a crash
+ * rolls both back and a retry repeats the idempotent transition. Increment only if a future defect
+ * again requires every persisted index to perform a one-time full re-embed.
+ */
+const EMBEDDING_TRANSITION_EPOCH = 1
+
+/**
  * Projection tables every readable index must expose.
  *
  * Per-profile vec tables are deliberately excluded: vec0 is a conditional
@@ -140,6 +152,17 @@ function readEmbeddingProfileStamp(db: DatabaseSync): string | undefined {
   }
 }
 
+function readTransitionEpoch(db: DatabaseSync): string | undefined {
+  try {
+    const row = db
+      .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+      .get()
+    return typeof row?.v === 'string' ? row.v : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Resolve the one active profile authority from the derived index's meta stamp.
  *
@@ -246,17 +269,18 @@ function stampMeta(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
   upsert.run('index_schema_version', String(INDEX_SCHEMA_VERSION))
   upsert.run('embedding_profile', embeddingProfileKey(activeProfile))
   upsert.run('rendering_schema_version', String(INDEX_RENDERING_SCHEMA_VERSION))
+  upsert.run('embedding_transition_epoch', String(EMBEDDING_TRANSITION_EPOCH))
 }
 
 /**
- * Close the pre-lock D-07 relabeling gap before a new profile stamp is written.
+ * Close the pre-lock D-07 relabeling gap before a profile stamp and epoch are written.
  *
- * Writer open previously replaced the former `main` revision stamp with the locked revision while
- * leaving canonical bytes present. Ordinary rebuild then skipped those rows and reconciliation
- * copied them into the locked revision's vec table. Pending rows instead ride D-19's benign-lag
- * path through the unchanged backfill selector. Old revision vec tables remain disposable
- * projections, embed-cache rows remain inert under their revision key, and no embedding work runs
- * during open, so a write never stalls on the transition.
+ * The transition also fires when the stamp already matches but the current epoch is absent: the
+ * former writer could pair the locked stamp with old-revision, same-dimension `present` bytes and
+ * erase every mismatch clue. The only sound repair is one full invalidation behind a durable
+ * marker; genuinely healthy locked indexes pay the same one-time re-embed cost. Pending rows ride
+ * D-19's unchanged benign-lag backfill selector. Old revision vec tables remain disposable,
+ * embed-cache rows stay inert under revision keys, and no embedding work runs at open.
  */
 function invalidateMismatchedProfileEmbeddings(db: DatabaseSync): void {
   db.prepare(`
@@ -289,10 +313,14 @@ export function openIndexWriter(
   try {
     const vec = resolveVecCapability(db, opts.vecLoadablePath)
     const storedStamp = readEmbeddingProfileStamp(db)
+    const storedEpoch = readTransitionEpoch(db)
     const activeProfile = resolveActiveProfile(db)
     db.exec('PRAGMA journal_mode=WAL')
     bootstrapSchema(db, vec, activeProfile)
-    if (storedStamp !== embeddingProfileKey(activeProfile)) {
+    if (
+      storedStamp !== embeddingProfileKey(activeProfile)
+      || storedEpoch !== String(EMBEDDING_TRANSITION_EPOCH)
+    ) {
       db.exec('BEGIN IMMEDIATE')
       try {
         invalidateMismatchedProfileEmbeddings(db)
