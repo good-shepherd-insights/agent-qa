@@ -152,9 +152,16 @@ describe('createNativeEmbedder', () => {
       },
     )
     transformers.pipeline.mockResolvedValue(extractor)
-    const selectedProfile = profile({ dim: 2 })
+    const selectedProfile = profile({
+      dim: 2,
+      doc_prefix: 'document: ',
+      query_prefix: 'query: ',
+    })
 
-    await createNativeEmbedder({ profile: selectedProfile, allowDownload: false })
+    const accepted = await createNativeEmbedder({
+      profile: selectedProfile,
+      allowDownload: false,
+    })
     const failure = await createNativeEmbedder({
       profile: selectedProfile,
       allowDownload: false,
@@ -168,6 +175,23 @@ describe('createNativeEmbedder', () => {
     expect(transformers.pipeline).toHaveBeenCalledTimes(1)
     expect(extractor.tokenizer._tokenizerConfig).toBe(tokenizerConfig)
     expect(tokenizerConfig.model_max_length).toBe(8_192)
+
+    await expect(accepted.embedDocument('checkout button')).resolves.toEqual(
+      new Float32Array([1, 0]),
+    )
+    await expect(accepted.embedQuery('find checkout')).resolves.toEqual(
+      new Float32Array([1, 0]),
+    )
+    expect(extractor).toHaveBeenNthCalledWith(1, 'document: checkout button', {
+      pooling: 'mean',
+      normalize: true,
+    })
+    expect(extractor).toHaveBeenNthCalledWith(2, 'query: find checkout', {
+      pooling: 'mean',
+      normalize: true,
+    })
+    expect(extractor.tokenizer._tokenizerConfig).toBe(tokenizerConfig)
+    expect(tokenizerConfig.model_max_length).toBe(8_192)
   })
 
   it('shares one bounded pipeline for repeated callers with the same token budget', async () => {
@@ -179,7 +203,12 @@ describe('createNativeEmbedder', () => {
     transformers.pipeline.mockResolvedValue(extractor)
     const selectedProfile = profile({ dim: 2 })
 
-    await Promise.all([
+    const first = await createNativeEmbedder({
+      profile: selectedProfile,
+      allowDownload: false,
+      maxTokens: 512,
+    })
+    const [second, third] = await Promise.all([
       createNativeEmbedder({
         profile: selectedProfile,
         allowDownload: false,
@@ -192,7 +221,14 @@ describe('createNativeEmbedder', () => {
       }),
     ])
 
+    await Promise.all([
+      first.embedDocument('first'),
+      second.embedDocument('second'),
+      third.embedQuery('third'),
+    ])
+
     expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(extractor).toHaveBeenCalledTimes(3)
     expect(extractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
   })
 
@@ -244,21 +280,35 @@ describe('createNativeEmbedder', () => {
       { tokenizer: { _tokenizerConfig: uncappedTokenizerConfig } },
     )
     const cappedExtractor = Object.assign(
-      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      vi.fn().mockResolvedValue({ data: new Float32Array([0, 1]) }),
       { tokenizer: { _tokenizerConfig: cappedTokenizerConfig } },
     )
     transformers.pipeline
       .mockResolvedValueOnce(uncappedExtractor)
       .mockResolvedValueOnce(cappedExtractor)
+    const uncappedProfile = profile({ dim: 2 })
+    const cappedProfile = {
+      ...uncappedProfile,
+      revision: `${uncappedProfile.revision}-independent`,
+    }
 
-    await createNativeEmbedder({ profile: profile({ dim: 2 }), allowDownload: false })
-    await createNativeEmbedder({
-      profile: profile({ dim: 2 }),
+    const uncapped = await createNativeEmbedder({
+      profile: uncappedProfile,
+      allowDownload: false,
+    })
+    const capped = await createNativeEmbedder({
+      profile: cappedProfile,
       allowDownload: false,
       maxTokens: 512,
     })
 
+    await expect(uncapped.embedDocument('uncapped')).resolves.toEqual(
+      new Float32Array([1, 0]),
+    )
+    await expect(capped.embedDocument('capped')).resolves.toEqual(new Float32Array([0, 1]))
     expect(transformers.pipeline).toHaveBeenCalledTimes(2)
+    expect(uncappedExtractor).toHaveBeenCalledTimes(1)
+    expect(cappedExtractor).toHaveBeenCalledTimes(1)
     expect(uncappedExtractor.tokenizer._tokenizerConfig).toBe(uncappedTokenizerConfig)
     expect(cappedExtractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
   })
