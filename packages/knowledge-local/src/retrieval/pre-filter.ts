@@ -16,7 +16,7 @@ export interface PreFilterOptions {
 
 export interface PreFilterPredicate {
   sql: string
-  binds: unknown[]
+  binds: string[]
 }
 
 export function preFilterPredicate(options: PreFilterOptions): PreFilterPredicate {
