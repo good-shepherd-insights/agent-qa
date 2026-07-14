@@ -100,6 +100,7 @@ describe('embedding profile stamp transitions', () => {
       defaultVecPath?: boolean
       poisonActiveVec?: boolean
       clearTransitionEpoch?: boolean
+      clearVecCleanupEpoch?: boolean
     } = {},
   ): knowledgeLocal.VecCapability {
     const writer = options.defaultVecPath
@@ -134,6 +135,11 @@ describe('embedding profile stamp transitions', () => {
       if (options.clearTransitionEpoch) {
         writer.db
           .prepare("DELETE FROM meta WHERE k = 'embedding_transition_epoch'")
+          .run()
+      }
+      if (options.clearVecCleanupEpoch) {
+        writer.db
+          .prepare("DELETE FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
           .run()
       }
       return writer.vec
@@ -174,6 +180,19 @@ describe('embedding profile stamp transitions', () => {
     try {
       return reader.db
         .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+        .get()?.v
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  function readVecCleanupEpoch(): unknown {
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      return reader.db
+        .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
         .get()?.v
     } finally {
       reader.db.close()
@@ -302,8 +321,210 @@ describe('embedding profile stamp transitions', () => {
           .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
           .get()?.v,
       ).toBe('1')
+      expect(
+        writer.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+          .get()?.v,
+      ).toBeUndefined()
     } finally {
       writer.close()
+    }
+  })
+
+  it('records both epochs on a fresh vec0 writer and preserves current state on repeat open', () => {
+    const first = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    if (first.vec !== 'vec0') {
+      first.close()
+      return
+    }
+
+    const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+    try {
+      expect(
+        first.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+          .get()?.v,
+      ).toBe('1')
+      expect(
+        first.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+          .get()?.v,
+      ).toBe('1')
+      expect(first.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count).toBe(0)
+    } finally {
+      first.close()
+    }
+
+    const second = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      expect(second.vec).toBe('vec0')
+      expect(
+        second.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+          .get()?.v,
+      ).toBe('1')
+      expect(second.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count).toBe(0)
+    } finally {
+      second.close()
+    }
+  })
+
+  it('keeps vec cleanup pending after a brute transition and completes it on next vec0 writer', async () => {
+    publishFixture()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    if (first.vec !== 'vec0') return
+
+    const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+    const setup = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      setup.db
+        .prepare(`
+          DELETE FROM meta
+          WHERE k IN ('embedding_transition_epoch', 'embedding_vec_cleanup_epoch')
+        `)
+        .run()
+    } finally {
+      setup.close()
+    }
+
+    const brute = knowledgeLocal.openIndexWriter(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    expect(brute.vec).toBe('brute')
+    brute.close()
+
+    expect(readTransitionEpoch()).toBe('1')
+    expect(readVecCleanupEpoch()).toBeUndefined()
+    expect(readProfileState()).toEqual({
+      stamp: LOCKED_DEFAULT_PROFILE_KEY,
+      embedStatus: 'pending',
+      embedding: null,
+    })
+
+    const stale = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(stale.vec).toBe('vec0')
+      expect(stale.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count).toBe(1)
+    } finally {
+      stale.db.close()
+    }
+
+    const cleanup = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      expect(cleanup.vec).toBe('vec0')
+      expect(cleanup.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count).toBe(0)
+      expect(
+        cleanup.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+          .get()?.v,
+      ).toBe('1')
+      const canonical = cleanup.db
+        .prepare('SELECT embed_status, embedding FROM records')
+        .get()
+      expect(canonical?.embed_status).toBe('pending')
+      expect(canonical?.embedding).toBeNull()
+    } finally {
+      cleanup.close()
+    }
+  })
+
+  it('marks cleanup pending before an ordinary brute rewrite and heals on next vec0 rebuild', async () => {
+    publishFixture()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    if (first.vec !== 'vec0') return
+
+    expect(readTransitionEpoch()).toBe('1')
+    expect(readVecCleanupEpoch()).toBe('1')
+    const originalState = readProfileState()
+    const originalBytes = Buffer.from(originalState.embedding as Uint8Array)
+
+    const brute = knowledgeLocal.openIndexWriter(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      expect(brute.vec).toBe('brute')
+      expect(
+        brute.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+          .get()?.v,
+      ).toBeUndefined()
+      brute.db
+        .prepare("UPDATE records SET embedding = NULL, embed_status = 'pending'")
+        .run()
+    } finally {
+      brute.close()
+    }
+
+    const replacement = new Float32Array(DEFAULT_EMBEDDING_PROFILE.dim)
+    replacement[0] = 1
+    const replacementEmbedder = {
+      async embedDocument(): Promise<Float32Array> {
+        return replacement
+      },
+      async embedQuery(): Promise<Float32Array> {
+        return replacement
+      },
+    }
+    const bruteRebuild = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: replacementEmbedder,
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    expect(bruteRebuild).toMatchObject({ vec: 'brute', projected: 0, backfilled: 1 })
+    expect(readVecCleanupEpoch()).toBeUndefined()
+
+    const healedByBrute = readProfileState()
+    const replacementBytes = Buffer.from(
+      replacement.buffer,
+      replacement.byteOffset,
+      replacement.byteLength,
+    )
+    expect(healedByBrute.embedStatus).toBe('present')
+    expect(Buffer.from(healedByBrute.embedding as Uint8Array)).toEqual(replacementBytes)
+    expect(Buffer.from(healedByBrute.embedding as Uint8Array)).not.toEqual(originalBytes)
+
+    const vecRebuild = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    expect(vecRebuild).toMatchObject({ vec: 'vec0', projected: 0, backfilled: 0 })
+    expect(readVecCleanupEpoch()).toBe('1')
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      const canonical = reader.db
+        .prepare('SELECT record_rowid, product, embed_status, embedding FROM records')
+        .get()
+      expect(canonical?.embed_status).toBe('present')
+      expect(Buffer.from(canonical?.embedding as Uint8Array)).toEqual(replacementBytes)
+
+      const nearest = reader.db
+        .prepare(`
+          SELECT record_rowid, distance
+          FROM ${knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)}
+          WHERE embedding MATCH ? AND product = ? AND k = 1
+        `)
+        .get(replacementBytes, String(canonical?.product))
+      expect(Number(nearest?.record_rowid)).toBe(Number(canonical?.record_rowid))
+      expect(Number(nearest?.distance)).toBeLessThan(1e-6)
+    } finally {
+      reader.db.close()
+    }
+
+    const repeat = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      expect(repeat.vec).toBe('vec0')
+      expect(readVecCleanupEpoch()).toBe('1')
+      const canonical = repeat.db
+        .prepare('SELECT embed_status, embedding FROM records')
+        .get()
+      expect(canonical?.embed_status).toBe('present')
+      expect(Buffer.from(canonical?.embedding as Uint8Array)).toEqual(replacementBytes)
+    } finally {
+      repeat.close()
     }
   })
 
