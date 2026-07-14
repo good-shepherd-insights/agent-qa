@@ -461,14 +461,20 @@ function emitRelationEdges(db: DatabaseSync, relationSources: readonly Projected
   })
 }
 
-function safeObservationPath(source: ProjectedBundle): string | undefined {
-  const bundleId = source.bundle.manifest.id
+function safeObservationPath(
+  knowledgeRoot: string,
+  source: ProjectedBundle,
+): string | undefined {
+  const bundleDir = basename(source.dir)
   if (
-    bundleId === ''
-    || bundleId === '.'
-    || bundleId === '..'
-    || bundleId !== basename(bundleId)
-    || basename(source.dir) !== bundleId
+    source.product === ''
+    || source.product === '.'
+    || source.product === '..'
+    || source.product !== basename(source.product)
+    || bundleDir === ''
+    || bundleDir === '.'
+    || bundleDir === '..'
+    || source.dir !== join(knowledgeRoot, 'memory', source.product, 'bundles', bundleDir)
   ) {
     return undefined
   }
@@ -476,10 +482,11 @@ function safeObservationPath(source: ProjectedBundle): string | undefined {
 }
 
 function loadObservations(
+  knowledgeRoot: string,
   source: ProjectedBundle,
   scanIssues: string[],
 ): DistilledObservation[] {
-  const observationPath = safeObservationPath(source)
+  const observationPath = safeObservationPath(knowledgeRoot, source)
   if (observationPath === undefined) {
     scanIssues.push(`${source.dir}: observations.jsonl: unsafe bundle path`)
     return []
@@ -535,6 +542,7 @@ function deleteObservationEdges(db: DatabaseSync, recordRowid: number): void {
 /** Re-read every valid bundle so fixture/live observation changes do not depend on bundle hashes. */
 function emitObservationEdges(
   db: DatabaseSync,
+  knowledgeRoot: string,
   sources: readonly ProjectedBundle[],
   scanIssues: string[],
 ): void {
@@ -553,7 +561,12 @@ function emitObservationEdges(
       createdAtOrdinal: source.bundle.frontmatter.createdAtOrdinal,
     }
     recordRowids.push(recordRowid)
-    prepared.push(deriveObservationEdges(loadObservations(source, scanIssues), context))
+    prepared.push(
+      deriveObservationEdges(
+        loadObservations(knowledgeRoot, source, scanIssues),
+        context,
+      ),
+    )
   }
 
   transaction(db, () => {
@@ -910,7 +923,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       activeProfile,
     )
     emitRelationEdges(writer.db, relationSources)
-    emitObservationEdges(writer.db, relationSources, report.scanIssues)
+    emitObservationEdges(writer.db, opts.knowledgeRoot, relationSources, report.scanIssues)
     emitEquivalentToBridges(writer.db)
     removeOrphanGraphNodes(writer.db)
     report.backfilled = await backfillPendingEmbeddings(
