@@ -459,14 +459,22 @@ function reconcileVecRows(
       .all()
       .map((row) => Number(row.record_rowid)),
   )
+  /**
+   * Writer open verifies the meta stamp before any present canonical bytes are trusted, so the
+   * stamp is their profile provenance without adding a per-row profile column. Status and exact
+   * byte length remain defense-in-depth gates: the active vec table must never receive bytes that
+   * the active profile could not have produced.
+   */
   const canonical = db
     .prepare(`
       SELECT record_rowid, product, embedding
       FROM records
       WHERE embedding IS NOT NULL
+        AND embed_status = 'present'
+        AND length(embedding) = ?
       ORDER BY record_rowid
     `)
-    .all()
+    .all(activeProfile.dim * Float32Array.BYTES_PER_ELEMENT)
   const canonicalRowids = new Set(canonical.map((row) => Number(row.record_rowid)))
 
   transaction(db, () => {
