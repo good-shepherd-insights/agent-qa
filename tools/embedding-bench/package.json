@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build-corpus": "node src/corpus.ts",
+    "calibrate-tau-lex": "node src/tau-lex.ts",
     "convert-floor": "node src/convert-floor.ts",
     "bench": "node src/report.ts",
     "test": "vitest run --passWithNoTests",
