@@ -119,18 +119,20 @@ function insertGraphEdge(
     dstNodeId: string
     recordRowid: number
     product: string
+    recencyOrdinal: number
   },
 ): void {
   db.prepare(`
     INSERT OR IGNORE INTO graph_edges (
-      src_node_id, edge_type, dst_node_id, record_rowid, product
-    ) VALUES (?, ?, ?, ?, ?)
+      src_node_id, edge_type, dst_node_id, record_rowid, product, recency_ordinal
+    ) VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     edge.srcNodeId,
     edge.edgeType,
     edge.dstNodeId,
     edge.recordRowid,
     edge.product,
+    edge.recencyOrdinal,
   )
 }
 
@@ -144,8 +146,9 @@ function upsertRecord(
     INSERT INTO records (
       bundle_id, product, mutable_state_hash, kind, subtype, scope_tier, scope_key,
       status, trust, confirmed, contradicted, helpful, harmful, opened_at_ordinal,
-      closed_at_ordinal, created_at_ordinal, origin_class, summary, embedding_input
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      closed_at_ordinal, created_at_ordinal, origin_class, summary, embedding_input,
+      situating_line, contextual_rendering
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bundle_id) DO UPDATE SET
       product = excluded.product,
       mutable_state_hash = excluded.mutable_state_hash,
@@ -164,7 +167,9 @@ function upsertRecord(
       created_at_ordinal = excluded.created_at_ordinal,
       origin_class = excluded.origin_class,
       summary = excluded.summary,
-      embedding_input = excluded.embedding_input
+      embedding_input = excluded.embedding_input,
+      situating_line = excluded.situating_line,
+      contextual_rendering = excluded.contextual_rendering
   `).run(
     bundle.manifest.id,
     product,
@@ -185,6 +190,8 @@ function upsertRecord(
     bundle.frontmatter.originClass,
     bundle.summary,
     bundle.manifest.embeddingInput,
+    '',
+    bundle.manifest.embeddingInput,
   )
 
   const row = db
@@ -201,11 +208,10 @@ function replaceFtsAndAnchors(
   recordRowid: number,
 ): void {
   db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
-  db.prepare('INSERT INTO fts_records (rowid, identity, content) VALUES (?, ?, ?)').run(
-    recordRowid,
-    identityText(bundle),
-    bundle.manifest.embeddingInput,
-  )
+  db.prepare(`
+    INSERT INTO fts_records (rowid, identity, content, context)
+    VALUES (?, ?, ?, ?)
+  `).run(recordRowid, identityText(bundle), bundle.manifest.embeddingInput, '')
 
   db.prepare('DELETE FROM anchors WHERE record_rowid = ?').run(recordRowid)
   const insertAnchor = db.prepare(`
@@ -252,6 +258,7 @@ function replaceAnchorGraph(
       dstNodeId: node.nodeId,
       recordRowid,
       product,
+      recencyOrdinal: bundle.frontmatter.createdAtOrdinal,
     })
     if (node.type === 'element' || node.type === 'web-element' || node.type === 'mobile-element') {
       elementNodes.push(node)
@@ -269,6 +276,7 @@ function replaceAnchorGraph(
         dstNodeId: page.nodeId,
         recordRowid,
         product,
+        recencyOrdinal: bundle.frontmatter.createdAtOrdinal,
       })
     }
   }
@@ -346,6 +354,7 @@ function emitRelationEdges(db: DatabaseSync, relationSources: readonly Projected
           dstNodeId: targetNode.nodeId,
           recordRowid,
           product,
+          recencyOrdinal: relation.addedAtOrdinal,
         })
       }
     }
