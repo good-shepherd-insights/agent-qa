@@ -132,6 +132,7 @@ const bundleRelationSchema = z.object({
     'conflicts-with',
     'relates-to',
     'renamed-from',
+    'equivalent-to',
   ]),
   targetId: z.string(),
   addedAtOrdinal: z.number(),

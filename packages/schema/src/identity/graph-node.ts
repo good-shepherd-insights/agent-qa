@@ -41,6 +41,14 @@ export type GraphEdgeType =
   | 'conflicts-with'
   | 'relates-to'
   | 'renamed-from'
+  | 'contains'
+  | 'composed-of'
+  | 'precedes'
+  | 'on'
+  | 'locates-via'
+  | 'uses'
+  | 'caused-by'
+  | 'equivalent-to'
 
 export type GraphNodeNaturalKey = string | JsonObject
 
