@@ -39,6 +39,16 @@ export const INDEX_RENDERING_SCHEMA_VERSION = 1
 const EMBEDDING_TRANSITION_EPOCH = 1
 
 /**
+ * Active vec-table cleanup completed by a connection that actually loaded sqlite-vec.
+ *
+ * This fact is intentionally separate from canonical invalidation. A brute writer can safely
+ * disown records.embedding bytes, but it cannot prove or mutate the unloaded virtual table. Every
+ * brute writer therefore removes this marker before exposing its mutable connection, and only a
+ * vec0 writer may publish it after clearing the active table in the same transaction.
+ */
+const EMBEDDING_VEC_CLEANUP_EPOCH = 1
+
+/**
  * Projection tables every readable index must expose.
  *
  * Per-profile vec tables are deliberately excluded: vec0 is a conditional
@@ -163,6 +173,22 @@ function readTransitionEpoch(db: DatabaseSync): string | undefined {
   }
 }
 
+function readVecCleanupEpoch(db: DatabaseSync): string | undefined {
+  try {
+    const row = db
+      .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+      .get()
+    return typeof row?.v === 'string' ? row.v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Internal dense-reader gate; deliberately absent from the package barrel. */
+export function isEmbeddingVecCleanupCurrent(db: DatabaseSync): boolean {
+  return readVecCleanupEpoch(db) === String(EMBEDDING_VEC_CLEANUP_EPOCH)
+}
+
 /**
  * Resolve the one active profile authority from the derived index's meta stamp.
  *
@@ -260,16 +286,26 @@ function bootstrapSchema(
   }
 }
 
-function stampMeta(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
+function stampMeta(
+  db: DatabaseSync,
+  activeProfile: EmbeddingProfile,
+  vecCleanup: 'current' | 'pending',
+): void {
   const upsert = db.prepare(`
     INSERT INTO meta (k, v) VALUES (?, ?)
     ON CONFLICT(k) DO UPDATE SET v = excluded.v
   `)
 
+  if (vecCleanup === 'pending') {
+    db.prepare("DELETE FROM meta WHERE k = 'embedding_vec_cleanup_epoch'").run()
+  }
   upsert.run('index_schema_version', String(INDEX_SCHEMA_VERSION))
   upsert.run('embedding_profile', embeddingProfileKey(activeProfile))
   upsert.run('rendering_schema_version', String(INDEX_RENDERING_SCHEMA_VERSION))
   upsert.run('embedding_transition_epoch', String(EMBEDDING_TRANSITION_EPOCH))
+  if (vecCleanup === 'current') {
+    upsert.run('embedding_vec_cleanup_epoch', String(EMBEDDING_VEC_CLEANUP_EPOCH))
+  }
 }
 
 /**
@@ -282,26 +318,37 @@ function stampMeta(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
  * D-19's unchanged benign-lag backfill selector. Old revision vec tables remain disposable,
  * embed-cache rows stay inert under revision keys, and no embedding work runs at open.
  *
- * A brute connection cannot execute DML against an unloaded vec0 virtual table. Canonical
- * invalidation is sufficient there because brute reads use only the BLOB, while the next
- * vec0-capable rebuild's reconciliation removes accelerator rows whose canonical source is no
- * longer `present`. On vec0 connections both the canonical UPDATE and active-table DELETE run
- * before stampMeta inside one BEGIN IMMEDIATE transaction, so no crash can commit the epoch or
- * fresh stamp beside surviving stale bytes.
+ * A brute connection cannot execute DML against an unloaded vec0 virtual table, so it invalidates
+ * canonical bytes and leaves vec cleanup pending. The next vec0 writer clears the active table
+ * before publishing cleanup current; an ordinary rebuild then reconciles it from canonical state.
+ * On vec0 connections both the canonical UPDATE and active-table DELETE run before stampMeta
+ * inside one BEGIN IMMEDIATE transaction, so no crash can commit fresh metadata beside stale
+ * bytes.
  */
-function invalidateDerivedEmbeddings(
-  db: DatabaseSync,
-  vec: VecCapability,
-  activeProfile: EmbeddingProfile,
-): void {
+function invalidateDerivedEmbeddings(db: DatabaseSync): void {
   db.prepare(`
     UPDATE records
     SET embedding = NULL, embed_status = 'pending'
     WHERE embedding IS NOT NULL OR embed_status = 'present'
   `).run()
+}
 
-  if (vec === 'vec0') {
-    db.exec(`DELETE FROM ${vecTableName(activeProfile)}`)
+function clearActiveVecTable(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
+  db.exec(`DELETE FROM ${vecTableName(activeProfile)}`)
+}
+
+function immediateTransaction(db: DatabaseSync, operation: () => void): void {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    operation()
+    db.exec('COMMIT')
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // Preserve the transition or cleanup error that caused the rollback.
+    }
+    throw error
   }
 }
 
@@ -327,31 +374,27 @@ export function openIndexWriter(
 
   try {
     const vec = resolveVecCapability(db, opts.vecLoadablePath)
-    const storedStamp = readEmbeddingProfileStamp(db)
-    const storedEpoch = readTransitionEpoch(db)
     const activeProfile = resolveActiveProfile(db)
     db.exec('PRAGMA journal_mode=WAL')
     bootstrapSchema(db, vec, activeProfile)
-    if (
-      storedStamp !== embeddingProfileKey(activeProfile)
-      || storedEpoch !== String(EMBEDDING_TRANSITION_EPOCH)
-    ) {
-      db.exec('BEGIN IMMEDIATE')
-      try {
-        invalidateDerivedEmbeddings(db, vec, activeProfile)
-        stampMeta(db, activeProfile)
-        db.exec('COMMIT')
-      } catch (error) {
-        try {
-          db.exec('ROLLBACK')
-        } catch {
-          // Preserve the transition error that caused the rollback.
-        }
-        throw error
+
+    immediateTransaction(db, () => {
+      const transitionRequired =
+        readEmbeddingProfileStamp(db) !== embeddingProfileKey(activeProfile)
+        || readTransitionEpoch(db) !== String(EMBEDDING_TRANSITION_EPOCH)
+
+      if (vec === 'brute') {
+        if (transitionRequired) invalidateDerivedEmbeddings(db)
+        stampMeta(db, activeProfile, 'pending')
+        return
       }
-    } else {
-      stampMeta(db, activeProfile)
-    }
+
+      if (transitionRequired || !isEmbeddingVecCleanupCurrent(db)) {
+        if (transitionRequired) invalidateDerivedEmbeddings(db)
+        clearActiveVecTable(db, activeProfile)
+      }
+      stampMeta(db, activeProfile, 'current')
+    })
 
     let closed = false
     return {
