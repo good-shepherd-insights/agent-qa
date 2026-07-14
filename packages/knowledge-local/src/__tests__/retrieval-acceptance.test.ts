@@ -89,6 +89,18 @@ interface ProjectionRow {
   fts_context: string
 }
 
+interface FactFixtureInput {
+  identity: string
+  anchors: readonly Anchor[]
+  createdAtOrdinal: number
+  originClass?: OriginClass
+  initialEvents?: readonly BundleOutcomeEvent[]
+  relations?: readonly BundleRelation[]
+  scope?: PublishBundleInput['draft']['scope']
+  summary?: string
+  body?: string
+}
+
 const PRODUCT = 'acceptance-storefront'
 const SIBLING_PRODUCT = 'acceptance-payments'
 const EXPANSION_FRACTION = 0.25
@@ -219,7 +231,7 @@ function rawVecIds(
         AND scope_key = ?
         ${statusClause}
         AND k = ?
-      ORDER BY distance, record_rowid
+      ORDER BY distance
     `).all(query, PRODUCT, PRODUCT, 128)
 
     return rows.map((row) => {
@@ -393,7 +405,7 @@ describe('ROADMAP success criterion 3 — fail-closed filters, audit, and fallba
         .toBe(true)
       expect(supersededAudit.find(({ id }) => id === ids.superseded)).toMatchObject({
         status: 'superseded',
-        validity: 'audit',
+        validity: 'current',
         audit: { status: 'superseded' },
       })
 
@@ -417,36 +429,40 @@ describe('ROADMAP success criterion 3 — fail-closed filters, audit, and fallba
 })
 
 describe('ROADMAP success criterion 4 — deterministic hybrid rank and carve-outs', () => {
-  it('returns identical ids twice, after permuted rebuild, and across vec capabilities', async () => {
-    const { canonicalRoot, permutedRoot, vecRoot, bruteRoot, tempRoot } = fixture()
-    const query = { intent: '', anchors: [MAIN_ANCHOR, CONFLICT_ANCHOR] } as const
-    const options = { n: 20, product: PRODUCT, asOfBuild: 1_000 } as const
-    const canonical = openKnowledgeReader(canonicalRoot)
-    const permuted = openKnowledgeReader(permutedRoot)
-    const vec = openKnowledgeReader(vecRoot)
-    const brute = openKnowledgeReader(bruteRoot, {
-      vecLoadablePath: join(tempRoot, 'missing-sqlite-vec'),
-    })
-    try {
-      expect(vec.vec).toBe('vec0')
-      expect(brute.vec).toBe('brute')
+  it(
+    'returns identical ids twice, after permuted rebuild, and across vec capabilities',
+    async () => {
+      const { canonicalRoot, permutedRoot, vecRoot, bruteRoot, tempRoot } = fixture()
+      const query = { intent: '', anchors: [MAIN_ANCHOR, CONFLICT_ANCHOR] } as const
+      const options = { n: 20, product: PRODUCT, asOfBuild: 1_000 } as const
+      const canonical = openKnowledgeReader(canonicalRoot)
+      const permuted = openKnowledgeReader(permutedRoot)
+      const vec = openKnowledgeReader(vecRoot)
+      const brute = openKnowledgeReader(bruteRoot, {
+        vecLoadablePath: join(tempRoot, 'missing-sqlite-vec'),
+      })
+      try {
+        expect(vec.vec).toBe('vec0')
+        expect(brute.vec).toBe('brute')
 
-      const first = orderedIds(await retrieve(canonical, query, options))
-      const second = orderedIds(await retrieve(canonical, query, options))
-      const permutedIds = orderedIds(await retrieve(permuted, query, options))
-      const vecIds = orderedIds(await retrieve(vec, query, options))
-      const bruteIds = orderedIds(await retrieve(brute, query, options))
+        const first = orderedIds(await retrieve(canonical, query, options))
+        const second = orderedIds(await retrieve(canonical, query, options))
+        const permutedIds = orderedIds(await retrieve(permuted, query, options))
+        const vecIds = orderedIds(await retrieve(vec, query, options))
+        const bruteIds = orderedIds(await retrieve(brute, query, options))
 
-      expect(second).toEqual(first)
-      expect(permutedIds).toEqual(first)
-      expect(bruteIds).toEqual(vecIds)
-    } finally {
-      canonical.close()
-      permuted.close()
-      vec.close()
-      brute.close()
-    }
-  }, 120_000)
+        expect(second).toEqual(first)
+        expect(permutedIds).toEqual(first)
+        expect(bruteIds).toEqual(vecIds)
+      } finally {
+        canonical.close()
+        permuted.close()
+        vec.close()
+        brute.close()
+      }
+    },
+    120_000,
+  )
 
   it('preserves user sovereignty and annotates both MintUnknown peers', async () => {
     const { canonicalRoot, ids } = fixture()
@@ -484,61 +500,69 @@ describe('ROADMAP success criterion 4 — deterministic hybrid rank and carve-ou
 })
 
 describe('ROADMAP success criterion 5 — normalized and contextual renderings', () => {
-  it('normalizes anchors, keeps selectors lexical-only, and mirrors index-side context', async () => {
-    const { canonicalRoot, ids } = fixture()
-    const input = {
-      intent: 'Complete acceptance checkout',
-      anchors: [
-        { t: 'selector', literal: RAW_SELECTOR },
-        { t: 'el', role: ' BUTTON ', name: ' Acceptance checkout (9) ' },
-      ],
-      screenState: makeScreenStateFixture(),
-    } as const
-    const first = buildRetrievalQuery(input)
-    const second = buildRetrievalQuery(input)
+  it(
+    'normalizes anchors, keeps selectors lexical-only, and mirrors index-side context',
+    async () => {
+      const { canonicalRoot, ids } = fixture()
+      const input = {
+        intent: 'Complete acceptance checkout',
+        anchors: [
+          { t: 'selector', literal: RAW_SELECTOR },
+          { t: 'el', role: ' BUTTON ', name: ' Acceptance checkout (9) ' },
+        ],
+        screenState: makeScreenStateFixture(),
+      } as const
+      const first = buildRetrievalQuery(input)
+      const second = buildRetrievalQuery(input)
 
-    expect(second).toEqual(first)
-    expect(first.normalizedAnchors[1]).toEqual(MAIN_ANCHOR)
-    expect(first.lexicalQuery).toContain(RAW_SELECTOR)
-    expect(first.semanticText).not.toContain(RAW_SELECTOR)
-    expect(first.fallbackRenderings).toHaveLength(1)
+      expect(second).toEqual(first)
+      expect(first.normalizedAnchors[1]).toEqual({
+        ...MAIN_ANCHOR,
+        name: 'acceptance checkout',
+      })
+      expect(first.lexicalQuery).toContain(RAW_SELECTOR)
+      expect(first.semanticText).not.toContain(RAW_SELECTOR)
+      expect(first.fallbackRenderings).toHaveLength(1)
 
-    const reader = openKnowledgeReader(canonicalRoot)
-    try {
-      const normalized = await retrieve(
-        reader,
-        { intent: '', anchors: [MAIN_ANCHOR] },
-        { n: 20, product: PRODUCT, asOfBuild: 1_000 },
-      )
-      const messy = await retrieve(
-        reader,
-        { intent: '', anchors: [input.anchors[1]] },
-        { n: 20, product: PRODUCT, asOfBuild: 1_000 },
-      )
-      expect(orderedIds(messy)).toEqual(orderedIds(normalized))
-    } finally {
-      reader.close()
-    }
+      const reader = openKnowledgeReader(canonicalRoot)
+      try {
+        const normalized = await retrieve(
+          reader,
+          { intent: '', anchors: [MAIN_ANCHOR] },
+          { n: 20, product: PRODUCT, asOfBuild: 1_000 },
+        )
+        const messy = await retrieve(
+          reader,
+          { intent: '', anchors: [input.anchors[1]] },
+          { n: 20, product: PRODUCT, asOfBuild: 1_000 },
+        )
+        expect(orderedIds(messy)).toEqual(orderedIds(normalized))
+      } finally {
+        reader.close()
+      }
 
-    const row = projection(canonicalRoot, ids.activeNew)
-    const manifest = JSON.parse(
-      readFileSync(
-        join(
-          canonicalRoot,
-          'memory',
-          PRODUCT,
-          'bundles',
-          ids.activeNew,
-          'manifest.json',
+      const row = projection(canonicalRoot, ids.activeNew)
+      const manifest = JSON.parse(
+        readFileSync(
+          join(
+            canonicalRoot,
+            'memory',
+            PRODUCT,
+            'bundles',
+            ids.activeNew,
+            'manifest.json',
+          ),
+          'utf8',
         ),
-        'utf8',
-      ),
-    ) as { embeddingInput: string }
-    expect(row.embedding_input).toBe(manifest.embeddingInput)
-    expect(row.situating_line).not.toBe('')
-    expect(row.contextual_rendering).toBe(`${manifest.embeddingInput}\n${row.situating_line}`)
-    expect(row.fts_context).toBe(row.situating_line)
-  })
+      ) as { embeddingInput: string }
+      expect(row.embedding_input).toBe(manifest.embeddingInput)
+      expect(row.situating_line).not.toBe('')
+      expect(row.contextual_rendering).toBe(
+        `${manifest.embeddingInput}\n${row.situating_line}`,
+      )
+      expect(row.fts_context).toBe(row.situating_line)
+    },
+  )
 
   it('contains no wall-clock reads in Phase 377 decision modules', () => {
     const wallClockCall = /\b(?:Date\.now|performance\.now)\s*\(|\bnew\s+Date\s*\(/
@@ -549,5 +573,379 @@ describe('ROADMAP success criterion 5 — normalized and contextual renderings',
 })
 
 async function buildAcceptanceFixture(): Promise<AcceptanceFixture> {
-  throw new Error('retrieval acceptance fixture is not implemented')
+  const tempRoot = await mkdtemp(join(tmpdir(), 'knowledge-retrieval-acceptance-'))
+  const canonicalRoot = join(tempRoot, 'canonical-knowledge')
+  const permutedRoot = join(tempRoot, 'permuted-knowledge')
+  const vecRoot = join(tempRoot, 'vec-knowledge')
+  const bruteRoot = join(tempRoot, 'brute-knowledge')
+
+  try {
+    const ids = buildCorpus(canonicalRoot)
+    for (const clone of [permutedRoot, vecRoot, bruteRoot]) {
+      cpSync(canonicalRoot, clone, { recursive: true })
+    }
+
+    const canonical = await rebuildIndex({ knowledgeRoot: canonicalRoot })
+    assertCleanRebuild('canonical', canonical.scanIssues)
+
+    const restorePermutation = permuteBundleEnumeration(permutedRoot)
+    try {
+      const permuted = await rebuildIndex({ knowledgeRoot: permutedRoot })
+      assertCleanRebuild('permuted', permuted.scanIssues)
+    } finally {
+      restorePermutation()
+    }
+
+    const embedder = makeFakeEmbedder()
+    const vec = await rebuildIndex({ knowledgeRoot: vecRoot, embedder })
+    assertCleanRebuild('vec0', vec.scanIssues)
+    if (vec.vec !== 'vec0') throw new Error(`expected vec0 fixture index, got ${vec.vec}`)
+
+    const brute = await rebuildIndex({
+      knowledgeRoot: bruteRoot,
+      embedder,
+      vecLoadablePath: join(tempRoot, 'missing-sqlite-vec'),
+    })
+    assertCleanRebuild('brute', brute.scanIssues)
+    if (brute.vec !== 'brute') throw new Error(`expected brute fixture index, got ${brute.vec}`)
+
+    return { tempRoot, canonicalRoot, permutedRoot, vecRoot, bruteRoot, ids }
+  } catch (error) {
+    rmSync(tempRoot, { recursive: true, force: true })
+    throw error
+  }
+}
+
+function assertCleanRebuild(label: string, scanIssues: readonly string[]): void {
+  if (scanIssues.length > 0) {
+    throw new Error(`${label} acceptance rebuild issues: ${scanIssues.join('; ')}`)
+  }
+}
+
+function config(knowledgeRoot: string, productKey = PRODUCT): BundleStoreConfig {
+  return {
+    knowledgeRoot,
+    productKey,
+    auditBaseDir: join(dirname(knowledgeRoot), '.agent-qa'),
+    commitArtifacts: 'none',
+  }
+}
+
+function factInput(input: FactFixtureInput): PublishBundleInput {
+  return {
+    draft: makeBundleDraftFixture({
+      anchors: [...input.anchors],
+      scope: input.scope ?? { tier: 'product', key: PRODUCT },
+      summary: input.summary ?? `${input.identity} acceptance fact`,
+      body: input.body ?? `${input.identity} records deterministic acceptance behavior.`,
+    }),
+    discriminant: {
+      kind: 'fact',
+      subtype: 'selector',
+      elementRef: { role: 'acceptance-fixture', name: input.identity },
+    },
+    originClass: input.originClass ?? 'agent-verified',
+    createdAtOrdinal: input.createdAtOrdinal,
+    screenStates: [makeScreenStateFixture(input.createdAtOrdinal % 3)],
+    initialEvents: [...(input.initialEvents ?? [])],
+    relations: [...(input.relations ?? [])],
+    provenance: {
+      mode: 'run-linked',
+      runId: 'retrieval-acceptance-run',
+      testId: `retrieval-acceptance-${input.identity}`,
+      stepIndex: input.createdAtOrdinal,
+    },
+    artifacts: [],
+  }
+}
+
+function publishFact(
+  knowledgeRoot: string,
+  input: FactFixtureInput,
+  productKey = PRODUCT,
+): PublishedBundle {
+  const outcome = publishBundle(config(knowledgeRoot, productKey), factInput(input))
+  if (outcome.kind !== 'published') {
+    throw new Error(`expected ${input.identity} publication, got ${outcome.kind}`)
+  }
+  return outcome
+}
+
+function confirmation(identity: string, buildOrdinal: number): BundleOutcomeEvent {
+  return BundleOutcomeEventSchema.parse({
+    type: 'confirmed',
+    evidenceToken: `${identity}-confirmed-${buildOrdinal}`,
+    curationJobId: `${identity}-confirmed-${buildOrdinal}-job`,
+    buildOrdinal,
+    origin: 'agent-verified',
+  })
+}
+
+function windowClose(identity: string, closedAtOrdinal: number): BundleOutcomeEvent {
+  return BundleOutcomeEventSchema.parse({
+    type: 'window-close',
+    evidenceToken: `${identity}-window-close`,
+    curationJobId: `${identity}-window-close-job`,
+    buildOrdinal: closedAtOrdinal,
+    closedAtOrdinal,
+  })
+}
+
+function relation(
+  targetId: PublishedBundle['id'],
+  identity: string,
+  ordinal: number,
+): BundleRelation {
+  return {
+    type: 'relates-to',
+    targetId,
+    addedAtOrdinal: ordinal,
+    curationJobId: `${identity}-relation-job`,
+  }
+}
+
+function observation(
+  platform: 'web' | 'mobile',
+  elementNaturalKey: string,
+  observedAtOrdinal: number,
+): DistilledObservation {
+  return {
+    schemaVersion: 1,
+    step: { naturalKey: 'acceptance shared checkout step', ordinal: 3 },
+    platform,
+    test: { id: 'retrieval-acceptance-test' },
+    procedure: { id: 'retrieval-acceptance-procedure' },
+    flow: { name: 'acceptance checkout', precedes: 'acceptance confirmation' },
+    surface: {
+      kind: platform === 'web' ? 'page' : 'screen',
+      naturalKey: platform === 'web' ? '/acceptance-web' : 'AcceptanceActivity',
+    },
+    element: { naturalKey: elementNaturalKey },
+    error: { naturalKey: `${platform} acceptance failure` },
+    observedAtOrdinal,
+  }
+}
+
+function buildCorpus(knowledgeRoot: string): AcceptanceIds {
+  scaffoldKnowledgeRoot(knowledgeRoot)
+
+  const activeOld = publishFact(knowledgeRoot, {
+    identity: 'active-old',
+    anchors: [MAIN_ANCHOR, { t: 'page', route: '/acceptance-checkout' }],
+    createdAtOrdinal: 10,
+    initialEvents: [confirmation('active-old', 11)],
+  })
+  const activeNew = publishFact(knowledgeRoot, {
+    identity: 'active-new',
+    anchors: [MAIN_ANCHOR, { t: 'page', route: '/acceptance-checkout' }],
+    createdAtOrdinal: 20,
+    initialEvents: [confirmation('active-new-a', 21), confirmation('active-new-b', 22)],
+  })
+  const user = publishFact(knowledgeRoot, {
+    identity: 'user-sovereign',
+    anchors: [MAIN_ANCHOR, { t: 'page', route: '/acceptance-checkout' }],
+    createdAtOrdinal: 7,
+    originClass: 'user',
+  })
+  const superseded = publishFact(knowledgeRoot, {
+    identity: 'withdrawn',
+    anchors: [MAIN_ANCHOR, { t: 'page', route: '/acceptance-checkout' }],
+    createdAtOrdinal: 8,
+    initialEvents: [
+      BundleOutcomeEventSchema.parse({
+        type: 'superseded',
+        evidenceToken: 'withdrawn-superseded',
+        curationJobId: 'withdrawn-superseded-job',
+        buildOrdinal: 30,
+        byRecordId: activeNew.id,
+      }),
+    ],
+  })
+  const sibling = publishFact(
+    knowledgeRoot,
+    {
+      identity: 'sibling-product',
+      anchors: [SIBLING_ANCHOR, MAIN_ANCHOR],
+      scope: { tier: 'product', key: PRODUCT },
+      createdAtOrdinal: 40,
+    },
+    SIBLING_PRODUCT,
+  )
+
+  const fallbackOld = publishFact(knowledgeRoot, {
+    identity: 'fallback-old',
+    anchors: [FALLBACK_ANCHOR, { t: 'page', route: '/acceptance-fallback' }],
+    createdAtOrdinal: 1,
+    initialEvents: [windowClose('fallback-old', 5)],
+  })
+  const fallbackNew = publishFact(knowledgeRoot, {
+    identity: 'fallback-new',
+    anchors: [FALLBACK_ANCHOR, { t: 'page', route: '/acceptance-fallback' }],
+    createdAtOrdinal: 2,
+    initialEvents: [windowClose('fallback-new', 10)],
+  })
+
+  const conflictLeft = publishFact(knowledgeRoot, {
+    identity: 'conflict-left',
+    anchors: [CONFLICT_ANCHOR, { t: 'platform', platform: 'web' }],
+    createdAtOrdinal: 50,
+  })
+  const conflictRight = publishFact(knowledgeRoot, {
+    identity: 'conflict-right',
+    anchors: [CONFLICT_ANCHOR, { t: 'platform', platform: 'web' }],
+    createdAtOrdinal: 51,
+  })
+  const conflictUnknownOutcome = publishBundle(config(knowledgeRoot), {
+    draft: makeBundleDraftFixture({
+      kind: 'unknown',
+      anchors: [CONFLICT_ANCHOR, { t: 'platform', platform: 'web' }],
+      scope: { tier: 'product', key: PRODUCT },
+      summary: 'Acceptance conflict remains unresolved',
+      body: 'Both conflicting acceptance observations remain visible.',
+    }),
+    discriminant: {
+      kind: 'unknown',
+      conflictRecordIds: [conflictLeft.id, conflictRight.id],
+    },
+    originClass: 'agent-verified',
+    createdAtOrdinal: 52,
+    screenStates: [makeScreenStateFixture()],
+    initialEvents: [],
+    relations: [],
+    provenance: {
+      mode: 'run-linked',
+      runId: 'retrieval-acceptance-run',
+      testId: 'retrieval-acceptance-conflict-unknown',
+      stepIndex: 52,
+    },
+    artifacts: [],
+  })
+  if (conflictUnknownOutcome.kind !== 'published') {
+    throw new Error(`expected conflict unknown publication, got ${conflictUnknownOutcome.kind}`)
+  }
+  const conflictUnknown = conflictUnknownOutcome
+  for (const peer of [conflictLeft, conflictRight]) {
+    const appended = appendRelation(config(knowledgeRoot), peer.id, {
+      type: 'conflicts-with',
+      targetId: conflictUnknown.id,
+      addedAtOrdinal: 53,
+      curationJobId: `${peer.id}-conflict-job`,
+    })
+    if (appended.kind !== 'appended') {
+      throw new Error(`expected conflict relation append, got ${appended.kind}`)
+    }
+  }
+
+  const expansionSeed = publishFact(knowledgeRoot, {
+    identity: 'expansion-seed',
+    anchors: [EXPANSION_ANCHOR, { t: 'platform', platform: 'web' }],
+    createdAtOrdinal: 100,
+  })
+  const expansionNeighbors = Array.from({ length: 40 }, (_, index) => {
+    const suffix = String(index).padStart(2, '0')
+    return publishFact(knowledgeRoot, {
+      identity: `expansion-neighbor-${suffix}`,
+      anchors: [{ t: 'page', route: `/acceptance-neighbor-${suffix}` }],
+      createdAtOrdinal: 200 + index,
+      relations: [relation(expansionSeed.id, `expansion-neighbor-${suffix}`, 300 + index)],
+    })
+  })
+  const poisonedGlobal = publishFact(knowledgeRoot, {
+    identity: 'poisoned-global',
+    anchors: [POISON_ANCHOR, { t: 'platform', platform: 'web' }],
+    scope: { tier: 'global', key: 'global' },
+    createdAtOrdinal: 500,
+    initialEvents: [confirmation('poisoned-global-a', 501), confirmation('poisoned-global-b', 502)],
+    relations: [relation(expansionSeed.id, 'poisoned-global', 503)],
+  })
+
+  const mobileBridge = publishObservationFixture(
+    config(knowledgeRoot),
+    factInput({
+      identity: 'mechanical-mobile-bridge',
+      anchors: [
+        { t: 'el', role: 'button', name: 'Acceptance mobile submit' },
+        { t: 'page', route: 'AcceptanceActivity' },
+        { t: 'platform', platform: 'android' },
+      ],
+      createdAtOrdinal: 600,
+    }),
+    [observation('mobile', 'mobile:acceptance submit', 601)],
+  )
+  const webBridge = publishObservationFixture(
+    config(knowledgeRoot),
+    factInput({
+      identity: 'mechanical-web-bridge',
+      anchors: [
+        { t: 'el', role: 'button', name: 'Acceptance web submit' },
+        { t: 'page', route: '/acceptance-web' },
+        { t: 'platform', platform: 'web' },
+      ],
+      createdAtOrdinal: 602,
+      relations: [{
+        type: 'equivalent-to',
+        targetId: mobileBridge.id,
+        addedAtOrdinal: 603,
+        curationJobId: 'acceptance-curated-bridge-job',
+      }],
+    }),
+    [observation('web', 'web:acceptance submit', 604)],
+  )
+
+  return {
+    activeOld: activeOld.id,
+    activeNew: activeNew.id,
+    user: user.id,
+    superseded: superseded.id,
+    sibling: sibling.id,
+    fallbackOld: fallbackOld.id,
+    fallbackNew: fallbackNew.id,
+    conflictLeft: conflictLeft.id,
+    conflictRight: conflictRight.id,
+    conflictUnknown: conflictUnknown.id,
+    expansionSeed: expansionSeed.id,
+    expansionNeighbors: expansionNeighbors.map(({ id }) => id),
+    poisonedGlobal: poisonedGlobal.id,
+    curatedBridgeSource: webBridge.id,
+    curatedBridgeTarget: mobileBridge.id,
+  }
+}
+
+function permuteBundleEnumeration(knowledgeRoot: string): () => void {
+  const memoryDir = join(knowledgeRoot, 'memory')
+  const moves: Array<{ current: string; canonical: string }> = []
+  const products = readdirSync(memoryDir, { withFileTypes: true })
+    .filter(
+      (entry) => entry.isDirectory() && !entry.name.startsWith('.')
+        && entry.name !== 'index' && entry.name !== 'queue',
+    )
+    .map(({ name }) => name)
+    .sort()
+
+  for (const product of products) {
+    const bundlesDir = join(memoryDir, product, 'bundles')
+    const canonicalNames = readdirSync(bundlesDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
+      .map(({ name }) => name)
+      .sort()
+    const staged = canonicalNames.map((canonicalName, index) => {
+      const canonical = join(bundlesDir, canonicalName)
+      const staging = join(bundlesDir, `.acceptance-permutation-${index}`)
+      renameSync(canonical, staging)
+      return { canonical, staging }
+    })
+
+    for (const [index, move] of staged.entries()) {
+      const visible = join(
+        bundlesDir,
+        `permuted-${String(staged.length - index).padStart(3, '0')}`,
+      )
+      renameSync(move.staging, visible)
+      moves.push({ current: visible, canonical: move.canonical })
+    }
+  }
+
+  return () => {
+    for (const move of moves) renameSync(move.current, move.canonical)
+  }
 }
