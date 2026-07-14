@@ -4,7 +4,13 @@ import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 import type { EmbedderPort } from './embedder-port.js'
 import { resolveModelCacheDir } from './model-cache-dir.js'
 
-const nativePipelines = new Map<string, Promise<FeatureExtractionPipeline>>()
+const nativePipelines = new Map<
+  string,
+  {
+    maxTokens: number | undefined
+    pipelinePromise: Promise<FeatureExtractionPipeline>
+  }
+>()
 
 export class NativeEmbeddingModuleLoadError extends Error {
   constructor(cause: unknown) {
@@ -33,8 +39,12 @@ function validateMaxTokens(maxTokens: number | undefined): number | undefined {
   return maxTokens
 }
 
-function pipelineKey(profile: EmbeddingProfile, maxTokens: number | undefined): string {
-  return `${profile.model_id}@${profile.revision}:${profile.dtype}:max=${maxTokens ?? 'model'}`
+function pipelineKey(profile: EmbeddingProfile): string {
+  return `${profile.model_id}@${profile.revision}:${profile.dtype}`
+}
+
+function tokenBudgetLabel(maxTokens: number | undefined): string {
+  return maxTokens === undefined ? 'uncapped' : String(maxTokens)
 }
 
 function acquirePipeline(
@@ -42,9 +52,16 @@ function acquirePipeline(
   allowDownload: boolean,
   maxTokens: number | undefined,
 ): Promise<FeatureExtractionPipeline> {
-  const key = pipelineKey(profile, maxTokens)
+  const key = pipelineKey(profile)
   const existing = nativePipelines.get(key)
-  if (existing) return existing
+  if (existing) {
+    if (existing.maxTokens !== maxTokens) {
+      throw new RangeError(
+        `Native embedding pipeline budget conflict for ${key}: existing maxTokens=${tokenBudgetLabel(existing.maxTokens)}, requested maxTokens=${tokenBudgetLabel(maxTokens)}; one process-lifetime session per model identity permits only the first budget`,
+      )
+    }
+    return existing.pipelinePromise
+  }
 
   const pending = (async () => {
     let transformers: typeof import('@huggingface/transformers')
@@ -83,7 +100,7 @@ function acquirePipeline(
     return extractor
   })()
 
-  nativePipelines.set(key, pending)
+  nativePipelines.set(key, { maxTokens, pipelinePromise: pending })
   return pending
 }
 
@@ -103,7 +120,7 @@ function toEmbedding(data: unknown, expectedDim: number): Float32Array {
 export async function createNativeEmbedder(options: {
   profile: EmbeddingProfile
   allowDownload: boolean
-  /** Optional caller-owned cap; a distinct pipeline preserves the process-lifetime session law. */
+  /** Optional process-wide token budget fixed by the first acquisition for this model identity. */
   maxTokens?: number
 }): Promise<EmbedderPort> {
   const { profile, allowDownload } = options
