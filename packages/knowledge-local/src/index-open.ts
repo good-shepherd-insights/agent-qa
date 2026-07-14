@@ -28,7 +28,12 @@ export const INDEX_SCHEMA_VERSION = 2
 /** Phase 377 readers reject pre-D-03 projections until a writer performs the v2 reset. */
 export const MIN_READABLE_INDEX_SCHEMA_VERSION = 2
 
-/** Phase 377 D-04 rendering epoch; v1 renderings are rebuilt with the v2 projection. */
+/**
+ * Phase 377 D-04 rendering epoch.
+ *
+ * Bump only when contextual-rendering bytes change. A stale stamp remains durable through writer
+ * open, forces one full render/vector pass, and is advanced only when that pass succeeds.
+ */
 export const INDEX_RENDERING_SCHEMA_VERSION = 2
 
 /**
@@ -98,6 +103,8 @@ export type VecCapability = 'vec0' | 'brute'
 export interface IndexWriterHandle {
   db: DatabaseSync
   vec: VecCapability
+  readonly renderingEpochStale: boolean
+  completeRenderingEpoch(): void
   checkpointPassive(): void
   close(): void
 }
@@ -171,6 +178,17 @@ function readIndexSchemaVersionStamp(db: DatabaseSync): string | undefined {
   try {
     const row = db
       .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
+      .get()
+    return typeof row?.v === 'string' ? row.v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readRenderingSchemaVersionStamp(db: DatabaseSync): string | undefined {
+  try {
+    const row = db
+      .prepare("SELECT v FROM meta WHERE k = 'rendering_schema_version'")
       .get()
     return typeof row?.v === 'string' ? row.v : undefined
   } catch {
@@ -330,6 +348,7 @@ function stampMeta(
   db: DatabaseSync,
   activeProfile: EmbeddingProfile,
   vecCleanup: 'current' | 'pending',
+  renderingEpoch: 'current' | 'preserve',
 ): void {
   const upsert = db.prepare(`
     INSERT INTO meta (k, v) VALUES (?, ?)
@@ -341,11 +360,20 @@ function stampMeta(
   }
   upsert.run('index_schema_version', String(INDEX_SCHEMA_VERSION))
   upsert.run('embedding_profile', embeddingProfileKey(activeProfile))
-  upsert.run('rendering_schema_version', String(INDEX_RENDERING_SCHEMA_VERSION))
+  if (renderingEpoch === 'current') {
+    upsert.run('rendering_schema_version', String(INDEX_RENDERING_SCHEMA_VERSION))
+  }
   upsert.run('embedding_transition_epoch', String(EMBEDDING_TRANSITION_EPOCH))
   if (vecCleanup === 'current') {
     upsert.run('embedding_vec_cleanup_epoch', String(EMBEDDING_VEC_CLEANUP_EPOCH))
   }
+}
+
+function stampRenderingSchemaVersion(db: DatabaseSync): void {
+  db.prepare(`
+    INSERT INTO meta (k, v) VALUES ('rendering_schema_version', ?)
+    ON CONFLICT(k) DO UPDATE SET v = excluded.v
+  `).run(String(INDEX_RENDERING_SCHEMA_VERSION))
 }
 
 /**
@@ -435,44 +463,81 @@ export function openIndexWriter(
   try {
     const vec = resolveVecCapability(db, opts.vecLoadablePath)
     const activeProfile = resolveActiveProfile(db)
+    const projectionTablesPresent = hasProjectionTables(db)
     const previousSchemaVersionStamp = readIndexSchemaVersionStamp(db)
     const previousSchemaVersion = Number(previousSchemaVersionStamp)
     const schemaResetRequired =
-      hasProjectionTables(db)
+      projectionTablesPresent
       && (previousSchemaVersionStamp === undefined
         || !Number.isFinite(previousSchemaVersion)
         || previousSchemaVersion < INDEX_SCHEMA_VERSION)
+    const previousRenderingVersionStamp = readRenderingSchemaVersionStamp(db)
+    const previousRenderingVersion = Number(previousRenderingVersionStamp)
+    let renderingEpochStale =
+      projectionTablesPresent
+      && !schemaResetRequired
+      && (previousRenderingVersionStamp === undefined
+        || !Number.isFinite(previousRenderingVersion)
+        || previousRenderingVersion !== INDEX_RENDERING_SCHEMA_VERSION)
     db.exec('PRAGMA journal_mode=WAL')
     bootstrapSchema(db, vec, activeProfile)
 
     immediateTransaction(db, () => {
       if (schemaResetRequired) {
         resetProjectionSchema(db, vec, activeProfile)
-        stampMeta(db, activeProfile, vec === 'vec0' ? 'current' : 'pending')
+        stampMeta(
+          db,
+          activeProfile,
+          vec === 'vec0' ? 'current' : 'pending',
+          'current',
+        )
+        renderingEpochStale = false
         return
       }
 
       const transitionRequired =
         readEmbeddingProfileStamp(db) !== embeddingProfileKey(activeProfile)
         || readTransitionEpoch(db) !== String(EMBEDDING_TRANSITION_EPOCH)
+      const embeddingInvalidationRequired =
+        transitionRequired || renderingEpochStale
 
       if (vec === 'brute') {
-        if (transitionRequired) invalidateDerivedEmbeddings(db)
-        stampMeta(db, activeProfile, 'pending')
+        if (embeddingInvalidationRequired) invalidateDerivedEmbeddings(db)
+        stampMeta(
+          db,
+          activeProfile,
+          'pending',
+          renderingEpochStale ? 'preserve' : 'current',
+        )
         return
       }
 
-      if (transitionRequired || !isEmbeddingVecCleanupCurrent(db)) {
-        if (transitionRequired) invalidateDerivedEmbeddings(db)
+      if (embeddingInvalidationRequired || !isEmbeddingVecCleanupCurrent(db)) {
+        if (embeddingInvalidationRequired) invalidateDerivedEmbeddings(db)
         recreateActiveVecTable(db, activeProfile)
       }
-      stampMeta(db, activeProfile, 'current')
+      stampMeta(
+        db,
+        activeProfile,
+        'current',
+        renderingEpochStale ? 'preserve' : 'current',
+      )
     })
 
     let closed = false
     return {
       db,
       vec,
+      get renderingEpochStale(): boolean {
+        return renderingEpochStale
+      },
+      completeRenderingEpoch(): void {
+        if (!renderingEpochStale) return
+        immediateTransaction(db, () => {
+          stampRenderingSchemaVersion(db)
+        })
+        renderingEpochStale = false
+      },
       checkpointPassive(): void {
         db.exec('PRAGMA wal_checkpoint(PASSIVE)')
       },

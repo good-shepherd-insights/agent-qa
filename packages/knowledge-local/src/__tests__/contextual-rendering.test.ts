@@ -444,7 +444,11 @@ describe('RETR-02 contextual rendering rebuild integration', () => {
       expect(stale.renderingEpochStale).toBe(true)
       expect(
         stale.db
-          .prepare("SELECT COUNT(*) AS count FROM records WHERE embed_status = 'present'")
+          .prepare(`
+            SELECT COUNT(*) AS count
+            FROM records
+            WHERE embed_status = 'pending' AND embedding IS NULL
+          `)
           .get()?.count,
       ).toBe(2)
     } finally {

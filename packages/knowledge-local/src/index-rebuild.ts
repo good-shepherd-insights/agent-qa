@@ -984,7 +984,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     emitObservationEdges(writer.db, opts.knowledgeRoot, relationSources, report.scanIssues)
     emitEquivalentToBridges(writer.db)
     removeOrphanGraphNodes(writer.db)
-    refreshContextualRenderings(writer.db)
+    refreshContextualRenderings(writer.db, writer.renderingEpochStale)
     report.backfilled = await backfillPendingEmbeddings(
       writer.db,
       writer.vec,
@@ -993,6 +993,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       new Set(projected.map(({ bundle }) => bundle.manifest.id)),
     )
     reconcileVecRows(writer.db, writer.vec, activeProfile)
+    writer.completeRenderingEpoch()
     clearRebuildRequest(opts.knowledgeRoot)
     return report
   } finally {
