@@ -25,6 +25,7 @@ import {
 import type { KnowledgeHit } from './bundle-scan.js'
 import {
   indexDbPath,
+  isEmbeddingVecCleanupCurrent,
   openIndexReaderConnection,
   probeIndexHealth,
   resolveActiveProfile,
@@ -203,15 +204,40 @@ function quoteFtsTokens(text: string): string {
     .join(' ')
 }
 
-function recordByRowid(db: DatabaseSync, recordRowid: number): IndexedRecord | undefined {
+function recordByRowidWithActiveEmbedding(
+  db: DatabaseSync,
+  recordRowid: number,
+  product: string,
+  expectedBytes: number,
+): IndexedRecord | undefined {
   const row = db.prepare(`
     SELECT ${RECORD_COLUMNS}
     FROM records r
     WHERE r.record_rowid = ?
-  `).get(recordRowid)
+      AND r.product = ?
+      AND r.embed_status = 'present'
+      AND r.embedding IS NOT NULL
+      AND length(r.embedding) = ?
+  `).get(recordRowid, product, expectedBytes)
   return row === undefined
     ? undefined
     : rowToIndexedRecord(row as Record<string, unknown>)
+}
+
+function withReadSnapshot<T>(db: DatabaseSync, operation: () => T): T {
+  db.exec('BEGIN')
+  try {
+    const result = operation()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // Preserve the SQL or commit error that caused the rollback.
+    }
+    throw error
+  }
 }
 
 function float32View(value: unknown): Float32Array | undefined {
@@ -274,44 +300,62 @@ function indexReader(
     const k = queryLimit(opts.k)
     if (k === 0) return []
 
-    const products = opts.product === undefined
-      ? db.prepare(`
-          SELECT DISTINCT r.product
-          FROM records r
-          WHERE r.embedding IS NOT NULL
-          ORDER BY r.product
-        `).all().map((row) => String(row.product))
-      : [opts.product]
     const queryBlob = Buffer.from(
       embedding.buffer,
       embedding.byteOffset,
       embedding.byteLength,
     )
     const tableName = vecTableName(activeProfile)
-    const knn = db.prepare(`
-      SELECT record_rowid, distance
-      FROM ${tableName}
-      WHERE embedding MATCH ? AND product = ? AND k = ?
-      ORDER BY distance
-    `)
-    const candidates: Array<{ distance: number; recordRowid: number }> = []
-    for (const product of products) {
-      for (const row of knn.all(queryBlob, product, k)) {
-        candidates.push({
-          recordRowid: Number(row.record_rowid),
-          distance: Number(row.distance),
-        })
-      }
-    }
-    candidates.sort(
-      (left, right) => left.distance - right.distance || left.recordRowid - right.recordRowid,
-    )
+    const expectedBytes = activeProfile.dim * Float32Array.BYTES_PER_ELEMENT
 
-    const hits = candidates.slice(0, k).flatMap(({ distance, recordRowid }) => {
-      const record = recordByRowid(db, recordRowid)
-      return record === undefined ? [] : [{ ...record.hit, distance }]
+    return withReadSnapshot(db, () => {
+      // This must be the first SQL read so it establishes the same WAL snapshot as MATCH.
+      if (!isEmbeddingVecCleanupCurrent(db)) return []
+
+      const products = opts.product === undefined
+        ? db.prepare(`
+            SELECT DISTINCT r.product
+            FROM records r
+            WHERE r.embed_status = 'present'
+              AND r.embedding IS NOT NULL
+              AND length(r.embedding) = ?
+            ORDER BY r.product
+          `).all(expectedBytes).map((row) => String(row.product))
+        : [opts.product]
+      const knn = db.prepare(`
+        SELECT record_rowid, distance
+        FROM ${tableName}
+        WHERE embedding MATCH ? AND product = ? AND k = ?
+        ORDER BY distance
+      `)
+      const candidates: Array<{
+        distance: number
+        product: string
+        recordRowid: number
+      }> = []
+      for (const product of products) {
+        for (const row of knn.all(queryBlob, product, k)) {
+          candidates.push({
+            recordRowid: Number(row.record_rowid),
+            product,
+            distance: Number(row.distance),
+          })
+        }
+      }
+      candidates.sort(
+        (left, right) => left.distance - right.distance || left.recordRowid - right.recordRowid,
+      )
+
+      return candidates.slice(0, k).flatMap(({ distance, product, recordRowid }) => {
+        const record = recordByRowidWithActiveEmbedding(
+          db,
+          recordRowid,
+          product,
+          expectedBytes,
+        )
+        return record === undefined ? [] : [{ ...record.hit, distance }]
+      })
     })
-    return hits
   }
 
   function denseBrute(embedding: Float32Array, opts: DenseSearchOptions): DenseHit[] {
