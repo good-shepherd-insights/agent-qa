@@ -42,8 +42,8 @@ describe('Phase 377 graph edge ontology', () => {
   })
 
   it('does not re-key the pre-phase graph node identity', () => {
-    expect(graphNodeId('flow', 'checkout'))
-      .toBe('2c5424ba567b3e61562c90618e05c9606b590519fb12bb2d5028efb075b3ad0d')
+    expect(graphNodeId('step', 'checkout:3'))
+      .toBe('64c1ad5d0a4f43e1016118459107f3155930a5d826b2473611bf42a04fa677db')
   })
 
   it('accepts equivalent-to only when every persisted relation field is present', () => {
