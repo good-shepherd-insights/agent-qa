@@ -8,20 +8,39 @@
  * pass so bundle ordering cannot change dangling-target behavior and late targets heal without
  * re-projecting an unchanged source.
  */
-import { basename } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
   anchorGraphNode,
   canonicalJson,
+  guardDistilledObservation,
   recordGraphNode,
 } from '@vostride/agent-qa-schema'
-import type { EmbeddingProfile, Platform } from '@vostride/agent-qa-schema'
+import type {
+  DistilledObservation,
+  EmbeddingProfile,
+  GraphNodeNaturalKey,
+  GraphNodeType,
+  Platform,
+} from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
 import type { EmbedderPort } from './embedder-port.js'
+import {
+  deriveEquivalentToBridges,
+  deriveLocatesViaEdges,
+  deriveObservationEdges,
+} from './graph-derive.js'
+import type {
+  DerivedGraphEdge,
+  DerivedGraphNode,
+  GraphDerivation,
+  GraphDerivationContext,
+} from './graph-derive.js'
 import {
   CHECKPOINT_EVERY_N_BUNDLES,
   openIndexWriter,
@@ -48,10 +67,17 @@ export interface RebuildIndexOptions {
 
 interface ProjectedBundle {
   bundle: LoadedBundle
+  dir: string
   product: string
 }
 
 type AnchorNode = NonNullable<ReturnType<typeof anchorGraphNode>>
+
+interface InsertableGraphNode {
+  nodeId: string
+  type: GraphNodeType
+  naturalKey: GraphNodeNaturalKey
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -127,7 +153,7 @@ function bundlePlatform(bundle: LoadedBundle): Platform | undefined {
 
 function insertGraphNode(
   db: DatabaseSync,
-  node: AnchorNode | ReturnType<typeof recordGraphNode>,
+  node: InsertableGraphNode,
   product: string,
 ): void {
   db.prepare(`
@@ -160,6 +186,11 @@ function insertGraphEdge(
     edge.product,
     edge.recencyOrdinal,
   )
+}
+
+function insertGraphDerivation(db: DatabaseSync, projection: GraphDerivation): void {
+  for (const node of projection.nodes) insertGraphNode(db, node, node.product)
+  for (const edge of projection.edges) insertGraphEdge(db, edge)
 }
 
 function upsertRecord(
@@ -306,6 +337,20 @@ function replaceAnchorGraph(
       })
     }
   }
+
+  insertGraphDerivation(
+    db,
+    deriveLocatesViaEdges(
+      bundle.frontmatter.anchors.map(({ normalized }) => normalized),
+      platform,
+      {
+        bundleId: bundle.manifest.id,
+        recordRowid,
+        product,
+        createdAtOrdinal: bundle.frontmatter.createdAtOrdinal,
+      },
+    ),
+  )
 }
 
 function storeEmbedding(
@@ -413,7 +458,194 @@ function emitRelationEdges(db: DatabaseSync, relationSources: readonly Projected
         })
       }
     }
+  })
+}
 
+function safeObservationPath(source: ProjectedBundle): string | undefined {
+  const bundleId = source.bundle.manifest.id
+  if (
+    bundleId === ''
+    || bundleId === '.'
+    || bundleId === '..'
+    || bundleId !== basename(bundleId)
+    || basename(source.dir) !== bundleId
+  ) {
+    return undefined
+  }
+  return join(source.dir, 'observations.jsonl')
+}
+
+function loadObservations(
+  source: ProjectedBundle,
+  scanIssues: string[],
+): DistilledObservation[] {
+  const observationPath = safeObservationPath(source)
+  if (observationPath === undefined) {
+    scanIssues.push(`${source.dir}: observations.jsonl: unsafe bundle path`)
+    return []
+  }
+  if (!existsSync(observationPath)) return []
+
+  let text: string
+  try {
+    text = readFileSync(observationPath, 'utf8')
+  } catch (error) {
+    scanIssues.push(`${observationPath}: ${errorMessage(error)}`)
+    return []
+  }
+
+  const observations: DistilledObservation[] = []
+  const lines = text.split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  for (const [index, line] of lines.entries()) {
+    try {
+      observations.push(guardDistilledObservation(JSON.parse(line)))
+    } catch (error) {
+      scanIssues.push(`${observationPath}:${index + 1}: ${errorMessage(error)}`)
+    }
+  }
+  return observations
+}
+
+function deleteObservationEdges(db: DatabaseSync, recordRowid: number): void {
+  db.prepare(`
+    DELETE FROM graph_edges
+    WHERE record_rowid = ?
+      AND EXISTS (
+        SELECT 1
+        FROM graph_nodes AS source
+        WHERE source.node_id = graph_edges.src_node_id
+          AND (
+            (graph_edges.edge_type = 'contains' AND source.node_type = 'test')
+            OR (
+              graph_edges.edge_type = 'composed-of'
+              AND source.node_type = 'procedure'
+            )
+            OR (
+              graph_edges.edge_type IN ('uses', 'on', 'part-of')
+              AND source.node_type = 'step'
+            )
+            OR (graph_edges.edge_type = 'precedes' AND source.node_type = 'flow')
+            OR (graph_edges.edge_type = 'caused-by' AND source.node_type = 'error')
+          )
+      )
+  `).run(recordRowid)
+}
+
+/** Re-read every valid bundle so fixture/live observation changes do not depend on bundle hashes. */
+function emitObservationEdges(
+  db: DatabaseSync,
+  sources: readonly ProjectedBundle[],
+  scanIssues: string[],
+): void {
+  const prepared: GraphDerivation[] = []
+  const recordRowids: number[] = []
+  for (const source of sources) {
+    const row = db
+      .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+      .get(source.bundle.manifest.id)
+    if (row === undefined) continue
+    const recordRowid = Number(row.record_rowid)
+    const context: GraphDerivationContext = {
+      bundleId: source.bundle.manifest.id,
+      recordRowid,
+      product: source.product,
+      createdAtOrdinal: source.bundle.frontmatter.createdAtOrdinal,
+    }
+    recordRowids.push(recordRowid)
+    prepared.push(deriveObservationEdges(loadObservations(source, scanIssues), context))
+  }
+
+  transaction(db, () => {
+    for (const recordRowid of recordRowids) deleteObservationEdges(db, recordRowid)
+    for (const projection of prepared) insertGraphDerivation(db, projection)
+  })
+}
+
+interface UsesEdgeRow {
+  src_node_id: string
+  dst_node_id: string
+  record_rowid: number
+  product: string
+  recency_ordinal: number
+  bundle_id: string
+  node_type: GraphNodeType
+  natural_key_json: string
+}
+
+function accumulatedUsesEdges(db: DatabaseSync): {
+  nodes: DerivedGraphNode[]
+  edges: DerivedGraphEdge[]
+} {
+  const rows = db.prepare(`
+    SELECT
+      edge.src_node_id,
+      edge.dst_node_id,
+      edge.record_rowid,
+      edge.product,
+      edge.recency_ordinal,
+      records.bundle_id,
+      target.node_type,
+      target.natural_key_json
+    FROM graph_edges AS edge
+    JOIN records ON records.record_rowid = edge.record_rowid
+    JOIN graph_nodes AS target ON target.node_id = edge.dst_node_id
+    WHERE edge.edge_type = 'uses'
+    ORDER BY
+      edge.src_node_id,
+      edge.edge_type,
+      edge.dst_node_id,
+      edge.record_rowid
+  `).all() as unknown as UsesEdgeRow[]
+
+  const nodes = new Map<string, DerivedGraphNode>()
+  const edges: DerivedGraphEdge[] = []
+  for (const row of rows) {
+    if (!nodes.has(row.dst_node_id)) {
+      nodes.set(row.dst_node_id, {
+        nodeId: row.dst_node_id,
+        type: row.node_type,
+        naturalKey: JSON.parse(row.natural_key_json) as GraphNodeNaturalKey,
+        product: row.product,
+      })
+    }
+    edges.push({
+      srcNodeId: row.src_node_id,
+      edgeType: 'uses',
+      dstNodeId: row.dst_node_id,
+      recordRowid: Number(row.record_rowid),
+      bundleId: row.bundle_id,
+      product: row.product,
+      recencyOrdinal: Number(row.recency_ordinal),
+    })
+  }
+  return { nodes: [...nodes.values()], edges }
+}
+
+function emitEquivalentToBridges(db: DatabaseSync): void {
+  const accumulated = accumulatedUsesEdges(db)
+  const bridges = deriveEquivalentToBridges(accumulated.nodes, accumulated.edges)
+
+  transaction(db, () => {
+    db.exec(`
+      DELETE FROM graph_edges
+      WHERE edge_type = 'equivalent-to'
+        AND EXISTS (
+          SELECT 1
+          FROM graph_nodes AS source
+          JOIN graph_nodes AS target
+            ON target.node_id = graph_edges.dst_node_id
+          WHERE source.node_id = graph_edges.src_node_id
+            AND source.node_type = 'web-element'
+            AND target.node_type = 'mobile-element'
+        )
+    `)
+    for (const edge of bridges) insertGraphEdge(db, edge)
+  })
+}
+
+function removeOrphanGraphNodes(db: DatabaseSync): void {
+  transaction(db, () => {
     db.exec(`
       DELETE FROM graph_nodes
       WHERE node_id NOT IN (
@@ -634,7 +866,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         report.scanIssues.push(`${entry.dir}: integrity: ${integrity.violations.join('; ')}`)
         continue
       }
-      const item = { bundle: outcome.bundle, product: entry.product }
+      const item = { bundle: outcome.bundle, dir: entry.dir, product: entry.product }
       relationSources.push(item)
       const current = writer.db
         .prepare(`
@@ -678,6 +910,9 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       activeProfile,
     )
     emitRelationEdges(writer.db, relationSources)
+    emitObservationEdges(writer.db, relationSources, report.scanIssues)
+    emitEquivalentToBridges(writer.db)
+    removeOrphanGraphNodes(writer.db)
     report.backfilled = await backfillPendingEmbeddings(
       writer.db,
       writer.vec,
