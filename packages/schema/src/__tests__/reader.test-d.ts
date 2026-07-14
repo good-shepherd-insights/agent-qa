@@ -25,6 +25,9 @@ expectTypeOf<IndexEntry>().toEqualTypeOf<{
   anchors: Anchor[]
   status: string
   servedAsCanary: boolean
+  servedAs?: 'current' | 'prior-build-hypothesis'
+  conflict?: { peerRecordId: RecordId; unknownRecordId: RecordId }
+  audit?: { status: string; openedAtOrdinal: number; closedAtOrdinal: number | null }
   scope: ScopeKey
   validity: string
 }>()
@@ -39,6 +42,9 @@ expectTypeOf<keyof IndexEntry>().toEqualTypeOf<
   | 'anchors'
   | 'status'
   | 'servedAsCanary'
+  | 'servedAs'
+  | 'conflict'
+  | 'audit'
   | 'scope'
   | 'validity'
 >()
