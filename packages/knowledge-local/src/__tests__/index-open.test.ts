@@ -153,6 +153,8 @@ describe('index-open', () => {
         'origin_class',
         'summary',
         'embedding_input',
+        'situating_line',
+        'contextual_rendering',
         'embed_status',
         'embedding',
       ])
@@ -215,14 +217,22 @@ describe('index-open', () => {
       expect(writer.vec).toBe('vec0')
       const tableName = api.vecTableName(DEFAULT_EMBEDDING_PROFILE)
       const insert = writer.db.prepare(
-        `INSERT INTO ${tableName} (record_rowid, product, embedding) VALUES (?, ?, ?)`,
+        `
+          INSERT INTO ${tableName}
+            (record_rowid, product, scope_tier, scope_key, status, embedding)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `,
       )
       const values = new Float32Array(DEFAULT_EMBEDDING_PROFILE.dim)
       values[0] = 1
       const embedding = Buffer.from(values.buffer)
 
-      expect(() => insert.run(1n, 'fixture-product', embedding)).not.toThrow()
-      expect(() => insert.run(2, 'fixture-product', embedding)).toThrow()
+      expect(() =>
+        insert.run(1n, 'fixture-product', 'global', 'global', 'active', embedding),
+      ).not.toThrow()
+      expect(() =>
+        insert.run(2, 'fixture-product', 'global', 'global', 'active', embedding),
+      ).toThrow()
     } finally {
       writer.close()
     }

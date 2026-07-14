@@ -22,9 +22,14 @@ import { getLoadablePath } from './sqlite-vec-loadable.js'
 
 export const INDEX_DB_FILE = 'knowledge.db'
 
-export const INDEX_SCHEMA_VERSION = 1
-export const MIN_READABLE_INDEX_SCHEMA_VERSION = 1
-export const INDEX_RENDERING_SCHEMA_VERSION = 1
+/** Phase 377 D-03 schema; older disposable projections reset instead of migrating virtual tables. */
+export const INDEX_SCHEMA_VERSION = 2
+
+/** Phase 377 readers reject pre-D-03 projections until a writer performs the v2 reset. */
+export const MIN_READABLE_INDEX_SCHEMA_VERSION = 2
+
+/** Phase 377 D-04 rendering epoch; v1 renderings are rebuilt with the v2 projection. */
+export const INDEX_RENDERING_SCHEMA_VERSION = 2
 
 /**
  * One-time derived-embedding invalidation epoch.
@@ -162,6 +167,30 @@ function readEmbeddingProfileStamp(db: DatabaseSync): string | undefined {
   }
 }
 
+function readIndexSchemaVersionStamp(db: DatabaseSync): string | undefined {
+  try {
+    const row = db
+      .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
+      .get()
+    return typeof row?.v === 'string' ? row.v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function hasProjectionTables(db: DatabaseSync): boolean {
+  const row = db
+    .prepare(`
+      SELECT 1 AS present
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN ('records', 'fts_records', 'anchors', 'graph_nodes', 'graph_edges', 'meta')
+      LIMIT 1
+    `)
+    .get()
+  return row !== undefined
+}
+
 function readTransitionEpoch(db: DatabaseSync): string | undefined {
   try {
     const row = db
@@ -207,6 +236,20 @@ export function resolveActiveProfile(db: DatabaseSync): EmbeddingProfile {
     ?? DEFAULT_EMBEDDING_PROFILE
 }
 
+function bootstrapVecSchema(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
+  const tableName = vecTableName(activeProfile)
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS ${tableName} USING vec0(
+      record_rowid integer primary key,
+      product text partition key,
+      scope_tier text,
+      scope_key text,
+      status text,
+      embedding float[${activeProfile.dim}] distance_metric=cosine
+    );
+  `)
+}
+
 function bootstrapSchema(
   db: DatabaseSync,
   vec: VecCapability,
@@ -234,6 +277,8 @@ function bootstrapSchema(
       origin_class TEXT NOT NULL,
       summary TEXT NOT NULL,
       embedding_input TEXT NOT NULL,
+      situating_line TEXT NOT NULL DEFAULT '',
+      contextual_rendering TEXT NOT NULL DEFAULT '',
       embed_status TEXT NOT NULL DEFAULT 'pending',
       embedding BLOB
     );
@@ -241,6 +286,7 @@ function bootstrapSchema(
     CREATE VIRTUAL TABLE IF NOT EXISTS fts_records USING fts5(
       identity,
       content,
+      context,
       tokenize = "unicode61 tokenchars '#-_./:[]=>@'"
     );
 
@@ -265,6 +311,7 @@ function bootstrapSchema(
       dst_node_id TEXT NOT NULL,
       record_rowid INTEGER NOT NULL,
       product TEXT NOT NULL,
+      recency_ordinal INTEGER NOT NULL DEFAULT 0,
       UNIQUE(src_node_id, edge_type, dst_node_id, record_rowid)
     );
 
@@ -275,14 +322,7 @@ function bootstrapSchema(
   `)
 
   if (vec === 'vec0') {
-    const tableName = vecTableName(activeProfile)
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS ${tableName} USING vec0(
-        record_rowid integer primary key,
-        product text partition key,
-        embedding float[${activeProfile.dim}] distance_metric=cosine
-      );
-    `)
+    bootstrapVecSchema(db, activeProfile)
   }
 }
 
@@ -333,8 +373,28 @@ function invalidateDerivedEmbeddings(db: DatabaseSync): void {
   `).run()
 }
 
-function clearActiveVecTable(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
-  db.exec(`DELETE FROM ${vecTableName(activeProfile)}`)
+function recreateActiveVecTable(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
+  db.exec(`DROP TABLE IF EXISTS ${vecTableName(activeProfile)}`)
+  bootstrapVecSchema(db, activeProfile)
+}
+
+function resetProjectionSchema(
+  db: DatabaseSync,
+  vec: VecCapability,
+  activeProfile: EmbeddingProfile,
+): void {
+  if (vec === 'vec0') {
+    db.exec(`DROP TABLE IF EXISTS ${vecTableName(activeProfile)}`)
+  }
+  db.exec(`
+    DROP TABLE IF EXISTS fts_records;
+    DROP TABLE IF EXISTS graph_edges;
+    DROP TABLE IF EXISTS graph_nodes;
+    DROP TABLE IF EXISTS anchors;
+    DROP TABLE IF EXISTS records;
+    DROP TABLE IF EXISTS meta;
+  `)
+  bootstrapSchema(db, vec, activeProfile)
 }
 
 function immediateTransaction(db: DatabaseSync, operation: () => void): void {
@@ -375,10 +435,23 @@ export function openIndexWriter(
   try {
     const vec = resolveVecCapability(db, opts.vecLoadablePath)
     const activeProfile = resolveActiveProfile(db)
+    const previousSchemaVersionStamp = readIndexSchemaVersionStamp(db)
+    const previousSchemaVersion = Number(previousSchemaVersionStamp)
+    const schemaResetRequired =
+      hasProjectionTables(db)
+      && (previousSchemaVersionStamp === undefined
+        || !Number.isFinite(previousSchemaVersion)
+        || previousSchemaVersion < INDEX_SCHEMA_VERSION)
     db.exec('PRAGMA journal_mode=WAL')
     bootstrapSchema(db, vec, activeProfile)
 
     immediateTransaction(db, () => {
+      if (schemaResetRequired) {
+        resetProjectionSchema(db, vec, activeProfile)
+        stampMeta(db, activeProfile, vec === 'vec0' ? 'current' : 'pending')
+        return
+      }
+
       const transitionRequired =
         readEmbeddingProfileStamp(db) !== embeddingProfileKey(activeProfile)
         || readTransitionEpoch(db) !== String(EMBEDDING_TRANSITION_EPOCH)
@@ -391,7 +464,7 @@ export function openIndexWriter(
 
       if (transitionRequired || !isEmbeddingVecCleanupCurrent(db)) {
         if (transitionRequired) invalidateDerivedEmbeddings(db)
-        clearActiveVecTable(db, activeProfile)
+        recreateActiveVecTable(db, activeProfile)
       }
       stampMeta(db, activeProfile, 'current')
     })
