@@ -96,7 +96,11 @@ describe('embedding profile stamp transitions', () => {
   function rewriteProfileStateWithOptions(
     profileKey: string,
     embedding: Uint8Array,
-    options: { defaultVecPath?: boolean; poisonActiveVec?: boolean } = {},
+    options: {
+      defaultVecPath?: boolean
+      poisonActiveVec?: boolean
+      clearTransitionEpoch?: boolean
+    } = {},
   ): knowledgeLocal.VecCapability {
     const writer = options.defaultVecPath
       ? knowledgeLocal.openIndexWriter(knowledgeRoot)
@@ -126,6 +130,11 @@ describe('embedding profile stamp transitions', () => {
             VALUES (?, ?, ?)
           `)
           .run(recordRowid, String(record.product), embedding)
+      }
+      if (options.clearTransitionEpoch) {
+        writer.db
+          .prepare("DELETE FROM meta WHERE k = 'embedding_transition_epoch'")
+          .run()
       }
       return writer.vec
     } finally {
@@ -157,6 +166,146 @@ describe('embedding profile stamp transitions', () => {
       reader.db.close()
     }
   }
+
+  function readTransitionEpoch(): unknown {
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      return reader.db
+        .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+        .get()?.v
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  it('invalidates already-normalized locked-stamp bytes when the transition epoch is absent', async () => {
+    await publishAndBuild()
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    rewriteProfileStateWithOptions(LOCKED_DEFAULT_PROFILE_KEY, marker, {
+      clearTransitionEpoch: true,
+    })
+
+    const writer = knowledgeLocal.openIndexWriter(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    writer.close()
+
+    expect(readProfileState()).toEqual({
+      stamp: LOCKED_DEFAULT_PROFILE_KEY,
+      embedStatus: 'pending',
+      embedding: null,
+    })
+    expect(readTransitionEpoch()).toBe('1')
+  })
+
+  it('heals a pre-fix normalized index through an ordinary unchanged-bundle rebuild on the forced-brute path', async () => {
+    await publishAndBuild()
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    rewriteProfileStateWithOptions(LOCKED_DEFAULT_PROFILE_KEY, marker, {
+      clearTransitionEpoch: true,
+    })
+
+    const report = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    expect(report).toMatchObject({
+      vec: 'brute',
+      projected: 0,
+      backfilled: 1,
+      removed: 0,
+    })
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      const record = reader.db
+        .prepare('SELECT embed_status, embedding, embedding_input FROM records')
+        .get()
+      const expected = await makeFakeEmbedder().embedDocument(
+        String(record?.embedding_input),
+      )
+      expect(record?.embed_status).toBe('present')
+      expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(
+        Buffer.from(expected.buffer, expected.byteOffset, expected.byteLength),
+      )
+      expect(Buffer.from(record?.embedding as Uint8Array)).not.toEqual(marker)
+      expect(
+        reader.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+          .get()?.v,
+      ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
+      expect(
+        reader.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+          .get()?.v,
+      ).toBe('1')
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('does not re-invalidate once the transition epoch is recorded', async () => {
+    await publishAndBuild()
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    rewriteProfileStateWithOptions(LOCKED_DEFAULT_PROFILE_KEY, marker, {
+      clearTransitionEpoch: true,
+    })
+
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    expect(first).toMatchObject({ vec: 'brute', projected: 0, backfilled: 1 })
+    const before = Buffer.from(readProfileState().embedding as Uint8Array)
+
+    const second = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    expect(second).toMatchObject({ vec: 'brute', projected: 0, backfilled: 0 })
+    const after = Buffer.from(readProfileState().embedding as Uint8Array)
+    expect(after).toEqual(before)
+    expect(readTransitionEpoch()).toBe('1')
+  })
+
+  it('records the transition epoch on a fresh knowledge root', () => {
+    const writer = knowledgeLocal.openIndexWriter(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      expect(
+        writer.db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count,
+      ).toBe(0)
+      expect(
+        writer.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+          .get()?.v,
+      ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
+      expect(
+        writer.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+          .get()?.v,
+      ).toBe('1')
+    } finally {
+      writer.close()
+    }
+  })
 
   it('invalidates present bytes before restamping a legacy main-revision index', async () => {
     await publishAndBuild()
