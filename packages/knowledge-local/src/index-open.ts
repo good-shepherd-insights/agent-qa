@@ -129,6 +129,17 @@ export function embeddingProfileKey(profile: EmbeddingProfile): string {
   })
 }
 
+function readEmbeddingProfileStamp(db: DatabaseSync): string | undefined {
+  try {
+    const row = db
+      .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+      .get()
+    return typeof row?.v === 'string' ? row.v : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Resolve the one active profile authority from the derived index's meta stamp.
  *
@@ -137,15 +148,7 @@ export function embeddingProfileKey(profile: EmbeddingProfile): string {
  * pre-bootstrap metadata always falls back to the ratified default.
  */
 export function resolveActiveProfile(db: DatabaseSync): EmbeddingProfile {
-  let stamp: string | undefined
-  try {
-    const row = db
-      .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
-      .get()
-    stamp = typeof row?.v === 'string' ? row.v : undefined
-  } catch {
-    return DEFAULT_EMBEDDING_PROFILE
-  }
+  const stamp = readEmbeddingProfileStamp(db)
 
   const knownProfiles = [
     DEFAULT_EMBEDDING_PROFILE,
@@ -245,6 +248,24 @@ function stampMeta(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
   upsert.run('rendering_schema_version', String(INDEX_RENDERING_SCHEMA_VERSION))
 }
 
+/**
+ * Close the pre-lock D-07 relabeling gap before a new profile stamp is written.
+ *
+ * Writer open previously replaced the former `main` revision stamp with the locked revision while
+ * leaving canonical bytes present. Ordinary rebuild then skipped those rows and reconciliation
+ * copied them into the locked revision's vec table. Pending rows instead ride D-19's benign-lag
+ * path through the unchanged backfill selector. Old revision vec tables remain disposable
+ * projections, embed-cache rows remain inert under their revision key, and no embedding work runs
+ * during open, so a write never stalls on the transition.
+ */
+function invalidateMismatchedProfileEmbeddings(db: DatabaseSync): void {
+  db.prepare(`
+    UPDATE records
+    SET embedding = NULL, embed_status = 'pending'
+    WHERE embedding IS NOT NULL OR embed_status = 'present'
+  `).run()
+}
+
 function closeAfterOpenFailure(db: DatabaseSync): void {
   try {
     db.close()
@@ -267,10 +288,27 @@ export function openIndexWriter(
 
   try {
     const vec = resolveVecCapability(db, opts.vecLoadablePath)
+    const storedStamp = readEmbeddingProfileStamp(db)
     const activeProfile = resolveActiveProfile(db)
     db.exec('PRAGMA journal_mode=WAL')
     bootstrapSchema(db, vec, activeProfile)
-    stampMeta(db, activeProfile)
+    if (storedStamp !== embeddingProfileKey(activeProfile)) {
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        invalidateMismatchedProfileEmbeddings(db)
+        stampMeta(db, activeProfile)
+        db.exec('COMMIT')
+      } catch (error) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {
+          // Preserve the transition error that caused the rollback.
+        }
+        throw error
+      }
+    } else {
+      stampMeta(db, activeProfile)
+    }
 
     let closed = false
     return {
