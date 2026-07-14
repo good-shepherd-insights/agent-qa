@@ -307,6 +307,134 @@ describe('embedding profile stamp transitions', () => {
     }
   })
 
+  it('clears active vec0 rows inside the transition transaction at writer open', async () => {
+    publishFixture()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    expect(first.projected).toBe(1)
+
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    const vec = rewriteProfileStateWithOptions(LOCKED_DEFAULT_PROFILE_KEY, marker, {
+      defaultVecPath: true,
+      poisonActiveVec: true,
+      clearTransitionEpoch: true,
+    })
+
+    if (vec === 'vec0') {
+      const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
+      try {
+        expect(writer.vec).toBe('vec0')
+        const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+        expect(
+          writer.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count,
+        ).toBe(0)
+        const record = writer.db
+          .prepare('SELECT embed_status, embedding FROM records')
+          .get()
+        expect(record?.embed_status).toBe('pending')
+        expect(record?.embedding).toBeNull()
+        expect(
+          writer.db
+            .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+            .get()?.v,
+        ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
+        expect(
+          writer.db
+            .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+            .get()?.v,
+        ).toBe('1')
+      } finally {
+        writer.close()
+      }
+    }
+  })
+
+  it('heals a pre-fix normalized index with poisoned active vec0 rows through an ordinary rebuild', async () => {
+    publishFixture()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    expect(first.projected).toBe(1)
+
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    const vec = rewriteProfileStateWithOptions(LOCKED_DEFAULT_PROFILE_KEY, marker, {
+      defaultVecPath: true,
+      poisonActiveVec: true,
+      clearTransitionEpoch: true,
+    })
+
+    if (vec === 'vec0') {
+      const second = await knowledgeLocal.rebuildIndex({
+        knowledgeRoot,
+        embedder: makeFakeEmbedder(),
+      })
+      expect(second).toMatchObject({
+        vec: 'vec0',
+        projected: 0,
+        backfilled: 1,
+        removed: 0,
+      })
+
+      const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+      try {
+        const record = reader.db
+          .prepare(`
+            SELECT record_rowid, product, embed_status, embedding, embedding_input
+            FROM records
+          `)
+          .get()
+        const expected = await makeFakeEmbedder().embedDocument(
+          String(record?.embedding_input),
+        )
+        const expectedBytes = Buffer.from(
+          expected.buffer,
+          expected.byteOffset,
+          expected.byteLength,
+        )
+        expect(record?.embed_status).toBe('present')
+        expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(expectedBytes)
+        expect(Buffer.from(record?.embedding as Uint8Array)).not.toEqual(marker)
+        expect(
+          reader.db
+            .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+            .get()?.v,
+        ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
+        expect(
+          reader.db
+            .prepare("SELECT v FROM meta WHERE k = 'embedding_transition_epoch'")
+            .get()?.v,
+        ).toBe('1')
+
+        const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+        expect(
+          reader.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count,
+        ).toBe(
+          reader.db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count,
+        )
+        const nearest = reader.db
+          .prepare(`
+            SELECT record_rowid, distance
+            FROM ${tableName}
+            WHERE embedding MATCH ? AND product = ? AND k = 1
+          `)
+          .get(expectedBytes, String(record?.product))
+        expect(Number(nearest?.record_rowid)).toBe(Number(record?.record_rowid))
+        expect(Number(nearest?.distance)).toBeLessThan(1e-6)
+      } finally {
+        reader.db.close()
+      }
+    }
+  })
+
   it('invalidates present bytes before restamping a legacy main-revision index', async () => {
     await publishAndBuild()
     rewriteProfileState(
