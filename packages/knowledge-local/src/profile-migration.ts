@@ -48,6 +48,9 @@ interface FrozenMember {
 
 interface CurrentMember extends FrozenMember {
   product: string
+  scopeTier: string
+  scopeKey: string
+  status: string
 }
 
 interface MigrationSnapshot {
@@ -137,9 +140,13 @@ function ensureMigrationTables(
   if (vec === 'vec0') {
     const tableName = vecTableName(targetProfile)
     db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS ${tableName} USING vec0(
+      DROP TABLE IF EXISTS ${tableName};
+      CREATE VIRTUAL TABLE ${tableName} USING vec0(
         record_rowid integer primary key,
         product text partition key,
+        scope_tier text,
+        scope_key text,
+        status text,
         embedding float[${targetProfile.dim}] distance_metric=cosine
       );
     `)
@@ -273,7 +280,8 @@ async function stageFrozenMembers(options: {
 function currentMembers(db: DatabaseSync): CurrentMember[] {
   return db
     .prepare(`
-      SELECT record_rowid, bundle_id, product, embedding_input
+      SELECT record_rowid, bundle_id, product, scope_tier, scope_key, status,
+             embedding_input
       FROM records
       ORDER BY record_rowid
     `)
@@ -282,6 +290,9 @@ function currentMembers(db: DatabaseSync): CurrentMember[] {
       recordRowid: Number(row.record_rowid),
       bundleId: String(row.bundle_id),
       product: String(row.product),
+      scopeTier: String(row.scope_tier),
+      scopeKey: String(row.scope_key),
+      status: String(row.status),
       embeddingInput: String(row.embedding_input),
     }))
 }
@@ -406,8 +417,9 @@ function flipProfile(options: {
       const tableName = vecTableName(options.targetProfile)
       options.db.exec(`DELETE FROM ${tableName}`)
       const insertTargetVec = options.db.prepare(`
-        INSERT INTO ${tableName} (record_rowid, product, embedding)
-        VALUES (?, ?, ?)
+        INSERT INTO ${tableName} (
+          record_rowid, product, scope_tier, scope_key, status, embedding
+        ) VALUES (?, ?, ?, ?, ?, ?)
       `)
       for (const member of options.frozenMembers) {
         const currentMember = currentByRowid.get(member.recordRowid)
@@ -418,6 +430,9 @@ function flipProfile(options: {
         insertTargetVec.run(
           BigInt(member.recordRowid),
           currentMember.product,
+          currentMember.scopeTier,
+          currentMember.scopeKey,
+          currentMember.status,
           staged.embedding,
         )
       }

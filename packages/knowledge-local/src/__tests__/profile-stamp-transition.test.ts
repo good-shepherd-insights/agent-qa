@@ -117,7 +117,10 @@ describe('embedding profile stamp transitions', () => {
         .run(embedding)
       if (options.poisonActiveVec && writer.vec === 'vec0') {
         const record = writer.db
-          .prepare('SELECT record_rowid, product FROM records')
+          .prepare(`
+            SELECT record_rowid, product, scope_tier, scope_key, status
+            FROM records
+          `)
           .get()
         if (record === undefined) throw new Error('expected a projected record')
         const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
@@ -127,10 +130,18 @@ describe('embedding profile stamp transitions', () => {
           .run(recordRowid)
         writer.db
           .prepare(`
-            INSERT INTO ${tableName} (record_rowid, product, embedding)
-            VALUES (?, ?, ?)
+            INSERT INTO ${tableName} (
+              record_rowid, product, scope_tier, scope_key, status, embedding
+            ) VALUES (?, ?, ?, ?, ?, ?)
           `)
-          .run(recordRowid, String(record.product), embedding)
+          .run(
+            recordRowid,
+            String(record.product),
+            String(record.scope_tier),
+            String(record.scope_key),
+            String(record.status),
+            embedding,
+          )
       }
       if (options.clearTransitionEpoch) {
         writer.db

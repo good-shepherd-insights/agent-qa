@@ -81,6 +81,32 @@ function embeddingBuffer(vector: Float32Array, activeProfile: EmbeddingProfile):
   return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength)
 }
 
+interface VecRowMetadata {
+  product: string
+  scopeTier: string
+  scopeKey: string
+  status: string
+}
+
+function recordVecMetadata(db: DatabaseSync, recordRowid: number): VecRowMetadata {
+  const row = db
+    .prepare(`
+      SELECT product, scope_tier, scope_key, status
+      FROM records
+      WHERE record_rowid = ?
+    `)
+    .get(recordRowid)
+  if (row === undefined) {
+    throw new Error(`vec metadata source record ${recordRowid} is missing`)
+  }
+  return {
+    product: String(row.product),
+    scopeTier: String(row.scope_tier),
+    scopeKey: String(row.scope_key),
+    status: String(row.status),
+  }
+}
+
 function identityText(bundle: LoadedBundle): string {
   return bundle.frontmatter.anchors
     .flatMap(({ raw }) => {
@@ -285,7 +311,6 @@ function replaceAnchorGraph(
 function storeEmbedding(
   db: DatabaseSync,
   vec: VecCapability,
-  product: string,
   recordRowid: number,
   vector: Float32Array,
   activeProfile: EmbeddingProfile,
@@ -298,13 +323,42 @@ function storeEmbedding(
   `).run(bytes, recordRowid)
 
   if (vec === 'vec0') {
+    const metadata = recordVecMetadata(db, recordRowid)
     const tableName = vecTableName(activeProfile)
     db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`).run(BigInt(recordRowid))
     db.prepare(`
-      INSERT INTO ${tableName} (record_rowid, product, embedding)
-      VALUES (?, ?, ?)
-    `).run(BigInt(recordRowid), product, bytes)
+      INSERT INTO ${tableName} (
+        record_rowid, product, scope_tier, scope_key, status, embedding
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      BigInt(recordRowid),
+      metadata.product,
+      metadata.scopeTier,
+      metadata.scopeKey,
+      metadata.status,
+      bytes,
+    )
   }
+}
+
+function refreshVecMetadata(
+  db: DatabaseSync,
+  vec: VecCapability,
+  recordRowid: number,
+  activeProfile: EmbeddingProfile,
+): void {
+  if (vec !== 'vec0') return
+  const metadata = recordVecMetadata(db, recordRowid)
+  db.prepare(`
+    UPDATE ${vecTableName(activeProfile)}
+    SET scope_tier = ?, scope_key = ?, status = ?
+    WHERE record_rowid = ?
+  `).run(
+    metadata.scopeTier,
+    metadata.scopeKey,
+    metadata.status,
+    BigInt(recordRowid),
+  )
 }
 
 function projectBundle(
@@ -316,10 +370,11 @@ function projectBundle(
 ): void {
   transaction(db, () => {
     const recordRowid = upsertRecord(db, projected.bundle, projected.product)
+    refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
     if (vector !== undefined) {
-      storeEmbedding(db, vec, projected.product, recordRowid, vector, activeProfile)
+      storeEmbedding(db, vec, recordRowid, vector, activeProfile)
     }
   })
 }
@@ -423,7 +478,7 @@ async function backfillPendingEmbeddings(
 
   const pending = db
     .prepare(`
-      SELECT record_rowid, product, bundle_id, embedding_input
+      SELECT record_rowid, bundle_id, embedding_input
       FROM records
       WHERE embed_status != 'present'
       ORDER BY record_rowid
@@ -444,7 +499,6 @@ async function backfillPendingEmbeddings(
       storeEmbedding(
         db,
         vec,
-        String(row.product),
         Number(row.record_rowid),
         vector,
         activeProfile,
@@ -462,11 +516,18 @@ function reconcileVecRows(
 ): void {
   if (vec !== 'vec0') return
   const tableName = vecTableName(activeProfile)
-  const vecRowids = new Set(
-    db
-      .prepare(`SELECT record_rowid FROM ${tableName}`)
-      .all()
-      .map((row) => Number(row.record_rowid)),
+  const vecRows = new Map(
+    db.prepare(`
+      SELECT record_rowid, scope_tier, scope_key, status
+      FROM ${tableName}
+    `).all().map((row) => [
+      Number(row.record_rowid),
+      {
+        scopeTier: String(row.scope_tier),
+        scopeKey: String(row.scope_key),
+        status: String(row.status),
+      },
+    ]),
   )
   /**
    * Writer open verifies the meta stamp before any present canonical bytes are trusted, so the
@@ -476,7 +537,7 @@ function reconcileVecRows(
    */
   const canonical = db
     .prepare(`
-      SELECT record_rowid, product, embedding
+      SELECT record_rowid, product, scope_tier, scope_key, status, embedding
       FROM records
       WHERE embedding IS NOT NULL
         AND embed_status = 'present'
@@ -488,18 +549,44 @@ function reconcileVecRows(
 
   transaction(db, () => {
     const deleteVec = db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`)
-    for (const recordRowid of vecRowids) {
+    for (const recordRowid of vecRows.keys()) {
       if (!canonicalRowids.has(recordRowid)) deleteVec.run(BigInt(recordRowid))
     }
 
     const insertVec = db.prepare(`
-      INSERT INTO ${tableName} (record_rowid, product, embedding)
-      VALUES (?, ?, ?)
+      INSERT INTO ${tableName} (
+        record_rowid, product, scope_tier, scope_key, status, embedding
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    const updateMetadata = db.prepare(`
+      UPDATE ${tableName}
+      SET scope_tier = ?, scope_key = ?, status = ?
+      WHERE record_rowid = ?
     `)
     for (const row of canonical) {
       const recordRowid = Number(row.record_rowid)
-      if (vecRowids.has(recordRowid)) continue
-      insertVec.run(BigInt(recordRowid), String(row.product), row.embedding as Uint8Array)
+      const scopeTier = String(row.scope_tier)
+      const scopeKey = String(row.scope_key)
+      const status = String(row.status)
+      const vecRow = vecRows.get(recordRowid)
+      if (vecRow === undefined) {
+        insertVec.run(
+          BigInt(recordRowid),
+          String(row.product),
+          scopeTier,
+          scopeKey,
+          status,
+          row.embedding as Uint8Array,
+        )
+        continue
+      }
+      if (
+        vecRow.scopeTier !== scopeTier
+        || vecRow.scopeKey !== scopeKey
+        || vecRow.status !== status
+      ) {
+        updateMetadata.run(scopeTier, scopeKey, status, BigInt(recordRowid))
+      }
     }
   })
 }
