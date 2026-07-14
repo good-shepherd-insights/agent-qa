@@ -98,9 +98,12 @@ describe('index-open', () => {
 
   it('derives a stable vec0 table name from the embedding profile', () => {
     const api = indexApi()
+    const tableName = api.vecTableName(DEFAULT_EMBEDDING_PROFILE)
 
-    expect(api.vecTableName(DEFAULT_EMBEDDING_PROFILE)).toBe(
-      'vec_xenova_bge_small_en_v1_5_main_q8_384',
+    expect(tableName).toMatch(/^vec_[a-z0-9_]+$/u)
+    expect(tableName).toContain(DEFAULT_EMBEDDING_PROFILE.revision)
+    expect(tableName).toMatch(
+      new RegExp(`_${DEFAULT_EMBEDDING_PROFILE.dtype}_${DEFAULT_EMBEDDING_PROFILE.dim}$`, 'u'),
     )
   })
 

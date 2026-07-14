@@ -8,8 +8,8 @@ export interface EmbeddingProfile {
    *
    * Phase 376's embed cache is keyed (model_id, dtype, revision,
    * sha256(rendering)) and the per-model vec0 table identity includes it.
-   * Defaults to 'main'; the Phase 376 bench may pin an exact commit hash
-   * with the profile lock.
+   * Locked production profiles use the exact commit hash exercised by the
+   * embedding bench so upstream re-uploads cannot change index identity.
    */
   revision: string
   /** Output vector dimensionality for the selected model. */
@@ -56,17 +56,21 @@ export interface EmbeddingProfile {
   /**
    * Per-leg dense admission floor for this model.
    *
-   * PROVISIONAL 0.6 pending the Phase 376 bench gate (memory.md §14.2
-   * open #1); BGE-family cosine mass sits in ≈[0.6, 1] per the official
-   * model card, so 0.6 is the permissive admission floor. The bench updates
-   * the value, never the shape — Phase 377 reads it unconditionally.
+   * Each profile's value is calibrated from the recorded gold-pair cosine
+   * distribution. The value may change after a benchmark gate, but the
+   * required profile-owned shape stays fixed for every retrieval consumer.
    */
   tau_dense: number
 }
 
 export const DEFAULT_EMBEDDING_PROFILE = {
   model_id: 'Xenova/bge-small-en-v1.5',
-  revision: 'main',
+  /**
+   * Locked 2026-07-14 from tools/embedding-bench/reports/REPORT.md (D-07).
+   * This pin changes vec-table identity; old revision-keyed tables are
+   * disposable rebuildable projections and are rebuilt, never migrated.
+   */
+  revision: 'ea104dacec62c0de699686887e3f920caeb4f3e3',
   dim: 384,
   dtype: 'q8',
   pooling: 'mean',
@@ -81,7 +85,11 @@ export const DEFAULT_EMBEDDING_PROFILE = {
       optimization: { enable_gelu_approximation: '1' },
     },
   },
-  tau_dense: 0.6,
+  /**
+   * Locked 2026-07-14 from recorded gold-pair p05 0.385200 in
+   * tools/embedding-bench/reports/REPORT.md; rounded down to two decimals.
+   */
+  tau_dense: 0.38,
 } as const satisfies EmbeddingProfile
 
 /**
@@ -103,8 +111,8 @@ export const STATIC_FLOOR_EMBEDDING_PROFILE = {
   /** ORT session options are inert for the static backend. */
   session_options: {},
   /**
-   * PROVISIONAL 0.6 pending the Phase 376 bench calibration (D-08).
-   * The bench updates the value, never the shape.
+   * Locked 2026-07-14 from recorded gold-pair p05 -0.012736 in
+   * tools/embedding-bench/reports/REPORT.md; rounded down to two decimals.
    */
-  tau_dense: 0.6,
+  tau_dense: -0.02,
 } as const satisfies EmbeddingProfile

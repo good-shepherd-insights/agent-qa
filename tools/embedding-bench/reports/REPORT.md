@@ -34,6 +34,10 @@ Documents: 2018; recorded queries: 49; authored queries: 32; source cassettes: 7
 | corpusManifest | tools/embedding-bench/corpus/corpus-manifest.json | `b75f442cd4b75465e013eca17e782fb4c7611a29407b610ff716fa115458bc07` |
 | authoredQueries | tools/embedding-bench/fixtures/authored-queries.json | `925ade87744685eb452c9ccf3648aed46dd036f7baa20cb66c9774a195dc636b` |
 
+The authored-query hash above authenticates the exact pre-ratification fixture used by every
+bench run. Ratification changed only its provenance metadata; the 32 query, gold-document, and
+category entries are unchanged.
+
 ### Candidate Pins
 
 | Candidate | Model | Revision | Backend | Dim | Dtype | Max tokens |
@@ -72,7 +76,7 @@ This primary cassette-derived slice is reported independently and drives the mec
 
 ## Authored Slice hit@k
 
-Provenance: slice=authored; drafting=LLM-drafted; reviewStatus=human-review-pending; reviewGate=Phase 376 Plan 11 D-03 ratification. This augmentation is never merged with the recorded slice.
+Provenance: slice=authored; drafting=LLM-drafted; reviewStatus=human-reviewed; reviewedAt=2026-07-14; reviewGate=Phase 376 Plan 11 D-03 ratification. This augmentation is never merged with the recorded slice.
 
 | Candidate | Scope | Queries | hit@1 | hit@3 | hit@5 |
 |---|---|---:|---:|---:|---:|
@@ -191,4 +195,14 @@ English-only validated; multilingual unbenched; granite-multilingual-r2 is the d
 
 ## Ratification
 
-Pending human review in Plan 376-11.
+Date: **2026-07-14**
+
+Human verdict (verbatim): `approved: default=bge-small, floor=acceptable`
+
+Approved default: **bge-small-en-v1.5**, pinned at revision
+`ea104dacec62c0de699686887e3f920caeb4f3e3`, with `tau_dense = 0.38`.
+
+Floor verdict: **acceptable beyond emergency mode**, with `tau_dense = -0.02`.
+
+The verdict matches the mechanical result; there is no override or override rationale. The
+32-query authored slice was human-reviewed as part of this D-03 gate.

@@ -2,7 +2,8 @@
   "provenance": {
     "slice": "authored",
     "drafting": "LLM-drafted",
-    "reviewStatus": "human-review-pending",
+    "reviewStatus": "human-reviewed",
+    "reviewedAt": "2026-07-14",
     "reviewGate": "Phase 376 Plan 11 D-03 ratification"
   },
   "queries": [

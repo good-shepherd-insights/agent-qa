@@ -5,7 +5,7 @@ import type { ModelProfile } from '../model-profile/index'
 
 const base: EmbeddingProfile = {
   model_id: 'Xenova/bge-small-en-v1.5',
-  revision: 'main',
+  revision: 'ea104dacec62c0de699686887e3f920caeb4f3e3',
   dim: 384,
   dtype: 'q8',
   pooling: 'mean',
@@ -14,7 +14,7 @@ const base: EmbeddingProfile = {
   doc_prefix: '',
   backend: 'node',
   session_options: {},
-  tau_dense: 0.6,
+  tau_dense: 0.38,
 }
 
 const defaultProfile: EmbeddingProfile = DEFAULT_EMBEDDING_PROFILE
