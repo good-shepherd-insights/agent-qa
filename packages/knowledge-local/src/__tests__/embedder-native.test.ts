@@ -138,45 +138,128 @@ describe('createNativeEmbedder', () => {
     )
   })
 
-  it('uses a separately cached pipeline with a bounded tokenizer budget', async () => {
+  it('holds one pipeline when uncapped and capped callers conflict for the same profile', async () => {
+    const tokenizerConfig = { model_max_length: 8_192 }
+    const extractor = Object.assign(
+      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      {
+        tokenizer: {
+          get model_max_length() {
+            return tokenizerConfig.model_max_length
+          },
+          _tokenizerConfig: tokenizerConfig,
+        },
+      },
+    )
+    transformers.pipeline.mockResolvedValue(extractor)
+    const selectedProfile = profile({ dim: 2 })
+
+    await createNativeEmbedder({ profile: selectedProfile, allowDownload: false })
+    const failure = await createNativeEmbedder({
+      profile: selectedProfile,
+      allowDownload: false,
+      maxTokens: 512,
+    }).catch((error) => error)
+
+    expect(failure).toBeInstanceOf(RangeError)
+    expect(failure).toMatchObject({
+      message: `Native embedding pipeline budget conflict for ${selectedProfile.model_id}@${selectedProfile.revision}:${selectedProfile.dtype}: existing maxTokens=uncapped, requested maxTokens=512; one process-lifetime session per model identity permits only the first budget`,
+    })
+    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(extractor.tokenizer._tokenizerConfig).toBe(tokenizerConfig)
+    expect(tokenizerConfig.model_max_length).toBe(8_192)
+  })
+
+  it('shares one bounded pipeline for repeated callers with the same token budget', async () => {
+    const tokenizerConfig = { model_max_length: 8_192 }
+    const extractor = Object.assign(
+      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      { tokenizer: { _tokenizerConfig: tokenizerConfig } },
+    )
+    transformers.pipeline.mockResolvedValue(extractor)
+    const selectedProfile = profile({ dim: 2 })
+
+    await Promise.all([
+      createNativeEmbedder({
+        profile: selectedProfile,
+        allowDownload: false,
+        maxTokens: 512,
+      }),
+      createNativeEmbedder({
+        profile: selectedProfile,
+        allowDownload: false,
+        maxTokens: 512,
+      }),
+    ])
+
+    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(extractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
+  })
+
+  it('constructs one pipeline under concurrent conflicting acquisitions', async () => {
+    const tokenizerConfig = { model_max_length: 8_192 }
+    const extractor = Object.assign(
+      vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
+      { tokenizer: { _tokenizerConfig: tokenizerConfig } },
+    )
+    let resolvePipeline!: (value: typeof extractor) => void
+    const pendingPipeline = new Promise<typeof extractor>((resolve) => {
+      resolvePipeline = resolve
+    })
+    transformers.pipeline.mockReturnValue(pendingPipeline)
+    const selectedProfile = profile({ dim: 2 })
+
+    const acceptedPromise = createNativeEmbedder({
+      profile: selectedProfile,
+      allowDownload: false,
+    })
+    await vi.waitFor(() => expect(transformers.pipeline).toHaveBeenCalledTimes(1))
+    const conflictPromise = createNativeEmbedder({
+      profile: selectedProfile,
+      allowDownload: false,
+      maxTokens: 512,
+    })
+    resolvePipeline(extractor)
+    const [accepted, conflict] = await Promise.allSettled([
+      acceptedPromise,
+      conflictPromise,
+    ])
+
+    expect(accepted.status).toBe('fulfilled')
+    expect(conflict.status).toBe('rejected')
+    expect(conflict.status === 'rejected' ? conflict.reason : undefined).toMatchObject({
+      name: 'RangeError',
+      message: expect.stringContaining('existing maxTokens=uncapped, requested maxTokens=512'),
+    })
+    expect(transformers.pipeline).toHaveBeenCalledTimes(1)
+    expect(extractor.tokenizer._tokenizerConfig).toBe(tokenizerConfig)
+    expect(tokenizerConfig.model_max_length).toBe(8_192)
+  })
+
+  it('allows different profile identities to select independent token budgets', async () => {
     const uncappedTokenizerConfig = { model_max_length: 8_192 }
     const cappedTokenizerConfig = { model_max_length: 8_192 }
     const uncappedExtractor = Object.assign(
       vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      {
-        tokenizer: {
-          get model_max_length() {
-            return uncappedTokenizerConfig.model_max_length
-          },
-          _tokenizerConfig: uncappedTokenizerConfig,
-        },
-      },
+      { tokenizer: { _tokenizerConfig: uncappedTokenizerConfig } },
     )
     const cappedExtractor = Object.assign(
       vi.fn().mockResolvedValue({ data: new Float32Array([1, 0]) }),
-      {
-        tokenizer: {
-          get model_max_length() {
-            return cappedTokenizerConfig.model_max_length
-          },
-          _tokenizerConfig: cappedTokenizerConfig,
-        },
-      },
+      { tokenizer: { _tokenizerConfig: cappedTokenizerConfig } },
     )
     transformers.pipeline
       .mockResolvedValueOnce(uncappedExtractor)
       .mockResolvedValueOnce(cappedExtractor)
-    const selectedProfile = profile({ dim: 2 })
 
-    await createNativeEmbedder({ profile: selectedProfile, allowDownload: false })
+    await createNativeEmbedder({ profile: profile({ dim: 2 }), allowDownload: false })
     await createNativeEmbedder({
-      profile: selectedProfile,
+      profile: profile({ dim: 2 }),
       allowDownload: false,
       maxTokens: 512,
     })
 
     expect(transformers.pipeline).toHaveBeenCalledTimes(2)
-    expect(uncappedTokenizerConfig.model_max_length).toBe(8_192)
+    expect(uncappedExtractor.tokenizer._tokenizerConfig).toBe(uncappedTokenizerConfig)
     expect(cappedExtractor.tokenizer._tokenizerConfig.model_max_length).toBe(512)
   })
 
