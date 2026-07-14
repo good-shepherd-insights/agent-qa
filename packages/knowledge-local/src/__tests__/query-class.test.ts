@@ -90,7 +90,7 @@ describe('retrieval constant authority', () => {
     }).toEqual({
       C_RRF: 60,
       FAN_OUT_CAP: 32,
-      TAU_LEX: 0.5,
+      TAU_LEX: 6.86,
       FTS_WEIGHT_IDENTITY: 10,
       FTS_WEIGHT_CONTENT: 5,
       FTS_WEIGHT_CONTEXT: 1,

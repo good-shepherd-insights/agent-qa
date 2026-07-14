@@ -9,6 +9,7 @@ import type {
   FusedCandidate,
   FusionCandidate,
 } from '../retrieval/fusion.js'
+import { TAU_LEX } from '../retrieval/constants.js'
 
 function candidate(
   bundleId: string,
@@ -147,7 +148,7 @@ describe('pre-fusion admission (D-06)', () => {
     ).toBe(true)
     expect(
       admitCandidate(
-        candidate('r_lexical', { rawScores: { bm25Positive: 0.5 } }),
+        candidate('r_lexical', { rawScores: { bm25Positive: TAU_LEX } }),
         floors,
       ),
     ).toBe(true)
@@ -157,7 +158,11 @@ describe('pre-fusion admission (D-06)', () => {
     expect(
       admitCandidate(
         candidate('r_junk', {
-          rawScores: { cosine: 0.379, bm25Positive: 0.499, anchorExact: false },
+          rawScores: {
+            cosine: 0.379,
+            bm25Positive: TAU_LEX - 0.001,
+            anchorExact: false,
+          },
         }),
         floors,
       ),
@@ -167,7 +172,7 @@ describe('pre-fusion admission (D-06)', () => {
   it('removes inadmissible candidates before ranks are assigned for fusion', () => {
     const leg = [
       candidate('r_junk', { rawScores: { cosine: 0.1, bm25Positive: 0.1 } }),
-      candidate('r_good', { rawScores: { bm25Positive: 0.5 } }),
+      candidate('r_good', { rawScores: { bm25Positive: TAU_LEX } }),
     ].filter((entry) => admitCandidate(entry, { tauDense: 0.38 }))
 
     const ranked = fuseWeightedRrf([{ weight: 1, ranked: leg }])
