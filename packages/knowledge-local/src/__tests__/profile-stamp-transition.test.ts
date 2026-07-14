@@ -528,6 +528,207 @@ describe('embedding profile stamp transitions', () => {
     }
   })
 
+  it('rejects stale vec0 hits across a brute transition before rebuild and heals ordinarily', async () => {
+    const published = publishFixture()
+    const embedder = makeFakeEmbedder()
+    const first = await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    if (first.vec !== 'vec0') return
+
+    const source = knowledgeLocal.scanBundleById({
+      knowledgeRoot,
+      bundleId: published.id,
+    })
+    expect(source).toBeDefined()
+    const query = await embedder.embedQuery(source!.embeddingInput)
+
+    const setup = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      setup.db
+        .prepare(`
+          DELETE FROM meta
+          WHERE k IN ('embedding_transition_epoch', 'embedding_vec_cleanup_epoch')
+        `)
+        .run()
+    } finally {
+      setup.close()
+    }
+
+    const bruteTransition = knowledgeLocal.openIndexWriter(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    bruteTransition.close()
+    expect(readTransitionEpoch()).toBe('1')
+    expect(readVecCleanupEpoch()).toBeUndefined()
+
+    const reader = knowledgeLocal.openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(reader).toMatchObject({ source: 'index', vec: 'vec0' })
+      expect(reader.searchDense(query, { product: source!.product, k: 1 })).toEqual([])
+
+      const bruteRebuild = await knowledgeLocal.rebuildIndex({
+        knowledgeRoot,
+        embedder,
+        vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+      })
+      expect(bruteRebuild).toMatchObject({
+        vec: 'brute',
+        projected: 0,
+        backfilled: 1,
+      })
+      expect(readVecCleanupEpoch()).toBeUndefined()
+      expect(readProfileState().embedStatus).toBe('present')
+      expect(reader.searchDense(query, { product: source!.product, k: 1 })).toEqual([])
+
+      const vecRebuild = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+      expect(vecRebuild).toMatchObject({
+        vec: 'vec0',
+        projected: 0,
+        backfilled: 0,
+      })
+      expect(readVecCleanupEpoch()).toBe('1')
+      const healed = reader.searchDense(query, { product: source!.product, k: 1 })
+      expect(healed.map((hit) => hit.bundleId)).toEqual([published.id])
+      expect(healed[0]?.distance).toBeLessThan(1e-6)
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('rechecks cleanup when reusing a vec0 reader opened before a brute rewrite', async () => {
+    const published = publishFixture()
+    const originalEmbedder = makeFakeEmbedder()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: originalEmbedder,
+    })
+    if (first.vec !== 'vec0') return
+
+    const source = knowledgeLocal.scanBundleById({
+      knowledgeRoot,
+      bundleId: published.id,
+    })
+    expect(source).toBeDefined()
+    const originalQuery = await originalEmbedder.embedQuery(source!.embeddingInput)
+    const reader = knowledgeLocal.openKnowledgeReader(knowledgeRoot)
+
+    try {
+      expect(reader).toMatchObject({ source: 'index', vec: 'vec0' })
+      expect(
+        reader
+          .searchDense(originalQuery, { product: source!.product, k: 1 })
+          .map((hit) => hit.bundleId),
+      ).toEqual([published.id])
+
+      const brute = knowledgeLocal.openIndexWriter(knowledgeRoot, {
+        vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+      })
+      try {
+        expect(
+          brute.db
+            .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+            .get()?.v,
+        ).toBeUndefined()
+        brute.db
+          .prepare("UPDATE records SET embedding = NULL, embed_status = 'pending'")
+          .run()
+      } finally {
+        brute.close()
+      }
+
+      const replacement = new Float32Array(DEFAULT_EMBEDDING_PROFILE.dim)
+      replacement[1] = 1
+      const replacementEmbedder = {
+        async embedDocument(): Promise<Float32Array> {
+          return replacement
+        },
+        async embedQuery(): Promise<Float32Array> {
+          return replacement
+        },
+      }
+      const bruteRebuild = await knowledgeLocal.rebuildIndex({
+        knowledgeRoot,
+        embedder: replacementEmbedder,
+        vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+      })
+      expect(bruteRebuild).toMatchObject({
+        vec: 'brute',
+        projected: 0,
+        backfilled: 1,
+      })
+      expect(readVecCleanupEpoch()).toBeUndefined()
+      expect(reader.searchDense(originalQuery, { product: source!.product, k: 1 })).toEqual([])
+
+      const vecRebuild = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+      expect(vecRebuild).toMatchObject({
+        vec: 'vec0',
+        projected: 0,
+        backfilled: 0,
+      })
+      const healed = reader.searchDense(replacement, {
+        product: source!.product,
+        k: 1,
+      })
+      expect(healed.map((hit) => hit.bundleId)).toEqual([published.id])
+      expect(healed[0]?.distance).toBeLessThan(1e-6)
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('rejects vec0 candidates without present exact-dimension canonical bytes', async () => {
+    const published = publishFixture()
+    const embedder = makeFakeEmbedder()
+    const first = await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })
+    if (first.vec !== 'vec0') return
+
+    const source = knowledgeLocal.scanBundleById({
+      knowledgeRoot,
+      bundleId: published.id,
+    })
+    expect(source).toBeDefined()
+    const query = await embedder.embedQuery(source!.embeddingInput)
+    const fullSizeBytes = Buffer.from(
+      query.buffer,
+      query.byteOffset,
+      query.byteLength,
+    )
+    const reader = knowledgeLocal.openKnowledgeReader(knowledgeRoot)
+
+    try {
+      const pendingWriter = knowledgeLocal.openIndexWriter(knowledgeRoot)
+      try {
+        pendingWriter.db
+          .prepare(`
+            UPDATE records
+            SET embedding = ?, embed_status = 'pending'
+            WHERE bundle_id = ?
+          `)
+          .run(fullSizeBytes, published.id)
+      } finally {
+        pendingWriter.close()
+      }
+      expect(readVecCleanupEpoch()).toBe('1')
+      expect(reader.searchDense(query, { product: source!.product, k: 1 })).toEqual([])
+
+      const wrongLengthWriter = knowledgeLocal.openIndexWriter(knowledgeRoot)
+      try {
+        wrongLengthWriter.db
+          .prepare(`
+            UPDATE records
+            SET embedding = ?, embed_status = 'present'
+            WHERE bundle_id = ?
+          `)
+          .run(Buffer.alloc(100, 0x7f), published.id)
+      } finally {
+        wrongLengthWriter.close()
+      }
+      expect(readVecCleanupEpoch()).toBe('1')
+      expect(reader.searchDense(query, { product: source!.product, k: 1 })).toEqual([])
+    } finally {
+      reader.close()
+    }
+  })
+
   it('clears active vec0 rows inside the transition transaction at writer open', async () => {
     publishFixture()
     const first = await knowledgeLocal.rebuildIndex({
