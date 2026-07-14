@@ -361,77 +361,100 @@ describe('RETR-01 composed retrieval pipeline', () => {
     }
   })
 
-  it('preserves and annotates both MintUnknown peers while keeping the unknown ordinary', async () => {
-    const anchor = { t: 'page', route: '/mint-unknown' } satisfies Anchor
-    const left = publishFact({ anchor, identity: 'conflict-left', createdAtOrdinal: 10 })
-    const right = publishFact({ anchor, identity: 'conflict-right', createdAtOrdinal: 11 })
-    const unknownOutcome = publishBundle(config(), {
-      draft: makeBundleDraftFixture({
-        kind: 'unknown',
-        anchors: [anchor, { t: 'platform', platform: 'web' }],
-        scope: { tier: 'product', key: PRODUCT },
-        summary: 'MintUnknown conflict remains unresolved',
-        body: 'The conflicting observations await deterministic resolution.',
-      }),
-      discriminant: { kind: 'unknown', conflictRecordIds: [left.id, right.id] },
-      originClass: 'agent-verified',
-      createdAtOrdinal: 12,
-      screenStates: [makeScreenStateFixture()],
-      initialEvents: [],
-      relations: [],
-      provenance: {
-        mode: 'run-linked',
-        runId: 'retrieve-pipeline-run',
-        testId: 'retrieve-mint-unknown',
-        stepIndex: 12,
-      },
-      artifacts: [],
-    })
-    expect(unknownOutcome.kind).toBe('published')
-    if (unknownOutcome.kind !== 'published') throw new Error('expected unknown publication')
-    const unknown = unknownOutcome
-
-    for (const peer of [left, right]) {
-      expect(
-        appendRelation(config(), peer.id, {
-          type: 'conflicts-with',
-          targetId: unknown.id,
-          addedAtOrdinal: 13,
-          curationJobId: `${peer.id}-conflict-job`,
+  it(
+    'preserves and annotates both MintUnknown peers while keeping the unknown ordinary',
+    async () => {
+      const anchor = { t: 'page', route: '/mint-unknown' } satisfies Anchor
+      const left = publishFact({ anchor, identity: 'conflict-left', createdAtOrdinal: 10 })
+      const right = publishFact({ anchor, identity: 'conflict-right', createdAtOrdinal: 11 })
+      const unknownOutcome = publishBundle(config(), {
+        draft: makeBundleDraftFixture({
+          kind: 'unknown',
+          anchors: [anchor, { t: 'platform', platform: 'web' }],
+          scope: { tier: 'product', key: PRODUCT },
+          summary: 'MintUnknown conflict remains unresolved',
+          body: 'The conflicting observations await deterministic resolution.',
         }),
-      ).toEqual({ kind: 'appended' })
-    }
-
-    await rebuildIndex({ knowledgeRoot })
-    const reader = openKnowledgeReader(knowledgeRoot)
-    try {
-      const result = await retrieve(
-        reader,
-        { intent: '', anchors: [anchor] },
-        { n: 10, product: PRODUCT, asOfBuild: 20 },
-      )
-      const leftEntry = result.find(({ id }) => id === left.id)
-      const rightEntry = result.find(({ id }) => id === right.id)
-      const unknownEntry = result.find(({ id }) => id === unknown.id)
-
-      expect(leftEntry?.conflict).toEqual({
-        peerRecordId: right.id,
-        unknownRecordId: unknown.id,
+        discriminant: { kind: 'unknown', conflictRecordIds: [left.id, right.id] },
+        originClass: 'agent-verified',
+        createdAtOrdinal: 12,
+        screenStates: [makeScreenStateFixture()],
+        initialEvents: [],
+        relations: [],
+        provenance: {
+          mode: 'run-linked',
+          runId: 'retrieve-pipeline-run',
+          testId: 'retrieve-mint-unknown',
+          stepIndex: 12,
+        },
+        artifacts: [],
       })
-      expect(rightEntry?.conflict).toEqual({
-        peerRecordId: left.id,
-        unknownRecordId: unknown.id,
-      })
-      expect(unknownEntry).toMatchObject({ kind: 'unknown' })
-      expect(unknownEntry?.conflict).toBeUndefined()
-    } finally {
-      reader.close()
-    }
-  })
+      expect(unknownOutcome.kind).toBe('published')
+      if (unknownOutcome.kind !== 'published') throw new Error('expected unknown publication')
+      const unknown = unknownOutcome
+
+      for (const peer of [left, right]) {
+        expect(
+          appendRelation(config(), peer.id, {
+            type: 'conflicts-with',
+            targetId: unknown.id,
+            addedAtOrdinal: 13,
+            curationJobId: `${peer.id}-conflict-job`,
+          }),
+        ).toEqual({ kind: 'appended' })
+      }
+
+      await rebuildIndex({ knowledgeRoot })
+      const reader = openKnowledgeReader(knowledgeRoot)
+      try {
+        const result = await retrieve(
+          reader,
+          { intent: '', anchors: [anchor] },
+          { n: 10, product: PRODUCT, asOfBuild: 20 },
+        )
+        const leftEntry = result.find(({ id }) => id === left.id)
+        const rightEntry = result.find(({ id }) => id === right.id)
+        const unknownEntry = result.find(({ id }) => id === unknown.id)
+
+        expect(leftEntry?.conflict).toEqual({
+          peerRecordId: right.id,
+          unknownRecordId: unknown.id,
+        })
+        expect(rightEntry?.conflict).toEqual({
+          peerRecordId: left.id,
+          unknownRecordId: unknown.id,
+        })
+        expect(unknownEntry).toMatchObject({ kind: 'unknown' })
+        expect(unknownEntry?.conflict).toBeUndefined()
+      } finally {
+        reader.close()
+      }
+    },
+  )
 
   it('uses deterministic lexical-plus-anchor RRF in scan mode and never expands', async () => {
     const anchor = { t: 'el', role: 'button', name: 'Scan seed (3)' } satisfies Anchor
     const seed = publishFact({ anchor, identity: 'scan-seed', createdAtOrdinal: 10 })
+    const closed = publishFact({
+      anchor,
+      identity: 'scan-closed',
+      createdAtOrdinal: 5,
+      initialEvents: [event('window-close', 'scan-closed', 15)],
+    })
+    const superseded = publishFact({
+      anchor,
+      identity: 'scan-superseded',
+      createdAtOrdinal: 6,
+      initialEvents: [
+        BundleOutcomeEventSchema.parse({
+          type: 'superseded',
+          evidenceToken: 'scan-superseded-event',
+          curationJobId: 'scan-superseded-job',
+          buildOrdinal: 16,
+          byRecordId: asRecordId(seed.id),
+        }),
+      ],
+    })
     const neighbor = publishFact({
       anchor: { t: 'page', route: '/scan-neighbor' },
       identity: 'scan-neighbor',
@@ -449,10 +472,22 @@ describe('RETR-01 composed retrieval pipeline', () => {
       const options = { n: 5, product: PRODUCT, asOfBuild: 20 } as const
       const first = await retrieve(reader, query, options)
       const second = await retrieve(reader, query, options)
+      const audit = await retrieve(reader, query, {
+        n: 10,
+        product: PRODUCT,
+        asOfBuild: 20,
+        includeSuperseded: true,
+        asOfRange: { lo: 1, hi: 20 },
+      })
 
       expect(first.map(({ id }) => id)).toEqual([seed.id])
       expect(second.map(({ id }) => id)).toEqual([seed.id])
       expect(first.some(({ id }) => id === neighbor.id)).toBe(false)
+      expect(audit.map(({ id }) => id)).toEqual(
+        expect.arrayContaining([seed.id, closed.id, superseded.id]),
+      )
+      expect(audit).toHaveLength(3)
+      expect(audit.every((entry) => entry.audit !== undefined)).toBe(true)
     } finally {
       reader.close()
     }

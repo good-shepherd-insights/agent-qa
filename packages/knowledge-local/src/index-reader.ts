@@ -14,13 +14,19 @@ import {
   canonicalJson,
   normalizeAnchor,
 } from '@vostride/agent-qa-schema'
-import type { Anchor } from '@vostride/agent-qa-schema'
+import type {
+  Anchor,
+  BundleRelation,
+  OriginClass,
+  ScopeKey,
+} from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import {
   isServable,
   scanBundleById,
   scanBundles,
+  scanBundlesForRetrieval,
 } from './bundle-scan.js'
 import type { KnowledgeHit } from './bundle-scan.js'
 import {
@@ -59,12 +65,54 @@ export interface KnowledgeReader {
   close(): void
 }
 
+/** Internal bundle-truth shape consumed by retrieve.ts; deliberately absent from the barrel. */
+export type AuthoritativeKnowledgeHit<THit extends KnowledgeHit = KnowledgeHit> = Omit<
+  THit,
+  | keyof KnowledgeHit
+  | 'anchors'
+  | 'scope'
+  | 'createdAtOrdinal'
+  | 'originClass'
+  | 'relations'
+> & KnowledgeHit & {
+  anchors: Anchor[]
+  scope: ScopeKey
+  createdAtOrdinal: number
+  originClass: OriginClass
+  relations: readonly BundleRelation[]
+}
+
+/** Internal snapshot context that lets the public retrieve function compose on this facade. */
+export interface KnowledgeRetrievalContext {
+  readonly source: 'index' | 'scan'
+  readonly vec: VecCapability | 'none'
+  readonly connection: IndexReaderConnection | undefined
+  readonly reader: KnowledgeReader
+  readonly scan:
+    | ((text: string | undefined, anchor: Anchor | undefined) => KnowledgeHit[])
+    | undefined
+  recheck<THit extends KnowledgeHit>(
+    hits: readonly THit[],
+    audit: boolean,
+  ): Array<AuthoritativeKnowledgeHit<THit>>
+}
+
+export type KnowledgeRetrievalOperation<TResult> = (
+  context: KnowledgeRetrievalContext,
+) => TResult | Promise<TResult>
+
 interface IndexedRecord {
   hit: KnowledgeHit
   recordRowid: number
 }
 
 type RefreshedHit<THit extends KnowledgeHit> = Omit<THit, keyof KnowledgeHit> & KnowledgeHit
+
+const RUN_RETRIEVAL = Symbol('knowledge-reader.run-retrieval')
+
+interface InternalKnowledgeReader extends KnowledgeReader {
+  [RUN_RETRIEVAL]<TResult>(operation: KnowledgeRetrievalOperation<TResult>): Promise<TResult>
+}
 
 const RECORD_COLUMNS = `
   r.record_rowid,
@@ -162,12 +210,13 @@ function safeBundleDir(knowledgeRoot: string, hit: KnowledgeHit): string | undef
   return join(knowledgeRoot, 'memory', hit.product, 'bundles', hit.bundleId)
 }
 
-/** D-09: refresh mutable truth from a digest-verified bundle and preserve ranking metadata. */
-function recheckHits<THit extends KnowledgeHit>(
+/** D-09: refresh complete truth from a digest-verified bundle and preserve ranking metadata. */
+function recheckAuthoritativeHits<THit extends KnowledgeHit>(
   knowledgeRoot: string,
   hits: readonly THit[],
-): Array<RefreshedHit<THit>> {
-  const refreshed: Array<RefreshedHit<THit>> = []
+  audit: boolean,
+): Array<AuthoritativeKnowledgeHit<THit>> {
+  const refreshed: Array<AuthoritativeKnowledgeHit<THit>> = []
   for (const hit of hits) {
     const bundleDir = safeBundleDir(knowledgeRoot, hit)
     if (bundleDir === undefined) continue
@@ -177,7 +226,7 @@ function recheckHits<THit extends KnowledgeHit>(
       const outcome = loadBundle(bundleDir)
       if (outcome.kind !== 'loaded' || outcome.bundle.manifest.id !== hit.bundleId) continue
       const trust = deriveBundleTrust(outcome.bundle)
-      if (!isServable(trust)) continue
+      if (!audit && !isServable(trust)) continue
 
       refreshed.push({
         ...hit,
@@ -188,12 +237,35 @@ function recheckHits<THit extends KnowledgeHit>(
         validity: trust.validity,
         summary: outcome.bundle.summary,
         embeddingInput: outcome.bundle.manifest.embeddingInput,
-      } as RefreshedHit<THit>)
+        anchors: outcome.bundle.frontmatter.anchors.map(({ normalized }) => normalized),
+        scope: outcome.bundle.frontmatter.scope,
+        createdAtOrdinal: outcome.bundle.frontmatter.createdAtOrdinal,
+        originClass: outcome.bundle.frontmatter.originClass,
+        relations: outcome.bundle.relations.relations,
+      } as AuthoritativeKnowledgeHit<THit>)
     } catch {
       // A changing, unreadable, or invalid bundle is never safe to serve from a stale index row.
     }
   }
   return refreshed
+}
+
+/** Serving recheck retains the historical KnowledgeHit runtime surface. */
+function recheckHits<THit extends KnowledgeHit>(
+  knowledgeRoot: string,
+  hits: readonly THit[],
+): Array<RefreshedHit<THit>> {
+  return recheckAuthoritativeHits(knowledgeRoot, hits, false).map((hit) => {
+    const {
+      anchors: _anchors,
+      scope: _scope,
+      createdAtOrdinal: _createdAtOrdinal,
+      originClass: _originClass,
+      relations: _relations,
+      ...refreshed
+    } = hit
+    return refreshed as unknown as RefreshedHit<THit>
+  })
 }
 
 function quoteFtsTokens(text: string): string {
@@ -240,6 +312,25 @@ function withReadSnapshot<T>(db: DatabaseSync, operation: () => T): T {
   }
 }
 
+async function withAsyncReadSnapshot<T>(
+  db: DatabaseSync,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  db.exec('BEGIN')
+  try {
+    const result = await operation()
+    db.exec('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // Preserve the SQL, async operation, or commit error that caused the rollback.
+    }
+    throw error
+  }
+}
+
 function float32View(value: unknown): Float32Array | undefined {
   if (!(value instanceof Uint8Array) || value.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
     return undefined
@@ -257,8 +348,8 @@ function cosineDistance(query: Float32Array, candidate: Float32Array): number | 
   return 1 - dot
 }
 
-function scanReader(knowledgeRoot: string): KnowledgeReader {
-  return {
+function scanReader(knowledgeRoot: string): InternalKnowledgeReader {
+  const reader: InternalKnowledgeReader = {
     source: 'scan',
     vec: 'none',
     getById(bundleId): KnowledgeHit | undefined {
@@ -279,13 +370,30 @@ function scanReader(knowledgeRoot: string): KnowledgeReader {
       return recheckHits(knowledgeRoot, hits)
     },
     close(): void {},
+    async [RUN_RETRIEVAL]<TResult>(
+      operation: KnowledgeRetrievalOperation<TResult>,
+    ): Promise<TResult> {
+      return operation({
+        source: 'scan',
+        vec: 'none',
+        connection: undefined,
+        reader,
+        scan: (text, anchor) => scanBundlesForRetrieval({
+          knowledgeRoot,
+          ...(text === undefined ? {} : { text }),
+          ...(anchor === undefined ? {} : { anchor }),
+        }),
+        recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit),
+      })
+    },
   }
+  return reader
 }
 
 function indexReader(
   knowledgeRoot: string,
   connection: IndexReaderConnection,
-): KnowledgeReader {
+): InternalKnowledgeReader {
   let closed = false
   const { db } = connection
   const activeProfile = resolveActiveProfile(db)
@@ -396,7 +504,7 @@ function indexReader(
     return hits
   }
 
-  return {
+  const reader: InternalKnowledgeReader = {
     source: 'index',
     vec: connection.vec,
     getById(bundleId): KnowledgeHit | undefined {
@@ -487,7 +595,21 @@ function indexReader(
       closed = true
       connection.db.close()
     },
+    async [RUN_RETRIEVAL]<TResult>(
+      operation: KnowledgeRetrievalOperation<TResult>,
+    ): Promise<TResult> {
+      return withAsyncReadSnapshot(db, () =>
+        operation({
+          source: 'index',
+          vec: connection.vec,
+          connection,
+          reader,
+          scan: undefined,
+          recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit),
+        }))
+    },
   }
+  return reader
 }
 
 /**
@@ -497,7 +619,7 @@ function indexReader(
 function operationDegradingReader(
   knowledgeRoot: string,
   connection: IndexReaderConnection,
-): KnowledgeReader {
+): InternalKnowledgeReader {
   let delegate = indexReader(knowledgeRoot, connection)
   let closed = false
 
@@ -518,7 +640,26 @@ function operationDegradingReader(
     }
   }
 
-  return {
+  async function invokeAsync<TResult>(
+    operation: (reader: InternalKnowledgeReader) => TResult | Promise<TResult>,
+  ): Promise<TResult> {
+    if (delegate.source === 'scan') return operation(delegate)
+
+    try {
+      return await operation(delegate)
+    } catch (error) {
+      closeBestEffort(connection)
+      requestRebuildBestEffort(
+        knowledgeRoot,
+        'corrupt',
+        `derived index operation failed: ${errorMessage(error)}`,
+      )
+      delegate = scanReader(knowledgeRoot)
+      return operation(delegate)
+    }
+  }
+
+  const reader: InternalKnowledgeReader = {
     get source(): 'index' | 'scan' {
       return delegate.source
     },
@@ -549,7 +690,29 @@ function operationDegradingReader(
         closeBestEffort(connection)
       }
     },
+    async [RUN_RETRIEVAL]<TResult>(
+      operation: KnowledgeRetrievalOperation<TResult>,
+    ): Promise<TResult> {
+      return invokeAsync((current) => current[RUN_RETRIEVAL](operation))
+    },
   }
+  return reader
+}
+
+/**
+ * Run one retrieval operation on the facade's current capability. Index work receives one async
+ * read snapshot; any operation failure follows the existing permanent index-to-scan retry path.
+ */
+export function withKnowledgeReadSnapshot<TResult>(
+  reader: KnowledgeReader,
+  operation: KnowledgeRetrievalOperation<TResult>,
+): Promise<TResult> {
+  const internal = reader as Partial<InternalKnowledgeReader>
+  const run = internal[RUN_RETRIEVAL]
+  if (run === undefined) {
+    throw new TypeError('retrieve requires a reader created by openKnowledgeReader')
+  }
+  return (reader as InternalKnowledgeReader)[RUN_RETRIEVAL](operation)
 }
 
 function degrade(

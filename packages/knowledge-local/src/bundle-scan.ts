@@ -150,7 +150,10 @@ function servableHit(dir: EnumeratedBundleDir): KnowledgeHit | undefined {
     : undefined
 }
 
-export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
+function scanBundlesWithPosture(
+  opts: ScanBundlesOptions,
+  servingOnly: boolean,
+): KnowledgeHit[] {
   const queryTokens = (opts.text ?? '')
     .toLowerCase()
     .split(/\s+/)
@@ -167,7 +170,7 @@ export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
     if (!verifyBundleIntegrity(entry.dir).ok) continue
 
     const trustState = deriveBundleTrust(outcome.bundle)
-    if (!isServable(trustState)) continue
+    if (servingOnly && !isServable(trustState)) continue
     if (!textMatches(outcome.bundle, queryTokens)) continue
     if (!anchorMatches(outcome.bundle, queryAnchor)) continue
     hits.push(toHit(outcome.bundle, trustState, entry.product))
@@ -180,6 +183,15 @@ export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
   return opts.k === undefined
     ? hits
     : hits.slice(0, Math.max(0, Math.floor(opts.k)))
+}
+
+export function scanBundles(opts: ScanBundlesOptions): KnowledgeHit[] {
+  return scanBundlesWithPosture(opts, true)
+}
+
+/** Internal retrieval scan: status and validity are filtered by the composed pipeline. */
+export function scanBundlesForRetrieval(opts: ScanBundlesOptions): KnowledgeHit[] {
+  return scanBundlesWithPosture(opts, false)
 }
 
 export function scanBundleById(opts: ScanBundleByIdOptions): KnowledgeHit | undefined {
