@@ -184,6 +184,19 @@ describe('embedding profile stamp transitions', () => {
     }
   }
 
+  function readContextualRendering(): string {
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      return String(
+        reader.db
+          .prepare('SELECT contextual_rendering FROM records')
+          .get()?.contextual_rendering,
+      )
+    } finally {
+      reader.db.close()
+    }
+  }
+
   function readTransitionEpoch(): unknown {
     const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot, {
       vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
@@ -260,10 +273,10 @@ describe('embedding profile stamp transitions', () => {
     })
     try {
       const record = reader.db
-        .prepare('SELECT embed_status, embedding, embedding_input FROM records')
+        .prepare('SELECT embed_status, embedding, contextual_rendering FROM records')
         .get()
       const expected = await makeFakeEmbedder().embedDocument(
-        String(record?.embedding_input),
+        String(record?.contextual_rendering),
       )
       expect(record?.embed_status).toBe('present')
       expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(
@@ -550,7 +563,7 @@ describe('embedding profile stamp transitions', () => {
       bundleId: published.id,
     })
     expect(source).toBeDefined()
-    const query = await embedder.embedQuery(source!.embeddingInput)
+    const query = await embedder.embedQuery(readContextualRendering())
 
     const setup = knowledgeLocal.openIndexWriter(knowledgeRoot)
     try {
@@ -821,12 +834,12 @@ describe('embedding profile stamp transitions', () => {
       try {
         const record = reader.db
           .prepare(`
-            SELECT record_rowid, product, embed_status, embedding, embedding_input
+            SELECT record_rowid, product, embed_status, embedding, contextual_rendering
             FROM records
           `)
           .get()
         const expected = await makeFakeEmbedder().embedDocument(
-          String(record?.embedding_input),
+          String(record?.contextual_rendering),
         )
         const expectedBytes = Buffer.from(
           expected.buffer,
@@ -971,10 +984,10 @@ describe('embedding profile stamp transitions', () => {
     })
     try {
       const record = reader.db
-        .prepare('SELECT embed_status, embedding, embedding_input FROM records')
+        .prepare('SELECT embed_status, embedding, contextual_rendering FROM records')
         .get()
       const expected = await makeFakeEmbedder().embedDocument(
-        String(record?.embedding_input),
+        String(record?.contextual_rendering),
       )
       expect(record?.embed_status).toBe('present')
       expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(
@@ -1018,12 +1031,12 @@ describe('embedding profile stamp transitions', () => {
     try {
       const record = reader.db
         .prepare(`
-          SELECT record_rowid, product, embed_status, embedding, embedding_input
+          SELECT record_rowid, product, embed_status, embedding, contextual_rendering
           FROM records
         `)
         .get()
       const expected = await makeFakeEmbedder().embedDocument(
-        String(record?.embedding_input),
+        String(record?.contextual_rendering),
       )
       const expectedBytes = Buffer.from(
         expected.buffer,

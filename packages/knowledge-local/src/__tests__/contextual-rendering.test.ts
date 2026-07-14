@@ -292,7 +292,7 @@ describe('RETR-02 contextual rendering rebuild integration', () => {
     const report = await rebuildIndex({ knowledgeRoot, embedder })
     const row = projection(fact.id)
 
-    expect(report).toMatchObject({ projected: 1, backfilled: 1 })
+    expect(report).toMatchObject({ projected: 1, backfilled: 0 })
     expect(row.situating_line).toContain('Page: /checkout.')
     expect(row.contextual_rendering).toBe(
       `${String(row.embedding_input)}\n${String(row.situating_line)}`,

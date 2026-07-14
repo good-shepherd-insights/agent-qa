@@ -347,8 +347,12 @@ describe('index schema v2 reset', () => {
         .all()
       expect(records).toHaveLength(2)
       for (const record of records) {
-        expect(record.situating_line).toBe('')
-        expect(record.contextual_rendering).toBe(record.embedding_input)
+        expect(String(record.situating_line)).toMatch(
+          /^Page: \/(?:login|schema-v2-source)\.$/,
+        )
+        expect(record.contextual_rendering).toBe(
+          `${String(record.embedding_input)}\n${String(record.situating_line)}`,
+        )
       }
 
       const sourceRecord = records.find((record) => record.bundle_id === source.id)
@@ -363,7 +367,7 @@ describe('index schema v2 reset', () => {
         .get(sourceRowid)
       expect(String(fts?.identity)).toContain('Schema v2 source')
       expect(fts?.content).toBe(sourceRecord?.embedding_input)
-      expect(fts?.context).toBe('')
+      expect(fts?.context).toBe(sourceRecord?.situating_line)
 
       expect(
         reader.db

@@ -122,7 +122,7 @@ describe('active embedding profile resolution', () => {
       knowledgeRoot,
       embedder: floorEmbedder,
     })
-    expect(report).toMatchObject({ projected: 1, backfilled: 0 })
+    expect(report).toMatchObject({ projected: 0, backfilled: 1 })
 
     const connection = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
     try {

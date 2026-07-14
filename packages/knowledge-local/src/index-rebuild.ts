@@ -29,6 +29,11 @@ import type {
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
+import {
+  buildSituatingLine,
+  computeRenderingDrift,
+  renderContextual,
+} from './contextual-rendering.js'
 import type { EmbedderPort } from './embedder-port.js'
 import {
   deriveEquivalentToBridges,
@@ -224,9 +229,7 @@ function upsertRecord(
       created_at_ordinal = excluded.created_at_ordinal,
       origin_class = excluded.origin_class,
       summary = excluded.summary,
-      embedding_input = excluded.embedding_input,
-      situating_line = excluded.situating_line,
-      contextual_rendering = excluded.contextual_rendering
+      embedding_input = excluded.embedding_input
   `).run(
     bundle.manifest.id,
     product,
@@ -264,11 +267,22 @@ function replaceFtsAndAnchors(
   product: string,
   recordRowid: number,
 ): void {
+  const rendering = db
+    .prepare('SELECT situating_line FROM records WHERE record_rowid = ?')
+    .get(recordRowid)
+  if (rendering === undefined) {
+    throw new Error(`FTS projection source record ${recordRowid} is missing`)
+  }
   db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
   db.prepare(`
     INSERT INTO fts_records (rowid, identity, content, context)
     VALUES (?, ?, ?, ?)
-  `).run(recordRowid, identityText(bundle), bundle.manifest.embeddingInput, '')
+  `).run(
+    recordRowid,
+    identityText(bundle),
+    bundle.manifest.embeddingInput,
+    String(rendering.situating_line),
+  )
 
   db.prepare('DELETE FROM anchors WHERE record_rowid = ?').run(recordRowid)
   const insertAnchor = db.prepare(`
@@ -410,7 +424,6 @@ function projectBundle(
   db: DatabaseSync,
   vec: VecCapability,
   projected: ProjectedBundle,
-  vector: Float32Array | undefined,
   activeProfile: EmbeddingProfile,
 ): void {
   transaction(db, () => {
@@ -418,9 +431,6 @@ function projectBundle(
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
-    if (vector !== undefined) {
-      storeEmbedding(db, vec, recordRowid, vector, activeProfile)
-    }
   })
 }
 
@@ -670,6 +680,64 @@ function removeOrphanGraphNodes(db: DatabaseSync): void {
   })
 }
 
+/** Recompute graph-derived prose only after every graph-producing pass has converged. */
+function refreshContextualRenderings(db: DatabaseSync, force = false): number {
+  const rows = db.prepare(`
+    SELECT record_rowid, embedding_input, contextual_rendering
+    FROM records
+    ORDER BY record_rowid
+  `).all()
+  let refreshed = 0
+
+  for (const row of rows) {
+    const recordRowid = Number(row.record_rowid)
+    const situatingLine = buildSituatingLine(db, recordRowid)
+    const contextualRendering = renderContextual(
+      String(row.embedding_input),
+      situatingLine,
+    )
+    if (
+      !force
+      && !computeRenderingDrift(
+        contextualRendering,
+        String(row.contextual_rendering),
+      )
+    ) {
+      continue
+    }
+
+    transaction(db, () => {
+      const fts = db
+        .prepare('SELECT identity FROM fts_records WHERE rowid = ?')
+        .get(recordRowid)
+      if (fts === undefined) {
+        throw new Error(`contextual FTS row ${recordRowid} is missing`)
+      }
+      db.prepare(`
+        UPDATE records
+        SET
+          situating_line = ?,
+          contextual_rendering = ?,
+          embed_status = 'pending',
+          embedding = NULL
+        WHERE record_rowid = ?
+      `).run(situatingLine, contextualRendering, recordRowid)
+      db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
+      db.prepare(`
+        INSERT INTO fts_records (rowid, identity, content, context)
+        VALUES (?, ?, ?, ?)
+      `).run(
+        recordRowid,
+        String(fts.identity),
+        String(row.embedding_input),
+        situatingLine,
+      )
+    })
+    refreshed += 1
+  }
+  return refreshed
+}
+
 function removeMissingBundles(
   db: DatabaseSync,
   vec: VecCapability,
@@ -718,12 +786,13 @@ async function backfillPendingEmbeddings(
   vec: VecCapability,
   embedder: EmbedderPort | undefined,
   activeProfile: EmbeddingProfile,
+  newlyProjectedBundleIds: ReadonlySet<string>,
 ): Promise<number> {
   if (embedder === undefined) return 0
 
   const pending = db
     .prepare(`
-      SELECT record_rowid, bundle_id, embedding_input
+      SELECT record_rowid, bundle_id, contextual_rendering
       FROM records
       WHERE embed_status != 'present'
       ORDER BY record_rowid
@@ -733,7 +802,7 @@ async function backfillPendingEmbeddings(
   for (const row of pending) {
     let vector: Float32Array
     try {
-      vector = await embedder.embedDocument(String(row.embedding_input))
+      vector = await embedder.embedDocument(String(row.contextual_rendering))
     } catch (error) {
       throw new Error(
         `embedding ${String(row.bundle_id)} failed: ${errorMessage(error)}`,
@@ -749,7 +818,8 @@ async function backfillPendingEmbeddings(
         activeProfile,
       )
     })
-    backfilled += 1
+    // Keep RebuildReport.backfilled's established meaning: rows carried pending into this rebuild.
+    if (!newlyProjectedBundleIds.has(String(row.bundle_id))) backfilled += 1
   }
   return backfilled
 }
@@ -883,7 +953,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       relationSources.push(item)
       const current = writer.db
         .prepare(`
-          SELECT mutable_state_hash, embed_status
+          SELECT mutable_state_hash
           FROM records
           WHERE bundle_id = ?
         `)
@@ -896,19 +966,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         continue
       }
 
-      let vector: Float32Array | undefined
-      if (opts.embedder !== undefined && current?.embed_status !== 'present') {
-        try {
-          vector = await opts.embedder.embedDocument(outcome.bundle.manifest.embeddingInput)
-        } catch (error) {
-          throw new Error(
-            `embedding ${outcome.bundle.manifest.id} failed: ${errorMessage(error)}`,
-            { cause: error },
-          )
-        }
-      }
-
-      projectBundle(writer.db, writer.vec, item, vector, activeProfile)
+      projectBundle(writer.db, writer.vec, item, activeProfile)
       projected.push(item)
       report.projected += 1
       if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
@@ -926,11 +984,13 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     emitObservationEdges(writer.db, opts.knowledgeRoot, relationSources, report.scanIssues)
     emitEquivalentToBridges(writer.db)
     removeOrphanGraphNodes(writer.db)
+    refreshContextualRenderings(writer.db)
     report.backfilled = await backfillPendingEmbeddings(
       writer.db,
       writer.vec,
       opts.embedder,
       activeProfile,
+      new Set(projected.map(({ bundle }) => bundle.manifest.id)),
     )
     reconcileVecRows(writer.db, writer.vec, activeProfile)
     clearRebuildRequest(opts.knowledgeRoot)
