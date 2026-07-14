@@ -90,9 +90,19 @@ describe('embedding profile stamp transitions', () => {
   }
 
   function rewriteProfileState(profileKey: string, embedding: Uint8Array): void {
-    const writer = knowledgeLocal.openIndexWriter(knowledgeRoot, {
-      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
-    })
+    rewriteProfileStateWithOptions(profileKey, embedding)
+  }
+
+  function rewriteProfileStateWithOptions(
+    profileKey: string,
+    embedding: Uint8Array,
+    options: { defaultVecPath?: boolean; poisonActiveVec?: boolean } = {},
+  ): knowledgeLocal.VecCapability {
+    const writer = options.defaultVecPath
+      ? knowledgeLocal.openIndexWriter(knowledgeRoot)
+      : knowledgeLocal.openIndexWriter(knowledgeRoot, {
+          vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+        })
     try {
       writer.db
         .prepare("UPDATE meta SET v = ? WHERE k = 'embedding_profile'")
@@ -100,6 +110,24 @@ describe('embedding profile stamp transitions', () => {
       writer.db
         .prepare("UPDATE records SET embedding = ?, embed_status = 'present'")
         .run(embedding)
+      if (options.poisonActiveVec && writer.vec === 'vec0') {
+        const record = writer.db
+          .prepare('SELECT record_rowid, product FROM records')
+          .get()
+        if (record === undefined) throw new Error('expected a projected record')
+        const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+        const recordRowid = BigInt(Number(record.record_rowid))
+        writer.db
+          .prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`)
+          .run(recordRowid)
+        writer.db
+          .prepare(`
+            INSERT INTO ${tableName} (record_rowid, product, embedding)
+            VALUES (?, ?, ?)
+          `)
+          .run(recordRowid, String(record.product), embedding)
+      }
+      return writer.vec
     } finally {
       writer.close()
     }
@@ -205,6 +233,170 @@ describe('embedding profile stamp transitions', () => {
       ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
     } finally {
       writer.close()
+    }
+  })
+
+  it('re-embeds an unchanged legacy-stamped row through the forced-brute backfill path', async () => {
+    await publishAndBuild()
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    rewriteProfileState(LEGACY_DEFAULT_PROFILE_KEY, marker)
+
+    const report = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    expect(report).toMatchObject({
+      vec: 'brute',
+      projected: 0,
+      backfilled: 1,
+      removed: 0,
+    })
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot, {
+      vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+    })
+    try {
+      const record = reader.db
+        .prepare('SELECT embed_status, embedding, embedding_input FROM records')
+        .get()
+      const expected = await makeFakeEmbedder().embedDocument(
+        String(record?.embedding_input),
+      )
+      expect(record?.embed_status).toBe('present')
+      expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(
+        Buffer.from(expected.buffer, expected.byteOffset, expected.byteLength),
+      )
+      expect(Buffer.from(record?.embedding as Uint8Array)).not.toEqual(marker)
+      expect(
+        reader.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+          .get()?.v,
+      ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('replaces legacy canonical and active vec0 marker bytes on ordinary rebuild', async () => {
+    publishFixture()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    expect(first.projected).toBe(1)
+
+    const marker = Buffer.alloc(
+      DEFAULT_EMBEDDING_PROFILE.dim * Float32Array.BYTES_PER_ELEMENT,
+      0x7f,
+    )
+    rewriteProfileStateWithOptions(LEGACY_DEFAULT_PROFILE_KEY, marker, {
+      defaultVecPath: true,
+      poisonActiveVec: true,
+    })
+
+    const second = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    expect(second).toMatchObject({ projected: 0, backfilled: 1, removed: 0 })
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      const record = reader.db
+        .prepare(`
+          SELECT record_rowid, product, embed_status, embedding, embedding_input
+          FROM records
+        `)
+        .get()
+      const expected = await makeFakeEmbedder().embedDocument(
+        String(record?.embedding_input),
+      )
+      const expectedBytes = Buffer.from(
+        expected.buffer,
+        expected.byteOffset,
+        expected.byteLength,
+      )
+      expect(record?.embed_status).toBe('present')
+      expect(Buffer.from(record?.embedding as Uint8Array)).toEqual(expectedBytes)
+      expect(Buffer.from(record?.embedding as Uint8Array)).not.toEqual(marker)
+      expect(
+        reader.db
+          .prepare("SELECT v FROM meta WHERE k = 'embedding_profile'")
+          .get()?.v,
+      ).toBe(LOCKED_DEFAULT_PROFILE_KEY)
+
+      if (second.vec === 'vec0') {
+        const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+        expect(
+          reader.db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get()?.count,
+        ).toBe(
+          reader.db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count,
+        )
+        const nearest = reader.db
+          .prepare(`
+            SELECT record_rowid, distance
+            FROM ${tableName}
+            WHERE embedding MATCH ? AND product = ? AND k = 1
+          `)
+          .get(expectedBytes, String(record?.product))
+        expect(Number(nearest?.record_rowid)).toBe(Number(record?.record_rowid))
+        expect(Number(nearest?.distance)).toBeLessThan(1e-6)
+      }
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('evicts a vec0 row whose present canonical blob has the wrong length', async () => {
+    const published = publishFixture()
+    const first = await knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+
+    if (first.vec === 'vec0') {
+      const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
+      let recordRowid: number
+      try {
+        const record = writer.db
+          .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+          .get(published.id)
+        if (record === undefined) throw new Error('expected a projected record')
+        recordRowid = Number(record.record_rowid)
+        writer.db
+          .prepare(`
+            UPDATE records
+            SET embedding = ?, embed_status = 'present'
+            WHERE record_rowid = ?
+          `)
+          .run(Buffer.alloc(100, 0x7f), recordRowid)
+      } finally {
+        writer.close()
+      }
+
+      const second = await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+      expect(second).toMatchObject({
+        vec: 'vec0',
+        projected: 0,
+        backfilled: 0,
+        removed: 0,
+      })
+
+      const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+      try {
+        const tableName = knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)
+        expect(
+          reader.db
+            .prepare(`SELECT record_rowid FROM ${tableName} WHERE record_rowid = ?`)
+            .get(BigInt(recordRowid)),
+        ).toBeUndefined()
+      } finally {
+        reader.db.close()
+      }
     }
   })
 })
