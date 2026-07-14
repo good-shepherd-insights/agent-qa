@@ -1,3 +1,7 @@
+import { readFileSync, rmSync } from 'node:fs'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import { canonicalJson, graphNodeId } from '@vostride/agent-qa-schema'
@@ -8,7 +12,24 @@ import {
   computeRenderingDrift,
   renderContextual,
 } from '../contextual-rendering.js'
+import { appendRelation } from '../bundle-append.js'
+import type { EmbedderPort } from '../embedder-port.js'
+import { openIndexReaderConnection } from '../index-open.js'
+import { rebuildIndex } from '../index-rebuild.js'
+import {
+  publishBundle,
+  type BundleStoreConfig,
+  type PublishBundleInput,
+  type PublishBundleOutcome,
+} from '../bundle-publish.js'
 import { SITUATING_LINE_MAX_CHARS } from '../retrieval/constants.js'
+import {
+  makeBundleDraftFixture,
+  makeDiscriminantFixture,
+  makeScreenStateFixture,
+  scaffoldKnowledgeRoot,
+} from './fixtures/bundle-fixture.js'
+import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 
 type RecordKind = 'fact' | 'procedure' | 'caution'
 
@@ -159,5 +180,215 @@ describe('RETR-02 deterministic contextual rendering', () => {
     )
     expect(computeRenderingDrift('same bytes', 'same bytes')).toBe(false)
     expect(computeRenderingDrift('same bytes\n', 'same bytes')).toBe(true)
+  })
+})
+
+type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
+
+describe('RETR-02 contextual rendering rebuild integration', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'knowledge-contextual-rendering-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    scaffoldKnowledgeRoot(knowledgeRoot)
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function config(): BundleStoreConfig {
+    return {
+      knowledgeRoot,
+      productKey: 'Contextual Rendering Product',
+      auditBaseDir: join(root, '.agent-qa'),
+      commitArtifacts: 'none',
+    }
+  }
+
+  function publish(
+    overrides: Partial<PublishBundleInput> = {},
+  ): PublishedBundle {
+    const outcome = publishBundle(config(), {
+      draft: makeBundleDraftFixture(),
+      discriminant: makeDiscriminantFixture(),
+      originClass: 'agent-verified',
+      createdAtOrdinal: 42,
+      screenStates: [makeScreenStateFixture()],
+      initialEvents: [],
+      relations: [],
+      provenance: {
+        mode: 'run-linked',
+        runId: 'contextual-rendering-run',
+        testId: 'contextual-rendering-test',
+        stepIndex: 0,
+      },
+      artifacts: [],
+      ...overrides,
+    })
+    expect(outcome.kind).toBe('published')
+    if (outcome.kind !== 'published') {
+      throw new Error(`expected publication, got ${outcome.kind}`)
+    }
+    return outcome
+  }
+
+  function manifestHash(bundle: PublishedBundle): string {
+    const parsed = JSON.parse(
+      readFileSync(join(bundle.dir, 'manifest.json'), 'utf8'),
+    ) as Record<string, unknown>
+    return String(parsed.mutableStateHash)
+  }
+
+  function projection(bundleId: string): Record<string, unknown> {
+    const reader = openIndexReaderConnection(knowledgeRoot)
+    try {
+      const row = reader.db.prepare(`
+        SELECT
+          records.record_rowid,
+          records.embedding_input,
+          records.situating_line,
+          records.contextual_rendering,
+          records.embed_status,
+          records.embedding,
+          hex(records.embedding) AS embedding_hex,
+          fts_records.context AS fts_context
+        FROM records
+        JOIN fts_records ON fts_records.rowid = records.record_rowid
+        WHERE records.bundle_id = ?
+      `).get(bundleId)
+      expect(row).toBeDefined()
+      return row as Record<string, unknown>
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  it('renders after graph convergence and embeds the exact contextual bytes', async () => {
+    const fact = publish({
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Checkout now' },
+          { t: 'page', route: '/checkout' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'contextual-rendering-product' },
+        summary: 'Checkout control on the checkout page',
+        body: 'Selecting Checkout now opens payment.',
+      }),
+    })
+    const base = makeFakeEmbedder()
+    const documentCalls: string[] = []
+    const embedder: EmbedderPort = {
+      async embedDocument(rendering) {
+        documentCalls.push(rendering)
+        return base.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => base.embedQuery(rendering),
+    }
+
+    const report = await rebuildIndex({ knowledgeRoot, embedder })
+    const row = projection(fact.id)
+
+    expect(report).toMatchObject({ projected: 1, backfilled: 1 })
+    expect(row.situating_line).toContain('Page: /checkout.')
+    expect(row.contextual_rendering).toBe(
+      `${String(row.embedding_input)}\n${String(row.situating_line)}`,
+    )
+    expect(row.fts_context).toBe(row.situating_line)
+    expect(documentCalls).toEqual([row.contextual_rendering])
+  })
+
+  it('avoids no-drift thrash and invalidates only a record affected by neighbor relations', async () => {
+    const fact = publish({
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Pay now' },
+          { t: 'page', route: '/payment' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'payment-fact' },
+        summary: 'Pay now submits the order',
+        body: 'Selecting Pay now submits the current order.',
+      }),
+    })
+    const caution = publish({
+      draft: makeBundleDraftFixture({
+        kind: 'caution',
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Pay now' },
+          { t: 'page', route: '/payment' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'payment-caution' },
+        summary: 'Confirm the cart total before payment',
+        body: 'Submitting an outdated cart can charge the wrong total.',
+      }),
+      discriminant: makeDiscriminantFixture('caution'),
+      createdAtOrdinal: 43,
+    })
+    const factManifestHash = manifestHash(fact)
+
+    await rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+    const first = projection(fact.id)
+    const noDriftCalls: string[] = []
+    const base = makeFakeEmbedder()
+    const noDriftEmbedder: EmbedderPort = {
+      async embedDocument(rendering) {
+        noDriftCalls.push(rendering)
+        return base.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => base.embedQuery(rendering),
+    }
+
+    const unchanged = await rebuildIndex({
+      knowledgeRoot,
+      embedder: noDriftEmbedder,
+    })
+    expect(unchanged).toMatchObject({ projected: 0, backfilled: 0 })
+    expect(noDriftCalls).toEqual([])
+    expect(projection(fact.id)).toEqual(first)
+
+    expect(
+      appendRelation(config(), caution.id, {
+        type: 'relates-to',
+        targetId: fact.id,
+        addedAtOrdinal: 44,
+        curationJobId: 'contextual-rendering-relation-job',
+      }),
+    ).toEqual({ kind: 'appended' })
+    expect(manifestHash(fact)).toBe(factManifestHash)
+
+    const invalidated = await rebuildIndex({ knowledgeRoot })
+    expect(invalidated).toMatchObject({ projected: 1, backfilled: 0 })
+    const pending = projection(fact.id)
+    expect(pending.situating_line).toContain(
+      'Caution: Confirm the cart total before payment.',
+    )
+    expect(pending.contextual_rendering).toBe(
+      `${String(pending.embedding_input)}\n${String(pending.situating_line)}`,
+    )
+    expect(pending.fts_context).toBe(pending.situating_line)
+    expect(pending.embed_status).toBe('pending')
+    expect(pending.embedding).toBeNull()
+
+    const changedCalls: string[] = []
+    const changedEmbedder: EmbedderPort = {
+      async embedDocument(rendering) {
+        changedCalls.push(rendering)
+        return base.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => base.embedQuery(rendering),
+    }
+    const backfilled = await rebuildIndex({
+      knowledgeRoot,
+      embedder: changedEmbedder,
+    })
+    expect(backfilled).toMatchObject({ projected: 0, backfilled: 1 })
+    expect(changedCalls).toEqual([pending.contextual_rendering])
+    expect(projection(fact.id).embed_status).toBe('present')
+    expect(manifestHash(fact)).toBe(factManifestHash)
   })
 })
