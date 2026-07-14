@@ -18,10 +18,12 @@ export const FAN_OUT_CAP = 32
 /**
  * Positive-scale lexical admission floor (D-05/D-06).
  *
- * PROVISIONAL 0.5 before calibration. Plan 377-09 replaces this value from the recorded FTS5
- * benchmark receipt; query sites negate SQLite's raw bm25() score before applying this floor.
+ * Calibrated 2026-07-15 from recorded gold-pair positive-scale p05 6.864719139232 in
+ * tools/embedding-bench/reports/TAU-LEX-RECEIPT.md; the p05 uses linear interpolation and is
+ * floored to two decimals. SQLite FTS5 returns negated raw bm25() scores, so query sites apply
+ * this floor to -bm25(...). M3 owns refinement; D-05 requires no human lock gate.
  */
-export const TAU_LEX = 0.5
+export const TAU_LEX = 6.86
 
 /**
  * Identity-column BM25 weight (D-03).
