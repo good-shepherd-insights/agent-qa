@@ -14,7 +14,7 @@ const FILTER_OPTIONS = {
   testKey: 'test:checkout',
   suiteKey: 'suite:smoke',
   productKey: 'product:storefront',
-  globalKey: 'global',
+  globalKey: 'scope:global',
 } as const
 
 function insertRecord(
