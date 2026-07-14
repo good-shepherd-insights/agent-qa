@@ -7,6 +7,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
+  FAN_IN_THRESHOLD_K,
   FAN_OUT_CAP,
   HUB_DEGREE_THRESHOLD,
 } from './constants.js'
@@ -41,6 +42,16 @@ interface NeighborRow {
   neighbor_node_id: string
   trust: number
   recency_ordinal: number
+}
+
+interface NormalizedSeed {
+  bundleId: string
+  nodeIds: string[]
+}
+
+interface CandidateAccumulator {
+  best: ExpansionCandidate
+  seedBundleIds: Set<string>
 }
 
 function compareText(left: string, right: string): number {
@@ -104,6 +115,7 @@ function readNeighbors(
     FROM incident
     JOIN records AS r ON r.record_rowid = incident.record_rowid
     WHERE ${predicate.sql}
+      AND r.scope_tier <> 'global'
       ${hubClause}
     GROUP BY
       r.record_rowid,
@@ -125,12 +137,45 @@ function readNeighbors(
   ) as unknown as NeighborRow[]
 }
 
-function compareCandidates(left: ExpansionCandidate, right: ExpansionCandidate): number {
+function compareRoutes(left: ExpansionCandidate, right: ExpansionCandidate): number {
   return right.trust - left.trust
     || right.recencyOrdinal - left.recencyOrdinal
     || compareText(left.nodeId, right.nodeId)
     || compareText(left.bundleId, right.bundleId)
-    || compareText(left.seedBundleIds[0] ?? '', right.seedBundleIds[0] ?? '')
+    || left.recordRowid - right.recordRowid
+}
+
+function compareCandidates(left: ExpansionCandidate, right: ExpansionCandidate): number {
+  return right.trust - left.trust
+    || right.recencyOrdinal - left.recencyOrdinal
+    || compareText(left.bundleId, right.bundleId)
+    || compareText(left.nodeId, right.nodeId)
+    || left.recordRowid - right.recordRowid
+}
+
+function normalizeSeeds(seeds: readonly ExpansionSeed[]): NormalizedSeed[] {
+  const byBundle = new Map<string, Set<string>>()
+  for (const seed of seeds) {
+    const nodeIds = byBundle.get(seed.bundleId) ?? new Set<string>()
+    for (const nodeId of seed.nodeIds) nodeIds.add(nodeId)
+    byBundle.set(seed.bundleId, nodeIds)
+  }
+  return [...byBundle]
+    .map(([bundleId, nodeIds]) => ({ bundleId, nodeIds: [...nodeIds].sort(compareText) }))
+    .sort((left, right) => compareText(left.bundleId, right.bundleId))
+}
+
+function seedMayExpand(db: DatabaseSync, bundleId: string): boolean {
+  const row = db.prepare(`
+    SELECT scope_tier
+    FROM records
+    WHERE bundle_id = ?
+    ORDER BY record_rowid ASC
+    LIMIT 1
+  `).get(bundleId)
+  return row?.scope_tier === 'product'
+    || row?.scope_tier === 'suite'
+    || row?.scope_tier === 'test'
 }
 
 export function expandOneHop(
@@ -149,14 +194,15 @@ export function expandOneHop(
     .map(([nodeId]) => nodeId)
     .sort(compareText)
   const hubs = new Set(hubNodeIds)
-  const expanded: ExpansionCandidate[] = []
+  const byBundle = new Map<string, CandidateAccumulator>()
 
-  for (const seed of [...seeds].sort((left, right) => compareText(left.bundleId, right.bundleId))) {
-    const nodeIds = [...new Set(seed.nodeIds)].sort(compareText)
-    for (const seedNodeId of nodeIds) {
+  for (const seed of normalizeSeeds(seeds)) {
+    // D-12: global records remain direct-match-only and never descend into product records.
+    if (!seedMayExpand(db, seed.bundleId)) continue
+    for (const seedNodeId of seed.nodeIds) {
       if (hubs.has(seedNodeId)) continue
       for (const row of readNeighbors(db, seedNodeId, hubNodeIds, queryScope)) {
-        expanded.push({
+        const candidate: ExpansionCandidate = {
           recordRowid: Number(row.record_rowid),
           bundleId: String(row.bundle_id),
           nodeId: String(row.neighbor_node_id),
@@ -164,9 +210,29 @@ export function expandOneHop(
           recencyOrdinal: Number(row.recency_ordinal),
           source: 'expanded',
           seedBundleIds: [seed.bundleId],
-        })
+        }
+        const current = byBundle.get(candidate.bundleId)
+        if (current === undefined) {
+          byBundle.set(candidate.bundleId, {
+            best: candidate,
+            seedBundleIds: new Set([seed.bundleId]),
+          })
+          continue
+        }
+        current.seedBundleIds.add(seed.bundleId)
+        if (compareRoutes(candidate, current.best) < 0) current.best = candidate
       }
     }
+  }
+
+  const expanded: ExpansionCandidate[] = []
+  for (const { best, seedBundleIds } of byBundle.values()) {
+    /**
+     * D-11/§13.1 deliberately treats graph ubiquity as a poison/hub signal rather than a
+     * relevance boost. This exclusion is expansion-local; direct recall remains the only door.
+     */
+    if (seedBundleIds.size > FAN_IN_THRESHOLD_K) continue
+    expanded.push({ ...best, seedBundleIds: [...seedBundleIds].sort(compareText) })
   }
 
   // D-07's count cap is deliberately single-owned by fusion.capExpansion; N is contract input only.
