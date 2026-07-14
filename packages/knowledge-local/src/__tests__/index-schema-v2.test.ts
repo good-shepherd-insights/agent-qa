@@ -111,7 +111,9 @@ describe('index schema v2 reset', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function publishFixture(): PublishedBundle {
+  function publishFixture(
+    overrides: Partial<PublishBundleInput> = {},
+  ): PublishedBundle {
     const config: BundleStoreConfig = {
       knowledgeRoot,
       productKey: 'Schema V2 Product',
@@ -133,6 +135,7 @@ describe('index schema v2 reset', () => {
         stepIndex: 0,
       },
       artifacts: [],
+      ...overrides,
     }
     const outcome = knowledgeLocal.publishBundle(config, input)
     expect(outcome.kind).toBe('published')
@@ -298,6 +301,91 @@ describe('index schema v2 reset', () => {
       ).toBe('1')
     } finally {
       recovered.close()
+    }
+  })
+
+  it('projects v2 renderings, FTS context, and ordinal edge recency', async () => {
+    const target = publishFixture()
+    const sourceCreatedAtOrdinal = 73
+    const relationAddedAtOrdinal = 84
+    const source = publishFixture({
+      draft: makeBundleDraftFixture({
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Schema v2 source' },
+          { t: 'page', route: '/schema-v2-source' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'schema-v2-source' },
+        summary: 'Schema v2 projection source',
+        body: 'The schema v2 source records deterministic projection fields.',
+      }),
+      createdAtOrdinal: sourceCreatedAtOrdinal,
+      relations: [
+        {
+          type: 'relates-to',
+          targetId: target.id,
+          addedAtOrdinal: relationAddedAtOrdinal,
+          curationJobId: 'schema-v2-relation-job',
+        },
+      ],
+    })
+
+    expect(await knowledgeLocal.rebuildIndex({ knowledgeRoot })).toMatchObject({
+      projected: 2,
+      scanIssues: [],
+    })
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      const records = reader.db
+        .prepare(`
+          SELECT record_rowid, bundle_id, embedding_input,
+                 situating_line, contextual_rendering
+          FROM records
+          ORDER BY bundle_id
+        `)
+        .all()
+      expect(records).toHaveLength(2)
+      for (const record of records) {
+        expect(record.situating_line).toBe('')
+        expect(record.contextual_rendering).toBe(record.embedding_input)
+      }
+
+      const sourceRecord = records.find((record) => record.bundle_id === source.id)
+      expect(sourceRecord).toBeDefined()
+      const sourceRowid = Number(sourceRecord?.record_rowid)
+      const fts = reader.db
+        .prepare(`
+          SELECT identity, content, context
+          FROM fts_records
+          WHERE rowid = ?
+        `)
+        .get(sourceRowid)
+      expect(String(fts?.identity)).toContain('Schema v2 source')
+      expect(fts?.content).toBe(sourceRecord?.embedding_input)
+      expect(fts?.context).toBe('')
+
+      expect(
+        reader.db
+          .prepare(`
+            SELECT recency_ordinal
+            FROM graph_edges
+            WHERE record_rowid = ? AND edge_type = 'relates-to'
+          `)
+          .get(sourceRowid)?.recency_ordinal,
+      ).toBe(relationAddedAtOrdinal)
+      expect(
+        reader.db
+          .prepare(`
+            SELECT recency_ordinal
+            FROM graph_edges
+            WHERE record_rowid = ? AND edge_type = 'about'
+            LIMIT 1
+          `)
+          .get(sourceRowid)?.recency_ordinal,
+      ).toBe(sourceCreatedAtOrdinal)
+    } finally {
+      reader.db.close()
     }
   })
 })
