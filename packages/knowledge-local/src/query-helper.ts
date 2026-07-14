@@ -157,7 +157,7 @@ function normalizedLabels(element: ElementInfo): string[] {
   return [...new Set(values.flatMap((value) => {
     if (value === undefined) return []
     const normalized = normalizeAnchor({ t: 'flow', name: value })
-    return normalized.name === '' ? [] : [normalized.name]
+    return normalized.t !== 'flow' || normalized.name === '' ? [] : [normalized.name]
   }))].sort()
 }
 
