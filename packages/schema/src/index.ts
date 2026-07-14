@@ -83,6 +83,7 @@ export type {
   GraphNodeNaturalKey,
 } from './identity/index'
 export { normalizeAnchor, graphNodeId, anchorGraphNode, recordGraphNode } from './identity/index'
+export { supersessionKey } from './identity/supersession-key'
 export {
   screenIdentityHash,
   screenStateHash,
@@ -274,6 +275,12 @@ export {
   foldBundleTrust,
 } from './knowledge/index'
 export type { BundleStatus, DerivedTrustState } from './knowledge/index'
+export {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
+  distilledObservationSchema,
+  guardDistilledObservation,
+} from './knowledge/distilled-observation'
+export type { DistilledObservation } from './knowledge/distilled-observation'
 export {
   ArtifactsIndexSchema,
   BUNDLE_SCHEMA_VERSION,

@@ -13,6 +13,12 @@ export interface IndexEntry {
   anchors: Anchor[]
   status: string
   servedAsCanary: boolean
+  /** D-14 temporal serving role; distinct from whether this entry was served to a canary. */
+  servedAs?: 'current' | 'prior-build-hypothesis'
+  /** D-16 active-conflict annotation linking the surviving peer and minted unknown record. */
+  conflict?: { peerRecordId: RecordId; unknownRecordId: RecordId }
+  /** D-15 audit-read state; absent from ordinary serving-path reads. */
+  audit?: { status: string; openedAtOrdinal: number; closedAtOrdinal: number | null }
   scope: ScopeKey
   validity: string
 }
