@@ -8,9 +8,11 @@ import {
   type ExpansionSeed,
 } from '../retrieval/expansion.js'
 import {
+  FAN_IN_THRESHOLD_K,
   FAN_OUT_CAP,
   HUB_DEGREE_THRESHOLD,
 } from '../retrieval/constants.js'
+import { fuseWeightedRrf } from '../retrieval/fusion.js'
 
 const QUERY_SCOPE = {
   product: 'storefront',
@@ -238,5 +240,174 @@ describe('GRPH-01 deterministic one-hop expansion', () => {
     expect(expand([{ bundleId: 'seed', nodeIds: ['node:seed'] }])).toMatchObject([
       { bundleId: 'admitted' },
     ])
+  })
+
+  it('deduplicates one candidate reached through multiple nodes and distinct seeds without a boost', () => {
+    for (const seed of ['seed-a', 'seed-b', 'seed-c']) {
+      insertRecord(seed, { trust: 1 })
+    }
+    insertRecord('shared-candidate', { trust: 0.73 })
+    insertEdge({
+      source: 'node:seed-a',
+      target: 'node:shared:a',
+      candidateBundleId: 'shared-candidate',
+      recencyOrdinal: 20,
+    })
+    insertEdge({
+      source: 'node:seed-a:alternate',
+      target: 'node:shared:a:alternate',
+      candidateBundleId: 'shared-candidate',
+      recencyOrdinal: 19,
+    })
+    insertEdge({
+      source: 'node:seed-b',
+      target: 'node:shared:b',
+      candidateBundleId: 'shared-candidate',
+      recencyOrdinal: 25,
+    })
+    insertEdge({
+      source: 'node:seed-c',
+      target: 'node:shared:c',
+      candidateBundleId: 'shared-candidate',
+      recencyOrdinal: 30,
+    })
+
+    const singleSeed = expand([{ bundleId: 'seed-c', nodeIds: ['node:seed-c'] }])
+    const multiSeed = expand([
+      { bundleId: 'seed-a', nodeIds: ['node:seed-a', 'node:seed-a:alternate'] },
+      { bundleId: 'seed-b', nodeIds: ['node:seed-b'] },
+      { bundleId: 'seed-c', nodeIds: ['node:seed-c'] },
+    ])
+
+    expect(multiSeed).toHaveLength(1)
+    expect(multiSeed[0]).toMatchObject({
+      bundleId: 'shared-candidate',
+      trust: 0.73,
+      recencyOrdinal: 30,
+      source: 'expanded',
+      seedBundleIds: ['seed-a', 'seed-b', 'seed-c'],
+    })
+    const { seedBundleIds: _singleAttribution, ...singleRankFields } = singleSeed[0]!
+    const { seedBundleIds: _multiAttribution, ...multiRankFields } = multiSeed[0]!
+    expect(multiRankFields).toEqual(singleRankFields)
+  })
+
+  it('excludes fan-in above the threshold only from expansion while direct fusion remains eligible', () => {
+    const seeds = Array.from({ length: FAN_IN_THRESHOLD_K + 1 }, (_, index) => {
+      const bundleId = `fan-in-seed:${index}`
+      const nodeId = `node:fan-in-seed:${index}`
+      insertRecord(bundleId, { trust: 1 })
+      return { bundleId, nodeIds: [nodeId] }
+    })
+    insertRecord('ubiquitous-candidate', { trust: 0.99 })
+    for (const [index, seed] of seeds.entries()) {
+      insertEdge({
+        source: seed.nodeIds[0]!,
+        target: `node:ubiquitous:${index}`,
+        candidateBundleId: 'ubiquitous-candidate',
+        recencyOrdinal: 100 - index,
+      })
+    }
+
+    expect(expand(seeds, 100)).toEqual([])
+
+    const direct = fuseWeightedRrf([{
+      weight: 1,
+      ranked: [{
+        bundleId: 'ubiquitous-candidate',
+        source: 'direct',
+        legRanks: { lexical: 1 },
+        rawScores: { bm25Positive: 1 },
+      }],
+    }])
+    expect(direct.map(({ bundleId }) => bundleId)).toEqual(['ubiquitous-candidate'])
+  })
+
+  it('walls global candidates and global seeds while crossing tiers inside the query product', () => {
+    insertRecord('product-seed', { scopeTier: 'test', trust: 1 })
+    insertRecord('global-seed', {
+      product: 'shared',
+      scopeTier: 'global',
+      scopeKey: QUERY_SCOPE.globalKey,
+      trust: 1,
+    })
+    insertRecord('test-candidate', { scopeTier: 'test', trust: 0.9 })
+    insertRecord('suite-candidate', {
+      scopeTier: 'suite',
+      scopeKey: QUERY_SCOPE.suiteKey,
+      trust: 0.8,
+    })
+    insertRecord('product-candidate', {
+      scopeTier: 'product',
+      scopeKey: QUERY_SCOPE.productKey,
+      trust: 0.7,
+    })
+    insertRecord('global-candidate', {
+      product: 'shared',
+      scopeTier: 'global',
+      scopeKey: QUERY_SCOPE.globalKey,
+      trust: 0.99,
+    })
+
+    for (const [index, bundleId] of [
+      'test-candidate',
+      'suite-candidate',
+      'product-candidate',
+      'global-candidate',
+    ].entries()) {
+      insertEdge({
+        source: 'node:product-seed',
+        target: `node:${bundleId}`,
+        candidateBundleId: bundleId,
+        recencyOrdinal: 50 - index,
+      })
+    }
+    insertEdge({
+      source: 'node:global-seed',
+      target: 'node:product-from-global',
+      candidateBundleId: 'test-candidate',
+      recencyOrdinal: 60,
+    })
+
+    expect(
+      expand([{ bundleId: 'product-seed', nodeIds: ['node:product-seed'] }]),
+    ).toMatchObject([
+      { bundleId: 'test-candidate' },
+      { bundleId: 'suite-candidate' },
+      { bundleId: 'product-candidate' },
+    ])
+    expect(
+      expand([{ bundleId: 'global-seed', nodeIds: ['node:global-seed'] }]),
+    ).toEqual([])
+  })
+
+  it('contains a high-trust poisoned global record under every seed selection', () => {
+    const seeds = ['poison-seed-a', 'poison-seed-b', 'poison-seed-c'].map(
+      (bundleId, index) => {
+        const nodeId = `node:${bundleId}`
+        insertRecord(bundleId, { trust: 1 })
+        return { bundleId, nodeIds: [nodeId], index }
+      },
+    )
+    insertRecord('poisoned-global', {
+      product: 'shared',
+      scopeTier: 'global',
+      scopeKey: QUERY_SCOPE.globalKey,
+      trust: 10,
+    })
+    for (const seed of seeds) {
+      insertEdge({
+        source: seed.nodeIds[0]!,
+        target: `node:poisoned-global:${seed.index}`,
+        candidateBundleId: 'poisoned-global',
+        recencyOrdinal: 1_000 - seed.index,
+      })
+    }
+
+    const expansionSeeds = seeds.map(({ bundleId, nodeIds }) => ({ bundleId, nodeIds }))
+    for (const seed of expansionSeeds) {
+      expect(expand([seed])).toEqual([])
+    }
+    expect(expand(expansionSeeds)).toEqual([])
   })
 })
