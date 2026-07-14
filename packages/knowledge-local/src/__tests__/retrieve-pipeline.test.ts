@@ -324,6 +324,43 @@ describe('RETR-01 composed retrieval pipeline', () => {
     }
   })
 
+  it('serves the most recent closed fact as a flagged fresh-build hypothesis', async () => {
+    const anchor = { t: 'el', role: 'button', name: 'Fresh build fallback' } satisfies Anchor
+    const older = publishFact({
+      anchor,
+      identity: 'fallback-older',
+      createdAtOrdinal: 1,
+      initialEvents: [event('window-close', 'fallback-older', 5)],
+    })
+    const newer = publishFact({
+      anchor,
+      identity: 'fallback-newer',
+      createdAtOrdinal: 2,
+      initialEvents: [event('window-close', 'fallback-newer', 10)],
+    })
+
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader(knowledgeRoot)
+    try {
+      const result = await retrieve(
+        reader,
+        { intent: '', anchors: [anchor] },
+        { n: 10, product: PRODUCT, asOfBuild: 20 },
+      )
+
+      expect(result).toMatchObject([
+        {
+          id: newer.id,
+          servedAs: 'prior-build-hypothesis',
+          validity: 'prior-build-hypothesis',
+        },
+      ])
+      expect(result.some(({ id }) => id === older.id)).toBe(false)
+    } finally {
+      reader.close()
+    }
+  })
+
   it('preserves and annotates both MintUnknown peers while keeping the unknown ordinary', async () => {
     const anchor = { t: 'page', route: '/mint-unknown' } satisfies Anchor
     const left = publishFact({ anchor, identity: 'conflict-left', createdAtOrdinal: 10 })
