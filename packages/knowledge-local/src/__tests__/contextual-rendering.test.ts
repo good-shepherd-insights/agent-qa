@@ -14,7 +14,11 @@ import {
 } from '../contextual-rendering.js'
 import { appendRelation } from '../bundle-append.js'
 import type { EmbedderPort } from '../embedder-port.js'
-import { openIndexReaderConnection } from '../index-open.js'
+import {
+  INDEX_RENDERING_SCHEMA_VERSION,
+  openIndexReaderConnection,
+  openIndexWriter,
+} from '../index-open.js'
 import { rebuildIndex } from '../index-rebuild.js'
 import {
   publishBundle,
@@ -390,5 +394,117 @@ describe('RETR-02 contextual rendering rebuild integration', () => {
     expect(changedCalls).toEqual([pending.contextual_rendering])
     expect(projection(fact.id).embed_status).toBe('present')
     expect(manifestHash(fact)).toBe(factManifestHash)
+  })
+
+  it('forces a stale rendering epoch exactly once and stamps it only after rebuild', async () => {
+    publish({
+      draft: makeBundleDraftFixture({
+        scope: { tier: 'product', key: 'rendering-epoch-fact' },
+        summary: 'Rendering epoch fact',
+        body: 'The rendering epoch fact remains content-stable.',
+      }),
+    })
+    publish({
+      draft: makeBundleDraftFixture({
+        kind: 'caution',
+        scope: { tier: 'product', key: 'rendering-epoch-caution' },
+        summary: 'Rendering epoch caution',
+        body: 'The rendering epoch caution remains content-stable.',
+      }),
+      discriminant: makeDiscriminantFixture('caution'),
+      createdAtOrdinal: 43,
+    })
+    await rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+
+    const beforeReader = openIndexReaderConnection(knowledgeRoot)
+    const before = beforeReader.db.prepare(`
+      SELECT bundle_id, contextual_rendering, embed_status, hex(embedding) AS embedding_hex
+      FROM records
+      ORDER BY bundle_id
+    `).all()
+    beforeReader.db.close()
+    expect(before).toHaveLength(2)
+    expect(before.every((row) => row.embed_status === 'present')).toBe(true)
+
+    const stamper = openIndexWriter(knowledgeRoot)
+    stamper.db
+      .prepare("UPDATE meta SET v = '1' WHERE k = 'rendering_schema_version'")
+      .run()
+    stamper.close()
+
+    const stale = openIndexWriter(knowledgeRoot) as ReturnType<typeof openIndexWriter> & {
+      renderingEpochStale?: boolean
+    }
+    try {
+      expect(
+        stale.db
+          .prepare("SELECT v FROM meta WHERE k = 'rendering_schema_version'")
+          .get()?.v,
+      ).toBe('1')
+      expect(stale.renderingEpochStale).toBe(true)
+      expect(
+        stale.db
+          .prepare("SELECT COUNT(*) AS count FROM records WHERE embed_status = 'present'")
+          .get()?.count,
+      ).toBe(2)
+    } finally {
+      stale.close()
+    }
+
+    const base = makeFakeEmbedder()
+    const staleCalls: string[] = []
+    const staleEmbedder: EmbedderPort = {
+      async embedDocument(rendering) {
+        staleCalls.push(rendering)
+        return base.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => base.embedQuery(rendering),
+    }
+    const forced = await rebuildIndex({ knowledgeRoot, embedder: staleEmbedder })
+    expect(forced).toMatchObject({ projected: 0, backfilled: 2 })
+
+    const healedReader = openIndexReaderConnection(knowledgeRoot)
+    const healed = healedReader.db.prepare(`
+      SELECT bundle_id, contextual_rendering, embed_status, hex(embedding) AS embedding_hex
+      FROM records
+      ORDER BY bundle_id
+    `).all()
+    expect(
+      healedReader.db
+        .prepare("SELECT v FROM meta WHERE k = 'rendering_schema_version'")
+        .get()?.v,
+    ).toBe(String(INDEX_RENDERING_SCHEMA_VERSION))
+    healedReader.db.close()
+    expect(staleCalls.sort()).toEqual(
+      healed.map((row) => String(row.contextual_rendering)).sort(),
+    )
+    expect(healed).toEqual(before)
+
+    const matching = openIndexWriter(knowledgeRoot) as ReturnType<typeof openIndexWriter> & {
+      renderingEpochStale?: boolean
+    }
+    expect(matching.renderingEpochStale).toBe(false)
+    matching.close()
+
+    const happyCalls: string[] = []
+    const happyEmbedder: EmbedderPort = {
+      async embedDocument(rendering) {
+        happyCalls.push(rendering)
+        return base.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => base.embedQuery(rendering),
+    }
+    expect(await rebuildIndex({ knowledgeRoot, embedder: happyEmbedder })).toMatchObject({
+      projected: 0,
+      backfilled: 0,
+    })
+    expect(happyCalls).toEqual([])
+    const afterReader = openIndexReaderConnection(knowledgeRoot)
+    expect(afterReader.db.prepare(`
+      SELECT bundle_id, contextual_rendering, embed_status, hex(embedding) AS embedding_hex
+      FROM records
+      ORDER BY bundle_id
+    `).all()).toEqual(healed)
+    afterReader.db.close()
   })
 })
