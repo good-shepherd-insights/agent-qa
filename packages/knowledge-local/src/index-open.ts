@@ -281,13 +281,28 @@ function stampMeta(db: DatabaseSync, activeProfile: EmbeddingProfile): void {
  * marker; genuinely healthy locked indexes pay the same one-time re-embed cost. Pending rows ride
  * D-19's unchanged benign-lag backfill selector. Old revision vec tables remain disposable,
  * embed-cache rows stay inert under revision keys, and no embedding work runs at open.
+ *
+ * A brute connection cannot execute DML against an unloaded vec0 virtual table. Canonical
+ * invalidation is sufficient there because brute reads use only the BLOB, while the next
+ * vec0-capable rebuild's reconciliation removes accelerator rows whose canonical source is no
+ * longer `present`. On vec0 connections both the canonical UPDATE and active-table DELETE run
+ * before stampMeta inside one BEGIN IMMEDIATE transaction, so no crash can commit the epoch or
+ * fresh stamp beside surviving stale bytes.
  */
-function invalidateMismatchedProfileEmbeddings(db: DatabaseSync): void {
+function invalidateDerivedEmbeddings(
+  db: DatabaseSync,
+  vec: VecCapability,
+  activeProfile: EmbeddingProfile,
+): void {
   db.prepare(`
     UPDATE records
     SET embedding = NULL, embed_status = 'pending'
     WHERE embedding IS NOT NULL OR embed_status = 'present'
   `).run()
+
+  if (vec === 'vec0') {
+    db.exec(`DELETE FROM ${vecTableName(activeProfile)}`)
+  }
 }
 
 function closeAfterOpenFailure(db: DatabaseSync): void {
@@ -323,7 +338,7 @@ export function openIndexWriter(
     ) {
       db.exec('BEGIN IMMEDIATE')
       try {
-        invalidateMismatchedProfileEmbeddings(db)
+        invalidateDerivedEmbeddings(db, vec, activeProfile)
         stampMeta(db, activeProfile)
         db.exec('COMMIT')
       } catch (error) {
