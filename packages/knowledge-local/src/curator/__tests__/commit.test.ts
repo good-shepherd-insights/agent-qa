@@ -23,6 +23,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadBundle } from '../../bundle-read.js'
+import type {
+  BundleStoreConfig,
+  PublishBundleInput,
+  PublishBundleOutcome,
+} from '../../bundle-publish.js'
 import { openIndexReaderConnection } from '../../index-open.js'
 import { listCommitIntents } from '../../journal/intent-journal.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
@@ -291,10 +296,15 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
 
   it('passes the claimed writer lease through the injected publisher configuration', () => {
     const claimed = job()
-    const publisher = vi.fn(() => ({
-      kind: 'egress-blocked' as const,
-      detections: [],
-    }))
+    const publisher = vi.fn(
+      (
+        _config: BundleStoreConfig,
+        _input: PublishBundleInput,
+      ): PublishBundleOutcome => ({
+        kind: 'egress-blocked',
+        detections: [],
+      }),
+    )
 
     const outcome = commitCurationDelta(
       deps(undefined, { operations: { publishBundle: publisher } }),

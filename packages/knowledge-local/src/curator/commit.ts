@@ -332,12 +332,14 @@ function publisherArtifacts(
 function storeConfig(
   deps: CommitCurationDependencies,
   productKey: string,
+  writerLeaseId: string,
 ): BundleStoreConfig {
   return {
     knowledgeRoot: deps.knowledgeRoot,
     productKey,
     auditBaseDir: deps.auditBaseDir,
     commitArtifacts: 'none',
+    writerLeaseId,
     policy: deps.policy,
     ...(deps.hooks?.beforePublishRename === undefined
       ? {}
@@ -540,7 +542,7 @@ export function commitCurationDelta(
     if (beforePublish !== undefined) return beforePublish
 
     let convertedConfirm = false
-    const config = storeConfig(deps, productKey)
+    const config = storeConfig(deps, productKey, job.leaseId)
     if (publishInput !== undefined) {
       const published = (deps.operations?.publishBundle ?? publishBundle)(config, publishInput)
       if (published.kind === 'egress-blocked') {
@@ -561,6 +563,7 @@ export function commitCurationDelta(
         const existingConfig = storeConfig(
           deps,
           productForBundle(deps.knowledgeRoot, published.id, productKey),
+          job.leaseId,
         )
         const capableEnrichment =
           delta.kind === 'Add'
@@ -607,6 +610,7 @@ export function commitCurationDelta(
       const targetConfig = storeConfig(
         deps,
         productForBundle(deps.knowledgeRoot, delta.targetId, productKey),
+        job.leaseId,
       )
       const appended = appendOutcomeEvent(
         targetConfig,
@@ -628,6 +632,7 @@ export function commitCurationDelta(
       const targetConfig = storeConfig(
         deps,
         productForBundle(deps.knowledgeRoot, delta.targetId, productKey),
+        job.leaseId,
       )
       const appended = appendOutcomeEvent(targetConfig, delta.targetId, {
         type: 'deprecated',
@@ -647,6 +652,7 @@ export function commitCurationDelta(
     const canonicalConfig = storeConfig(
       deps,
       productForBundle(deps.knowledgeRoot, bundleId, productKey),
+      job.leaseId,
     )
     for (const relation of relationRows) {
       const failure = appendFailure(appendRelation(canonicalConfig, bundleId, relation))
@@ -661,6 +667,7 @@ export function commitCurationDelta(
       const victimConfig = storeConfig(
         deps,
         productForBundle(deps.knowledgeRoot, delta.victimId, productKey),
+        job.leaseId,
       )
       const superseded = appendOutcomeEvent(victimConfig, delta.victimId, {
         type: 'superseded',
