@@ -21,12 +21,8 @@ import {
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
-  candidateContentAddress,
   commitCurationDelta,
   drainQueue,
-  enqueueCurationCandidate,
   enumerateBundleDirs,
   listClaimedLeases,
   listQueuedCandidates,
@@ -34,11 +30,13 @@ import {
   openIndexReaderConnection,
   readJobState,
   verifyBundleIntegrity,
-  type CurationCandidatePayload,
   type CuratorAuthor,
   type DrainOptions,
 } from '../../index.js'
-import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
+import {
+  enqueueArtifactFreeCandidateProjection,
+  type ArtifactFreeCandidateProjectionInput,
+} from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const TEST_TIMEOUT_MS = 30_000
@@ -68,9 +66,8 @@ interface SigkillBoundaryMarker {
 
 type DrainOperations = NonNullable<DrainOptions['operations']>
 
-function addressFields(seed: string) {
-  return candidateAddressFixture({
-    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+function projectionInput(seed: string): ArtifactFreeCandidateProjectionInput {
+  return {
     sourceRunId: `run-${seed}`,
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,
@@ -93,20 +90,15 @@ function addressFields(seed: string) {
     ],
     evidenceToken: `evidence-${seed}`,
     attributingObservationId: `run-${seed}:test-0:step-0`,
-    artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-15T10:00:00.000Z',
-  })
+  }
 }
 
-function payload(seed: string): CurationCandidatePayload {
-  const fields = addressFields(seed)
-  return { candidateId: candidateContentAddress(fields), ...fields }
-}
-
-function mutablePayload(seed: string, buildOrdinal: number): CurationCandidatePayload {
-  const fields = candidateAddressFixture({
-    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+function mutableProjectionInput(
+  seed: string,
+  buildOrdinal: number,
+): ArtifactFreeCandidateProjectionInput {
+  return {
     sourceRunId: `run-mutable-${seed}`,
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal,
@@ -127,11 +119,8 @@ function mutablePayload(seed: string, buildOrdinal: number): CurationCandidatePa
     ],
     evidenceToken: `evidence-mutable-${seed}`,
     attributingObservationId: `run-mutable-${seed}:test-0:step-0`,
-    artifactInventory: [],
-    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: `2026-07-15T10:${String(buildOrdinal).padStart(2, '0')}:00.000Z`,
-  })
-  return { candidateId: candidateContentAddress(fields), ...fields }
+  }
 }
 
 function authoredAdd(job: Parameters<CuratorAuthor>[0]): {
@@ -172,14 +161,16 @@ function scriptedAuthor() {
   return vi.fn<CuratorAuthor>(async (job) => ({ kind: 'authored', ...authoredAdd(job) }))
 }
 
-function enqueue(knowledgeRoot: string, candidate: CurationCandidatePayload): void {
-  expect(
-    enqueueCurationCandidate({
-      knowledgeRoot,
-      payload: candidate,
-      artifactSources: [],
-    }),
-  ).toBe('enqueued')
+function enqueue(
+  knowledgeRoot: string,
+  candidateProjection: ArtifactFreeCandidateProjectionInput,
+): { candidateId: string } {
+  const outcome = enqueueArtifactFreeCandidateProjection({
+    knowledgeRoot,
+    projectionInput: candidateProjection,
+  })
+  void outcome
+  throw new Error('projection enqueue outcome is not returned')
 }
 
 function walk(root: string): string[] {
@@ -556,8 +547,10 @@ async function provePublishStagingSigkill(): Promise<void> {
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
   const auditBaseDir = join(root, '.agent-qa')
   const markerPath = join(root, 'child-publish-staged.marker')
-  const candidate = payload('sigkill-publish-staged')
-  enqueue(knowledgeRoot, candidate)
+  const candidate = enqueue(
+    knowledgeRoot,
+    projectionInput('sigkill-publish-staged'),
+  )
   let running: ReturnType<typeof startSigkillChild> | undefined
 
   try {
@@ -635,8 +628,10 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
   let running: ReturnType<typeof startSigkillChild> | undefined
 
   try {
-    const fallbackCandidate = mutablePayload('fallback', 42)
-    enqueue(knowledgeRoot, fallbackCandidate)
+    const fallbackCandidate = enqueue(
+      knowledgeRoot,
+      mutableProjectionInput('fallback', 42),
+    )
     const fallbackAuthor = vi.fn<CuratorAuthor>(async () => ({
       kind: 'fallback-required',
       reason: 'no-model',
@@ -657,8 +652,10 @@ async function proveMutableEnrichmentSigkill(): Promise<void> {
     })
     const originalBundleId = fallbackLoaded.bundle.manifest.id
 
-    const capableCandidate = mutablePayload('capable', 43)
-    enqueue(knowledgeRoot, capableCandidate)
+    const capableCandidate = enqueue(
+      knowledgeRoot,
+      mutableProjectionInput('capable', 43),
+    )
     running = startSigkillChild({
       point: 'mutable-enrichment',
       knowledgeRoot,
@@ -773,10 +770,9 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
     const root = mkdtempSync(join(tmpdir(), `knowledge-kill-${point}-`))
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
     const auditBaseDir = join(root, '.agent-qa')
-    const candidate = payload(point)
+    const candidate = enqueue(knowledgeRoot, projectionInput(point))
     const author = scriptedAuthor()
     const observed = { value: point === 'after-emit-before-claim' }
-    enqueue(knowledgeRoot, candidate)
 
     try {
       if (point === 'after-emit-before-claim') {
@@ -839,8 +835,7 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
     const auditBaseDir = join(root, '.agent-qa')
     const markerPath = join(root, 'child-at-intent.marker')
-    const candidate = payload('sigkill')
-    enqueue(knowledgeRoot, candidate)
+    const candidate = enqueue(knowledgeRoot, projectionInput('sigkill'))
     const running = startSigkillChild({
       point: 'authored-intent',
       knowledgeRoot,

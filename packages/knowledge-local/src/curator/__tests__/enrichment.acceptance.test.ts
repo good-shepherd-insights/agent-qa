@@ -10,20 +10,18 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
-  candidateContentAddress,
   commitCurationDelta,
   drainQueue,
-  enqueueCurationCandidate,
   enumerateBundleDirs,
   loadBundle,
   verifyBundleIntegrity,
   type CommitCurationOutcome,
-  type CurationCandidatePayload,
   type CuratorAuthor,
 } from '../../index.js'
-import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
+import {
+  enqueueArtifactFreeCandidateProjection,
+  type ArtifactFreeCandidateProjectionInput,
+} from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const flowAnchor = { t: 'flow', name: 'Checkout flow' } as const
@@ -43,12 +41,11 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function payload(
+  function projectionInput(
     seed: string,
     buildOrdinal: number,
-  ): CurationCandidatePayload {
-    const fields = candidateAddressFixture({
-      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+  ): ArtifactFreeCandidateProjectionInput {
+    return {
       sourceRunId: `run-enrichment-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal,
@@ -69,21 +66,19 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
       ],
       evidenceToken: `evidence-enrichment-${seed}`,
       attributingObservationId: `run-enrichment-${seed}:test-0:step-0`,
-      artifactInventory: [],
-      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: `2026-07-15T10:0${buildOrdinal - 42}:00.000Z`,
-    })
-    return { candidateId: candidateContentAddress(fields), ...fields }
+    }
   }
 
-  function enqueue(candidate: CurationCandidatePayload): void {
-    expect(
-      enqueueCurationCandidate({
-        knowledgeRoot,
-        payload: candidate,
-        artifactSources: [],
-      }),
-    ).toBe('enqueued')
+  function enqueue(
+    candidateProjection: ArtifactFreeCandidateProjectionInput,
+  ): { candidateId: string } {
+    const outcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: candidateProjection,
+    })
+    void outcome
+    throw new Error('projection enqueue outcome is not returned')
   }
 
   function options(author: CuratorAuthor) {
@@ -97,8 +92,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
   }
 
   it('converts an enriched duplicate Add to Confirm on the one existing bundle', async () => {
-    const fallbackCandidate = payload('fallback', 42)
-    enqueue(fallbackCandidate)
+    const fallbackCandidate = enqueue(projectionInput('fallback', 42))
     const fallbackAuthor = vi.fn<CuratorAuthor>(async () => ({
       kind: 'fallback-required',
       reason: 'no-model',
@@ -119,8 +113,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
     })
     const originalId = fallbackLoaded.bundle.manifest.id
 
-    const capableCandidate = payload('capable', 43)
-    enqueue(capableCandidate)
+    const capableCandidate = enqueue(projectionInput('capable', 43))
     const enrichedSummary = 'Checkout submission sequence with verified terminal action'
     const enrichedBody =
       'Submit the resolved checkout form, wait for confirmation, and verify payment navigation.'
