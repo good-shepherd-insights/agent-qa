@@ -70,10 +70,6 @@ const EMPTY_RECONCILE: ReconcileReport = {
   malformed: 0,
 }
 
-type PlannedDrainOperations = DrainOperations & {
-  readIndexMaintenanceState: typeof readIndexMaintenanceState
-}
-
 const NO_INDEX_MAINTENANCE = {
   indexAbsent: false,
   pendingEmbeddings: 0,
@@ -198,7 +194,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     }
   }
 
-  function noWriterPass(): Partial<PlannedDrainOperations> {
+  function noWriterPass(): Partial<DrainOperations> {
     return {
       readRebuildRequest: () => ({ present: false }),
       readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
@@ -580,7 +576,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       return { kind: 'lexical-only' }
     })
 
-    const operations: Partial<PlannedDrainOperations> = {
+    const operations: Partial<DrainOperations> = {
       readRebuildRequest: read,
       readIndexMaintenanceState: inspect,
       acquireEmbedder: acquire,
@@ -608,7 +604,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   it('does not request writer work when both marker and durable debt are absent', async () => {
     const acquire = vi.fn<DrainOperations['acquireEmbedder']>()
     const rebuild = vi.fn<DrainOperations['rebuildIndex']>()
-    const operations: Partial<PlannedDrainOperations> = {
+    const operations: Partial<DrainOperations> = {
       ...noWriterPass(),
       acquireEmbedder: acquire,
       rebuildIndex: rebuild,
@@ -642,7 +638,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       pendingEmbeddings: 1,
       maintenanceRemaining: true,
     }))
-    const operations: Partial<PlannedDrainOperations> = {
+    const operations: Partial<DrainOperations> = {
       readRebuildRequest: () => ({ present: false }),
       readIndexMaintenanceState: () => ({
         ...NO_INDEX_MAINTENANCE,
@@ -740,6 +736,20 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(lexicalOnly.writerPass).not.toHaveProperty('request')
     expect(readIndexMaintenanceState(knowledgeRoot).pendingEmbeddings).toBe(1)
     expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+    const lexicalReader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(
+        lexicalReader.db
+          .prepare('SELECT record_rowid, bundle_id, embed_status FROM records WHERE bundle_id = ?')
+          .get(published.id),
+      ).toEqual({
+        record_rowid: pendingRow?.record_rowid,
+        bundle_id: published.id,
+        embed_status: 'pending',
+      })
+    } finally {
+      lexicalReader.db.close()
+    }
 
     const ready = await drainQueue(options)
     expect(ready.writerPass).toMatchObject({

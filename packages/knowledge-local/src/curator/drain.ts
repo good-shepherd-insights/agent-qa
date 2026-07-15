@@ -10,11 +10,15 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
-import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
+import {
+  indexDbPath,
+  openIndexReaderConnection,
+  readIndexMaintenanceState,
+  type IndexMaintenanceState,
+} from '../index-open.js'
 import { rebuildIndex, type RebuildReport } from '../index-rebuild.js'
 import { acquireEmbedder } from '../embedder-acquire.js'
 import {
-  clearRebuildRequest,
   readRebuildRequest,
   type RebuildRequest,
 } from '../rebuild-marker.js'
@@ -97,7 +101,7 @@ export type WriterPassReport =
   | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
   | {
       kind: 'rebuilt'
-      request: RebuildRequest | undefined
+      request?: RebuildRequest
       rebuild: RebuildReport
     }
   | { kind: 'failed'; message: string }
@@ -142,9 +146,9 @@ export interface DrainOperations {
   /** The canonical commit already projects dense work as pending; the breaker selects this seam. */
   commitCurationDeltaVectorless: typeof commitCurationDelta
   readRebuildRequest: typeof readRebuildRequest
+  readIndexMaintenanceState: typeof readIndexMaintenanceState
   acquireEmbedder: typeof acquireEmbedder
   rebuildIndex: typeof rebuildIndex
-  clearRebuildRequest: typeof clearRebuildRequest
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
   applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
   deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
@@ -209,9 +213,9 @@ const DEFAULT_OPERATIONS: DrainOperations = {
   commitCurationDelta,
   commitCurationDeltaVectorless: commitCurationDelta,
   readRebuildRequest,
+  readIndexMaintenanceState,
   acquireEmbedder,
   rebuildIndex,
-  clearRebuildRequest,
   hasIndexRow,
   applyIndexDeltaForBundle,
   deriveIndexRowFromBundle,
@@ -487,18 +491,28 @@ async function runWriterPass(
   knowledgeRoot: string,
 ): Promise<WriterPassReport> {
   const marker = operations.readRebuildRequest(knowledgeRoot)
-  if (!marker.present) return { kind: 'not-requested' }
+  const maintenance = operations.readIndexMaintenanceState(knowledgeRoot)
+  if (!marker.present && !hasIndexMaintenanceDebt(maintenance)) {
+    return { kind: 'not-requested' }
+  }
 
   const capability = await operations.acquireEmbedder({ allowDownload: false })
   const rebuild = await operations.rebuildIndex({
     knowledgeRoot,
     ...(capability.kind === 'ready' ? { embedder: capability.embedder } : {}),
   })
-  // rebuildIndex already consumes the marker after its complete writer transaction. This
-  // idempotent explicit clear keeps the drain-level D-05 order visible and cannot erase a failed
-  // pass: control reaches it only after full success. Pending rows heal on a later drain.
-  operations.clearRebuildRequest(knowledgeRoot)
-  return { kind: 'rebuilt', request: marker.request, rebuild }
+  return {
+    kind: 'rebuilt',
+    ...(marker.present && marker.request !== undefined ? { request: marker.request } : {}),
+    rebuild,
+  }
+}
+
+function hasIndexMaintenanceDebt(state: IndexMaintenanceState): boolean {
+  return state.indexAbsent
+    || state.pendingEmbeddings > 0
+    || state.renderingEpochStale
+    || state.vectorReconciliationOutstanding
 }
 
 function mapCommitOutcome(
