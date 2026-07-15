@@ -223,6 +223,17 @@ export type {
   DispositionProfile,
   NeighborRecord,
 } from './curator/author-contract.js'
+export {
+  BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN,
+  disposeDelta,
+} from './curator/disposition.js'
+export type {
+  DisposeDeltaInput,
+  DispositionCandidateContext,
+  DispositionDrainState,
+  DispositionOutcome,
+  RelationIntent,
+} from './curator/disposition.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
