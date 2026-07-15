@@ -147,8 +147,7 @@ export function makeBundleDraftFixture(
       overrides.body ??
       'Selecting Sign in submits the recorded credentials and advances to the account page.',
     distilledEvidenceRef: overrides.distilledEvidenceRef ?? makeArtifactFixture().ref,
-    originStage:
-      overrides.originStage ?? ('fixture-curator' as BundleDraft['originStage']),
+    originStage: overrides.originStage ?? 'run-curation',
   }
 }
 

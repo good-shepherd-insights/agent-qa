@@ -2,8 +2,7 @@ import type { ArtifactRef } from '../ids/artifact-ref'
 import type { RecordId } from '../ids/record-id'
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
-
-declare const originStageBrand: unique symbol
+import type { ExecutionContext } from '../run/run-status'
 
 export type BundleKind = 'fact' | 'procedure' | 'caution' | 'unknown' | 'policy'
 export type FactSubtype =
@@ -13,11 +12,23 @@ export type FactSubtype =
   | 'measurement'
   | 'content'
 
+/** Phase 378 closes the producer vocabulary around the one-shot Curator drainer. */
+export type OriginStage = 'run-curation'
+
+export type CurationAuthorshipPath = 'llm' | 'llm-repaired' | 'deterministic-fallback'
+
 /**
- * D-06 review: no closed origin-stage vocabulary is ratified yet. Phase 378 owns closing this
- * brand when the Curator becomes the first live BundleDraft producer.
+ * D-04 raw Curator authorship facts with the SAFE-01 write-posture context that produced them.
  */
-export type OriginStage = string & { readonly [originStageBrand]: 'OriginStage' }
+export interface CurationAuthorship {
+  path: CurationAuthorshipPath
+  model?: {
+    id: string
+    family?: string
+    fingerprint?: string
+  }
+  executionContext: ExecutionContext
+}
 
 export interface CompareAndSet {
   recordId: RecordId
@@ -30,6 +41,7 @@ export interface DeltaEnvelope {
   scope: ScopeKey
   citedIds: RecordId[]
   precondition?: CompareAndSet[]
+  authorship?: CurationAuthorship
 }
 
 export interface BundleDraft {

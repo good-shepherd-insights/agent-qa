@@ -44,7 +44,7 @@ const bundle: BundleDraft = {
   summary: 'Checkout submit is disabled until the card form validates.',
   body: 'The submit button remains disabled while the card number is incomplete.',
   distilledEvidenceRef,
-  originStage: 'curation' as BundleDraft['originStage'],
+  originStage: 'run-curation',
 }
 
 // @ts-expect-error proposal bundles omit trust; deterministic code disposes trust later.
