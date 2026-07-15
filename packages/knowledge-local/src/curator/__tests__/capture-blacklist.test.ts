@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 
 import { ArtifactsIndexSchema } from '@vostride/agent-qa-schema'
 import { copyArtifacts } from '../../artifact-copy.js'
@@ -15,13 +15,66 @@ import {
   CAPTURE_BLACKLIST_REDACTION_PLACEHOLDER,
   classifyCaptureBlacklist,
   filterArtifactsForCapture,
+  sanitizeCaptureBlacklistEvidence,
 } from '../capture-blacklist.js'
+import type { SanitizedCaptureBlacklistRegion } from '../capture-blacklist.js'
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
 describe('classifyCaptureBlacklist', () => {
+  it('sanitizes, sorts, and deduplicates durable regions without source values', () => {
+    const regions = sanitizeCaptureBlacklistEvidence([
+      {
+        stepIndex: 4,
+        elementRef: 'z-password',
+        role: 'textbox',
+        normalizedName: 'password',
+        inputType: 'password',
+        value: 'must-not-survive',
+        reason: 'password-input',
+      },
+      {
+        stepIndex: 2,
+        elementRef: 'api-key',
+        role: 'searchbox',
+        normalizedName: 'api key',
+        value: 'also-must-not-survive',
+        reason: 'credential-name',
+      },
+      {
+        stepIndex: 4,
+        elementRef: 'z-password',
+        role: 'textbox',
+        normalizedName: 'password',
+        inputType: 'password',
+        value: 'duplicate-raw-value',
+        reason: 'password-input',
+      },
+    ])
+
+    expect(regions).toEqual([
+      {
+        stepIndex: 2,
+        elementRef: 'api-key',
+        role: 'searchbox',
+        normalizedName: 'api key',
+        reason: 'credential-name',
+      },
+      {
+        stepIndex: 4,
+        elementRef: 'z-password',
+        role: 'textbox',
+        normalizedName: 'password',
+        inputType: 'password',
+        reason: 'password-input',
+      },
+    ])
+    expect(JSON.stringify(regions)).not.toContain('must-not-survive')
+    expectTypeOf<SanitizedCaptureBlacklistRegion>().not.toHaveProperty('value')
+  })
+
   it('blacklists textbox-class password inputs', () => {
     expect(
       classifyCaptureBlacklist({
@@ -155,6 +208,8 @@ describe('capture blacklist artifact filtering', () => {
       {
         ref: blockedScreenshot.ref,
         stepIndex: 4,
+        role: 'screenshot',
+        originalName: 'blocked.png',
         reason: 'capture-blacklist',
       },
     ])
@@ -199,4 +254,34 @@ describe('capture blacklist artifact filtering', () => {
       expect(copied.ref.sha).not.toBe(snapshot.ref.sha)
     },
   )
+
+  it('fails closed for opaque and unrecognized artifacts on a blacklisted interaction', () => {
+    const opaque = artifact('opaque.bin', Buffer.from('opaque credential bytes'), 4, 'opaque-evidence')
+    const unrecognized = artifact('unknown.txt', Buffer.from('unknown credential bytes'), 4, 'other')
+    const ordinary = artifact('ordinary.bin', Buffer.from('ordinary bytes'), 5, 'opaque-evidence')
+
+    const filtered = filterArtifactsForCapture({
+      artifacts: [opaque, unrecognized, ordinary],
+      blacklist: blacklist(),
+      stepInteractions: [{ stepIndex: 4, elementRef: 'credential-field' }],
+    })
+
+    expect(filtered.toCopy).toEqual([ordinary])
+    expect(filtered.skipped).toEqual([
+      {
+        ref: opaque.ref,
+        stepIndex: 4,
+        role: 'opaque-evidence',
+        originalName: 'opaque.bin',
+        reason: 'capture-blacklist',
+      },
+      {
+        ref: unrecognized.ref,
+        stepIndex: 4,
+        role: 'opaque-evidence',
+        originalName: 'unknown.txt',
+        reason: 'capture-blacklist',
+      },
+    ])
+  })
 })
