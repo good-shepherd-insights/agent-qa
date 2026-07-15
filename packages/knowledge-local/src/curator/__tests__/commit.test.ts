@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import {
   asEvidenceToken,
   asRecordId,
+  sha256hex,
   type Anchor,
   type BundleDraft,
   type Delta,
@@ -20,7 +21,7 @@ import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { loadBundle } from '../../bundle-read.js'
 import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
@@ -213,6 +214,205 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       reader.db.close()
     }
   }
+
+  function passwordReceipt(
+    overrides: Partial<CurationCaptureReceipt> = {},
+  ): CurationCaptureReceipt {
+    return {
+      regions: [
+        {
+          stepIndex: 4,
+          elementRef: 'password-field',
+          role: 'textbox',
+          normalizedName: 'password',
+          inputType: 'password',
+          reason: 'password-input',
+        },
+      ],
+      interactions: [{ stepIndex: 4, elementRef: 'password-field' }],
+      omissions: [],
+      redactions: [],
+      ...overrides,
+    }
+  }
+
+  it('uses only the required payload receipt and preserves safe artifact metadata for publish', () => {
+    expectTypeOf<CommitCurationJob>().not.toHaveProperty('captureEvidence')
+    expectTypeOf<CommitCurationJob>().not.toHaveProperty('stepInteractions')
+
+    const artifactText = '<main>safe checkout evidence</main>'
+    const artifactBytes = Buffer.from(artifactText)
+    const artifactSha = sha256hex(artifactText)
+    const claimed = job(artifactFreeCaptureReceipt(), {
+      artifactInventory: [
+        {
+          relativePath: `artifacts/${artifactSha}`,
+          sha256: artifactSha,
+          bytes: artifactBytes.byteLength,
+          stepIndex: 4,
+          role: 'dom-snapshot',
+          originalName: 'step-4.safe.dom.html',
+        },
+      ],
+    })
+    writeFileSync(join(claimed.artifactsDir, artifactSha), artifactBytes)
+    const publisher = vi.fn(
+      (
+        _config: BundleStoreConfig,
+        _input: PublishBundleInput,
+      ): PublishBundleOutcome => ({ kind: 'egress-blocked', detections: [] }),
+    )
+
+    const outcome = commitCurationDelta(
+      deps(undefined, { operations: { publishBundle: publisher } }),
+      claimed,
+      checkpoint(addDelta()),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'withheld', reason: 'egress-blocked' })
+    expect(publisher).toHaveBeenCalledOnce()
+    expect(publisher.mock.calls[0]?.[1]).toMatchObject({
+      artifacts: [
+        {
+          ref: { sha: artifactSha },
+          stepIndex: 4,
+          role: 'dom-snapshot',
+          originalName: 'step-4.safe.dom.html',
+        },
+      ],
+      preSkippedArtifacts: [],
+    })
+  })
+
+  it('renders receipt omissions as evidence-incomplete inventory without requiring a queue file', () => {
+    const omittedRef = 'password-screenshot'
+    const claimed = job(
+      passwordReceipt({
+        omissions: [
+          {
+            stepIndex: 4,
+            ref: omittedRef,
+            role: 'screenshot',
+            originalName: 'step-4.password.png',
+            reason: 'capture-blacklist',
+          },
+        ],
+      }),
+    )
+
+    const outcome = commitCurationDelta(deps(), claimed, checkpoint(addDelta()))
+
+    expect(outcome.kind).toBe('applied')
+    if (outcome.kind !== 'applied') throw new Error('expected applied omission bundle')
+    const loaded = loadBundle(outcome.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded omission bundle')
+    expect(loaded.bundle.frontmatter.evidenceIncomplete).toBe(true)
+    expect(loaded.bundle.manifest.evidenceIncomplete).toBe(true)
+    expect(loaded.bundle.artifactsIndex.artifacts).toEqual([])
+    expect(loaded.bundle.artifactsIndex.skipped).toEqual([
+      expect.objectContaining({
+        id: omittedRef,
+        stepIndex: 4,
+        reason: 'capture-blacklist',
+      }),
+    ])
+    const [skipped] = loaded.bundle.artifactsIndex.skipped ?? []
+    expect(skipped).toBeDefined()
+    if (skipped === undefined) throw new Error('expected skipped omission row')
+    expect(existsSync(join(claimed.artifactsDir, skipped.sha))).toBe(false)
+    expect(existsSync(join(outcome.bundleDir, skipped.path))).toBe(false)
+  })
+
+  it('rejects inconsistent capture receipts before intent or publisher mutation', () => {
+    const unsafeScreenshotText = 'unsafe screenshot bytes'
+    const unsafeScreenshot = Buffer.from(unsafeScreenshotText)
+    const unsafeScreenshotSha = sha256hex(unsafeScreenshotText)
+    const screenshotJob = job(passwordReceipt(), {
+      artifactInventory: [
+        {
+          relativePath: `artifacts/${unsafeScreenshotSha}`,
+          sha256: unsafeScreenshotSha,
+          bytes: unsafeScreenshot.byteLength,
+          stepIndex: 4,
+          role: 'screenshot',
+          originalName: 'step-4.password.png',
+        },
+      ],
+      attributingObservationId: 'unsafe-blacklisted-screenshot',
+    })
+
+    const safeDomText = '<input value="<REDACTED:capture-blacklist>">'
+    const safeDom = Buffer.from(safeDomText)
+    const safeDomSha = sha256hex(safeDomText)
+    const validRedaction = {
+      stepIndex: 4,
+      ref: 'password-dom',
+      role: 'dom-snapshot' as const,
+      originalName: 'step-4.password.dom.html',
+      reason: 'capture-blacklist' as const,
+      safeSha256: safeDomSha,
+    }
+    const mismatchedRedactionJob = job(
+      passwordReceipt({ redactions: [validRedaction] }),
+      {
+        artifactInventory: [
+          {
+            relativePath: `artifacts/${safeDomSha}`,
+            sha256: safeDomSha,
+            bytes: safeDom.byteLength,
+            stepIndex: 4,
+            role: 'dom-snapshot',
+            originalName: validRedaction.originalName,
+          },
+        ],
+        attributingObservationId: 'mismatched-redaction-digest',
+      },
+    )
+    mismatchedRedactionJob.payload.captureReceipt.redactions[0]!.safeSha256 = 'f'.repeat(64)
+
+    const undeclaredDescriptorJob = job(passwordReceipt(), {
+      artifactInventory: [
+        {
+          relativePath: `artifacts/${safeDomSha}`,
+          sha256: safeDomSha,
+          bytes: safeDom.byteLength,
+          stepIndex: 4,
+          role: 'dom-snapshot',
+          originalName: validRedaction.originalName,
+        },
+      ],
+      attributingObservationId: 'undeclared-safe-descriptor',
+    })
+
+    for (const inconsistentJob of [
+      screenshotJob,
+      mismatchedRedactionJob,
+      undeclaredDescriptorJob,
+    ]) {
+      const publisher = vi.fn(
+        (
+          _config: BundleStoreConfig,
+          _input: PublishBundleInput,
+        ): PublishBundleOutcome => ({ kind: 'egress-blocked', detections: [] }),
+      )
+      const afterIntentWritten = vi.fn()
+
+      expect(() =>
+        commitCurationDelta(
+          deps(undefined, {
+            hooks: { afterIntentWritten },
+            operations: { publishBundle: publisher },
+          }),
+          inconsistentJob,
+          checkpoint(addDelta()),
+        ),
+      ).toThrow(/capture-safe payload/i)
+      expect(listCommitIntents(knowledgeRoot)).toEqual([])
+      expect(afterIntentWritten).not.toHaveBeenCalled()
+      expect(publisher).not.toHaveBeenCalled()
+    }
+  })
 
   it('publishes a clean Add, applies its index row, clears intent, and marks the job done', () => {
     const claimed = job(artifactFreeCaptureReceipt())
