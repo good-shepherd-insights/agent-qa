@@ -19,7 +19,7 @@ import {
   parseRecordMarkdown,
   slugBranch,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ARTIFACT_STEP_CAP_BYTES } from '../artifact-copy.js'
 import {
@@ -28,6 +28,7 @@ import {
   type PublishBundleInput,
 } from '../bundle-publish.js'
 import { renderBundleParts } from '../bundle-parts.js'
+import { fsyncDirectory } from '../durable-fs.js'
 import {
   makeArtifactFixture,
   makeBundleDraftFixture,
@@ -153,6 +154,106 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
     expect(existsSync(join(outcome.dir, 'artifacts.index.json'))).toBe(true)
     expect(existsSync(join(outcome.dir, 'artifacts', 'artifacts.index.json'))).toBe(false)
     expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
+  it('stages a complete reader-invisible tree under the active writer lease', () => {
+    let stagedBasename = ''
+    const outcome = publishBundle(
+      config({
+        writerLeaseId: 'lease-alpha',
+        hooks: {
+          beforePublishRename: () => {
+            const stagingRoot = join(bundlesDir(), '.staging')
+            const entries = readdirSync(stagingRoot)
+            expect(entries).toHaveLength(1)
+            stagedBasename = entries[0]!
+            expect(stagedBasename).toMatch(/^lease-alpha-/)
+            expect(readdirSync(bundlesDir())).toEqual(['.staging'])
+
+            const stagedDir = join(stagingRoot, stagedBasename)
+            expect(walkFiles(stagedDir)).toEqual([
+              'artifacts.index.json',
+              `artifacts/${makeArtifactFixture().sha}`,
+              'evidence/evidence.md',
+              'evidence/outcomes.jsonl',
+              'evidence/screenstates/step-0.json',
+              'manifest.json',
+              'provenance.json',
+              'record.md',
+              'relations.json',
+            ])
+            expect(
+              guardBundleManifest(
+                JSON.parse(readFileSync(join(stagedDir, 'manifest.json'), 'utf8')),
+              ).complete,
+            ).toBe(true)
+          },
+        },
+      }),
+      input(),
+    )
+
+    expect(outcome.kind).toBe('published')
+    expect(stagedBasename).not.toBe('')
+    expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
+  it.each(['', '.', '..', '../escape', 'lease/escape', 'lease\\escape'])(
+    'rejects unsafe writer lease token %j before staging exists',
+    (writerLeaseId) => {
+      expect(() => publishBundle(config({ writerLeaseId }), input())).toThrow(
+        /writerLeaseId.*path-safe token/i,
+      )
+      expect(existsSync(join(bundlesDir(), '.staging'))).toBe(false)
+    },
+  )
+
+  it('classifies an already-exists rename race and durably removes empty staging', () => {
+    const outcome = publishBundle(
+      config({
+        writerLeaseId: 'lease-race',
+        hooks: {
+          beforePublishRename: () => {
+            const stagingRoot = join(bundlesDir(), '.staging')
+            const stagedDir = join(stagingRoot, readdirSync(stagingRoot)[0]!)
+            const manifest = guardBundleManifest(
+              JSON.parse(readFileSync(join(stagedDir, 'manifest.json'), 'utf8')),
+            )
+            cpSync(stagedDir, join(bundlesDir(), manifest.id), { recursive: true })
+          },
+        },
+      }),
+      input(),
+    )
+
+    expect(outcome.kind).toBe('already-exists')
+    expect(readdirSync(bundlesDir())).not.toContain('.staging')
+  })
+
+  it('uses a closed directory-fsync portability allowlist and surfaces every other error', () => {
+    for (const code of ['EINVAL', 'EISDIR', 'EPERM', 'ENOTSUP']) {
+      const error = Object.assign(new Error(code), { code })
+      expect(() =>
+        fsyncDirectory(root, {
+          openSync: () => {
+            throw error
+          },
+          fsyncSync: vi.fn(),
+          closeSync: vi.fn(),
+        }),
+      ).not.toThrow()
+    }
+
+    const error = Object.assign(new Error('disk I/O failure'), { code: 'EIO' })
+    expect(() =>
+      fsyncDirectory(root, {
+        openSync: () => {
+          throw error
+        },
+        fsyncSync: vi.fn(),
+        closeSync: vi.fn(),
+      }),
+    ).toThrow(error)
   })
 
   it('refuses a detector-shaped secret with audit but no bundle or staging bytes', () => {
