@@ -8,8 +8,10 @@ import {
   FTS_WEIGHT_IDENTITY,
   TAU_LEX,
 } from '../retrieval/constants.js'
+import { LEXICAL_MATCH_SEMANTICS } from '../retrieval/fts-match.js'
 
 interface TauLexReceipt {
+  schemaVersion: number
   tauLex: number
   percentile05: number
   rule: string
@@ -19,8 +21,22 @@ interface TauLexReceipt {
     content: number
     context: number
   }
-  ftsShape: { columns: string[] }
+  ftsShape: {
+    columns: string[]
+    querySemantics: string
+    productionQuerySource: string
+  }
+  servingReplay: {
+    evaluatedCandidates: number
+    matchedCandidates: number
+    admittedCandidates: number
+    goldPairs: number
+    matchedGoldPairs: number
+    admittedGoldPairs: number
+    goldRecall: number
+  }
   pairs: Array<{ bm25Positive: number }>
+  unmatchedPairs: Array<{ queryId: string; goldId: string }>
 }
 
 const receipt = JSON.parse(
@@ -54,7 +70,13 @@ describe('TAU_LEX calibration receipt', () => {
   })
 
   it('guards the final three-column FTS weights and positive-scale sign convention', () => {
+    expect(receipt.schemaVersion).toBe(2)
     expect(receipt.ftsShape.columns).toEqual(['identity', 'content', 'context'])
+    expect(receipt.ftsShape.querySemantics).toBe('quoted-token-or-v1')
+    expect(receipt.ftsShape.querySemantics).toBe(LEXICAL_MATCH_SEMANTICS)
+    expect(receipt.ftsShape.productionQuerySource).toBe(
+      'packages/knowledge-local/src/retrieval/fts-match.ts',
+    )
     expect(receipt.weights).toEqual({
       identity: FTS_WEIGHT_IDENTITY,
       content: FTS_WEIGHT_CONTENT,
@@ -66,15 +88,22 @@ describe('TAU_LEX calibration receipt', () => {
     expect(receipt.pairs.every(({ bm25Positive }) => bm25Positive > 0)).toBe(true)
   })
 
-  it('admits neither zero nor every combined gold and background candidate', () => {
-    const backgroundNonMatches = [0, 0.05, 0.25, 1]
-    const candidates = [
-      ...receipt.pairs.map(({ bm25Positive }) => bm25Positive),
-      ...backgroundNonMatches,
-    ]
-    const admitted = candidates.filter((bm25Positive) => bm25Positive >= TAU_LEX).length
+  it('records non-zero recall and non-degenerate admission from actual MATCH candidates', () => {
+    const replay = receipt.servingReplay
+    const admittedGoldPairs = receipt.pairs.filter(
+      ({ bm25Positive }) => bm25Positive >= TAU_LEX,
+    ).length
 
-    expect(admitted).toBeGreaterThan(0)
-    expect(admitted).toBeLessThan(candidates.length)
+    expect(receipt.pairs.length).toBe(replay.matchedGoldPairs)
+    expect(receipt.pairs.length + receipt.unmatchedPairs.length).toBe(replay.goldPairs)
+    expect(replay.admittedGoldPairs).toBe(admittedGoldPairs)
+    expect(replay.goldRecall).toBe(replay.matchedGoldPairs / replay.goldPairs)
+    expect(replay.matchedGoldPairs).toBeGreaterThan(0)
+    expect(replay.goldRecall).toBeGreaterThan(0)
+    expect(replay.admittedCandidates).toBeGreaterThan(0)
+    expect(replay.admittedCandidates).toBeLessThan(replay.matchedCandidates)
+    expect(replay.matchedCandidates).toBeLessThanOrEqual(replay.evaluatedCandidates)
+    expect(replay.admittedGoldPairs).toBeLessThanOrEqual(replay.matchedGoldPairs)
+    expect(replay.admittedGoldPairs).toBeLessThanOrEqual(replay.admittedCandidates)
   })
 })
