@@ -91,7 +91,7 @@ function subAction(
     stateBefore,
     stateAfter: screen(elements, afterUrl),
     result: { success: true },
-    artifactRefs: [{ id: `decision-screenshot:${artifactSha}`, sha: artifactSha }],
+    decisionScreenshotRef: { id: `decision-screenshot:${artifactSha}`, sha: artifactSha },
   }
 }
 
@@ -183,7 +183,8 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
       injectionFlagged: false,
       attributingObservationId: 'run-emit-1:test-0:step-0',
     })
-    expect(candidate?.candidateId).toMatch(/^[0-9a-f]{64}$/)
+    expect(candidate).not.toHaveProperty('candidateId')
+    expect(candidate).not.toHaveProperty('artifactInventory')
     expect(candidate?.distilledObservations).toEqual([
       expect.objectContaining({
         step: { naturalKey: 'run-emit-1:test-0:step-0', ordinal: 0 },
@@ -194,6 +195,69 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
         observedAtOrdinal: 42,
       }),
     ])
+  })
+
+  it('carries raw state evidence, exact interactions, and closed artifact descriptors', () => {
+    const password = {
+      ...element('password', 'Account password', { type: 'password' }),
+      role: 'textbox',
+      value: 'correct horse battery staple',
+    }
+    const evidence = subAction([password], 'password')
+    evidence.artifactRefs = [
+      { id: `dom-snapshot:${'b'.repeat(64)}`, sha: 'b'.repeat(64) },
+      { id: `ax-snapshot:${'c'.repeat(64)}`, sha: 'c'.repeat(64) },
+      { id: `trace:${'d'.repeat(64)}`, sha: 'd'.repeat(64) },
+    ]
+
+    const [candidate] = projectCurationCandidates(
+      handoff([testOutcome({}, [step({}, [evidence])])]),
+    )
+
+    expect(candidate?.captureEvidence).toEqual({
+      elements: [
+        {
+          stepIndex: 0,
+          elementRef: 'password',
+          role: 'textbox',
+          name: 'Account password',
+          nameNormalized: 'account password',
+          inputType: 'password',
+          value: 'correct horse battery staple',
+        },
+      ],
+    })
+    expect(candidate?.stepInteractions).toEqual([
+      { stepIndex: 0, elementRef: 'password' },
+    ])
+    expect(candidate?.artifactDescriptors).toEqual([
+      {
+        ref: evidence.decisionScreenshotRef,
+        stepIndex: 0,
+        role: 'screenshot',
+        originalName: 'decision-screenshot.png',
+      },
+      {
+        ref: evidence.artifactRefs[0],
+        stepIndex: 0,
+        role: 'dom-snapshot',
+        originalName: 'dom-snapshot.json',
+      },
+      {
+        ref: evidence.artifactRefs[1],
+        stepIndex: 0,
+        role: 'ax-snapshot',
+        originalName: 'ax-snapshot.json',
+      },
+      {
+        ref: evidence.artifactRefs[2],
+        stepIndex: 0,
+        role: 'opaque-evidence',
+        originalName: 'opaque-evidence.bin',
+      },
+    ])
+    expect(candidate?.artifactDescriptors.every((descriptor) => !('bytes' in descriptor)))
+      .toBe(true)
   })
 
   it('enforces PASS plus exactly one resolved element for leaf facts', () => {
@@ -289,6 +353,8 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
     expect(first).not.toHaveLength(0)
     expect(first.every((candidate) => candidate.executionContext === 'ci')).toBe(true)
     expect(first.every((candidate) => candidate.secretFlagged)).toBe(true)
+    expect(first.every((candidate) => !('candidateId' in candidate))).toBe(true)
+    expect(first.every((candidate) => !('artifactInventory' in candidate))).toBe(true)
   })
 })
 
