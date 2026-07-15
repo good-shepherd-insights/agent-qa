@@ -46,6 +46,10 @@ export interface BundleStoreConfig {
   auditBaseDir: string
   commitArtifacts: 'none' | 'thumbnails'
   policy?: GuardrailPolicy
+  hooks?: {
+    /** Test/chaos seam after all staged bytes exist but before the visibility rename. */
+    beforePublishRename?: () => void
+  }
 }
 
 export interface PublishBundleInput
@@ -242,6 +246,7 @@ export function publishBundle(
       writePart(stagingDir, renderedPart)
     }
     writePart(stagingDir, manifest)
+    config.hooks?.beforePublishRename?.()
 
     try {
       renameSync(stagingDir, finalDir)

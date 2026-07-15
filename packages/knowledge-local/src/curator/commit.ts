@@ -71,6 +71,12 @@ export interface CommitCurationDependencies {
   hooks?: {
     /** Test/chaos seam immediately after the durable intent rename. */
     afterIntentWritten?: () => void
+    /** Test/chaos seam while the complete bundle is staged but still reader-invisible. */
+    beforePublishRename?: () => void
+    /** Test/chaos seam after a fresh bundle publish and before its index projection. */
+    afterBundlePublished?: (bundleId: RecordId) => void
+    /** Test/chaos seam after the index transaction and before intent removal. */
+    afterIndexApplied?: (bundleId: RecordId) => void
   }
   operations?: {
     /** Test/chaos seam; production always uses the canonical publisher. */
@@ -329,6 +335,9 @@ function storeConfig(
     auditBaseDir: deps.auditBaseDir,
     commitArtifacts: 'none',
     policy: deps.policy,
+    ...(deps.hooks?.beforePublishRename === undefined
+      ? {}
+      : { hooks: { beforePublishRename: deps.hooks.beforePublishRename } }),
   }
 }
 
@@ -565,6 +574,7 @@ export function commitCurationDelta(
         convertedConfirm = true
       } else {
         bundleDir = published.dir
+        deps.hooks?.afterBundlePublished?.(published.id)
       }
     } else if (delta.kind === 'Confirm') {
       const targetConfig = storeConfig(
@@ -663,6 +673,7 @@ export function commitCurationDelta(
       ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
       ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
     })
+    deps.hooks?.afterIndexApplied?.(bundleId)
     clearCommitIntent(deps.knowledgeRoot, job.candidateId)
     markDone(deps, job)
 
