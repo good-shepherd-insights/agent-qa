@@ -5,7 +5,7 @@ import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
-import { describe, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import {
   commitCurationDelta,
@@ -14,6 +14,13 @@ import {
 } from '../../../index.js'
 
 const childMode = process.env.AGENT_QA_SIGKILL_CHILD === '1'
+
+type SigkillPoint = 'authored-intent' | 'publish-staged' | 'mutable-enrichment'
+
+function parseSigkillPoint(value: string | undefined): SigkillPoint {
+  if (value === undefined || value === 'authored-intent') return 'authored-intent'
+  throw new Error(`unsupported AGENT_QA_SIGKILL_POINT: ${value}`)
+}
 
 function requiredEnv(name: string): string {
   const value = process.env[name]
@@ -49,6 +56,26 @@ const author: CuratorAuthor = async (job) => {
   }
   return { kind: 'authored', delta, authorship }
 }
+
+describe('SIGKILL child point selector', () => {
+  it.each([
+    'authored-intent',
+    'publish-staged',
+    'mutable-enrichment',
+  ] as const)('accepts %s', (point) => {
+    expect(parseSigkillPoint(point)).toBe(point)
+  })
+
+  it('keeps the original authored-intent mode when the selector is absent', () => {
+    expect(parseSigkillPoint(undefined)).toBe('authored-intent')
+  })
+
+  it('rejects unknown selectors before the child drain starts', () => {
+    expect(() => parseSigkillPoint('unknown-boundary')).toThrow(
+      'unsupported AGENT_QA_SIGKILL_POINT: unknown-boundary',
+    )
+  })
+})
 
 describe.skipIf(!childMode)('SIGKILL drain child fixture', () => {
   it('blocks after the authored checkpoint and durable intent until killed', async () => {
