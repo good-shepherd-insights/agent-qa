@@ -46,7 +46,7 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
     ...actual,
     enqueueCurationCandidate: vi.fn((options: EnqueueCurationCandidateOptions) => {
       queueSpy.legacyCalls.push(options)
-      return actual.enqueueCurationCandidate(options)
+      throw new Error('legacy finalized-payload enqueue must not be called')
     }),
     enqueueCurationCandidateProjection: vi.fn(
       (options: EnqueueCurationCandidateProjectionOptions) => {

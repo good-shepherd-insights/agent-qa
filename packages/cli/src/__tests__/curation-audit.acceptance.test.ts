@@ -154,7 +154,11 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
             projection: candidate,
             artifactSources: [],
           })
-          void outcome
+          expect(outcome.kind).toBe('enqueued')
+          if (outcome.kind !== 'enqueued') {
+            throw new Error(`expected enqueued projection, received ${outcome.kind}`)
+          }
+          finalizedCandidateId = outcome.candidateId
           return {
             enqueued: 1,
             coalesced: 0,
