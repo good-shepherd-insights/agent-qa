@@ -20,7 +20,10 @@ import {
   makeScreenStateFixture,
   scaffoldKnowledgeRoot,
 } from '../../__tests__/fixtures/bundle-fixture.js'
-import type { ArtifactFreeCandidateProjectionInput } from '../../__tests__/fixtures/curation-candidate-fixture.js'
+import {
+  enqueueArtifactFreeCandidateProjection,
+  type ArtifactFreeCandidateProjectionInput,
+} from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
 import { publishBundle } from '../../bundle-publish.js'
 import { readIndexMaintenanceState } from '../../index-open.js'
@@ -122,8 +125,13 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     seed: string,
     overrides: Partial<ArtifactFreeCandidateProjectionInput> = {},
   ): string {
-    void projectionInput(seed, overrides)
-    throw new Error('projection drain setup is not implemented')
+    const outcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: projectionInput(seed, overrides),
+    })
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    return outcome.candidateId
   }
 
   function addDelta(job: ClaimedCurationJob): Delta {

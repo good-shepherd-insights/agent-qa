@@ -22,6 +22,7 @@ import {
   CURATION_QUEUE_SCHEMA_VERSION,
   persistAuthoredCheckpoint,
   queuedCandidateDir,
+  readCurationCandidatePayload,
   readJobState,
   verifyBundleIntegrity,
   writeJobState,
@@ -54,7 +55,10 @@ import {
   makeDiscriminantFixture,
   makeScreenStateFixture,
 } from './fixtures/bundle-fixture.js'
-import type { ArtifactFreeCandidateProjectionInput } from './fixtures/curation-candidate-fixture.js'
+import {
+  enqueueArtifactFreeCandidateProjection,
+  type ArtifactFreeCandidateProjectionInput,
+} from './fixtures/curation-candidate-fixture.js'
 
 type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 
@@ -174,9 +178,40 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     seed: string,
     leaseId: string,
   ): CurationCandidatePayload {
-    void projectionInput(seed)
-    void leaseId
-    throw new Error('projection reconcile setup is not implemented')
+    const outcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: projectionInput(seed),
+    })
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    const { candidateId } = outcome
+    const queued = readCurationCandidatePayload(
+      queuedCandidateDir(knowledgeRoot, candidateId),
+    )
+    expect(queued.kind).toBe('parsed')
+    if (queued.kind !== 'parsed') throw new Error('expected parsed projection payload')
+    expect(queued.payload.candidateId).toBe(candidateId)
+
+    const claim = claimNextJob({ knowledgeRoot, leaseId })
+    expect(claim?.kind).toBe('claimed')
+    if (claim?.kind !== 'claimed') throw new Error('expected claimed candidate')
+    expect(claim.candidateId).toBe(candidateId)
+    expect(claim.payload).toEqual(queued.payload)
+
+    const authored = { delta: { kind: 'Add', body: seed }, neighborIds: ['record-1'] }
+    const persisted = persistAuthoredCheckpoint({
+      knowledgeRoot,
+      candidateId,
+      authored,
+    })
+    expect(persisted.kind).toBe('persisted')
+    writeJobState({
+      knowledgeRoot,
+      candidateId,
+      lifecycle: 'bundling',
+      authored,
+    })
+    return queued.payload
   }
 
   function intent(candidateId: string, bundleId: string): CommitIntent {
