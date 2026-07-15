@@ -13,11 +13,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   acquireWriterLease,
+  assertEpochCurrent,
   EPOCH_FILE,
   heartbeatLease,
   isLeaseStale,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  readCurrentEpoch,
   releaseLease,
   type WriterLease,
 } from '../lease/writer-lease.js'
@@ -150,5 +152,51 @@ describe('writer lease acquire, heartbeat, release, and stale self-heal (CUR-03/
     expect(() => acquireWriterLease('relative/agent-qa-knowledge')).toThrow(
       /knowledgeRoot must be absolute/,
     )
+  })
+
+  it('reads missing or malformed epoch bytes as the pre-acquire epoch zero', () => {
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(0)
+
+    mkdirSync(knowledgeRoot, { recursive: true })
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), 'not-an-integer\n', 'utf8')
+
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(0)
+  })
+
+  it('accepts the current holder epoch at the mutation boundary', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    expect(acquired.kind).toBe('acquired')
+    if (acquired.kind !== 'acquired') throw new Error('expected acquired writer lease')
+
+    expect(assertEpochCurrent({ knowledgeRoot, epoch: acquired.epoch })).toEqual({
+      current: true,
+    })
+  })
+
+  it('fresh-reads a competing reclaim and refuses the original holder without throwing', () => {
+    const original = acquireWriterLease(knowledgeRoot)
+    expect(original.kind).toBe('acquired')
+    if (original.kind !== 'acquired') throw new Error('expected original writer lease')
+    writeFileSync(
+      join(knowledgeRoot, LEASE_FILE),
+      `${JSON.stringify({
+        ...leaseOnDisk(),
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+      })}\n`,
+      'utf8',
+    )
+
+    const competitor = acquireWriterLease(knowledgeRoot)
+
+    expect(competitor.kind).toBe('acquired')
+    if (competitor.kind !== 'acquired') throw new Error('expected competing writer lease')
+    expect(competitor.epoch).toBe(2)
+    expect(assertEpochCurrent({ knowledgeRoot, epoch: original.epoch })).toEqual({
+      current: false,
+      observedEpoch: 2,
+    })
+    expect(assertEpochCurrent({ knowledgeRoot, epoch: competitor.epoch })).toEqual({
+      current: true,
+    })
   })
 })
