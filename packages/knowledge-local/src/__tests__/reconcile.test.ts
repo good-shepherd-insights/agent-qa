@@ -18,17 +18,13 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  artifactFreeCaptureReceipt,
-  candidateContentAddress,
   claimNextJob,
   CURATION_QUEUE_SCHEMA_VERSION,
-  enqueueCurationCandidate,
   persistAuthoredCheckpoint,
   queuedCandidateDir,
   readJobState,
   verifyBundleIntegrity,
   writeJobState,
-  type CurationCaptureReceipt,
   type CurationCandidatePayload,
 } from '../index.js'
 import { appendOutcomeEventWithEnrichment } from '../bundle-append.js'
@@ -58,7 +54,7 @@ import {
   makeDiscriminantFixture,
   makeScreenStateFixture,
 } from './fixtures/bundle-fixture.js'
-import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
+import type { ArtifactFreeCandidateProjectionInput } from './fixtures/curation-candidate-fixture.js'
 
 type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 
@@ -146,12 +142,8 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     return outcome
   }
 
-  function queuePayload(
-    seed: string,
-    captureReceipt: CurationCaptureReceipt,
-  ): CurationCandidatePayload {
-    const fields = candidateAddressFixture({
-      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+  function projectionInput(seed: string): ArtifactFreeCandidateProjectionInput {
+    return {
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'fixture-storefront' },
       buildOrdinal: 42,
@@ -174,39 +166,17 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       ],
       evidenceToken: `evidence-${seed}`,
       attributingObservationId: `observation-${seed}`,
-      artifactInventory: [],
-      captureReceipt,
       emittedAt: '2026-07-15T10:00:00.000Z',
-    })
-    return { candidateId: candidateContentAddress(fields), ...fields }
+    }
   }
 
   function claimWithAuthoredCheckpoint(
     seed: string,
     leaseId: string,
-    captureReceipt: CurationCaptureReceipt,
   ): CurationCandidatePayload {
-    const payload = queuePayload(seed, captureReceipt)
-    expect(
-      enqueueCurationCandidate({ knowledgeRoot, payload, artifactSources: [] }),
-    ).toBe('enqueued')
-    const claim = claimNextJob({ knowledgeRoot, leaseId })
-    expect(claim?.kind).toBe('claimed')
-    if (claim?.kind !== 'claimed') throw new Error('expected claimed candidate')
-    const authored = { delta: { kind: 'Add', body: seed }, neighborIds: ['record-1'] }
-    const persisted = persistAuthoredCheckpoint({
-      knowledgeRoot,
-      candidateId: payload.candidateId,
-      authored,
-    })
-    expect(persisted.kind).toBe('persisted')
-    writeJobState({
-      knowledgeRoot,
-      candidateId: payload.candidateId,
-      lifecycle: 'bundling',
-      authored,
-    })
-    return payload
+    void projectionInput(seed)
+    void leaseId
+    throw new Error('projection reconcile setup is not implemented')
   }
 
   function intent(candidateId: string, bundleId: string): CommitIntent {
@@ -258,7 +228,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const payload = claimWithAuthoredCheckpoint(
       'missing-bundle',
       'dead-lease',
-      artifactFreeCaptureReceipt(),
     )
     writeCommitIntent(
       knowledgeRoot,
@@ -320,7 +289,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const payload = claimWithAuthoredCheckpoint(
       'malformed-intent',
       'dead-malformed',
-      artifactFreeCaptureReceipt(),
     )
     const file = join(
       knowledgeRoot,
@@ -349,7 +317,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const payload = claimWithAuthoredCheckpoint(
       'stale-reclaim',
       stale.leaseId,
-      artifactFreeCaptureReceipt(),
     )
 
     now.mockReturnValue(1_000_000 + LEASE_HEARTBEAT_TTL_MS)
@@ -397,7 +364,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const payload = claimWithAuthoredCheckpoint(
       'partial-enrichment',
       stale.leaseId,
-      artifactFreeCaptureReceipt(),
     )
     const published = publishBundle(
       {
@@ -524,7 +490,6 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     claimWithAuthoredCheckpoint(
       'malformed-mutation',
       stale.leaseId,
-      artifactFreeCaptureReceipt(),
     )
     const published = publishBundle(
       {
