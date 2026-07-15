@@ -98,7 +98,12 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         executionContext: handoff.executionContext,
       },
       async () => {
-        operations.emitCurationCandidates({ handoff, runDir, knowledgeRoot })
+        operations.emitCurationCandidates({
+          handoff,
+          runDir,
+          knowledgeRoot,
+          policy: opts.policy,
+        })
         const author =
           opts.modelDeps === undefined
             ? async () => ({

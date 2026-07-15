@@ -8,6 +8,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { RUN_EVIDENCE_BLOBS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
+  canonicalJson,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
   type Anchor,
@@ -16,11 +17,13 @@ import {
   type DistilledObservation,
   type ElementInfo,
   type FactSubtype,
+  type GuardrailPolicy,
   type PerTestOutcome,
   type Platform,
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
+import { scan } from '@vostride/agent-qa-safety'
 
 export const LEARNABLE_CAUTION_ROOT_CAUSES = [
   'environment',
@@ -48,6 +51,15 @@ type CaptureElementEvidence =
   CurationCandidateProjection['captureEvidence']['elements'][number]
 type CaptureStepInteraction =
   CurationCandidateProjection['stepInteractions'][number]
+
+type CandidateInjectionEvidence = Pick<
+  CurationCandidateProjection,
+  | 'anchors'
+  | 'summarySeed'
+  | 'bodySeed'
+  | 'distilledObservations'
+  | 'captureEvidence'
+>
 
 const SHA256_HEX = /^[0-9a-f]{64}$/
 
@@ -273,6 +285,34 @@ function stepInteractions(steps: readonly StepEvidence[]): CaptureStepInteractio
   })
 }
 
+function candidateEvidenceText(evidence: CandidateInjectionEvidence): string {
+  return canonicalJson({
+    summarySeed: evidence.summarySeed,
+    bodySeed: evidence.bodySeed,
+    anchors: evidence.anchors,
+    distilledObservations: evidence.distilledObservations,
+    captureEvidence: {
+      elements: evidence.captureEvidence.elements.map((element) => ({
+        stepIndex: element.stepIndex,
+        elementRef: element.elementRef,
+        role: element.role,
+        name: element.name,
+        nameNormalized: element.nameNormalized,
+        ...(element.inputType === undefined ? {} : { inputType: element.inputType }),
+      })),
+    },
+  })
+}
+
+function candidateInjectionFlag(
+  evidence: CandidateInjectionEvidence,
+  policy: GuardrailPolicy,
+): boolean {
+  return scan(candidateEvidenceText(evidence), policy).fired.some(
+    (detection) => detection.detector === 'injectionShape',
+  )
+}
+
 function commonFields(
   handoff: CompletedRunHandoff,
   input: {
@@ -287,20 +327,28 @@ function commonFields(
     steps: readonly StepEvidence[]
     artifactDescriptors: CurationArtifactDescriptor[]
   },
+  policy: GuardrailPolicy,
 ): CurationCandidateProjection {
+  const evidence = {
+    anchors: input.anchors,
+    summarySeed: input.summarySeed,
+    bodySeed: input.bodySeed,
+    distilledObservations: input.observations,
+    captureEvidence: captureEvidence(input.steps),
+  }
   return {
     sourceRunId: handoff.runId,
     scope: handoff.scope,
     buildOrdinal: handoff.buildOrdinal,
     executionContext: handoff.executionContext,
     secretFlagged: input.secretFlagged,
-    injectionFlagged: false,
+    injectionFlagged: candidateInjectionFlag(evidence, policy),
     kind: input.kind,
     ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
-    anchors: input.anchors,
-    summarySeed: input.summarySeed,
-    bodySeed: input.bodySeed,
-    distilledObservations: input.observations,
+    anchors: evidence.anchors,
+    summarySeed: evidence.summarySeed,
+    bodySeed: evidence.bodySeed,
+    distilledObservations: evidence.distilledObservations,
     evidenceToken: deriveEvidenceToken({
       attributingObservationId: input.attributingObservationId,
       anchor: input.anchors[0]!,
@@ -308,7 +356,7 @@ function commonFields(
     }),
     attributingObservationId: input.attributingObservationId,
     artifactDescriptors: input.artifactDescriptors,
-    captureEvidence: captureEvidence(input.steps),
+    captureEvidence: evidence.captureEvidence,
     stepInteractions: stepInteractions(input.steps),
     emittedAt: new Date(handoff.endedAt).toISOString(),
   }
@@ -331,6 +379,7 @@ function projectFact(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
+  policy: GuardrailPolicy,
 ): CurationCandidateProjection | undefined {
   if (!step.verifierVerdict.pass) return undefined
   const resolved = resolvedElementEvidence(step)
@@ -387,18 +436,22 @@ function projectFact(
       ? `Verified ${subject} before navigation to ${classification.route}.`
       : `Verified ${subject} from the recorded screen state.`
 
-  return commonFields(handoff, {
-    kind: 'fact',
-    subtype: classification.subtype,
-    anchors,
-    summarySeed,
-    bodySeed,
-    observations: [observation],
-    attributingObservationId: id,
-    secretFlagged: step.cacheStatus === 'bypass',
-    steps: [step],
-    artifactDescriptors: stepArtifactDescriptors(step),
-  })
+  return commonFields(
+    handoff,
+    {
+      kind: 'fact',
+      subtype: classification.subtype,
+      anchors,
+      summarySeed,
+      bodySeed,
+      observations: [observation],
+      attributingObservationId: id,
+      secretFlagged: step.cacheStatus === 'bypass',
+      steps: [step],
+      artifactDescriptors: stepArtifactDescriptors(step),
+    },
+    policy,
+  )
 }
 
 function measurementSeeds(step: StepEvidence): MeasurementSeed[] {
@@ -423,6 +476,7 @@ function projectMeasurements(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
+  policy: GuardrailPolicy,
 ): CurationCandidateProjection[] {
   if (!step.verifierVerdict.pass) return []
   const firstSubAction = step.subActions[0]
@@ -453,18 +507,22 @@ function projectMeasurements(
         : { element: { naturalKey: elementNaturalKey(singleElement) } }),
       observedAtOrdinal: handoff.buildOrdinal,
     }
-    return commonFields(handoff, {
-      kind: 'fact',
-      subtype: 'measurement',
-      anchors,
-      summarySeed: `${measurement.metric} measured as ${measurement.value}`,
-      bodySeed: `Verified ${measurement.metric} value: ${measurement.value}.`,
-      observations: [observation],
-      attributingObservationId: id,
-      secretFlagged: step.cacheStatus === 'bypass',
-      steps: [step],
-      artifactDescriptors: stepArtifactDescriptors(step),
-    })
+    return commonFields(
+      handoff,
+      {
+        kind: 'fact',
+        subtype: 'measurement',
+        anchors,
+        summarySeed: `${measurement.metric} measured as ${measurement.value}`,
+        bodySeed: `Verified ${measurement.metric} value: ${measurement.value}.`,
+        observations: [observation],
+        attributingObservationId: id,
+        secretFlagged: step.cacheStatus === 'bypass',
+        steps: [step],
+        artifactDescriptors: stepArtifactDescriptors(step),
+      },
+      policy,
+    )
   })
 }
 
@@ -477,6 +535,7 @@ function isLearnableCaution(
 function projectCaution(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
+  policy: GuardrailPolicy,
 ): CurationCandidateProjection | undefined {
   const rootCause = test.rootCause
   if (rootCause === undefined || !isLearnableCaution(rootCause.class)) return undefined
@@ -504,35 +563,40 @@ function projectCaution(
     observedAtOrdinal: handoff.buildOrdinal,
   }
 
-  return commonFields(handoff, {
-    kind: 'caution',
-    anchors,
-    summarySeed: `${rootCause.class} caution for ${test.testId}`,
-    bodySeed: `${rootCause.class}: ${rootCause.evidence.rationale}`,
-    observations: [observation],
-    attributingObservationId: id,
-    secretFlagged: producingSteps.some((step) => step.cacheStatus === 'bypass'),
-    steps: producingSteps,
-    artifactDescriptors: artifactDescriptorsForRefs(
-      rootCause.evidence.citedArtifacts,
-      stepIndex,
-    ),
-  })
+  return commonFields(
+    handoff,
+    {
+      kind: 'caution',
+      anchors,
+      summarySeed: `${rootCause.class} caution for ${test.testId}`,
+      bodySeed: `${rootCause.class}: ${rootCause.evidence.rationale}`,
+      observations: [observation],
+      attributingObservationId: id,
+      secretFlagged: producingSteps.some((step) => step.cacheStatus === 'bypass'),
+      steps: producingSteps,
+      artifactDescriptors: artifactDescriptorsForRefs(
+        rootCause.evidence.citedArtifacts,
+        stepIndex,
+      ),
+    },
+    policy,
+  )
 }
 
 /** Pure post-verdict projection. Host artifact bytes are resolved only by the emit wrapper. */
 export function projectCurationCandidates(
   handoff: CompletedRunHandoff,
+  policy: GuardrailPolicy,
 ): CurationCandidateProjection[] {
   return handoff.tests.flatMap((test) => {
     const factsAndMeasurements = test.steps.flatMap((step) => {
-      const fact = projectFact(handoff, test, step)
+      const fact = projectFact(handoff, test, step, policy)
       return [
         ...(fact === undefined ? [] : [fact]),
-        ...projectMeasurements(handoff, test, step),
+        ...projectMeasurements(handoff, test, step, policy),
       ]
     })
-    const caution = projectCaution(handoff, test)
+    const caution = projectCaution(handoff, test, policy)
     return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
   })
 }
@@ -543,6 +607,7 @@ export interface EmitCurationCandidatesOptions {
   runDir: string
   /** Absolute agent-qa-knowledge root that owns the durable queue. */
   knowledgeRoot: string
+  policy: GuardrailPolicy
 }
 
 export type EmitCandidateOutcome =
@@ -599,7 +664,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     refused: 0,
     details: [],
   }
-  for (const projected of projectCurationCandidates(opts.handoff)) {
+  for (const projected of projectCurationCandidates(opts.handoff, opts.policy)) {
     const artifactSources = bindArtifactSources(projected, opts.runDir)
     let outcome: EmitCandidateOutcome
     try {

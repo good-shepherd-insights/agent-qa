@@ -416,6 +416,16 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
     const [flagged] = projectCurationCandidates(input, policy)
     const [policyOff] = projectCurationCandidates(input, injectionOffPolicy)
     const [repeat] = projectCurationCandidates(input, policy)
+    const valueOnly = {
+      ...element('checkout', 'Checkout', { 'data-testid': 'checkout' }),
+      value: suspicious,
+    }
+    const [valueOnlyCandidate] = projectCurationCandidates(
+      handoff([
+        testOutcome({}, [step({}, [subAction([valueOnly], 'checkout')])]),
+      ]),
+      policy,
+    )
 
     expect(flagged).toMatchObject({
       injectionFlagged: true,
@@ -438,6 +448,7 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
       },
     })
     expect(policyOff?.injectionFlagged).toBe(false)
+    expect(valueOnlyCandidate?.injectionFlagged).toBe(false)
     expect(repeat).toEqual(flagged)
   })
 })
