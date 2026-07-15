@@ -70,6 +70,34 @@ export interface RebuildIndexOptions {
   vecLoadablePath?: string
 }
 
+export const EMBED_STATUS_PENDING = 'pending'
+export const EMBED_STATUS_PRESENT = 'present'
+/** SAFE-02 terminal state: lexical projection exists, but dense bytes must never be backfilled. */
+export const EMBED_STATUS_SUPPRESSED = 'suppressed'
+
+export interface PendingEmbeddingRow {
+  record_rowid: number
+  bundle_id: string
+  contextual_rendering: string
+}
+
+/** The single selector used by ordinary vector backfill; terminal suppression is not pending. */
+export function selectPendingEmbeddingRows(db: DatabaseSync): PendingEmbeddingRow[] {
+  return db
+    .prepare(`
+      SELECT record_rowid, bundle_id, contextual_rendering
+      FROM records
+      WHERE embed_status = ?
+      ORDER BY record_rowid
+    `)
+    .all(EMBED_STATUS_PENDING)
+    .map((row) => ({
+      record_rowid: Number(row.record_rowid),
+      bundle_id: String(row.bundle_id),
+      contextual_rendering: String(row.contextual_rendering),
+    }))
+}
+
 interface ProjectedBundle {
   bundle: LoadedBundle
   dir: string
@@ -377,9 +405,9 @@ function storeEmbedding(
   const bytes = embeddingBuffer(vector, activeProfile)
   db.prepare(`
     UPDATE records
-    SET embedding = ?, embed_status = 'present'
+    SET embedding = ?, embed_status = ?
     WHERE record_rowid = ?
-  `).run(bytes, recordRowid)
+  `).run(bytes, EMBED_STATUS_PRESENT, recordRowid)
 
   if (vec === 'vec0') {
     const metadata = recordVecMetadata(db, recordRowid)
@@ -718,10 +746,20 @@ function refreshContextualRenderings(db: DatabaseSync, force = false): number {
         SET
           situating_line = ?,
           contextual_rendering = ?,
-          embed_status = 'pending',
+          embed_status = CASE
+            WHEN embed_status = ? THEN ?
+            ELSE ?
+          END,
           embedding = NULL
         WHERE record_rowid = ?
-      `).run(situatingLine, contextualRendering, recordRowid)
+      `).run(
+        situatingLine,
+        contextualRendering,
+        EMBED_STATUS_SUPPRESSED,
+        EMBED_STATUS_SUPPRESSED,
+        EMBED_STATUS_PENDING,
+        recordRowid,
+      )
       db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
       db.prepare(`
         INSERT INTO fts_records (rowid, identity, content, context)
@@ -790,14 +828,7 @@ async function backfillPendingEmbeddings(
 ): Promise<number> {
   if (embedder === undefined) return 0
 
-  const pending = db
-    .prepare(`
-      SELECT record_rowid, bundle_id, contextual_rendering
-      FROM records
-      WHERE embed_status != 'present'
-      ORDER BY record_rowid
-    `)
-    .all()
+  const pending = selectPendingEmbeddingRows(db)
   let backfilled = 0
   for (const row of pending) {
     let vector: Float32Array
@@ -855,11 +886,11 @@ function reconcileVecRows(
       SELECT record_rowid, product, scope_tier, scope_key, status, embedding
       FROM records
       WHERE embedding IS NOT NULL
-        AND embed_status = 'present'
+        AND embed_status = ?
         AND length(embedding) = ?
       ORDER BY record_rowid
     `)
-    .all(activeProfile.dim * Float32Array.BYTES_PER_ELEMENT)
+    .all(EMBED_STATUS_PRESENT, activeProfile.dim * Float32Array.BYTES_PER_ELEMENT)
   const canonicalRowids = new Set(canonical.map((row) => Number(row.record_rowid)))
 
   transaction(db, () => {
