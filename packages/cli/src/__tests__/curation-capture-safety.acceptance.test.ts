@@ -185,11 +185,13 @@ describe('production capture-safety transport (SAFE-02)', () => {
     expect(safeDomSha === rawDomSha).toBe(false)
     writeFileSync(join(blobsDir, screenshotSha), screenshotBytes)
     writeFileSync(join(blobsDir, rawDomSha), rawDomBytes)
+    const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
     const emitted = emitCurationCandidates({
       handoff: handoff(screenshotSha, rawDomSha),
       runDir,
       knowledgeRoot,
+      policy,
     })
 
     expect(emitted).toMatchObject({
@@ -265,7 +267,7 @@ describe('production capture-safety transport (SAFE-02)', () => {
       auditBaseDir,
       author,
       executionContext: 'local-interactive',
-      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      policy,
     })
 
     expect(drained).toMatchObject({

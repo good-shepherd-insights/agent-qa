@@ -120,11 +120,13 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       },
       emitCurationCandidates(options) {
         order.push('emit')
-        expect(options).toEqual({
+        expect(options).toMatchObject({
           handoff: completed,
           runDir: join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
           knowledgeRoot,
+          policy,
         })
+        expect(options.policy).toBe(policy)
         return {
           enqueued: 0,
           coalesced: 0,
@@ -148,6 +150,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           policy,
           signal: controller.signal,
         })
+        expect(options.policy).toBe(policy)
         return {
           kind: 'drained',
           jobsProcessed: 0,
