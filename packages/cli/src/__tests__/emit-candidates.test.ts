@@ -13,7 +13,6 @@ import { isAbsolute, join } from 'node:path'
 
 import {
   queuedCandidateDir,
-  type EnqueueCurationCandidateOptions,
   type EnqueueCurationCandidateProjectionOptions,
   type EnqueueCurationCandidateProjectionOutcome,
 } from '@vostride/agent-qa-knowledge-local'
@@ -31,7 +30,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const queueSpy = vi.hoisted(() => ({
-  legacyCalls: [] as EnqueueCurationCandidateOptions[],
+  aliasCalls: [] as EnqueueCurationCandidateProjectionOptions[],
   projectionCalls: [] as EnqueueCurationCandidateProjectionOptions[],
   nextProjectionOutcome: undefined as
     | EnqueueCurationCandidateProjectionOutcome
@@ -44,10 +43,12 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
   >()
   return {
     ...actual,
-    enqueueCurationCandidate: vi.fn((options: EnqueueCurationCandidateOptions) => {
-      queueSpy.legacyCalls.push(options)
-      throw new Error('legacy finalized-payload enqueue must not be called')
-    }),
+    enqueueCurationCandidate: vi.fn(
+      (options: EnqueueCurationCandidateProjectionOptions) => {
+        queueSpy.aliasCalls.push(options)
+        throw new Error('projection alias must not replace the explicit emitter entry')
+      },
+    ),
     enqueueCurationCandidateProjection: vi.fn(
       (options: EnqueueCurationCandidateProjectionOptions) => {
         queueSpy.projectionCalls.push(options)
@@ -411,7 +412,7 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
-    queueSpy.legacyCalls.length = 0
+    queueSpy.aliasCalls.length = 0
     queueSpy.projectionCalls.length = 0
     queueSpy.nextProjectionOutcome = undefined
   })
@@ -465,7 +466,7 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       kind: 'enqueued',
       candidateId: report.details[0]?.candidateId,
     })
-    expect(queueSpy.legacyCalls).toEqual([])
+    expect(queueSpy.aliasCalls).toEqual([])
     expect(queueSpy.projectionCalls).toHaveLength(1)
     const projectionCall = queueSpy.projectionCalls[0]!
     expect(projectionCall).not.toHaveProperty('payload')
@@ -543,7 +544,7 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       }],
     })
     expect(queueSpy.projectionCalls).toHaveLength(1)
-    expect(queueSpy.legacyCalls).toEqual([])
+    expect(queueSpy.aliasCalls).toEqual([])
   })
 
   it('reports a missing artifact per candidate and continues the remaining batch', () => {

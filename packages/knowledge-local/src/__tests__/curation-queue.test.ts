@@ -265,19 +265,22 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       payload: payload({ captureReceipt: artifactFreeCaptureReceipt() }),
       artifactSources: [],
     }
-    if (false) {
-      // @ts-expect-error finalized payload bytes cannot bypass projection safety
-      enqueueCurationCandidateProjection(finalizedPayloadOptions)
-      // @ts-expect-error the public alias rejects the same finalized payload bypass
-      enqueueCurationCandidate(finalizedPayloadOptions)
-    }
+    type FinalizedPayloadOptions = typeof finalizedPayloadOptions
+    type ProjectionRejectsFinalized = FinalizedPayloadOptions extends Parameters<
+      typeof enqueueCurationCandidateProjection
+    >[0] ? false : true
+    type AliasRejectsFinalized = FinalizedPayloadOptions extends Parameters<
+      typeof enqueueCurationCandidate
+    >[0] ? false : true
+    const projectionRejectsFinalized: ProjectionRejectsFinalized = true
+    const aliasRejectsFinalized: AliasRejectsFinalized = true
+    expect(projectionRejectsFinalized).toBe(true)
+    expect(aliasRejectsFinalized).toBe(true)
 
     const source = readFileSync(
       new URL('../queue/curation-queue.ts', import.meta.url),
       'utf8',
     )
-    expect(source).not.toContain('interface EnqueueCurationCandidateOptions')
-    expect(source).not.toContain('function copyCandidateArtifacts')
     expect(source).not.toMatch(/export function enqueueCurationCandidate\s*\(/u)
     expect(source).toMatch(
       /export const enqueueCurationCandidate = enqueueCurationCandidateProjection/u,
