@@ -1,9 +1,16 @@
+import { statSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
+
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   candidateContentAddress,
+  enqueueCurationCandidate,
   type CurationCandidateAddressFields,
   type CurationCandidatePayload,
+  type CurationArtifactSource,
+  type EnqueueCurationCandidateOutcome,
 } from '@vostride/agent-qa-knowledge-local'
+import { RUN_EVIDENCE_BLOBS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
@@ -170,8 +177,8 @@ function artifactInventory(
       {
         relativePath: `artifacts/${ref.sha}`,
         sha256: ref.sha,
-        // The pure handoff projection cannot inspect host bytes. emitCurationCandidates hydrates
-        // this deterministic placeholder from the run blob before recomputing the content address.
+        // The pure handoff projection cannot inspect host bytes. emitCurationCandidates resolves
+        // this deterministic zero count from the run blob before recomputing the content address.
         bytes: 0,
         stepIndex,
       },
@@ -447,4 +454,104 @@ export function projectCurationCandidates(
     const caution = projectCaution(handoff, test)
     return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
   })
+}
+
+export interface EmitCurationCandidatesOptions {
+  handoff: CompletedRunHandoff
+  /** Absolute completed-run directory containing runner-local's blobs/ subdirectory. */
+  runDir: string
+  /** Absolute agent-qa-knowledge root that owns the durable queue. */
+  knowledgeRoot: string
+}
+
+export type EmitCandidateOutcome =
+  | EnqueueCurationCandidateOutcome
+  | { kind: 'refused'; reason: 'artifact-io-error' }
+
+export interface EmitCandidateDetail {
+  candidateId: string
+  outcome: EmitCandidateOutcome
+}
+
+export interface EmitReport {
+  enqueued: number
+  coalesced: number
+  capExceeded: number
+  refused: number
+  details: EmitCandidateDetail[]
+}
+
+function hydrateArtifacts(
+  candidate: CurationCandidatePayload,
+  runDir: string,
+): { payload: CurationCandidatePayload; sources: CurationArtifactSource[] } {
+  const sources = candidate.artifactInventory.map((artifact) => ({
+    relativePath: artifact.relativePath,
+    sourcePath: join(runDir, RUN_EVIDENCE_BLOBS_SUBDIR, artifact.sha256),
+  }))
+  const inventory = candidate.artifactInventory.map((artifact, index) => {
+    let bytes = artifact.bytes
+    try {
+      bytes = statSync(sources[index]!.sourcePath).size
+    } catch {
+      // Preserve the valid projected payload and let the queue return artifact-missing. Other
+      // host data failures are isolated by the enqueue boundary below.
+    }
+    return { ...artifact, bytes }
+  })
+  const { candidateId: _projectedId, ...projectedFields } = candidate
+  const fields: CurationCandidateAddressFields = {
+    ...projectedFields,
+    artifactInventory: inventory,
+  }
+  return {
+    payload: { candidateId: candidateContentAddress(fields), ...fields },
+    sources,
+  }
+}
+
+function incrementReport(report: EmitReport, outcome: EmitCandidateOutcome): void {
+  if (outcome === 'enqueued') {
+    report.enqueued += 1
+  } else if (outcome === 'coalesced') {
+    report.coalesced += 1
+  } else if (outcome === 'cap-exceeded') {
+    report.capExceeded += 1
+  } else {
+    report.refused += 1
+  }
+}
+
+/**
+ * Resolves runner-local artifact blobs and synchronously publishes each candidate in isolation.
+ * Queue publication owns temp-write, fsync, cap enforcement, and atomic rename semantics.
+ */
+export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): EmitReport {
+  if (!isAbsolute(opts.runDir)) throw new TypeError('runDir must be absolute')
+  if (!isAbsolute(opts.knowledgeRoot)) throw new TypeError('knowledgeRoot must be absolute')
+
+  const report: EmitReport = {
+    enqueued: 0,
+    coalesced: 0,
+    capExceeded: 0,
+    refused: 0,
+    details: [],
+  }
+  for (const projected of projectCurationCandidates(opts.handoff)) {
+    const hydrated = hydrateArtifacts(projected, opts.runDir)
+    let outcome: EmitCandidateOutcome
+    try {
+      outcome = enqueueCurationCandidate({
+        knowledgeRoot: opts.knowledgeRoot,
+        payload: hydrated.payload,
+        artifactSources: hydrated.sources,
+      })
+    } catch (error) {
+      if (error instanceof TypeError) throw error
+      outcome = { kind: 'refused', reason: 'artifact-io-error' }
+    }
+    incrementReport(report, outcome)
+    report.details.push({ candidateId: hydrated.payload.candidateId, outcome })
+  }
+  return report
 }
