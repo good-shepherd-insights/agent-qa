@@ -513,7 +513,7 @@ async function retrieveFromIndex(
   const capped = capExpansion(fuseWeightedRrf(finalLegs), options.n)
   const candidates = capped.map((candidate) => hydrateFusedCandidate(connection.db, candidate))
   const assembled = applyAssembly(candidates, mintUnknownConflicts(connection.db), options)
-  return finalRecheck(context, assembled, scope, options)
+  return finalRecheck(context, assembled, scope, options).slice(0, options.n)
 }
 
 function scanLegCandidate(
@@ -639,7 +639,7 @@ async function retrieveFromScan(
     }]
   })
   const assembled = applyAssembly(candidates, [], options)
-  return finalRecheck(context, assembled, scope, options)
+  return finalRecheck(context, assembled, scope, options).slice(0, options.n)
 }
 
 function validateOptions(options: RetrieveOptions): void {
