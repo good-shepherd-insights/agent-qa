@@ -47,8 +47,10 @@ import {
 import { readJobState, writeJobState } from '../../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
   candidateContentAddress,
   type BuildCurationCandidateAddressFieldsInput,
+  type CurationCaptureReceipt,
   type CurationCandidatePayload,
 } from '../../queue/queue-payload.js'
 import type { CuratorAuthor, NeighborRecord } from '../author-contract.js'
@@ -95,6 +97,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   function fields(
     seed: string,
+    captureReceipt: CurationCaptureReceipt,
     overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
   ): BuildCurationCandidateAddressFieldsInput {
     return candidateAddressFixture({
@@ -122,6 +125,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       evidenceToken: `evidence-${seed}`,
       attributingObservationId: `observation-${seed}`,
       artifactInventory: [],
+      captureReceipt,
       emittedAt: '2026-07-15T10:00:00.000Z',
       ...overrides,
     })
@@ -129,9 +133,10 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   function payload(
     seed: string,
+    captureReceipt: CurationCaptureReceipt,
     overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
   ): CurationCandidatePayload {
-    const address = fields(seed, overrides)
+    const address = fields(seed, captureReceipt, overrides)
     return { candidateId: candidateContentAddress(address), ...address }
   }
 
@@ -203,7 +208,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   }
 
   it('hands off to a fresh current holder without claiming or authoring', async () => {
-    enqueue(payload('held'))
+    enqueue(payload('held', artifactFreeCaptureReceipt()))
     const holder = acquireWriterLease(knowledgeRoot)
     if (holder.kind !== 'acquired') throw new Error('expected initial lease')
     const author = vi.fn<CuratorAuthor>()
@@ -230,7 +235,10 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   })
 
   it('reconciles before the first claim and processes deterministic claims serially', async () => {
-    const candidates = [payload('zulu'), payload('alpha')]
+    const candidates = [
+      payload('zulu', artifactFreeCaptureReceipt()),
+      payload('alpha', artifactFreeCaptureReceipt()),
+    ]
     for (const candidate of candidates) enqueue(candidate)
     const expectedIds = candidates.map(({ candidateId }) => candidateId).sort()
     const order: string[] = []
@@ -280,8 +288,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   })
 
   it('uses the budget only as a gate before new claims', async () => {
-    enqueue(payload('first'))
-    enqueue(payload('second'))
+    enqueue(payload('first', artifactFreeCaptureReceipt()))
+    enqueue(payload('second', artifactFreeCaptureReceipt()))
     const author = vi.fn<CuratorAuthor>(async (job) => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
@@ -326,7 +334,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   it('uses one reader for targeted queries and passes stable deduped aliases', async () => {
     enqueue(
-      payload('search', {
+      payload('search', artifactFreeCaptureReceipt(), {
         distilledObservations: [
           {
             schemaVersion: 1,
@@ -400,7 +408,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   })
 
   it('persists the authored checkpoint before commit and never re-invokes the author', async () => {
-    enqueue(payload('recovery'))
+    enqueue(payload('recovery', artifactFreeCaptureReceipt()))
     const author = vi.fn<CuratorAuthor>(async (job) => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
@@ -456,8 +464,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   })
 
   it('finishes an in-flight job, then aborts at the next boundary and releases the lease', async () => {
-    enqueue(payload('abort-first'))
-    enqueue(payload('abort-second'))
+    enqueue(payload('abort-first', artifactFreeCaptureReceipt()))
+    enqueue(payload('abort-second', artifactFreeCaptureReceipt()))
     const controller = new AbortController()
     const author = vi.fn<CuratorAuthor>(async (job) => {
       controller.abort()
@@ -496,7 +504,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   })
 
   it('durably breaks repeated embedding crashes into a vectorless commit', async () => {
-    const candidate = payload('embed-crash')
+    const candidate = payload('embed-crash', artifactFreeCaptureReceipt())
     enqueue(candidate)
     const author = vi.fn<CuratorAuthor>(async (job) => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
@@ -784,7 +792,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   })
 
   it('leaves writer work durable when jobs consume the budget', async () => {
-    enqueue(payload('budget-marker'))
+    enqueue(payload('budget-marker', artifactFreeCaptureReceipt()))
     requestRebuild({ knowledgeRoot, reason: 'corrupt', detail: 'retry later' })
     const author = vi.fn<CuratorAuthor>(async (job) => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
