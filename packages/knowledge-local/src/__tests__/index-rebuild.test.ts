@@ -1,4 +1,13 @@
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -27,6 +36,12 @@ import {
   type PublishBundleInput,
   type PublishBundleOutcome,
 } from '../bundle-publish.js'
+import {
+  INDEX_DB_FILE,
+  INDEX_RENDERING_SCHEMA_VERSION,
+  openIndexWriter,
+  readIndexMaintenanceState,
+} from '../index-open.js'
 import { readRebuildRequest, requestRebuild } from '../rebuild-marker.js'
 import {
   makeBundleDraftFixture,
@@ -43,6 +58,8 @@ interface RebuildReport {
   removed: number
   backfilled: number
   vec: 'vec0' | 'brute'
+  pendingEmbeddings: number
+  maintenanceRemaining: boolean
 }
 
 interface RebuildApi {
@@ -65,6 +82,30 @@ function rebuildApi(): RebuildApi {
 
 function rows(db: DatabaseSync, sql: string): Record<string, unknown>[] {
   return db.prepare(sql).all() as Record<string, unknown>[]
+}
+
+function snapshotDirectory(dir: string): {
+  directoryMtimeMs: number
+  files: Record<string, { contents: Buffer; mtimeMs: number; size: number }>
+} {
+  return {
+    directoryMtimeMs: statSync(dir).mtimeMs,
+    files: Object.fromEntries(
+      readdirSync(dir).sort().map((name) => {
+        const path = join(dir, name)
+        const stat = statSync(path)
+        if (!stat.isFile()) throw new Error(`unexpected index directory entry: ${path}`)
+        return [
+          name,
+          {
+            contents: readFileSync(path),
+            mtimeMs: stat.mtimeMs,
+            size: stat.size,
+          },
+        ]
+      }),
+    ),
+  }
 }
 
 describe('IDX-01 derived-index rebuild projection', () => {
@@ -141,6 +182,78 @@ describe('IDX-01 derived-index rebuild projection', () => {
   function openReader(): knowledgeLocal.IndexReaderConnection {
     return knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
   }
+
+  it('inspects an absent or pending index without creating or changing files', async () => {
+    const indexDir = join(knowledgeRoot, 'memory', 'index')
+    expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
+      indexAbsent: true,
+      pendingEmbeddings: 0,
+      renderingEpochStale: false,
+      vectorReconciliationOutstanding: false,
+    })
+    expect(existsSync(indexDir)).toBe(false)
+
+    publishNamed('Pending Inspection Product', 'Pending inspection')
+    await rebuildApi().rebuildIndex({ knowledgeRoot })
+    const before = snapshotDirectory(indexDir)
+
+    expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
+      indexAbsent: false,
+      pendingEmbeddings: 1,
+      renderingEpochStale: false,
+      vectorReconciliationOutstanding: false,
+    })
+    expect(snapshotDirectory(indexDir)).toEqual(before)
+  })
+
+  it('reports rendering and vector maintenance independently of pending rows', async () => {
+    publishNamed('Metadata Inspection Product', 'Metadata inspection')
+    await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+
+    const writer = openIndexWriter(knowledgeRoot)
+    try {
+      const vectorEpoch = writer.db
+        .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
+        .get()?.v
+      expect(typeof vectorEpoch).toBe('string')
+
+      writer.db
+        .prepare("UPDATE meta SET v = ? WHERE k = 'rendering_schema_version'")
+        .run('0')
+      writer.db
+        .prepare("UPDATE meta SET v = ? WHERE k = 'embedding_vec_cleanup_epoch'")
+        .run(String(vectorEpoch))
+      expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
+        indexAbsent: false,
+        pendingEmbeddings: 0,
+        renderingEpochStale: true,
+        vectorReconciliationOutstanding: false,
+      })
+
+      writer.db
+        .prepare("UPDATE meta SET v = ? WHERE k = 'rendering_schema_version'")
+        .run(String(INDEX_RENDERING_SCHEMA_VERSION))
+      writer.db
+        .prepare("UPDATE meta SET v = ? WHERE k = 'embedding_vec_cleanup_epoch'")
+        .run('0')
+      expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
+        indexAbsent: false,
+        pendingEmbeddings: 0,
+        renderingEpochStale: false,
+        vectorReconciliationOutstanding: true,
+      })
+    } finally {
+      writer.close()
+    }
+  })
+
+  it('fails inspection rather than treating a malformed index as healthy', () => {
+    const indexDir = join(knowledgeRoot, 'memory', 'index')
+    mkdirSync(indexDir, { recursive: true })
+    writeFileSync(join(indexDir, INDEX_DB_FILE), 'not a sqlite database', 'utf8')
+
+    expect(() => readIndexMaintenanceState(knowledgeRoot)).toThrow()
+  })
 
   it('projects records, trust, FTS, anchors, graph edges, and pending vectors from bundles', async () => {
     const target = publish('Checkout Product', {
@@ -445,7 +558,9 @@ describe('IDX-01 derived-index rebuild projection', () => {
   it('projects only a mutable-hash change, preserves rowids, and consumes the rebuild marker', async () => {
     const changed = publishNamed('Incremental Product', 'Incremental changed')
     const unchanged = publishNamed('Stable Product', 'Incremental stable')
-    expect(await rebuildApi().rebuildIndex({ knowledgeRoot })).toMatchObject({ projected: 2 })
+    expect(
+      await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() }),
+    ).toMatchObject({ projected: 2 })
 
     const beforeReader = openReader()
     const before = new Map(
@@ -476,8 +591,17 @@ describe('IDX-01 derived-index rebuild projection', () => {
     })
     expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
 
-    const report = await rebuildApi().rebuildIndex({ knowledgeRoot })
-    expect(report).toMatchObject({ projected: 1, backfilled: 0, removed: 0 })
+    const report = await rebuildApi().rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    expect(report).toMatchObject({
+      projected: 1,
+      backfilled: 0,
+      removed: 0,
+      pendingEmbeddings: 0,
+      maintenanceRemaining: false,
+    })
     expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
 
     const afterReader = openReader()
@@ -500,6 +624,47 @@ describe('IDX-01 derived-index rebuild projection', () => {
       )
     } finally {
       afterReader.db.close()
+    }
+  })
+
+  it('retains a rebuild marker until pending embeddings converge', async () => {
+    const published = publishNamed('Marker Retention Product', 'Marker retention')
+    requestRebuild({
+      knowledgeRoot,
+      reason: 'corrupt',
+      detail: 'fixture retains intent until dense maintenance converges',
+    })
+
+    const lexicalOnly = await rebuildApi().rebuildIndex({ knowledgeRoot })
+    expect(lexicalOnly).toMatchObject({
+      projected: 1,
+      backfilled: 0,
+      pendingEmbeddings: 1,
+      maintenanceRemaining: true,
+    })
+    expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+
+    const ready = await rebuildApi().rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(),
+    })
+    expect(ready).toMatchObject({
+      projected: 0,
+      backfilled: 1,
+      pendingEmbeddings: 0,
+      maintenanceRemaining: false,
+    })
+    expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+
+    const reader = openReader()
+    try {
+      expect(
+        reader.db
+          .prepare('SELECT bundle_id, embed_status FROM records WHERE bundle_id = ?')
+          .get(published.id),
+      ).toEqual({ bundle_id: published.id, embed_status: 'present' })
+    } finally {
+      reader.db.close()
     }
   })
 
