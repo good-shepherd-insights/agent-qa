@@ -169,8 +169,11 @@ function enqueue(
     knowledgeRoot,
     projectionInput: candidateProjection,
   })
-  void outcome
-  throw new Error('projection enqueue outcome is not returned')
+  expect(outcome.kind).toBe('enqueued')
+  if (outcome.kind !== 'enqueued') {
+    throw new Error(`expected enqueued projection, received ${outcome.kind}`)
+  }
+  return { candidateId: outcome.candidateId }
 }
 
 function walk(root: string): string[] {
