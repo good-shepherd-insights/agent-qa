@@ -19,10 +19,10 @@ import {
   loadBundle,
   verifyBundleIntegrity,
   type CommitCurationOutcome,
-  type CurationCandidateAddressFields,
   type CurationCandidatePayload,
   type CuratorAuthor,
 } from '../../index.js'
+import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const flowAnchor = { t: 'flow', name: 'Checkout flow' } as const
@@ -46,7 +46,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
     seed: string,
     buildOrdinal: number,
   ): CurationCandidatePayload {
-    const fields: CurationCandidateAddressFields = {
+    const fields = candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: `run-enrichment-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
@@ -70,7 +70,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
       attributingObservationId: `run-enrichment-${seed}:test-0:step-0`,
       artifactInventory: [],
       emittedAt: `2026-07-15T10:0${buildOrdinal - 42}:00.000Z`,
-    }
+    })
     return { candidateId: candidateContentAddress(fields), ...fields }
   }
 

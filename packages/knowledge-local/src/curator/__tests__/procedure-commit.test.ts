@@ -20,8 +20,8 @@ import {
   type AuthoredCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
-  type CurationCandidateAddressFields,
 } from '../../index.js'
+import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import {
   makeProcedureBundleDraftFixture,
   makeProcedureScreenStateSequenceFixture,
@@ -55,7 +55,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
         stepIndex,
       }
     })
-    const fields: CurationCandidateAddressFields = {
+    const fields = candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: 'run-procedure-commit',
       scope: draft.scope,
@@ -89,7 +89,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
         stepIndex,
       })),
       emittedAt: '2026-07-15T10:00:00.000Z',
-    }
+    })
     const candidateId = candidateContentAddress(fields)
     const candidateDir = join(root, 'claimed', candidateId)
     const artifactsDir = join(candidateDir, 'artifacts')

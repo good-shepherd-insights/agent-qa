@@ -8,10 +8,10 @@ import type {
 } from '@ai-sdk/provider'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  buildCurationCandidateAddressFields,
   candidateContentAddress,
   enqueueCurationCandidate,
   enumerateBundleDirs,
-  type CurationCandidateAddressFields,
   type CurationCandidatePayload,
 } from '@vostride/agent-qa-knowledge-local'
 import {
@@ -103,7 +103,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
     root = mkdtempSync(join(tmpdir(), 'cli-curation-audit-'))
     agentQaRoot = join(root, '.agent-qa')
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const fields: CurationCandidateAddressFields = {
+    const fields = buildCurationCandidateAddressFields({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: 'run-curation-audit',
       scope: { tier: 'product', key: 'storefront' },
@@ -121,7 +121,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       attributingObservationId: 'run-curation-audit:test-0:step-0',
       artifactInventory: [],
       emittedAt: '2026-07-15T10:00:00.000Z',
-    }
+    })
     candidate = { candidateId: candidateContentAddress(fields), ...fields }
   })
 

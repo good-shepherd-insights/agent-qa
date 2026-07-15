@@ -33,11 +33,11 @@ import {
   openIndexReaderConnection,
   readJobState,
   verifyBundleIntegrity,
-  type CurationCandidateAddressFields,
   type CurationCandidatePayload,
   type CuratorAuthor,
   type DrainOptions,
 } from '../../index.js'
+import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const TEST_TIMEOUT_MS = 30_000
@@ -67,8 +67,8 @@ interface SigkillBoundaryMarker {
 
 type DrainOperations = NonNullable<DrainOptions['operations']>
 
-function addressFields(seed: string): CurationCandidateAddressFields {
-  return {
+function addressFields(seed: string) {
+  return candidateAddressFixture({
     schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
     sourceRunId: `run-${seed}`,
     scope: { tier: 'product', key: 'storefront' },
@@ -94,7 +94,7 @@ function addressFields(seed: string): CurationCandidateAddressFields {
     attributingObservationId: `run-${seed}:test-0:step-0`,
     artifactInventory: [],
     emittedAt: '2026-07-15T10:00:00.000Z',
-  }
+  })
 }
 
 function payload(seed: string): CurationCandidatePayload {
@@ -103,7 +103,7 @@ function payload(seed: string): CurationCandidatePayload {
 }
 
 function mutablePayload(seed: string, buildOrdinal: number): CurationCandidatePayload {
-  const fields: CurationCandidateAddressFields = {
+  const fields = candidateAddressFixture({
     schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
     sourceRunId: `run-mutable-${seed}`,
     scope: { tier: 'product', key: 'storefront' },
@@ -127,7 +127,7 @@ function mutablePayload(seed: string, buildOrdinal: number): CurationCandidatePa
     attributingObservationId: `run-mutable-${seed}:test-0:step-0`,
     artifactInventory: [],
     emittedAt: `2026-07-15T10:${String(buildOrdinal).padStart(2, '0')}:00.000Z`,
-  }
+  })
   return { candidateId: candidateContentAddress(fields), ...fields }
 }
 
