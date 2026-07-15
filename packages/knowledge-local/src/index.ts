@@ -224,6 +224,17 @@ export type {
   NeighborRecord,
 } from './curator/author-contract.js'
 export {
+  applyIndexDeltaForBundle,
+  commitCurationDelta,
+  deriveIndexRowFromBundle,
+} from './curator/commit.js'
+export type {
+  ApplyIndexDeltaForBundleInput,
+  CommitCurationDependencies,
+  CommitCurationJob,
+  CommitCurationOutcome,
+} from './curator/commit.js'
+export {
   BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN,
   disposeDelta,
 } from './curator/disposition.js'

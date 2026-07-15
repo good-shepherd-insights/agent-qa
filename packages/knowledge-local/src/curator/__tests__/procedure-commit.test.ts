@@ -148,7 +148,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
     expect(loaded.bundle.manifest.complete).toBe(true)
     expect(loaded.bundle.frontmatter.kind).toBe('procedure')
     expect(loaded.bundle.screenStates).toHaveLength(3)
-    expect(loaded.bundle.artifacts.artifacts.map(({ stepIndex }) => stepIndex)).toEqual([0, 1, 2])
+    expect(loaded.bundle.artifactsIndex.artifacts.map(({ stepIndex }) => stepIndex)).toEqual([0, 1, 2])
 
     const reader = openIndexReaderConnection(knowledgeRoot)
     try {
