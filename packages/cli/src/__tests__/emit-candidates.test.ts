@@ -487,6 +487,9 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
     expect(projectionCall.artifactSources.every((source) => isAbsolute(source.sourcePath)))
       .toBe(true)
     const candidate = report.details[0]!
+    if (candidate.candidateId === undefined) {
+      throw new Error('enqueued detail must carry the queue-finalized candidate id')
+    }
     const queuedDir = queuedCandidateDir(fixture.knowledgeRoot, candidate.candidateId)
     expect(JSON.parse(readFileSync(join(queuedDir, 'payload.json'), 'utf8'))).toMatchObject({
       candidateId: candidate.candidateId,

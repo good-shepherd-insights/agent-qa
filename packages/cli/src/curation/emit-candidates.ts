@@ -1,15 +1,10 @@
-import { statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
 import {
-  CURATION_QUEUE_SCHEMA_VERSION,
-  candidateContentAddress,
-  enqueueCurationCandidate,
-  type CurationCandidateAddressFields,
-  type CurationCandidatePayload,
+  enqueueCurationCandidateProjection,
   type CurationCandidateProjection,
-  type CurationArtifactSource,
-  type EnqueueCurationCandidateOutcome,
+  type CurationProjectionArtifactSource,
+  type EnqueueCurationCandidateProjectionOutcome,
 } from '@vostride/agent-qa-knowledge-local'
 import { RUN_EVIDENCE_BLOBS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
@@ -200,9 +195,14 @@ function artifactDescriptorsForRefs(
   refs: readonly ArtifactRef[],
   stepIndex: number,
 ): CurationArtifactDescriptor[] {
-  return refs.flatMap((ref) =>
-    SHA256_HEX.test(ref.sha) ? [artifactDescriptor(ref, stepIndex)] : [],
-  )
+  const seen = new Set<string>()
+  const descriptors: CurationArtifactDescriptor[] = []
+  for (const ref of refs) {
+    if (!SHA256_HEX.test(ref.sha) || seen.has(ref.id)) continue
+    seen.add(ref.id)
+    descriptors.push(artifactDescriptor(ref, stepIndex))
+  }
+  return descriptors
 }
 
 function stepArtifactDescriptors(step: StepEvidence): CurationArtifactDescriptor[] {
@@ -258,7 +258,11 @@ function stepInteractions(steps: readonly StepEvidence[]): CaptureStepInteractio
   )
   interactions.sort((left, right) =>
     left.stepIndex - right.stepIndex
-    || left.elementRef.localeCompare(right.elementRef),
+    || (left.elementRef < right.elementRef
+      ? -1
+      : left.elementRef > right.elementRef
+        ? 1
+        : 0),
   )
   const seen = new Set<string>()
   return interactions.filter((interaction) => {
@@ -542,11 +546,11 @@ export interface EmitCurationCandidatesOptions {
 }
 
 export type EmitCandidateOutcome =
-  | EnqueueCurationCandidateOutcome
+  | EnqueueCurationCandidateProjectionOutcome
   | { kind: 'refused'; reason: 'artifact-io-error' }
 
 export interface EmitCandidateDetail {
-  candidateId: string
+  candidateId?: string
   outcome: EmitCandidateOutcome
 }
 
@@ -558,52 +562,22 @@ export interface EmitReport {
   details: EmitCandidateDetail[]
 }
 
-function hydrateArtifacts(
-  candidate: CurationCandidateProjection,
+function bindArtifactSources(
+  projection: CurationCandidateProjection,
   runDir: string,
-): { payload: CurationCandidatePayload; sources: CurationArtifactSource[] } {
-  const sources = candidate.artifactDescriptors.map((descriptor) => ({
-    relativePath: `artifacts/${descriptor.ref.sha}`,
+): CurationProjectionArtifactSource[] {
+  return projection.artifactDescriptors.map((descriptor) => ({
+    artifactId: descriptor.ref.id,
     sourcePath: join(runDir, RUN_EVIDENCE_BLOBS_SUBDIR, descriptor.ref.sha),
   }))
-  const inventory = candidate.artifactDescriptors.map((descriptor, index) => {
-    let bytes = 0
-    try {
-      bytes = statSync(sources[index]!.sourcePath).size
-    } catch {
-      // Preserve the valid projected payload and let the queue return artifact-missing. Other
-      // host data failures are isolated by the enqueue boundary below.
-    }
-    return {
-      relativePath: `artifacts/${descriptor.ref.sha}`,
-      sha256: descriptor.ref.sha,
-      bytes,
-      stepIndex: descriptor.stepIndex,
-    }
-  })
-  const {
-    artifactDescriptors: _artifactDescriptors,
-    captureEvidence: _captureEvidence,
-    stepInteractions: _stepInteractions,
-    ...projectedFields
-  } = candidate
-  const fields: CurationCandidateAddressFields = {
-    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
-    ...projectedFields,
-    artifactInventory: inventory,
-  }
-  return {
-    payload: { candidateId: candidateContentAddress(fields), ...fields },
-    sources,
-  }
 }
 
 function incrementReport(report: EmitReport, outcome: EmitCandidateOutcome): void {
-  if (outcome === 'enqueued') {
+  if (outcome.kind === 'enqueued') {
     report.enqueued += 1
-  } else if (outcome === 'coalesced') {
+  } else if (outcome.kind === 'coalesced') {
     report.coalesced += 1
-  } else if (outcome === 'cap-exceeded') {
+  } else if (outcome.kind === 'cap-exceeded') {
     report.capExceeded += 1
   } else {
     report.refused += 1
@@ -626,20 +600,23 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     details: [],
   }
   for (const projected of projectCurationCandidates(opts.handoff)) {
-    const hydrated = hydrateArtifacts(projected, opts.runDir)
+    const artifactSources = bindArtifactSources(projected, opts.runDir)
     let outcome: EmitCandidateOutcome
     try {
-      outcome = enqueueCurationCandidate({
+      outcome = enqueueCurationCandidateProjection({
         knowledgeRoot: opts.knowledgeRoot,
-        payload: hydrated.payload,
-        artifactSources: hydrated.sources,
+        projection: projected,
+        artifactSources,
       })
     } catch (error) {
       if (error instanceof TypeError) throw error
       outcome = { kind: 'refused', reason: 'artifact-io-error' }
     }
     incrementReport(report, outcome)
-    report.details.push({ candidateId: hydrated.payload.candidateId, outcome })
+    report.details.push({
+      ...('candidateId' in outcome ? { candidateId: outcome.candidateId } : {}),
+      outcome,
+    })
   }
   return report
 }
