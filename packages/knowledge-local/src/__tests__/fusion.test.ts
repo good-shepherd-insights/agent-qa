@@ -183,25 +183,65 @@ describe('pre-fusion admission (D-06)', () => {
 })
 
 describe('expansion slot cap (D-07)', () => {
-  it('keeps at most ceil(f*N) highest-ranked expanded entries in final top N', () => {
+  it('removes only expanded entries beyond ceil(f*N) and preserves the direct tail', () => {
     const ranked = [
       fused('r_d0', 1, 'direct'),
       fused('r_e1', 0.99, 'expanded'),
+      fused('r_d1', 0.985, 'direct'),
       fused('r_e2', 0.98, 'expanded'),
+      fused('r_d2', 0.975, 'direct'),
       fused('r_e3', 0.97, 'expanded'),
+      fused('r_d3', 0.965, 'direct'),
       fused('r_e4', 0.96, 'expanded'),
-      ...Array.from({ length: 9 }, (_, index) =>
-        fused(`r_d${index + 1}`, 0.95 - index / 100, 'direct'),
+      ...Array.from({ length: 8 }, (_, index) =>
+        fused(`r_d${index + 4}`, 0.95 - index / 100, 'direct'),
       ),
     ]
 
     const capped = capExpansion(ranked, 10)
 
-    expect(capped).toHaveLength(10)
     expect(
       capped.filter(({ source }) => source === 'expanded').map(({ bundleId }) => bundleId),
     ).toEqual(['r_e1', 'r_e2', 'r_e3'])
     expect(capped.map(({ bundleId }) => bundleId)).not.toContain('r_e4')
-    expect(capped.filter(({ source }) => source === 'direct')).toHaveLength(7)
+    expect(
+      capped.filter(({ source }) => source === 'direct').map(({ bundleId }) => bundleId),
+    ).toEqual(Array.from({ length: 12 }, (_, index) => `r_d${index}`))
+    expect(capped.map(({ bundleId }) => bundleId)).toEqual([
+      'r_d0',
+      'r_e1',
+      'r_d1',
+      'r_e2',
+      'r_d2',
+      'r_e3',
+      'r_d3',
+      'r_d4',
+      'r_d5',
+      'r_d6',
+      'r_d7',
+      'r_d8',
+      'r_d9',
+      'r_d10',
+      'r_d11',
+    ])
+  })
+
+  it('keeps direct candidates when N is zero or one', () => {
+    const ranked = [
+      fused('r_e1', 1, 'expanded'),
+      fused('r_d1', 0.99, 'direct'),
+      fused('r_e2', 0.98, 'expanded'),
+      fused('r_d2', 0.97, 'direct'),
+    ]
+
+    expect(capExpansion(ranked, 0).map(({ bundleId }) => bundleId)).toEqual([
+      'r_d1',
+      'r_d2',
+    ])
+    expect(capExpansion(ranked, 1).map(({ bundleId }) => bundleId)).toEqual([
+      'r_e1',
+      'r_d1',
+      'r_d2',
+    ])
   })
 })
