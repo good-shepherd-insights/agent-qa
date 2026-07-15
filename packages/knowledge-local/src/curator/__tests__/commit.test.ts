@@ -23,6 +23,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadBundle } from '../../bundle-read.js'
+import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import type {
   BundleStoreConfig,
   PublishBundleInput,
@@ -35,7 +36,7 @@ import { readJobState } from '../../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   candidateContentAddress,
-  type CurationCandidateAddressFields,
+  type BuildCurationCandidateAddressFieldsInput,
 } from '../../queue/queue-payload.js'
 import {
   commitCurationDelta,
@@ -76,9 +77,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   })
 
   function addressFields(
-    overrides: Partial<CurationCandidateAddressFields> = {},
-  ): CurationCandidateAddressFields {
-    return {
+    overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
+  ): BuildCurationCandidateAddressFieldsInput {
+    return candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: 'run-commit-1',
       scope: { tier: 'product', key: 'storefront' },
@@ -106,11 +107,11 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       artifactInventory: [],
       emittedAt: '2026-07-15T10:00:00.000Z',
       ...overrides,
-    }
+    })
   }
 
   function job(
-    overrides: Partial<CurationCandidateAddressFields> = {},
+    overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
   ): CommitCurationJob {
     const fields = addressFields(overrides)
     const payload = {

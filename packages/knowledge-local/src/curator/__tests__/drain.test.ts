@@ -20,6 +20,7 @@ import {
   makeScreenStateFixture,
   scaffoldKnowledgeRoot,
 } from '../../__tests__/fixtures/bundle-fixture.js'
+import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
 import { publishBundle } from '../../bundle-publish.js'
 import { readIndexMaintenanceState } from '../../index-open.js'
@@ -47,7 +48,7 @@ import { readJobState, writeJobState } from '../../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   candidateContentAddress,
-  type CurationCandidateAddressFields,
+  type BuildCurationCandidateAddressFieldsInput,
   type CurationCandidatePayload,
 } from '../../queue/queue-payload.js'
 import type { CuratorAuthor, NeighborRecord } from '../author-contract.js'
@@ -94,9 +95,9 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   function fields(
     seed: string,
-    overrides: Partial<CurationCandidateAddressFields> = {},
-  ): CurationCandidateAddressFields {
-    return {
+    overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
+  ): BuildCurationCandidateAddressFieldsInput {
+    return candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
@@ -123,12 +124,12 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       artifactInventory: [],
       emittedAt: '2026-07-15T10:00:00.000Z',
       ...overrides,
-    }
+    })
   }
 
   function payload(
     seed: string,
-    overrides: Partial<CurationCandidateAddressFields> = {},
+    overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
   ): CurationCandidatePayload {
     const address = fields(seed, overrides)
     return { candidateId: candidateContentAddress(address), ...address }
