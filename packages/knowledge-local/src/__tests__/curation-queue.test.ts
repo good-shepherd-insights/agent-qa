@@ -4,18 +4,27 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 
-import { ARTIFACT_STEP_CAP_BYTES } from '../artifact-copy.js'
+import {
+  ARTIFACT_STEP_CAP_BYTES,
+  ARTIFACT_VALUE_REDACTION_PLACEHOLDER,
+} from '../artifact-copy.js'
 import {
   enqueueCurationCandidate,
+  enqueueCurationCandidateProjection,
   readCurationCandidatePayload,
+} from '../queue/curation-queue.js'
+import type {
+  CurationProjectionArtifactSource,
+  EnqueueCurationCandidateProjectionOutcome,
 } from '../queue/curation-queue.js'
 import {
   QUEUE_MAX_EMITS_PER_RUN,
@@ -28,8 +37,11 @@ import {
   artifactFreeCaptureReceipt,
   candidateContentAddress,
   type BuildCurationCandidateAddressFieldsInput,
+  type CurationArtifactDescriptor,
+  type CurationArtifactRole,
   type CurationCaptureReceipt,
   type CurationCandidatePayload,
+  type CurationCandidateProjection,
 } from '../queue/queue-payload.js'
 import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
 
@@ -46,10 +58,13 @@ function sha(bytes: Uint8Array): string {
 describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
   let root: string
   let knowledgeRoot: string
+  let sourceRoot: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-curation-queue-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
+    sourceRoot = join(root, 'sources')
+    mkdirSync(sourceRoot, { recursive: true })
   })
 
   afterEach(() => {
@@ -107,6 +122,67 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const candidateDir = queuedCandidateDir(rootOverride, candidate.candidateId)
     mkdirSync(candidateDir, { recursive: true })
     writeFileSync(join(candidateDir, 'payload.json'), JSON.stringify(candidate), 'utf8')
+  }
+
+  function projection(
+    overrides: Partial<CurationCandidateProjection> = {},
+  ): CurationCandidateProjection {
+    return {
+      sourceRunId: 'projection-run',
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext: 'local-interactive',
+      secretFlagged: false,
+      injectionFlagged: false,
+      kind: 'fact',
+      subtype: 'selector',
+      anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
+      summarySeed: 'Checkout button selector',
+      bodySeed: 'The checkout button was resolved and verified.',
+      distilledObservations: [],
+      evidenceToken: 'projection-evidence',
+      attributingObservationId: 'projection-run:test-0:step-0',
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
+      emittedAt: '2026-07-15T10:00:00.000Z',
+      ...overrides,
+    }
+  }
+
+  function projectionArtifact(
+    name: string,
+    bytes: Uint8Array,
+    stepIndex: number,
+    role: CurationArtifactRole,
+  ): {
+    descriptor: CurationArtifactDescriptor
+    source: CurationProjectionArtifactSource
+  } {
+    const sourcePath = join(sourceRoot, name)
+    writeFileSync(sourcePath, bytes)
+    const artifactId = `artifact-${name}`
+    return {
+      descriptor: {
+        ref: { id: artifactId, sha: sha(bytes) },
+        stepIndex,
+        role,
+        originalName: name,
+      },
+      source: { artifactId, sourcePath },
+    }
+  }
+
+  function queueFiles(dir = queueRoot(knowledgeRoot)): { path: string; bytes: Buffer }[] {
+    if (!existsSync(dir)) return []
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name)
+      return entry.isDirectory() ? queueFiles(path) : [{ path, bytes: readFileSync(path) }]
+    })
+  }
+
+  function expectQueueTreeEmpty(): void {
+    expect(queueFiles()).toEqual([])
   }
 
   it('hashes only deterministic fields regardless of object order or emittedAt', () => {
@@ -198,6 +274,254 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       present: true,
       payload: candidate,
     })
+  })
+
+  it('omits credential screenshots before queue-root write and emits a value-free receipt', () => {
+    const credential = 'fixture-queue-credential'
+    const screenshotBytes = Buffer.from(`screenshot pixels ${credential}`)
+    const screenshot = projectionArtifact('credential.png', screenshotBytes, 4, 'screenshot')
+    const rawSha = screenshot.descriptor.ref.sha
+    const rawProjection = projection({
+      artifactDescriptors: [screenshot.descriptor],
+      captureEvidence: {
+        elements: [
+          {
+            stepIndex: 4,
+            elementRef: 'credential-field',
+            role: 'textbox',
+            name: 'API key',
+            value: credential,
+          },
+        ],
+      },
+      stepInteractions: [{ stepIndex: 4, elementRef: 'credential-field' }],
+    })
+
+    const outcome = enqueueCurationCandidateProjection({
+      knowledgeRoot,
+      projection: rawProjection,
+      artifactSources: [screenshot.source],
+    })
+
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    const candidateDir = queuedCandidateDir(knowledgeRoot, outcome.candidateId)
+    const parsed = readCurationCandidatePayload(candidateDir)
+    expect(parsed.kind).toBe('parsed')
+    if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
+    expect(parsed.payload.artifactInventory).toEqual([])
+    expect(parsed.payload.captureReceipt).toEqual({
+      regions: [
+        {
+          stepIndex: 4,
+          elementRef: 'credential-field',
+          role: 'textbox',
+          normalizedName: 'api key',
+          reason: 'credential-name',
+        },
+      ],
+      interactions: [{ stepIndex: 4, elementRef: 'credential-field' }],
+      omissions: [
+        {
+          stepIndex: 4,
+          ref: screenshot.descriptor.ref.id,
+          role: 'screenshot',
+          originalName: 'credential.png',
+          reason: 'capture-blacklist',
+        },
+      ],
+      redactions: [],
+    })
+    const files = queueFiles()
+    expect(files.some(({ path }) => path.includes(rawSha))).toBe(false)
+    expect(Buffer.concat(files.map(({ bytes }) => bytes)).toString('utf8')).not.toContain(
+      credential,
+    )
+  })
+
+  it.each(['dom-snapshot', 'ax-snapshot'] as const)(
+    'redacts %s bytes before hashing and coalesces on the finalized candidate id',
+    (role) => {
+      const credential = 'fixture-dom-credential'
+      const rawBytes = Buffer.from(JSON.stringify({ ref: 'credential-field', value: credential }))
+      const snapshot = projectionArtifact(`${role}.json`, rawBytes, 4, role)
+      const rawProjection = projection({
+        artifactDescriptors: [snapshot.descriptor],
+        captureEvidence: {
+          elements: [
+            {
+              stepIndex: 4,
+              elementRef: 'credential-field',
+              role: 'textbox',
+              name: 'Password',
+              inputType: 'password',
+              value: credential,
+            },
+          ],
+        },
+        stepInteractions: [{ stepIndex: 4, elementRef: 'credential-field' }],
+      })
+
+      const first = enqueueCurationCandidateProjection({
+        knowledgeRoot,
+        projection: rawProjection,
+        artifactSources: [snapshot.source],
+      })
+      expect(first.kind).toBe('enqueued')
+      if (first.kind !== 'enqueued') throw new Error('expected enqueued projection')
+      const candidateDir = queuedCandidateDir(knowledgeRoot, first.candidateId)
+      const parsed = readCurationCandidatePayload(candidateDir)
+      expect(parsed.kind).toBe('parsed')
+      if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
+      const inventory = parsed.payload.artifactInventory[0]!
+      const safeBytes = readFileSync(join(candidateDir, inventory.relativePath), 'utf8')
+
+      expect(inventory).toMatchObject({
+        role,
+        originalName: `${role}.json`,
+        sha256: sha(Buffer.from(safeBytes)),
+        bytes: Buffer.byteLength(safeBytes),
+      })
+      expect(inventory.sha256).not.toBe(snapshot.descriptor.ref.sha)
+      expect(safeBytes).toContain(ARTIFACT_VALUE_REDACTION_PLACEHOLDER)
+      expect(safeBytes).not.toContain(credential)
+      expect(parsed.payload.captureReceipt?.redactions).toEqual([
+        {
+          stepIndex: 4,
+          ref: snapshot.descriptor.ref.id,
+          role,
+          originalName: `${role}.json`,
+          reason: 'capture-blacklist',
+          safeSha256: inventory.sha256,
+        },
+      ])
+      expect(parsed.payload.candidateId).toBe(first.candidateId)
+
+      const duplicate = enqueueCurationCandidateProjection({
+        knowledgeRoot,
+        projection: { ...rawProjection, emittedAt: '2099-01-01T00:00:00.000Z' },
+        artifactSources: [snapshot.source],
+      })
+      expect(duplicate).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
+      expect(queueFiles().some(({ path }) => path.includes(snapshot.descriptor.ref.sha))).toBe(
+        false,
+      )
+    },
+  )
+
+  it('cleans staging and exposes no candidate for malformed, missing, mismatched, or inconsistent input', () => {
+    const source = projectionArtifact(
+      'source.txt',
+      Buffer.from('safe source bytes'),
+      0,
+      'opaque-evidence',
+    )
+    const cases = [
+      {
+        projection: { ...projection(), scope: undefined } as unknown as CurationCandidateProjection,
+        artifactSources: [] as CurationProjectionArtifactSource[],
+        reason: 'invalid-payload',
+      },
+      {
+        projection: projection({ artifactDescriptors: [source.descriptor] }),
+        artifactSources: [{ ...source.source, sourcePath: join(sourceRoot, 'missing.txt') }],
+        reason: 'artifact-missing',
+      },
+      {
+        projection: projection({
+          artifactDescriptors: [
+            { ...source.descriptor, ref: { ...source.descriptor.ref, sha: '0'.repeat(64) } },
+          ],
+        }),
+        artifactSources: [source.source],
+        reason: 'artifact-sha-mismatch',
+      },
+    ] as const
+
+    for (const scenario of cases) {
+      expect(
+        enqueueCurationCandidateProjection({
+          knowledgeRoot,
+          projection: scenario.projection,
+          artifactSources: scenario.artifactSources,
+        }),
+      ).toEqual({ kind: 'refused', reason: scenario.reason })
+      expectQueueTreeEmpty()
+    }
+
+    const duplicateBytes = Buffer.from('same redacted credential')
+    const dom = projectionArtifact('same.dom.json', duplicateBytes, 4, 'dom-snapshot')
+    const ax = projectionArtifact('same.ax.json', duplicateBytes, 4, 'ax-snapshot')
+    expect(
+      enqueueCurationCandidateProjection({
+        knowledgeRoot,
+        projection: projection({ artifactDescriptors: [dom.descriptor, ax.descriptor] }),
+        artifactSources: [dom.source, ax.source],
+      }),
+    ).toEqual({ kind: 'refused', reason: 'artifact-inventory-mismatch' })
+    expectQueueTreeEmpty()
+  })
+
+  it('returns finalized candidate ids for enqueued, coalesced, and cap-exceeded outcomes', () => {
+    expectTypeOf<EnqueueCurationCandidateProjectionOutcome>().toMatchTypeOf<
+      | { kind: 'enqueued'; candidateId: string }
+      | { kind: 'coalesced'; candidateId: string }
+      | { kind: 'cap-exceeded'; candidateId: string }
+      | { kind: 'refused'; reason: string }
+    >()
+
+    const first = enqueueCurationCandidateProjection({
+      knowledgeRoot,
+      projection: projection(),
+      artifactSources: [],
+    })
+    expect(first.kind).toBe('enqueued')
+    if (first.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    expect(
+      enqueueCurationCandidateProjection({
+        knowledgeRoot,
+        projection: projection(),
+        artifactSources: [],
+      }),
+    ).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
+
+    const capRoot = join(root, 'cap-root')
+    for (let index = 0; index < QUEUE_MAX_JOBS_PER_SCOPE; index += 1) {
+      seedQueued(
+        payload({
+          captureReceipt: artifactFreeCaptureReceipt(),
+          sourceRunId: `cap-run-${index}`,
+          attributingObservationId: `cap-observation-${index}`,
+          evidenceToken: `cap-evidence-${index}`,
+        }),
+        capRoot,
+      )
+    }
+    const capped = enqueueCurationCandidateProjection({
+      knowledgeRoot: capRoot,
+      projection: projection({
+        sourceRunId: 'cap-overflow-run',
+        attributingObservationId: 'cap-overflow-observation',
+        evidenceToken: 'cap-overflow-evidence',
+      }),
+      artifactSources: [],
+    })
+    expect(capped.kind).toBe('cap-exceeded')
+    if (capped.kind !== 'cap-exceeded') throw new Error('expected cap-exceeded projection')
+    expect(existsSync(queuedCandidateDir(capRoot, capped.candidateId))).toBe(false)
+  })
+
+  it('retains the legacy finalized-payload entry and string outcome', () => {
+    const candidate = payload({ captureReceipt: artifactFreeCaptureReceipt() })
+    expect(
+      enqueueCurationCandidate({
+        knowledgeRoot,
+        payload: candidate,
+        artifactSources: [],
+      }),
+    ).toBe('enqueued')
+    expect(readCurationCandidatePayload(queuedCandidateDir(knowledgeRoot, candidate.candidateId)))
+      .toMatchObject({ kind: 'parsed', payload: candidate })
   })
 
   it('fails closed at the per-scope and per-run queue caps without visible bytes', () => {
