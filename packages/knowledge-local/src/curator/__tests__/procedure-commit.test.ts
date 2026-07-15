@@ -48,11 +48,21 @@ describe('D-02 procedure-kind commit mint contract', () => {
     const draft = makeProcedureBundleDraftFixture()
     const screenStates = makeProcedureScreenStateSequenceFixture()
     const artifacts = screenStates.map((_, stepIndex) => {
-      const bytes = Buffer.from(`procedure capture ${stepIndex}\n`)
+      const role = stepIndex === 1 ? 'dom-snapshot' as const : 'opaque-evidence' as const
+      const originalName = stepIndex === 1
+        ? 'procedure-step-1.dom.json'
+        : `procedure-step-${stepIndex}.txt`
+      const bytes = Buffer.from(
+        stepIndex === 1
+          ? '{"role":"textbox","name":"Password"}\n'
+          : `procedure capture ${stepIndex}\n`,
+      )
       return {
         bytes,
         sha: createHash('sha256').update(bytes).digest('hex'),
         stepIndex,
+        role,
+        originalName,
       }
     })
     const fields = candidateAddressFixture({
@@ -82,13 +92,13 @@ describe('D-02 procedure-kind commit mint contract', () => {
       })),
       evidenceToken: 'procedure-evidence',
       attributingObservationId: 'run-procedure-commit:test-sign-in:step-0',
-      artifactInventory: artifacts.map(({ bytes, sha, stepIndex }) => ({
+      artifactInventory: artifacts.map(({ bytes, sha, stepIndex, role, originalName }) => ({
         relativePath: `artifacts/${sha}`,
         sha256: sha,
         bytes: bytes.byteLength,
         stepIndex,
-        role: 'opaque-evidence',
-        originalName: `procedure-step-${stepIndex}.txt`,
+        role,
+        originalName,
       })),
       captureReceipt: {
         regions: [
@@ -117,7 +127,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
       })),
     ).toEqual([
       { stepIndex: 0, role: 'opaque-evidence', originalName: 'procedure-step-0.txt' },
-      { stepIndex: 1, role: 'opaque-evidence', originalName: 'procedure-step-1.txt' },
+      { stepIndex: 1, role: 'dom-snapshot', originalName: 'procedure-step-1.dom.json' },
       { stepIndex: 2, role: 'opaque-evidence', originalName: 'procedure-step-2.txt' },
     ])
     expect(fields.captureReceipt).toMatchObject({
