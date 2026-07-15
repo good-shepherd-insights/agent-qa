@@ -9,9 +9,14 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
-import { queuedCandidateDir } from '@vostride/agent-qa-knowledge-local'
+import {
+  queuedCandidateDir,
+  type EnqueueCurationCandidateOptions,
+  type EnqueueCurationCandidateProjectionOptions,
+  type EnqueueCurationCandidateProjectionOutcome,
+} from '@vostride/agent-qa-knowledge-local'
 import {
   asRef,
   asRunId,
@@ -23,7 +28,39 @@ import {
   type SubActionEvidence,
   type Verdict,
 } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const queueSpy = vi.hoisted(() => ({
+  legacyCalls: [] as EnqueueCurationCandidateOptions[],
+  projectionCalls: [] as EnqueueCurationCandidateProjectionOptions[],
+  nextProjectionOutcome: undefined as
+    | EnqueueCurationCandidateProjectionOutcome
+    | undefined,
+}))
+
+vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@vostride/agent-qa-knowledge-local')
+  >()
+  return {
+    ...actual,
+    enqueueCurationCandidate: vi.fn((options: EnqueueCurationCandidateOptions) => {
+      queueSpy.legacyCalls.push(options)
+      return actual.enqueueCurationCandidate(options)
+    }),
+    enqueueCurationCandidateProjection: vi.fn(
+      (options: EnqueueCurationCandidateProjectionOptions) => {
+        queueSpy.projectionCalls.push(options)
+        if (queueSpy.nextProjectionOutcome !== undefined) {
+          const outcome = queueSpy.nextProjectionOutcome
+          queueSpy.nextProjectionOutcome = undefined
+          return outcome
+        }
+        return actual.enqueueCurationCandidateProjection(options)
+      },
+    ),
+  }
+})
 
 import {
   emitCurationCandidates,
@@ -374,6 +411,9 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+    queueSpy.legacyCalls.length = 0
+    queueSpy.projectionCalls.length = 0
+    queueSpy.nextProjectionOutcome = undefined
   })
 
   function emitFixture(): {
@@ -421,7 +461,31 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       refused: 0,
     })
     expect(report.details).toHaveLength(1)
-    expect(report.details[0]?.outcome).toBe('enqueued')
+    expect(report.details[0]?.outcome).toEqual({
+      kind: 'enqueued',
+      candidateId: report.details[0]?.candidateId,
+    })
+    expect(queueSpy.legacyCalls).toEqual([])
+    expect(queueSpy.projectionCalls).toHaveLength(1)
+    const projectionCall = queueSpy.projectionCalls[0]!
+    expect(projectionCall).not.toHaveProperty('payload')
+    expect(projectionCall.projection).not.toHaveProperty('candidateId')
+    expect(projectionCall.projection).not.toHaveProperty('artifactInventory')
+    expect(projectionCall.projection.artifactDescriptors.every(
+      (descriptor) => !('bytes' in descriptor),
+    )).toBe(true)
+    expect(projectionCall.artifactSources).toEqual([
+      {
+        artifactId: projectionCall.projection.artifactDescriptors[0]?.ref.id,
+        sourcePath: join(
+          fixture.runDir,
+          'blobs',
+          projectionCall.projection.artifactDescriptors[0]!.ref.sha,
+        ),
+      },
+    ])
+    expect(projectionCall.artifactSources.every((source) => isAbsolute(source.sourcePath)))
+      .toBe(true)
     const candidate = report.details[0]!
     const queuedDir = queuedCandidateDir(fixture.knowledgeRoot, candidate.candidateId)
     expect(JSON.parse(readFileSync(join(queuedDir, 'payload.json'), 'utf8'))).toMatchObject({
@@ -446,8 +510,37 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       capExceeded: 0,
       refused: 0,
     })
-    expect(second.details.every((detail) => detail.outcome === 'coalesced')).toBe(true)
+    expect(second.details.every((detail) =>
+      detail.outcome.kind === 'coalesced'
+      && detail.candidateId === detail.outcome.candidateId,
+    )).toBe(true)
     expect(treeBytes(fixture.knowledgeRoot)).toBe(bytesAfterFirst)
+  })
+
+  it('reports the finalized candidate id returned with a cap outcome', () => {
+    const fixture = emitFixture()
+    queueSpy.nextProjectionOutcome = {
+      kind: 'cap-exceeded',
+      candidateId: 'queue-finalized-cap-id',
+    }
+
+    const report = emitCurationCandidates(fixture)
+
+    expect(report).toMatchObject({
+      enqueued: 0,
+      coalesced: 0,
+      capExceeded: 1,
+      refused: 0,
+      details: [{
+        candidateId: 'queue-finalized-cap-id',
+        outcome: {
+          kind: 'cap-exceeded',
+          candidateId: 'queue-finalized-cap-id',
+        },
+      }],
+    })
+    expect(queueSpy.projectionCalls).toHaveLength(1)
+    expect(queueSpy.legacyCalls).toEqual([])
   })
 
   it('reports a missing artifact per candidate and continues the remaining batch', () => {
@@ -482,6 +575,8 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       kind: 'refused',
       reason: 'artifact-missing',
     })
-    expect(report.details.map((detail) => detail.outcome)).toContain('enqueued')
+    expect(report.details.map((detail) => detail.outcome)).toContainEqual(
+      expect.objectContaining({ kind: 'enqueued' }),
+    )
   })
 })
