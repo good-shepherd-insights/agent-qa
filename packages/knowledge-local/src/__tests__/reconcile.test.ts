@@ -18,6 +18,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  artifactFreeCaptureReceipt,
   candidateContentAddress,
   claimNextJob,
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -27,7 +28,7 @@ import {
   readJobState,
   verifyBundleIntegrity,
   writeJobState,
-  type CurationCandidateAddressFields,
+  type CurationCaptureReceipt,
   type CurationCandidatePayload,
 } from '../index.js'
 import { appendOutcomeEventWithEnrichment } from '../bundle-append.js'
@@ -57,6 +58,7 @@ import {
   makeDiscriminantFixture,
   makeScreenStateFixture,
 } from './fixtures/bundle-fixture.js'
+import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
 
 type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 
@@ -144,8 +146,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     return outcome
   }
 
-  function queuePayload(seed: string): CurationCandidatePayload {
-    const fields: CurationCandidateAddressFields = {
+  function queuePayload(
+    seed: string,
+    captureReceipt: CurationCaptureReceipt,
+  ): CurationCandidatePayload {
+    const fields = candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'fixture-storefront' },
@@ -170,13 +175,18 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       evidenceToken: `evidence-${seed}`,
       attributingObservationId: `observation-${seed}`,
       artifactInventory: [],
+      captureReceipt,
       emittedAt: '2026-07-15T10:00:00.000Z',
-    }
+    })
     return { candidateId: candidateContentAddress(fields), ...fields }
   }
 
-  function claimWithAuthoredCheckpoint(seed: string, leaseId: string): CurationCandidatePayload {
-    const payload = queuePayload(seed)
+  function claimWithAuthoredCheckpoint(
+    seed: string,
+    leaseId: string,
+    captureReceipt: CurationCaptureReceipt,
+  ): CurationCandidatePayload {
+    const payload = queuePayload(seed, captureReceipt)
     expect(
       enqueueCurationCandidate({ knowledgeRoot, payload, artifactSources: [] }),
     ).toBe('enqueued')
@@ -245,7 +255,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
   })
 
   it('state 3 discards an intent without bundle truth and returns the job to queued', () => {
-    const payload = claimWithAuthoredCheckpoint('missing-bundle', 'dead-lease')
+    const payload = claimWithAuthoredCheckpoint(
+      'missing-bundle',
+      'dead-lease',
+      artifactFreeCaptureReceipt(),
+    )
     writeCommitIntent(
       knowledgeRoot,
       intent(payload.candidateId, 'fact-never-published-0123456789abcdef'),
@@ -303,7 +317,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
   })
 
   it('discards malformed intent bytes and fails toward re-processing the candidate', () => {
-    const payload = claimWithAuthoredCheckpoint('malformed-intent', 'dead-malformed')
+    const payload = claimWithAuthoredCheckpoint(
+      'malformed-intent',
+      'dead-malformed',
+      artifactFreeCaptureReceipt(),
+    )
     const file = join(
       knowledgeRoot,
       JOURNAL_SUBDIR,
@@ -328,7 +346,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const stale = acquireWriterLease(knowledgeRoot)
     expect(stale.kind).toBe('acquired')
     if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
-    const payload = claimWithAuthoredCheckpoint('stale-reclaim', stale.leaseId)
+    const payload = claimWithAuthoredCheckpoint(
+      'stale-reclaim',
+      stale.leaseId,
+      artifactFreeCaptureReceipt(),
+    )
 
     now.mockReturnValue(1_000_000 + LEASE_HEARTBEAT_TTL_MS)
     const current = acquireWriterLease(knowledgeRoot)
@@ -372,7 +394,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const stale = acquireWriterLease(knowledgeRoot)
     expect(stale.kind).toBe('acquired')
     if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
-    const payload = claimWithAuthoredCheckpoint('partial-enrichment', stale.leaseId)
+    const payload = claimWithAuthoredCheckpoint(
+      'partial-enrichment',
+      stale.leaseId,
+      artifactFreeCaptureReceipt(),
+    )
     const published = publishBundle(
       {
         knowledgeRoot,
@@ -495,7 +521,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const stale = acquireWriterLease(knowledgeRoot)
     expect(stale.kind).toBe('acquired')
     if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
-    claimWithAuthoredCheckpoint('malformed-mutation', stale.leaseId)
+    claimWithAuthoredCheckpoint(
+      'malformed-mutation',
+      stale.leaseId,
+      artifactFreeCaptureReceipt(),
+    )
     const published = publishBundle(
       {
         knowledgeRoot,

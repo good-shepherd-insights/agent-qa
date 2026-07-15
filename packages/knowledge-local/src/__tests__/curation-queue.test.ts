@@ -25,10 +25,19 @@ import {
 } from '../queue/queue-layout.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
   candidateContentAddress,
-  type CurationCandidateAddressFields,
+  type BuildCurationCandidateAddressFieldsInput,
+  type CurationCaptureReceipt,
   type CurationCandidatePayload,
 } from '../queue/queue-payload.js'
+import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
+
+type CandidateFixtureOverrides = Pick<
+  BuildCurationCandidateAddressFieldsInput,
+  'captureReceipt'
+> &
+  Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>>
 
 function sha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
@@ -48,9 +57,9 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
   })
 
   function addressFields(
-    overrides: Partial<CurationCandidateAddressFields> = {},
-  ): CurationCandidateAddressFields {
-    return {
+    overrides: CandidateFixtureOverrides,
+  ): BuildCurationCandidateAddressFieldsInput {
+    return candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
       sourceRunId: 'run-1',
       scope: { tier: 'product', key: 'storefront' },
@@ -77,14 +86,21 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       artifactInventory: [],
       emittedAt: '2026-07-15T10:00:00.000Z',
       ...overrides,
-    }
+    })
   }
 
-  function payload(
-    overrides: Partial<CurationCandidateAddressFields> = {},
-  ): CurationCandidatePayload {
+  function payload(overrides: CandidateFixtureOverrides): CurationCandidatePayload {
     const fields = addressFields(overrides)
     return { candidateId: candidateContentAddress(fields), ...fields }
+  }
+
+  function artifactCaptureReceipt(stepIndex: number): CurationCaptureReceipt {
+    return {
+      regions: [],
+      interactions: [{ stepIndex }],
+      omissions: [],
+      redactions: [],
+    }
   }
 
   function seedQueued(candidate: CurationCandidatePayload, rootOverride = knowledgeRoot): void {
@@ -94,10 +110,11 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
   }
 
   it('hashes only deterministic fields regardless of object order or emittedAt', () => {
-    const first = addressFields()
+    const first = addressFields({ captureReceipt: artifactFreeCaptureReceipt() })
     const reordered = {
       emittedAt: '2099-01-01T00:00:00.000Z',
       artifactInventory: first.artifactInventory,
+      captureReceipt: first.captureReceipt,
       attributingObservationId: first.attributingObservationId,
       evidenceToken: first.evidenceToken,
       distilledObservations: first.distilledObservations,
@@ -113,9 +130,17 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       scope: { key: first.scope.key, tier: first.scope.tier },
       sourceRunId: first.sourceRunId,
       schemaVersion: first.schemaVersion,
-    } satisfies CurationCandidateAddressFields
+    } satisfies BuildCurationCandidateAddressFieldsInput
 
     expect(candidateContentAddress(reordered)).toBe(candidateContentAddress(first))
+  })
+
+  it('requires an explicit capture receipt in the shared candidate fixture input', () => {
+    type FixtureInput = Parameters<typeof candidateAddressFixture>[0]
+    type ReceiptIsRequired = {} extends Pick<FixtureInput, 'captureReceipt'> ? false : true
+    const receiptIsRequired: ReceiptIsRequired = true
+
+    expect(receiptIsRequired).toBe(true)
   })
 
   it('publishes payload and artifact bytes atomically then coalesces without rewriting', () => {
@@ -124,12 +149,15 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const artifactSource = join(root, 'evidence.bin')
     writeFileSync(artifactSource, artifactBytes)
     const candidate = payload({
+      captureReceipt: artifactCaptureReceipt(0),
       artifactInventory: [
         {
           relativePath: `artifacts/${artifactSha}`,
           sha256: artifactSha,
           bytes: artifactBytes.byteLength,
           stepIndex: 0,
+          role: 'opaque-evidence',
+          originalName: 'evidence.bin',
         },
       ],
     })
@@ -175,6 +203,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
   it('fails closed at the per-scope and per-run queue caps without visible bytes', () => {
     for (let index = 0; index < QUEUE_MAX_JOBS_PER_SCOPE; index += 1) {
       const candidate = payload({
+        captureReceipt: artifactFreeCaptureReceipt(),
         sourceRunId: `scope-run-${index}`,
         attributingObservationId: `scope-observation-${index}`,
         evidenceToken: `scope-evidence-${index}`,
@@ -182,6 +211,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       seedQueued(candidate)
     }
     const scopeOverflow = payload({
+      captureReceipt: artifactFreeCaptureReceipt(),
       sourceRunId: 'scope-overflow-run',
       attributingObservationId: 'scope-overflow-observation',
       evidenceToken: 'scope-overflow-evidence',
@@ -198,6 +228,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const secondKnowledgeRoot = join(root, 'second-knowledge-root')
     for (let index = 0; index < QUEUE_MAX_EMITS_PER_RUN; index += 1) {
       const candidate = payload({
+        captureReceipt: artifactFreeCaptureReceipt(),
         sourceRunId: 'one-hot-run',
         scope: { tier: 'test', key: `test-${index}` },
         attributingObservationId: `run-observation-${index}`,
@@ -206,6 +237,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       seedQueued(candidate, secondKnowledgeRoot)
     }
     const runOverflow = payload({
+      captureReceipt: artifactFreeCaptureReceipt(),
       sourceRunId: 'one-hot-run',
       scope: { tier: 'test', key: 'overflow-test' },
       attributingObservationId: 'run-overflow-observation',
@@ -229,12 +261,15 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const artifactSource = join(root, 'oversized.bin')
     writeFileSync(artifactSource, artifactBytes)
     const candidate = payload({
+      captureReceipt: artifactCaptureReceipt(0),
       artifactInventory: [
         {
           relativePath: `artifacts/${artifactSha}`,
           sha256: artifactSha,
           bytes: artifactBytes.byteLength,
           stepIndex: 0,
+          role: 'opaque-evidence',
+          originalName: 'oversized.bin',
         },
       ],
     })
