@@ -16,6 +16,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildRetrievalQuery } from '../../query-helper.js'
 import { retrieve, type RetrieveResult } from '../../retrieve.js'
 import {
+  clearRebuildRequest,
+  readRebuildRequest,
+  requestRebuild,
+} from '../../rebuild-marker.js'
+import * as knowledgeLocal from '../../index.js'
+import {
   claimNextJob,
   enqueueCurationCandidate,
   listQueuedCandidates,
@@ -37,6 +43,7 @@ import type { CuratorAuthor, NeighborRecord } from '../author-contract.js'
 import type { CommitCurationOutcome } from '../commit.js'
 import {
   DRAIN_BUDGET_MS,
+  EMBED_CRASH_VECTORLESS_THRESHOLD,
   SEARCH_BEFORE_CREATE_MAX_QUERIES,
   drainQueue,
   type DrainOperations,
@@ -460,6 +467,169 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(author).toHaveBeenCalledTimes(1)
     expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(1)
     expect(existsSync(join(knowledgeRoot, '.lease'))).toBe(false)
+  })
+
+  it('durably breaks repeated embedding crashes into a vectorless commit', async () => {
+    const candidate = payload('embed-crash')
+    enqueue(candidate)
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return {
+        kind: 'authored',
+        delta: addDelta(claimed),
+        authorship: authorship(claimed),
+      }
+    })
+    const embeddingCommit = vi.fn<DrainOperations['commitCurationDelta']>(() => {
+      throw new Error('embedding embed-crash failed: native embedder crashed')
+    })
+    const vectorlessCommit = vi.fn(completingCommit())
+    const options = {
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive' as const,
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: embeddingCommit,
+        commitCurationDeltaVectorless: vectorlessCommit,
+      },
+    }
+
+    for (let crashCount = 1; crashCount <= EMBED_CRASH_VECTORLESS_THRESHOLD; crashCount += 1) {
+      const report = await drainQueue(options)
+      expect(report).toMatchObject({ jobsProcessed: 1, committed: 0, requeued: 1 })
+      const state = readJobState(knowledgeRoot, candidate.candidateId)
+      expect(state.kind).toBe('parsed')
+      if (state.kind !== 'parsed') throw new Error('expected requeued crash state')
+      expect(state.state.lifecycle).toBe('queued')
+      expect(state.state.embedCrashCount).toBe(crashCount)
+      expect(state.state.authored).toMatchObject({ schemaVersion: 1 })
+    }
+
+    const recovered = await drainQueue(options)
+    expect(recovered).toMatchObject({ jobsProcessed: 1, committed: 1, requeued: 0 })
+    expect(embeddingCommit).toHaveBeenCalledTimes(EMBED_CRASH_VECTORLESS_THRESHOLD)
+    expect(vectorlessCommit).toHaveBeenCalledTimes(1)
+    expect(author).toHaveBeenCalledTimes(1)
+    expect(readJobState(knowledgeRoot, candidate.candidateId).kind).toBe('absent')
+  })
+
+  it('consumes a rebuild marker in writer-pass order while budget remains', async () => {
+    requestRebuild({ knowledgeRoot, reason: 'absent', detail: 'test marker' })
+    const order: string[] = []
+    const read = vi.fn((root: string) => {
+      order.push('read')
+      return readRebuildRequest(root)
+    })
+    const rebuild = vi.fn<DrainOperations['rebuildIndex']>(async () => {
+      order.push('rebuild')
+      return {
+        projected: 3,
+        skippedIncomplete: 0,
+        scanIssues: [],
+        removed: 0,
+        backfilled: 0,
+        vec: 'brute',
+      }
+    })
+    const clear = vi.fn((root: string) => {
+      order.push('clear')
+      clearRebuildRequest(root)
+    })
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: vi.fn<CuratorAuthor>(),
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        readRebuildRequest: read,
+        rebuildIndex: rebuild,
+        clearRebuildRequest: clear,
+      },
+    })
+
+    expect(report.writerPass).toEqual({
+      kind: 'rebuilt',
+      request: expect.objectContaining({ reason: 'absent' }),
+      projected: 3,
+    })
+    expect(order).toEqual(['read', 'rebuild', 'clear'])
+    expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+  })
+
+  it('leaves writer work durable when jobs consume the budget', async () => {
+    enqueue(payload('budget-marker'))
+    requestRebuild({ knowledgeRoot, reason: 'corrupt', detail: 'retry later' })
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return {
+        kind: 'authored',
+        delta: addDelta(claimed),
+        authorship: authorship(claimed),
+      }
+    })
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(DRAIN_BUDGET_MS)
+    const rebuild = vi.fn<DrainOperations['rebuildIndex']>()
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      now,
+      operations: {
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: completingCommit(),
+        rebuildIndex: rebuild,
+      },
+    })
+
+    expect(report.writerPass).toEqual({ kind: 'skipped', reason: 'budget-exhausted' })
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+  })
+
+  it('reports writer-pass failure without consuming its durable marker', async () => {
+    requestRebuild({ knowledgeRoot, reason: 'locked', detail: 'writer unavailable' })
+    const clear = vi.fn(clearRebuildRequest)
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: vi.fn<CuratorAuthor>(),
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        rebuildIndex: async () => {
+          throw new Error('simulated writer pass failure')
+        },
+        clearRebuildRequest: clear,
+      },
+    })
+
+    expect(report.writerPass).toEqual({
+      kind: 'failed',
+      message: 'simulated writer pass failure',
+    })
+    expect(report.failures).toBe(1)
+    expect(clear).not.toHaveBeenCalled()
+    expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+  })
+
+  it('barrel-exports the daemon-stable drain seam', () => {
+    expect(knowledgeLocal.drainQueue).toBe(drainQueue)
   })
 })
 
