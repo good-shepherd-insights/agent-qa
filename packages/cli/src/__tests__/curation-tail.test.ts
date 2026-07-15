@@ -1,0 +1,242 @@
+import { join } from 'node:path'
+
+import {
+  HANDOFF_FILE,
+  RUNS_SUBDIR,
+  slugBranch,
+} from '@vostride/agent-qa-runner-local'
+import type {
+  AuditSink,
+} from '@vostride/agent-qa-safety'
+import type {
+  CompletedRunHandoff,
+  GuardrailPolicy,
+  MaskingContext,
+} from '@vostride/agent-qa-schema'
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  runCurationTail,
+  type RunCurationTailOptions,
+} from '../curation/curation-tail.js'
+
+const agentQaRoot = '/workspace/project/.agent-qa'
+const configDir = '/workspace/project'
+const knowledgeRoot = '/workspace/project/agent-qa-knowledge'
+const runId = 'run-curation-tail'
+const auditSink = {} as AuditSink
+const maskingContext = {} as MaskingContext
+const policy = {} as GuardrailPolicy
+const modelDeps = {} as RunCurationTailOptions['modelDeps']
+
+function handoff(executionContext: CompletedRunHandoff['executionContext'] = 'ci') {
+  return { executionContext } as CompletedRunHandoff
+}
+
+function baseOptions(
+  operations: NonNullable<RunCurationTailOptions['operations']>,
+  overrides: Partial<RunCurationTailOptions> = {},
+): RunCurationTailOptions {
+  return {
+    runId,
+    agentQaRoot,
+    knowledgeConfig: { dir: 'agent-qa-knowledge' },
+    configDir,
+    auditSink,
+    maskingContext,
+    modelDeps,
+    policy,
+    log: { warn: vi.fn() },
+    operations,
+    ...overrides,
+  }
+}
+
+function successfulOperations(
+  overrides: NonNullable<RunCurationTailOptions['operations']> = {},
+): NonNullable<RunCurationTailOptions['operations']> {
+  return {
+    loadCompletedRunHandoff: () => handoff(),
+    resolveKnowledgeRoot: () => knowledgeRoot,
+    runSafetyScope: (_bundle, fn) => fn(),
+    emitCurationCandidates: vi.fn(),
+    buildCuratorAuthor: () => vi.fn(async () => ({
+      kind: 'fallback-required' as const,
+      reason: 'no-model' as const,
+    })),
+    drainQueue: vi.fn(async () => ({
+      kind: 'drained' as const,
+      jobsProcessed: 0,
+      committed: 0,
+      downgraded: 0,
+      withheld: 0,
+      requeued: 0,
+      failures: 0,
+      failureDetails: [],
+      reconcile: undefined,
+      writerPass: { kind: 'not-requested' as const },
+    })),
+    ...overrides,
+  }
+}
+
+describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
+  it('loads the canonical handoff, uses its posture in a live scope, emits, then drains with the same AbortSignal', async () => {
+    const order: string[] = []
+    const controller = new AbortController()
+    const ambientExecutionContext = 'local-interactive'
+    const completed = handoff('ci')
+    const author = vi.fn(async () => ({
+      kind: 'fallback-required' as const,
+      reason: 'no-model' as const,
+    }))
+
+    const operations = successfulOperations({
+      loadCompletedRunHandoff(file) {
+        order.push('handoff')
+        expect(file).toBe(
+          join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId), HANDOFF_FILE),
+        )
+        return completed
+      },
+      resolveKnowledgeRoot(knowledge, seenConfigDir) {
+        order.push('knowledge-root')
+        expect(knowledge).toEqual({ dir: 'agent-qa-knowledge' })
+        expect(seenConfigDir).toBe(configDir)
+        return knowledgeRoot
+      },
+      runSafetyScope(bundle, fn) {
+        order.push('scope')
+        expect(ambientExecutionContext).not.toBe(completed.executionContext)
+        expect(bundle).toEqual({
+          maskingContext,
+          auditSink,
+          executionContext: completed.executionContext,
+        })
+        return fn()
+      },
+      emitCurationCandidates(options) {
+        order.push('emit')
+        expect(options).toEqual({
+          handoff: completed,
+          runDir: join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
+          knowledgeRoot,
+        })
+        return {
+          enqueued: 0,
+          coalesced: 0,
+          capExceeded: 0,
+          refused: 0,
+          details: [],
+        }
+      },
+      buildCuratorAuthor(deps) {
+        order.push('author')
+        expect(deps).toBe(modelDeps)
+        return author
+      },
+      async drainQueue(options) {
+        order.push('drain')
+        expect(options).toMatchObject({
+          knowledgeRoot,
+          auditBaseDir: agentQaRoot,
+          author,
+          executionContext: completed.executionContext,
+          policy,
+          signal: controller.signal,
+        })
+        return {
+          kind: 'drained',
+          jobsProcessed: 0,
+          committed: 0,
+          downgraded: 0,
+          withheld: 0,
+          requeued: 0,
+          failures: 0,
+          failureDetails: [],
+          reconcile: undefined,
+          writerPass: { kind: 'not-requested' },
+        }
+      },
+    })
+
+    await expect(
+      runCurationTail(baseOptions(operations, { signal: controller.signal })),
+    ).resolves.toBeUndefined()
+
+    expect(order).toEqual([
+      'handoff',
+      'knowledge-root',
+      'scope',
+      'emit',
+      'author',
+      'drain',
+    ])
+  })
+
+  it.each(['emit', 'drain'] as const)(
+    'swallows a %s failure and warns that incomplete curation resumes on the next run',
+    async (failureStage) => {
+      const warn = vi.fn()
+      const operations = successfulOperations({
+        emitCurationCandidates() {
+          if (failureStage === 'emit') throw new Error('emit failed')
+          return {
+            enqueued: 0,
+            coalesced: 0,
+            capExceeded: 0,
+            refused: 0,
+            details: [],
+          }
+        },
+        async drainQueue() {
+          if (failureStage === 'drain') throw new Error('drain failed')
+          return {
+            kind: 'drained',
+            jobsProcessed: 0,
+            committed: 0,
+            downgraded: 0,
+            withheld: 0,
+            requeued: 0,
+            failures: 0,
+            failureDetails: [],
+            reconcile: undefined,
+            writerPass: { kind: 'not-requested' },
+          }
+        },
+      })
+
+      await expect(
+        runCurationTail(baseOptions(operations, { log: { warn } })),
+      ).resolves.toBeUndefined()
+      expect(warn).toHaveBeenCalledOnce()
+      expect(warn.mock.calls[0]?.[0]).toMatch(/curation incomplete/i)
+      expect(warn.mock.calls[0]?.[0]).toMatch(/next run/i)
+    },
+  )
+
+  it.each(['missing', 'malformed'] as const)(
+    'treats a %s handoff as a logged skip without emitting or draining',
+    async (condition) => {
+      const warn = vi.fn()
+      const emitCurationCandidates = vi.fn()
+      const drainQueue = vi.fn()
+      const operations = successfulOperations({
+        loadCompletedRunHandoff() {
+          throw new Error(`${condition} handoff`)
+        },
+        emitCurationCandidates,
+        drainQueue,
+      })
+
+      await expect(
+        runCurationTail(baseOptions(operations, { log: { warn } })),
+      ).resolves.toBeUndefined()
+      expect(warn).toHaveBeenCalledOnce()
+      expect(warn.mock.calls[0]?.[0]).toMatch(/skip/i)
+      expect(warn.mock.calls[0]?.[0]).toMatch(/handoff/i)
+      expect(emitCurationCandidates).not.toHaveBeenCalled()
+      expect(drainQueue).not.toHaveBeenCalled()
+    },
+  )
+})
