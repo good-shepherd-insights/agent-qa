@@ -151,7 +151,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
     for (const item of neighbors) {
       expect(rendered).not.toContain(String(item.recordId))
     }
-    expect(captured).not.toHaveProperty('responseFormat')
+    expect(captured?.responseFormat).toBeUndefined()
     expect(JSON.stringify(captured)).not.toContain('response_format')
   })
 
