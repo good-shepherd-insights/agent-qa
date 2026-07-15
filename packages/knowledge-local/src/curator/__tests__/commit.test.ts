@@ -294,8 +294,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(outcome.detections).toContainEqual({ label: 'record.md', detector: 'awsKey' })
   })
 
-  it('passes the claimed writer lease through the injected publisher configuration', () => {
+  it('passes the claimed writer lease and mutable replacement hook through store config', () => {
     const claimed = job()
+    const afterMutableReplacement = vi.fn()
     const publisher = vi.fn(
       (
         _config: BundleStoreConfig,
@@ -307,7 +308,10 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     )
 
     const outcome = commitCurationDelta(
-      deps(undefined, { operations: { publishBundle: publisher } }),
+      deps(undefined, {
+        hooks: { afterMutableReplacement },
+        operations: { publishBundle: publisher },
+      }),
       claimed,
       checkpoint(addDelta()),
     )
@@ -316,6 +320,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(publisher).toHaveBeenCalledOnce()
     expect(publisher.mock.calls[0]?.[0]).toMatchObject({
       writerLeaseId: claimed.leaseId,
+      hooks: { afterMutableReplacement },
     })
   })
 

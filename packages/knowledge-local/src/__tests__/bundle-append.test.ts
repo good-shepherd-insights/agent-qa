@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   appendOutcomeEvent,
+  appendOutcomeEventWithEnrichment,
   appendRelation,
   type AppendOutcome,
 } from '../bundle-append.js'
@@ -28,6 +30,7 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../bundle-publish.js'
+import { commitBundleMutation } from '../journal/bundle-mutation.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
@@ -72,6 +75,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
       productKey: 'Example Store / production',
       auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
+      writerLeaseId: 'lease-append-fixture',
     }
     const input: PublishBundleInput = {
       draft: makeBundleDraftFixture(),
@@ -92,6 +96,11 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
         runId: 'append-run',
         testId: 'append-sign-in',
         stepIndex: 0,
+        authorship: {
+          path: 'deterministic-fallback',
+          executionContext: 'local-headless',
+        },
+        needsEnrichment: true,
       },
       artifacts: [],
     }
@@ -110,6 +119,159 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
       JSON.parse(readFileSync(join(bundleDir, 'manifest.json'), 'utf8')),
     )
   }
+
+  function mutationDirs(): string[] {
+    const stagingRoot = join(bundleDir, '..', '.staging')
+    return existsSync(stagingRoot)
+      ? readdirSync(stagingRoot).filter((name) => name.includes('-mutation-')).sort()
+      : []
+  }
+
+  function sha256(bytes: Uint8Array): string {
+    return createHash('sha256').update(bytes).digest('hex')
+  }
+
+  it('stages one complete outcome mutation, applies the manifest last, and removes the journal', () => {
+    const replacementOrder: string[] = []
+    let durableJournalObserved = false
+    config.hooks = {
+      afterMutableReplacement(relPath) {
+        replacementOrder.push(relPath)
+        if (relPath !== 'evidence/outcomes.jsonl') return
+
+        const [transactionName] = mutationDirs()
+        expect(transactionName).toMatch(/^lease-append-fixture-mutation-/)
+        const transactionDir = join(bundleDir, '..', '.staging', transactionName!)
+        const journal = JSON.parse(
+          readFileSync(join(transactionDir, 'mutation.json'), 'utf8'),
+        ) as {
+          leaseId: string
+          bundleId: string
+          replacements: {
+            targetRelPath: string
+            recoveryRelPath: string
+            sha256: string
+            manifest: boolean
+          }[]
+        }
+        expect(journal).toMatchObject({
+          leaseId: config.writerLeaseId,
+          bundleId: id,
+        })
+        expect(journal.replacements.map(({ targetRelPath, manifest }) => ({
+          targetRelPath,
+          manifest,
+        }))).toEqual([
+          { targetRelPath: 'evidence/outcomes.jsonl', manifest: false },
+          { targetRelPath: 'manifest.json', manifest: true },
+        ])
+        for (const replacement of journal.replacements) {
+          expect(
+            sha256(readFileSync(join(transactionDir, replacement.recoveryRelPath))),
+          ).toBe(replacement.sha256)
+        }
+        durableJournalObserved = true
+      },
+    }
+
+    expect(appendOutcomeEvent(config, id, event())).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+
+    expect(durableJournalObserved).toBe(true)
+    expect(replacementOrder).toEqual(['evidence/outcomes.jsonl', 'manifest.json'])
+    expect(mutationDirs()).toEqual([])
+  })
+
+  it('retains every immutable recovery payload when enrichment stops after the first target', () => {
+    const before = Object.fromEntries(
+      ['record.md', 'provenance.json', 'evidence/outcomes.jsonl', 'manifest.json'].map(
+        (relPath) => [relPath, readFileSync(join(bundleDir, relPath))],
+      ),
+    )
+    config.hooks = {
+      afterMutableReplacement(relPath) {
+        if (relPath === 'record.md') throw new Error('injected mutable stop')
+      },
+    }
+
+    expect(() =>
+      appendOutcomeEventWithEnrichment(config, id, event(), {
+        summary: 'Capable-model checkout selector',
+        body: 'The checkout selector was re-authored from verified evidence.',
+        authorship: {
+          path: 'llm',
+          model: { id: 'capable-curator' },
+          executionContext: 'local-interactive',
+        },
+      }),
+    ).toThrow('injected mutable stop')
+
+    expect(readFileSync(join(bundleDir, 'record.md'))).not.toEqual(before['record.md'])
+    expect(readFileSync(join(bundleDir, 'provenance.json'))).toEqual(before['provenance.json'])
+    expect(readFileSync(join(bundleDir, 'evidence/outcomes.jsonl'))).toEqual(
+      before['evidence/outcomes.jsonl'],
+    )
+    expect(readFileSync(join(bundleDir, 'manifest.json'))).toEqual(before['manifest.json'])
+
+    const [transactionName] = mutationDirs()
+    expect(transactionName).toMatch(/^lease-append-fixture-mutation-/)
+    const transactionDir = join(bundleDir, '..', '.staging', transactionName!)
+    const journal = JSON.parse(
+      readFileSync(join(transactionDir, 'mutation.json'), 'utf8'),
+    ) as {
+      replacements: {
+        targetRelPath: string
+        recoveryRelPath: string
+        sha256: string
+        manifest: boolean
+      }[]
+    }
+    expect(journal.replacements.map(({ targetRelPath }) => targetRelPath)).toEqual([
+      'record.md',
+      'provenance.json',
+      'evidence/outcomes.jsonl',
+      'manifest.json',
+    ])
+    for (const replacement of journal.replacements) {
+      const recoveryBytes = readFileSync(join(transactionDir, replacement.recoveryRelPath))
+      expect(sha256(recoveryBytes)).toBe(replacement.sha256)
+    }
+  })
+
+  it('rejects traversal and unexpected mutable targets before changing canonical bytes', () => {
+    const recordBefore = readFileSync(join(bundleDir, 'record.md'))
+    const manifestBefore = readFileSync(join(bundleDir, 'manifest.json'))
+    const baseInput = {
+      knowledgeRoot: config.knowledgeRoot,
+      bundleDir,
+      bundleId: id,
+      writerLeaseId: config.writerLeaseId!,
+    }
+
+    expect(() =>
+      commitBundleMutation({
+        ...baseInput,
+        replacements: [
+          { targetRelPath: '../record.md', text: 'escaped' },
+          { targetRelPath: 'manifest.json', text: manifestBefore.toString('utf8') },
+        ],
+      }),
+    ).toThrow()
+    expect(() =>
+      commitBundleMutation({
+        ...baseInput,
+        replacements: [
+          { targetRelPath: 'notes.txt', text: 'unexpected' },
+          { targetRelPath: 'manifest.json', text: manifestBefore.toString('utf8') },
+        ],
+      }),
+    ).toThrow()
+
+    expect(readFileSync(join(bundleDir, 'record.md'))).toEqual(recordBefore)
+    expect(readFileSync(join(bundleDir, 'manifest.json'))).toEqual(manifestBefore)
+    expect(mutationDirs()).toEqual([])
+  })
 
   it('appends exactly one canonical event and advances only mutable identity', () => {
     const appendedEvent = event()
@@ -184,6 +346,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(readFileSync(join(config.auditBaseDir, 'guardrail_audit.jsonl'), 'utf8')).toContain(
       'knowledge-bundle:evidence/outcomes.jsonl',
     )
+    expect(mutationDirs()).toEqual([])
   })
 
   it('appends, deduplicates, and blocks relations with the pinned relation key', () => {
@@ -218,6 +381,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(blocked.kind).toBe('egress-blocked')
     expect(readFileSync(relationsPath)).toEqual(relationsAfterAppend)
     expect(readFileSync(manifestPath)).toEqual(manifestAfterAppend)
+    expect(mutationDirs()).toEqual([])
   })
 
   it('treats missing and incomplete bundles as not found', () => {
