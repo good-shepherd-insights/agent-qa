@@ -1,0 +1,289 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import type { KnowledgePort } from '@vostride/agent-qa-agent'
+import {
+  canonicalJson,
+  committedFileText,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
+import type {
+  BundleDraft,
+  CanaryOutcome,
+  CurationAuthorship,
+  Delta,
+  ExecutionContext,
+  GuardrailPolicy,
+  RecordId,
+  ScreenState,
+} from '@vostride/agent-qa-schema'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
+
+import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
+import type { LoadedBundle } from '../bundle-read.js'
+import { enumerateBundleDirs } from '../bundle-scan.js'
+import { readCurrentEpoch } from '../lease/writer-lease.js'
+import { claimedCandidateDir } from '../queue/queue-layout.js'
+import {
+  CURATION_QUEUE_SCHEMA_VERSION,
+  candidateContentAddress,
+} from '../queue/queue-payload.js'
+import type {
+  CurationCandidateAddressFields,
+  CurationCandidatePayload,
+} from '../queue/queue-payload.js'
+import { resolveDispositionProfile } from './author-contract.js'
+import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
+import { commitCurationDelta } from './commit.js'
+import type {
+  CommitCurationDependencies,
+  CommitCurationJob,
+  CommitCurationOutcome,
+} from './commit.js'
+
+export interface CreateLocalKnowledgeStoreConfig {
+  knowledgeRoot: string
+  auditBaseDir: string
+  executionContext: ExecutionContext
+  /** The holder's fresh lease epoch. Defaults to a fresh disk read for composition roots. */
+  epoch?: number
+  policy?: GuardrailPolicy
+  /** Port calls lack a run ordinal; callers with run context should supply it. */
+  sourceBuildOrdinal?: number
+  sourceRunId?: string
+  screenStates?: readonly ScreenState[]
+  operations?: {
+    /** Test/chaos seam; production always uses commitCurationDelta. */
+    commitCurationDelta?: typeof commitCurationDelta
+  }
+}
+
+export class KnowledgeStoreNotImplementedError extends Error {
+  readonly operation: 'recordCanaryOutcome' | 'promote'
+  readonly ownerPhase: 379 | 380
+
+  constructor(operation: 'recordCanaryOutcome' | 'promote', ownerPhase: 379 | 380) {
+    super(`${operation} is not implemented; Phase ${ownerPhase} owns this KnowledgePort seam`)
+    this.name = 'KnowledgeStoreNotImplementedError'
+    this.operation = operation
+    this.ownerPhase = ownerPhase
+  }
+}
+
+export class KnowledgeCommitError extends Error {
+  readonly outcome: CommitCurationOutcome
+
+  constructor(outcome: CommitCurationOutcome) {
+    super(`local knowledge commit did not complete: ${outcome.kind}`)
+    this.name = 'KnowledgeCommitError'
+    this.outcome = outcome
+  }
+}
+
+interface ResolvedTruth {
+  id: RecordId
+  bundle: LoadedBundle
+  observedStatus: string
+  observedOrdinal: number
+}
+
+function resolveTruth(knowledgeRoot: string, id: RecordId): ResolvedTruth | undefined {
+  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
+    const loaded = loadBundle(entry.dir)
+    if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) continue
+    const trust = deriveBundleTrust(loaded.bundle)
+    return {
+      id,
+      bundle: loaded.bundle,
+      observedStatus: trust.status,
+      observedOrdinal: trust.validity.closedAtOrdinal ?? trust.validity.openedAtOrdinal,
+    }
+  }
+  return undefined
+}
+
+function targetId(delta: Delta): RecordId | undefined {
+  switch (delta.kind) {
+    case 'Confirm':
+    case 'Deprecate':
+      return delta.targetId
+    case 'Supersede':
+      return delta.victimId
+    case 'MintUnknown':
+      return delta.conflict.recordIds[0]
+    case 'Add':
+    case 'Noop':
+      return undefined
+  }
+}
+
+function draft(delta: Delta): BundleDraft | undefined {
+  if (delta.kind === 'Add') return delta.bundle
+  if (delta.kind === 'Supersede') return delta.newBundle
+  return undefined
+}
+
+function syntheticEvidenceToken(delta: Delta): string {
+  if (delta.kind === 'Confirm' || delta.kind === 'Supersede') return delta.evidenceToken
+  return sha256hex(canonicalJson({ delta, source: 'knowledge-port' }))
+}
+
+function addressFields(
+  config: CreateLocalKnowledgeStoreConfig,
+  delta: Delta,
+  target: ResolvedTruth | undefined,
+  buildOrdinal: number,
+): CurationCandidateAddressFields {
+  const authored = draft(delta)
+  const kind = authored?.kind ?? target?.bundle.frontmatter.kind ?? 'unknown'
+  const subtype = authored?.subtype ?? target?.bundle.frontmatter.subtype
+  const anchors = authored?.anchors
+    ?? target?.bundle.frontmatter.anchors.map(({ raw }) => raw)
+    ?? [{ t: 'error' as const, message: `unresolved knowledge-port ${delta.kind}` }]
+  return {
+    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+    sourceRunId: config.sourceRunId ?? 'knowledge-port',
+    scope: delta.scope,
+    buildOrdinal,
+    executionContext: config.executionContext,
+    secretFlagged: false,
+    injectionFlagged: false,
+    kind,
+    ...(kind === 'fact'
+      ? { subtype: subtype ?? 'content' }
+      : {}),
+    anchors,
+    summarySeed: authored?.summary ?? target?.bundle.summary ?? `KnowledgePort ${delta.kind}`,
+    bodySeed: authored?.body ?? target?.bundle.body ?? canonicalJson(delta),
+    distilledObservations: [],
+    evidenceToken: syntheticEvidenceToken(delta),
+    attributingObservationId: `knowledge-port:${sha256hex(canonicalJson(delta))}`,
+    artifactInventory: [],
+    emittedAt: '1970-01-01T00:00:00.000Z',
+  }
+}
+
+function syntheticAuthorship(
+  config: CreateLocalKnowledgeStoreConfig,
+  delta: Delta,
+): CurationAuthorship {
+  return delta.authorship ?? {
+    path: 'llm',
+    model: { id: 'knowledge-port-bridge' },
+    executionContext: config.executionContext,
+  }
+}
+
+function bridgeDelta(
+  config: CreateLocalKnowledgeStoreConfig,
+  delta: Delta,
+): { job: CommitCurationJob; checkpoint: AuthoredCheckpoint } {
+  const neighbors = delta.citedIds
+    .map((id) => resolveTruth(config.knowledgeRoot, id))
+    .filter((truth): truth is ResolvedTruth => truth !== undefined)
+  const target = targetId(delta)
+  const targetTruth = target === undefined
+    ? undefined
+    : neighbors.find(({ id }) => id === target) ?? resolveTruth(config.knowledgeRoot, target)
+  const observedOrdinals = [...neighbors, ...(targetTruth === undefined ? [] : [targetTruth])]
+    .map(({ observedOrdinal }) => observedOrdinal)
+  const buildOrdinal = config.sourceBuildOrdinal
+    ?? (observedOrdinals.length === 0 ? 0 : Math.max(...observedOrdinals) + 1)
+  const fields = addressFields(config, delta, targetTruth, buildOrdinal)
+  const candidateId = candidateContentAddress(fields)
+  const leaseId = 'knowledge-port'
+  const candidateDir = claimedCandidateDir(config.knowledgeRoot, leaseId, candidateId)
+  const artifactsDir = join(candidateDir, 'artifacts')
+  const payload: CurationCandidatePayload = { candidateId, ...fields }
+  mkdirSync(artifactsDir, { recursive: true })
+  writeFileSync(join(candidateDir, 'payload.json'), committedFileText(payload), 'utf8')
+
+  const authorship = syntheticAuthorship(config, delta)
+  return {
+    job: {
+      kind: 'claimed',
+      candidateId,
+      leaseId,
+      payload,
+      candidateDir,
+      payloadPath: join(candidateDir, 'payload.json'),
+      artifactsDir,
+      ...(config.screenStates === undefined ? {} : { screenStates: config.screenStates }),
+    },
+    checkpoint: {
+      schemaVersion: 1,
+      delta,
+      neighborIds: neighbors.map(({ id }) => id),
+      preconditions: neighbors.map(({ id, observedStatus, observedOrdinal }) => ({
+        recordId: id,
+        observedStatus,
+        observedOrdinal,
+      })),
+      authorship,
+    },
+  }
+}
+
+function completed(outcome: CommitCurationOutcome): boolean {
+  return outcome.kind === 'applied'
+    || outcome.kind === 'downgraded'
+    || outcome.kind === 'converted-confirm'
+    || outcome.kind === 'noop'
+    || (outcome.kind === 'withheld' && outcome.reason === 'injection-restricted')
+}
+
+/**
+ * Realizes the four-method agent port over one mutation function. D-08 propose-only is a
+ * disposition profile inside commitCurationDelta, never a second mutation path. Because the port
+ * carries bare deltas, this bridge materializes the smallest queue/checkpoint envelope and resolves
+ * cited neighbor truth from canonical bundles before entering disposition.
+ */
+export function createLocalKnowledgeStore(
+  config: CreateLocalKnowledgeStoreConfig,
+): KnowledgePort {
+  const operation = config.operations?.commitCurationDelta ?? commitCurationDelta
+  const policy = config.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput)
+
+  async function commitWithProfile(
+    deltas: Delta[],
+    profile: DispositionProfile,
+  ): Promise<void> {
+    const drainState: CommitCurationDependencies['drainState'] = {
+      supersedesSeenByAnchorKey: new Map(),
+    }
+    for (const delta of deltas) {
+      const { job, checkpoint } = bridgeDelta(config, delta)
+      const outcome = operation(
+        {
+          knowledgeRoot: config.knowledgeRoot,
+          auditBaseDir: config.auditBaseDir,
+          epoch: config.epoch ?? readCurrentEpoch(config.knowledgeRoot),
+          profile,
+          drainState,
+          policy,
+        },
+        job,
+        checkpoint,
+      )
+      if (!completed(outcome)) throw new KnowledgeCommitError(outcome)
+    }
+  }
+
+  return {
+    proposeDeltas(deltas: Delta[]): Promise<void> {
+      return commitWithProfile(deltas, { mode: 'propose-only' })
+    },
+    commit(deltas: Delta[]): Promise<void> {
+      return commitWithProfile(deltas, resolveDispositionProfile(config.executionContext))
+    },
+    async recordCanaryOutcome(_outcome: CanaryOutcome): Promise<void> {
+      throw new KnowledgeStoreNotImplementedError('recordCanaryOutcome', 380)
+    },
+    async promote(_candidateId: RecordId): Promise<void> {
+      throw new KnowledgeStoreNotImplementedError('promote', 379)
+    },
+  }
+}

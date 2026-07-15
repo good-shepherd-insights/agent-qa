@@ -431,7 +431,13 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   })
 
   it('routes KnowledgePort commit through the same boundary with execution-context posture', async () => {
-    const operation = vi.fn(() => ({ kind: 'noop', reason: 'port-fixture' } as const))
+    const operation = vi.fn(
+      (
+        _dependencies: CommitCurationDependencies,
+        _job: CommitCurationJob,
+        _checkpoint: AuthoredCheckpoint,
+      ) => ({ kind: 'noop', reason: 'port-fixture' } as const),
+    )
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
       auditBaseDir,
@@ -451,7 +457,13 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   })
 
   it('routes proposeDeltas through the commit boundary with forced propose-only posture', async () => {
-    const operation = vi.fn(() => ({ kind: 'noop', reason: 'port-fixture' } as const))
+    const operation = vi.fn(
+      (
+        _dependencies: CommitCurationDependencies,
+        _job: CommitCurationJob,
+        _checkpoint: AuthoredCheckpoint,
+      ) => ({ kind: 'noop', reason: 'port-fixture' } as const),
+    )
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
       auditBaseDir,

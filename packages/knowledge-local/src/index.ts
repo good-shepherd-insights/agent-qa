@@ -245,6 +245,12 @@ export type {
   DispositionOutcome,
   RelationIntent,
 } from './curator/disposition.js'
+export {
+  createLocalKnowledgeStore,
+  KnowledgeCommitError,
+  KnowledgeStoreNotImplementedError,
+} from './curator/knowledge-store.js'
+export type { CreateLocalKnowledgeStoreConfig } from './curator/knowledge-store.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
