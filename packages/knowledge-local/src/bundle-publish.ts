@@ -8,7 +8,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmdirSync,
   rmSync,
   writeFileSync,
@@ -38,6 +37,7 @@ import type {
 import { checkpointCommittedParts } from './bundle-egress.js'
 import { renderBundleParts } from './bundle-parts.js'
 import type { RenderBundlePartsInput } from './bundle-parts.js'
+import { durableRename, fsyncDirectory, fsyncTree } from './durable-fs.js'
 
 export interface BundleStoreConfig {
   /** Absolute committed-root path. Deliberately no working-directory default. */
@@ -45,6 +45,8 @@ export interface BundleStoreConfig {
   productKey: string
   auditBaseDir: string
   commitArtifacts: 'none' | 'thumbnails'
+  /** Active writer identity used to attribute crash-left staging trees. */
+  writerLeaseId?: string
   policy?: GuardrailPolicy
   hooks?: {
     /** Test/chaos seam after all staged bytes exist but before the visibility rename. */
@@ -82,6 +84,9 @@ const EMPTY_ARTIFACT_COPY: ArtifactCopyResult = {
   skipped: [],
   evidenceIncomplete: false,
 }
+
+// Matches the path-safe token grammar enforced for claimed queue lease directories.
+const SAFE_WRITER_LEASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 type ExistingBundleTargetClassification =
   | { kind: 'same-identity' }
@@ -156,18 +161,26 @@ function identityCollisionOutcome(
   }
 }
 
-function removeEmptyStagingRoot(stagingRoot: string): void {
+function removeEmptyStagingRoot(stagingRoot: string, bundlesDir: string): void {
+  let removed = false
   try {
     rmdirSync(stagingRoot)
+    removed = true
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error
   }
+  if (removed) fsyncDirectory(bundlesDir)
 }
 
-function removeStaging(stagingDir: string, stagingRoot: string): void {
+function removeStaging(
+  stagingDir: string,
+  stagingRoot: string,
+  bundlesDir: string,
+): void {
   rmSync(stagingDir, { recursive: true, force: true })
-  removeEmptyStagingRoot(stagingRoot)
+  if (existsSync(stagingRoot)) fsyncDirectory(stagingRoot)
+  removeEmptyStagingRoot(stagingRoot, bundlesDir)
 }
 
 function writePart(stagingDir: string, part: { relPath: string; text: string }): void {
@@ -187,6 +200,12 @@ export function publishBundle(
   }
   if (!isAbsolute(config.knowledgeRoot)) {
     throw new TypeError('BundleStoreConfig.knowledgeRoot must be absolute')
+  }
+  if (
+    config.writerLeaseId !== undefined
+    && !SAFE_WRITER_LEASE_ID.test(config.writerLeaseId)
+  ) {
+    throw new TypeError('BundleStoreConfig.writerLeaseId must be a non-empty path-safe token')
   }
 
   const { artifacts, preSkippedArtifacts, ...renderInput } = input
@@ -211,7 +230,10 @@ export function publishBundle(
   }
 
   const stagingRoot = join(bundlesDir, '.staging')
-  const stagingDir = join(stagingRoot, `${identity.id}-${randomUUID()}`)
+  const stagingBasename = config.writerLeaseId === undefined
+    ? `${identity.id}-${randomUUID()}`
+    : `${config.writerLeaseId}-${identity.id}-${randomUUID()}`
+  const stagingDir = join(stagingRoot, stagingBasename)
   mkdirSync(stagingDir, { recursive: true })
 
   try {
@@ -234,7 +256,7 @@ export function publishBundle(
     )
 
     if (checkpoint.kind === 'egress-blocked') {
-      removeStaging(stagingDir, stagingRoot)
+      removeStaging(stagingDir, stagingRoot, bundlesDir)
       return checkpoint
     }
 
@@ -246,22 +268,24 @@ export function publishBundle(
       writePart(stagingDir, renderedPart)
     }
     writePart(stagingDir, manifest)
+    fsyncTree(stagingDir)
+    fsyncDirectory(stagingRoot)
     config.hooks?.beforePublishRename?.()
 
     try {
-      renameSync(stagingDir, finalDir)
+      durableRename(stagingDir, finalDir)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(finalDir)) {
         const existing = classifyExistingBundleTarget(finalDir, rendered)
-        removeStaging(stagingDir, stagingRoot)
+        removeStaging(stagingDir, stagingRoot, bundlesDir)
         return existing.kind === 'same-identity'
           ? { kind: 'already-exists', id: rendered.id }
           : identityCollisionOutcome(finalDir, rendered, existing)
       }
       throw error
     }
-    removeEmptyStagingRoot(stagingRoot)
+    removeEmptyStagingRoot(stagingRoot, bundlesDir)
 
     return {
       kind: 'published',
@@ -270,7 +294,7 @@ export function publishBundle(
       evidenceIncomplete: copiedArtifacts.evidenceIncomplete,
     }
   } catch (error) {
-    removeStaging(stagingDir, stagingRoot)
+    removeStaging(stagingDir, stagingRoot, bundlesDir)
     throw error
   }
 }
