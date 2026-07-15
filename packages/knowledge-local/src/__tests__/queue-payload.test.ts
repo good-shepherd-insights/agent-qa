@@ -25,17 +25,19 @@ import {
   curationCandidatePayloadSchema,
   curationCandidateProjectionSchema,
   curationCaptureReceiptSchema,
+  type BuildCurationCandidateAddressFieldsInput,
   type CurationCandidateAddressFields,
   type CurationCandidateProjection,
   type CurationCaptureReceipt,
 } from '../queue/queue-payload.js'
 import type {
   CurationArtifactDescriptor,
+  CurationArtifactRole,
   CurationCandidateOmission,
   CurationCandidateRedaction,
 } from '../index.js'
 
-function legacyAddressFields(): CurationCandidateAddressFields {
+function candidateAddressInput(): BuildCurationCandidateAddressFieldsInput {
   return {
     schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
     sourceRunId: 'run-queue-contract',
@@ -61,6 +63,7 @@ function legacyAddressFields(): CurationCandidateAddressFields {
     evidenceToken: 'evidence-queue-contract',
     attributingObservationId: 'run-queue-contract:test-0:step-0',
     artifactInventory: [],
+    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-15T10:00:00.000Z',
   }
 }
@@ -100,11 +103,11 @@ function finalizedReceipt(): CurationCaptureReceipt {
   }
 }
 
-function bridgeAddressInput(): Parameters<
+function strictAddressInput(): Parameters<
   typeof buildCurationCandidateAddressFields
 >[0] {
   return {
-    ...legacyAddressFields(),
+    ...candidateAddressInput(),
     artifactInventory: [
       {
         relativePath: `artifacts/${'b'.repeat(64)}`,
@@ -129,10 +132,12 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     const {
       schemaVersion: _schemaVersion,
       artifactInventory: _artifactInventory,
+      captureReceipt: _captureReceipt,
       ...projectionFields
-    } = legacyAddressFields()
+    } = candidateAddressInput()
     void _schemaVersion
     void _artifactInventory
+    void _captureReceipt
     const projection = curationCandidateProjectionSchema.parse({
       ...projectionFields,
       artifactDescriptors: [
@@ -245,47 +250,58 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     })
   })
 
-  it('keeps legacy version-1 bytes parseable while the explicit builder emits the bridge', () => {
-    const legacy = legacyAddressFields()
-    const legacyBytes = Buffer.from(JSON.stringify(legacy), 'utf8')
-    const parsedLegacy = JSON.parse(legacyBytes.toString('utf8')) as unknown
-    const legacyPayload = {
-      candidateId: candidateContentAddress(legacy),
-      ...(parsedLegacy as CurationCandidateAddressFields),
-    }
-    expect(curationCandidatePayloadSchema.parse(legacyPayload)).toEqual(legacyPayload)
-
-    const bridgeInput = bridgeAddressInput()
-    const bridge = buildCurationCandidateAddressFields(bridgeInput)
-    expect(bridge).toEqual(bridgeInput)
+  it('requires queue version 2 and every finalized capture-safety field', () => {
+    const input = strictAddressInput()
+    const fields: CurationCandidateAddressFields =
+      buildCurationCandidateAddressFields(input)
+    expect(CURATION_QUEUE_SCHEMA_VERSION).toBe(2)
+    expect(fields).toEqual(input)
     expectTypeOf<Parameters<typeof buildCurationCandidateAddressFields>[0]>()
       .toMatchTypeOf<{ captureReceipt: CurationCaptureReceipt }>()
+    expectTypeOf<CurationCandidateAddressFields>()
+      .toMatchTypeOf<{ captureReceipt: CurationCaptureReceipt }>()
+    expectTypeOf<CurationCandidateAddressFields['artifactInventory'][number]>()
+      .toMatchTypeOf<{ role: CurationArtifactRole; originalName: string }>()
 
-    const bridgePayload = {
-      candidateId: candidateContentAddress(bridge),
-      ...bridge,
+    const payload = {
+      candidateId: candidateContentAddress(fields),
+      ...fields,
     }
-    expect(curationCandidatePayloadSchema.parse(bridgePayload)).toEqual(bridgePayload)
-    expect(bridgePayload.candidateId).not.toBe(legacyPayload.candidateId)
+    expect(curationCandidatePayloadSchema.parse(payload)).toEqual(payload)
 
-    const changedReceipt = buildCurationCandidateAddressFields({
-      ...bridgeInput,
-      captureReceipt: {
-        ...bridgeInput.captureReceipt,
-        interactions: [{ stepIndex: 1, elementRef: 'password-input' }],
+    const artifact = payload.artifactInventory[0]!
+    const { role: _role, ...artifactWithoutRole } = artifact
+    const { originalName: _originalName, ...artifactWithoutOriginalName } = artifact
+    const { captureReceipt: _receipt, ...payloadWithoutReceipt } = payload
+    void _role
+    void _originalName
+    void _receipt
+    const invalidPayloads: unknown[] = [
+      { ...payload, schemaVersion: 1 },
+      { ...payload, artifactInventory: [artifactWithoutRole] },
+      { ...payload, artifactInventory: [artifactWithoutOriginalName] },
+      payloadWithoutReceipt,
+      {
+        ...payload,
+        captureReceipt: { ...payload.captureReceipt, interactions: undefined },
       },
-    })
-    expect(candidateContentAddress(changedReceipt)).not.toBe(
-      candidateContentAddress(bridge),
-    )
+      {
+        ...payload,
+        captureReceipt: { ...payload.captureReceipt, omissions: undefined },
+      },
+      {
+        ...payload,
+        captureReceipt: { ...payload.captureReceipt, redactions: undefined },
+      },
+    ]
 
-    const missingReceipt = { ...bridgeInput } as Record<string, unknown>
-    delete missingReceipt.captureReceipt
-    expect(() => buildCurationCandidateAddressFields(missingReceipt as never)).toThrow()
+    for (const invalidPayload of invalidPayloads) {
+      expect(curationCandidatePayloadSchema.safeParse(invalidPayload).success).toBe(false)
+    }
   })
 
   it('addresses every populated safety fact while excluding only emittedAt', () => {
-    const input = bridgeAddressInput()
+    const input = strictAddressInput()
     const baseline = buildCurationCandidateAddressFields(input)
     const baselineId = candidateContentAddress(baseline)
     const artifact = input.artifactInventory[0]!
@@ -380,8 +396,8 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     ).toBe(baselineId)
   })
 
-  it('rejects unknown and raw-value-shaped bridge keys at every finalized boundary', () => {
-    const input = bridgeAddressInput()
+  it('rejects unknown and raw-value-shaped keys at every finalized boundary', () => {
+    const input = strictAddressInput()
     const receipt = input.captureReceipt
     const omission = {
       stepIndex: 0,
@@ -443,9 +459,9 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
   })
 })
 
-describe('format-local durability versions and public bridge surface', () => {
+describe('format-local durability versions and strict public surface', () => {
   it('keeps job-state and commit-intent bytes on independent version-1 constants', () => {
-    expect(CURATION_QUEUE_SCHEMA_VERSION).toBe(1)
+    expect(CURATION_QUEUE_SCHEMA_VERSION).toBe(2)
     expect(CURATION_JOB_STATE_SCHEMA_VERSION).toBe(1)
     expect(COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
     expect(
@@ -489,19 +505,20 @@ describe('format-local durability versions and public bridge surface', () => {
       new URL('../queue/queue-payload.ts', import.meta.url),
       'utf8',
     )
-    expect(queueSource).toMatch(/export const CURATION_QUEUE_SCHEMA_VERSION = 1\b/u)
-    expect(queueSource).not.toMatch(/CURATION_QUEUE_SCHEMA_VERSION\s*=\s*2\b/u)
+    expect(queueSource).toMatch(/export const CURATION_QUEUE_SCHEMA_VERSION = 2\b/u)
+    expect(queueSource).not.toContain('Version-1 compatibility bridge')
+    expect(queueSource).not.toMatch(/captureReceipt:\s*curationCaptureReceiptSchema\.optional/u)
     expect(jobStateSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
     expect(intentSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
     expect(jobStateSource).toContain('CURATION_JOB_STATE_SCHEMA_VERSION')
     expect(intentSource).toContain('COMMIT_INTENT_SCHEMA_VERSION')
   })
 
-  it('round-trips queue, job-state, and commit-intent bytes under separate v1 authorities', () => {
+  it('round-trips queue v2 and independent job-state/commit-intent v1 bytes', () => {
     const root = mkdtempSync(join(tmpdir(), 'curation-version-roundtrip-'))
     const candidateId = 'd'.repeat(64)
     try {
-      const fields = buildCurationCandidateAddressFields(bridgeAddressInput())
+      const fields = buildCurationCandidateAddressFields(strictAddressInput())
       const payload = { candidateId: candidateContentAddress(fields), ...fields }
       expect(
         curationCandidatePayloadSchema.parse(JSON.parse(JSON.stringify(payload))),
