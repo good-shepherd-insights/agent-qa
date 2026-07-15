@@ -1,9 +1,13 @@
 import {
   buildCurationCandidateAddressFields,
+  curationCandidateProjectionSchema,
   type BuildCurationCandidateAddressFieldsInput,
   type CurationCandidateProjection,
 } from '../../queue/queue-payload.js'
-import type { EnqueueCurationCandidateProjectionOutcome } from '../../queue/curation-queue.js'
+import {
+  enqueueCurationCandidateProjection,
+  type EnqueueCurationCandidateProjectionOutcome,
+} from '../../queue/curation-queue.js'
 
 export type ArtifactFreeCandidateProjectionInput = Omit<
   CurationCandidateProjection,
@@ -24,13 +28,20 @@ export function candidateAddressFixture(
 export function candidateProjectionFixture(
   input: CurationCandidateProjection,
 ): CurationCandidateProjection {
-  void input
-  throw new Error('candidateProjectionFixture is not implemented')
+  return curationCandidateProjectionSchema.parse(input)
 }
 
 export function enqueueArtifactFreeCandidateProjection(
   input: EnqueueArtifactFreeCandidateProjectionOptions,
 ): EnqueueCurationCandidateProjectionOutcome {
-  void input
-  throw new Error('enqueueArtifactFreeCandidateProjection is not implemented')
+  return enqueueCurationCandidateProjection({
+    knowledgeRoot: input.knowledgeRoot,
+    projection: candidateProjectionFixture({
+      ...input.projectionInput,
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
+    }),
+    artifactSources: [],
+  })
 }
