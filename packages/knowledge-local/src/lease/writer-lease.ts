@@ -71,6 +71,15 @@ export type ReleaseLeaseOutcome =
       holder?: WriterLease
     }
 
+export interface AssertEpochCurrentOptions {
+  knowledgeRoot: string
+  epoch: number
+}
+
+export type AssertEpochCurrentOutcome =
+  | { current: true }
+  | { current: false; observedEpoch: number }
+
 type ReadLeaseOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
@@ -205,6 +214,26 @@ function readEpoch(knowledgeRoot: string): number {
   if (!/^(0|[1-9][0-9]*)$/.test(raw)) return 0
   const epoch = Number(raw)
   return Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : 0
+}
+
+/** Fresh-read the monotonic disk epoch; absent or malformed bytes are the pre-acquire epoch zero. */
+export function readCurrentEpoch(knowledgeRoot: string): number {
+  assertAbsoluteKnowledgeRoot(knowledgeRoot)
+  return readEpoch(knowledgeRoot)
+}
+
+/**
+ * An epoch-stale write is refused AT THE MUTATION BOUNDARY. Plan 378-10 calls this immediately
+ * before the intent-journal write and again immediately before the publish rename; a stale result
+ * abandons the in-flight job without mutation. Every call re-reads disk and never caches the epoch.
+ */
+export function assertEpochCurrent(
+  opts: AssertEpochCurrentOptions,
+): AssertEpochCurrentOutcome {
+  const observedEpoch = readCurrentEpoch(opts.knowledgeRoot)
+  return observedEpoch === opts.epoch
+    ? { current: true }
+    : { current: false, observedEpoch }
 }
 
 function nextEpoch(knowledgeRoot: string): number {
