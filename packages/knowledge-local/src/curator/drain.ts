@@ -11,7 +11,8 @@ import {
 
 import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
 import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
-import { rebuildIndex } from '../index-rebuild.js'
+import { rebuildIndex, type RebuildReport } from '../index-rebuild.js'
+import { acquireEmbedder } from '../embedder-acquire.js'
 import {
   clearRebuildRequest,
   readRebuildRequest,
@@ -65,6 +66,9 @@ export const DRAIN_BUDGET_MS = 60_000
 /** Provisional §7.4 cap over distinct search-before-create query targets. */
 export const SEARCH_BEFORE_CREATE_MAX_QUERIES = 5
 
+/** Provisional 376 D-14 per-job breaker before a vector-deferred commit is forced. */
+export const EMBED_CRASH_VECTORLESS_THRESHOLD = 2
+
 const SEARCH_BEFORE_CREATE_RESULTS_PER_QUERY = 8
 const SEARCH_BEFORE_CREATE_MAX_NEIGHBORS = 12
 
@@ -90,9 +94,12 @@ export interface DrainFailure {
 
 export type WriterPassReport =
   | { kind: 'not-requested' }
-  | { kind: 'pending'; request: RebuildRequest | undefined }
   | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
-  | { kind: 'rebuilt'; request: RebuildRequest | undefined; projected: number }
+  | {
+      kind: 'rebuilt'
+      request: RebuildRequest | undefined
+      rebuild: RebuildReport
+    }
   | { kind: 'failed'; message: string }
 
 interface DrainReportBase {
@@ -132,9 +139,10 @@ export interface DrainOperations {
   buildRetrievalQuery: typeof buildRetrievalQuery
   retrieve: typeof retrieve
   commitCurationDelta: typeof commitCurationDelta
-  /** The canonical commit already projects dense work as pending; Task 2 selects this explicit seam. */
+  /** The canonical commit already projects dense work as pending; the breaker selects this seam. */
   commitCurationDeltaVectorless: typeof commitCurationDelta
   readRebuildRequest: typeof readRebuildRequest
+  acquireEmbedder: typeof acquireEmbedder
   rebuildIndex: typeof rebuildIndex
   clearRebuildRequest: typeof clearRebuildRequest
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
@@ -201,6 +209,7 @@ const DEFAULT_OPERATIONS: DrainOperations = {
   commitCurationDelta,
   commitCurationDeltaVectorless: commitCurationDelta,
   readRebuildRequest,
+  acquireEmbedder,
   rebuildIndex,
   clearRebuildRequest,
   hasIndexRow,
@@ -210,6 +219,16 @@ const DEFAULT_OPERATIONS: DrainOperations = {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isEmbeddingCrash(error: unknown, seen = new Set<object>()): boolean {
+  if (typeof error !== 'object' || error === null || seen.has(error)) return false
+  seen.add(error)
+  const value = error as { name?: unknown; message?: unknown; cause?: unknown }
+  const attribution = `${String(value.name ?? '')} ${String(value.message ?? '')}`
+  return /(?:embedder|embedding|embeddings|embedDocument|FloorEmbedding|NativeEmbedding)/i
+    .test(attribution)
+    || isEmbeddingCrash(value.cause, seen)
 }
 
 function emptyReport(): DrainReportBase {
@@ -441,6 +460,47 @@ function clearCheckpointAndRequeue(
   operations.requeueClaimed({ knowledgeRoot, leaseId })
 }
 
+function incrementEmbedCrashAndRequeue(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+  leaseId: string,
+  job: ClaimedCurationJob,
+  checkpoint: AuthoredCheckpoint,
+  embedCrashCount: number,
+): number {
+  operations.writeJobState({
+    knowledgeRoot,
+    candidateId: job.candidateId,
+    lifecycle: 'authored',
+    embedCrashCount: embedCrashCount + 1,
+    authored: checkpoint,
+  })
+  const requeued = operations.requeueClaimed({ knowledgeRoot, leaseId })
+  if (!requeued.includes(job.candidateId)) {
+    throw new Error(`embed-crashed candidate ${job.candidateId} was not requeued`)
+  }
+  return requeued.length
+}
+
+async function runWriterPass(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+): Promise<WriterPassReport> {
+  const marker = operations.readRebuildRequest(knowledgeRoot)
+  if (!marker.present) return { kind: 'not-requested' }
+
+  const capability = await operations.acquireEmbedder({ allowDownload: false })
+  const rebuild = await operations.rebuildIndex({
+    knowledgeRoot,
+    ...(capability.kind === 'ready' ? { embedder: capability.embedder } : {}),
+  })
+  // rebuildIndex already consumes the marker after its complete writer transaction. This
+  // idempotent explicit clear keeps the drain-level D-05 order visible and cannot erase a failed
+  // pass: control reaches it only after full success. Pending rows heal on a later drain.
+  operations.clearRebuildRequest(knowledgeRoot)
+  return { kind: 'rebuilt', request: marker.request, rebuild }
+}
+
 function mapCommitOutcome(
   report: DrainReportBase,
   outcome: CommitCurationOutcome,
@@ -587,6 +647,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         recordFailure(result, 'job-state', 'job lifecycle state is malformed', claimed.candidateId)
         continue
       }
+      const embedCrashCount = state.kind === 'parsed' ? state.state.embedCrashCount : 0
       if (state.kind === 'parsed' && state.state.authored !== undefined) {
         try {
           checkpoint = parseAuthoredCheckpoint(state.state.authored)
@@ -615,8 +676,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       }
 
       let outcome: CommitCurationOutcome
+      const vectorless = embedCrashCount >= EMBED_CRASH_VECTORLESS_THRESHOLD
       try {
-        outcome = operations.commitCurationDelta(
+        const commit = vectorless
+          ? operations.commitCurationDeltaVectorless
+          : operations.commitCurationDelta
+        outcome = commit(
           {
             knowledgeRoot: options.knowledgeRoot,
             auditBaseDir: options.auditBaseDir,
@@ -629,6 +694,24 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           checkpoint,
         )
       } catch (error) {
+        if (!vectorless && isEmbeddingCrash(error)) {
+          recordFailure(result, 'commit', error, claimed.candidateId)
+          try {
+            result.requeued += incrementEmbedCrashAndRequeue(
+              operations,
+              options.knowledgeRoot,
+              lease.leaseId,
+              claimed,
+              checkpoint,
+              embedCrashCount,
+            )
+          } catch (requeueError) {
+            recordFailure(result, 'requeue', requeueError, claimed.candidateId)
+          }
+          // A requeued crash is deliberately a next-drain retry. At the durable threshold that
+          // retry uses the vectorless seam and lands the canonical bundle with dense work pending.
+          break
+        }
         recordFailure(result, 'commit', error, claimed.candidateId)
         continue
       }
@@ -652,10 +735,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       result.writerPass = { kind: 'skipped', reason: 'budget-exhausted' }
     } else {
       try {
-        const request = operations.readRebuildRequest(options.knowledgeRoot)
-        result.writerPass = request.present
-          ? { kind: 'pending', request: request.request }
-          : { kind: 'not-requested' }
+        result.writerPass = await runWriterPass(operations, options.knowledgeRoot)
       } catch (error) {
         recordFailure(result, 'writer-pass', error)
         result.writerPass = { kind: 'failed', message: errorMessage(error) }

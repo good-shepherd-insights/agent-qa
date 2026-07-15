@@ -246,6 +246,19 @@ export type {
   RelationIntent,
 } from './curator/disposition.js'
 export {
+  DRAIN_BUDGET_MS,
+  EMBED_CRASH_VECTORLESS_THRESHOLD,
+  SEARCH_BEFORE_CREATE_MAX_QUERIES,
+  drainQueue,
+} from './curator/drain.js'
+export type {
+  DrainFailure,
+  DrainFailureStage,
+  DrainOptions,
+  DrainReport,
+  WriterPassReport,
+} from './curator/drain.js'
+export {
   createLocalKnowledgeStore,
   KnowledgeCommitError,
   KnowledgeStoreNotImplementedError,

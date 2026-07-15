@@ -549,15 +549,16 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       policy,
       operations: {
         readRebuildRequest: read,
+        acquireEmbedder: async () => ({ kind: 'lexical-only' }),
         rebuildIndex: rebuild,
         clearRebuildRequest: clear,
       },
     })
 
-    expect(report.writerPass).toEqual({
+    expect(report.writerPass).toMatchObject({
       kind: 'rebuilt',
       request: expect.objectContaining({ reason: 'absent' }),
-      projected: 3,
+      rebuild: { projected: 3 },
     })
     expect(order).toEqual(['read', 'rebuild', 'clear'])
     expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
@@ -612,6 +613,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       executionContext: 'local-interactive',
       policy,
       operations: {
+        acquireEmbedder: async () => ({ kind: 'lexical-only' }),
         rebuildIndex: async () => {
           throw new Error('simulated writer pass failure')
         },
