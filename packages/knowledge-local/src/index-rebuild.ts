@@ -48,6 +48,7 @@ import type {
 } from './graph-derive.js'
 import {
   CHECKPOINT_EVERY_N_BUNDLES,
+  isEmbeddingVecCleanupCurrent,
   openIndexWriter,
   resolveActiveProfile,
   vecTableName,
@@ -62,6 +63,8 @@ export interface RebuildReport {
   removed: number
   backfilled: number
   vec: VecCapability
+  pendingEmbeddings: number
+  maintenanceRemaining: boolean
 }
 
 export interface RebuildIndexOptions {
@@ -1059,6 +1062,8 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     removed: 0,
     backfilled: 0,
     vec: writer.vec,
+    pendingEmbeddings: 0,
+    maintenanceRemaining: true,
   }
   const projected: ProjectedBundle[] = []
   const relationSources: ProjectedBundle[] = []
@@ -1131,7 +1136,12 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
     )
     reconcileVecRows(writer.db, writer.vec, activeProfile)
     writer.completeRenderingEpoch()
-    clearRebuildRequest(opts.knowledgeRoot)
+    report.pendingEmbeddings = selectPendingEmbeddingRows(writer.db).length
+    report.maintenanceRemaining =
+      report.pendingEmbeddings > 0
+      || writer.renderingEpochStale
+      || !isEmbeddingVecCleanupCurrent(writer.db)
+    if (!report.maintenanceRemaining) clearRebuildRequest(opts.knowledgeRoot)
     return report
   } finally {
     writer.close()

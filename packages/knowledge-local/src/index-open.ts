@@ -7,9 +7,10 @@
  * the gitignored memory/index partition (Research Pitfall 10), so these derived
  * writes intentionally do not pass through the committed-bundle egress gate.
  */
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { pathToFileURL } from 'node:url'
 
 import {
   canonicalJson,
@@ -114,6 +115,14 @@ export interface IndexReaderConnection {
   vec: VecCapability
 }
 
+/** Durable writer work that can be inspected without opening a mutable index connection. */
+export interface IndexMaintenanceState {
+  indexAbsent: boolean
+  pendingEmbeddings: number
+  renderingEpochStale: boolean
+  vectorReconciliationOutstanding: boolean
+}
+
 export type IndexHealth =
   | { ok: true }
   | {
@@ -129,6 +138,86 @@ interface IndexOpenOptions {
 
 export function indexDbPath(knowledgeRoot: string): string {
   return join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE)
+}
+
+/**
+ * Inspect bounded durable maintenance facts without bootstrapping, migrating, or restamping.
+ *
+ * Absence is a valid schedulable state. Once the database exists, malformed or incomplete
+ * projection schemas throw so callers cannot mistake an unreadable index for convergence.
+ */
+export function readIndexMaintenanceState(
+  knowledgeRoot: string,
+): IndexMaintenanceState {
+  const path = indexDbPath(knowledgeRoot)
+  if (!existsSync(path)) {
+    return {
+      indexAbsent: true,
+      pendingEmbeddings: 0,
+      renderingEpochStale: false,
+      vectorReconciliationOutstanding: false,
+    }
+  }
+
+  // The lease-gated writer closes with a truncate checkpoint. Immutable read mode then avoids
+  // SQLite creating WAL/SHM sidecars merely to inspect that closed, fully checkpointed database.
+  const immutableUri = pathToFileURL(path)
+  immutableUri.searchParams.set('mode', 'ro')
+  immutableUri.searchParams.set('immutable', '1')
+  const db = new DatabaseSync(immutableUri.href, {
+    readOnly: true,
+    timeout: READER_BUSY_TIMEOUT_MS,
+  })
+  try {
+    db.exec('PRAGMA query_only=1')
+    const tableNames = new Set(
+      db.prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN (
+            'records',
+            'fts_records',
+            'anchors',
+            'graph_nodes',
+            'graph_edges',
+            'meta'
+          )
+      `).all().map((row) => String(row.name)),
+    )
+    const missingTables = REQUIRED_INDEX_TABLES.filter((name) => !tableNames.has(name))
+    if (missingTables.length > 0) {
+      throw new Error(
+        `index maintenance inspection found incomplete schema: ${missingTables.join(', ')}`,
+      )
+    }
+
+    const pendingRow = db
+      .prepare("SELECT COUNT(*) AS count FROM records WHERE embed_status = 'pending'")
+      .get()
+    const pendingEmbeddings = Number(pendingRow?.count)
+    if (!Number.isSafeInteger(pendingEmbeddings) || pendingEmbeddings < 0) {
+      throw new Error('index maintenance inspection returned an invalid pending count')
+    }
+
+    const metadata = new Map(
+      db.prepare(`
+        SELECT k, v
+        FROM meta
+        WHERE k IN ('rendering_schema_version', 'embedding_vec_cleanup_epoch')
+      `).all().map((row) => [String(row.k), String(row.v)]),
+    )
+    return {
+      indexAbsent: false,
+      pendingEmbeddings,
+      renderingEpochStale:
+        metadata.get('rendering_schema_version') !== String(INDEX_RENDERING_SCHEMA_VERSION),
+      vectorReconciliationOutstanding:
+        metadata.get('embedding_vec_cleanup_epoch') !== String(EMBEDDING_VEC_CLEANUP_EPOCH),
+    }
+  } finally {
+    db.close()
+  }
 }
 
 export function resolveVecCapability(

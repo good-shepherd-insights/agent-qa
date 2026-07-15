@@ -11,7 +11,7 @@ import {
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   BundleOutcomeEventSchema,
@@ -39,7 +39,6 @@ import {
 import {
   INDEX_DB_FILE,
   INDEX_RENDERING_SCHEMA_VERSION,
-  openIndexWriter,
   readIndexMaintenanceState,
 } from '../index-open.js'
 import { readRebuildRequest, requestRebuild } from '../rebuild-marker.js'
@@ -210,41 +209,50 @@ describe('IDX-01 derived-index rebuild projection', () => {
     publishNamed('Metadata Inspection Product', 'Metadata inspection')
     await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
 
-    const writer = openIndexWriter(knowledgeRoot)
+    const dbPath = join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE)
+    const renderingWriter = new DatabaseSync(dbPath)
+    let vectorEpoch: unknown
     try {
-      const vectorEpoch = writer.db
+      vectorEpoch = renderingWriter
         .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")
         .get()?.v
       expect(typeof vectorEpoch).toBe('string')
 
-      writer.db
+      renderingWriter
         .prepare("UPDATE meta SET v = ? WHERE k = 'rendering_schema_version'")
         .run('0')
-      writer.db
+      renderingWriter
         .prepare("UPDATE meta SET v = ? WHERE k = 'embedding_vec_cleanup_epoch'")
         .run(String(vectorEpoch))
-      expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
-        indexAbsent: false,
-        pendingEmbeddings: 0,
-        renderingEpochStale: true,
-        vectorReconciliationOutstanding: false,
-      })
+      renderingWriter.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } finally {
+      renderingWriter.close()
+    }
+    expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
+      indexAbsent: false,
+      pendingEmbeddings: 0,
+      renderingEpochStale: true,
+      vectorReconciliationOutstanding: false,
+    })
 
-      writer.db
+    const vectorWriter = new DatabaseSync(dbPath)
+    try {
+      vectorWriter
         .prepare("UPDATE meta SET v = ? WHERE k = 'rendering_schema_version'")
         .run(String(INDEX_RENDERING_SCHEMA_VERSION))
-      writer.db
+      vectorWriter
         .prepare("UPDATE meta SET v = ? WHERE k = 'embedding_vec_cleanup_epoch'")
         .run('0')
-      expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
-        indexAbsent: false,
-        pendingEmbeddings: 0,
-        renderingEpochStale: false,
-        vectorReconciliationOutstanding: true,
-      })
+      vectorWriter.exec('PRAGMA wal_checkpoint(TRUNCATE)')
     } finally {
-      writer.close()
+      vectorWriter.close()
     }
+    expect(readIndexMaintenanceState(knowledgeRoot)).toEqual({
+      indexAbsent: false,
+      pendingEmbeddings: 0,
+      renderingEpochStale: false,
+      vectorReconciliationOutstanding: true,
+    })
   })
 
   it('fails inspection rather than treating a malformed index as healthy', () => {
