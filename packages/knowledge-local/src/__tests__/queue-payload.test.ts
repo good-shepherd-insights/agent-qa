@@ -1,5 +1,16 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
+import * as knowledgeLocal from '../index.js'
+import {
+  COMMIT_INTENT_SCHEMA_VERSION,
+  commitIntentSchema,
+} from '../journal/intent-journal.js'
+import {
+  CURATION_JOB_STATE_SCHEMA_VERSION,
+  curationJobStateSchema,
+} from '../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   artifactFreeCaptureReceipt,
@@ -12,6 +23,11 @@ import {
   type CurationCandidateProjection,
   type CurationCaptureReceipt,
 } from '../queue/queue-payload.js'
+import type {
+  CurationArtifactDescriptor,
+  CurationCandidateOmission,
+  CurationCandidateRedaction,
+} from '../index.js'
 
 function legacyAddressFields(): CurationCandidateAddressFields {
   return {
@@ -247,5 +263,88 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     const missingReceipt = { ...bridgeInput } as Record<string, unknown>
     delete missingReceipt.captureReceipt
     expect(() => buildCurationCandidateAddressFields(missingReceipt as never)).toThrow()
+  })
+})
+
+describe('format-local durability versions and public bridge surface', () => {
+  it('keeps job-state and commit-intent bytes on independent version-1 constants', () => {
+    expect(CURATION_JOB_STATE_SCHEMA_VERSION).toBe(1)
+    expect(COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
+    expect(
+      curationJobStateSchema.parse({
+        schemaVersion: CURATION_JOB_STATE_SCHEMA_VERSION,
+        candidateId: 'd'.repeat(64),
+        lifecycle: 'queued',
+        embedCrashCount: 0,
+        updatedAt: '2026-07-15T10:00:00.000Z',
+      }),
+    ).toMatchObject({
+      schemaVersion: 1,
+      candidateId: 'd'.repeat(64),
+      lifecycle: 'queued',
+    })
+    expect(
+      commitIntentSchema.parse({
+        schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
+        candidateId: 'e'.repeat(64),
+        bundleId: 'fact-checkout-button-0123456789abcdef',
+        deltaKind: 'Add',
+        epoch: 7,
+      }),
+    ).toEqual({
+      schemaVersion: 1,
+      candidateId: 'e'.repeat(64),
+      bundleId: 'fact-checkout-button-0123456789abcdef',
+      deltaKind: 'Add',
+      epoch: 7,
+    })
+
+    const jobStateSource = readFileSync(
+      new URL('../queue/job-state.ts', import.meta.url),
+      'utf8',
+    )
+    const intentSource = readFileSync(
+      new URL('../journal/intent-journal.ts', import.meta.url),
+      'utf8',
+    )
+    expect(jobStateSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
+    expect(intentSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
+    expect(jobStateSource).toContain('CURATION_JOB_STATE_SCHEMA_VERSION')
+    expect(intentSource).toContain('COMMIT_INTENT_SCHEMA_VERSION')
+  })
+
+  it('uses a named artifact-free receipt at the production synthetic constructor', () => {
+    const source = readFileSync(
+      new URL('../curator/knowledge-store.ts', import.meta.url),
+      'utf8',
+    )
+    expect(source).toContain('buildCurationCandidateAddressFields')
+    expect(source).toContain('artifactFreeCaptureReceipt')
+    expect(source).toMatch(/captureReceipt:\s*artifactFreeCaptureReceipt\(\)/u)
+  })
+
+  it('exports every queue migration contract and durability version from the barrel', () => {
+    const surface = knowledgeLocal as unknown as Record<string, unknown>
+    for (const symbol of [
+      'artifactFreeCaptureReceipt',
+      'buildCurationCandidateAddressFields',
+    ]) {
+      expect(surface[symbol], symbol).toBeTypeOf('function')
+    }
+    for (const symbol of [
+      'curationArtifactDescriptorSchema',
+      'curationCandidateOmissionSchema',
+      'curationCandidateProjectionSchema',
+      'curationCandidateRedactionSchema',
+      'curationCaptureReceiptSchema',
+    ]) {
+      expect(surface[symbol], symbol).toBeTypeOf('object')
+    }
+    expect(surface.CURATION_JOB_STATE_SCHEMA_VERSION).toBe(1)
+    expect(surface.COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
+
+    expectTypeOf<CurationArtifactDescriptor>().toHaveProperty('originalName')
+    expectTypeOf<CurationCandidateOmission>().not.toHaveProperty('value')
+    expectTypeOf<CurationCandidateRedaction>().toHaveProperty('safeSha256')
   })
 })
