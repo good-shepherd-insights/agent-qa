@@ -10,10 +10,11 @@ import { DETECTOR_PRECEDENCE, findDetectorMatches, type GuardrailMatch } from '.
 
 type FiringAction = Exclude<ScanAction, 'pass'>
 type GuardrailDetectorAction = GuardrailPolicy['detectors'][GuardrailDetectorFamily]
+type ReportedAction = Exclude<GuardrailDetectorAction, 'off'>
 
 export interface FiredDetection {
   detector: GuardrailDetectorFamily
-  action: FiringAction
+  action: ReportedAction
   redactedFingerprint: string
 }
 
@@ -30,6 +31,10 @@ interface ActiveMatch extends GuardrailMatch {
 
 function isFiringAction(action: GuardrailDetectorAction): action is FiringAction {
   return action === 'block' || action === 'redact'
+}
+
+function isReportedAction(action: GuardrailDetectorAction): action is ReportedAction {
+  return action !== 'off'
 }
 
 function isAllowlisted(match: GuardrailMatch, policy: GuardrailPolicy): boolean {
@@ -84,30 +89,34 @@ export function scan(text: string, policy: GuardrailPolicy): ScanOutput {
 
   for (const detector of DETECTOR_PRECEDENCE) {
     const action = policy.detectors[detector]
-    if (!isFiringAction(action)) {
+    if (!isReportedAction(action)) {
       continue
     }
 
     const matches = findDetectorMatches(detector, text)
       .filter((match) => !isAllowlisted(match, policy))
-      .map((match): ActiveMatch => {
-        return {
-          ...match,
-          action,
-          redactedFingerprint: sha256hex16(match.value),
-        }
-      })
 
     if (matches.length === 0) {
       continue
     }
 
-    activeMatches.push(...matches)
     fired.push({
       detector,
       action,
-      redactedFingerprint: matches[0].redactedFingerprint,
+      redactedFingerprint: sha256hex16(matches[0].value),
     })
+
+    if (isFiringAction(action)) {
+      activeMatches.push(
+        ...matches.map((match): ActiveMatch => {
+          return {
+            ...match,
+            action,
+            redactedFingerprint: sha256hex16(match.value),
+          }
+        }),
+      )
+    }
   }
 
   if (activeMatches.length === 0) {

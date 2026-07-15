@@ -85,7 +85,10 @@ export function assertCommittedEgressSafe(
 
       rows.push(row)
 
-      if (partBlocks && (fired.action === 'block' || blocksByRedactRule)) {
+      if (
+        partBlocks &&
+        (fired.action === 'block' || (fired.action === 'redact' && blocksByRedactRule))
+      ) {
         blocked.push({
           label,
           detector: fired.detector,

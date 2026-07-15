@@ -38,7 +38,8 @@ export interface ExecutionAuditRow {
 export interface GuardrailAuditRow {
   runId?: string
   channel?: string
-  action: ScanAction
+  /** Route is a reported soft-review signal, never a ScanResult verdict. */
+  action: ScanAction | 'route'
   detector?: string
   redactedFingerprint?: string
   overridden?: boolean
