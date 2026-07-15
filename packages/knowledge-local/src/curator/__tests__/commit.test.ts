@@ -289,6 +289,26 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(outcome.detections).toContainEqual({ label: 'record.md', detector: 'awsKey' })
   })
 
+  it('passes the claimed writer lease through the injected publisher configuration', () => {
+    const claimed = job()
+    const publisher = vi.fn(() => ({
+      kind: 'egress-blocked' as const,
+      detections: [],
+    }))
+
+    const outcome = commitCurationDelta(
+      deps(undefined, { operations: { publishBundle: publisher } }),
+      claimed,
+      checkpoint(addDelta()),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'withheld', reason: 'egress-blocked' })
+    expect(publisher).toHaveBeenCalledOnce()
+    expect(publisher.mock.calls[0]?.[0]).toMatchObject({
+      writerLeaseId: claimed.leaseId,
+    })
+  })
+
   it('maps publish identity collision to a typed failure', () => {
     const outcome = commitCurationDelta(
       deps(undefined, {
