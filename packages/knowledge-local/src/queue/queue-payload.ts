@@ -7,6 +7,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
+  ArtifactRef,
   BundleKind,
   ExecutionContext,
   FactSubtype,
@@ -66,26 +67,144 @@ const executionContextSchema: z.ZodType<ExecutionContext> = z.enum([
   'cloud',
 ])
 
+export const curationArtifactRoleSchema = z.enum([
+  'screenshot',
+  'dom-snapshot',
+  'ax-snapshot',
+  'opaque-evidence',
+])
+
+const artifactRefSchema: z.ZodType<ArtifactRef> = z
+  .object({
+    id: z.string().min(1),
+    sha: z.string().regex(SHA256_HEX),
+    evidenceIncomplete: z.boolean().optional(),
+  })
+  .strict()
+
+export const curationArtifactDescriptorSchema = z
+  .object({
+    ref: artifactRefSchema,
+    stepIndex: z.number().int().nonnegative(),
+    role: curationArtifactRoleSchema,
+    originalName: z.string().min(1),
+  })
+  .strict()
+
+const captureElementEvidenceSchema = z
+  .object({
+    stepIndex: z.number().int().nonnegative(),
+    elementRef: z.string().min(1),
+    role: z.string().min(1),
+    name: z.string(),
+    nameNormalized: z.string().optional(),
+    inputType: z.string().optional(),
+    /** Raw values are legal only in this function-local, pre-copy projection. */
+    value: z.string().optional(),
+  })
+  .strict()
+
+const captureEvidenceSchema = z
+  .object({ elements: z.array(captureElementEvidenceSchema) })
+  .strict()
+
+const captureStepInteractionSchema = z
+  .object({
+    stepIndex: z.number().int().nonnegative(),
+    elementRef: z.string().min(1).optional(),
+  })
+  .strict()
+
+const curationCaptureRegionSchema = z
+  .object({
+    stepIndex: z.number().int().nonnegative(),
+    elementRef: z.string().min(1),
+    role: z.string().min(1),
+    normalizedName: z.string(),
+    inputType: z.string().optional(),
+    reason: z.enum(['password-input', 'credential-name']),
+  })
+  .strict()
+
+export const curationCandidateOmissionSchema = z
+  .object({
+    stepIndex: z.number().int().nonnegative(),
+    ref: z.string().min(1),
+    role: curationArtifactRoleSchema,
+    originalName: z.string().min(1),
+    reason: z.literal('capture-blacklist'),
+  })
+  .strict()
+
+export const curationCandidateRedactionSchema = z
+  .object({
+    stepIndex: z.number().int().nonnegative(),
+    ref: z.string().min(1),
+    role: z.enum(['dom-snapshot', 'ax-snapshot']),
+    originalName: z.string().min(1),
+    reason: z.literal('capture-blacklist'),
+    safeSha256: z.string().regex(SHA256_HEX),
+  })
+  .strict()
+
+export const curationCaptureReceiptSchema = z
+  .object({
+    regions: z.array(curationCaptureRegionSchema),
+    interactions: z.array(captureStepInteractionSchema),
+    omissions: z.array(curationCandidateOmissionSchema),
+    redactions: z.array(curationCandidateRedactionSchema),
+  })
+  .strict()
+
+const artifactInventoryEntryShape = {
+  relativePath: z.string().regex(/^artifacts\/[0-9a-f]{64}$/),
+  sha256: z.string().regex(SHA256_HEX),
+  bytes: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative(),
+} as const
+
+function validateArtifactInventoryEntry(
+  entry: { relativePath: string; sha256: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (entry.relativePath !== `artifacts/${entry.sha256}`) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['relativePath'],
+      message: 'artifact relativePath must match its SHA-256 digest',
+    })
+  }
+}
+
 const artifactInventoryEntrySchema = z
   .object({
-    relativePath: z.string().regex(/^artifacts\/[0-9a-f]{64}$/),
-    sha256: z.string().regex(SHA256_HEX),
-    bytes: z.number().int().nonnegative(),
-    stepIndex: z.number().int().nonnegative(),
+    ...artifactInventoryEntryShape,
+    /** Version-1 compatibility bridge; absent together on legacy direct bytes. */
+    role: curationArtifactRoleSchema.optional(),
+    originalName: z.string().min(1).optional(),
   })
   .strict()
   .superRefine((entry, ctx) => {
-    if (entry.relativePath !== `artifacts/${entry.sha256}`) {
+    validateArtifactInventoryEntry(entry, ctx)
+    if ((entry.role === undefined) !== (entry.originalName === undefined)) {
       ctx.addIssue({
         code: 'custom',
-        path: ['relativePath'],
-        message: 'artifact relativePath must match its SHA-256 digest',
+        path: ['role'],
+        message: 'artifact role and originalName must be present together',
       })
     }
   })
 
-const addressShape = {
-  schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
+const finalizedArtifactInventoryEntrySchema = z
+  .object({
+    ...artifactInventoryEntryShape,
+    role: curationArtifactRoleSchema,
+    originalName: z.string().min(1),
+  })
+  .strict()
+  .superRefine(validateArtifactInventoryEntry)
+
+const candidateSeedShape = {
   sourceRunId: z.string().min(1),
   scope: scopeSchema,
   buildOrdinal: z.number().int().nonnegative(),
@@ -100,16 +219,37 @@ const addressShape = {
   distilledObservations: z.array(distilledObservationSchema),
   evidenceToken: z.string().min(1),
   attributingObservationId: z.string().min(1),
+} as const
+
+const addressShape = {
+  schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
+  ...candidateSeedShape,
   artifactInventory: z.array(artifactInventoryEntrySchema),
+  /**
+   * Version-1 compatibility bridge. Legacy direct bytes may omit this field; explicit builders
+   * and every migrated producer must supply it. There is deliberately no parser default.
+   */
+  captureReceipt: curationCaptureReceiptSchema.optional(),
   /** Diagnostic only; wall-clock metadata is excluded from queue identity. */
   emittedAt: z.string(),
 } as const
 
-function validateCandidateSemantics(
+export const curationCandidateProjectionSchema = z
+  .object({
+    ...candidateSeedShape,
+    artifactDescriptors: z.array(curationArtifactDescriptorSchema),
+    captureEvidence: captureEvidenceSchema,
+    stepInteractions: z.array(captureStepInteractionSchema),
+    /** Diagnostic only; queue finalization excludes wall-clock metadata from identity. */
+    emittedAt: z.string(),
+  })
+  .strict()
+  .superRefine(validateProjectionSemantics)
+
+function validateKindSemantics(
   value: {
     kind: BundleKind
     subtype?: FactSubtype
-    artifactInventory: readonly { relativePath: string }[]
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -127,6 +267,46 @@ function validateCandidateSemantics(
       message: 'only fact candidates may carry a fact subtype',
     })
   }
+}
+
+function validateProjectionSemantics(
+  value: {
+    kind: BundleKind
+    subtype?: FactSubtype
+    artifactDescriptors: readonly { ref: ArtifactRef }[]
+  },
+  ctx: z.RefinementCtx,
+): void {
+  validateKindSemantics(value, ctx)
+  const refs = new Set<string>()
+  for (const [index, descriptor] of value.artifactDescriptors.entries()) {
+    if (refs.has(descriptor.ref.id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['artifactDescriptors', index, 'ref', 'id'],
+        message: 'artifact descriptor refs must be unique',
+      })
+    }
+    refs.add(descriptor.ref.id)
+  }
+}
+
+function validateAddressSemantics(
+  value: {
+    kind: BundleKind
+    subtype?: FactSubtype
+    artifactInventory: readonly {
+      relativePath: string
+      sha256: string
+      stepIndex: number
+      role?: z.infer<typeof curationArtifactRoleSchema>
+      originalName?: string
+    }[]
+    captureReceipt?: z.infer<typeof curationCaptureReceiptSchema>
+  },
+  ctx: z.RefinementCtx,
+): void {
+  validateKindSemantics(value, ctx)
   const paths = new Set<string>()
   for (const [index, artifact] of value.artifactInventory.entries()) {
     if (paths.has(artifact.relativePath)) {
@@ -137,13 +317,61 @@ function validateCandidateSemantics(
       })
     }
     paths.add(artifact.relativePath)
+
+    const bridgeMetadataPresent =
+      artifact.role !== undefined && artifact.originalName !== undefined
+    if (value.captureReceipt !== undefined && !bridgeMetadataPresent) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['artifactInventory', index, 'role'],
+        message: 'bridge artifacts require role and originalName',
+      })
+    }
+    if (value.captureReceipt === undefined && bridgeMetadataPresent) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['captureReceipt'],
+        message: 'artifact bridge metadata requires a capture receipt',
+      })
+    }
+  }
+
+  for (const [index, redaction] of (value.captureReceipt?.redactions ?? []).entries()) {
+    const safeArtifact = value.artifactInventory.find(
+      (artifact) => artifact.sha256 === redaction.safeSha256,
+    )
+    if (
+      safeArtifact === undefined
+      || safeArtifact.stepIndex !== redaction.stepIndex
+      || safeArtifact.role !== redaction.role
+      || safeArtifact.originalName !== redaction.originalName
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['captureReceipt', 'redactions', index, 'safeSha256'],
+        message: 'redaction safe digest must identify matching finalized artifact metadata',
+      })
+    }
   }
 }
 
 const curationCandidateAddressFieldsSchema = z
   .object(addressShape)
   .strict()
-  .superRefine(validateCandidateSemantics)
+  .superRefine(validateAddressSemantics)
+
+const explicitAddressShape = {
+  schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
+  ...candidateSeedShape,
+  artifactInventory: z.array(finalizedArtifactInventoryEntrySchema),
+  captureReceipt: curationCaptureReceiptSchema,
+  emittedAt: z.string(),
+} as const
+
+const explicitCurationCandidateAddressFieldsSchema = z
+  .object(explicitAddressShape)
+  .strict()
+  .superRefine(validateAddressSemantics)
 
 export const curationCandidatePayloadSchema = z
   .object({
@@ -152,7 +380,7 @@ export const curationCandidatePayloadSchema = z
   })
   .strict()
   .superRefine((payload, ctx) => {
-    validateCandidateSemantics(payload, ctx)
+    validateAddressSemantics(payload, ctx)
     const { candidateId, ...fields } = payload
     if (candidateId !== candidateContentAddress(fields)) {
       ctx.addIssue({
@@ -168,11 +396,44 @@ export type CurationCandidateAddressFields = z.infer<
 >
 export type CurationCandidatePayload = z.infer<typeof curationCandidatePayloadSchema>
 export type CurationCandidateArtifact = z.infer<typeof artifactInventoryEntrySchema>
+export type CurationArtifactRole = z.infer<typeof curationArtifactRoleSchema>
+export type CurationArtifactDescriptor = z.infer<
+  typeof curationArtifactDescriptorSchema
+>
+export type CurationCandidateProjection = z.infer<
+  typeof curationCandidateProjectionSchema
+>
+export type CurationCaptureReceipt = z.infer<typeof curationCaptureReceiptSchema>
+export type CurationCandidateOmission = z.infer<
+  typeof curationCandidateOmissionSchema
+>
+export type CurationCandidateRedaction = z.infer<
+  typeof curationCandidateRedactionSchema
+>
+export type BuildCurationCandidateAddressFieldsInput = z.infer<
+  typeof explicitCurationCandidateAddressFieldsSchema
+>
+
+/** Explicit source-truth marker for candidates that have no run artifacts by construction. */
+export function artifactFreeCaptureReceipt(): CurationCaptureReceipt {
+  return { regions: [], interactions: [], omissions: [], redactions: [] }
+}
+
+/**
+ * Constructs bridge-populated version-1 fields. Unlike the direct-byte parser, this entry point
+ * requires a finalized receipt and complete descriptor metadata for every copied artifact.
+ */
+export function buildCurationCandidateAddressFields(
+  input: BuildCurationCandidateAddressFieldsInput,
+): BuildCurationCandidateAddressFieldsInput {
+  return explicitCurationCandidateAddressFieldsSchema.parse(input)
+}
 
 /**
  * Hashes every payload field except derived candidateId and diagnostic emittedAt. Identity covers
  * schema/run/scope/ordinal/posture flags, candidate kind/subtype, anchors and seeds, distilled
- * observations, evidence attribution, and the complete artifact inventory.
+ * observations, evidence attribution, the complete artifact inventory, and every present
+ * version-1 safety-bridge field.
  */
 export function candidateContentAddress(fields: CurationCandidateAddressFields): string {
   const parsed = curationCandidateAddressFieldsSchema.parse(fields)
