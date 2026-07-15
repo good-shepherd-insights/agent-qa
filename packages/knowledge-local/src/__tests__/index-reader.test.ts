@@ -386,24 +386,35 @@ describe('IDX-02 degrading knowledge reader', () => {
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
       const options = { product: slugBranch('FTS Product') }
-      const checkoutMatches = [literalOperator.id, literalCheckout.id].sort()
+      const queryIds = (query: string): string[] =>
+        reader.searchLexical(query, options).map((hit) => hit.bundleId)
+      const expectDeterministicSet = (query: string, expected: readonly string[]): void => {
+        const first = queryIds(query)
+        expect(new Set(first)).toEqual(new Set(expected))
+        expect(queryIds(query)).toEqual(first)
+      }
+      const checkoutMatches = [literalOperator.id, literalCheckout.id]
 
-      expect(reader.searchLexical('#submit', options).map((hit) => hit.bundleId))
-        .toEqual([exact.id])
-      expect(reader.searchLexical('#submit-cancel', options).map((hit) => hit.bundleId))
-        .toEqual([longer.id])
-      expect(
-        reader.searchLexical('literal OR checkout', options).map((hit) => hit.bundleId),
-      ).toEqual(checkoutMatches)
-      expect(
-        reader.searchLexical('OR AND NOT NEAR', options).map((hit) => hit.bundleId),
-      ).toEqual([literalOperator.id, literalAnd.id, literalNot.id, literalNear.id].sort())
-      expect(reader.searchLexical('(checkout)', options).map((hit) => hit.bundleId))
-        .toEqual(checkoutMatches)
-      expect(reader.searchLexical('"checkout"', options).map((hit) => hit.bundleId))
-        .toEqual(checkoutMatches)
-      expect(reader.searchLexical('checkout*', options).map((hit) => hit.bundleId))
-        .toEqual(checkoutMatches)
+      expect(queryIds('#submit')).toEqual([exact.id])
+      expect(queryIds('#submit-cancel')).toEqual([longer.id])
+      expectDeterministicSet('literal OR checkout', [
+        exact.id,
+        longer.id,
+        literalOperator.id,
+        literalCheckout.id,
+        literalAnd.id,
+        literalNot.id,
+        literalNear.id,
+      ])
+      expectDeterministicSet('OR AND NOT NEAR', [
+        literalOperator.id,
+        literalAnd.id,
+        literalNot.id,
+        literalNear.id,
+      ])
+      expectDeterministicSet('(checkout)', checkoutMatches)
+      expectDeterministicSet('"checkout"', checkoutMatches)
+      expectDeterministicSet('checkout*', checkoutMatches)
     } finally {
       reader.close()
     }

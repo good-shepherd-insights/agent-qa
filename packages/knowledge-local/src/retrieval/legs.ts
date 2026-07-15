@@ -28,6 +28,7 @@ import {
   FTS_WEIGHT_CONTEXT,
   FTS_WEIGHT_IDENTITY,
 } from './constants.js'
+import { buildLexicalMatchExpression } from './fts-match.js'
 import type { CandidateRawScores, FusionCandidate } from './fusion.js'
 import { preFilterPredicate, type PreFilterOptions } from './pre-filter.js'
 
@@ -133,15 +134,6 @@ function rowToCandidate(
   }
 }
 
-/** Quote every whitespace token so FTS operators remain app-observed data, never query syntax. */
-function quoteFtsTokens(text: string): string {
-  return text
-    .split(/\s+/)
-    .filter((token) => token !== '')
-    .map((token) => `"${token.replaceAll('"', '""')}"`)
-    .join(' ')
-}
-
 /** Weighted, sign-corrected FTS5 recall over the shared scope/status join. */
 export function lexicalLeg(
   db: DatabaseSync,
@@ -150,7 +142,7 @@ export function lexicalLeg(
   requestedK: number,
 ): LegCandidate[] {
   const k = queryLimit(requestedK)
-  const match = quoteFtsTokens(lexicalQuery)
+  const match = buildLexicalMatchExpression(lexicalQuery)
   if (k === 0 || match === '') return []
 
   const predicate = preFilterPredicate(scope)

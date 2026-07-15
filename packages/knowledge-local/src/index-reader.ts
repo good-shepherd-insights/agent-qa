@@ -40,6 +40,7 @@ import {
 import type { IndexReaderConnection, VecCapability } from './index-open.js'
 import { requestRebuild } from './rebuild-marker.js'
 import type { RebuildReason } from './rebuild-marker.js'
+import { buildLexicalMatchExpression } from './retrieval/fts-match.js'
 
 export interface KnowledgeSearchOptions {
   product?: string
@@ -266,14 +267,6 @@ function recheckHits<THit extends KnowledgeHit>(
     } = hit
     return refreshed as unknown as RefreshedHit<THit>
   })
-}
-
-function quoteFtsTokens(text: string): string {
-  return text
-    .split(/\s+/)
-    .filter((token) => token !== '')
-    .map((token) => `"${token.replaceAll('"', '""')}"`)
-    .join(' ')
 }
 
 function recordByRowidWithActiveEmbedding(
@@ -519,7 +512,7 @@ function indexReader(
     searchLexical(text, opts = {}): KnowledgeHit[] {
       const k = queryLimit(opts.k)
       if (k === 0) return []
-      const match = quoteFtsTokens(text)
+      const match = buildLexicalMatchExpression(text)
       const rows = match === ''
         ? opts.product === undefined
           ? db.prepare(`
@@ -541,7 +534,7 @@ function indexReader(
               FROM fts_records
               JOIN records r ON r.record_rowid = fts_records.rowid
               WHERE fts_records MATCH ?
-              ORDER BY bm25(fts_records), r.record_rowid
+              ORDER BY bm25(fts_records), r.bundle_id
               LIMIT ?
             `).all(match, k)
           : db.prepare(`
@@ -549,7 +542,7 @@ function indexReader(
               FROM fts_records
               JOIN records r ON r.record_rowid = fts_records.rowid
               WHERE fts_records MATCH ? AND r.product = ?
-              ORDER BY bm25(fts_records), r.record_rowid
+              ORDER BY bm25(fts_records), r.bundle_id
               LIMIT ?
             `).all(match, opts.product, k)
       return recheckCurrent(
