@@ -70,6 +70,15 @@ export interface RebuildIndexOptions {
   vecLoadablePath?: string
 }
 
+export interface ProjectBundleIndexRowOptions {
+  knowledgeRoot: string
+  bundleId: string
+  /** SAFE-02 lexical bytes after governed redaction. */
+  lexicalInput?: string
+  /** Terminal dense suppression; ordinary backfill must never select this row. */
+  suppressDense?: boolean
+}
+
 export const EMBED_STATUS_PENDING = 'pending'
 export const EMBED_STATUS_PRESENT = 'present'
 /** SAFE-02 terminal state: lexical projection exists, but dense bytes must never be backfilled. */
@@ -460,6 +469,103 @@ function projectBundle(
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
   })
+}
+
+function applyProjectionSafety(
+  db: DatabaseSync,
+  vec: VecCapability,
+  bundle: LoadedBundle,
+  activeProfile: EmbeddingProfile,
+  lexicalInput: string,
+  suppressDense: boolean,
+): void {
+  const row = db
+    .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+    .get(bundle.manifest.id)
+  if (row === undefined) {
+    throw new Error(`projection safety source bundle ${bundle.manifest.id} is missing`)
+  }
+  const recordRowid = Number(row.record_rowid)
+  const situatingLine = buildSituatingLine(db, recordRowid)
+  const contextualRendering = renderContextual(lexicalInput, situatingLine)
+
+  transaction(db, () => {
+    db.prepare(`
+      UPDATE records
+      SET embedding_input = ?, situating_line = ?, contextual_rendering = ?,
+          embed_status = ?, embedding = NULL
+      WHERE record_rowid = ?
+    `).run(
+      lexicalInput,
+      situatingLine,
+      contextualRendering,
+      suppressDense ? EMBED_STATUS_SUPPRESSED : EMBED_STATUS_PENDING,
+      recordRowid,
+    )
+    const fts = db
+      .prepare('SELECT identity FROM fts_records WHERE rowid = ?')
+      .get(recordRowid)
+    if (fts === undefined) throw new Error(`projection FTS row ${recordRowid} is missing`)
+    db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
+    db.prepare(`
+      INSERT INTO fts_records (rowid, identity, content, context)
+      VALUES (?, ?, ?, ?)
+    `).run(recordRowid, String(fts.identity), lexicalInput, situatingLine)
+    if (vec === 'vec0') {
+      db.prepare(`DELETE FROM ${vecTableName(activeProfile)} WHERE record_rowid = ?`)
+        .run(BigInt(recordRowid))
+    }
+  })
+}
+
+/**
+ * Project exactly one canonical bundle through the same record/FTS/anchor/graph units used by a
+ * full rebuild. Commit and journal recovery both call this authority; no projection SQL exists in
+ * either orchestration layer.
+ */
+export function projectBundleIndexRow(opts: ProjectBundleIndexRowOptions): void {
+  let projected: ProjectedBundle | undefined
+  for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
+    const outcome = loadBundle(entry.dir)
+    if (outcome.kind !== 'loaded' || outcome.bundle.manifest.id !== opts.bundleId) continue
+    const integrity = verifyBundleIntegrity(entry.dir)
+    if (!integrity.ok) {
+      throw new Error(
+        `cannot project invalid bundle ${opts.bundleId}: ${integrity.violations.join('; ')}`,
+      )
+    }
+    projected = { bundle: outcome.bundle, dir: entry.dir, product: entry.product }
+    break
+  }
+  if (projected === undefined) throw new Error(`bundle ${opts.bundleId} was not found`)
+
+  const writer = openIndexWriter(opts.knowledgeRoot)
+  const activeProfile = resolveActiveProfile(writer.db)
+  try {
+    projectBundle(writer.db, writer.vec, projected, activeProfile)
+    emitRelationEdges(writer.db, [projected])
+    const scanIssues: string[] = []
+    emitObservationEdges(writer.db, opts.knowledgeRoot, [projected], scanIssues)
+    if (scanIssues.length > 0) {
+      throw new Error(`bundle ${opts.bundleId} observation projection failed: ${scanIssues.join('; ')}`)
+    }
+    emitEquivalentToBridges(writer.db)
+    removeOrphanGraphNodes(writer.db)
+    refreshContextualRenderings(writer.db, writer.renderingEpochStale)
+    if (opts.lexicalInput !== undefined || opts.suppressDense === true) {
+      applyProjectionSafety(
+        writer.db,
+        writer.vec,
+        projected.bundle,
+        activeProfile,
+        opts.lexicalInput ?? projected.bundle.manifest.embeddingInput,
+        opts.suppressDense === true,
+      )
+    }
+    writer.completeRenderingEpoch()
+  } finally {
+    writer.close()
+  }
 }
 
 /**

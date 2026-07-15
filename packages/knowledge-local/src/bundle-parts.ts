@@ -28,6 +28,8 @@ import type {
   BundleProvenance,
   BundleRelation,
   BundleRelations,
+  CurationAuthorship,
+  DistilledObservation,
   OriginClass,
   RecordFrontmatter,
   RecordId,
@@ -48,6 +50,11 @@ export type BundleProvenanceInput =
       runId: string
       testId: string
       stepIndex: number
+      curationJobId?: string
+      sourceBuildOrdinal?: number
+      authorship?: CurationAuthorship
+      needsEnrichment?: boolean
+      withheld?: boolean
     }
   | {
       mode: 'standalone'
@@ -66,6 +73,7 @@ export interface RenderBundlePartsInput {
   copiedArtifacts: ArtifactCopyResult<'capture-blacklist'>
   evidenceIncomplete: boolean
   evidenceMarkdown?: string
+  distilledObservations?: readonly DistilledObservation[]
 }
 
 function textSha(text: string): string {
@@ -113,6 +121,21 @@ function renderProvenance(
         runId: provenance.runId,
         testId: provenance.testId,
         stepIndex: provenance.stepIndex,
+        ...(provenance.curationJobId === undefined
+          ? {}
+          : { curationJobId: provenance.curationJobId }),
+        ...(provenance.sourceBuildOrdinal === undefined
+          ? {}
+          : { sourceBuildOrdinal: provenance.sourceBuildOrdinal }),
+        ...(provenance.authorship === undefined
+          ? {}
+          : { authorship: provenance.authorship }),
+        ...(provenance.needsEnrichment === undefined
+          ? {}
+          : { needsEnrichment: provenance.needsEnrichment }),
+        ...(provenance.withheld === undefined
+          ? {}
+          : { withheld: provenance.withheld }),
       }
     : {
         schemaVersion: BUNDLE_SCHEMA_VERSION,
@@ -222,6 +245,16 @@ export function renderBundleParts(input: RenderBundlePartsInput): {
     ...input.screenStates.map((screenState, stepIndex) =>
       part(screenStateSnapshotRelPath(stepIndex), committedFileText(screenState)),
     ),
+    ...(input.distilledObservations === undefined
+      ? []
+      : [
+          part(
+            'observations.jsonl',
+            input.distilledObservations
+              .map((observation) => `${canonicalJson(observation)}\n`)
+              .join(''),
+          ),
+        ]),
     part('evidence/outcomes.jsonl', outcomesText),
     ...(input.evidenceMarkdown === undefined
       ? []

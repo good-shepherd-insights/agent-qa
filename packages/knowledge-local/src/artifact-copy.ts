@@ -53,7 +53,7 @@ export interface ArtifactCopyResult<AdditionalReason extends string = never> {
 
 export interface ArtifactCopyOptions<AdditionalReason extends string = never> {
   /** Pre-copy filter refusals retained in the same inventory as copy-time refusals. */
-  preSkipped?: readonly SkippedArtifact<AdditionalReason>[]
+  preSkipped?: readonly SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[]
 }
 
 const ARTIFACT_SHA_RE = /^[0-9a-f]{64}$/

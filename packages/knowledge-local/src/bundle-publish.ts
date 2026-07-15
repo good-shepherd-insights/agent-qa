@@ -29,7 +29,12 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { copyArtifacts } from './artifact-copy.js'
-import type { ArtifactCopyInput, ArtifactCopyResult } from './artifact-copy.js'
+import type {
+  ArtifactCopyInput,
+  ArtifactCopyResult,
+  ArtifactCopySkipReason,
+  SkippedArtifact,
+} from './artifact-copy.js'
 import { checkpointCommittedParts } from './bundle-egress.js'
 import { renderBundleParts } from './bundle-parts.js'
 import type { RenderBundlePartsInput } from './bundle-parts.js'
@@ -46,6 +51,10 @@ export interface BundleStoreConfig {
 export interface PublishBundleInput
   extends Omit<RenderBundlePartsInput, 'copiedArtifacts' | 'evidenceIncomplete'> {
   artifacts: readonly ArtifactCopyInput[]
+  /** Refusals already decided by the Curator's required pre-copy safety pass. */
+  preSkippedArtifacts?: readonly SkippedArtifact<
+    ArtifactCopySkipReason | 'capture-blacklist'
+  >[]
 }
 
 export type PublishBundleOutcome =
@@ -176,7 +185,7 @@ export function publishBundle(
     throw new TypeError('BundleStoreConfig.knowledgeRoot must be absolute')
   }
 
-  const { artifacts, ...renderInput } = input
+  const { artifacts, preSkippedArtifacts, ...renderInput } = input
   const identity = renderBundleParts({
     ...renderInput,
     copiedArtifacts: EMPTY_ARTIFACT_COPY,
@@ -202,7 +211,11 @@ export function publishBundle(
   mkdirSync(stagingDir, { recursive: true })
 
   try {
-    const copiedArtifacts = copyArtifacts(artifacts, join(stagingDir, 'artifacts'))
+    const copiedArtifacts = copyArtifacts<'capture-blacklist'>(
+      artifacts,
+      join(stagingDir, 'artifacts'),
+      { preSkipped: preSkippedArtifacts },
+    )
     const rendered = renderBundleParts({
       ...renderInput,
       copiedArtifacts,
