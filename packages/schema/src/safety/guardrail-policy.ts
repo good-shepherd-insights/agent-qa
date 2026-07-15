@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
-const guardrailDetectorActionSchema = z.enum(['block', 'redact', 'off'])
+/**
+ * `route` is SAFE-03's soft Curator-review signal. It reports suspicious content
+ * without deterministically blocking or redacting it.
+ */
+const guardrailDetectorActionSchema = z.enum(['block', 'redact', 'route', 'off'])
 
 export const guardrailPolicySchema = z.object({
   detectors: z.object({
@@ -10,6 +14,7 @@ export const guardrailPolicySchema = z.object({
     bearer: guardrailDetectorActionSchema,
     apiKey: guardrailDetectorActionSchema,
     email: guardrailDetectorActionSchema,
+    injectionShape: guardrailDetectorActionSchema.default('route'),
   }).strict(),
   allowlist: z.array(z.string()).default([]),
 }).strict()

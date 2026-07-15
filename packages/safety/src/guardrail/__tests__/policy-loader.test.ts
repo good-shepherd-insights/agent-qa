@@ -14,6 +14,7 @@ const expectedDetectors = {
   bearer: 'redact',
   apiKey: 'redact',
   email: 'redact',
+  injectionShape: 'route',
 } as const
 
 function expectConfigError(input: unknown): void {
