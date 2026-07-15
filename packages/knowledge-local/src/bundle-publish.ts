@@ -51,6 +51,8 @@ export interface BundleStoreConfig {
   hooks?: {
     /** Test/chaos seam after all staged bytes exist but before the visibility rename. */
     beforePublishRename?: () => void
+    /** Test/chaos seam after each durable mutable-file replacement. */
+    afterMutableReplacement?: (targetRelPath: string) => void
   }
 }
 

@@ -2,8 +2,8 @@
 // manifest. BNDL-03 deduplicates before checkpointing, while the schema fold repeats that defense
 // in depth. Every mutable file uses a full same-directory temp rewrite plus atomic rename (§4).
 
-import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
 import {
@@ -32,6 +32,7 @@ import type {
 
 import { checkpointCommittedParts } from './bundle-egress.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
+import { commitBundleMutation } from './journal/bundle-mutation.js'
 
 export type AppendOutcome =
   | { kind: 'appended' }
@@ -119,19 +120,10 @@ function rewriteManifestParts(
   })
 }
 
-function atomicRewrite(file: string, text: string): void {
-  const temporary = `${file}.tmp-${randomUUID()}`
-  try {
-    writeFileSync(temporary, text, { encoding: 'utf8', flag: 'wx' })
-    renameSync(temporary, file)
-  } finally {
-    rmSync(temporary, { force: true })
-  }
-}
-
 function checkpointAndRewrite(
   config: BundleStoreConfig,
   dir: string,
+  id: RecordId,
   relPath: string,
   appendedText: string,
   rewrittenText: string,
@@ -149,8 +141,17 @@ function checkpointAndRewrite(
   )
   if (checkpoint.kind === 'egress-blocked') return checkpoint
 
-  atomicRewrite(join(dir, relPath), rewrittenText)
-  atomicRewrite(join(dir, 'manifest.json'), manifestText)
+  commitBundleMutation({
+    knowledgeRoot: config.knowledgeRoot,
+    bundleDir: dir,
+    bundleId: id,
+    writerLeaseId: config.writerLeaseId,
+    replacements: [
+      { targetRelPath: relPath, text: rewrittenText },
+      { targetRelPath: 'manifest.json', text: manifestText },
+    ],
+    afterMutableReplacement: config.hooks?.afterMutableReplacement,
+  })
   return { kind: 'appended' }
 }
 
@@ -188,6 +189,7 @@ export function appendOutcomeEvent(
   return checkpointAndRewrite(
     config,
     dir,
+    id,
     OUTCOMES_REL_PATH,
     appendedText,
     rewrittenText,
@@ -267,10 +269,21 @@ export function appendOutcomeEventWithEnrichment(
   )
   if (checkpoint.kind === 'egress-blocked') return checkpoint
 
-  atomicRewrite(recordFile, recordText)
-  atomicRewrite(provenanceFile, provenanceText)
-  if (!duplicate) atomicRewrite(outcomesFile, outcomesText)
-  atomicRewrite(join(dir, 'manifest.json'), manifestText)
+  commitBundleMutation({
+    knowledgeRoot: config.knowledgeRoot,
+    bundleDir: dir,
+    bundleId: id,
+    writerLeaseId: config.writerLeaseId,
+    replacements: [
+      { targetRelPath: 'record.md', text: recordText },
+      { targetRelPath: 'provenance.json', text: provenanceText },
+      ...(duplicate
+        ? []
+        : [{ targetRelPath: OUTCOMES_REL_PATH, text: outcomesText }]),
+      { targetRelPath: 'manifest.json', text: manifestText },
+    ],
+    afterMutableReplacement: config.hooks?.afterMutableReplacement,
+  })
   return { kind: duplicate ? 'duplicate' : 'appended', enriched: true }
 }
 
@@ -316,6 +329,7 @@ export function appendRelation(
   return checkpointAndRewrite(
     config,
     dir,
+    id,
     RELATIONS_REL_PATH,
     appendedText,
     rewrittenText,

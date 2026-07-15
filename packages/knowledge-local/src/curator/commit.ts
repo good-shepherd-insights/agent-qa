@@ -77,6 +77,8 @@ export interface CommitCurationDependencies {
     afterIntentWritten?: () => void
     /** Test/chaos seam while the complete bundle is staged but still reader-invisible. */
     beforePublishRename?: () => void
+    /** Test/chaos seam after each durable mutable-file replacement. */
+    afterMutableReplacement?: (targetRelPath: string) => void
     /** Test/chaos seam after a fresh bundle publish and before its index projection. */
     afterBundlePublished?: (bundleId: RecordId) => void
     /** Test/chaos seam after the index transaction and before intent removal. */
@@ -334,6 +336,14 @@ function storeConfig(
   productKey: string,
   writerLeaseId: string,
 ): BundleStoreConfig {
+  const hooks: NonNullable<BundleStoreConfig['hooks']> = {
+    ...(deps.hooks?.beforePublishRename === undefined
+      ? {}
+      : { beforePublishRename: deps.hooks.beforePublishRename }),
+    ...(deps.hooks?.afterMutableReplacement === undefined
+      ? {}
+      : { afterMutableReplacement: deps.hooks.afterMutableReplacement }),
+  }
   return {
     knowledgeRoot: deps.knowledgeRoot,
     productKey,
@@ -341,9 +351,7 @@ function storeConfig(
     commitArtifacts: 'none',
     writerLeaseId,
     policy: deps.policy,
-    ...(deps.hooks?.beforePublishRename === undefined
-      ? {}
-      : { hooks: { beforePublishRename: deps.hooks.beforePublishRename } }),
+    ...(Object.keys(hooks).length === 0 ? {} : { hooks }),
   }
 }
 
