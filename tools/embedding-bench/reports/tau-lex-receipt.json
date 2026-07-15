@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "calibrationDate": "2026-07-15",
   "tauLex": 6.86,
   "percentile05": 6.864719139232,
@@ -19,7 +19,9 @@
     "tokenizer": "unicode61 tokenchars '#-_./:[]=>@'",
     "productionShapeSource": "packages/knowledge-local/src/index-open.ts",
     "productionWeightSource": "packages/knowledge-local/src/retrieval/constants.ts",
-    "queryMode": "Per-gold score probe over deduplicated, double-quote-escaped query tokens joined with FTS5 OR; serving uses the same FTS5 tokenizer, columns, bm25() weights, and positive-score convention.",
+    "querySemantics": "quoted-token-or-v1",
+    "productionQuerySource": "packages/knowledge-local/src/retrieval/fts-match.ts",
+    "queryMode": "Full serving replay over every in-app corpus document using the live production MATCH constructor, final FTS columns and tokenizer, bm25() weights, and positive-score convention.",
     "contextProjection": "The recorded corpus predates graph neighbors, so the v2 context column is present and populated with the empty string for every corpus document."
   },
   "corpusId": "sha256:60ef8d2931cea95367d4095ac7d92b113a01d990f5bdc7ff7060cf26b40a5a38",
@@ -34,6 +36,15 @@
     "goldPairs": 90,
     "scoredPairs": 35,
     "unmatchedPairs": 55
+  },
+  "servingReplay": {
+    "evaluatedCandidates": 20729,
+    "matchedCandidates": 2047,
+    "admittedCandidates": 1574,
+    "goldPairs": 90,
+    "matchedGoldPairs": 35,
+    "admittedGoldPairs": 35,
+    "goldRecall": 0.3888888888888889
   },
   "pairs": [
     {

@@ -412,7 +412,7 @@ function renderMarkdown(receipt: TauLexReceipt): string {
     `- Rule: \`${receipt.rule}\` — p05 linear interpolation over the recorded scored gold-pair distribution, then floor to two decimals.`,
     `- Recorded p05: \`${receipt.percentile05}\`.`,
     `- Sign convention: ${receipt.signConvention}`,
-    `- Query score probe: ${receipt.ftsShape.queryMode}`,
+    `- Query replay: ${receipt.ftsShape.queryMode}`,
     `- Context caveat: ${receipt.ftsShape.contextProjection}`,
     '',
     '## Production FTS Contract',

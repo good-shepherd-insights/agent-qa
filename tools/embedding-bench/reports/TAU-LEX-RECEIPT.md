@@ -9,7 +9,7 @@
 - Rule: `p05-linear-floor2` — p05 linear interpolation over the recorded scored gold-pair distribution, then floor to two decimals.
 - Recorded p05: `6.864719139232`.
 - Sign convention: SQLite FTS5 bm25() returns negated raw scores (better matches are more negative); calibration stores bm25Positive = -bm25(...) and applies TAU_LEX on that positive scale.
-- Query score probe: Per-gold score probe over deduplicated, double-quote-escaped query tokens joined with FTS5 OR; serving uses the same FTS5 tokenizer, columns, bm25() weights, and positive-score convention.
+- Query replay: Full serving replay over every in-app corpus document using the live production MATCH constructor, final FTS columns and tokenizer, bm25() weights, and positive-score convention.
 - Context caveat: The recorded corpus predates graph neighbors, so the v2 context column is present and populated with the empty string for every corpus document.
 
 ## Production FTS Contract
@@ -21,6 +21,20 @@
 | `bm25()` weights | identity=10, content=5, context=1 |
 | Shape source | `packages/knowledge-local/src/index-open.ts` |
 | Weight source | `packages/knowledge-local/src/retrieval/constants.ts` |
+| Query semantics | `quoted-token-or-v1` |
+| Query source | `packages/knowledge-local/src/retrieval/fts-match.ts` |
+
+## Serving Replay
+
+| Metric | Recorded value |
+| --- | ---: |
+| Evaluated in-app query/document pairs | 20729 |
+| MATCH candidates | 2047 |
+| Admitted candidates | 1574 |
+| Gold pairs | 90 |
+| Matched gold pairs | 35 |
+| Admitted gold pairs | 35 |
+| Gold recall | 0.3888888888888889 |
 
 ## Corpus Identity
 
@@ -35,8 +49,8 @@
 | Documents | 2018 |
 | Recorded queries | 49 |
 | Gold pairs | 90 |
-| Scored lexical pairs | 35 |
-| No-overlap pairs | 55 |
+| Matched gold pairs | 35 |
+| Unmatched gold pairs | 55 |
 
 ## Scored Gold Pairs
 
@@ -78,9 +92,9 @@
 | query:ff335434730c3ec7b89180dbcd7df911c81122c94415dcf05cdea2be95fbb384 | doc:049d63bde5ff15d8a24fcbed260c10a53d4c9a7b1660ecfe84c684466c041cff | 7.167422918291 |
 | query:ff335434730c3ec7b89180dbcd7df911c81122c94415dcf05cdea2be95fbb384 | doc:b584b61a93b1b7eb43f3a83e4b45638695fc5a18537b49291356816c62ccafa9 | 9.604889723868 |
 
-## Gold Pairs Without Lexical Overlap
+## Gold Pairs Unmatched by Serving
 
-These members were resolved and validated against the recorded corpus, but the score-probe query had no matching FTS token. They are excluded from the lexical-candidate floor rather than represented as fabricated BM25 scores.
+These members were resolved and validated against the recorded corpus, but the live production MATCH constructor did not return them. They are excluded from the lexical-candidate floor rather than represented as fabricated BM25 scores.
 
 | Query ID | Gold document ID |
 | --- | --- |
