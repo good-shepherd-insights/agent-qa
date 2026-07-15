@@ -468,15 +468,35 @@ function mutationTarget(delta: Delta): RecordId | undefined {
   return undefined
 }
 
-function injectedAdd(delta: Delta, job: CommitCurationJob): Delta {
-  if (delta.kind === 'Add' || delta.kind === 'MintUnknown' || delta.kind === 'Noop') return delta
-  return {
-    kind: 'Add',
+function unreachableRestrictedDelta(delta: never): never {
+  throw new TypeError(`unsupported injection-restricted delta: ${canonicalJson(delta)}`)
+}
+
+function restrictedInjectionDelta(delta: Delta, job: CommitCurationJob): Delta {
+  const envelope = {
     origin: delta.origin,
     scope: delta.scope,
     citedIds: [],
     ...(delta.authorship === undefined ? {} : { authorship: delta.authorship }),
-    bundle: delta.kind === 'Supersede' ? delta.newBundle : syntheticDraft(job),
+  }
+
+  switch (delta.kind) {
+    case 'Add':
+      return { kind: 'Add', ...envelope, bundle: delta.bundle }
+    case 'MintUnknown':
+      return {
+        kind: 'MintUnknown',
+        ...envelope,
+        conflict: { recordIds: [], kind: delta.conflict.kind },
+      }
+    case 'Supersede':
+      return { kind: 'Add', ...envelope, bundle: delta.newBundle }
+    case 'Confirm':
+    case 'Deprecate':
+    case 'Noop':
+      return { kind: 'Add', ...envelope, bundle: syntheticDraft(job) }
+    default:
+      return unreachableRestrictedDelta(delta)
   }
 }
 
@@ -518,7 +538,7 @@ export function commitCurationDelta(
     job.payload.injectionFlagged
     || embedGate.detections.some((detection) => detection.detector === 'injectionShape')
   const dispositionDelta = injectionRestricted
-    ? injectedAdd(checkpoint.delta, job)
+    ? restrictedInjectionDelta(checkpoint.delta, job)
     : checkpoint.delta
   const dispositionCheckpoint: AuthoredCheckpoint = {
     ...checkpoint,
