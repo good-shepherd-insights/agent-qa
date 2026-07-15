@@ -14,7 +14,7 @@ import type {
   ScopeKey,
 } from '@vostride/agent-qa-schema'
 
-export const CURATION_QUEUE_SCHEMA_VERSION = 1
+export const CURATION_QUEUE_SCHEMA_VERSION = 2
 
 const SHA256_HEX = /^[0-9a-f]{64}$/
 
@@ -179,25 +179,6 @@ function validateArtifactInventoryEntry(
 const artifactInventoryEntrySchema = z
   .object({
     ...artifactInventoryEntryShape,
-    /** Version-1 compatibility bridge; absent together on legacy direct bytes. */
-    role: curationArtifactRoleSchema.optional(),
-    originalName: z.string().min(1).optional(),
-  })
-  .strict()
-  .superRefine((entry, ctx) => {
-    validateArtifactInventoryEntry(entry, ctx)
-    if ((entry.role === undefined) !== (entry.originalName === undefined)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['role'],
-        message: 'artifact role and originalName must be present together',
-      })
-    }
-  })
-
-const finalizedArtifactInventoryEntrySchema = z
-  .object({
-    ...artifactInventoryEntryShape,
     role: curationArtifactRoleSchema,
     originalName: z.string().min(1),
   })
@@ -225,11 +206,7 @@ const addressShape = {
   schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
   ...candidateSeedShape,
   artifactInventory: z.array(artifactInventoryEntrySchema),
-  /**
-   * Version-1 compatibility bridge. Legacy direct bytes may omit this field; explicit builders
-   * and every migrated producer must supply it. There is deliberately no parser default.
-   */
-  captureReceipt: curationCaptureReceiptSchema.optional(),
+  captureReceipt: curationCaptureReceiptSchema,
   /** Diagnostic only; wall-clock metadata is excluded from queue identity. */
   emittedAt: z.string(),
 } as const
@@ -299,10 +276,10 @@ function validateAddressSemantics(
       relativePath: string
       sha256: string
       stepIndex: number
-      role?: z.infer<typeof curationArtifactRoleSchema>
-      originalName?: string
+      role: z.infer<typeof curationArtifactRoleSchema>
+      originalName: string
     }[]
-    captureReceipt?: z.infer<typeof curationCaptureReceiptSchema>
+    captureReceipt: z.infer<typeof curationCaptureReceiptSchema>
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -317,26 +294,9 @@ function validateAddressSemantics(
       })
     }
     paths.add(artifact.relativePath)
-
-    const bridgeMetadataPresent =
-      artifact.role !== undefined && artifact.originalName !== undefined
-    if (value.captureReceipt !== undefined && !bridgeMetadataPresent) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['artifactInventory', index, 'role'],
-        message: 'bridge artifacts require role and originalName',
-      })
-    }
-    if (value.captureReceipt === undefined && bridgeMetadataPresent) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['captureReceipt'],
-        message: 'artifact bridge metadata requires a capture receipt',
-      })
-    }
   }
 
-  for (const [index, redaction] of (value.captureReceipt?.redactions ?? []).entries()) {
+  for (const [index, redaction] of value.captureReceipt.redactions.entries()) {
     const safeArtifact = value.artifactInventory.find(
       (artifact) => artifact.sha256 === redaction.safeSha256,
     )
@@ -357,19 +317,6 @@ function validateAddressSemantics(
 
 const curationCandidateAddressFieldsSchema = z
   .object(addressShape)
-  .strict()
-  .superRefine(validateAddressSemantics)
-
-const explicitAddressShape = {
-  schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
-  ...candidateSeedShape,
-  artifactInventory: z.array(finalizedArtifactInventoryEntrySchema),
-  captureReceipt: curationCaptureReceiptSchema,
-  emittedAt: z.string(),
-} as const
-
-const explicitCurationCandidateAddressFieldsSchema = z
-  .object(explicitAddressShape)
   .strict()
   .superRefine(validateAddressSemantics)
 
@@ -410,9 +357,7 @@ export type CurationCandidateOmission = z.infer<
 export type CurationCandidateRedaction = z.infer<
   typeof curationCandidateRedactionSchema
 >
-export type BuildCurationCandidateAddressFieldsInput = z.infer<
-  typeof explicitCurationCandidateAddressFieldsSchema
->
+export type BuildCurationCandidateAddressFieldsInput = CurationCandidateAddressFields
 
 /** Explicit source-truth marker for candidates that have no run artifacts by construction. */
 export function artifactFreeCaptureReceipt(): CurationCaptureReceipt {
@@ -420,20 +365,20 @@ export function artifactFreeCaptureReceipt(): CurationCaptureReceipt {
 }
 
 /**
- * Constructs bridge-populated version-1 fields. Unlike the direct-byte parser, this entry point
- * requires a finalized receipt and complete descriptor metadata for every copied artifact.
+ * Constructs strict version-2 fields with a complete finalized receipt and descriptor metadata
+ * for every copied artifact.
  */
 export function buildCurationCandidateAddressFields(
   input: BuildCurationCandidateAddressFieldsInput,
-): BuildCurationCandidateAddressFieldsInput {
-  return explicitCurationCandidateAddressFieldsSchema.parse(input)
+): CurationCandidateAddressFields {
+  return curationCandidateAddressFieldsSchema.parse(input)
 }
 
 /**
  * Hashes every payload field except derived candidateId and diagnostic emittedAt. Identity covers
  * schema/run/scope/ordinal/posture flags, candidate kind/subtype, anchors and seeds, distilled
- * observations, evidence attribution, the complete artifact inventory, and every present
- * version-1 safety-bridge field.
+ * observations, evidence attribution, the complete artifact inventory, and the complete
+ * finalized capture receipt.
  */
 export function candidateContentAddress(fields: CurationCandidateAddressFields): string {
   const parsed = curationCandidateAddressFieldsSchema.parse(fields)

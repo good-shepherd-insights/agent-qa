@@ -36,6 +36,7 @@ import {
   readCurrentEpoch,
 } from '../lease/writer-lease.js'
 import {
+  COMMIT_INTENT_SCHEMA_VERSION,
   JOURNAL_SUBDIR,
   listCommitIntents,
   writeCommitIntent,
@@ -216,7 +217,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
 
   function intent(candidateId: string, bundleId: string): CommitIntent {
     return {
-      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+      schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
       candidateId,
       bundleId,
       deltaKind: 'Add',
