@@ -150,13 +150,28 @@ export type {
 } from './rebuild-marker.js'
 export {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
+  buildCurationCandidateAddressFields,
   candidateContentAddress,
+  curationArtifactDescriptorSchema,
+  curationArtifactRoleSchema,
+  curationCandidateOmissionSchema,
   curationCandidatePayloadSchema,
+  curationCandidateProjectionSchema,
+  curationCandidateRedactionSchema,
+  curationCaptureReceiptSchema,
 } from './queue/queue-payload.js'
 export type {
+  BuildCurationCandidateAddressFieldsInput,
+  CurationArtifactDescriptor,
+  CurationArtifactRole,
   CurationCandidateAddressFields,
   CurationCandidateArtifact,
+  CurationCandidateOmission,
   CurationCandidatePayload,
+  CurationCandidateProjection,
+  CurationCandidateRedaction,
+  CurationCaptureReceipt,
 } from './queue/queue-payload.js'
 export {
   CLAIMED_SUBDIR,
@@ -196,6 +211,7 @@ export type {
   RequeueClaimedOptions,
 } from './queue/curation-queue.js'
 export {
+  CURATION_JOB_STATE_SCHEMA_VERSION,
   curationJobStateSchema,
   persistAuthoredCheckpoint,
   readJobState,
@@ -209,6 +225,7 @@ export type {
   ReadJobStateOutcome,
   WriteJobStateOptions,
 } from './queue/job-state.js'
+export { COMMIT_INTENT_SCHEMA_VERSION } from './journal/intent-journal.js'
 export {
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   authoredCheckpointSchema,

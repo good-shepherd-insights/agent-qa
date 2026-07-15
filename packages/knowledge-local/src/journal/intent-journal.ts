@@ -22,16 +22,15 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
-import { CURATION_QUEUE_SCHEMA_VERSION } from '../queue/queue-payload.js'
-
 export const JOURNAL_SUBDIR = 'memory/queue/journal'
+export const COMMIT_INTENT_SCHEMA_VERSION = 1
 
 const CANDIDATE_ID = /^[0-9a-f]{64}$/
 const INTENT_FILE = /^([0-9a-f]{64})\.intent\.json$/
 
 export const commitIntentSchema = z
   .object({
-    schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
+    schemaVersion: z.literal(COMMIT_INTENT_SCHEMA_VERSION),
     candidateId: z.string().regex(CANDIDATE_ID),
     bundleId: z.string().min(1),
     deltaKind: z.enum(['Add', 'Confirm', 'Supersede', 'Deprecate', 'MintUnknown', 'Noop']),

@@ -29,6 +29,8 @@ import { readCurrentEpoch } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
+  buildCurationCandidateAddressFields,
   candidateContentAddress,
 } from '../queue/queue-payload.js'
 import type {
@@ -143,7 +145,7 @@ function addressFields(
   const anchors = authored?.anchors
     ?? target?.bundle.frontmatter.anchors.map(({ raw }) => raw)
     ?? [{ t: 'error' as const, message: `unresolved knowledge-port ${delta.kind}` }]
-  return {
+  return buildCurationCandidateAddressFields({
     schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
     sourceRunId: config.sourceRunId ?? 'knowledge-port',
     scope: delta.scope,
@@ -162,8 +164,9 @@ function addressFields(
     evidenceToken: syntheticEvidenceToken(delta),
     attributingObservationId: `knowledge-port:${sha256hex(canonicalJson(delta))}`,
     artifactInventory: [],
+    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '1970-01-01T00:00:00.000Z',
-  }
+  })
 }
 
 function syntheticAuthorship(

@@ -22,7 +22,8 @@ import {
   jobStatePath,
   jobsRoot,
 } from './queue-layout.js'
-import { CURATION_QUEUE_SCHEMA_VERSION } from './queue-payload.js'
+
+export const CURATION_JOB_STATE_SCHEMA_VERSION = 1
 
 export type CurationJobLifecycle =
   | 'queued'
@@ -41,7 +42,7 @@ const jobLifecycleSchema: z.ZodType<CurationJobLifecycle> = z.enum([
 
 export const curationJobStateSchema = z
   .object({
-    schemaVersion: z.literal(CURATION_QUEUE_SCHEMA_VERSION),
+    schemaVersion: z.literal(CURATION_JOB_STATE_SCHEMA_VERSION),
     candidateId: z.string().regex(/^[0-9a-f]{64}$/),
     lifecycle: jobLifecycleSchema,
     embedCrashCount: z.number().int().nonnegative().default(0),
@@ -179,7 +180,7 @@ export function readJobState(
  */
 export function writeJobState(opts: WriteJobStateOptions): CurationJobState {
   const state = curationJobStateSchema.parse({
-    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+    schemaVersion: CURATION_JOB_STATE_SCHEMA_VERSION,
     candidateId: opts.candidateId,
     lifecycle: opts.lifecycle,
     embedCrashCount: opts.embedCrashCount ?? 0,
