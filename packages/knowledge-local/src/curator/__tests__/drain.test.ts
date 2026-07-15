@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DEFAULT_EMBEDDING_PROFILE,
   asRecordId,
   type CurationAuthorship,
   type Delta,
@@ -13,6 +14,22 @@ import {
 } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  makeBundleDraftFixture,
+  makeDiscriminantFixture,
+  makeScreenStateFixture,
+  scaffoldKnowledgeRoot,
+} from '../../__tests__/fixtures/bundle-fixture.js'
+import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
+import { publishBundle } from '../../bundle-publish.js'
+import { readIndexMaintenanceState } from '../../index-open.js'
+import { projectBundleIndexRow } from '../../index-rebuild.js'
+import * as knowledgeLocal from '../../index.js'
+import {
+  reconcileOnDrainStart,
+  type ReconcileReport,
+} from '../../journal/reconcile.js'
+import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { buildRetrievalQuery } from '../../query-helper.js'
 import { retrieve, type RetrieveResult } from '../../retrieve.js'
 import {
@@ -20,7 +37,6 @@ import {
   readRebuildRequest,
   requestRebuild,
 } from '../../rebuild-marker.js'
-import * as knowledgeLocal from '../../index.js'
 import {
   claimNextJob,
   enqueueCurationCandidate,
@@ -34,11 +50,6 @@ import {
   type CurationCandidateAddressFields,
   type CurationCandidatePayload,
 } from '../../queue/queue-payload.js'
-import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
-import {
-  reconcileOnDrainStart,
-  type ReconcileReport,
-} from '../../journal/reconcile.js'
 import type { CuratorAuthor, NeighborRecord } from '../author-contract.js'
 import type { CommitCurationOutcome } from '../commit.js'
 import {
@@ -58,6 +69,17 @@ const EMPTY_RECONCILE: ReconcileReport = {
   orphansRemoved: 0,
   malformed: 0,
 }
+
+type PlannedDrainOperations = DrainOperations & {
+  readIndexMaintenanceState: typeof readIndexMaintenanceState
+}
+
+const NO_INDEX_MAINTENANCE = {
+  indexAbsent: false,
+  pendingEmbeddings: 0,
+  renderingEpochStale: false,
+  vectorReconciliationOutstanding: false,
+} as const
 
 describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   let root: string
@@ -176,9 +198,10 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     }
   }
 
-  function noWriterPass(): Partial<DrainOperations> {
+  function noWriterPass(): Partial<PlannedDrainOperations> {
     return {
       readRebuildRequest: () => ({ present: false }),
+      readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
     }
   }
 
@@ -201,6 +224,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       kind: 'handed-off',
       jobsProcessed: 0,
       committed: 0,
+      writerPass: { kind: 'skipped', reason: 'lease-held' },
       holder: { leaseId: holder.leaseId, epoch: holder.epoch },
     })
     expect(author).not.toHaveBeenCalled()
@@ -463,7 +487,12 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       },
     })
 
-    expect(report).toMatchObject({ kind: 'aborted', jobsProcessed: 1, committed: 1 })
+    expect(report).toMatchObject({
+      kind: 'aborted',
+      jobsProcessed: 1,
+      committed: 1,
+      writerPass: { kind: 'skipped', reason: 'aborted' },
+    })
     expect(author).toHaveBeenCalledTimes(1)
     expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(1)
     expect(existsSync(join(knowledgeRoot, '.lease'))).toBe(false)
@@ -518,28 +547,45 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(readJobState(knowledgeRoot, candidate.candidateId).kind).toBe('absent')
   })
 
-  it('consumes a rebuild marker in writer-pass order while budget remains', async () => {
+  it('delegates rebuild-marker consumption to the rebuild authority', async () => {
     requestRebuild({ knowledgeRoot, reason: 'absent', detail: 'test marker' })
     const order: string[] = []
     const read = vi.fn((root: string) => {
       order.push('read')
       return readRebuildRequest(root)
     })
-    const rebuild = vi.fn<DrainOperations['rebuildIndex']>(async () => {
+    const inspect = vi.fn(() => {
+      order.push('inspect')
+      return {
+        ...NO_INDEX_MAINTENANCE,
+        indexAbsent: true,
+      }
+    })
+    const rebuild = vi.fn<DrainOperations['rebuildIndex']>(async ({ knowledgeRoot: root }) => {
       order.push('rebuild')
+      clearRebuildRequest(root)
       return {
         projected: 3,
         skippedIncomplete: 0,
         scanIssues: [],
         removed: 0,
         backfilled: 0,
-        vec: 'brute',
+        vec: 'vec0',
+        pendingEmbeddings: 0,
+        maintenanceRemaining: false,
       }
     })
-    const clear = vi.fn((root: string) => {
-      order.push('clear')
-      clearRebuildRequest(root)
+    const acquire = vi.fn<DrainOperations['acquireEmbedder']>(async () => {
+      order.push('acquire')
+      return { kind: 'lexical-only' }
     })
+
+    const operations: Partial<PlannedDrainOperations> = {
+      readRebuildRequest: read,
+      readIndexMaintenanceState: inspect,
+      acquireEmbedder: acquire,
+      rebuildIndex: rebuild,
+    }
 
     const report = await drainQueue({
       knowledgeRoot,
@@ -547,12 +593,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       author: vi.fn<CuratorAuthor>(),
       executionContext: 'local-interactive',
       policy,
-      operations: {
-        readRebuildRequest: read,
-        acquireEmbedder: async () => ({ kind: 'lexical-only' }),
-        rebuildIndex: rebuild,
-        clearRebuildRequest: clear,
-      },
+      operations,
     })
 
     expect(report.writerPass).toMatchObject({
@@ -560,8 +601,175 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       request: expect.objectContaining({ reason: 'absent' }),
       rebuild: { projected: 3 },
     })
-    expect(order).toEqual(['read', 'rebuild', 'clear'])
+    expect(order).toEqual(['read', 'inspect', 'acquire', 'rebuild'])
     expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+  })
+
+  it('does not request writer work when both marker and durable debt are absent', async () => {
+    const acquire = vi.fn<DrainOperations['acquireEmbedder']>()
+    const rebuild = vi.fn<DrainOperations['rebuildIndex']>()
+    const operations: Partial<PlannedDrainOperations> = {
+      ...noWriterPass(),
+      acquireEmbedder: acquire,
+      rebuildIndex: rebuild,
+    }
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: vi.fn<CuratorAuthor>(),
+      executionContext: 'local-interactive',
+      policy,
+      operations,
+    })
+
+    expect(report.writerPass).toEqual({ kind: 'not-requested' })
+    expect(acquire).not.toHaveBeenCalled()
+    expect(rebuild).not.toHaveBeenCalled()
+  })
+
+  it('runs the writer pass for pending debt without a rebuild marker', async () => {
+    const acquire = vi.fn<DrainOperations['acquireEmbedder']>(async () => ({
+      kind: 'lexical-only',
+    }))
+    const rebuild = vi.fn<DrainOperations['rebuildIndex']>(async () => ({
+      projected: 0,
+      skippedIncomplete: 0,
+      scanIssues: [],
+      removed: 0,
+      backfilled: 0,
+      vec: 'vec0',
+      pendingEmbeddings: 1,
+      maintenanceRemaining: true,
+    }))
+    const operations: Partial<PlannedDrainOperations> = {
+      readRebuildRequest: () => ({ present: false }),
+      readIndexMaintenanceState: () => ({
+        ...NO_INDEX_MAINTENANCE,
+        pendingEmbeddings: 1,
+      }),
+      acquireEmbedder: acquire,
+      rebuildIndex: rebuild,
+    }
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: vi.fn<CuratorAuthor>(),
+      executionContext: 'local-interactive',
+      policy,
+      operations,
+    })
+
+    expect(report.writerPass).toMatchObject({
+      kind: 'rebuilt',
+      rebuild: { pendingEmbeddings: 1, maintenanceRemaining: true },
+    })
+    expect(report.writerPass).not.toHaveProperty('request')
+    expect(acquire).toHaveBeenCalledWith({ allowDownload: false })
+    expect(rebuild).toHaveBeenCalledWith({ knowledgeRoot })
+  })
+
+  it('heals the same pending row across lexical-only and ready drains without a marker', async () => {
+    scaffoldKnowledgeRoot(knowledgeRoot)
+    const published = publishBundle(
+      {
+        knowledgeRoot,
+        productKey: 'Writer Maintenance Product',
+        auditBaseDir,
+        commitArtifacts: 'none',
+      },
+      {
+        draft: makeBundleDraftFixture({
+          summary: 'Writer maintenance pending row',
+          body: 'The same canonical row must survive until dense backfill is ready.',
+        }),
+        discriminant: makeDiscriminantFixture(),
+        originClass: 'agent-verified',
+        createdAtOrdinal: 42,
+        screenStates: [makeScreenStateFixture()],
+        initialEvents: [],
+        relations: [],
+        provenance: {
+          mode: 'run-linked',
+          runId: 'writer-maintenance-run',
+          testId: 'writer-maintenance-test',
+          stepIndex: 0,
+        },
+        artifacts: [],
+      },
+    )
+    expect(published.kind).toBe('published')
+    if (published.kind !== 'published') throw new Error(`unexpected ${published.kind}`)
+    projectBundleIndexRow({ knowledgeRoot, bundleId: published.id })
+
+    expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+    expect(readIndexMaintenanceState(knowledgeRoot).pendingEmbeddings).toBe(1)
+    const pendingReader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    const pendingRow = pendingReader.db
+      .prepare('SELECT record_rowid, bundle_id, embed_status FROM records WHERE bundle_id = ?')
+      .get(published.id)
+    pendingReader.db.close()
+    expect(pendingRow).toMatchObject({
+      bundle_id: published.id,
+      embed_status: 'pending',
+    })
+
+    const acquire = vi.fn<DrainOperations['acquireEmbedder']>()
+      .mockResolvedValueOnce({ kind: 'lexical-only' })
+      .mockResolvedValueOnce({
+        kind: 'ready',
+        rung: 'native',
+        profile: DEFAULT_EMBEDDING_PROFILE,
+        embedder: makeFakeEmbedder(),
+      })
+    const options = {
+      knowledgeRoot,
+      auditBaseDir,
+      author: vi.fn<CuratorAuthor>(),
+      executionContext: 'local-interactive' as const,
+      policy,
+      operations: { acquireEmbedder: acquire },
+    }
+
+    const lexicalOnly = await drainQueue(options)
+    expect(lexicalOnly.writerPass).toMatchObject({
+      kind: 'rebuilt',
+      rebuild: { pendingEmbeddings: 1, maintenanceRemaining: true },
+    })
+    expect(lexicalOnly.writerPass).not.toHaveProperty('request')
+    expect(readIndexMaintenanceState(knowledgeRoot).pendingEmbeddings).toBe(1)
+    expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+
+    const ready = await drainQueue(options)
+    expect(ready.writerPass).toMatchObject({
+      kind: 'rebuilt',
+      rebuild: {
+        projected: 0,
+        backfilled: 1,
+        pendingEmbeddings: 0,
+        maintenanceRemaining: false,
+      },
+    })
+    expect(ready.writerPass).not.toHaveProperty('request')
+    expect(readIndexMaintenanceState(knowledgeRoot).pendingEmbeddings).toBe(0)
+    expect(readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+
+    const presentReader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(
+        presentReader.db
+          .prepare('SELECT record_rowid, bundle_id, embed_status FROM records WHERE bundle_id = ?')
+          .get(published.id),
+      ).toEqual({
+        record_rowid: pendingRow?.record_rowid,
+        bundle_id: published.id,
+        embed_status: 'present',
+      })
+    } finally {
+      presentReader.db.close()
+    }
+    expect(acquire).toHaveBeenCalledTimes(2)
   })
 
   it('leaves writer work durable when jobs consume the budget', async () => {
@@ -604,7 +812,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   it('reports writer-pass failure without consuming its durable marker', async () => {
     requestRebuild({ knowledgeRoot, reason: 'locked', detail: 'writer unavailable' })
-    const clear = vi.fn(clearRebuildRequest)
 
     const report = await drainQueue({
       knowledgeRoot,
@@ -617,7 +824,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
         rebuildIndex: async () => {
           throw new Error('simulated writer pass failure')
         },
-        clearRebuildRequest: clear,
       },
     })
 
@@ -626,7 +832,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       message: 'simulated writer pass failure',
     })
     expect(report.failures).toBe(1)
-    expect(clear).not.toHaveBeenCalled()
     expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
   })
 
