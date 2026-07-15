@@ -1,3 +1,17 @@
+import { createHash } from 'node:crypto'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { queuedCandidateDir } from '@vostride/agent-qa-knowledge-local'
 import {
   asRef,
   asRunId,
@@ -9,9 +23,10 @@ import {
   type SubActionEvidence,
   type Verdict,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  emitCurationCandidates,
   LEARNABLE_CAUTION_ROOT_CAUSES,
   projectCurationCandidates,
 } from '../curation/emit-candidates.js'
@@ -64,6 +79,7 @@ function subAction(
   elements: ElementInfo[],
   ref?: string,
   afterUrl = 'https://shop.example/cart',
+  artifactSha = ARTIFACT_SHA,
 ): SubActionEvidence {
   const stateBefore = screen(elements)
   return {
@@ -75,7 +91,7 @@ function subAction(
     stateBefore,
     stateAfter: screen(elements, afterUrl),
     result: { success: true },
-    artifactRefs: [{ id: `decision-screenshot:${ARTIFACT_SHA}`, sha: ARTIFACT_SHA }],
+    artifactRefs: [{ id: `decision-screenshot:${artifactSha}`, sha: artifactSha }],
   }
 }
 
@@ -273,5 +289,133 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
     expect(first).not.toHaveLength(0)
     expect(first.every((candidate) => candidate.executionContext === 'ci')).toBe(true)
     expect(first.every((candidate) => candidate.secretFlagged)).toBe(true)
+  })
+})
+
+function sha(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+function treeBytes(root: string): number {
+  return readdirSync(root, { withFileTypes: true }).reduce((total, entry) => {
+    const path = join(root, entry.name)
+    return total + (entry.isDirectory() ? treeBytes(path) : statSync(path).size)
+  }, 0)
+}
+
+describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  function emitFixture(): {
+    root: string
+    runDir: string
+    knowledgeRoot: string
+    handoff: CompletedRunHandoff
+  } {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-emit-candidates-'))
+    roots.push(root)
+    const runDir = join(root, 'runs', 'run-emit-1')
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const bytes = Buffer.from('verified checkout evidence')
+    const artifactSha = sha(bytes)
+    mkdirSync(join(runDir, 'blobs'), { recursive: true })
+    writeFileSync(join(runDir, 'blobs', artifactSha), bytes)
+    const resolvedStep = step(
+      {},
+      [
+        subAction(
+          [element('checkout', 'Checkout', { 'data-testid': 'checkout' })],
+          'checkout',
+          'https://shop.example/cart',
+          artifactSha,
+        ),
+      ],
+    )
+    return {
+      root,
+      runDir,
+      knowledgeRoot,
+      handoff: handoff([testOutcome({}, [resolvedStep])]),
+    }
+  }
+
+  it('drops every projected candidate through the durable queue and reports outcomes', () => {
+    const fixture = emitFixture()
+
+    const report = emitCurationCandidates(fixture)
+
+    expect(report).toMatchObject({
+      enqueued: 1,
+      coalesced: 0,
+      capExceeded: 0,
+      refused: 0,
+    })
+    expect(report.details).toHaveLength(1)
+    expect(report.details[0]?.outcome).toBe('enqueued')
+    const candidate = report.details[0]!
+    const queuedDir = queuedCandidateDir(fixture.knowledgeRoot, candidate.candidateId)
+    expect(JSON.parse(readFileSync(join(queuedDir, 'payload.json'), 'utf8'))).toMatchObject({
+      candidateId: candidate.candidateId,
+      artifactInventory: [
+        expect.objectContaining({ bytes: Buffer.byteLength('verified checkout evidence') }),
+      ],
+    })
+  })
+
+  it('coalesces every candidate on re-emit without writing new bytes', () => {
+    const fixture = emitFixture()
+    const first = emitCurationCandidates(fixture)
+    const bytesAfterFirst = treeBytes(fixture.knowledgeRoot)
+
+    const second = emitCurationCandidates(fixture)
+
+    expect(first.enqueued).toBe(1)
+    expect(second).toMatchObject({
+      enqueued: 0,
+      coalesced: 1,
+      capExceeded: 0,
+      refused: 0,
+    })
+    expect(second.details.every((detail) => detail.outcome === 'coalesced')).toBe(true)
+    expect(treeBytes(fixture.knowledgeRoot)).toBe(bytesAfterFirst)
+  })
+
+  it('reports a missing artifact per candidate and continues the remaining batch', () => {
+    const fixture = emitFixture()
+    const existingBytes = Buffer.from('second candidate evidence')
+    const existingSha = sha(existingBytes)
+    writeFileSync(join(fixture.runDir, 'blobs', existingSha), existingBytes)
+    const missingSha = 'f'.repeat(64)
+    const first = step(
+      { stepIndex: 0, stepText: 'Open checkout' },
+      [subAction([element('checkout', 'Checkout')], 'checkout', undefined, missingSha)],
+    )
+    const second = step(
+      { stepIndex: 1, stepText: 'Open payment' },
+      [subAction([element('payment', 'Payment')], 'payment', undefined, existingSha)],
+    )
+    const input = {
+      handoff: handoff([testOutcome({}, [first, second])]),
+      runDir: fixture.runDir,
+      knowledgeRoot: fixture.knowledgeRoot,
+    }
+
+    const report = emitCurationCandidates(input)
+
+    expect(report).toMatchObject({
+      enqueued: 1,
+      coalesced: 0,
+      capExceeded: 0,
+      refused: 1,
+    })
+    expect(report.details.map((detail) => detail.outcome)).toContainEqual({
+      kind: 'refused',
+      reason: 'artifact-missing',
+    })
+    expect(report.details.map((detail) => detail.outcome)).toContain('enqueued')
   })
 })
