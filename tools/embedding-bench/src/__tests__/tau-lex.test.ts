@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { describe, expect, it } from 'vitest'
 
@@ -9,6 +10,81 @@ import {
   deriveTauLex,
   type TauLexCorpus,
 } from '../tau-lex'
+
+interface ProductionMatchModule {
+  LEXICAL_MATCH_SEMANTICS: string
+  buildLexicalMatchExpression(text: string): string
+}
+
+interface SchemaV2ReceiptView {
+  schemaVersion: number
+  ftsShape: {
+    querySemantics: string
+    productionQuerySource: string
+  }
+  servingReplay: {
+    evaluatedCandidates: number
+    matchedCandidates: number
+    admittedCandidates: number
+    goldPairs: number
+    matchedGoldPairs: number
+    admittedGoldPairs: number
+    goldRecall: number
+  }
+}
+
+const FTS_TOKENIZER = "unicode61 tokenchars '#-_./:[]=>@'"
+
+async function productionMatchModule(): Promise<ProductionMatchModule> {
+  return await import(
+    new URL(
+      '../../../../packages/knowledge-local/src/retrieval/fts-match.ts',
+      import.meta.url,
+    ).href
+  ) as ProductionMatchModule
+}
+
+function scoreWithProductionMatch(
+  fixture: TauLexCorpus,
+  queryId: string,
+  goldId: string,
+  buildMatch: (text: string) => string,
+): number {
+  const db = new DatabaseSync(':memory:')
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE fts_records USING fts5(
+        identity,
+        content,
+        context,
+        tokenize = "${FTS_TOKENIZER}"
+      )
+    `)
+    const insert = db.prepare(`
+      INSERT INTO fts_records (rowid, identity, content, context)
+      VALUES (?, ?, ?, ?)
+    `)
+    fixture.documents.forEach((document, index) => {
+      const identity = document.text
+        .split(/\r?\n/u)
+        .filter((line) => line.startsWith('anchor: '))
+        .join('\n')
+      insert.run(index + 1, identity, document.text, '')
+    })
+    const query = fixture.recordedQueries.find(({ id }) => id === queryId)
+    const rowid = fixture.documents.findIndex(({ id }) => id === goldId) + 1
+    if (query === undefined || rowid === 0) throw new Error('invalid syntax fixture identity')
+    const row = db.prepare(`
+      SELECT -bm25(fts_records, 10, 5, 1) AS bm25_positive
+      FROM fts_records
+      WHERE fts_records MATCH ? AND rowid = ?
+    `).get(buildMatch(query.query), rowid)
+    if (row === undefined) throw new Error('production MATCH did not recall the syntax fixture')
+    return Number(Number(row.bm25_positive).toFixed(12))
+  } finally {
+    db.close()
+  }
+}
 
 const corpus: TauLexCorpus = {
   documents: [
@@ -41,8 +117,37 @@ const corpus: TauLexCorpus = {
     {
       id: 'doc-background',
       kind: 'page',
-      text: 'page "Account settings"\n\nanchor: page:/settings',
+      text: [
+        'page "Complete account search settings"',
+        '',
+        'This long background page mentions complete and search among unrelated settings.',
+        'anchor: page:/settings',
+      ].join('\n'),
       apps: ['shop', 'maps'],
+      sourcePaths: ['fixture.json'],
+    },
+    {
+      id: 'doc-syntax-gold',
+      kind: 'element',
+      text: [
+        'button "Literal OR token"',
+        '',
+        'The operator-shaped OR token is inert document content.',
+        'anchor: fixture:syntax-gold',
+      ].join('\n'),
+      apps: ['syntax'],
+      sourcePaths: ['fixture.json'],
+    },
+    {
+      id: 'doc-syntax-background',
+      kind: 'page',
+      text: [
+        'page "Literal background"',
+        '',
+        'A long unrelated background document with only the literal overlap token.',
+        'anchor: fixture:syntax-background',
+      ].join('\n'),
+      apps: ['syntax'],
       sourcePaths: ['fixture.json'],
     },
   ],
@@ -61,6 +166,14 @@ const corpus: TauLexCorpus = {
       query: 'Search for a place',
       goldDocIds: ['doc-search'],
       sourceCassetteId: 'cassette-maps',
+      sourcePath: 'fixture.json',
+    },
+    {
+      id: 'query-syntax',
+      app: 'syntax',
+      query: 'literal literal a"b OR AND NOT NEAR',
+      goldDocIds: ['doc-syntax-gold'],
+      sourceCassetteId: 'cassette-syntax',
       sourcePath: 'fixture.json',
     },
   ],
@@ -91,20 +204,56 @@ describe('tau lexical calibration', () => {
       const firstJson = await readFile(jsonPath, 'utf8')
       const firstMarkdown = await readFile(markdownPath, 'utf8')
       const second = await calibrateTauLex(options)
+      const production = await productionMatchModule()
+      const receiptV2 = first.receipt as unknown as SchemaV2ReceiptView
 
       expect(await readFile(jsonPath, 'utf8')).toBe(firstJson)
       expect(await readFile(markdownPath, 'utf8')).toBe(firstMarkdown)
       expect(second.receipt).toEqual(first.receipt)
+      expect(receiptV2.schemaVersion).toBe(2)
+      expect(receiptV2.ftsShape.querySemantics).toBe('quoted-token-or-v1')
+      expect(receiptV2.ftsShape.querySemantics).toBe(production.LEXICAL_MATCH_SEMANTICS)
+      expect(receiptV2.ftsShape.productionQuerySource).toBe(
+        'packages/knowledge-local/src/retrieval/fts-match.ts',
+      )
       expect(first.receipt.rule).toBe('p05-linear-floor2')
       expect(first.receipt.signConvention).toContain('negated')
       expect(first.receipt.weights).toEqual({ identity: 10, content: 5, context: 1 })
       expect(first.receipt.pairs.map(({ queryId, goldId }) => [queryId, goldId])).toEqual([
         ['query-checkout', 'doc-checkout'],
         ['query-search', 'doc-search'],
+        ['query-syntax', 'doc-syntax-gold'],
       ])
       expect(first.receipt.pairs.every(({ bm25Positive }) => bm25Positive > 0)).toBe(true)
+      expect(production.buildLexicalMatchExpression('literal literal a"b OR AND NOT NEAR'))
+        .toBe('"literal" OR "a""b" OR "OR" OR "AND" OR "NOT" OR "NEAR"')
+      expect(
+        first.receipt.pairs.find(({ queryId }) => queryId === 'query-syntax')?.bm25Positive,
+      ).toBe(
+        scoreWithProductionMatch(
+          corpus,
+          'query-syntax',
+          'doc-syntax-gold',
+          production.buildLexicalMatchExpression,
+        ),
+      )
+      expect(receiptV2.servingReplay.matchedGoldPairs).toBeGreaterThan(0)
+      expect(receiptV2.servingReplay.goldRecall).toBeGreaterThan(0)
+      expect(receiptV2.servingReplay.admittedCandidates).toBeGreaterThan(0)
+      expect(receiptV2.servingReplay.admittedCandidates).toBeLessThan(
+        receiptV2.servingReplay.matchedCandidates,
+      )
+      expect(receiptV2.servingReplay.matchedCandidates).toBeLessThanOrEqual(
+        receiptV2.servingReplay.evaluatedCandidates,
+      )
+      expect(receiptV2.servingReplay.admittedGoldPairs).toBeLessThanOrEqual(
+        receiptV2.servingReplay.matchedGoldPairs,
+      )
+      expect(receiptV2.servingReplay.goldPairs).toBe(3)
       expect(firstMarkdown).toContain('p05 linear interpolation')
       expect(firstMarkdown).toContain('2026-07-15')
+      expect(firstMarkdown).toContain('quoted-token-or-v1')
+      expect(firstMarkdown).toContain('Serving Replay')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
