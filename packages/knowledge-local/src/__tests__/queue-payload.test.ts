@@ -103,7 +103,25 @@ function finalizedReceipt(): CurationCaptureReceipt {
 function bridgeAddressInput(): Parameters<
   typeof buildCurationCandidateAddressFields
 >[0] {
-  throw new Error('Plan 378-21 bridge regression fixture is not implemented')
+  return {
+    ...legacyAddressFields(),
+    artifactInventory: [
+      {
+        relativePath: `artifacts/${'b'.repeat(64)}`,
+        sha256: 'b'.repeat(64),
+        bytes: 128,
+        stepIndex: 0,
+        role: 'dom-snapshot',
+        originalName: 'step-0.dom.json',
+      },
+    ],
+    captureReceipt: {
+      regions: [],
+      interactions: [{ stepIndex: 0, elementRef: 'password-input' }],
+      omissions: [],
+      redactions: [],
+    },
+  }
 }
 
 describe('curation candidate projection and receipt contracts (SAFE-02)', () => {
