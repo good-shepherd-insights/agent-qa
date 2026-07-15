@@ -183,6 +183,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
 
   function expectQueueTreeEmpty(): void {
     expect(queueFiles()).toEqual([])
+    expect(existsSync(join(queueRoot(knowledgeRoot), '.staging'))).toBe(false)
   }
 
   it('hashes only deterministic fields regardless of object order or emittedAt', () => {
@@ -333,10 +334,10 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       redactions: [],
     })
     const files = queueFiles()
+    const serialized = Buffer.concat(files.map(({ bytes }) => bytes)).toString('utf8')
     expect(files.some(({ path }) => path.includes(rawSha))).toBe(false)
-    expect(Buffer.concat(files.map(({ bytes }) => bytes)).toString('utf8')).not.toContain(
-      credential,
-    )
+    expect(serialized).not.toContain(rawSha)
+    expect(serialized).not.toContain(credential)
   })
 
   it.each(['dom-snapshot', 'ax-snapshot'] as const)(
@@ -403,9 +404,11 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         artifactSources: [snapshot.source],
       })
       expect(duplicate).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
-      expect(queueFiles().some(({ path }) => path.includes(snapshot.descriptor.ref.sha))).toBe(
-        false,
-      )
+      const files = queueFiles()
+      const serialized = Buffer.concat(files.map(({ bytes }) => bytes)).toString('utf8')
+      expect(files.some(({ path }) => path.includes(snapshot.descriptor.ref.sha))).toBe(false)
+      expect(serialized).not.toContain(snapshot.descriptor.ref.sha)
+      expect(serialized).not.toContain(credential)
     },
   )
 
@@ -509,6 +512,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     expect(capped.kind).toBe('cap-exceeded')
     if (capped.kind !== 'cap-exceeded') throw new Error('expected cap-exceeded projection')
     expect(existsSync(queuedCandidateDir(capRoot, capped.candidateId))).toBe(false)
+    expect(existsSync(join(queueRoot(capRoot), '.staging'))).toBe(false)
   })
 
   it('retains the legacy finalized-payload entry and string outcome', () => {
