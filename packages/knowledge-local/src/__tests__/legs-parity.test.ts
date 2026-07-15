@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ensureEmbedCacheTable, putCachedEmbedding } from '../embed-cache.js'
 import type { EmbedderPort } from '../embedder-port.js'
 import { openIndexWriter, vecTableName, type IndexWriterHandle } from '../index-open.js'
+import { buildRetrievalQuery } from '../query-helper.js'
 import {
   anchorSeedLeg,
   denseLeg,
@@ -169,7 +170,88 @@ describe('RETR-01 fail-closed retrieval legs', () => {
     expect(candidates[0]!.rawScores.bm25Positive).toBeGreaterThan(
       candidates[1]!.rawScores.bm25Positive!,
     )
-    expect(lexicalLeg(db, 'checkout OR sibling', QUERY_SCOPE, 10)).toEqual([])
+    expect(
+      lexicalLeg(db, 'checkout OR sibling', QUERY_SCOPE, 10).map(
+        ({ bundleId }) => bundleId,
+      ),
+    ).toEqual(['identity-match', 'context-match'])
+  })
+
+  it('passes realistic multi-token query-helper output unchanged into lexical recall', () => {
+    const gold = insertRecord({ bundleId: 'checkout-button-gold' })
+    const unrelated = insertRecord({ bundleId: 'shipping-address-unrelated' })
+    const sibling = insertRecord({
+      bundleId: 'checkout-button-sibling',
+      product: 'payments',
+      scopeTier: 'product',
+      scopeKey: QUERY_SCOPE.productKey,
+    })
+    const withdrawn = insertRecord({
+      bundleId: 'checkout-button-withdrawn',
+      status: 'superseded',
+    })
+    insertFts(gold, { identity: 'checkout button' })
+    insertFts(unrelated, { identity: 'shipping address' })
+    insertFts(sibling, { identity: 'checkout button' })
+    insertFts(withdrawn, { identity: 'checkout button' })
+
+    const query = buildRetrievalQuery({
+      intent: 'Complete checkout securely',
+      anchors: [
+        { t: 'el', role: 'Button', name: 'Checkout now' },
+        { t: 'selector', literal: '#checkout-submit' },
+        { t: 'platform', platform: 'web' },
+      ],
+    })
+    expect(new Set(query.lexicalQuery.split(/\s+/)).size).toBeGreaterThan(4)
+
+    const first = lexicalLeg(db, query.lexicalQuery, QUERY_SCOPE, 10)
+    const second = lexicalLeg(db, query.lexicalQuery, QUERY_SCOPE, 10)
+
+    expect(first.map(({ bundleId }) => bundleId)).toEqual(['checkout-button-gold'])
+    expect(first[0]?.rawScores.bm25Positive).toBeGreaterThan(0)
+    expect(second).toEqual(first)
+  })
+
+  it('keeps operator, quote, parenthesis, wildcard, and selector-shaped helper text inert', () => {
+    const literalRows = [
+      ['literal-or', 'OR'],
+      ['literal-and', 'AND'],
+      ['literal-not', 'NOT'],
+      ['literal-near', 'NEAR'],
+      ['literal-paren', 'paren'],
+      ['literal-anchor', 'anchor'],
+      ['literal-quote', 'quote'],
+      ['literal-checkout', 'checkout'],
+    ] as const
+    for (const [bundleId, token] of literalRows) {
+      const recordRowid = insertRecord({ bundleId })
+      insertFts(recordRowid, { identity: token })
+    }
+    const wildcardPrefixOnly = insertRecord({ bundleId: 'wildcard-prefix-only' })
+    const unrelated = insertRecord({ bundleId: 'operator-unrelated' })
+    insertFts(wildcardPrefixOnly, { identity: 'checkoutish' })
+    insertFts(unrelated, { identity: 'shipping' })
+
+    const query = buildRetrievalQuery({
+      intent: 'OR AND NOT NEAR (paren) checkout*',
+      anchors: [
+        { t: 'flow', name: 'Anchor "quote"' },
+        { t: 'selector', literal: '[data-testid="checkout*"]' },
+      ],
+    })
+    expect(query.lexicalQuery).toContain('Anchor "quote"')
+    expect(query.lexicalQuery).toContain('[data-testid="checkout*"]')
+
+    const first = lexicalLeg(db, query.lexicalQuery, QUERY_SCOPE, 20)
+    const second = lexicalLeg(db, query.lexicalQuery, QUERY_SCOPE, 20)
+
+    expect(new Set(first.map(({ bundleId }) => bundleId))).toEqual(
+      new Set(literalRows.map(([bundleId]) => bundleId)),
+    )
+    expect(first.map(({ bundleId }) => bundleId)).not.toContain('wildcard-prefix-only')
+    expect(first.map(({ bundleId }) => bundleId)).not.toContain('operator-unrelated')
+    expect(second).toEqual(first)
   })
 
   it('merges product and partition-unconstrained global vec0 results with brute parity', async () => {
