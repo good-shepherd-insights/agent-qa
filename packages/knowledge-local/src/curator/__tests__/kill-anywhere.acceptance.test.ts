@@ -50,6 +50,8 @@ type FaultPoint =
   | 'after-publish-before-index'
   | 'after-index-before-intent-clear'
 
+type RealSigkillPoint = 'publish-staged' | 'mutable-enrichment'
+
 type DrainOperations = NonNullable<DrainOptions['operations']>
 
 function addressFields(seed: string): CurationCandidateAddressFields {
@@ -295,6 +297,10 @@ function operationsForFault(
   return {}
 }
 
+async function proveRealSigkillBoundary(point: RealSigkillPoint): Promise<void> {
+  throw new Error(`real SIGKILL boundary harness not implemented: ${point}`)
+}
+
 describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CUR-04)', () => {
   const matrix: readonly FaultPoint[] = [
     'after-emit-before-claim',
@@ -443,5 +449,13 @@ describe('kill-anywhere recovery across memory.md §8.7 lifecycle boundaries (CU
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
       rmSync(root, { recursive: true, force: true })
     }
+  }, TEST_TIMEOUT_MS)
+
+  it('recovers a real SIGKILL from durable publish staging without re-authoring', async () => {
+    await proveRealSigkillBoundary('publish-staged')
+  }, TEST_TIMEOUT_MS)
+
+  it('recovers a real SIGKILL from partial mutable enrichment without re-authoring', async () => {
+    await proveRealSigkillBoundary('mutable-enrichment')
   }, TEST_TIMEOUT_MS)
 })
