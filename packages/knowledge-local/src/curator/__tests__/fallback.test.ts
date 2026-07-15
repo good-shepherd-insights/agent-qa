@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import {
   asEvidenceToken,
   asRecordId,
@@ -7,8 +11,9 @@ import {
   type ExecutionContext,
   type FactSubtype,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, expectTypeOf, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 
+import { publishBundle, type PublishBundleInput } from '../../index.js'
 import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, NeighborRecord } from '../author-contract.js'
 import {
@@ -27,6 +32,15 @@ type FallbackNeighborFixture = Extract<NeighborRecord, { kind: 'fact' }>
 const primaryAnchor: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 const pageAnchor: Anchor = { t: 'page', route: '/checkout' }
 const scope = { tier: 'product', key: 'storefront' } as const
+let root: string
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'knowledge-fallback-'))
+})
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true })
+})
 
 function job(overrides: Partial<FallbackJobFixture> = {}): FallbackJobFixture {
   return {
@@ -323,5 +337,92 @@ describe('assertRestrictedFallbackDelta commit-side boundary', () => {
     for (const delta of forbidden) {
       expect(() => assertRestrictedFallbackDelta(delta)).toThrow(TypeError)
     }
+  })
+})
+
+describe('fallback and capable-author identity convergence (CUR-02)', () => {
+  function publishInput(draft: Extract<Delta, { kind: 'Add' }>['bundle']): PublishBundleInput {
+    const primary = draft.anchors[0]
+    if (draft.kind !== 'fact' || draft.subtype !== 'selector' || primary?.t !== 'el') {
+      throw new TypeError('identity fixture requires a selector fact with an element anchor')
+    }
+
+    return {
+      draft,
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: primary.role, name: primary.name },
+      },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 42,
+      screenStates: [],
+      initialEvents: [],
+      relations: [],
+      provenance: {
+        mode: 'run-linked',
+        runId: 'fallback-run',
+        testId: 'fallback-checkout',
+        stepIndex: 0,
+      },
+      artifacts: [],
+    }
+  }
+
+  function config() {
+    return {
+      knowledgeRoot: join(root, 'agent-qa-knowledge'),
+      productKey: 'storefront',
+      auditBaseDir: join(root, '.agent-qa'),
+      commitArtifacts: 'none' as const,
+    }
+  }
+
+  function fallbackAdd(input = job()): Extract<Delta, { kind: 'Add' }> {
+    const delta = onlyDelta(input)
+    if (delta.kind !== 'Add') throw new Error('expected fallback Add')
+    return delta
+  }
+
+  it('publishes enriched prose for the same deterministic fields as already-exists', () => {
+    const fallback = fallbackAdd()
+    const first = publishBundle(config(), publishInput(fallback.bundle))
+    expect(first.kind).toBe('published')
+    if (first.kind !== 'published') throw new Error('expected fallback publish')
+
+    const enrichedDraft = {
+      ...fallback.bundle,
+      summary: 'Checkout call to action for the current storefront',
+      body:
+        'The uniquely resolved Checkout button submits the cart and navigates to payment.',
+    }
+    const enriched = publishBundle(config(), publishInput(enrichedDraft))
+
+    expect(enriched).toEqual({ kind: 'already-exists', id: first.id })
+  })
+
+  it('mints a different identity when the deterministic primary anchor changes', () => {
+    const firstFallback = fallbackAdd()
+    const first = publishBundle(config(), publishInput(firstFallback.bundle))
+    expect(first.kind).toBe('published')
+    if (first.kind !== 'published') throw new Error('expected first publish')
+
+    const differentFallback = fallbackAdd(
+      job({
+        candidateId: 'b'.repeat(64),
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Continue to payment' },
+          pageAnchor,
+        ],
+        summarySeed: 'Continue to payment control',
+        bodySeed: 'The Continue to payment button resolves uniquely.',
+        attributingObservationId: 'run-1:test-0:step-1',
+      }),
+    )
+    const different = publishBundle(config(), publishInput(differentFallback.bundle))
+
+    expect(different.kind).toBe('published')
+    if (different.kind !== 'published') throw new Error('expected distinct publish')
+    expect(different.id).not.toBe(first.id)
   })
 })
