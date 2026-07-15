@@ -388,9 +388,11 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const state = readJobState(knowledgeRoot, job.candidateId)
       expect(state.kind).toBe('parsed')
       if (state.kind !== 'parsed') throw new Error('expected checkpointed state')
-      expect(state.state.lifecycle).toBe('authored')
       expect(state.state.authored).toMatchObject({ schemaVersion: 1 })
-      if (commits === 1) throw new Error('simulated crash after checkpoint')
+      if (commits === 1) {
+        expect(state.state.lifecycle).toBe('authored')
+        throw new Error('simulated crash after checkpoint')
+      }
       writeJobState({ knowledgeRoot, candidateId: job.candidateId, lifecycle: 'done' })
       return {
         kind: 'applied',

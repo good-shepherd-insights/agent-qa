@@ -1,0 +1,676 @@
+import { existsSync } from 'node:fs'
+
+import {
+  canonicalJson,
+  type BundleKind,
+  type ExecutionContext,
+  type FactSubtype,
+  type GuardrailPolicy,
+  type IndexEntry,
+} from '@vostride/agent-qa-schema'
+
+import { openKnowledgeReader, type KnowledgeReader } from '../index-reader.js'
+import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
+import { rebuildIndex } from '../index-rebuild.js'
+import {
+  clearRebuildRequest,
+  readRebuildRequest,
+  type RebuildRequest,
+} from '../rebuild-marker.js'
+import { buildRetrievalQuery, type RetrievalQueryInput } from '../query-helper.js'
+import { retrieve } from '../retrieve.js'
+import {
+  reconcileOnDrainStart,
+  type ReconcileReport,
+} from '../journal/reconcile.js'
+import type { CommitIntent } from '../journal/intent-journal.js'
+import {
+  acquireWriterLease,
+  heartbeatLease,
+  releaseLease,
+  type WriterLease,
+} from '../lease/writer-lease.js'
+import {
+  claimNextJob,
+  requeueClaimed,
+  type ClaimedCurationJob,
+} from '../queue/curation-queue.js'
+import {
+  persistAuthoredCheckpoint,
+  readJobState,
+  writeJobState,
+} from '../queue/job-state.js'
+import type { CurationCandidatePayload } from '../queue/queue-payload.js'
+import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+  parseAuthoredCheckpoint,
+  resolveDispositionProfile,
+  type AuthoredCheckpoint,
+  type CurationJobView,
+  type CuratorAuthor,
+  type NeighborRecord,
+} from './author-contract.js'
+import {
+  applyIndexDeltaForBundle,
+  commitCurationDelta,
+  deriveIndexRowFromBundle,
+  type CommitCurationOutcome,
+} from './commit.js'
+import type { DispositionDrainState } from './disposition.js'
+import { constructFallbackDeltas } from './fallback.js'
+
+/** Ratified M2 one-shot budget. It gates job starts only, never an in-flight author request. */
+export const DRAIN_BUDGET_MS = 60_000
+
+/** Provisional §7.4 cap over distinct search-before-create query targets. */
+export const SEARCH_BEFORE_CREATE_MAX_QUERIES = 5
+
+const SEARCH_BEFORE_CREATE_RESULTS_PER_QUERY = 8
+const SEARCH_BEFORE_CREATE_MAX_NEIGHBORS = 12
+
+export type DrainFailureStage =
+  | 'lease'
+  | 'reconcile'
+  | 'claim'
+  | 'heartbeat'
+  | 'job-state'
+  | 'search'
+  | 'author'
+  | 'checkpoint'
+  | 'commit'
+  | 'requeue'
+  | 'release'
+  | 'writer-pass'
+
+export interface DrainFailure {
+  stage: DrainFailureStage
+  message: string
+  candidateId?: string
+}
+
+export type WriterPassReport =
+  | { kind: 'not-requested' }
+  | { kind: 'pending'; request: RebuildRequest | undefined }
+  | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
+  | { kind: 'rebuilt'; request: RebuildRequest | undefined; projected: number }
+  | { kind: 'failed'; message: string }
+
+interface DrainReportBase {
+  jobsProcessed: number
+  committed: number
+  downgraded: number
+  withheld: number
+  requeued: number
+  failures: number
+  failureDetails: DrainFailure[]
+  reconcile: ReconcileReport | undefined
+  writerPass: WriterPassReport
+}
+
+export type DrainReport = DrainReportBase &
+  (
+    | { kind: 'drained' | 'aborted' }
+    | { kind: 'handed-off'; holder: WriterLease }
+  )
+
+/**
+ * Internal capability table used by focused fault-injection tests. Production callers omit it;
+ * every default delegates directly to the shipped queue, lease, retrieval, commit, and rebuild
+ * authorities.
+ */
+export interface DrainOperations {
+  acquireWriterLease: typeof acquireWriterLease
+  heartbeatLease: typeof heartbeatLease
+  releaseLease: typeof releaseLease
+  reconcileOnDrainStart: typeof reconcileOnDrainStart
+  claimNextJob: typeof claimNextJob
+  requeueClaimed: typeof requeueClaimed
+  readJobState: typeof readJobState
+  writeJobState: typeof writeJobState
+  persistAuthoredCheckpoint: typeof persistAuthoredCheckpoint
+  openKnowledgeReader: typeof openKnowledgeReader
+  buildRetrievalQuery: typeof buildRetrievalQuery
+  retrieve: typeof retrieve
+  commitCurationDelta: typeof commitCurationDelta
+  /** The canonical commit already projects dense work as pending; Task 2 selects this explicit seam. */
+  commitCurationDeltaVectorless: typeof commitCurationDelta
+  readRebuildRequest: typeof readRebuildRequest
+  rebuildIndex: typeof rebuildIndex
+  clearRebuildRequest: typeof clearRebuildRequest
+  hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
+  applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
+  deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
+}
+
+export interface DrainOptions {
+  knowledgeRoot: string
+  auditBaseDir: string
+  budgetMs?: number
+  author: CuratorAuthor
+  executionContext: ExecutionContext
+  policy: GuardrailPolicy
+  signal?: AbortSignal
+  /** D-06 test seam. Production uses the one wall clock only at drain boundaries. */
+  now?: () => number
+  /** Fault-injection seam; production callers must omit it. */
+  operations?: Partial<DrainOperations>
+}
+
+const BUNDLE_KINDS = new Set<BundleKind>([
+  'fact',
+  'procedure',
+  'caution',
+  'unknown',
+  'policy',
+])
+const FACT_SUBTYPES = new Set<FactSubtype>([
+  'selector',
+  'behavioral',
+  'navigational',
+  'measurement',
+  'content',
+])
+
+function hasIndexRow(knowledgeRoot: string, bundleId: string): boolean {
+  if (!existsSync(indexDbPath(knowledgeRoot))) return false
+  let reader: ReturnType<typeof openIndexReaderConnection> | undefined
+  try {
+    reader = openIndexReaderConnection(knowledgeRoot)
+    return reader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(bundleId)
+      !== undefined
+  } catch {
+    return false
+  } finally {
+    reader?.db.close()
+  }
+}
+
+const DEFAULT_OPERATIONS: DrainOperations = {
+  acquireWriterLease,
+  heartbeatLease,
+  releaseLease,
+  reconcileOnDrainStart,
+  claimNextJob,
+  requeueClaimed,
+  readJobState,
+  writeJobState,
+  persistAuthoredCheckpoint,
+  openKnowledgeReader,
+  buildRetrievalQuery,
+  retrieve,
+  commitCurationDelta,
+  commitCurationDeltaVectorless: commitCurationDelta,
+  readRebuildRequest,
+  rebuildIndex,
+  clearRebuildRequest,
+  hasIndexRow,
+  applyIndexDeltaForBundle,
+  deriveIndexRowFromBundle,
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function emptyReport(): DrainReportBase {
+  return {
+    jobsProcessed: 0,
+    committed: 0,
+    downgraded: 0,
+    withheld: 0,
+    requeued: 0,
+    failures: 0,
+    failureDetails: [],
+    reconcile: undefined,
+    writerPass: { kind: 'not-requested' },
+  }
+}
+
+function recordFailure(
+  report: DrainReportBase,
+  stage: DrainFailureStage,
+  error: unknown,
+  candidateId?: string,
+): void {
+  report.failures += 1
+  report.failureDetails.push({
+    stage,
+    message: errorMessage(error),
+    ...(candidateId === undefined ? {} : { candidateId }),
+  })
+}
+
+function jobView(payload: CurationCandidatePayload): CurationJobView {
+  return {
+    candidateId: payload.candidateId,
+    kind: payload.kind,
+    ...(payload.subtype === undefined ? {} : { subtype: payload.subtype }),
+    anchors: payload.anchors,
+    summarySeed: payload.summarySeed,
+    bodySeed: payload.bodySeed,
+    distilledObservations: payload.distilledObservations,
+    scope: payload.scope,
+    buildOrdinal: payload.buildOrdinal,
+    attributingObservationId: payload.attributingObservationId,
+    executionContext: payload.executionContext,
+    secretFlagged: payload.secretFlagged,
+    injectionFlagged: payload.injectionFlagged,
+  }
+}
+
+function addTargetedQuery(
+  queries: RetrievalQueryInput[],
+  seen: Set<string>,
+  query: RetrievalQueryInput,
+): void {
+  if (queries.length >= SEARCH_BEFORE_CREATE_MAX_QUERIES) return
+  const key = canonicalJson({ intent: query.intent, anchors: query.anchors })
+  if (seen.has(key)) return
+  seen.add(key)
+  queries.push(query)
+}
+
+function targetedQueries(payload: CurationCandidatePayload): RetrievalQueryInput[] {
+  const primary = payload.anchors[0]!
+  const queries: RetrievalQueryInput[] = []
+  const seen = new Set<string>()
+  addTargetedQuery(queries, seen, {
+    intent: payload.summarySeed,
+    anchors: [primary],
+  })
+
+  for (const anchor of payload.anchors) {
+    if (anchor.t === 'error') {
+      addTargetedQuery(queries, seen, {
+        intent: anchor.message,
+        anchors: [primary, anchor],
+      })
+    } else if (anchor.t === 'flow') {
+      addTargetedQuery(queries, seen, {
+        intent: anchor.name,
+        anchors: [primary, anchor],
+      })
+    }
+  }
+  for (const observation of payload.distilledObservations) {
+    if (observation.error !== undefined) {
+      addTargetedQuery(queries, seen, {
+        intent: observation.error.naturalKey,
+        anchors: [
+          primary,
+          { t: 'error', message: observation.error.naturalKey },
+        ],
+      })
+    }
+    if (observation.flow !== undefined) {
+      addTargetedQuery(queries, seen, {
+        intent: observation.flow.name,
+        anchors: [primary, { t: 'flow', name: observation.flow.name }],
+      })
+    }
+  }
+  return queries
+}
+
+function retrievalOptions(payload: CurationCandidatePayload) {
+  return {
+    n: SEARCH_BEFORE_CREATE_RESULTS_PER_QUERY,
+    product: payload.scope.key,
+    ...(payload.scope.tier === 'test' ? { testKey: payload.scope.key } : {}),
+    ...(payload.scope.tier === 'suite' ? { suiteKey: payload.scope.key } : {}),
+    includeSuperseded: true,
+  }
+}
+
+function neighborFromEntry(entry: IndexEntry, alias: number): NeighborRecord | undefined {
+  if (!BUNDLE_KINDS.has(entry.kind as BundleKind) || entry.audit === undefined) return undefined
+  const kind = entry.kind as BundleKind
+  const observedOrdinal = entry.audit.closedAtOrdinal ?? entry.audit.openedAtOrdinal
+  const base = {
+    alias,
+    recordId: entry.id,
+    summary: entry.summary,
+    anchors: entry.anchors,
+    observedStatus: entry.audit.status,
+    observedOrdinal,
+  }
+  if (kind === 'fact') {
+    if (!FACT_SUBTYPES.has(entry.subtype as FactSubtype)) return undefined
+    return { ...base, kind, subtype: entry.subtype as FactSubtype }
+  }
+  return { ...base, kind }
+}
+
+async function searchBeforeCreate(
+  operations: DrainOperations,
+  payload: CurationCandidatePayload,
+  knowledgeRoot: string,
+): Promise<NeighborRecord[]> {
+  let reader: KnowledgeReader | undefined
+  try {
+    reader = operations.openKnowledgeReader(knowledgeRoot)
+    const byRecordId = new Map<string, IndexEntry>()
+    for (const query of targetedQueries(payload)) {
+      // The explicit build call fixes normalization/query classification at this boundary; the
+      // retrieve pipeline consumes the same structured input through its public entry point.
+      operations.buildRetrievalQuery(query)
+      const hits = await operations.retrieve(reader, query, retrievalOptions(payload))
+      for (const hit of hits) {
+        if (!byRecordId.has(hit.id)) byRecordId.set(hit.id, hit)
+      }
+    }
+
+    const neighbors: NeighborRecord[] = []
+    for (const hit of byRecordId.values()) {
+      const neighbor = neighborFromEntry(hit, neighbors.length + 1)
+      if (neighbor !== undefined) neighbors.push(neighbor)
+      if (neighbors.length >= SEARCH_BEFORE_CREATE_MAX_NEIGHBORS) break
+    }
+    return neighbors
+  } finally {
+    reader?.close()
+  }
+}
+
+function checkpointFromAuthored(
+  delta: AuthoredCheckpoint['delta'],
+  authorship: AuthoredCheckpoint['authorship'],
+  neighbors: readonly NeighborRecord[],
+): AuthoredCheckpoint {
+  return parseAuthoredCheckpoint({
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+    delta,
+    neighborIds: neighbors.map(({ recordId }) => recordId),
+    preconditions: [...(delta.precondition ?? [])],
+    authorship,
+  })
+}
+
+async function authorCheckpoint(
+  options: DrainOptions,
+  operations: DrainOperations,
+  job: ClaimedCurationJob,
+): Promise<AuthoredCheckpoint> {
+  const view = jobView(job.payload)
+  const neighbors = await searchBeforeCreate(operations, job.payload, options.knowledgeRoot)
+  const outcome = await options.author(view, neighbors)
+  if (outcome.kind === 'authored') {
+    return checkpointFromAuthored(outcome.delta, outcome.authorship, neighbors)
+  }
+
+  const fallback = constructFallbackDeltas(view, neighbors)
+  if (fallback.length !== 1 || fallback[0] === undefined) {
+    throw new Error('deterministic fallback must produce exactly one delta')
+  }
+  const authorship = fallback[0].authorship
+  if (authorship === undefined || authorship.path !== 'deterministic-fallback') {
+    throw new Error('deterministic fallback omitted its authorship stamp')
+  }
+  return checkpointFromAuthored(fallback[0], authorship, neighbors)
+}
+
+function persistCheckpoint(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+  candidateId: string,
+  checkpoint: AuthoredCheckpoint,
+): void {
+  const persisted = operations.persistAuthoredCheckpoint({
+    knowledgeRoot,
+    candidateId,
+    authored: checkpoint,
+  })
+  if (persisted.kind !== 'persisted') {
+    throw new Error('cannot persist authored checkpoint over malformed job state')
+  }
+}
+
+function clearCheckpointAndRequeue(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+  leaseId: string,
+  job: ClaimedCurationJob,
+): void {
+  const state = operations.readJobState(knowledgeRoot, job.candidateId)
+  operations.writeJobState({
+    knowledgeRoot,
+    candidateId: job.candidateId,
+    lifecycle: 'queued',
+    embedCrashCount: state.kind === 'parsed' ? state.state.embedCrashCount : 0,
+  })
+  operations.requeueClaimed({ knowledgeRoot, leaseId })
+}
+
+function mapCommitOutcome(
+  report: DrainReportBase,
+  outcome: CommitCurationOutcome,
+  job: ClaimedCurationJob,
+  operations: DrainOperations,
+  options: DrainOptions,
+  leaseId: string,
+): 'continue' | 'stop' {
+  switch (outcome.kind) {
+    case 'applied':
+    case 'converted-confirm':
+      report.committed += 1
+      return 'continue'
+    case 'downgraded':
+      report.committed += 1
+      report.downgraded += 1
+      return 'continue'
+    case 'withheld':
+      report.withheld += 1
+      return 'continue'
+    case 'noop':
+      return 'continue'
+    case 'failed':
+      recordFailure(report, 'commit', outcome.reason, job.candidateId)
+      return 'continue'
+    case 'abandoned-stale-epoch':
+      recordFailure(
+        report,
+        'commit',
+        `writer epoch became stale (observed ${outcome.observedEpoch})`,
+        job.candidateId,
+      )
+      return 'stop'
+    case 'requeue-resynthesis':
+      try {
+        clearCheckpointAndRequeue(
+          operations,
+          options.knowledgeRoot,
+          leaseId,
+          job,
+        )
+        report.requeued += 1
+      } catch (error) {
+        recordFailure(report, 'requeue', error, job.candidateId)
+      }
+      // Fresh neighbors belong to the next drain; reclaiming immediately could livelock on the
+      // same lexicographically-first candidate.
+      return 'stop'
+  }
+}
+
+function reconcileDependencies(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+) {
+  return {
+    knowledgeRoot,
+    hasIndexRow: (bundleId: string) => operations.hasIndexRow(knowledgeRoot, bundleId),
+    applyIndexDelta: (intent: CommitIntent) => {
+      operations.applyIndexDeltaForBundle({ knowledgeRoot, bundleId: intent.bundleId })
+    },
+    deriveIndexRowFromBundle: (bundleId: string) => {
+      operations.deriveIndexRowFromBundle({ knowledgeRoot, bundleId })
+    },
+  }
+}
+
+function budgetMs(options: DrainOptions): number {
+  const value = options.budgetMs ?? DRAIN_BUDGET_MS
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError('budgetMs must be a finite non-negative number')
+  }
+  return value
+}
+
+/**
+ * Lease-gated one-shot Curator drain. It owns no provider: authoring is injected, serialized, and
+ * durably checkpointed before the deterministic commit tail. Abort and budget are checked only at
+ * job boundaries, so an in-flight model request always finishes under its own model-layer policy.
+ */
+export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
+  const operations: DrainOperations = { ...DEFAULT_OPERATIONS, ...options.operations }
+  const now = options.now ?? Date.now
+  const startedAt = now()
+  const limit = budgetMs(options)
+  const report = emptyReport()
+  const lease = operations.acquireWriterLease(options.knowledgeRoot)
+  if (lease.kind === 'held') {
+    report.writerPass = { kind: 'skipped', reason: 'lease-held' }
+    return { ...report, kind: 'handed-off', holder: lease.holder }
+  }
+
+  const result: DrainReportBase & { kind: 'drained' | 'aborted' } = {
+    ...report,
+    kind: 'drained',
+  }
+  const drainState: DispositionDrainState = { supersedesSeenByAnchorKey: new Map() }
+  try {
+    try {
+      result.reconcile = operations.reconcileOnDrainStart(
+        reconcileDependencies(operations, options.knowledgeRoot),
+      )
+    } catch (error) {
+      recordFailure(result, 'reconcile', error)
+      return result
+    }
+
+    while (true) {
+      if (now() - startedAt >= limit) break
+      if (options.signal?.aborted === true) {
+        result.kind = 'aborted'
+        break
+      }
+
+      let claimed
+      try {
+        claimed = operations.claimNextJob({
+          knowledgeRoot: options.knowledgeRoot,
+          leaseId: lease.leaseId,
+        })
+      } catch (error) {
+        recordFailure(result, 'claim', error)
+        break
+      }
+      if (claimed === undefined) break
+      result.jobsProcessed += 1
+      if (claimed.kind === 'malformed') {
+        recordFailure(result, 'job-state', 'claimed candidate payload is malformed', claimed.candidateId)
+        continue
+      }
+
+      const heartbeat = operations.heartbeatLease({
+        knowledgeRoot: options.knowledgeRoot,
+        leaseId: lease.leaseId,
+      })
+      if (heartbeat.kind === 'refused') {
+        recordFailure(result, 'heartbeat', heartbeat.reason, claimed.candidateId)
+        break
+      }
+
+      let checkpoint: AuthoredCheckpoint
+      const state = operations.readJobState(options.knowledgeRoot, claimed.candidateId)
+      if (state.kind === 'malformed') {
+        recordFailure(result, 'job-state', 'job lifecycle state is malformed', claimed.candidateId)
+        continue
+      }
+      if (state.kind === 'parsed' && state.state.authored !== undefined) {
+        try {
+          checkpoint = parseAuthoredCheckpoint(state.state.authored)
+        } catch (error) {
+          recordFailure(result, 'checkpoint', error, claimed.candidateId)
+          continue
+        }
+      } else {
+        try {
+          checkpoint = await authorCheckpoint(options, operations, claimed)
+        } catch (error) {
+          recordFailure(result, 'author', error, claimed.candidateId)
+          continue
+        }
+        try {
+          persistCheckpoint(
+            operations,
+            options.knowledgeRoot,
+            claimed.candidateId,
+            checkpoint,
+          )
+        } catch (error) {
+          recordFailure(result, 'checkpoint', error, claimed.candidateId)
+          continue
+        }
+      }
+
+      let outcome: CommitCurationOutcome
+      try {
+        outcome = operations.commitCurationDelta(
+          {
+            knowledgeRoot: options.knowledgeRoot,
+            auditBaseDir: options.auditBaseDir,
+            epoch: lease.epoch,
+            profile: resolveDispositionProfile(options.executionContext),
+            drainState,
+            policy: options.policy,
+          },
+          claimed,
+          checkpoint,
+        )
+      } catch (error) {
+        recordFailure(result, 'commit', error, claimed.candidateId)
+        continue
+      }
+      if (
+        mapCommitOutcome(
+          result,
+          outcome,
+          claimed,
+          operations,
+          options,
+          lease.leaseId,
+        ) === 'stop'
+      ) {
+        break
+      }
+    }
+
+    if (result.kind === 'aborted') {
+      result.writerPass = { kind: 'skipped', reason: 'aborted' }
+    } else if (now() - startedAt >= limit) {
+      result.writerPass = { kind: 'skipped', reason: 'budget-exhausted' }
+    } else {
+      try {
+        const request = operations.readRebuildRequest(options.knowledgeRoot)
+        result.writerPass = request.present
+          ? { kind: 'pending', request: request.request }
+          : { kind: 'not-requested' }
+      } catch (error) {
+        recordFailure(result, 'writer-pass', error)
+        result.writerPass = { kind: 'failed', message: errorMessage(error) }
+      }
+    }
+    return result
+  } finally {
+    try {
+      const released = operations.releaseLease({
+        knowledgeRoot: options.knowledgeRoot,
+        leaseId: lease.leaseId,
+      })
+      if (released.kind === 'refused') recordFailure(result, 'release', released.reason)
+    } catch (error) {
+      recordFailure(result, 'release', error)
+    }
+  }
+}
