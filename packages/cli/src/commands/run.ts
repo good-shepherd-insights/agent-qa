@@ -41,7 +41,16 @@ import {
   type RunMaskingContext,
 } from '../run-session-composition.js'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
-import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+  type SafetyHookRunner,
+} from '@vostride/agent-qa-safety'
+import {
+  runCurationTail,
+  runVerdictFirstCurationTail,
+  type CurationTailModelDeps,
+} from '../curation/curation-tail.js'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { BetterSqlite3AbiMismatchError, isBetterSqlite3AbiMismatch } from '@vostride/agent-qa-core'
@@ -51,6 +60,12 @@ import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type 
 const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artifacts'
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const RUNTIME_VIDEOS_DIR = DEFAULT_AGENT_QA_VIDEOS_DIR || '.agent-qa/artifacts/videos'
+
+const curationTailLog = {
+  warn(message: string): void {
+    console.warn(pc.yellow(`Warning: ${message}`))
+  },
+}
 
 // SESSION-04 force-exit backstop grace window. Primary guarantee is the shell settling `done`
 // cleanly on cancel/budget (Plan 361-13 Task 2); this is a hard safety net so a genuinely
@@ -318,6 +333,7 @@ interface RunOptions {
   var?: string[]
   runAttr?: string[]
   trustSession?: boolean
+  detach?: boolean
 }
 
 const SUPPORTED_REPORTERS = ['console', 'junit', 'stdout-live', 'dashboard'] as const
@@ -998,9 +1014,14 @@ async function executeSuites(
   // handler routes the abort into `session.cancel()` (skip the rest, aggregate `cancelled`); core's
   // per-test SIGINT registration is suppressed because the executor threads ctx.abortSignal (D-03).
   let activeRunSession: { cancel(): void } | undefined
+  const curationAbortController = new AbortController()
   // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
   // `await session.done`. Fires only if `done` is genuinely un-settleable so the CLI can never hang.
   let graceTimer: ReturnType<typeof setTimeout> | undefined
+  const clearGraceTimer = (): void => {
+    if (graceTimer) clearTimeout(graceTimer)
+    graceTimer = undefined
+  }
   // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner, built at the runId
   // mint below and captured here so the earlier-defined member/teardown closures (which only execute
   // after startRun) resolve the run bundle at call time. `runMaskingContext` also feeds the D-06
@@ -1032,7 +1053,10 @@ async function executeSuites(
   // (130) immediately, independent of the grace timer and of any wedged async `done`. The grace-timer
   // arming/unref/clear stays inline here (owned by the caller) so the 361-13 backstop anchors hold.
   const shutdownController = createShutdownController({
-    cancel: () => { try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ } },
+    cancel: () => {
+      curationAbortController.abort()
+      try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
+    },
     exit: (code) => process.exit(code),
     setExitCode: (code) => { shutdownRequested = true; process.exitCode = code },
     armGrace: () => {
@@ -1088,6 +1112,7 @@ async function executeSuites(
     suiteKey: string
     suiteConfig: RunSuiteConfig
     modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile }
+    curationModelDeps: CurationTailModelDeps
     testEntries: [TestDefinition, string][]
     suiteMembers: Array<Record<string, unknown>>
     suiteRunId: string
@@ -1657,6 +1682,7 @@ async function executeSuites(
       suiteKey: suiteFile,
       suiteConfig,
       modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
+      curationModelDeps: { profile: plannerProfile, auth: plannerAuth },
       testEntries,
       suiteMembers,
       suiteRunId: preparedSuiteRunId,
@@ -2161,15 +2187,38 @@ async function executeSuites(
       })
 
       const { verdict } = await session.done
-      if (graceTimer) clearTimeout(graceTimer)
+      clearGraceTimer()
       await lifecycle.finalize()
       // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
       // AFTER session.done + lifecycle.finalize() and BEFORE mapping the verdict to the exit code.
       await subscribers.flush()
       activeRunSession = undefined
-      // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130). A
-      // SIGINT that raced the terminal verdict still maps to 130.
-      return mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+      // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a signal
+      // arriving while the drain owns its lease can stop learning, but can never replace this code.
+      const verdictExitCode = mapVerdictToExitCode(
+        shutdownRequested ? 'cancelled' : verdict,
+      )
+      return await runVerdictFirstCurationTail({
+        exitCode: verdictExitCode,
+        detach: opts.detach === true,
+        runTail: () => runCurationTail({
+          runId,
+          agentQaRoot: resolvePath(configDir, '.agent-qa'),
+          knowledgeConfig: config.knowledge,
+          configDir,
+          auditSink,
+          maskingContext,
+          modelDeps: preparedSuites[0]!.curationModelDeps,
+          policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+          signal: curationAbortController.signal,
+          log: curationTailLog,
+        }),
+        onUnexpectedError: () => {
+          curationTailLog.warn(
+            'Post-verdict knowledge curation incomplete; it will resume on the next run.',
+          )
+        },
+      })
     } finally {
       // Pitfall 8: dispose LAST — after session.done + lifecycle.finalize() (teardown auth capture +
       // handoff assembly) so every late masker still replaces; a post-run stray egress sees no mask.
@@ -2177,6 +2226,7 @@ async function executeSuites(
     }
   })
 
+  clearGraceTimer()
   shutdownController.dispose()
   process.removeListener('SIGINT', shutdownController.handleSignal)
   process.removeListener('SIGTERM', shutdownController.handleSignal)
@@ -2216,6 +2266,7 @@ export function createRunCommand(): Command {
     .option('--var <kv...>', 'set variable KEY=VALUE (repeatable)')
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
     .option('--trust-session', 'treat every ask-tier policy decision in this session as trusted (execution-safety §2.3 session.trustMode; explicit opt-in, session-scoped)')
+    .option('--detach', 'skip the post-verdict knowledge curation tail')
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
       try {
@@ -2599,6 +2650,7 @@ export function createRunCommand(): Command {
         // (Pitfall 7). `singleMaskingContext` also feeds the D-06 mid-run auth registration.
         let singleMaskingContext: RunMaskingContext | undefined
         let singleSafetyHooks: SafetyHookRunner | undefined
+        let singleCurationModelDeps: CurationTailModelDeps | undefined
 
         // WM-01/WM-02: one run-scoped working-memory store per run, constructed with the run's
         // SecretRedactor (capture-time redaction live); threaded into the loop and flushed
@@ -2872,6 +2924,9 @@ export function createRunCommand(): Command {
             const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
             const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
             const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
+            // D-03: retain the first already-resolved planner identity used by this RunSession.
+            // The post-verdict Curator reuses these exact objects and never resolves config again.
+            singleCurationModelDeps ??= { profile: plannerProfile, auth: plannerAuth }
             const plannerCapabilities = resolveCapabilities(plannerProfile)
             const verifierCapabilities = resolveCapabilities(verifierProfile)
             const plannerDeclared: DeclaredModelProfile = {
@@ -3264,6 +3319,7 @@ export function createRunCommand(): Command {
         // The run-level SIGINT routes into session.cancel(); the D-14 verdict map owns the exit code.
         let shutdownRequested = false
         let activeRunSession: { cancel(): void } | undefined
+        const curationAbortController = new AbortController()
         // A throw out of a member closure is a framework/setup error (not a test failure): the shell
         // absorbs executor throws into failed members (D-13, never crashes the run), so we capture the
         // first one, cancel the run, and re-surface it after `done` to preserve the exit-2 contract.
@@ -3271,11 +3327,18 @@ export function createRunCommand(): Command {
         // SESSION-04 force-exit backstop (Plan 361-13 Task 3): armed on cancel, cleared after
         // `await session.done` (and BEFORE any frameworkError re-throw so the exit-2 contract holds).
         let graceTimer: ReturnType<typeof setTimeout> | undefined
+        const clearGraceTimer = (): void => {
+          if (graceTimer) clearTimeout(graceTimer)
+          graceTimer = undefined
+        }
         // RUNX-02 / D1: route both signals through the controller so a SECOND Ctrl+C HARD force-exits
         // (130) immediately, independent of the grace timer and of any wedged async `done`. The
         // grace-timer arming/unref/clear stays inline here so the 361-13 backstop anchors hold.
         const shutdownController = createShutdownController({
-          cancel: () => { try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ } },
+          cancel: () => {
+            curationAbortController.abort()
+            try { activeRunSession?.cancel() } catch { /* cancel is best-effort */ }
+          },
           exit: (code) => process.exit(code),
           setExitCode: (code) => { shutdownRequested = true; process.exitCode = code },
           armGrace: () => {
@@ -3449,14 +3512,11 @@ export function createRunCommand(): Command {
             })
 
             const { verdict } = await session.done
-            if (graceTimer) clearTimeout(graceTimer)
+            clearGraceTimer()
             // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
             // AFTER session.done and BEFORE mapping the verdict / re-throwing a framework error.
             await subscribers.flush()
             activeRunSession = undefined
-            shutdownController.dispose()
-            process.removeListener('SIGINT', shutdownController.handleSignal)
-            process.removeListener('SIGTERM', shutdownController.handleSignal)
 
             // Re-surface a captured framework/setup error so the existing exit-2 contract holds — the
             // throw stays inside the scope so dispose (finally) runs before it propagates. The grace
@@ -3465,10 +3525,42 @@ export function createRunCommand(): Command {
               throw frameworkError
             }
 
-            // D-14: the verdict-mapped exit code (passed/healed=0, failed/timeout=1, cancelled=130).
-            return mapVerdictToExitCode(shutdownRequested ? 'cancelled' : verdict)
+            // Freeze the complete --all-aware exit code before the tail begins. Signals remain wired
+            // until the tail releases its lease, but neither abort nor failure may replace this code.
+            const verdictExitCode = mapVerdictToExitCode(
+              shutdownRequested ? 'cancelled' : verdict,
+            )
+            const exitCode =
+              verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
+            return await runVerdictFirstCurationTail({
+              exitCode,
+              detach: opts.detach === true,
+              runTail: () => runCurationTail({
+                runId: singleRunId,
+                agentQaRoot: resolvePath(configDir, '.agent-qa'),
+                knowledgeConfig: config.knowledge,
+                configDir,
+                auditSink,
+                maskingContext,
+                ...(singleCurationModelDeps === undefined
+                  ? {}
+                  : { modelDeps: singleCurationModelDeps }),
+                policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+                signal: curationAbortController.signal,
+                log: curationTailLog,
+              }),
+              onUnexpectedError: () => {
+                curationTailLog.warn(
+                  'Post-verdict knowledge curation incomplete; it will resume on the next run.',
+                )
+              },
+            })
           } finally {
-            // Pitfall 8: dispose LAST so late maskers (handoff assembly, WM flush) still replace.
+            // Keep both process signals live through the drain; then dispose masking absolutely last.
+            clearGraceTimer()
+            shutdownController.dispose()
+            process.removeListener('SIGINT', shutdownController.handleSignal)
+            process.removeListener('SIGTERM', shutdownController.handleSignal)
             maskingContext.dispose()
           }
         })
@@ -3479,10 +3571,8 @@ export function createRunCommand(): Command {
           dashboardDb.close()
         }
 
-        // `singleExit` (the D-14 verdict-mapped exit code) is returned from the run-safety scope
-        // above. `suitesFailed` (the --all combined path) still forces a nonzero exit when the
-        // separately-run suites leg failed.
-        const exitCode = singleExit !== 0 ? singleExit : (suitesFailed ? 1 : 0)
+        // `singleExit` was fixed from the verdict plus any --all suite failure before curation.
+        const exitCode = singleExit
         await maybePrintPostRunUpdateNotice({
           reporterSelection,
           effectiveLogLevel,

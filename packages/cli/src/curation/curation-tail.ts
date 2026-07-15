@@ -48,7 +48,7 @@ export interface RunCurationTailOptions {
   auditSink: AuditSink
   maskingContext?: MaskingContext
   /** The exact already-resolved planner profile and auth used by the run. */
-  modelDeps: CurationTailModelDeps
+  modelDeps?: CurationTailModelDeps
   policy: GuardrailPolicy
   signal?: AbortSignal
   log: CurationTailLogger
@@ -56,13 +56,15 @@ export interface RunCurationTailOptions {
   operations?: Partial<CurationTailOperations>
 }
 
-const DEFAULT_OPERATIONS: CurationTailOperations = {
-  loadCompletedRunHandoff,
-  resolveKnowledgeRoot,
-  runSafetyScope,
-  emitCurationCandidates,
-  buildCuratorAuthor,
-  drainQueue,
+function defaultOperations(): CurationTailOperations {
+  return {
+    loadCompletedRunHandoff,
+    resolveKnowledgeRoot,
+    runSafetyScope,
+    emitCurationCandidates,
+    buildCuratorAuthor,
+    drainQueue,
+  }
 }
 
 /**
@@ -71,7 +73,7 @@ const DEFAULT_OPERATIONS: CurationTailOperations = {
  */
 export async function runCurationTail(opts: RunCurationTailOptions): Promise<void> {
   const operations: CurationTailOperations = {
-    ...DEFAULT_OPERATIONS,
+    ...defaultOperations(),
     ...opts.operations,
   }
   const runDir = join(opts.agentQaRoot, RUNS_SUBDIR, slugBranch(opts.runId))
@@ -97,7 +99,13 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       },
       async () => {
         operations.emitCurationCandidates({ handoff, runDir, knowledgeRoot })
-        const author = operations.buildCuratorAuthor(opts.modelDeps)
+        const author =
+          opts.modelDeps === undefined
+            ? async () => ({
+                kind: 'fallback-required' as const,
+                reason: 'no-model' as const,
+              })
+            : operations.buildCuratorAuthor(opts.modelDeps)
         await operations.drainQueue({
           knowledgeRoot,
           auditBaseDir: opts.agentQaRoot,
@@ -119,4 +127,26 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       'Post-verdict knowledge curation incomplete; it will resume on the next run.',
     )
   }
+}
+
+export interface RunVerdictFirstCurationTailOptions {
+  /** The complete verdict-derived process code, fixed before the tail begins. */
+  exitCode: number
+  detach: boolean
+  runTail(): Promise<void>
+  /** Defensive call-site boundary; runCurationTail itself already never rejects. */
+  onUnexpectedError?(error: unknown): void
+}
+
+/** Await the optional tail without permitting it to replace the already-fixed verdict code. */
+export async function runVerdictFirstCurationTail(
+  opts: RunVerdictFirstCurationTailOptions,
+): Promise<number> {
+  if (opts.detach) return opts.exitCode
+  try {
+    await opts.runTail()
+  } catch (error) {
+    opts.onUnexpectedError?.(error)
+  }
+  return opts.exitCode
 }
