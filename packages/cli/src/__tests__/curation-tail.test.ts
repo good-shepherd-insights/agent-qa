@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   HANDOFF_FILE,
@@ -17,6 +19,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   runCurationTail,
+  runVerdictFirstCurationTail,
   type RunCurationTailOptions,
 } from '../curation/curation-tail.js'
 
@@ -239,4 +242,82 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       expect(drainQueue).not.toHaveBeenCalled()
     },
   )
+})
+
+describe('verdict-first CLI tail wiring (CUR-03)', () => {
+  it('returns the fixed verdict exit code even when the defensive tail boundary catches a throw', async () => {
+    const unexpected = new Error('tail contract was violated')
+    const onUnexpectedError = vi.fn()
+
+    await expect(
+      runVerdictFirstCurationTail({
+        exitCode: 1,
+        detach: false,
+        runTail: vi.fn(async () => {
+          throw unexpected
+        }),
+        onUnexpectedError,
+      }),
+    ).resolves.toBe(1)
+    expect(onUnexpectedError).toHaveBeenCalledWith(unexpected)
+  })
+
+  it('skips the complete tail under --detach and preserves the verdict code', async () => {
+    const runTail = vi.fn()
+
+    await expect(
+      runVerdictFirstCurationTail({
+        exitCode: 130,
+        detach: true,
+        runTail,
+      }),
+    ).resolves.toBe(130)
+    expect(runTail).not.toHaveBeenCalled()
+  })
+
+  it('keeps the reported verdict when the process signal aborts the drain at its boundary', async () => {
+    const controller = new AbortController()
+    const drainQueue = vi.fn(async (options) => {
+      controller.abort()
+      expect(options.signal).toBe(controller.signal)
+      expect(options.signal?.aborted).toBe(true)
+      return {
+        kind: 'aborted' as const,
+        jobsProcessed: 0,
+        committed: 0,
+        downgraded: 0,
+        withheld: 0,
+        requeued: 0,
+        failures: 0,
+        failureDetails: [],
+        reconcile: undefined,
+        writerPass: { kind: 'skipped' as const, reason: 'aborted' as const },
+      }
+    })
+    const operations = successfulOperations({ drainQueue })
+
+    await expect(
+      runVerdictFirstCurationTail({
+        exitCode: 0,
+        detach: false,
+        runTail: () =>
+          runCurationTail(
+            baseOptions(operations, { signal: controller.signal }),
+          ),
+      }),
+    ).resolves.toBe(0)
+    expect(drainQueue).toHaveBeenCalledOnce()
+  })
+
+  it('registers --detach and invokes the shared tail at both run verdict sites', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../commands/run.ts', import.meta.url)),
+      'utf8',
+    )
+
+    expect(source).toContain(
+      ".option('--detach', 'skip the post-verdict knowledge curation tail')",
+    )
+    expect(source.match(/runCurationTail\(/g)).toHaveLength(2)
+  })
 })
