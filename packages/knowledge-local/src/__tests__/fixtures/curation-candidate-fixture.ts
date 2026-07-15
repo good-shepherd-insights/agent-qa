@@ -1,7 +1,10 @@
-import type { BuildCurationCandidateAddressFieldsInput } from '../../queue/queue-payload.js'
+import {
+  buildCurationCandidateAddressFields,
+  type BuildCurationCandidateAddressFieldsInput,
+} from '../../queue/queue-payload.js'
 
 export function candidateAddressFixture(
-  _input: BuildCurationCandidateAddressFieldsInput,
+  input: BuildCurationCandidateAddressFieldsInput,
 ): BuildCurationCandidateAddressFieldsInput {
-  throw new Error('candidateAddressFixture is not implemented')
+  return buildCurationCandidateAddressFields(input)
 }
