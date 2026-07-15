@@ -20,7 +20,7 @@ export interface TauLexUnmatchedPair {
 }
 
 export interface TauLexReceipt {
-  schemaVersion: 1
+  schemaVersion: 2
   calibrationDate: string
   tauLex: number
   percentile05: number
@@ -36,6 +36,8 @@ export interface TauLexReceipt {
     tokenizer: string
     productionShapeSource: string
     productionWeightSource: string
+    querySemantics: string
+    productionQuerySource: string
     queryMode: string
     contextProjection: string
   }
@@ -51,6 +53,15 @@ export interface TauLexReceipt {
     goldPairs: number
     scoredPairs: number
     unmatchedPairs: number
+  }
+  servingReplay: {
+    evaluatedCandidates: number
+    matchedCandidates: number
+    admittedCandidates: number
+    goldPairs: number
+    matchedGoldPairs: number
+    admittedGoldPairs: number
+    goldRecall: number
   }
   pairs: TauLexPair[]
   unmatchedPairs: TauLexUnmatchedPair[]
@@ -72,15 +83,23 @@ const COMPARISON_TOLERANCE = 1e-12
 const FTS_TOKENIZER = "unicode61 tokenchars '#-_./:[]=>@'"
 const PRODUCTION_SHAPE_SOURCE = 'packages/knowledge-local/src/index-open.ts'
 const PRODUCTION_WEIGHT_SOURCE = 'packages/knowledge-local/src/retrieval/constants.ts'
+const PRODUCTION_QUERY_SOURCE = 'packages/knowledge-local/src/retrieval/fts-match.ts'
 const SIGN_CONVENTION =
   'SQLite FTS5 bm25() returns negated raw scores (better matches are more negative); calibration stores bm25Positive = -bm25(...) and applies TAU_LEX on that positive scale.'
 const QUERY_MODE =
-  'Per-gold score probe over deduplicated, double-quote-escaped query tokens joined with FTS5 OR; serving uses the same FTS5 tokenizer, columns, bm25() weights, and positive-score convention.'
+  'Full serving replay over every in-app corpus document using the live production MATCH constructor, final FTS columns and tokenizer, bm25() weights, and positive-score convention.'
 const CONTEXT_PROJECTION =
   'The recorded corpus predates graph neighbors, so the v2 context column is present and populated with the empty string for every corpus document.'
 
 interface ProductionFtsContract {
   weights: TauLexReceipt['weights']
+  querySemantics: string
+  buildLexicalMatchExpression(text: string): string
+}
+
+interface ProductionMatchModule {
+  LEXICAL_MATCH_SEMANTICS?: unknown
+  buildLexicalMatchExpression?: unknown
 }
 
 function sha256(raw: string): string {
@@ -110,12 +129,27 @@ async function loadProductionFtsContract(): Promise<ProductionFtsContract> {
   if (!ftsShape.test(indexOpenSource) || !indexOpenSource.includes(FTS_TOKENIZER)) {
     throw new Error('production FTS shape no longer matches the calibrated three-column tokenizer')
   }
+  const matchModule = await import(
+    new URL(
+      '../../../packages/knowledge-local/src/retrieval/fts-match.ts',
+      import.meta.url,
+    ).href
+  ) as ProductionMatchModule
+  if (
+    typeof matchModule.LEXICAL_MATCH_SEMANTICS !== 'string'
+    || typeof matchModule.buildLexicalMatchExpression !== 'function'
+  ) {
+    throw new TypeError('production lexical MATCH module does not expose its semantic contract')
+  }
   return {
     weights: {
       identity: parseNumericConstant(constantsSource, 'FTS_WEIGHT_IDENTITY'),
       content: parseNumericConstant(constantsSource, 'FTS_WEIGHT_CONTENT'),
       context: parseNumericConstant(constantsSource, 'FTS_WEIGHT_CONTEXT'),
     },
+    querySemantics: matchModule.LEXICAL_MATCH_SEMANTICS,
+    buildLexicalMatchExpression:
+      matchModule.buildLexicalMatchExpression as (text: string) => string,
   }
 }
 
@@ -185,24 +219,19 @@ function identityProjection(rendering: string): string {
     .join('\n')
 }
 
-function scoreQuery(query: string): string {
-  const tokens = [
-    ...new Set(
-      query
-        .split(/\s+/u)
-        .filter((token) => token !== '')
-        .map((token) => token.replaceAll('"', '""')),
-    ),
-  ]
-  if (tokens.length === 0) throw new TypeError('recorded query text must not be empty')
-  return tokens.map((token) => `"${token}"`).join(' OR ')
+interface CollectedServingReplay {
+  pairs: TauLexPair[]
+  unmatchedPairs: TauLexUnmatchedPair[]
+  evaluatedCandidates: number
+  matchedCandidates: number
+  candidateScores: number[]
 }
 
-function collectPairs(
+function collectServingReplay(
   corpus: TauLexCorpus,
   rowids: ReadonlyMap<string, number>,
-  weights: TauLexReceipt['weights'],
-): { pairs: TauLexPair[]; unmatchedPairs: TauLexUnmatchedPair[] } {
+  production: ProductionFtsContract,
+): CollectedServingReplay {
   const db = new DatabaseSync(':memory:')
   try {
     db.exec(`
@@ -211,45 +240,88 @@ function collectPairs(
         content,
         context,
         tokenize = "${FTS_TOKENIZER}"
-      )
+      );
+      CREATE TABLE corpus_apps (
+        record_rowid INTEGER NOT NULL,
+        app TEXT NOT NULL,
+        PRIMARY KEY (record_rowid, app)
+      ) STRICT;
     `)
     const insert = db.prepare(`
       INSERT INTO fts_records (rowid, identity, content, context)
       VALUES (?, ?, ?, ?)
     `)
+    const insertApp = db.prepare(`
+      INSERT INTO corpus_apps (record_rowid, app)
+      VALUES (?, ?)
+    `)
+    const documentsPerApp = new Map<string, number>()
     corpus.documents.forEach((document, index) => {
-      insert.run(index + 1, identityProjection(document.text), document.text, '')
+      const rowid = index + 1
+      insert.run(rowid, identityProjection(document.text), document.text, '')
+      for (const app of new Set(document.apps)) {
+        insertApp.run(rowid, app)
+        documentsPerApp.set(app, (documentsPerApp.get(app) ?? 0) + 1)
+      }
     })
     const score = db.prepare(`
-      SELECT -bm25(fts_records, ?, ?, ?) AS bm25_positive
+      SELECT fts_records.rowid AS record_rowid,
+        -bm25(fts_records, ?, ?, ?) AS bm25_positive
       FROM fts_records
-      WHERE fts_records MATCH ? AND rowid = ?
+      JOIN corpus_apps apps ON apps.record_rowid = fts_records.rowid
+      WHERE fts_records MATCH ? AND apps.app = ?
+      ORDER BY fts_records.rowid
     `)
     const pairs: TauLexPair[] = []
     const unmatchedPairs: TauLexUnmatchedPair[] = []
+    const candidateScores: number[] = []
+    let evaluatedCandidates = 0
+    let matchedCandidates = 0
     for (const query of corpus.recordedQueries) {
-      const match = scoreQuery(query.query)
+      const match = production.buildLexicalMatchExpression(query.query)
+      if (match === '') throw new TypeError(`recorded query ${query.id} text must not be empty`)
+      const eligibleDocuments = documentsPerApp.get(query.app) ?? 0
+      evaluatedCandidates += eligibleDocuments
+      const rows = score.all(
+        production.weights.identity,
+        production.weights.content,
+        production.weights.context,
+        match,
+        query.app,
+      )
+      if (rows.length > eligibleDocuments) {
+        throw new Error(`serving replay returned too many candidates for ${query.id}`)
+      }
+      matchedCandidates += rows.length
+      const scoresByRowid = new Map<number, number>()
+      for (const row of rows) {
+        const recordRowid = Number(row.record_rowid)
+        const bm25Positive = roundScore(Number(row.bm25_positive))
+        if (
+          !Number.isSafeInteger(recordRowid)
+          || recordRowid <= 0
+          || !Number.isFinite(bm25Positive)
+          || bm25Positive < 0
+        ) {
+          throw new TypeError(`invalid serving replay candidate for ${query.id}`)
+        }
+        if (scoresByRowid.has(recordRowid)) {
+          throw new Error(`duplicate serving replay candidate ${query.id}/${recordRowid}`)
+        }
+        scoresByRowid.set(recordRowid, bm25Positive)
+        candidateScores.push(bm25Positive)
+      }
       for (const goldId of [...new Set(query.goldDocIds)].sort()) {
         const rowid = rowids.get(goldId)
         if (rowid === undefined) {
           throw new Error(`recorded query ${query.id} references missing gold document ${goldId}`)
         }
-        const row = score.get(
-          weights.identity,
-          weights.content,
-          weights.context,
-          match,
-          rowid,
-        )
-        if (row === undefined) {
+        const bm25Positive = scoresByRowid.get(rowid)
+        if (bm25Positive === undefined) {
           unmatchedPairs.push({ queryId: query.id, goldId })
           continue
         }
-        const bm25Positive = Number(row.bm25_positive)
-        if (!Number.isFinite(bm25Positive) || bm25Positive < 0) {
-          throw new TypeError(`invalid positive BM25 score for ${query.id}/${goldId}`)
-        }
-        pairs.push({ queryId: query.id, goldId, bm25Positive: roundScore(bm25Positive) })
+        pairs.push({ queryId: query.id, goldId, bm25Positive })
       }
     }
     const byIdentity = (
@@ -258,10 +330,69 @@ function collectPairs(
     ) => left.queryId.localeCompare(right.queryId) || left.goldId.localeCompare(right.goldId)
     pairs.sort(byIdentity)
     unmatchedPairs.sort(byIdentity)
-    return { pairs, unmatchedPairs }
+    if (candidateScores.length !== matchedCandidates) {
+      throw new Error('serving replay candidate count is inconsistent')
+    }
+    return {
+      pairs,
+      unmatchedPairs,
+      evaluatedCandidates,
+      matchedCandidates,
+      candidateScores,
+    }
   } finally {
     db.close()
   }
+}
+
+function servingReplayMetrics(
+  collected: CollectedServingReplay,
+  goldPairs: number,
+  tauLex: number,
+): TauLexReceipt['servingReplay'] {
+  const matchedGoldPairs = collected.pairs.length
+  const admittedCandidates = collected.candidateScores.filter(
+    (bm25Positive) => bm25Positive >= tauLex,
+  ).length
+  const admittedGoldPairs = collected.pairs.filter(
+    ({ bm25Positive }) => bm25Positive >= tauLex,
+  ).length
+  const replay: TauLexReceipt['servingReplay'] = {
+    evaluatedCandidates: collected.evaluatedCandidates,
+    matchedCandidates: collected.matchedCandidates,
+    admittedCandidates,
+    goldPairs,
+    matchedGoldPairs,
+    admittedGoldPairs,
+    goldRecall: matchedGoldPairs / goldPairs,
+  }
+  const counts = [
+    replay.evaluatedCandidates,
+    replay.matchedCandidates,
+    replay.admittedCandidates,
+    replay.goldPairs,
+    replay.matchedGoldPairs,
+    replay.admittedGoldPairs,
+  ]
+  if (counts.some((count) => !Number.isSafeInteger(count) || count < 0)) {
+    throw new TypeError('serving replay produced an invalid count')
+  }
+  if (
+    replay.matchedGoldPairs === 0
+    || replay.admittedCandidates === 0
+    || replay.admittedCandidates >= replay.matchedCandidates
+    || replay.matchedCandidates > replay.evaluatedCandidates
+    || replay.matchedGoldPairs > replay.goldPairs
+    || replay.matchedGoldPairs > replay.matchedCandidates
+    || replay.admittedGoldPairs > replay.matchedGoldPairs
+    || replay.admittedGoldPairs > replay.admittedCandidates
+    || collected.pairs.length + collected.unmatchedPairs.length !== replay.goldPairs
+    || replay.goldRecall <= 0
+    || replay.goldRecall > 1
+  ) {
+    throw new Error('serving replay failed its recall or admission invariants')
+  }
+  return replay
 }
 
 function markdownCell(value: string): string {
@@ -293,6 +424,20 @@ function renderMarkdown(receipt: TauLexReceipt): string {
     `| \`bm25()\` weights | identity=${receipt.weights.identity}, content=${receipt.weights.content}, context=${receipt.weights.context} |`,
     `| Shape source | \`${receipt.ftsShape.productionShapeSource}\` |`,
     `| Weight source | \`${receipt.ftsShape.productionWeightSource}\` |`,
+    `| Query semantics | \`${receipt.ftsShape.querySemantics}\` |`,
+    `| Query source | \`${receipt.ftsShape.productionQuerySource}\` |`,
+    '',
+    '## Serving Replay',
+    '',
+    '| Metric | Recorded value |',
+    '| --- | ---: |',
+    `| Evaluated in-app query/document pairs | ${receipt.servingReplay.evaluatedCandidates} |`,
+    `| MATCH candidates | ${receipt.servingReplay.matchedCandidates} |`,
+    `| Admitted candidates | ${receipt.servingReplay.admittedCandidates} |`,
+    `| Gold pairs | ${receipt.servingReplay.goldPairs} |`,
+    `| Matched gold pairs | ${receipt.servingReplay.matchedGoldPairs} |`,
+    `| Admitted gold pairs | ${receipt.servingReplay.admittedGoldPairs} |`,
+    `| Gold recall | ${receipt.servingReplay.goldRecall} |`,
     '',
     '## Corpus Identity',
     '',
@@ -307,8 +452,8 @@ function renderMarkdown(receipt: TauLexReceipt): string {
     `| Documents | ${receipt.corpusStats.documents} |`,
     `| Recorded queries | ${receipt.corpusStats.recordedQueries} |`,
     `| Gold pairs | ${receipt.corpusStats.goldPairs} |`,
-    `| Scored lexical pairs | ${receipt.corpusStats.scoredPairs} |`,
-    `| No-overlap pairs | ${receipt.corpusStats.unmatchedPairs} |`,
+    `| Matched gold pairs | ${receipt.corpusStats.scoredPairs} |`,
+    `| Unmatched gold pairs | ${receipt.corpusStats.unmatchedPairs} |`,
     '',
     '## Scored Gold Pairs',
     '',
@@ -319,9 +464,9 @@ function renderMarkdown(receipt: TauLexReceipt): string {
         `| ${markdownCell(queryId)} | ${markdownCell(goldId)} | ${bm25Positive} |`,
     ),
     '',
-    '## Gold Pairs Without Lexical Overlap',
+    '## Gold Pairs Unmatched by Serving',
     '',
-    'These members were resolved and validated against the recorded corpus, but the score-probe query had no matching FTS token. They are excluded from the lexical-candidate floor rather than represented as fabricated BM25 scores.',
+    'These members were resolved and validated against the recorded corpus, but the live production MATCH constructor did not return them. They are excluded from the lexical-candidate floor rather than represented as fabricated BM25 scores.',
     '',
     '| Query ID | Gold document ID |',
     '| --- | --- |',
@@ -341,16 +486,22 @@ export async function calibrateTauLex(options: CalibrateTauLexOptions): Promise<
 }> {
   const production = await loadProductionFtsContract()
   const rowids = assertCorpus(options.corpus)
-  const { pairs, unmatchedPairs } = collectPairs(options.corpus, rowids, production.weights)
-  const derived = deriveTauLex(pairs.map(({ bm25Positive }) => bm25Positive))
-  const corpusRaw = options.corpusRaw ?? JSON.stringify(options.corpus)
-  const corpusHash = sha256(corpusRaw)
+  const collected = collectServingReplay(options.corpus, rowids, production)
   const goldPairs = options.corpus.recordedQueries.reduce(
     (count, query) => count + new Set(query.goldDocIds).size,
     0,
   )
+  if (collected.pairs.length === 0) {
+    throw new Error('serving replay matched zero recorded gold pairs')
+  }
+  const derived = deriveTauLex(
+    collected.pairs.map(({ bm25Positive }) => bm25Positive),
+  )
+  const servingReplay = servingReplayMetrics(collected, goldPairs, derived.tauLex)
+  const corpusRaw = options.corpusRaw ?? JSON.stringify(options.corpus)
+  const corpusHash = sha256(corpusRaw)
   const receipt: TauLexReceipt = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     calibrationDate: options.calibrationDate ?? CALIBRATION_DATE,
     tauLex: derived.tauLex,
     percentile05: derived.percentile05,
@@ -362,6 +513,8 @@ export async function calibrateTauLex(options: CalibrateTauLexOptions): Promise<
       tokenizer: FTS_TOKENIZER,
       productionShapeSource: PRODUCTION_SHAPE_SOURCE,
       productionWeightSource: PRODUCTION_WEIGHT_SOURCE,
+      querySemantics: production.querySemantics,
+      productionQuerySource: PRODUCTION_QUERY_SOURCE,
       queryMode: QUERY_MODE,
       contextProjection: CONTEXT_PROJECTION,
     },
@@ -376,11 +529,12 @@ export async function calibrateTauLex(options: CalibrateTauLexOptions): Promise<
       documents: options.corpus.documents.length,
       recordedQueries: options.corpus.recordedQueries.length,
       goldPairs,
-      scoredPairs: pairs.length,
-      unmatchedPairs: unmatchedPairs.length,
+      scoredPairs: collected.pairs.length,
+      unmatchedPairs: collected.unmatchedPairs.length,
     },
-    pairs,
-    unmatchedPairs,
+    servingReplay,
+    pairs: collected.pairs,
+    unmatchedPairs: collected.unmatchedPairs,
   }
   const jsonPath = resolve(options.jsonPath)
   const markdownPath = resolve(options.markdownPath)
@@ -456,6 +610,9 @@ async function runCli(): Promise<void> {
       markdown: result.markdownPath,
       tauLex: result.receipt.tauLex,
       pairs: result.receipt.pairs.length,
+      matchedCandidates: result.receipt.servingReplay.matchedCandidates,
+      admittedCandidates: result.receipt.servingReplay.admittedCandidates,
+      goldRecall: result.receipt.servingReplay.goldRecall,
     })}\n`,
   )
 }
