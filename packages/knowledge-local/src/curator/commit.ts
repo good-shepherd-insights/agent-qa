@@ -22,7 +22,11 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { copyArtifacts } from '../artifact-copy.js'
-import type { ArtifactCopyInput, ArtifactCopyResult } from '../artifact-copy.js'
+import type {
+  ArtifactCopyInput,
+  ArtifactCopyResult,
+  SkippedArtifact,
+} from '../artifact-copy.js'
 import {
   appendOutcomeEvent,
   appendOutcomeEventWithEnrichment,
@@ -42,14 +46,6 @@ import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.
 import { assertEpochCurrent } from '../lease/writer-lease.js'
 import type { ClaimedCurationJob } from '../queue/curation-queue.js'
 import { writeJobState } from '../queue/job-state.js'
-import {
-  classifyCaptureBlacklist,
-  filterArtifactsForCapture,
-} from './capture-blacklist.js'
-import type {
-  CaptureBlacklistEvidence,
-  CaptureStepInteraction,
-} from './capture-blacklist.js'
 import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
 import { disposeDelta } from './disposition.js'
 import type { DispositionDrainState, RelationIntent } from './disposition.js'
@@ -59,10 +55,7 @@ import { assertRestrictedFallbackDelta } from './fallback.js'
 type CheckpointDraft = BundleDraft & { needsEnrichment?: true }
 
 export interface CommitCurationJob extends ClaimedCurationJob {
-  /** Optional richer evidence supplied by the drainer; queue transport remains backwards safe. */
   screenStates?: readonly ScreenState[]
-  captureEvidence?: CaptureBlacklistEvidence
-  stepInteractions?: readonly CaptureStepInteraction[]
 }
 
 export interface CommitCurationDependencies {
@@ -300,6 +293,94 @@ function artifactInputs(job: CommitCurationJob): ArtifactCopyInput[] {
     },
     sourcePath: join(job.candidateDir, artifact.relativePath),
     stepIndex: artifact.stepIndex,
+    role: artifact.role,
+    originalName: artifact.originalName,
+  }))
+}
+
+function receiptInteractionMatchesRegion(
+  region: CommitCurationJob['payload']['captureReceipt']['regions'][number],
+  interaction: CommitCurationJob['payload']['captureReceipt']['interactions'][number],
+): boolean {
+  return region.stepIndex === interaction.stepIndex
+    && (interaction.elementRef === undefined || interaction.elementRef === region.elementRef)
+}
+
+function captureSafePayloadError(): TypeError {
+  return new TypeError('claimed job has an inconsistent capture-safe payload')
+}
+
+/** Defense-in-depth over value-free queue facts; raw capture classification stays queue-owned. */
+function assertCaptureSafePayload(job: CommitCurationJob): void {
+  const { artifactInventory, captureReceipt } = job.payload
+  const interactedBlacklistedSteps = new Set(
+    captureReceipt.regions
+      .filter((region) =>
+        captureReceipt.interactions.some((interaction) =>
+          receiptInteractionMatchesRegion(region, interaction),
+        ),
+      )
+      .map((region) => region.stepIndex),
+  )
+  const declaredDescriptorRefs = new Set<string>()
+
+  for (const omission of captureReceipt.omissions) {
+    if (
+      !interactedBlacklistedSteps.has(omission.stepIndex)
+      || omission.role === 'dom-snapshot'
+      || omission.role === 'ax-snapshot'
+      || declaredDescriptorRefs.has(omission.ref)
+    ) {
+      throw captureSafePayloadError()
+    }
+    declaredDescriptorRefs.add(omission.ref)
+  }
+
+  for (const redaction of captureReceipt.redactions) {
+    const safeArtifact = artifactInventory.find((artifact) =>
+      artifact.sha256 === redaction.safeSha256
+      && artifact.stepIndex === redaction.stepIndex
+      && artifact.role === redaction.role
+      && artifact.originalName === redaction.originalName,
+    )
+    if (
+      !interactedBlacklistedSteps.has(redaction.stepIndex)
+      || safeArtifact === undefined
+      || declaredDescriptorRefs.has(redaction.ref)
+    ) {
+      throw captureSafePayloadError()
+    }
+    declaredDescriptorRefs.add(redaction.ref)
+  }
+
+  for (const artifact of artifactInventory) {
+    if (
+      interactedBlacklistedSteps.has(artifact.stepIndex)
+      && (artifact.role === 'screenshot' || artifact.role === 'opaque-evidence')
+    ) {
+      throw captureSafePayloadError()
+    }
+  }
+}
+
+function omissionPreSkipped(
+  job: CommitCurationJob,
+): SkippedArtifact<'capture-blacklist'>[] {
+  return job.payload.captureReceipt.omissions.map((omission) => ({
+    ref: {
+      id: omission.ref,
+      sha: sha256hex(canonicalJson({
+        schemaVersion: 1,
+        kind: 'capture-blacklist-omission',
+        stepIndex: omission.stepIndex,
+        ref: omission.ref,
+        role: omission.role,
+        originalName: omission.originalName,
+        reason: omission.reason,
+      })),
+    },
+    stepIndex: omission.stepIndex,
+    reason: omission.reason,
   }))
 }
 
@@ -307,14 +388,8 @@ function preCopyArtifacts(
   job: CommitCurationJob,
   preflightDir: string,
 ): ArtifactCopyResult<'capture-blacklist'> {
-  const blacklist = classifyCaptureBlacklist(job.captureEvidence ?? { elements: [] })
-  const filtered = filterArtifactsForCapture({
-    artifacts: artifactInputs(job),
-    blacklist,
-    stepInteractions: job.stepInteractions ?? [],
-  })
-  return copyArtifacts(filtered.toCopy, join(preflightDir, 'artifacts'), {
-    preSkipped: filtered.skipped,
+  return copyArtifacts(artifactInputs(job), join(preflightDir, 'artifacts'), {
+    preSkipped: omissionPreSkipped(job),
   })
 }
 
@@ -416,6 +491,7 @@ export function commitCurationDelta(
 ): CommitCurationOutcome {
   const beforeWork = staleEpoch(deps)
   if (beforeWork !== undefined) return beforeWork
+  assertCaptureSafePayload(job)
 
   if (checkpoint.authorship.path === 'deterministic-fallback') {
     try {

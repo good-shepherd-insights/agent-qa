@@ -237,8 +237,11 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   }
 
   it('uses only the required payload receipt and preserves safe artifact metadata for publish', () => {
-    expectTypeOf<CommitCurationJob>().not.toHaveProperty('captureEvidence')
-    expectTypeOf<CommitCurationJob>().not.toHaveProperty('stepInteractions')
+    type CommitSafetyOverrideKeys = Extract<
+      keyof CommitCurationJob,
+      'captureEvidence' | 'stepInteractions'
+    >
+    expectTypeOf<CommitSafetyOverrideKeys>().toEqualTypeOf<never>()
 
     const artifactText = '<main>safe checkout evidence</main>'
     const artifactBytes = Buffer.from(artifactText)
@@ -371,19 +374,20 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     )
     mismatchedRedactionJob.payload.captureReceipt.redactions[0]!.safeSha256 = 'f'.repeat(64)
 
-    const undeclaredDescriptorJob = job(passwordReceipt(), {
-      artifactInventory: [
-        {
-          relativePath: `artifacts/${safeDomSha}`,
-          sha256: safeDomSha,
-          bytes: safeDom.byteLength,
-          stepIndex: 4,
-          role: 'dom-snapshot',
-          originalName: validRedaction.originalName,
-        },
-      ],
-      attributingObservationId: 'undeclared-safe-descriptor',
-    })
+    const undeclaredDescriptorJob = job(
+      passwordReceipt({
+        omissions: [
+          {
+            stepIndex: 9,
+            ref: 'undeclared-screenshot',
+            role: 'screenshot',
+            originalName: 'step-9.undeclared.png',
+            reason: 'capture-blacklist',
+          },
+        ],
+      }),
+      { attributingObservationId: 'undeclared-omission-descriptor' },
+    )
 
     for (const inconsistentJob of [
       screenshotJob,
