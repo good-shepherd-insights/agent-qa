@@ -7,13 +7,10 @@ import type {
   LanguageModelV3CallOptions,
 } from '@ai-sdk/provider'
 import {
-  CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
-  buildCurationCandidateAddressFields,
-  candidateContentAddress,
-  enqueueCurationCandidate,
+  enqueueCurationCandidateProjection,
   enumerateBundleDirs,
-  type CurationCandidatePayload,
+  loadBundle,
+  type CurationCandidateProjection,
 } from '@vostride/agent-qa-knowledge-local'
 import {
   createModel,
@@ -98,14 +95,15 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
   let root: string
   let agentQaRoot: string
   let knowledgeRoot: string
-  let candidate: CurationCandidatePayload
+  let candidate: CurationCandidateProjection
+  let finalizedCandidateId: string | undefined
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'cli-curation-audit-'))
     agentQaRoot = join(root, '.agent-qa')
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    const fields = buildCurationCandidateAddressFields({
-      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+    finalizedCandidateId = undefined
+    candidate = {
       sourceRunId: 'run-curation-audit',
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
@@ -120,11 +118,11 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       distilledObservations: [],
       evidenceToken: 'evidence-curation-audit',
       attributingObservationId: 'run-curation-audit:test-0:step-0',
-      artifactInventory: [],
-      captureReceipt: artifactFreeCaptureReceipt(),
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
       emittedAt: '2026-07-15T10:00:00.000Z',
-    })
-    candidate = { candidateId: candidateContentAddress(fields), ...fields }
+    }
   })
 
   afterEach(() => {
@@ -151,13 +149,12 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
         }) as CompletedRunHandoff,
         resolveKnowledgeRoot: () => knowledgeRoot,
         emitCurationCandidates: () => {
-          expect(
-            enqueueCurationCandidate({
-              knowledgeRoot,
-              payload: candidate,
-              artifactSources: [],
-            }),
-          ).toBe('enqueued')
+          const outcome = enqueueCurationCandidateProjection({
+            knowledgeRoot,
+            projection: candidate,
+            artifactSources: [],
+          })
+          void outcome
           return {
             enqueued: 1,
             coalesced: 0,
@@ -185,7 +182,14 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
     await runCurationTail(tailOptions(sink, modelCalls))
 
     expect(modelCalls).toHaveBeenCalledOnce()
-    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(1)
+    const bundles = enumerateBundleDirs(knowledgeRoot)
+    expect(bundles).toHaveLength(1)
+    const loaded = loadBundle(bundles[0]!.dir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected one curated audit bundle')
+    expect(loaded.bundle.events).toContainEqual(
+      expect.objectContaining({ curationJobId: finalizedCandidateId }),
+    )
     const auditFile = join(agentQaRoot, 'guardrail_audit.jsonl')
     expect(existsSync(auditFile)).toBe(true)
     const rows = readFileSync(auditFile, 'utf8')
