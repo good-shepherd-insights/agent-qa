@@ -136,7 +136,15 @@ export type {
   RecordId,
 } from './ids/index'
 export type { Verdict, VerdictEvidence } from './verdict/index'
-export type { DeltaEnvelope, CompareAndSet, BundleDraft, Delta, IssueDelta } from './delta/index'
+export type {
+  DeltaEnvelope,
+  CompareAndSet,
+  BundleDraft,
+  CurationAuthorship,
+  CurationAuthorshipPath,
+  Delta,
+  IssueDelta,
+} from './delta/index'
 export type { ServedBrief, BriefLine, ReadTrace, CautionLine } from './brief/index'
 export type {
   CompletedRunHandoff,
@@ -288,6 +296,7 @@ export {
   BundleProvenanceSchema,
   BundleRelationsSchema,
   computeMutableStateHash,
+  deriveEvidenceToken,
   guardArtifactsIndex,
   guardBundleManifest,
   guardBundleProvenance,

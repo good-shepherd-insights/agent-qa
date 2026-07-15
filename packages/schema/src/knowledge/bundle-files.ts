@@ -1,8 +1,10 @@
 import { z } from 'zod'
 
+import type { CurationAuthorship, CurationAuthorshipPath } from '../delta/envelope'
 import type { BundleIdentityCore } from '../ids/content-address'
 import { canonicalJson } from '../determinism/canonical-json'
 import { sha256hex } from '../determinism/sha256'
+import type { ExecutionContext } from '../run/run-status'
 import { createVersionGuard } from '../versioning/create-version-guard'
 import type { OriginClass } from './outcome-event'
 
@@ -23,6 +25,26 @@ const originClassSchema: z.ZodType<OriginClass> = z.enum([
   'agent-observed',
   'import',
 ])
+const curationAuthorshipPaths = [
+  'llm',
+  'llm-repaired',
+  'deterministic-fallback',
+] as const satisfies readonly CurationAuthorshipPath[]
+const executionContexts = [
+  'local-interactive',
+  'local-headless',
+  'ci',
+  'cloud',
+] as const satisfies readonly ExecutionContext[]
+const curationAuthorshipSchema: z.ZodType<CurationAuthorship> = z.object({
+  path: z.enum(curationAuthorshipPaths),
+  model: z.object({
+    id: z.string(),
+    family: z.string().optional(),
+    fingerprint: z.string().optional(),
+  }).strict().optional(),
+  executionContext: z.enum(executionContexts),
+}).strict()
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'expected a lowercase SHA-256 hex digest')
 
 const anchorSchema = z.discriminatedUnion('t', [
@@ -113,6 +135,16 @@ export const BundleProvenanceSchema = z.discriminatedUnion('mode', [
     runId: z.string(),
     testId: z.string(),
     stepIndex: z.number().int().nonnegative(),
+    curationJobId: z.string().optional(),
+    sourceBuildOrdinal: z.number().optional(),
+    authorship: curationAuthorshipSchema.optional(),
+    /** CUR-02: deterministic fallback output may request capable-model re-processing. */
+    needsEnrichment: z.boolean().optional(),
+    /**
+     * SAFE-03: injection-flagged candidates stay out of brief serving and ordinary promotion
+     * until a local-interactive re-review supersedes them.
+     */
+    withheld: z.boolean().optional(),
   }).strict(),
   z.object({
     schemaVersion: z.number().int().positive(),
@@ -133,6 +165,7 @@ const bundleRelationSchema = z.object({
     'relates-to',
     'renamed-from',
     'equivalent-to',
+    'proposed-supersession-of',
   ]),
   targetId: z.string(),
   addedAtOrdinal: z.number(),
