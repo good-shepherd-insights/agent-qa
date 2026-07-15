@@ -36,6 +36,7 @@ import {
   listCommitIntents,
   type CommitIntent,
 } from './intent-journal.js'
+import { recoverExpiredBundleMutations } from './bundle-mutation.js'
 
 export interface ReconcileOnDrainStartDependencies {
   knowledgeRoot: string
@@ -50,6 +51,8 @@ export interface ReconcileReport {
   intentsDiscarded: number
   jobsRequeued: number
   orphansRemoved: number
+  /** Present on production reconciliation; optional keeps injected legacy test reports compatible. */
+  mutationsRecovered?: number
   malformed: number
 }
 
@@ -196,6 +199,7 @@ export function reconcileOnDrainStart(
     intentsDiscarded: 0,
     jobsRequeued: 0,
     orphansRemoved: 0,
+    mutationsRecovered: 0,
     malformed: 0,
   }
   const requeued = new Set<string>()
@@ -212,6 +216,10 @@ export function reconcileOnDrainStart(
       requeued.add(candidateId)
     }
   }
+  report.mutationsRecovered = recoverExpiredBundleMutations(
+    deps.knowledgeRoot,
+    [...expiredLeaseIds],
+  ).mutationsRecovered
   report.orphansRemoved = removeExpiredLeaseStaging(
     deps.knowledgeRoot,
     expiredLeaseIds,
@@ -240,10 +248,8 @@ export function reconcileOnDrainStart(
       continue
     }
 
-    if (!deps.hasIndexRow(intent.bundleId)) {
-      deps.applyIndexDelta(intent)
-      report.intentsReplayed += 1
-    }
+    deps.applyIndexDelta(intent)
+    report.intentsReplayed += 1
     clearCommitIntent(deps.knowledgeRoot, intent.candidateId)
     report.intentsCleared += 1
   }

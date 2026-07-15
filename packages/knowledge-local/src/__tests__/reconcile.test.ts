@@ -217,7 +217,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
 
     expect(reconcileOnDrainStart(deps())).toEqual({
       intentsCleared: 1,
-      intentsReplayed: 0,
+      intentsReplayed: 1,
       intentsDiscarded: 0,
       jobsRequeued: 0,
       orphansRemoved: 0,
