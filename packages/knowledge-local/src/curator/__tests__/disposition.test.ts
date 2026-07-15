@@ -69,10 +69,11 @@ describe('Curator author contract (CUR-01/SAFE-01)', () => {
       (job: CurationJobView, neighbors: NeighborRecord[]) => Promise<AuthorOutcome>
     >()
 
+    const parsedCheckpoint = parseAuthoredCheckpoint(authoredCheckpoint)
     const authored: AuthorOutcome = {
       kind: 'authored',
-      delta: authoredCheckpoint.delta,
-      authorship: authoredCheckpoint.authorship,
+      delta: parsedCheckpoint.delta,
+      authorship: parsedCheckpoint.authorship,
     }
     const fallbackReasons: Record<
       Extract<AuthorOutcome, { kind: 'fallback-required' }>['reason'],

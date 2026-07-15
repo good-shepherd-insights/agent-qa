@@ -209,6 +209,20 @@ export type {
   ReadJobStateOutcome,
   WriteJobStateOptions,
 } from './queue/job-state.js'
+export {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+  authoredCheckpointSchema,
+  parseAuthoredCheckpoint,
+  resolveDispositionProfile,
+} from './curator/author-contract.js'
+export type {
+  AuthoredCheckpoint,
+  AuthorOutcome,
+  CurationJobView,
+  CuratorAuthor,
+  DispositionProfile,
+  NeighborRecord,
+} from './curator/author-contract.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
