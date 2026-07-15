@@ -3,12 +3,11 @@ import {
   asRecordId,
   deriveEvidenceToken,
   type Anchor,
-  type BundleKind,
   type Delta,
   type ExecutionContext,
   type FactSubtype,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, NeighborRecord } from '../author-contract.js'
@@ -23,10 +22,7 @@ type FallbackJobFixture = CurationJobView & {
   executionContext: ExecutionContext
 }
 
-type FallbackNeighborFixture = NeighborRecord & {
-  kind: BundleKind
-  subtype?: FactSubtype
-}
+type FallbackNeighborFixture = Extract<NeighborRecord, { kind: 'fact' }>
 
 const primaryAnchor: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 const pageAnchor: Anchor = { t: 'page', route: '/checkout' }
@@ -74,6 +70,17 @@ function onlyDelta(jobView: FallbackJobFixture, neighbors: FallbackNeighborFixtu
 }
 
 describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
+  it('types the fallback-only job and neighbor facts at the author boundary', () => {
+    expectTypeOf<CurationJobView['attributingObservationId']>().toEqualTypeOf<string>()
+    expectTypeOf<CurationJobView['executionContext']>().toEqualTypeOf<ExecutionContext>()
+    expectTypeOf<
+      Extract<NeighborRecord, { kind: 'fact' }>['subtype']
+    >().toEqualTypeOf<FactSubtype>()
+    expectTypeOf<
+      Extract<NeighborRecord, { kind: 'procedure' }>['subtype']
+    >().toEqualTypeOf<undefined>()
+  })
+
   it('emits a born-candidate Add with deterministic fallback authorship when no anchor matches', () => {
     const input = job()
     const delta = onlyDelta(input)

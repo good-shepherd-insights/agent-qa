@@ -31,12 +31,14 @@ export type CurationJobView = Pick<
   | 'distilledObservations'
   | 'scope'
   | 'buildOrdinal'
+  | 'attributingObservationId'
+  | 'executionContext'
   | 'secretFlagged'
   | 'injectionFlagged'
 >
 
 /** One retrieval hit as shown to the author through a small integer alias. */
-export interface NeighborRecord {
+interface NeighborRecordBase {
   alias: number
   recordId: RecordId
   summary: string
@@ -44,6 +46,13 @@ export interface NeighborRecord {
   observedStatus: string
   observedOrdinal: number
 }
+
+type NonFactNeighborRecord = {
+  [Kind in Exclude<BundleKind, 'fact'>]: { kind: Kind; subtype?: never }
+}[Exclude<BundleKind, 'fact'>]
+
+export type NeighborRecord = NeighborRecordBase &
+  ({ kind: 'fact'; subtype: FactSubtype } | NonFactNeighborRecord)
 
 export type AuthorOutcome =
   | { kind: 'authored'; delta: Delta; authorship: CurationAuthorship }
@@ -138,7 +147,9 @@ const factSubtypeSchema: z.ZodType<FactSubtype> = z.enum([
   'content',
 ])
 
-const bundleDraftSchema: z.ZodType<BundleDraft> = z
+type CheckpointBundleDraft = BundleDraft & { needsEnrichment?: true }
+
+const bundleDraftSchema: z.ZodType<CheckpointBundleDraft> = z
   .object({
     kind: bundleKindSchema,
     subtype: factSubtypeSchema.optional(),
@@ -148,6 +159,8 @@ const bundleDraftSchema: z.ZodType<BundleDraft> = z
     body: z.string(),
     distilledEvidenceRef: artifactRefSchema,
     originStage: z.literal('run-curation'),
+    /** Transient CUR-02 signal consumed when commit renders run-linked provenance. */
+    needsEnrichment: z.literal(true).optional(),
   })
   .strict()
   .superRefine((bundle, ctx) => {
@@ -198,7 +211,7 @@ const envelopeShape = {
   authorship: curationAuthorshipSchema.optional(),
 } as const
 
-const deltaSchema: z.ZodType<Delta> = z.discriminatedUnion('kind', [
+const deltaSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('Add'),
@@ -249,7 +262,7 @@ const deltaSchema: z.ZodType<Delta> = z.discriminatedUnion('kind', [
       ...envelopeShape,
     })
     .strict(),
-])
+]) satisfies z.ZodType<Delta>
 
 /**
  * Strict recovery boundary for the opaque queue slot. Neighbor membership and CAS freshness are
