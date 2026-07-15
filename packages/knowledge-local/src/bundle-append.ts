@@ -12,14 +12,19 @@ import {
   canonicalJson,
   committedFileText,
   computeMutableStateHash,
+  emitRecordMarkdown,
   eventDedupKey,
   guardBundleManifest,
+  guardBundleProvenance,
   guardBundleRelations,
+  parseRecordMarkdown,
+  renderEmbeddingInput,
   slugBranch,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleManifest,
   BundleOutcomeEvent,
+  CurationAuthorship,
   BundleRelation,
   BundleRelations,
   RecordId,
@@ -33,6 +38,17 @@ export type AppendOutcome =
   | { kind: 'duplicate' }
   | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
   | { kind: 'not-found' }
+
+export type AppendEnrichedOutcome =
+  | { kind: 'appended' | 'duplicate'; enriched: boolean }
+  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
+  | { kind: 'not-found' }
+
+export interface BundleProseEnrichment {
+  summary: string
+  body: string
+  authorship: CurationAuthorship
+}
 
 const OUTCOMES_REL_PATH = 'evidence/outcomes.jsonl'
 const RELATIONS_REL_PATH = 'relations.json'
@@ -81,6 +97,23 @@ function rewriteManifest(
   }
   return committedFileText({
     ...manifest,
+    contentHashes,
+    mutableStateHash: mutableStateHash(contentHashes),
+  })
+}
+
+function rewriteManifestParts(
+  manifest: BundleManifest,
+  rewrittenParts: Readonly<Record<string, string>>,
+  embeddingInput: string,
+): string {
+  const contentHashes = { ...manifest.contentHashes }
+  for (const [relPath, rewrittenText] of Object.entries(rewrittenParts)) {
+    contentHashes[relPath] = textSha(rewrittenText)
+  }
+  return committedFileText({
+    ...manifest,
+    embeddingInput,
     contentHashes,
     mutableStateHash: mutableStateHash(contentHashes),
   })
@@ -160,6 +193,85 @@ export function appendOutcomeEvent(
     rewrittenText,
     manifestText,
   )
+}
+
+/**
+ * Confirm a capable-model duplicate Add while backfilling only the mutable prose and provenance
+ * fields of a fallback bundle. The identity frontmatter is parsed and re-emitted unchanged; the
+ * stable content address therefore cannot drift during CUR-02 enrichment.
+ */
+export function appendOutcomeEventWithEnrichment(
+  config: BundleStoreConfig,
+  id: RecordId,
+  event: BundleOutcomeEvent,
+  enrichment: BundleProseEnrichment,
+): AppendEnrichedOutcome {
+  const dir = bundleDir(config, id)
+  const manifest = completeManifest(dir)
+  if (manifest === null) return { kind: 'not-found' }
+
+  const provenanceFile = join(dir, 'provenance.json')
+  const provenance = guardBundleProvenance(
+    JSON.parse(readFileSync(provenanceFile, 'utf8')),
+  )
+  if (provenance.mode !== 'run-linked' || provenance.needsEnrichment !== true) {
+    const appended = appendOutcomeEvent(config, id, event)
+    return appended.kind === 'appended' || appended.kind === 'duplicate'
+      ? { ...appended, enriched: false }
+      : appended
+  }
+
+  const recordFile = join(dir, 'record.md')
+  const record = parseRecordMarkdown(readFileSync(recordFile, 'utf8'))
+  const recordText = emitRecordMarkdown(record.frontmatter, {
+    summary: enrichment.summary,
+    body: enrichment.body,
+  })
+  const provenanceText = committedFileText({
+    ...provenance,
+    authorship: enrichment.authorship,
+    needsEnrichment: false,
+  })
+
+  const outcomesFile = join(dir, OUTCOMES_REL_PATH)
+  const existingOutcomesText = readFileSync(outcomesFile, 'utf8')
+  const existingEvents = parseOutcomeLog(existingOutcomesText)
+  const parsedEvent = BundleOutcomeEventSchema.parse(event)
+  const duplicate = existingEvents.some(
+    (candidate) => eventDedupKey(candidate) === eventDedupKey(parsedEvent),
+  )
+  const appendedText = duplicate ? '' : `${canonicalJson(parsedEvent)}\n`
+  const outcomesText = `${existingOutcomesText}${appendedText}`
+  const embeddingInput = renderEmbeddingInput({
+    summary: enrichment.summary,
+    body: enrichment.body,
+    anchors: record.frontmatter.anchors.map(({ raw }) => raw),
+  })
+  const rewrittenParts = {
+    'record.md': recordText,
+    'provenance.json': provenanceText,
+    [OUTCOMES_REL_PATH]: outcomesText,
+  }
+  const manifestText = rewriteManifestParts(manifest, rewrittenParts, embeddingInput)
+  const checkpoint = checkpointCommittedParts(
+    [
+      { label: 'record.md', text: recordText },
+      { label: 'provenance.json', text: provenanceText },
+      ...(duplicate ? [] : [{ label: OUTCOMES_REL_PATH, text: appendedText }]),
+      { label: 'manifest.json', text: manifestText },
+    ],
+    {
+      auditBaseDir: config.auditBaseDir,
+      ...(config.policy === undefined ? {} : { policy: config.policy }),
+    },
+  )
+  if (checkpoint.kind === 'egress-blocked') return checkpoint
+
+  atomicRewrite(recordFile, recordText)
+  atomicRewrite(provenanceFile, provenanceText)
+  if (!duplicate) atomicRewrite(outcomesFile, outcomesText)
+  atomicRewrite(join(dir, 'manifest.json'), manifestText)
+  return { kind: duplicate ? 'duplicate' : 'appended', enriched: true }
 }
 
 function relationDedupKey(relation: BundleRelation): string {

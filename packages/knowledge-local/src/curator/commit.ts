@@ -23,7 +23,11 @@ import type {
 
 import { copyArtifacts } from '../artifact-copy.js'
 import type { ArtifactCopyInput, ArtifactCopyResult } from '../artifact-copy.js'
-import { appendOutcomeEvent, appendRelation } from '../bundle-append.js'
+import {
+  appendOutcomeEvent,
+  appendOutcomeEventWithEnrichment,
+  appendRelation,
+} from '../bundle-append.js'
 import { renderBundleParts } from '../bundle-parts.js'
 import type { RenderBundlePartsInput } from '../bundle-parts.js'
 import { publishBundle } from '../bundle-publish.js'
@@ -361,7 +365,10 @@ function markDone(deps: CommitCurationDependencies, job: CommitCurationJob): voi
 }
 
 function appendFailure(
-  outcome: ReturnType<typeof appendOutcomeEvent> | ReturnType<typeof appendRelation>,
+  outcome:
+    | ReturnType<typeof appendOutcomeEvent>
+    | ReturnType<typeof appendOutcomeEventWithEnrichment>
+    | ReturnType<typeof appendRelation>,
 ): CommitCurationOutcome | undefined {
   if (outcome.kind === 'egress-blocked') {
     return { kind: 'withheld', reason: 'egress-blocked', detections: outcome.detections }
@@ -555,18 +562,38 @@ export function commitCurationDelta(
           deps,
           productForBundle(deps.knowledgeRoot, published.id, productKey),
         )
-        const appended = appendOutcomeEvent(
-          existingConfig,
-          published.id,
-          confirmedEvent(job, delta),
-        )
+        const capableEnrichment =
+          delta.kind === 'Add'
+          && checkpoint.authorship.path !== 'deterministic-fallback'
+          && draft !== undefined
+            ? {
+                summary: draft.summary,
+                body: draft.body,
+                authorship: checkpoint.authorship,
+              }
+            : undefined
+        const appended = capableEnrichment === undefined
+          ? appendOutcomeEvent(
+              existingConfig,
+              published.id,
+              confirmedEvent(job, delta),
+            )
+          : appendOutcomeEventWithEnrichment(
+              existingConfig,
+              published.id,
+              confirmedEvent(job, delta),
+              capableEnrichment,
+            )
         const failure = appendFailure(appended)
         if (failure !== undefined) {
           clearCommitIntent(deps.knowledgeRoot, job.candidateId)
           markDone(deps, job)
           return failure
         }
-        if (appended.kind === 'duplicate') {
+        if (
+          appended.kind === 'duplicate'
+          && (!('enriched' in appended) || appended.enriched === false)
+        ) {
           clearCommitIntent(deps.knowledgeRoot, job.candidateId)
           markDone(deps, job)
           return { kind: 'noop', reason: 'evidence-token-consumed' }

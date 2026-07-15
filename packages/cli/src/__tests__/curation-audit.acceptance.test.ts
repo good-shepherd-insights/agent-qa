@@ -19,7 +19,7 @@ import {
   type ModelProfile,
   type ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
-import type { CompletedRunHandoff } from '@vostride/agent-qa-runner-local'
+import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
