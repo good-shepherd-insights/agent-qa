@@ -20,7 +20,7 @@ import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadBundle } from '../../bundle-read.js'
 import { openIndexReaderConnection } from '../../index-open.js'
@@ -38,6 +38,10 @@ import {
   type CommitCurationJob,
 } from '../commit.js'
 import type { AuthoredCheckpoint, DispositionProfile } from '../author-contract.js'
+import {
+  KnowledgeStoreNotImplementedError,
+  createLocalKnowledgeStore,
+} from '../knowledge-store.js'
 import { makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
@@ -424,5 +428,69 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       sourceBuildOrdinal: 42,
     })
     expect(loaded.bundle.events.some((event) => event.type === 'promoted')).toBe(false)
+  })
+
+  it('routes KnowledgePort commit through the same boundary with execution-context posture', async () => {
+    const operation = vi.fn(() => ({ kind: 'noop', reason: 'port-fixture' } as const))
+    const store = createLocalKnowledgeStore({
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'local-interactive',
+      epoch,
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      operations: { commitCurationDelta: operation },
+    })
+
+    await store.commit([addDelta(), addDelta(draft({ summary: 'Second port delta' }))])
+
+    expect(operation).toHaveBeenCalledTimes(2)
+    expect(operation.mock.calls.map(([dependencies]) => dependencies.profile)).toEqual([
+      { mode: 'drain-to-active' },
+      { mode: 'drain-to-active' },
+    ])
+  })
+
+  it('routes proposeDeltas through the commit boundary with forced propose-only posture', async () => {
+    const operation = vi.fn(() => ({ kind: 'noop', reason: 'port-fixture' } as const))
+    const store = createLocalKnowledgeStore({
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'local-interactive',
+      epoch,
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      operations: { commitCurationDelta: operation },
+    })
+
+    await store.proposeDeltas([addDelta()])
+
+    expect(operation).toHaveBeenCalledOnce()
+    expect(operation.mock.calls[0]?.[0].profile).toEqual({ mode: 'propose-only' })
+  })
+
+  it('leaves canary attribution and promotion as typed phase-owned stubs', async () => {
+    const store = createLocalKnowledgeStore({
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'ci',
+      epoch,
+    })
+
+    await expect(
+      store.recordCanaryOutcome({
+        candidateId: asRecordId('candidate-record'),
+        runOutcome: 'passed',
+        attribution: 'served',
+        exercisedAnchor: checkoutAnchors[0]!,
+      }),
+    ).rejects.toMatchObject({
+      name: 'KnowledgeStoreNotImplementedError',
+      operation: 'recordCanaryOutcome',
+      ownerPhase: 380,
+    } satisfies Partial<KnowledgeStoreNotImplementedError>)
+    await expect(store.promote(asRecordId('candidate-record'))).rejects.toMatchObject({
+      name: 'KnowledgeStoreNotImplementedError',
+      operation: 'promote',
+      ownerPhase: 379,
+    } satisfies Partial<KnowledgeStoreNotImplementedError>)
   })
 })
