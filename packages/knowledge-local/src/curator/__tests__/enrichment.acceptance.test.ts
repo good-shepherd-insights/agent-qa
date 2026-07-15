@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   drainQueue,
@@ -69,6 +70,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
       evidenceToken: `evidence-enrichment-${seed}`,
       attributingObservationId: `run-enrichment-${seed}:test-0:step-0`,
       artifactInventory: [],
+      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: `2026-07-15T10:0${buildOrdinal - 42}:00.000Z`,
     })
     return { candidateId: candidateContentAddress(fields), ...fields }

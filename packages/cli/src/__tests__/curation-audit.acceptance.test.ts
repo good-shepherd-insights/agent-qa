@@ -8,6 +8,7 @@ import type {
 } from '@ai-sdk/provider'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
   buildCurationCandidateAddressFields,
   candidateContentAddress,
   enqueueCurationCandidate,
@@ -120,6 +121,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       evidenceToken: 'evidence-curation-audit',
       attributingObservationId: 'run-curation-audit:test-0:step-0',
       artifactInventory: [],
+      captureReceipt: artifactFreeCaptureReceipt(),
       emittedAt: '2026-07-15T10:00:00.000Z',
     })
     candidate = { candidateId: candidateContentAddress(fields), ...fields }

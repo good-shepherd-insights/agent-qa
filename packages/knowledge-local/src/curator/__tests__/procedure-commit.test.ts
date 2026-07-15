@@ -87,8 +87,55 @@ describe('D-02 procedure-kind commit mint contract', () => {
         sha256: sha,
         bytes: bytes.byteLength,
         stepIndex,
+        role: 'opaque-evidence',
+        originalName: `procedure-step-${stepIndex}.txt`,
       })),
+      captureReceipt: {
+        regions: [
+          {
+            stepIndex: 1,
+            elementRef: screenStates[1]!.elements[0]!.ref,
+            role: 'textbox',
+            normalizedName: 'password',
+            reason: 'credential-name',
+          },
+        ],
+        interactions: artifacts.map(({ stepIndex }) => ({
+          stepIndex,
+          elementRef: screenStates[stepIndex]!.elements[0]!.ref,
+        })),
+        omissions: [],
+        redactions: [],
+      },
       emittedAt: '2026-07-15T10:00:00.000Z',
+    })
+    expect(
+      fields.artifactInventory.map(({ stepIndex, role, originalName }) => ({
+        stepIndex,
+        role,
+        originalName,
+      })),
+    ).toEqual([
+      { stepIndex: 0, role: 'opaque-evidence', originalName: 'procedure-step-0.txt' },
+      { stepIndex: 1, role: 'opaque-evidence', originalName: 'procedure-step-1.txt' },
+      { stepIndex: 2, role: 'opaque-evidence', originalName: 'procedure-step-2.txt' },
+    ])
+    expect(fields.captureReceipt).toMatchObject({
+      regions: [
+        {
+          stepIndex: 1,
+          role: 'textbox',
+          normalizedName: 'password',
+          reason: 'credential-name',
+        },
+      ],
+      interactions: [
+        { stepIndex: 0 },
+        { stepIndex: 1 },
+        { stepIndex: 2 },
+      ],
+      omissions: [],
+      redactions: [],
     })
     const candidateId = candidateContentAddress(fields)
     const candidateDir = join(root, 'claimed', candidateId)

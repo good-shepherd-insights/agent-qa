@@ -22,6 +22,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
   drainQueue,
@@ -93,6 +94,7 @@ function addressFields(seed: string) {
     evidenceToken: `evidence-${seed}`,
     attributingObservationId: `run-${seed}:test-0:step-0`,
     artifactInventory: [],
+    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: '2026-07-15T10:00:00.000Z',
   })
 }
@@ -126,6 +128,7 @@ function mutablePayload(seed: string, buildOrdinal: number): CurationCandidatePa
     evidenceToken: `evidence-mutable-${seed}`,
     attributingObservationId: `run-mutable-${seed}:test-0:step-0`,
     artifactInventory: [],
+    captureReceipt: artifactFreeCaptureReceipt(),
     emittedAt: `2026-07-15T10:${String(buildOrdinal).padStart(2, '0')}:00.000Z`,
   })
   return { candidateId: candidateContentAddress(fields), ...fields }
