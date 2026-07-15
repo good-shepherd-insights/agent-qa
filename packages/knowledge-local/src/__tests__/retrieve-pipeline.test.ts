@@ -23,6 +23,7 @@ import {
   type PublishBundleOutcome,
 } from '../index.js'
 import { retrieve } from '../retrieve.js'
+import { EXPANSION_FRACTION_F } from '../retrieval/constants.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,
@@ -213,6 +214,50 @@ describe('RETR-01 composed retrieval pipeline', () => {
     }
   })
 
+  it(
+    'applies N after validity so a future fused leader cannot crowd out current truth',
+    async () => {
+      const anchor = { t: 'el', role: 'button', name: 'Budget ordering' } satisfies Anchor
+      const trailingAnchor = { t: 'page', route: '/budget-trailing' } satisfies Anchor
+      const future = publishFact({
+        anchor,
+        identity: 'budget-future-leader',
+        createdAtOrdinal: 30,
+      })
+      const current = publishFact({
+        anchor,
+        identity: 'budget-current-tail',
+        createdAtOrdinal: 10,
+      })
+      const trailing = publishFact({
+        anchor: trailingAnchor,
+        identity: 'budget-valid-trailing',
+        createdAtOrdinal: 5,
+      })
+
+      expect([future.id, current.id, trailing.id].sort()).toEqual([
+        future.id,
+        current.id,
+        trailing.id,
+      ])
+
+      await rebuildIndex({ knowledgeRoot })
+      const reader = openKnowledgeReader(knowledgeRoot)
+      try {
+        const result = await retrieve(
+          reader,
+          { intent: '', anchors: [anchor, trailingAnchor] },
+          { n: 1, product: PRODUCT, asOfBuild: 20 },
+        )
+
+        expect(result.map(({ id }) => id)).toEqual([current.id])
+        expect(result.some(({ id }) => id === future.id)).toBe(false)
+      } finally {
+        reader.close()
+      }
+    },
+  )
+
   it('adds one-hop results at the discounted, count-capped expansion rung', async () => {
     const seedAnchor = { t: 'el', role: 'button', name: 'Graph seed only' } satisfies Anchor
     const seed = publishFact({
@@ -236,17 +281,23 @@ describe('RETR-01 composed retrieval pipeline', () => {
     await rebuildIndex({ knowledgeRoot })
     const reader = openKnowledgeReader(knowledgeRoot)
     try {
+      const n = 4
       const result = await retrieve(
         reader,
         { intent: '', anchors: [seedAnchor] },
-        { n: 4, product: PRODUCT, asOfBuild: 40 },
+        { n, product: PRODUCT, asOfBuild: 40 },
       )
       const ids = result.map(({ id }) => id)
+      const expandedIds = new Set([olderNeighbor.id, newerNeighbor.id])
 
       expect(ids).toContain(seed.id)
       expect(ids).toContain(newerNeighbor.id)
       expect(ids).not.toContain(olderNeighbor.id)
       expect(ids).toHaveLength(2)
+      expect(result.length).toBeLessThanOrEqual(n)
+      expect(ids.filter((id) => expandedIds.has(id))).toHaveLength(
+        Math.ceil(EXPANSION_FRACTION_F * n),
+      )
     } finally {
       reader.close()
     }
