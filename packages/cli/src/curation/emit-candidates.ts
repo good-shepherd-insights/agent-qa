@@ -7,6 +7,7 @@ import {
   enqueueCurationCandidate,
   type CurationCandidateAddressFields,
   type CurationCandidatePayload,
+  type CurationCandidateProjection,
   type CurationArtifactSource,
   type EnqueueCurationCandidateOutcome,
 } from '@vostride/agent-qa-knowledge-local'
@@ -45,6 +46,13 @@ interface MeasurementSeed {
   metric: string
   value: string
 }
+
+type CurationArtifactDescriptor =
+  CurationCandidateProjection['artifactDescriptors'][number]
+type CaptureElementEvidence =
+  CurationCandidateProjection['captureEvidence']['elements'][number]
+type CaptureStepInteraction =
+  CurationCandidateProjection['stepInteractions'][number]
 
 const SHA256_HEX = /^[0-9a-f]{64}$/
 
@@ -165,44 +173,106 @@ function uniqueAnchors(anchors: readonly Anchor[]): Anchor[] {
   })
 }
 
-function artifactInventory(
+function artifactDescriptor(
+  ref: ArtifactRef,
+  stepIndex: number,
+  forcedRole?: CurationArtifactDescriptor['role'],
+): CurationArtifactDescriptor {
+  const role = forcedRole
+    ?? (ref.id.startsWith('decision-screenshot:')
+      ? 'screenshot'
+      : ref.id.startsWith('dom-snapshot:')
+        ? 'dom-snapshot'
+        : ref.id.startsWith('ax-snapshot:')
+          ? 'ax-snapshot'
+          : 'opaque-evidence')
+  const originalName = role === 'screenshot'
+    ? 'decision-screenshot.png'
+    : role === 'dom-snapshot'
+      ? 'dom-snapshot.json'
+      : role === 'ax-snapshot'
+        ? 'ax-snapshot.json'
+        : 'opaque-evidence.bin'
+  return { ref, stepIndex, role, originalName }
+}
+
+function artifactDescriptorsForRefs(
   refs: readonly ArtifactRef[],
   stepIndex: number,
-): CurationCandidateAddressFields['artifactInventory'] {
+): CurationArtifactDescriptor[] {
+  return refs.flatMap((ref) =>
+    SHA256_HEX.test(ref.sha) ? [artifactDescriptor(ref, stepIndex)] : [],
+  )
+}
+
+function stepArtifactDescriptors(step: StepEvidence): CurationArtifactDescriptor[] {
+  const descriptors = step.subActions.flatMap((subAction) => [
+    ...(subAction.decisionScreenshotRef === undefined
+      || !SHA256_HEX.test(subAction.decisionScreenshotRef.sha)
+      ? []
+      : [artifactDescriptor(
+          subAction.decisionScreenshotRef,
+          step.stepIndex,
+          'screenshot',
+        )]),
+    ...artifactDescriptorsForRefs(subAction.artifactRefs ?? [], step.stepIndex),
+  ])
   const seen = new Set<string>()
-  return refs.flatMap((ref) => {
-    if (!SHA256_HEX.test(ref.sha) || seen.has(ref.sha)) return []
-    seen.add(ref.sha)
-    return [
-      {
-        relativePath: `artifacts/${ref.sha}`,
-        sha256: ref.sha,
-        // The pure handoff projection cannot inspect host bytes. emitCurationCandidates resolves
-        // this deterministic zero count from the run blob before recomputing the content address.
-        bytes: 0,
-        stepIndex,
-      },
-    ]
+  return descriptors.filter((descriptor) => {
+    if (seen.has(descriptor.ref.id)) return false
+    seen.add(descriptor.ref.id)
+    return true
   })
 }
 
-function stepArtifactRefs(step: StepEvidence): ArtifactRef[] {
-  return step.subActions.flatMap((subAction) => [
-    ...(subAction.decisionScreenshotRef === undefined
-      ? []
-      : [subAction.decisionScreenshotRef]),
-    ...(subAction.artifactRefs ?? []),
-  ])
+function captureEvidence(steps: readonly StepEvidence[]): {
+  elements: CaptureElementEvidence[]
+} {
+  return {
+    elements: steps.flatMap((step) =>
+      step.subActions.flatMap((subAction) =>
+        subAction.stateBefore.elements.map((element) => ({
+          stepIndex: step.stepIndex,
+          elementRef: element.ref,
+          role: element.role,
+          name: element.name,
+          nameNormalized: element.nameNormalized,
+          ...(element.attributes.type === undefined
+            ? {}
+            : { inputType: element.attributes.type }),
+          ...(element.value === undefined ? {} : { value: element.value }),
+        })),
+      ),
+    ),
+  }
 }
 
-function buildCandidate(fields: CurationCandidateAddressFields): CurationCandidatePayload {
-  return { candidateId: candidateContentAddress(fields), ...fields }
+function stepInteractions(steps: readonly StepEvidence[]): CaptureStepInteraction[] {
+  const interactions = steps.flatMap((step) =>
+    step.subActions.flatMap((subAction) =>
+      actionRefs(subAction).map((elementRef) => ({
+        stepIndex: step.stepIndex,
+        elementRef,
+      })),
+    ),
+  )
+  interactions.sort((left, right) =>
+    left.stepIndex - right.stepIndex
+    || left.elementRef.localeCompare(right.elementRef),
+  )
+  const seen = new Set<string>()
+  return interactions.filter((interaction) => {
+    const key = `${interaction.stepIndex}\u0000${interaction.elementRef}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function commonFields(
   handoff: CompletedRunHandoff,
   input: {
-    kind: CurationCandidateAddressFields['kind']
+    kind: CurationCandidateProjection['kind']
     subtype?: FactSubtype
     anchors: Anchor[]
     summarySeed: string
@@ -210,11 +280,11 @@ function commonFields(
     observations: DistilledObservation[]
     attributingObservationId: string
     secretFlagged: boolean
-    artifactInventory: CurationCandidateAddressFields['artifactInventory']
+    steps: readonly StepEvidence[]
+    artifactDescriptors: CurationArtifactDescriptor[]
   },
-): CurationCandidatePayload {
-  const fields: CurationCandidateAddressFields = {
-    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+): CurationCandidateProjection {
+  return {
     sourceRunId: handoff.runId,
     scope: handoff.scope,
     buildOrdinal: handoff.buildOrdinal,
@@ -233,10 +303,11 @@ function commonFields(
       buildOrdinal: handoff.buildOrdinal,
     }),
     attributingObservationId: input.attributingObservationId,
-    artifactInventory: input.artifactInventory,
+    artifactDescriptors: input.artifactDescriptors,
+    captureEvidence: captureEvidence(input.steps),
+    stepInteractions: stepInteractions(input.steps),
     emittedAt: new Date(handoff.endedAt).toISOString(),
   }
-  return buildCandidate(fields)
 }
 
 function factSubtype(
@@ -256,7 +327,7 @@ function projectFact(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
-): CurationCandidatePayload | undefined {
+): CurationCandidateProjection | undefined {
   if (!step.verifierVerdict.pass) return undefined
   const resolved = resolvedElementEvidence(step)
   if (resolved.length !== 1) return undefined
@@ -321,7 +392,8 @@ function projectFact(
     observations: [observation],
     attributingObservationId: id,
     secretFlagged: step.cacheStatus === 'bypass',
-    artifactInventory: artifactInventory(stepArtifactRefs(step), step.stepIndex),
+    steps: [step],
+    artifactDescriptors: stepArtifactDescriptors(step),
   })
 }
 
@@ -347,7 +419,7 @@ function projectMeasurements(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
   step: StepEvidence,
-): CurationCandidatePayload[] {
+): CurationCandidateProjection[] {
   if (!step.verifierVerdict.pass) return []
   const firstSubAction = step.subActions[0]
   if (firstSubAction === undefined) return []
@@ -386,7 +458,8 @@ function projectMeasurements(
       observations: [observation],
       attributingObservationId: id,
       secretFlagged: step.cacheStatus === 'bypass',
-      artifactInventory: artifactInventory(stepArtifactRefs(step), step.stepIndex),
+      steps: [step],
+      artifactDescriptors: stepArtifactDescriptors(step),
     })
   })
 }
@@ -400,7 +473,7 @@ function isLearnableCaution(
 function projectCaution(
   handoff: CompletedRunHandoff,
   test: PerTestOutcome,
-): CurationCandidatePayload | undefined {
+): CurationCandidateProjection | undefined {
   const rootCause = test.rootCause
   if (rootCause === undefined || !isLearnableCaution(rootCause.class)) return undefined
   const stepIndex = rootCause.evidence.citedSteps[0] ?? 0
@@ -435,14 +508,18 @@ function projectCaution(
     observations: [observation],
     attributingObservationId: id,
     secretFlagged: producingSteps.some((step) => step.cacheStatus === 'bypass'),
-    artifactInventory: artifactInventory(rootCause.evidence.citedArtifacts, stepIndex),
+    steps: producingSteps,
+    artifactDescriptors: artifactDescriptorsForRefs(
+      rootCause.evidence.citedArtifacts,
+      stepIndex,
+    ),
   })
 }
 
 /** Pure post-verdict projection. Host artifact bytes are resolved only by the emit wrapper. */
 export function projectCurationCandidates(
   handoff: CompletedRunHandoff,
-): CurationCandidatePayload[] {
+): CurationCandidateProjection[] {
   return handoff.tests.flatMap((test) => {
     const factsAndMeasurements = test.steps.flatMap((step) => {
       const fact = projectFact(handoff, test, step)
@@ -482,25 +559,36 @@ export interface EmitReport {
 }
 
 function hydrateArtifacts(
-  candidate: CurationCandidatePayload,
+  candidate: CurationCandidateProjection,
   runDir: string,
 ): { payload: CurationCandidatePayload; sources: CurationArtifactSource[] } {
-  const sources = candidate.artifactInventory.map((artifact) => ({
-    relativePath: artifact.relativePath,
-    sourcePath: join(runDir, RUN_EVIDENCE_BLOBS_SUBDIR, artifact.sha256),
+  const sources = candidate.artifactDescriptors.map((descriptor) => ({
+    relativePath: `artifacts/${descriptor.ref.sha}`,
+    sourcePath: join(runDir, RUN_EVIDENCE_BLOBS_SUBDIR, descriptor.ref.sha),
   }))
-  const inventory = candidate.artifactInventory.map((artifact, index) => {
-    let bytes = artifact.bytes
+  const inventory = candidate.artifactDescriptors.map((descriptor, index) => {
+    let bytes = 0
     try {
       bytes = statSync(sources[index]!.sourcePath).size
     } catch {
       // Preserve the valid projected payload and let the queue return artifact-missing. Other
       // host data failures are isolated by the enqueue boundary below.
     }
-    return { ...artifact, bytes }
+    return {
+      relativePath: `artifacts/${descriptor.ref.sha}`,
+      sha256: descriptor.ref.sha,
+      bytes,
+      stepIndex: descriptor.stepIndex,
+    }
   })
-  const { candidateId: _projectedId, ...projectedFields } = candidate
+  const {
+    artifactDescriptors: _artifactDescriptors,
+    captureEvidence: _captureEvidence,
+    stepInteractions: _stepInteractions,
+    ...projectedFields
+  } = candidate
   const fields: CurationCandidateAddressFields = {
+    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
     ...projectedFields,
     artifactInventory: inventory,
   }
