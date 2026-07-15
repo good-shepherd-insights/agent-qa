@@ -18,11 +18,13 @@ import {
   ARTIFACT_VALUE_REDACTION_PLACEHOLDER,
 } from '../artifact-copy.js'
 import {
+  enqueueCurationCandidate,
   enqueueCurationCandidateProjection,
   readCurationCandidatePayload,
 } from '../queue/curation-queue.js'
 import type {
   CurationProjectionArtifactSource,
+  EnqueueCurationCandidateProjectionOptions,
   EnqueueCurationCandidateProjectionOutcome,
 } from '../queue/curation-queue.js'
 import {
@@ -221,6 +223,65 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     const receiptIsRequired: ReceiptIsRequired = true
 
     expect(receiptIsRequired).toBe(true)
+  })
+
+  it('exposes both public enqueue names as one projection-only safety boundary', () => {
+    expect(enqueueCurationCandidate).toBe(enqueueCurationCandidateProjection)
+    expectTypeOf(enqueueCurationCandidate)
+      .toEqualTypeOf<typeof enqueueCurationCandidateProjection>()
+    expectTypeOf<Parameters<typeof enqueueCurationCandidate>[0]>()
+      .toEqualTypeOf<EnqueueCurationCandidateProjectionOptions>()
+
+    const projected = projection()
+    const first = enqueueCurationCandidateProjection({
+      knowledgeRoot,
+      projection: projected,
+      artifactSources: [],
+    })
+    expect(first.kind).toBe('enqueued')
+    if (first.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    expect(
+      (enqueueCurationCandidate as typeof enqueueCurationCandidateProjection)({
+        knowledgeRoot,
+        projection: { ...projected, emittedAt: '2099-01-01T00:00:00.000Z' },
+        artifactSources: [],
+      }),
+    ).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
+
+    const malformedProjection = {
+      ...projected,
+      scope: undefined,
+    } as unknown as CurationCandidateProjection
+    expect(
+      (enqueueCurationCandidate as typeof enqueueCurationCandidateProjection)({
+        knowledgeRoot,
+        projection: malformedProjection,
+        artifactSources: [],
+      }),
+    ).toEqual({ kind: 'refused', reason: 'invalid-payload' })
+
+    const finalizedPayloadOptions = {
+      knowledgeRoot,
+      payload: payload({ captureReceipt: artifactFreeCaptureReceipt() }),
+      artifactSources: [],
+    }
+    if (false) {
+      // @ts-expect-error finalized payload bytes cannot bypass projection safety
+      enqueueCurationCandidateProjection(finalizedPayloadOptions)
+      // @ts-expect-error the public alias rejects the same finalized payload bypass
+      enqueueCurationCandidate(finalizedPayloadOptions)
+    }
+
+    const source = readFileSync(
+      new URL('../queue/curation-queue.ts', import.meta.url),
+      'utf8',
+    )
+    expect(source).not.toContain('interface EnqueueCurationCandidateOptions')
+    expect(source).not.toContain('function copyCandidateArtifacts')
+    expect(source).not.toMatch(/export function enqueueCurationCandidate\s*\(/u)
+    expect(source).toMatch(
+      /export const enqueueCurationCandidate = enqueueCurationCandidateProjection/u,
+    )
   })
 
   it('publishes payload and artifact bytes atomically then coalesces without rewriting', () => {
