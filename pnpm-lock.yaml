@@ -162,6 +162,9 @@ importers:
       '@vostride/agent-qa-ios':
         specifier: workspace:*
         version: link:../ios
+      '@vostride/agent-qa-knowledge-local':
+        specifier: workspace:*
+        version: link:../knowledge-local
       '@vostride/agent-qa-mcp':
         specifier: workspace:*
         version: link:../mcp

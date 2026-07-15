@@ -238,7 +238,7 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
         {
           testId: `failure-${kind}`,
           testIndex: index,
-          outcome: kind === 'flake' ? 'passed' : kind,
+          outcome: kind === 'flake' ? 'passed' : kind === 'timeout' ? 'timeout' : 'failed',
           rootCause: rootCause(kind, index),
         },
         [],

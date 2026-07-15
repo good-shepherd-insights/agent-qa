@@ -30,6 +30,7 @@ export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-eval-local',
   '@vostride/agent-qa-ids',
   '@vostride/agent-qa-ios',
+  '@vostride/agent-qa-knowledge-local',
   '@vostride/agent-qa-mcp',
   '@vostride/agent-qa-model',
   '@vostride/agent-qa-runner',
