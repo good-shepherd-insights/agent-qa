@@ -11,26 +11,25 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  CURATION_QUEUE_SCHEMA_VERSION,
-  artifactFreeCaptureReceipt,
-  candidateContentAddress,
   claimNextJob,
   claimedCandidateDir,
   claimedLeaseDir,
-  enqueueCurationCandidate,
   jobStatePath,
   listClaimedLeases,
   listQueuedCandidates,
   persistAuthoredCheckpoint,
+  readCurationCandidatePayload,
   readJobState,
   requeueClaimed,
   queuedCandidateDir,
   writeJobState,
-  type CurationCaptureReceipt,
   type CurationCandidatePayload,
   type CurationJobLifecycle,
 } from '../index.js'
-import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
+import {
+  enqueueArtifactFreeCandidateProjection,
+  type ArtifactFreeCandidateProjectionInput,
+} from './fixtures/curation-candidate-fixture.js'
 
 describe('curation queue claim and durable lifecycle (CUR-04)', () => {
   let root: string
@@ -45,12 +44,8 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function payload(
-    seed: string,
-    captureReceipt: CurationCaptureReceipt,
-  ): CurationCandidatePayload {
-    const fields = candidateAddressFixture({
-      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+  function projectionInput(seed: string): ArtifactFreeCandidateProjectionInput {
+    return {
       sourceRunId: `run-${seed}`,
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
@@ -73,28 +68,29 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
       ],
       evidenceToken: `evidence-${seed}`,
       attributingObservationId: `observation-${seed}`,
-      artifactInventory: [],
-      captureReceipt,
       emittedAt: '2026-07-15T10:00:00.000Z',
-    })
-    return { candidateId: candidateContentAddress(fields), ...fields }
+    }
   }
 
-  function enqueue(candidate: CurationCandidatePayload): void {
-    expect(
-      enqueueCurationCandidate({
-        knowledgeRoot,
-        payload: candidate,
-        artifactSources: [],
-      }),
-    ).toBe('enqueued')
+  function enqueue(seed: string): CurationCandidatePayload {
+    const outcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: projectionInput(seed),
+    })
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    const read = readCurationCandidatePayload(
+      queuedCandidateDir(knowledgeRoot, outcome.candidateId),
+    )
+    expect(read.kind).toBe('parsed')
+    if (read.kind !== 'parsed') throw new Error('expected parsed projection payload')
+    expect(read.payload.candidateId).toBe(outcome.candidateId)
+    return read.payload
   }
 
   it('claims queued candidates in deterministic id order and returns parsed paths', () => {
-    const firstInput = payload('zulu', artifactFreeCaptureReceipt())
-    const secondInput = payload('alpha', artifactFreeCaptureReceipt())
-    enqueue(firstInput)
-    enqueue(secondInput)
+    const firstInput = enqueue('zulu')
+    const secondInput = enqueue('alpha')
     const expectedOrder = [firstInput.candidateId, secondInput.candidateId].sort()
 
     expect(listQueuedCandidates(knowledgeRoot)).toEqual(expectedOrder)
@@ -117,7 +113,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
   })
 
   it('atomically round-trips all five lifecycle values and degrades corrupt state', () => {
-    const candidate = payload('lifecycle', artifactFreeCaptureReceipt())
+    const candidate = enqueue('lifecycle')
     const lifecycles: CurationJobLifecycle[] = [
       'queued',
       'authored',
@@ -156,7 +152,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
   })
 
   it('persists the opaque authored checkpoint and durable embed crash count', () => {
-    const candidate = payload('authored', artifactFreeCaptureReceipt())
+    const candidate = enqueue('authored')
     const authored = {
       delta: { kind: 'Add', aliases: [1, 3] },
       neighbors: ['record-a', 'record-b'],
@@ -197,8 +193,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
   })
 
   it('requeues a claimed candidate while preserving its authored checkpoint', () => {
-    const candidate = payload('requeue', artifactFreeCaptureReceipt())
-    enqueue(candidate)
+    const candidate = enqueue('requeue')
     const claim = claimNextJob({ knowledgeRoot, leaseId: 'dead-lease' })
     expect(claim?.kind).toBe('claimed')
     if (claim?.kind !== 'claimed') throw new Error('expected claimed job')

@@ -18,7 +18,6 @@ import {
   ARTIFACT_VALUE_REDACTION_PLACEHOLDER,
 } from '../artifact-copy.js'
 import {
-  enqueueCurationCandidate,
   enqueueCurationCandidateProjection,
   readCurationCandidatePayload,
 } from '../queue/curation-queue.js'
@@ -39,11 +38,15 @@ import {
   type BuildCurationCandidateAddressFieldsInput,
   type CurationArtifactDescriptor,
   type CurationArtifactRole,
-  type CurationCaptureReceipt,
   type CurationCandidatePayload,
   type CurationCandidateProjection,
 } from '../queue/queue-payload.js'
-import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
+import {
+  candidateAddressFixture,
+  candidateProjectionFixture,
+  enqueueArtifactFreeCandidateProjection,
+  type ArtifactFreeCandidateProjectionInput,
+} from './fixtures/curation-candidate-fixture.js'
 
 type CandidateFixtureOverrides = Pick<
   BuildCurationCandidateAddressFieldsInput,
@@ -109,24 +112,15 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     return { candidateId: candidateContentAddress(fields), ...fields }
   }
 
-  function artifactCaptureReceipt(stepIndex: number): CurationCaptureReceipt {
-    return {
-      regions: [],
-      interactions: [{ stepIndex }],
-      omissions: [],
-      redactions: [],
-    }
-  }
-
   function seedQueued(candidate: CurationCandidatePayload, rootOverride = knowledgeRoot): void {
     const candidateDir = queuedCandidateDir(rootOverride, candidate.candidateId)
     mkdirSync(candidateDir, { recursive: true })
     writeFileSync(join(candidateDir, 'payload.json'), JSON.stringify(candidate), 'utf8')
   }
 
-  function projection(
-    overrides: Partial<CurationCandidateProjection> = {},
-  ): CurationCandidateProjection {
+  function projectionInput(
+    overrides: Partial<ArtifactFreeCandidateProjectionInput> = {},
+  ): ArtifactFreeCandidateProjectionInput {
     return {
       sourceRunId: 'projection-run',
       scope: { tier: 'product', key: 'storefront' },
@@ -142,12 +136,21 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       distilledObservations: [],
       evidenceToken: 'projection-evidence',
       attributingObservationId: 'projection-run:test-0:step-0',
-      artifactDescriptors: [],
-      captureEvidence: { elements: [] },
-      stepInteractions: [],
       emittedAt: '2026-07-15T10:00:00.000Z',
       ...overrides,
     }
+  }
+
+  function projection(
+    overrides: Partial<CurationCandidateProjection> = {},
+  ): CurationCandidateProjection {
+    return candidateProjectionFixture({
+      ...projectionInput(),
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
+      ...overrides,
+    })
   }
 
   function projectionArtifact(
@@ -222,58 +225,57 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
 
   it('publishes payload and artifact bytes atomically then coalesces without rewriting', () => {
     const artifactBytes = Buffer.from('curation evidence')
-    const artifactSha = sha(artifactBytes)
-    const artifactSource = join(root, 'evidence.bin')
-    writeFileSync(artifactSource, artifactBytes)
-    const candidate = payload({
-      captureReceipt: artifactCaptureReceipt(0),
-      artifactInventory: [
-        {
-          relativePath: `artifacts/${artifactSha}`,
-          sha256: artifactSha,
-          bytes: artifactBytes.byteLength,
-          stepIndex: 0,
-          role: 'opaque-evidence',
-          originalName: 'evidence.bin',
-        },
-      ],
+    const artifact = projectionArtifact(
+      'evidence.bin',
+      artifactBytes,
+      0,
+      'opaque-evidence',
+    )
+    const projectionInput = projection({
+      artifactDescriptors: [artifact.descriptor],
     })
 
-    expect(
-      enqueueCurationCandidate({
-        knowledgeRoot,
-        payload: candidate,
-        artifactSources: [
-          { relativePath: `artifacts/${artifactSha}`, sourcePath: artifactSource },
-        ],
-      }),
-    ).toBe('enqueued')
+    const first = enqueueCurationCandidateProjection({
+      knowledgeRoot,
+      projection: projectionInput,
+      artifactSources: [artifact.source],
+    })
+    expect(first.kind).toBe('enqueued')
+    if (first.kind !== 'enqueued') throw new Error('expected enqueued projection')
 
-    const candidateDir = queuedCandidateDir(knowledgeRoot, candidate.candidateId)
+    const candidateDir = queuedCandidateDir(knowledgeRoot, first.candidateId)
     const payloadFile = join(candidateDir, 'payload.json')
     const firstPayloadBytes = readFileSync(payloadFile)
-    expect(readFileSync(join(candidateDir, 'artifacts', artifactSha))).toEqual(artifactBytes)
-    expect(readCurationCandidatePayload(candidateDir)).toEqual({
-      kind: 'parsed',
-      present: true,
-      payload: candidate,
-    })
+    expect(readFileSync(join(candidateDir, 'artifacts', artifact.descriptor.ref.sha))).toEqual(
+      artifactBytes,
+    )
+    const parsed = readCurationCandidatePayload(candidateDir)
+    expect(parsed.kind).toBe('parsed')
+    if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
+    expect(parsed.payload.candidateId).toBe(first.candidateId)
+    expect(parsed.payload.artifactInventory).toEqual([
+      {
+        relativePath: `artifacts/${artifact.descriptor.ref.sha}`,
+        sha256: artifact.descriptor.ref.sha,
+        bytes: artifactBytes.byteLength,
+        stepIndex: 0,
+        role: 'opaque-evidence',
+        originalName: 'evidence.bin',
+      },
+    ])
 
-    const duplicate = { ...candidate, emittedAt: '2099-01-01T00:00:00.000Z' }
     expect(
-      enqueueCurationCandidate({
+      enqueueCurationCandidateProjection({
         knowledgeRoot,
-        payload: duplicate,
-        artifactSources: [
-          { relativePath: `artifacts/${artifactSha}`, sourcePath: artifactSource },
-        ],
+        projection: { ...projectionInput, emittedAt: '2099-01-01T00:00:00.000Z' },
+        artifactSources: [artifact.source],
       }),
-    ).toBe('coalesced')
+    ).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
     expect(readFileSync(payloadFile)).toEqual(firstPayloadBytes)
     expect(readCurationCandidatePayload(candidateDir)).toEqual({
       kind: 'parsed',
       present: true,
-      payload: candidate,
+      payload: parsed.payload,
     })
   })
 
@@ -473,18 +475,16 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       | { kind: 'refused'; reason: string }
     >()
 
-    const first = enqueueCurationCandidateProjection({
+    const first = enqueueArtifactFreeCandidateProjection({
       knowledgeRoot,
-      projection: projection(),
-      artifactSources: [],
+      projectionInput: projectionInput(),
     })
     expect(first.kind).toBe('enqueued')
     if (first.kind !== 'enqueued') throw new Error('expected enqueued projection')
     expect(
-      enqueueCurationCandidateProjection({
+      enqueueArtifactFreeCandidateProjection({
         knowledgeRoot,
-        projection: projection(),
-        artifactSources: [],
+        projectionInput: projectionInput(),
       }),
     ).toEqual({ kind: 'coalesced', candidateId: first.candidateId })
 
@@ -500,14 +500,13 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         capRoot,
       )
     }
-    const capped = enqueueCurationCandidateProjection({
+    const capped = enqueueArtifactFreeCandidateProjection({
       knowledgeRoot: capRoot,
-      projection: projection({
+      projectionInput: projectionInput({
         sourceRunId: 'cap-overflow-run',
         attributingObservationId: 'cap-overflow-observation',
         evidenceToken: 'cap-overflow-evidence',
       }),
-      artifactSources: [],
     })
     expect(capped.kind).toBe('cap-exceeded')
     if (capped.kind !== 'cap-exceeded') throw new Error('expected cap-exceeded projection')
@@ -515,17 +514,34 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     expect(existsSync(join(queueRoot(capRoot), '.staging'))).toBe(false)
   })
 
-  it('retains the legacy finalized-payload entry and string outcome', () => {
-    const candidate = payload({ captureReceipt: artifactFreeCaptureReceipt() })
-    expect(
-      enqueueCurationCandidate({
-        knowledgeRoot,
-        payload: candidate,
-        artifactSources: [],
-      }),
-    ).toBe('enqueued')
-    expect(readCurationCandidatePayload(queuedCandidateDir(knowledgeRoot, candidate.candidateId)))
-      .toMatchObject({ kind: 'parsed', payload: candidate })
+  it('uses the named helper for explicit artifact-free projection source truth', () => {
+    const input = projectionInput()
+    const explicit = candidateProjectionFixture({
+      ...input,
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
+    })
+    expect(explicit).toMatchObject({
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
+    })
+
+    const outcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: input,
+    })
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') throw new Error('expected enqueued projection')
+    const parsed = readCurationCandidatePayload(
+      queuedCandidateDir(knowledgeRoot, outcome.candidateId),
+    )
+    expect(parsed.kind).toBe('parsed')
+    if (parsed.kind !== 'parsed') throw new Error('expected parsed projection payload')
+    expect(parsed.payload.candidateId).toBe(outcome.candidateId)
+    expect(parsed.payload.artifactInventory).toEqual([])
+    expect(parsed.payload.captureReceipt).toEqual(artifactFreeCaptureReceipt())
   })
 
   it('fails closed at the per-scope and per-run queue caps without visible bytes', () => {
@@ -538,20 +554,20 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       })
       seedQueued(candidate)
     }
-    const scopeOverflow = payload({
-      captureReceipt: artifactFreeCaptureReceipt(),
+    const scopeOverflow = projectionInput({
       sourceRunId: 'scope-overflow-run',
       attributingObservationId: 'scope-overflow-observation',
       evidenceToken: 'scope-overflow-evidence',
     })
-    expect(
-      enqueueCurationCandidate({
-        knowledgeRoot,
-        payload: scopeOverflow,
-        artifactSources: [],
-      }),
-    ).toBe('cap-exceeded')
-    expect(existsSync(queuedCandidateDir(knowledgeRoot, scopeOverflow.candidateId))).toBe(false)
+    const scopeOutcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: scopeOverflow,
+    })
+    expect(scopeOutcome.kind).toBe('cap-exceeded')
+    if (scopeOutcome.kind !== 'cap-exceeded') {
+      throw new Error('expected scope cap-exceeded projection')
+    }
+    expect(existsSync(queuedCandidateDir(knowledgeRoot, scopeOutcome.candidateId))).toBe(false)
 
     const secondKnowledgeRoot = join(root, 'second-knowledge-root')
     for (let index = 0; index < QUEUE_MAX_EMITS_PER_RUN; index += 1) {
@@ -564,55 +580,43 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       })
       seedQueued(candidate, secondKnowledgeRoot)
     }
-    const runOverflow = payload({
-      captureReceipt: artifactFreeCaptureReceipt(),
+    const runOverflow = projectionInput({
       sourceRunId: 'one-hot-run',
       scope: { tier: 'test', key: 'overflow-test' },
       attributingObservationId: 'run-overflow-observation',
       evidenceToken: 'run-overflow-evidence',
     })
-    expect(
-      enqueueCurationCandidate({
-        knowledgeRoot: secondKnowledgeRoot,
-        payload: runOverflow,
-        artifactSources: [],
-      }),
-    ).toBe('cap-exceeded')
-    expect(existsSync(queuedCandidateDir(secondKnowledgeRoot, runOverflow.candidateId))).toBe(
-      false,
-    )
+    const runOutcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot: secondKnowledgeRoot,
+      projectionInput: runOverflow,
+    })
+    expect(runOutcome.kind).toBe('cap-exceeded')
+    if (runOutcome.kind !== 'cap-exceeded') {
+      throw new Error('expected run cap-exceeded projection')
+    }
+    expect(existsSync(queuedCandidateDir(secondKnowledgeRoot, runOutcome.candidateId))).toBe(false)
   })
 
   it('returns a typed refusal when one artifact exceeds the imported step cap', () => {
     const artifactBytes = new Uint8Array(ARTIFACT_STEP_CAP_BYTES + 1).fill(97)
-    const artifactSha = sha(artifactBytes)
-    const artifactSource = join(root, 'oversized.bin')
-    writeFileSync(artifactSource, artifactBytes)
-    const candidate = payload({
-      captureReceipt: artifactCaptureReceipt(0),
-      artifactInventory: [
-        {
-          relativePath: `artifacts/${artifactSha}`,
-          sha256: artifactSha,
-          bytes: artifactBytes.byteLength,
-          stepIndex: 0,
-          role: 'opaque-evidence',
-          originalName: 'oversized.bin',
-        },
-      ],
+    const artifact = projectionArtifact(
+      'oversized.bin',
+      artifactBytes,
+      0,
+      'opaque-evidence',
+    )
+    const rawProjection = projection({
+      artifactDescriptors: [artifact.descriptor],
     })
 
     expect(
-      enqueueCurationCandidate({
+      enqueueCurationCandidateProjection({
         knowledgeRoot,
-        payload: candidate,
-        artifactSources: [
-          { relativePath: `artifacts/${artifactSha}`, sourcePath: artifactSource },
-        ],
+        projection: rawProjection,
+        artifactSources: [artifact.source],
       }),
     ).toEqual({ kind: 'refused', reason: 'artifact-step-cap' })
-    expect(existsSync(queuedCandidateDir(knowledgeRoot, candidate.candidateId))).toBe(false)
-    expect(existsSync(join(queueRoot(knowledgeRoot), '.staging'))).toBe(false)
+    expectQueueTreeEmpty()
   })
 
   it('reports corrupt payload bytes as malformed instead of throwing', () => {
