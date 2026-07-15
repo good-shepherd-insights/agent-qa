@@ -63,7 +63,7 @@ export interface RenderBundlePartsInput {
   initialEvents: readonly BundleOutcomeEvent[]
   relations: readonly BundleRelation[]
   provenance: BundleProvenanceInput
-  copiedArtifacts: ArtifactCopyResult
+  copiedArtifacts: ArtifactCopyResult<'capture-blacklist'>
   evidenceIncomplete: boolean
   evidenceMarkdown?: string
 }
@@ -122,7 +122,9 @@ function renderProvenance(
       }
 }
 
-function renderArtifactIndex(copiedArtifacts: ArtifactCopyResult): ArtifactsIndex {
+export function renderArtifactIndex(
+  copiedArtifacts: ArtifactCopyResult<'capture-blacklist'>,
+): ArtifactsIndex {
   return {
     schemaVersion: BUNDLE_SCHEMA_VERSION,
     artifacts: copiedArtifacts.copied.map((copied) => ({
@@ -137,6 +139,17 @@ function renderArtifactIndex(copiedArtifacts: ArtifactCopyResult): ArtifactsInde
         ? {}
         : { evidenceIncomplete: copied.ref.evidenceIncomplete }),
     })),
+    ...(copiedArtifacts.skipped.length === 0
+      ? {}
+      : {
+          skipped: copiedArtifacts.skipped.map((skipped) => ({
+            id: skipped.ref.id,
+            sha: skipped.ref.sha,
+            stepIndex: skipped.stepIndex,
+            path: `artifacts/${skipped.ref.sha}`,
+            reason: skipped.reason,
+          })),
+        }),
   }
 }
 

@@ -6,8 +6,10 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { ArtifactsIndexSchema } from '@vostride/agent-qa-schema'
 import { copyArtifacts } from '../../artifact-copy.js'
 import type { ArtifactCopyInput } from '../../artifact-copy.js'
+import { renderArtifactIndex } from '../../bundle-parts.js'
 import {
   CAPTURE_BLACKLIST_NAME_PATTERNS,
   CAPTURE_BLACKLIST_REDACTION_PLACEHOLDER,
@@ -157,6 +159,15 @@ describe('capture blacklist artifact filtering', () => {
       },
     ])
     expect(inventory.evidenceIncomplete).toBe(true)
+    expect(ArtifactsIndexSchema.parse(renderArtifactIndex(inventory)).skipped).toEqual([
+      {
+        id: blockedScreenshot.ref.id,
+        sha: blockedScreenshot.ref.sha,
+        stepIndex: 4,
+        path: `artifacts/${blockedScreenshot.ref.sha}`,
+        reason: 'capture-blacklist',
+      },
+    ])
   })
 
   it.each(['dom-snapshot', 'ax-snapshot'])(

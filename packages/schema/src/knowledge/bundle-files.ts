@@ -199,9 +199,25 @@ const artifactIndexEntrySchema = z.object({
   }
 })
 
+const skippedArtifactIndexEntrySchema = z.object({
+  id: z.string(),
+  sha: sha256Schema,
+  stepIndex: z.number().int().nonnegative(),
+  path: z.string(),
+  reason: z.enum([
+    'step-cap',
+    'run-cap',
+    'pruned-source',
+    'sha-mismatch',
+    'capture-blacklist',
+  ]),
+}).strict()
+
 export const ArtifactsIndexSchema = z.object({
   schemaVersion: z.number().int().positive(),
   artifacts: z.array(artifactIndexEntrySchema),
+  /** Additive v1 inventory: bytes are intentionally absent and the refusal reason is durable. */
+  skipped: z.array(skippedArtifactIndexEntrySchema).optional(),
 }).strict()
 
 export type ArtifactsIndex = z.infer<typeof ArtifactsIndexSchema>

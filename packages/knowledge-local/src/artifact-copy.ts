@@ -12,6 +12,7 @@ import type { ArtifactRef } from '@vostride/agent-qa-schema'
 
 export const ARTIFACT_STEP_CAP_BYTES = 2 * 1024 * 1024
 export const ARTIFACT_RUN_CAP_BYTES = 25 * 1024 * 1024
+export const ARTIFACT_VALUE_REDACTION_PLACEHOLDER = '<REDACTED:capture-blacklist>'
 
 export interface ArtifactCopyInput {
   ref: ArtifactRef
@@ -19,6 +20,8 @@ export interface ArtifactCopyInput {
   stepIndex: number
   role?: string
   originalName?: string
+  /** Exact values to replace before hashing and copying a textual DOM/AX snapshot. */
+  redactValues?: readonly string[]
 }
 
 export interface CopiedArtifact {
@@ -30,16 +33,27 @@ export interface CopiedArtifact {
   originalName?: string
 }
 
-export interface SkippedArtifact {
+export type ArtifactCopySkipReason =
+  | 'step-cap'
+  | 'run-cap'
+  | 'pruned-source'
+  | 'sha-mismatch'
+
+export interface SkippedArtifact<Reason extends string = ArtifactCopySkipReason> {
   ref: ArtifactRef
   stepIndex: number
-  reason: 'step-cap' | 'run-cap' | 'pruned-source' | 'sha-mismatch'
+  reason: Reason
 }
 
-export interface ArtifactCopyResult {
+export interface ArtifactCopyResult<AdditionalReason extends string = never> {
   copied: CopiedArtifact[]
-  skipped: SkippedArtifact[]
+  skipped: SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[]
   evidenceIncomplete: boolean
+}
+
+export interface ArtifactCopyOptions<AdditionalReason extends string = never> {
+  /** Pre-copy filter refusals retained in the same inventory as copy-time refusals. */
+  preSkipped?: readonly SkippedArtifact<AdditionalReason>[]
 }
 
 const ARTIFACT_SHA_RE = /^[0-9a-f]{64}$/
@@ -48,10 +62,14 @@ function byteSha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-function copiedRow(input: ArtifactCopyInput, bytes: number): CopiedArtifact {
+function copiedRow(
+  input: ArtifactCopyInput,
+  ref: ArtifactRef,
+  bytes: number,
+): CopiedArtifact {
   return {
-    ref: input.ref,
-    relPath: `artifacts/${input.ref.sha}`,
+    ref,
+    relPath: `artifacts/${ref.sha}`,
     bytes,
     stepIndex: input.stepIndex,
     ...(input.role === undefined ? {} : { role: input.role }),
@@ -59,19 +77,34 @@ function copiedRow(input: ArtifactCopyInput, bytes: number): CopiedArtifact {
   }
 }
 
+function redactArtifactValues(bytes: Buffer, values: readonly string[] | undefined): Buffer {
+  if (values === undefined || values.length === 0) return bytes
+
+  let text = bytes.toString('utf8')
+  for (const value of [...new Set(values)].filter(Boolean).sort((left, right) =>
+    right.length - left.length || left.localeCompare(right),
+  )) {
+    text = text.split(value).join(ARTIFACT_VALUE_REDACTION_PLACEHOLDER)
+  }
+  return Buffer.from(text)
+}
+
 function skippedRow(
   input: ArtifactCopyInput,
-  reason: SkippedArtifact['reason'],
-): SkippedArtifact {
+  reason: ArtifactCopySkipReason,
+): SkippedArtifact<ArtifactCopySkipReason> {
   return { ref: input.ref, stepIndex: input.stepIndex, reason }
 }
 
-export function copyArtifacts(
+export function copyArtifacts<AdditionalReason extends string = never>(
   inputs: readonly ArtifactCopyInput[],
   destArtifactsDir: string,
-): ArtifactCopyResult {
+  options: ArtifactCopyOptions<AdditionalReason> = {},
+): ArtifactCopyResult<AdditionalReason> {
   const copied: CopiedArtifact[] = []
-  const skipped: SkippedArtifact[] = []
+  const skipped: SkippedArtifact<ArtifactCopySkipReason | AdditionalReason>[] = [
+    ...(options.preSkipped ?? []),
+  ]
   const copiedBytesByStep = new Map<number, number>()
   let copiedBytesForRun = 0
 
@@ -99,43 +132,47 @@ export function copyArtifacts(
       continue
     }
 
-    const targetPath = join(destArtifactsDir, input.ref.sha)
+    const copyBytes = redactArtifactValues(sourceBytes, input.redactValues)
+    const copiedRef = copyBytes.equals(sourceBytes)
+      ? input.ref
+      : { ...input.ref, sha: byteSha(copyBytes) }
+    const targetPath = join(destArtifactsDir, copiedRef.sha)
     if (existsSync(targetPath)) {
       const existingBytes = readFileSync(targetPath)
-      if (byteSha(existingBytes) !== input.ref.sha || !existingBytes.equals(sourceBytes)) {
+      if (byteSha(existingBytes) !== copiedRef.sha || !existingBytes.equals(copyBytes)) {
         skipped.push(skippedRow(input, 'sha-mismatch'))
         continue
       }
-      copied.push(copiedRow(input, sourceBytes.byteLength))
+      copied.push(copiedRow(input, copiedRef, copyBytes.byteLength))
       continue
     }
 
     const stepBytes = copiedBytesByStep.get(input.stepIndex) ?? 0
-    if (stepBytes + sourceBytes.byteLength > ARTIFACT_STEP_CAP_BYTES) {
+    if (stepBytes + copyBytes.byteLength > ARTIFACT_STEP_CAP_BYTES) {
       skipped.push(skippedRow(input, 'step-cap'))
       continue
     }
-    if (copiedBytesForRun + sourceBytes.byteLength > ARTIFACT_RUN_CAP_BYTES) {
+    if (copiedBytesForRun + copyBytes.byteLength > ARTIFACT_RUN_CAP_BYTES) {
       skipped.push(skippedRow(input, 'run-cap'))
       continue
     }
 
     try {
-      writeFileSync(targetPath, sourceBytes, { flag: 'wx' })
+      writeFileSync(targetPath, copyBytes, { flag: 'wx' })
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
       const existingBytes = readFileSync(targetPath)
-      if (byteSha(existingBytes) !== input.ref.sha || !existingBytes.equals(sourceBytes)) {
+      if (byteSha(existingBytes) !== copiedRef.sha || !existingBytes.equals(copyBytes)) {
         skipped.push(skippedRow(input, 'sha-mismatch'))
         continue
       }
-      copied.push(copiedRow(input, sourceBytes.byteLength))
+      copied.push(copiedRow(input, copiedRef, copyBytes.byteLength))
       continue
     }
 
-    copiedBytesByStep.set(input.stepIndex, stepBytes + sourceBytes.byteLength)
-    copiedBytesForRun += sourceBytes.byteLength
-    copied.push(copiedRow(input, sourceBytes.byteLength))
+    copiedBytesByStep.set(input.stepIndex, stepBytes + copyBytes.byteLength)
+    copiedBytesForRun += copyBytes.byteLength
+    copied.push(copiedRow(input, copiedRef, copyBytes.byteLength))
   }
 
   return { copied, skipped, evidenceIncomplete: skipped.length > 0 }
