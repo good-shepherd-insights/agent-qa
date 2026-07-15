@@ -248,6 +248,8 @@ describe('capture blacklist artifact filtering', () => {
       const copiedBytes = readFileSync(join(root, copied.relPath), 'utf8')
 
       expect(inventory.skipped).toEqual([])
+      expect(filtered.toCopy[0]?.redactValues).toContain(originalValue)
+      expect(copied).toMatchObject({ role, originalName: `${role}.json` })
       expect(copiedBytes).toContain(CAPTURE_BLACKLIST_REDACTION_PLACEHOLDER)
       expect(copiedBytes).not.toContain(originalValue)
       expect(copied.ref.sha).toBe(sha256(Buffer.from(copiedBytes)))
@@ -256,8 +258,18 @@ describe('capture blacklist artifact filtering', () => {
   )
 
   it('fails closed for opaque and unrecognized artifacts on a blacklisted interaction', () => {
-    const opaque = artifact('opaque.bin', Buffer.from('opaque credential bytes'), 4, 'opaque-evidence')
-    const unrecognized = artifact('unknown.txt', Buffer.from('unknown credential bytes'), 4, 'other')
+    const opaque = artifact(
+      'opaque.bin',
+      Buffer.from('opaque credential bytes'),
+      4,
+      'opaque-evidence',
+    )
+    const unrecognized = artifact(
+      'unknown.txt',
+      Buffer.from('unknown credential bytes'),
+      4,
+      'other',
+    )
     const ordinary = artifact('ordinary.bin', Buffer.from('ordinary bytes'), 5, 'opaque-evidence')
 
     const filtered = filterArtifactsForCapture({

@@ -3,6 +3,10 @@ import {
   type ArtifactCopyInput,
   type SkippedArtifact,
 } from '../artifact-copy.js'
+import type {
+  CurationArtifactRole,
+  CurationCaptureReceipt,
+} from '../queue/queue-payload.js'
 
 export const CAPTURE_BLACKLIST_NAME_PATTERNS = [
   'password',
@@ -60,6 +64,14 @@ export interface CaptureStepInteraction {
   elementRef?: string
 }
 
+export type SanitizedCaptureBlacklistRegion = CurationCaptureReceipt['regions'][number]
+
+export interface CaptureBlacklistSkippedArtifact
+  extends SkippedArtifact<'capture-blacklist'> {
+  role: CurationArtifactRole
+  originalName: string
+}
+
 export interface FilterArtifactsForCaptureInput {
   artifacts: readonly ArtifactCopyInput[]
   blacklist: readonly BlacklistedRegion[]
@@ -68,7 +80,7 @@ export interface FilterArtifactsForCaptureInput {
 
 export interface FilterArtifactsForCaptureResult {
   toCopy: ArtifactCopyInput[]
-  skipped: SkippedArtifact<'capture-blacklist'>[]
+  skipped: CaptureBlacklistSkippedArtifact[]
 }
 
 function normalize(value: string): string {
@@ -108,6 +120,41 @@ export function classifyCaptureBlacklist(
   })
 }
 
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+/** Removes raw values and returns one deterministic durable row per step/ref/reason. */
+export function sanitizeCaptureBlacklistEvidence(
+  regions: readonly BlacklistedRegion[],
+): SanitizedCaptureBlacklistRegion[] {
+  const sanitized = regions
+    .map((region): SanitizedCaptureBlacklistRegion => ({
+      stepIndex: region.stepIndex,
+      elementRef: region.elementRef,
+      role: region.role,
+      normalizedName: region.normalizedName,
+      ...(region.inputType === undefined ? {} : { inputType: region.inputType }),
+      reason: region.reason,
+    }))
+    .sort((left, right) =>
+      left.stepIndex - right.stepIndex
+      || compareText(left.elementRef, right.elementRef)
+      || compareText(left.reason, right.reason)
+      || compareText(left.role, right.role)
+      || compareText(left.normalizedName, right.normalizedName)
+      || compareText(left.inputType ?? '', right.inputType ?? ''),
+    )
+
+  const seen = new Set<string>()
+  return sanitized.filter((region) => {
+    const key = JSON.stringify([region.stepIndex, region.elementRef, region.reason])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function matchesInteraction(
   region: BlacklistedRegion,
   interaction: CaptureStepInteraction,
@@ -120,18 +167,30 @@ function artifactRole(artifact: ArtifactCopyInput): string {
   return normalize(artifact.role ?? '')
 }
 
-function screenshotArtifact(artifact: ArtifactCopyInput): boolean {
+function captureArtifactRole(artifact: ArtifactCopyInput): CurationArtifactRole {
   const role = artifactRole(artifact)
-  if (SCREENSHOT_ROLES.has(role)) return true
+  if (SCREENSHOT_ROLES.has(role)) return 'screenshot'
+  if (role === 'dom' || role === 'dom-snapshot') return 'dom-snapshot'
+  if (SNAPSHOT_ROLES.has(role)) return 'ax-snapshot'
   const name = (artifact.originalName ?? artifact.sourcePath).toLowerCase()
   return ['.png', '.jpg', '.jpeg', '.webp'].some((suffix) => name.endsWith(suffix))
+    ? 'screenshot'
+    : 'opaque-evidence'
 }
 
-function snapshotArtifact(artifact: ArtifactCopyInput): boolean {
-  const role = artifactRole(artifact)
-  if (SNAPSHOT_ROLES.has(role)) return true
-  const name = (artifact.originalName ?? '').toLowerCase()
-  return name.endsWith('.html') || name.endsWith('.dom.json') || name.endsWith('.ax.json')
+function artifactOriginalName(artifact: ArtifactCopyInput): string {
+  const sourceName = artifact.sourcePath.split(/[\\/]/u).at(-1)
+  return artifact.originalName ?? sourceName ?? artifact.ref.id
+}
+
+function skippedArtifact(artifact: ArtifactCopyInput): CaptureBlacklistSkippedArtifact {
+  return {
+    ref: artifact.ref,
+    stepIndex: artifact.stepIndex,
+    role: captureArtifactRole(artifact),
+    originalName: artifactOriginalName(artifact),
+    reason: 'capture-blacklist',
+  }
 }
 
 function uniqueNonEmpty(values: readonly (string | undefined)[]): string[] {
@@ -150,7 +209,7 @@ export function filterArtifactsForCapture(
     input.stepInteractions.some((interaction) => matchesInteraction(region, interaction)),
   )
   const toCopy: ArtifactCopyInput[] = []
-  const skipped: SkippedArtifact<'capture-blacklist'>[] = []
+  const skipped: CaptureBlacklistSkippedArtifact[] = []
 
   for (const artifact of input.artifacts) {
     const stepRegions = relevant.filter((region) => region.stepIndex === artifact.stepIndex)
@@ -158,15 +217,8 @@ export function filterArtifactsForCapture(
       toCopy.push(artifact)
       continue
     }
-    if (screenshotArtifact(artifact)) {
-      skipped.push({
-        ref: artifact.ref,
-        stepIndex: artifact.stepIndex,
-        reason: 'capture-blacklist',
-      })
-      continue
-    }
-    if (snapshotArtifact(artifact)) {
+    const role = captureArtifactRole(artifact)
+    if (role === 'dom-snapshot' || role === 'ax-snapshot') {
       toCopy.push({
         ...artifact,
         redactValues: uniqueNonEmpty([
@@ -176,7 +228,7 @@ export function filterArtifactsForCapture(
       })
       continue
     }
-    toCopy.push(artifact)
+    skipped.push(skippedArtifact(artifact))
   }
 
   return { toCopy, skipped }
