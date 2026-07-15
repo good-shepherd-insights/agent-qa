@@ -354,23 +354,56 @@ describe('IDX-02 degrading knowledge reader', () => {
     }
   })
 
-  it('quotes every FTS token so identity atoms stay exact and MATCH syntax is inert', async () => {
-    const exact = publishNamed('FTS Product', 'Submit exact', '#submit')
-    const longer = publishNamed('FTS Product', 'Submit cancel', '#submit-cancel')
-    const literalOperator = publishNamed('FTS Product', 'Literal OR checkout', '#literal-or')
-    publishNamed('FTS Product', 'Literal checkout', '#literal-checkout')
+  it('returns every ordinary-token match in deterministic BM25 and bundle-id order', async () => {
+    const alpha = publishNamed('Recall Product', 'Recall alpha')
+    const bravo = publishNamed('Recall Product', 'Recall bravo')
     await knowledgeLocal.rebuildIndex({ knowledgeRoot })
 
     const reader = readerApi().openKnowledgeReader(knowledgeRoot)
     try {
-      expect(reader.searchLexical('#submit', { product: slugBranch('FTS Product') }).map((hit) => hit.bundleId))
+      const options = { product: slugBranch('Recall Product') }
+      const expected = [alpha.id, bravo.id].sort()
+
+      expect(reader.searchLexical('alpha bravo', options).map((hit) => hit.bundleId))
+        .toEqual(expected)
+      expect(reader.searchLexical('alpha bravo', options).map((hit) => hit.bundleId))
+        .toEqual(expected)
+    } finally {
+      reader.close()
+    }
+  })
+
+  it('quotes every FTS token so identity atoms stay exact and MATCH syntax is inert', async () => {
+    const exact = publishNamed('FTS Product', 'Submit exact', '#submit')
+    const longer = publishNamed('FTS Product', 'Submit cancel', '#submit-cancel')
+    const literalOperator = publishNamed('FTS Product', 'Literal OR checkout', '#literal-or')
+    const literalCheckout = publishNamed('FTS Product', 'Literal checkout', '#literal-checkout')
+    const literalAnd = publishNamed('FTS Product', 'Conjunction AND sentinel')
+    const literalNot = publishNamed('FTS Product', 'Negation NOT sentinel')
+    const literalNear = publishNamed('FTS Product', 'Proximity NEAR sentinel')
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+
+    const reader = readerApi().openKnowledgeReader(knowledgeRoot)
+    try {
+      const options = { product: slugBranch('FTS Product') }
+      const checkoutMatches = [literalOperator.id, literalCheckout.id].sort()
+
+      expect(reader.searchLexical('#submit', options).map((hit) => hit.bundleId))
         .toEqual([exact.id])
-      expect(reader.searchLexical('#submit-cancel', { product: slugBranch('FTS Product') }).map((hit) => hit.bundleId))
+      expect(reader.searchLexical('#submit-cancel', options).map((hit) => hit.bundleId))
         .toEqual([longer.id])
       expect(
-        reader.searchLexical('literal OR checkout', { product: slugBranch('FTS Product') })
-          .map((hit) => hit.bundleId),
-      ).toEqual([literalOperator.id])
+        reader.searchLexical('literal OR checkout', options).map((hit) => hit.bundleId),
+      ).toEqual(checkoutMatches)
+      expect(
+        reader.searchLexical('OR AND NOT NEAR', options).map((hit) => hit.bundleId),
+      ).toEqual([literalOperator.id, literalAnd.id, literalNot.id, literalNear.id].sort())
+      expect(reader.searchLexical('(checkout)', options).map((hit) => hit.bundleId))
+        .toEqual(checkoutMatches)
+      expect(reader.searchLexical('"checkout"', options).map((hit) => hit.bundleId))
+        .toEqual(checkoutMatches)
+      expect(reader.searchLexical('checkout*', options).map((hit) => hit.bundleId))
+        .toEqual(checkoutMatches)
     } finally {
       reader.close()
     }
