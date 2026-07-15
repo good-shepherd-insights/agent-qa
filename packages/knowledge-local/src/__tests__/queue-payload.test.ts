@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
@@ -6,10 +8,14 @@ import * as knowledgeLocal from '../index.js'
 import {
   COMMIT_INTENT_SCHEMA_VERSION,
   commitIntentSchema,
+  listCommitIntents,
+  writeCommitIntent,
 } from '../journal/intent-journal.js'
 import {
   CURATION_JOB_STATE_SCHEMA_VERSION,
   curationJobStateSchema,
+  readJobState,
+  writeJobState,
 } from '../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -92,6 +98,12 @@ function finalizedReceipt(): CurationCaptureReceipt {
       },
     ],
   }
+}
+
+function bridgeAddressInput(): Parameters<
+  typeof buildCurationCandidateAddressFields
+>[0] {
+  throw new Error('Plan 378-21 bridge regression fixture is not implemented')
 }
 
 describe('curation candidate projection and receipt contracts (SAFE-02)', () => {
@@ -217,26 +229,15 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
 
   it('keeps legacy version-1 bytes parseable while the explicit builder emits the bridge', () => {
     const legacy = legacyAddressFields()
+    const legacyBytes = Buffer.from(JSON.stringify(legacy), 'utf8')
+    const parsedLegacy = JSON.parse(legacyBytes.toString('utf8')) as unknown
     const legacyPayload = {
       candidateId: candidateContentAddress(legacy),
-      ...legacy,
+      ...(parsedLegacy as CurationCandidateAddressFields),
     }
     expect(curationCandidatePayloadSchema.parse(legacyPayload)).toEqual(legacyPayload)
 
-    const bridgeInput = {
-      ...legacy,
-      artifactInventory: [
-        {
-          relativePath: `artifacts/${'b'.repeat(64)}`,
-          sha256: 'b'.repeat(64),
-          bytes: 128,
-          stepIndex: 0,
-          role: 'dom-snapshot' as const,
-          originalName: 'step-0.dom.json',
-        },
-      ],
-      captureReceipt: finalizedReceipt(),
-    }
+    const bridgeInput = bridgeAddressInput()
     const bridge = buildCurationCandidateAddressFields(bridgeInput)
     expect(bridge).toEqual(bridgeInput)
     expectTypeOf<Parameters<typeof buildCurationCandidateAddressFields>[0]>()
@@ -264,10 +265,169 @@ describe('curation candidate projection and receipt contracts (SAFE-02)', () => 
     delete missingReceipt.captureReceipt
     expect(() => buildCurationCandidateAddressFields(missingReceipt as never)).toThrow()
   })
+
+  it('addresses every populated safety fact while excluding only emittedAt', () => {
+    const input = bridgeAddressInput()
+    const baseline = buildCurationCandidateAddressFields(input)
+    const baselineId = candidateContentAddress(baseline)
+    const artifact = input.artifactInventory[0]!
+    const changedDigest = 'c'.repeat(64)
+
+    const variants = [
+      buildCurationCandidateAddressFields({
+        ...input,
+        artifactInventory: [
+          {
+            ...artifact,
+            relativePath: `artifacts/${changedDigest}`,
+            sha256: changedDigest,
+          },
+        ],
+      }),
+      buildCurationCandidateAddressFields({
+        ...input,
+        artifactInventory: [{ ...artifact, role: 'ax-snapshot' }],
+      }),
+      buildCurationCandidateAddressFields({
+        ...input,
+        artifactInventory: [{ ...artifact, originalName: 'step-0.safe.dom.json' }],
+      }),
+      buildCurationCandidateAddressFields({
+        ...input,
+        captureReceipt: {
+          ...input.captureReceipt,
+          regions: [
+            {
+              stepIndex: 0,
+              elementRef: 'password-input',
+              role: 'textbox',
+              normalizedName: 'password',
+              inputType: 'password',
+              reason: 'password-input',
+            },
+          ],
+        },
+      }),
+      buildCurationCandidateAddressFields({
+        ...input,
+        captureReceipt: {
+          ...input.captureReceipt,
+          interactions: [{ stepIndex: 1, elementRef: 'password-input' }],
+        },
+      }),
+      buildCurationCandidateAddressFields({
+        ...input,
+        captureReceipt: {
+          ...input.captureReceipt,
+          omissions: [
+            {
+              stepIndex: 0,
+              ref: 'decision-screenshot',
+              role: 'screenshot',
+              originalName: 'step-0.png',
+              reason: 'capture-blacklist',
+            },
+          ],
+        },
+      }),
+      buildCurationCandidateAddressFields({
+        ...input,
+        captureReceipt: {
+          ...input.captureReceipt,
+          redactions: [
+            {
+              stepIndex: artifact.stepIndex,
+              ref: 'dom-snapshot',
+              role: 'dom-snapshot',
+              originalName: artifact.originalName,
+              reason: 'capture-blacklist',
+              safeSha256: artifact.sha256,
+            },
+          ],
+        },
+      }),
+      buildCurationCandidateAddressFields({ ...input, injectionFlagged: true }),
+    ]
+
+    for (const variant of variants) {
+      expect(candidateContentAddress(variant)).not.toBe(baselineId)
+    }
+    expect(
+      candidateContentAddress(
+        buildCurationCandidateAddressFields({
+          ...input,
+          emittedAt: '2099-01-01T00:00:00.000Z',
+        }),
+      ),
+    ).toBe(baselineId)
+  })
+
+  it('rejects unknown and raw-value-shaped bridge keys at every finalized boundary', () => {
+    const input = bridgeAddressInput()
+    const receipt = input.captureReceipt
+    const omission = {
+      stepIndex: 0,
+      ref: 'decision-screenshot',
+      role: 'screenshot' as const,
+      originalName: 'step-0.png',
+      reason: 'capture-blacklist' as const,
+    }
+    const redaction = {
+      stepIndex: 0,
+      ref: 'dom-snapshot',
+      role: 'dom-snapshot' as const,
+      originalName: input.artifactInventory[0]!.originalName,
+      reason: 'capture-blacklist' as const,
+      safeSha256: input.artifactInventory[0]!.sha256,
+    }
+    const invalidInputs: unknown[] = [
+      { ...input, captureReceipt: { ...receipt, rawValue: 'secret' } },
+      {
+        ...input,
+        captureReceipt: {
+          ...receipt,
+          regions: [
+            {
+              stepIndex: 0,
+              elementRef: 'password-input',
+              role: 'textbox',
+              normalizedName: 'password',
+              reason: 'credential-name',
+              value: 'secret',
+            },
+          ],
+        },
+      },
+      {
+        ...input,
+        captureReceipt: {
+          ...receipt,
+          interactions: [{ ...receipt.interactions[0]!, rawValue: 'secret' }],
+        },
+      },
+      {
+        ...input,
+        captureReceipt: { ...receipt, omissions: [{ ...omission, value: 'secret' }] },
+      },
+      {
+        ...input,
+        captureReceipt: { ...receipt, redactions: [{ ...redaction, rawValue: 'secret' }] },
+      },
+      {
+        ...input,
+        artifactInventory: [{ ...input.artifactInventory[0]!, value: 'secret' }],
+      },
+    ]
+
+    for (const invalid of invalidInputs) {
+      expect(() => buildCurationCandidateAddressFields(invalid as never)).toThrow()
+    }
+  })
 })
 
 describe('format-local durability versions and public bridge surface', () => {
   it('keeps job-state and commit-intent bytes on independent version-1 constants', () => {
+    expect(CURATION_QUEUE_SCHEMA_VERSION).toBe(1)
     expect(CURATION_JOB_STATE_SCHEMA_VERSION).toBe(1)
     expect(COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
     expect(
@@ -307,10 +467,59 @@ describe('format-local durability versions and public bridge surface', () => {
       new URL('../journal/intent-journal.ts', import.meta.url),
       'utf8',
     )
+    const queueSource = readFileSync(
+      new URL('../queue/queue-payload.ts', import.meta.url),
+      'utf8',
+    )
+    expect(queueSource).toMatch(/export const CURATION_QUEUE_SCHEMA_VERSION = 1\b/u)
+    expect(queueSource).not.toMatch(/CURATION_QUEUE_SCHEMA_VERSION\s*=\s*2\b/u)
     expect(jobStateSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
     expect(intentSource).not.toContain('CURATION_QUEUE_SCHEMA_VERSION')
     expect(jobStateSource).toContain('CURATION_JOB_STATE_SCHEMA_VERSION')
     expect(intentSource).toContain('COMMIT_INTENT_SCHEMA_VERSION')
+  })
+
+  it('round-trips queue, job-state, and commit-intent bytes under separate v1 authorities', () => {
+    const root = mkdtempSync(join(tmpdir(), 'curation-version-roundtrip-'))
+    const candidateId = 'd'.repeat(64)
+    try {
+      const fields = buildCurationCandidateAddressFields(bridgeAddressInput())
+      const payload = { candidateId: candidateContentAddress(fields), ...fields }
+      expect(
+        curationCandidatePayloadSchema.parse(JSON.parse(JSON.stringify(payload))),
+      ).toEqual(payload)
+
+      writeJobState({
+        knowledgeRoot: root,
+        candidateId,
+        lifecycle: 'queued',
+      })
+      expect(readJobState(root, candidateId)).toMatchObject({
+        kind: 'parsed',
+        state: { schemaVersion: 1, candidateId, lifecycle: 'queued' },
+      })
+
+      writeCommitIntent(root, {
+        schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
+        candidateId,
+        bundleId: 'fact-checkout-button-0123456789abcdef',
+        deltaKind: 'Add',
+        epoch: 7,
+      })
+      expect(listCommitIntents(root)).toEqual([
+        {
+          parsed: {
+            schemaVersion: 1,
+            candidateId,
+            bundleId: 'fact-checkout-button-0123456789abcdef',
+            deltaKind: 'Add',
+            epoch: 7,
+          },
+        },
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('uses a named artifact-free receipt at the production synthetic constructor', () => {
