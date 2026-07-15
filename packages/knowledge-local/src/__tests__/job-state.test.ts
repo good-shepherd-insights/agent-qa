@@ -1,0 +1,230 @@
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  CURATION_QUEUE_SCHEMA_VERSION,
+  candidateContentAddress,
+  claimNextJob,
+  claimedCandidateDir,
+  claimedLeaseDir,
+  enqueueCurationCandidate,
+  jobStatePath,
+  listClaimedLeases,
+  listQueuedCandidates,
+  persistAuthoredCheckpoint,
+  readJobState,
+  requeueClaimed,
+  queuedCandidateDir,
+  writeJobState,
+  type CurationCandidateAddressFields,
+  type CurationCandidatePayload,
+  type CurationJobLifecycle,
+} from '../index.js'
+
+describe('curation queue claim and durable lifecycle (CUR-04)', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-job-state-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function payload(seed: string): CurationCandidatePayload {
+    const fields: CurationCandidateAddressFields = {
+      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+      sourceRunId: `run-${seed}`,
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext: 'local-interactive',
+      secretFlagged: false,
+      injectionFlagged: false,
+      kind: 'fact',
+      subtype: 'selector',
+      anchors: [{ t: 'el', role: 'button', name: seed }],
+      summarySeed: `${seed} selector`,
+      bodySeed: `${seed} was resolved and verified.`,
+      distilledObservations: [
+        {
+          schemaVersion: 1,
+          step: { naturalKey: seed, ordinal: 0 },
+          platform: 'web',
+          element: { naturalKey: `button:${seed}` },
+          observedAtOrdinal: 42,
+        },
+      ],
+      evidenceToken: `evidence-${seed}`,
+      attributingObservationId: `observation-${seed}`,
+      artifactInventory: [],
+      emittedAt: '2026-07-15T10:00:00.000Z',
+    }
+    return { candidateId: candidateContentAddress(fields), ...fields }
+  }
+
+  function enqueue(candidate: CurationCandidatePayload): void {
+    expect(
+      enqueueCurationCandidate({
+        knowledgeRoot,
+        payload: candidate,
+        artifactSources: [],
+      }),
+    ).toBe('enqueued')
+  }
+
+  it('claims queued candidates in deterministic id order and returns parsed paths', () => {
+    const firstInput = payload('zulu')
+    const secondInput = payload('alpha')
+    enqueue(firstInput)
+    enqueue(secondInput)
+    const expectedOrder = [firstInput.candidateId, secondInput.candidateId].sort()
+
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual(expectedOrder)
+    const firstClaim = claimNextJob({ knowledgeRoot, leaseId: 'lease-1' })
+    expect(firstClaim?.kind).toBe('claimed')
+    if (firstClaim?.kind !== 'claimed') throw new Error('expected first claimed job')
+    expect(firstClaim.candidateId).toBe(expectedOrder[0])
+    expect(firstClaim.payload.candidateId).toBe(expectedOrder[0])
+    expect(firstClaim.candidateDir).toBe(
+      claimedCandidateDir(knowledgeRoot, 'lease-1', expectedOrder[0]!),
+    )
+    expect(firstClaim.payloadPath).toBe(join(firstClaim.candidateDir, 'payload.json'))
+    expect(existsSync(queuedCandidateDir(knowledgeRoot, expectedOrder[0]!))).toBe(false)
+    expect(existsSync(firstClaim.candidateDir)).toBe(true)
+
+    const secondClaim = claimNextJob({ knowledgeRoot, leaseId: 'lease-1' })
+    expect(secondClaim?.candidateId).toBe(expectedOrder[1])
+    expect(claimNextJob({ knowledgeRoot, leaseId: 'lease-1' })).toBeUndefined()
+    expect(listClaimedLeases(knowledgeRoot)).toEqual(['lease-1'])
+  })
+
+  it('atomically round-trips all five lifecycle values and degrades corrupt state', () => {
+    const candidate = payload('lifecycle')
+    const lifecycles: CurationJobLifecycle[] = [
+      'queued',
+      'authored',
+      'bundling',
+      'committing',
+    ]
+    for (const lifecycle of lifecycles) {
+      writeJobState({ knowledgeRoot, candidateId: candidate.candidateId, lifecycle })
+      const read = readJobState(knowledgeRoot, candidate.candidateId)
+      expect(read.kind).toBe('parsed')
+      if (read.kind !== 'parsed') throw new Error('expected parsed state')
+      expect(read.state.lifecycle).toBe(lifecycle)
+      expect(read.state.embedCrashCount).toBe(0)
+    }
+
+    const claimedDir = claimedCandidateDir(knowledgeRoot, 'lease-done', candidate.candidateId)
+    mkdirSync(claimedDir, { recursive: true })
+    writeJobState({
+      knowledgeRoot,
+      candidateId: candidate.candidateId,
+      lifecycle: 'done',
+    })
+    expect(readJobState(knowledgeRoot, candidate.candidateId)).toEqual({
+      kind: 'absent',
+      present: false,
+    })
+    expect(existsSync(claimedDir)).toBe(false)
+
+    const stateFile = jobStatePath(knowledgeRoot, candidate.candidateId)
+    mkdirSync(join(stateFile, '..'), { recursive: true })
+    writeFileSync(stateFile, '{broken-json', 'utf8')
+    expect(readJobState(knowledgeRoot, candidate.candidateId)).toEqual({
+      kind: 'malformed',
+      present: true,
+    })
+  })
+
+  it('persists the opaque authored checkpoint and durable embed crash count', () => {
+    const candidate = payload('authored')
+    const authored = {
+      delta: { kind: 'Add', aliases: [1, 3] },
+      neighbors: ['record-a', 'record-b'],
+      nested: { preserve: true },
+    }
+    writeJobState({
+      knowledgeRoot,
+      candidateId: candidate.candidateId,
+      lifecycle: 'queued',
+      embedCrashCount: 1,
+    })
+
+    const persisted = persistAuthoredCheckpoint({
+      knowledgeRoot,
+      candidateId: candidate.candidateId,
+      authored,
+    })
+    expect(persisted.kind).toBe('persisted')
+    const read = readJobState(knowledgeRoot, candidate.candidateId)
+    expect(read.kind).toBe('parsed')
+    if (read.kind !== 'parsed') throw new Error('expected parsed authored state')
+    expect(read.state.lifecycle).toBe('authored')
+    expect(read.state.authored).toEqual(authored)
+    expect(read.state.embedCrashCount).toBe(1)
+
+    writeJobState({
+      knowledgeRoot,
+      candidateId: candidate.candidateId,
+      lifecycle: 'bundling',
+      embedCrashCount: read.state.embedCrashCount + 1,
+      authored: read.state.authored,
+    })
+    const incremented = readJobState(knowledgeRoot, candidate.candidateId)
+    expect(incremented.kind).toBe('parsed')
+    if (incremented.kind !== 'parsed') throw new Error('expected incremented state')
+    expect(incremented.state.embedCrashCount).toBe(2)
+    expect(incremented.state.authored).toEqual(authored)
+  })
+
+  it('requeues a claimed candidate while preserving its authored checkpoint', () => {
+    const candidate = payload('requeue')
+    enqueue(candidate)
+    const claim = claimNextJob({ knowledgeRoot, leaseId: 'dead-lease' })
+    expect(claim?.kind).toBe('claimed')
+    if (claim?.kind !== 'claimed') throw new Error('expected claimed job')
+    const authored = { delta: { kind: 'Add', body: 'opaque' }, neighborIds: ['record-1'] }
+    expect(
+      persistAuthoredCheckpoint({
+        knowledgeRoot,
+        candidateId: candidate.candidateId,
+        authored,
+      }).kind,
+    ).toBe('persisted')
+    const before = readJobState(knowledgeRoot, candidate.candidateId)
+    expect(before.kind).toBe('parsed')
+    if (before.kind !== 'parsed') throw new Error('expected authored state')
+    writeJobState({
+      knowledgeRoot,
+      candidateId: candidate.candidateId,
+      lifecycle: 'bundling',
+      embedCrashCount: before.state.embedCrashCount,
+      authored: before.state.authored,
+    })
+
+    expect(requeueClaimed({ knowledgeRoot, leaseId: 'dead-lease' })).toEqual([
+      candidate.candidateId,
+    ])
+    expect(existsSync(queuedCandidateDir(knowledgeRoot, candidate.candidateId))).toBe(true)
+    expect(existsSync(claimedLeaseDir(knowledgeRoot, 'dead-lease'))).toBe(false)
+    const after = readJobState(knowledgeRoot, candidate.candidateId)
+    expect(after.kind).toBe('parsed')
+    if (after.kind !== 'parsed') throw new Error('expected requeued state')
+    expect(after.state.lifecycle).toBe('queued')
+    expect(after.state.authored).toEqual(before.state.authored)
+    expect(after.state.authored).toEqual(authored)
+  })
+})
