@@ -3,12 +3,18 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import {
+  BundleOutcomeEventSchema,
+  canonicalJson,
+  guardBundleManifest,
+} from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -19,10 +25,12 @@ import {
   persistAuthoredCheckpoint,
   queuedCandidateDir,
   readJobState,
+  verifyBundleIntegrity,
   writeJobState,
   type CurationCandidateAddressFields,
   type CurationCandidatePayload,
 } from '../index.js'
+import { appendOutcomeEventWithEnrichment } from '../bundle-append.js'
 import {
   acquireWriterLease,
   LEASE_FILE,
@@ -101,6 +109,23 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
         stepIndex: 0,
       },
       artifacts: [],
+    }
+  }
+
+  function enrichmentBundleInput(): PublishBundleInput {
+    return {
+      ...bundleInput(),
+      provenance: {
+        mode: 'run-linked',
+        runId: 'reconcile-run',
+        testId: 'reconcile-test',
+        stepIndex: 0,
+        authorship: {
+          path: 'deterministic-fallback',
+          executionContext: 'local-headless',
+        },
+        needsEnrichment: true,
+      },
     }
   }
 
@@ -184,7 +209,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     }
   }
 
-  it('state 1 clears an intent when both bundle and index row are present', () => {
+  it('state 1 reprojects an existing row from canonical bundle truth before clearing intent', () => {
     const published = publishBundleTruth()
     const entry = intent('a'.repeat(64), published.id)
     writeCommitIntent(knowledgeRoot, entry)
@@ -196,10 +221,12 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       intentsDiscarded: 0,
       jobsRequeued: 0,
       orphansRemoved: 0,
+      mutationsRecovered: 0,
       malformed: 0,
     })
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
-    expect(applyIndexDelta).not.toHaveBeenCalled()
+    expect(applyIndexDelta).toHaveBeenCalledOnce()
+    expect(applyIndexDelta).toHaveBeenCalledWith(entry)
     expect(deriveIndexRowFromBundle).not.toHaveBeenCalled()
   })
 
@@ -254,6 +281,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       intentsDiscarded: 0,
       jobsRequeued: 0,
       orphansRemoved: 0,
+      mutationsRecovered: 0,
       malformed: 0,
     })
 
@@ -337,6 +365,192 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       delta: { kind: 'Add', body: 'stale-reclaim' },
       neighborIds: ['record-1'],
     })
+  })
+
+  it('recovers a partial expired-lease enrichment before stale GC and refreshes its existing row', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(2_000_000)
+    const stale = acquireWriterLease(knowledgeRoot)
+    expect(stale.kind).toBe('acquired')
+    if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
+    const payload = claimWithAuthoredCheckpoint('partial-enrichment', stale.leaseId)
+    const published = publishBundle(
+      {
+        knowledgeRoot,
+        productKey: 'fixture-storefront',
+        auditBaseDir: join(root, '.agent-qa'),
+        commitArtifacts: 'none',
+        writerLeaseId: stale.leaseId,
+      },
+      enrichmentBundleInput(),
+    )
+    expect(published.kind).toBe('published')
+    if (published.kind !== 'published') throw new Error('expected enrichment fixture bundle')
+    writeCommitIntent(knowledgeRoot, intent(payload.candidateId, published.id))
+    indexRows.add(published.id)
+
+    expect(() =>
+      appendOutcomeEventWithEnrichment(
+        {
+          knowledgeRoot,
+          productKey: 'fixture-storefront',
+          auditBaseDir: join(root, '.agent-qa'),
+          commitArtifacts: 'none',
+          writerLeaseId: stale.leaseId,
+          hooks: {
+            afterMutableReplacement(relPath) {
+              if (relPath === 'record.md') throw new Error('injected partial enrichment')
+            },
+          },
+        },
+        published.id,
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'recovered-enrichment',
+          curationJobId: payload.candidateId,
+          buildOrdinal: 43,
+          origin: 'agent-verified',
+        }),
+        {
+          summary: 'Recovered capable-model selector',
+          body: 'The recovered mutation contains verified capable-model prose.',
+          authorship: {
+            path: 'llm',
+            model: { id: 'recovery-curator' },
+            executionContext: 'local-interactive',
+          },
+        },
+      ),
+    ).toThrow('injected partial enrichment')
+    expect(verifyBundleIntegrity(published.dir).ok).toBe(false)
+
+    const stagingRoot = join(published.dir, '..', '.staging')
+    const mutationDir = join(
+      stagingRoot,
+      readdirSync(stagingRoot).find((name) => name.includes('-mutation-'))!,
+    )
+    const ordinaryStaging = join(stagingRoot, `${stale.leaseId}-unpublished-bundle`)
+    mkdirSync(ordinaryStaging)
+    writeFileSync(join(ordinaryStaging, 'partial'), 'ordinary stale staging', 'utf8')
+
+    let projectedMutableStateHash: string | undefined
+    applyIndexDelta.mockImplementation((entry) => {
+      indexRows.add(entry.bundleId)
+      projectedMutableStateHash = guardBundleManifest(
+        JSON.parse(readFileSync(join(published.dir, 'manifest.json'), 'utf8')),
+      ).mutableStateHash
+    })
+    now.mockReturnValue(2_000_000 + LEASE_HEARTBEAT_TTL_MS)
+    expect(acquireWriterLease(knowledgeRoot).kind).toBe('acquired')
+
+    const report = reconcileOnDrainStart(deps())
+
+    expect(report).toMatchObject({
+      mutationsRecovered: 1,
+      orphansRemoved: 1,
+      intentsCleared: 1,
+      intentsReplayed: 1,
+      jobsRequeued: 1,
+    })
+    expect(existsSync(mutationDir)).toBe(false)
+    expect(existsSync(ordinaryStaging)).toBe(false)
+    expect(verifyBundleIntegrity(published.dir)).toEqual({ ok: true, violations: [] })
+    const repairedManifest = guardBundleManifest(
+      JSON.parse(readFileSync(join(published.dir, 'manifest.json'), 'utf8')),
+    )
+    expect(projectedMutableStateHash).toBe(repairedManifest.mutableStateHash)
+    expect(applyIndexDelta).toHaveBeenCalledWith(intent(payload.candidateId, published.id))
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
+
+    applyIndexDelta.mockClear()
+    expect(reconcileOnDrainStart(deps())).toMatchObject({ mutationsRecovered: 0 })
+    expect(applyIndexDelta).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      label: 'malformed journal',
+      tamper(transactionDir: string) {
+        writeFileSync(join(transactionDir, 'mutation.json'), '{torn-journal', 'utf8')
+      },
+    },
+    {
+      label: 'digest-mismatched recovery copy',
+      tamper(transactionDir: string) {
+        writeFileSync(join(transactionDir, 'recovery', '0001'), 'tampered', 'utf8')
+      },
+    },
+    {
+      label: 'path-escaping target',
+      tamper(transactionDir: string) {
+        const journalPath = join(transactionDir, 'mutation.json')
+        const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
+          replacements: { targetRelPath: string }[]
+        }
+        journal.replacements[0]!.targetRelPath = '../record.md'
+        writeFileSync(journalPath, `${canonicalJson(journal)}\n`, 'utf8')
+      },
+    },
+  ])('preserves expired mutation evidence for a $label', ({ tamper }) => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(3_000_000)
+    const stale = acquireWriterLease(knowledgeRoot)
+    expect(stale.kind).toBe('acquired')
+    if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
+    claimWithAuthoredCheckpoint('malformed-mutation', stale.leaseId)
+    const published = publishBundle(
+      {
+        knowledgeRoot,
+        productKey: 'fixture-storefront',
+        auditBaseDir: join(root, '.agent-qa'),
+        commitArtifacts: 'none',
+        writerLeaseId: stale.leaseId,
+      },
+      enrichmentBundleInput(),
+    )
+    expect(published.kind).toBe('published')
+    if (published.kind !== 'published') throw new Error('expected mutation fixture bundle')
+
+    expect(() =>
+      appendOutcomeEventWithEnrichment(
+        {
+          knowledgeRoot,
+          productKey: 'fixture-storefront',
+          auditBaseDir: join(root, '.agent-qa'),
+          commitArtifacts: 'none',
+          writerLeaseId: stale.leaseId,
+          hooks: {
+            afterMutableReplacement() {
+              throw new Error('leave mutation journal')
+            },
+          },
+        },
+        published.id,
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'malformed-recovery',
+          curationJobId: 'malformed-recovery-job',
+          buildOrdinal: 43,
+          origin: 'agent-verified',
+        }),
+        {
+          summary: 'Recovery evidence',
+          body: 'Recovery evidence must remain durable.',
+          authorship: {
+            path: 'llm',
+            model: { id: 'recovery-curator' },
+            executionContext: 'local-interactive',
+          },
+        },
+      ),
+    ).toThrow('leave mutation journal')
+    const stagingRoot = join(published.dir, '..', '.staging')
+    const transactionDir = join(stagingRoot, readdirSync(stagingRoot)[0]!)
+    tamper(transactionDir)
+
+    now.mockReturnValue(3_000_000 + LEASE_HEARTBEAT_TTL_MS)
+    expect(acquireWriterLease(knowledgeRoot).kind).toBe('acquired')
+
+    expect(() => reconcileOnDrainStart(deps())).toThrow()
+    expect(existsSync(transactionDir)).toBe(true)
   })
 
   it('has no author or model invocation slot in its dependency surface', () => {
