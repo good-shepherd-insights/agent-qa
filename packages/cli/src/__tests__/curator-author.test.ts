@@ -1,4 +1,4 @@
-import { asRecordId } from '@vostride/agent-qa-schema'
+import { asRecordId, deriveEvidenceToken } from '@vostride/agent-qa-schema'
 import type {
   CurationJobView,
   NeighborRecord,
@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   buildCuratorAuthor,
   CURATOR_MAX_NEIGHBORS,
+  CURATOR_RETRY_CAP,
 } from '../curation/curator-author.js'
 
 type CuratorModel = ReturnType<typeof createModel>
@@ -118,6 +119,16 @@ function promptText(options: CallOptions): string {
       return message.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
     })
     .join('\n')
+}
+
+function wireBundle(input: CurationJobView = job()) {
+  return {
+    kind: input.kind,
+    ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
+    anchors: input.anchors,
+    summary: 'Model-authored atomic summary',
+    body: 'Model-authored standalone body',
+  }
 }
 
 describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)', () => {
@@ -270,5 +281,188 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
       kind: 'fallback-required',
       reason: 'no-model',
     })
+  })
+})
+
+describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)', () => {
+  it('maps clean JSON to an llm-authored Add with job-owned envelope facts', async () => {
+    const input = job()
+    const presented = neighbor(1)
+    const resolvedProfile = profile()
+    const author = buildCuratorAuthor({
+      profile: resolvedProfile,
+      auth: noAuth,
+      createModelImpl: () =>
+        scriptedModel([
+          JSON.stringify({
+            kind: 'Add',
+            citedAliases: [1],
+            bundle: wireBundle(input),
+            ignoredExtraField: 'lenient',
+          }),
+        ]),
+    })
+
+    const outcome = await author(input, [presented])
+
+    expect(outcome).toMatchObject({
+      kind: 'authored',
+      authorship: {
+        path: 'llm',
+        model: { id: resolvedProfile.model },
+        executionContext: input.executionContext,
+      },
+      delta: {
+        kind: 'Add',
+        origin: 'agent',
+        scope: input.scope,
+        citedIds: [presented.recordId],
+        precondition: [
+          {
+            recordId: presented.recordId,
+            observedStatus: presented.observedStatus,
+            observedOrdinal: presented.observedOrdinal,
+          },
+        ],
+        bundle: {
+          ...wireBundle(input),
+          scope: input.scope,
+          distilledEvidenceRef: {
+            id: `curation-candidate-${input.candidateId}`,
+            sha: input.candidateId,
+          },
+          originStage: 'run-curation',
+        },
+      },
+    })
+    if (outcome.kind === 'authored') {
+      expect(outcome.delta.authorship).toEqual(outcome.authorship)
+    }
+  })
+
+  it('repairs prose-wrapped fenced JSON and stamps llm-repaired authorship', async () => {
+    const output = [
+      'Here is the delta you requested:',
+      '```json',
+      JSON.stringify({ kind: 'Noop', citedAliases: [] }),
+      '```',
+      'The JSON above is the complete answer.',
+    ].join('\n')
+    const author = buildCuratorAuthor({
+      profile: profile(),
+      auth: noAuth,
+      createModelImpl: () => scriptedModel([output]),
+    })
+
+    const outcome = await author(job(), [])
+
+    expect(outcome).toMatchObject({
+      kind: 'authored',
+      authorship: { path: 'llm-repaired' },
+      delta: { kind: 'Noop', authorship: { path: 'llm-repaired' } },
+    })
+  })
+
+  it('repairs deterministic trailing-comma and missing-delimiter damage', async () => {
+    const author = buildCuratorAuthor({
+      profile: profile(),
+      auth: noAuth,
+      createModelImpl: () =>
+        scriptedModel(['{"kind":"Noop","citedAliases":[],']),
+    })
+
+    await expect(author(job(), [])).resolves.toMatchObject({
+      kind: 'authored',
+      authorship: { path: 'llm-repaired' },
+      delta: { kind: 'Noop' },
+    })
+  })
+
+  it('resolves aliases, derives the evidence token in code, and ignores a forged model token', async () => {
+    const input = job()
+    const neighbors = [neighbor(1), neighbor(2)]
+    const author = buildCuratorAuthor({
+      profile: profile(),
+      auth: noAuth,
+      createModelImpl: () =>
+        scriptedModel([
+          JSON.stringify({
+            kind: 'Confirm',
+            targetAlias: 2,
+            citedAliases: [1, 2],
+            evidenceToken: 'model-forged-token-must-be-ignored',
+          }),
+        ]),
+    })
+
+    const outcome = await author(input, neighbors)
+
+    expect(outcome).toMatchObject({
+      kind: 'authored',
+      delta: {
+        kind: 'Confirm',
+        targetId: neighbors[1]!.recordId,
+        citedIds: [neighbors[0]!.recordId, neighbors[1]!.recordId],
+        evidenceToken: deriveEvidenceToken({
+          attributingObservationId: input.attributingObservationId,
+          anchor: input.anchors[0]!,
+          buildOrdinal: input.buildOrdinal,
+        }),
+      },
+    })
+    if (outcome.kind === 'authored' && outcome.delta.kind === 'Confirm') {
+      expect(outcome.delta.evidenceToken).not.toBe('model-forged-token-must-be-ignored')
+    }
+  })
+
+  it('retries unknown aliases with specific feedback, then falls back after the bounded cap', async () => {
+    const calls: CallOptions[] = []
+    const malformed = JSON.stringify({
+      kind: 'Confirm',
+      targetAlias: 99,
+      citedAliases: [99],
+    })
+    const author = buildCuratorAuthor({
+      profile: profile(),
+      auth: noAuth,
+      createModelImpl: () =>
+        scriptedModel(
+          Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => malformed),
+          (options) => calls.push(options),
+        ),
+    })
+
+    await expect(author(job(), [neighbor(1)])).resolves.toEqual({
+      kind: 'fallback-required',
+      reason: 'malformed',
+    })
+    expect(calls).toHaveLength(CURATOR_RETRY_CAP + 1)
+    expect(promptText(calls[0]!)).not.toMatch(/unknown alias 99/i)
+    for (const retry of calls.slice(1)) {
+      expect(promptText(retry)).toMatch(/unknown alias 99/i)
+    }
+  })
+
+  it('never coerces a delta kind outside the closed six-member union', async () => {
+    const calls: CallOptions[] = []
+    const author = buildCuratorAuthor({
+      profile: profile(),
+      auth: noAuth,
+      createModelImpl: () =>
+        scriptedModel(
+          Array.from(
+            { length: CURATOR_RETRY_CAP + 1 },
+            () => JSON.stringify({ kind: 'RewriteStore', citedAliases: [] }),
+          ),
+          (options) => calls.push(options),
+        ),
+    })
+
+    await expect(author(job(), [])).resolves.toEqual({
+      kind: 'fallback-required',
+      reason: 'malformed',
+    })
+    expect(calls).toHaveLength(CURATOR_RETRY_CAP + 1)
+    expect(promptText(calls[1]!)).toMatch(/RewriteStore|unsupported delta kind/i)
   })
 })
