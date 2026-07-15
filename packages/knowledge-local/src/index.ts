@@ -148,6 +148,67 @@ export type {
   RebuildRequest,
   RequestRebuildOptions,
 } from './rebuild-marker.js'
+export {
+  CURATION_QUEUE_SCHEMA_VERSION,
+  candidateContentAddress,
+  curationCandidatePayloadSchema,
+} from './queue/queue-payload.js'
+export type {
+  CurationCandidateAddressFields,
+  CurationCandidateArtifact,
+  CurationCandidatePayload,
+} from './queue/queue-payload.js'
+export {
+  CLAIMED_SUBDIR,
+  claimedCandidateDir,
+  claimedLeaseDir,
+  claimedRoot,
+  JOBS_SUBDIR,
+  jobStatePath,
+  jobsRoot,
+  QUEUE_DIR,
+  QUEUE_MAX_EMITS_PER_RUN,
+  QUEUE_MAX_JOBS_PER_SCOPE,
+  queueRoot,
+  queueStagingRoot,
+  QUEUED_SUBDIR,
+  queuedCandidateDir,
+  queuedRoot,
+} from './queue/queue-layout.js'
+export {
+  claimNextJob,
+  enqueueCurationCandidate,
+  listClaimedLeases,
+  listQueuedCandidates,
+  readCurationCandidatePayload,
+  requeueClaimed,
+} from './queue/curation-queue.js'
+export type {
+  ClaimedCurationJob,
+  ClaimNextJobOptions,
+  ClaimNextJobOutcome,
+  CurationArtifactSource,
+  CurationEnqueueRefusalReason,
+  EnqueueCurationCandidateOptions,
+  EnqueueCurationCandidateOutcome,
+  MalformedClaimedCurationJob,
+  ReadCurationCandidatePayloadOutcome,
+  RequeueClaimedOptions,
+} from './queue/curation-queue.js'
+export {
+  curationJobStateSchema,
+  persistAuthoredCheckpoint,
+  readJobState,
+  writeJobState,
+} from './queue/job-state.js'
+export type {
+  CurationJobLifecycle,
+  CurationJobState,
+  PersistAuthoredCheckpointOptions,
+  PersistAuthoredCheckpointOutcome,
+  ReadJobStateOutcome,
+  WriteJobStateOptions,
+} from './queue/job-state.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader

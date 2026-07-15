@@ -87,6 +87,12 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     return { candidateId: candidateContentAddress(fields), ...fields }
   }
 
+  function seedQueued(candidate: CurationCandidatePayload, rootOverride = knowledgeRoot): void {
+    const candidateDir = queuedCandidateDir(rootOverride, candidate.candidateId)
+    mkdirSync(candidateDir, { recursive: true })
+    writeFileSync(join(candidateDir, 'payload.json'), JSON.stringify(candidate), 'utf8')
+  }
+
   it('hashes only deterministic fields regardless of object order or emittedAt', () => {
     const first = addressFields()
     const reordered = {
@@ -173,9 +179,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         attributingObservationId: `scope-observation-${index}`,
         evidenceToken: `scope-evidence-${index}`,
       })
-      expect(
-        enqueueCurationCandidate({ knowledgeRoot, payload: candidate, artifactSources: [] }),
-      ).toBe('enqueued')
+      seedQueued(candidate)
     }
     const scopeOverflow = payload({
       sourceRunId: 'scope-overflow-run',
@@ -199,13 +203,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         attributingObservationId: `run-observation-${index}`,
         evidenceToken: `run-evidence-${index}`,
       })
-      expect(
-        enqueueCurationCandidate({
-          knowledgeRoot: secondKnowledgeRoot,
-          payload: candidate,
-          artifactSources: [],
-        }),
-      ).toBe('enqueued')
+      seedQueued(candidate, secondKnowledgeRoot)
     }
     const runOverflow = payload({
       sourceRunId: 'one-hot-run',

@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 
 import { canonicalJson } from '@vostride/agent-qa-schema'
 
@@ -23,12 +23,16 @@ import {
 } from '../artifact-copy.js'
 import type { ArtifactCopyResult, SkippedArtifact } from '../artifact-copy.js'
 import {
+  claimedCandidateDir,
+  claimedLeaseDir,
+  claimedRoot,
   QUEUE_MAX_EMITS_PER_RUN,
   QUEUE_MAX_JOBS_PER_SCOPE,
   queueStagingRoot,
   queuedCandidateDir,
   queuedRoot,
 } from './queue-layout.js'
+import { readJobState, writeJobState } from './job-state.js'
 import {
   curationCandidatePayloadSchema,
   type CurationCandidateArtifact,
@@ -66,6 +70,38 @@ export type ReadCurationCandidatePayloadOutcome =
   | { kind: 'absent'; present: false }
   | { kind: 'parsed'; present: true; payload: CurationCandidatePayload }
   | { kind: 'malformed'; present: true }
+
+export interface ClaimNextJobOptions {
+  knowledgeRoot: string
+  leaseId: string
+}
+
+export interface ClaimedCurationJob {
+  kind: 'claimed'
+  candidateId: string
+  leaseId: string
+  payload: CurationCandidatePayload
+  candidateDir: string
+  payloadPath: string
+  artifactsDir: string
+}
+
+export interface MalformedClaimedCurationJob {
+  kind: 'malformed'
+  candidateId: string
+  leaseId: string
+  candidateDir: string
+  payloadPath: string
+  artifactsDir: string
+  payloadPresent: true
+}
+
+export type ClaimNextJobOutcome = ClaimedCurationJob | MalformedClaimedCurationJob
+
+export interface RequeueClaimedOptions {
+  knowledgeRoot: string
+  leaseId: string
+}
 
 function removeEmptyDir(dir: string): void {
   try {
@@ -114,6 +150,19 @@ function directoryNames(dir: string): string[] {
   }
 }
 
+const CANDIDATE_ID = /^[0-9a-f]{64}$/
+const SAFE_LEASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+/** Return deterministic candidate-id order and ignore non-contract directory names. */
+export function listQueuedCandidates(knowledgeRoot: string): string[] {
+  return directoryNames(queuedRoot(knowledgeRoot)).filter((name) => CANDIDATE_ID.test(name))
+}
+
+/** Return deterministic active/recoverable lease directory order. */
+export function listClaimedLeases(knowledgeRoot: string): string[] {
+  return directoryNames(claimedRoot(knowledgeRoot)).filter((name) => SAFE_LEASE_ID.test(name))
+}
+
 export function readCurationCandidatePayload(
   candidateDir: string,
 ): ReadCurationCandidatePayloadOutcome {
@@ -129,7 +178,7 @@ export function readCurationCandidatePayload(
 
   try {
     const parsed = curationCandidatePayloadSchema.safeParse(JSON.parse(raw))
-    return parsed.success
+    return parsed.success && parsed.data.candidateId === basename(candidateDir)
       ? { kind: 'parsed', present: true, payload: parsed.data }
       : { kind: 'malformed', present: true }
   } catch {
@@ -138,12 +187,121 @@ export function readCurationCandidatePayload(
 }
 
 function queuedPayloads(knowledgeRoot: string): CurationCandidatePayload[] {
-  return directoryNames(queuedRoot(knowledgeRoot)).flatMap((candidateId) => {
+  return listQueuedCandidates(knowledgeRoot).flatMap((candidateId) => {
     const outcome = readCurationCandidatePayload(
       queuedCandidateDir(knowledgeRoot, candidateId),
     )
     return outcome.kind === 'parsed' ? [outcome.payload] : []
   })
+}
+
+function initializeClaimedState(knowledgeRoot: string, candidateId: string): void {
+  const state = readJobState(knowledgeRoot, candidateId)
+  if (state.kind === 'absent') {
+    writeJobState({ knowledgeRoot, candidateId, lifecycle: 'queued' })
+  }
+}
+
+/** Atomically claim the lexicographically first queued content address. */
+export function claimNextJob(opts: ClaimNextJobOptions): ClaimNextJobOutcome | undefined {
+  for (const candidateId of listQueuedCandidates(opts.knowledgeRoot)) {
+    const sourceDir = queuedCandidateDir(opts.knowledgeRoot, candidateId)
+    const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
+    const candidateDir = claimedCandidateDir(
+      opts.knowledgeRoot,
+      opts.leaseId,
+      candidateId,
+    )
+    mkdirSync(leaseDir, { recursive: true })
+    try {
+      renameSync(sourceDir, candidateDir)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') {
+        removeEmptyDir(leaseDir)
+        continue
+      }
+      if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(candidateDir)) {
+        removeEmptyDir(leaseDir)
+        continue
+      }
+      throw error
+    }
+    bestEffortFsyncDirectory(leaseDir)
+    bestEffortFsyncDirectory(queuedRoot(opts.knowledgeRoot))
+    initializeClaimedState(opts.knowledgeRoot, candidateId)
+
+    const payloadPath = join(candidateDir, 'payload.json')
+    const artifactsDir = join(candidateDir, 'artifacts')
+    const payload = readCurationCandidatePayload(candidateDir)
+    if (payload.kind !== 'parsed') {
+      return {
+        kind: 'malformed',
+        candidateId,
+        leaseId: opts.leaseId,
+        candidateDir,
+        payloadPath,
+        artifactsDir,
+        payloadPresent: true,
+      }
+    }
+    return {
+      kind: 'claimed',
+      candidateId,
+      leaseId: opts.leaseId,
+      payload: payload.payload,
+      candidateDir,
+      payloadPath,
+      artifactsDir,
+    }
+  }
+  return undefined
+}
+
+/** Reclaim one dead lease without discarding an already-authored deterministic checkpoint. */
+export function requeueClaimed(opts: RequeueClaimedOptions): string[] {
+  const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
+  const candidateIds = directoryNames(leaseDir).filter((name) => CANDIDATE_ID.test(name))
+  const requeued: string[] = []
+  mkdirSync(queuedRoot(opts.knowledgeRoot), { recursive: true })
+  for (const candidateId of candidateIds) {
+    const sourceDir = claimedCandidateDir(opts.knowledgeRoot, opts.leaseId, candidateId)
+    const targetDir = queuedCandidateDir(opts.knowledgeRoot, candidateId)
+    if (existsSync(targetDir)) {
+      rmSync(sourceDir, { recursive: true, force: true })
+    } else {
+      try {
+        renameSync(sourceDir, targetDir)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(targetDir)) {
+          rmSync(sourceDir, { recursive: true, force: true })
+        } else if (code === 'ENOENT') {
+          continue
+        } else {
+          throw error
+        }
+      }
+    }
+
+    const state = readJobState(opts.knowledgeRoot, candidateId)
+    if (state.kind === 'parsed') {
+      writeJobState({
+        knowledgeRoot: opts.knowledgeRoot,
+        candidateId,
+        lifecycle: 'queued',
+        embedCrashCount: state.state.embedCrashCount,
+        ...(state.state.authored === undefined ? {} : { authored: state.state.authored }),
+      })
+    } else if (state.kind === 'absent') {
+      writeJobState({ knowledgeRoot: opts.knowledgeRoot, candidateId, lifecycle: 'queued' })
+    }
+    requeued.push(candidateId)
+  }
+  removeEmptyDir(leaseDir)
+  removeEmptyDir(claimedRoot(opts.knowledgeRoot))
+  bestEffortFsyncDirectory(queuedRoot(opts.knowledgeRoot))
+  return requeued
 }
 
 function queueCapExceeded(
