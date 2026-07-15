@@ -145,16 +145,14 @@ export function fuseWeightedRrf<T extends FusionCandidate>(
 }
 
 /**
- * Assemble at most N results while reserving all but ceil(f*N) slots for direct matches (D-07).
- * Input rank order is preserved, so lower-ranked expanded entries are discarded first.
+ * Keep at most ceil(f*N) expanded candidates while preserving every direct candidate (D-07).
+ * Input rank order is preserved. retrieve() owns final top-N after assembly and recheck.
  */
 export function capExpansion<T extends Pick<FusionCandidate, 'source'>>(
   fused: readonly T[],
   n: number,
 ): T[] {
   const resultBudget = Math.max(0, Math.floor(n))
-  if (resultBudget === 0) return []
-
   const expansionBudget = Math.ceil(EXPANSION_FRACTION_F * resultBudget)
   const retained: T[] = []
   let expandedCount = 0
@@ -165,7 +163,6 @@ export function capExpansion<T extends Pick<FusionCandidate, 'source'>>(
       expandedCount += 1
     }
     retained.push(candidate)
-    if (retained.length === resultBudget) break
   }
 
   return retained
