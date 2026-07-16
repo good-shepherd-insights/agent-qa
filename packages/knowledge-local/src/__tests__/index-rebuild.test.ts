@@ -37,6 +37,10 @@ import {
   type PublishBundleOutcome,
 } from '../bundle-publish.js'
 import {
+  EMBED_STATUS_SUPPRESSED,
+  projectBundleIndexRow,
+} from '../index-rebuild.js'
+import {
   INDEX_DB_FILE,
   INDEX_RENDERING_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
@@ -840,6 +844,208 @@ describe('IDX-01 derived-index rebuild projection', () => {
       presentReader.db.close()
     }
   })
+
+  for (const deadStatus of ['superseded', 'deprecated'] as const) {
+    it(`structurally scrubs ${deadStatus} recall rows on every projection`, async () => {
+      const product = `Structural Forgetting ${deadStatus} Product`
+      const target = publishNamed(product, `${deadStatus} live target`)
+      const deadSummary = `${deadStatus} poisoned trigger`
+      const dead = publish(product, {
+        draft: makeBundleDraftFixture({
+          kind: 'caution',
+          anchors: [
+            { t: 'error', message: `${deadStatus} poisoned trigger error` },
+            { t: 'page', route: `/structural-forgetting/${deadStatus}` },
+            { t: 'platform', platform: 'web' },
+          ],
+          scope: { tier: 'product', key: `structural-forgetting-${deadStatus}` },
+          summary: deadSummary,
+          body: 'This withdrawn trigger must never remain reachable through a recall row.',
+        }),
+        discriminant: makeDiscriminantFixture('caution'),
+        relations: [
+          {
+            type: 'relates-to',
+            targetId: target.id,
+            addedAtOrdinal: 7,
+            curationJobId: `${deadStatus}-dead-source-relation-job`,
+          },
+        ],
+        distilledObservations: [
+          {
+            schemaVersion: 1,
+            step: { naturalKey: `${deadStatus} poisoned step`, ordinal: 0 },
+            platform: 'web',
+            test: { id: `${deadStatus}-poisoned-test` },
+            error: {
+              naturalKey: `${deadStatus} poisoned error`,
+              rootCauseClass: 'timeout',
+            },
+            observedAtOrdinal: 7,
+          },
+        ],
+      })
+      const liveSource = publish(product, {
+        draft: makeBundleDraftFixture({
+          anchors: [
+            { t: 'el', role: 'Button', name: `${deadStatus} live source` },
+            { t: 'page', route: `/structural-forgetting/${deadStatus}/source` },
+            { t: 'platform', platform: 'web' },
+          ],
+          scope: { tier: 'product', key: `structural-forgetting-${deadStatus}-source` },
+          summary: `${deadStatus} live source`,
+          body: 'This live neighbor must survive when the poisoned caution is withdrawn.',
+        }),
+        relations: [
+          {
+            type: 'relates-to',
+            targetId: dead.id,
+            addedAtOrdinal: 8,
+            curationJobId: `${deadStatus}-live-source-relation-job`,
+          },
+        ],
+      })
+
+      expect(
+        await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() }),
+      ).toMatchObject({ projected: 3, pendingEmbeddings: 0 })
+
+      const deadNodeId = graphNodeId('caution', dead.id)
+      const initialReader = openReader()
+      const deadRow = initialReader.db
+        .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+        .get(dead.id)
+      expect(deadRow).toBeDefined()
+      const deadRowid = Number(deadRow?.record_rowid)
+      try {
+        expect(
+          initialReader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?').get(deadRowid),
+        ).toBeDefined()
+        expect(
+          initialReader.db
+            .prepare(`
+              SELECT situating_line
+              FROM records
+              WHERE bundle_id = ?
+            `)
+            .get(liveSource.id)?.situating_line,
+        ).toContain(deadSummary)
+        expect(
+          initialReader.db
+            .prepare(`
+              SELECT 1
+              FROM graph_edges
+              WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
+              LIMIT 1
+            `)
+            .get(deadRowid, deadNodeId, deadNodeId),
+        ).toBeDefined()
+      } finally {
+        initialReader.db.close()
+      }
+
+      const event = BundleOutcomeEventSchema.parse(deadStatus === 'superseded'
+        ? {
+            type: 'superseded',
+            evidenceToken: 'index-structural-forgetting-superseded',
+            curationJobId: 'index-structural-forgetting-superseded-job',
+            buildOrdinal: 50,
+            byRecordId: target.id,
+          }
+        : {
+            type: 'deprecated',
+            evidenceToken: 'index-structural-forgetting-deprecated',
+            curationJobId: 'index-structural-forgetting-deprecated-job',
+            buildOrdinal: 50,
+            reason: 'withdraw poisoned trigger',
+          })
+      expect(appendOutcomeEvent(config(product), dead.id, event)).toEqual({ kind: 'appended' })
+
+      projectBundleIndexRow({ knowledgeRoot, bundleId: dead.id })
+
+      function expectScrubbed(): void {
+        const reader = openReader()
+        try {
+          const projected = reader.db
+            .prepare(`
+              SELECT status, embed_status, embedding
+              FROM records
+              WHERE bundle_id = ?
+            `)
+            .get(dead.id)
+          expect(projected?.status).toBe(deadStatus)
+          expect(projected?.embed_status).toBe(EMBED_STATUS_SUPPRESSED)
+          expect(projected?.embedding).toBeNull()
+          expect(
+            reader.db
+              .prepare('SELECT COUNT(*) AS count FROM anchors WHERE record_rowid = ?')
+              .get(deadRowid)?.count,
+          ).toBe(3)
+          expect(
+            reader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?').get(deadRowid),
+          ).toBeUndefined()
+          expect(
+            reader.db
+              .prepare(`
+                SELECT 1
+                FROM ${knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)}
+                WHERE record_rowid = ?
+              `)
+              .get(BigInt(deadRowid)),
+          ).toBeUndefined()
+          expect(
+            reader.db
+              .prepare(`
+                SELECT 1
+                FROM graph_edges
+                WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
+                LIMIT 1
+              `)
+              .get(deadRowid, deadNodeId, deadNodeId),
+          ).toBeUndefined()
+          expect(
+            reader.db.prepare('SELECT 1 FROM graph_nodes WHERE node_id = ?').get(deadNodeId),
+          ).toBeUndefined()
+          expect(
+            reader.db
+              .prepare('SELECT situating_line FROM records WHERE bundle_id = ?')
+              .get(liveSource.id)?.situating_line,
+          ).not.toContain(deadSummary)
+        } finally {
+          reader.db.close()
+        }
+      }
+
+      expectScrubbed()
+
+      const staleRenderingWriter = new DatabaseSync(
+        join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE),
+      )
+      try {
+        staleRenderingWriter
+          .prepare("UPDATE meta SET v = ? WHERE k = 'rendering_schema_version'")
+          .run(String(INDEX_RENDERING_SCHEMA_VERSION - 1))
+        staleRenderingWriter.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+      } finally {
+        staleRenderingWriter.close()
+      }
+
+      const embeddedRenderings: string[] = []
+      const baseEmbedder = makeFakeEmbedder()
+      const recordingEmbedder: knowledgeLocal.EmbedderPort = {
+        async embedDocument(rendering) {
+          embeddedRenderings.push(rendering)
+          return baseEmbedder.embedDocument(rendering)
+        },
+        embedQuery: (rendering) => baseEmbedder.embedQuery(rendering),
+      }
+      expect(
+        await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: recordingEmbedder }),
+      ).toMatchObject({ projected: 0, pendingEmbeddings: 0 })
+      expect(embeddedRenderings.every((rendering) => !rendering.includes(deadSummary))).toBe(true)
+      expectScrubbed()
+    })
+  }
 
   it('removes deleted bundle projections, incoming edges, vec rows, and orphan nodes', async () => {
     const target = publishNamed('Removal Target Product', 'Removal target')
