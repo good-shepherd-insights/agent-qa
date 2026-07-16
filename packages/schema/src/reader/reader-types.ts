@@ -15,6 +15,13 @@ export interface IndexEntry {
   servedAsCanary: boolean
   /** D-14 temporal serving role; distinct from whether this entry was served to a canary. */
   servedAs?: 'current' | 'prior-build-hypothesis'
+  /**
+   * 379 D-05 read-side staleness annotation; present once the confirmation gap exceeds the
+   * volatility-tier threshold so Phase 380 can frame "unconfirmed since build N" as a hypothesis.
+   */
+  unconfirmedSinceOrdinal?: number
+  /** 379 D-20 vetted candidate served at discounted trust through the always-on sub-cap. */
+  unverified?: boolean
   /** D-16 active-conflict annotation linking the surviving peer and minted unknown record. */
   conflict?: { peerRecordId: RecordId; unknownRecordId: RecordId }
   /** D-15 audit-read state; absent from ordinary serving-path reads. */

@@ -15,6 +15,17 @@ export type {
   PromotionGateVerdict,
 } from './promotion-gate'
 export {
+  COLD_START_MAX_BUDGET_FRACTION,
+  COLD_START_MAX_RECORDS,
+  COLD_START_TRUST_DISCOUNT,
+  applyColdStartSubCap,
+  isVettedCandidate,
+} from './cold-start'
+export type {
+  ColdStartBudgetEntry,
+  VettedCandidateInput,
+} from './cold-start'
+export {
   BIMODAL_GAP_THRESHOLD,
   BIMODAL_MIN_MODE_N,
   CI_SEPARATION_Z,
