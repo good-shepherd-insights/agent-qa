@@ -820,11 +820,10 @@ async function parseRemovedRunFlag(...runArgs: string[]) {
   return program.parseAsync(['node', 'agent-qa', 'run', ...runArgs])
 }
 
-async function waitForCondition(predicate: () => boolean, attempts = 20) {
-  for (let i = 0; i < attempts; i++) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  }
+async function waitForCondition(predicate: () => boolean) {
+  await vi.waitFor(() => {
+    expect(predicate()).toBe(true)
+  }, { timeout: 2_000, interval: 5 })
 }
 
 function deferredRunResult(name: string) {
