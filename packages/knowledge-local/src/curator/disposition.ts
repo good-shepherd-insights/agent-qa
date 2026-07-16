@@ -20,6 +20,14 @@ import {
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
+import {
+  STABLE_WINDOW_BUILDS,
+  THRASH_MAX_SUPERSESSIONS,
+  THRASH_WINDOW_BUILDS,
+  foldSupersessionLineage,
+  scanCanonicalBundles,
+  type CanonicalBundleSnapshot,
+} from './lineage-fold.js'
 
 /** Provisional §7.3.1 cap. Phase 379 may retune it only through an explicit constant edit. */
 export const BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN = 1
@@ -41,6 +49,29 @@ export interface RelationIntent {
 
 export interface DispositionDrainState {
   supersedesSeenByAnchorKey: Map<string, number>
+  /** 379 Open Question 3: one canonical O(store) scan, lazily cached per drain. */
+  canonicalBundles?: CanonicalBundleSnapshot[]
+  /** Test-only observability seam for proving the canonical scan runs once. */
+  onCanonicalBundleScan?: () => void
+  /** Prevent two jobs in one drain from arming the same not-yet-published unknown. */
+  unknownMarkersSeen?: Set<string>
+}
+
+export interface UnknownMintIntent {
+  kind: 'thrash' | 'scope-burst'
+  marker: string
+  triggerKey: string
+  scope: ScopeKey
+  windowOpenOrdinal: number
+  windowCloseOrdinal: number
+  evidenceRecordIds: RecordId[]
+  includeCommittedBundle: boolean
+  firstSeenCount?: number
+}
+
+export interface UnknownResolutionIntent {
+  targetId: RecordId
+  reason: 'thrash-stable-window'
 }
 
 export interface DisposeDeltaInput {
@@ -63,6 +94,8 @@ export type DispositionOutcome =
       relationIntents?: RelationIntent[]
       bornActive?: true
       measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
+      unknownMintIntents?: UnknownMintIntent[]
+      unknownResolutionIntents?: UnknownResolutionIntent[]
     }
   | {
       kind: 'downgraded'
@@ -71,6 +104,8 @@ export type DispositionOutcome =
       original: Delta
       relationIntents?: RelationIntent[]
       measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
+      unknownMintIntents?: UnknownMintIntent[]
+      unknownResolutionIntents?: UnknownResolutionIntent[]
     }
   | { kind: 'requeue-resynthesis'; reason: string }
   | { kind: 'noop'; reason: string }
@@ -94,6 +129,8 @@ type CheckVerdict = { kind: 'pass' } | CheckFailure
 interface EvaluationState {
   renameBridge?: RelationIntent
   blastRadiusAnchorKey?: string
+  unknownMintIntents?: UnknownMintIntent[]
+  unknownResolutionIntents?: UnknownResolutionIntent[]
 }
 
 const PASS: CheckVerdict = { kind: 'pass' }
@@ -153,6 +190,131 @@ function truthLookup(knowledgeRoot: string): TruthLookup {
 
     cache.set(id, undefined)
     return undefined
+  }
+}
+
+function canonicalBundles(input: DisposeDeltaInput): readonly CanonicalBundleSnapshot[] {
+  if (input.drainState.canonicalBundles === undefined) {
+    input.drainState.onCanonicalBundleScan?.()
+    input.drainState.canonicalBundles = scanCanonicalBundles(input.knowledgeRoot)
+  }
+  return input.drainState.canonicalBundles
+}
+
+function flowMarker(bundle: CanonicalBundleSnapshot): string | undefined {
+  const primary = bundle.anchors[0]
+  return primary?.t === 'flow' ? primary.name : undefined
+}
+
+function unresolvedUnknownsWithPrefix(
+  input: DisposeDeltaInput,
+  prefix: string,
+): CanonicalBundleSnapshot[] {
+  return canonicalBundles(input).filter((bundle) =>
+    bundle.kind === 'unknown'
+    && bundle.status !== 'deprecated'
+    && bundle.status !== 'superseded'
+    && flowMarker(bundle)?.startsWith(prefix) === true,
+  )
+}
+
+function unknownMarkerAlreadyArmed(input: DisposeDeltaInput, marker: string): boolean {
+  if (input.drainState.unknownMarkersSeen?.has(marker) === true) return true
+  return canonicalBundles(input).some((bundle) =>
+    bundle.kind === 'unknown'
+    && bundle.status !== 'deprecated'
+    && bundle.status !== 'superseded'
+    && flowMarker(bundle) === marker,
+  )
+}
+
+function armUnknownMarker(input: DisposeDeltaInput, marker: string): void {
+  input.drainState.unknownMarkersSeen ??= new Set<string>()
+  input.drainState.unknownMarkersSeen.add(marker)
+}
+
+function pushUnknownMint(state: EvaluationState, intent: UnknownMintIntent): void {
+  state.unknownMintIntents = [...(state.unknownMintIntents ?? []), intent]
+}
+
+function pushUnknownResolution(
+  state: EvaluationState,
+  intent: UnknownResolutionIntent,
+): void {
+  state.unknownResolutionIntents = [...(state.unknownResolutionIntents ?? []), intent]
+}
+
+/**
+ * D-07/D-08: the tripping Supersede remains the applied write. The unresolved
+ * unknown is a second deterministic commit intent; it suppresses serving later,
+ * never this writer path.
+ */
+function armThrashTripAndClosure(
+  input: DisposeDeltaInput,
+  lookup: TruthLookup,
+  state: EvaluationState,
+): void {
+  const buildOrdinal = input.candidate?.buildOrdinal
+  if (buildOrdinal === undefined) return
+  const bundles = canonicalBundles(input)
+
+  if (input.delta.kind === 'Supersede' && input.profile.mode === 'drain-to-active') {
+    const victim = lookup(input.delta.victimId)
+    if (victim === undefined) return
+    const victimAnchors = victim.bundle.frontmatter.anchors.map(
+      ({ normalized }) => normalized,
+    )
+    const triggerKey = schemaSupersessionKey(victimAnchors)
+    const folded = foldSupersessionLineage(bundles, {
+      windowBuilds: THRASH_WINDOW_BUILDS,
+      asOfBuildOrdinal: buildOrdinal,
+    }).get(triggerKey)
+    const depthAfterCommit = (folded?.supersededDepthInWindow ?? 0) + 1
+    if (depthAfterCommit < THRASH_MAX_SUPERSESSIONS) return
+
+    const prefix = `thrash:${triggerKey}:window:`
+    if (unresolvedUnknownsWithPrefix(input, prefix).length > 0) return
+    const windowOpenOrdinal = folded?.windowOpenOrdinal
+      ?? Math.max(1, buildOrdinal - THRASH_WINDOW_BUILDS + 1)
+    const marker = `${prefix}${windowOpenOrdinal}`
+    if (unknownMarkerAlreadyArmed(input, marker)) return
+
+    pushUnknownMint(state, {
+      kind: 'thrash',
+      marker,
+      triggerKey,
+      scope: input.delta.scope,
+      windowOpenOrdinal,
+      windowCloseOrdinal: buildOrdinal,
+      evidenceRecordIds: [
+        ...(folded?.chainRecordIds ?? []),
+        input.delta.victimId,
+      ].filter((id, index, values) => values.indexOf(id) === index).sort(),
+      includeCommittedBundle: true,
+    })
+    armUnknownMarker(input, marker)
+    return
+  }
+
+  if (input.delta.kind !== 'Confirm') return
+  const target = lookup(input.delta.targetId)
+  if (target === undefined) return
+  const targetAnchors = target.bundle.frontmatter.anchors.map(
+    ({ normalized }) => normalized,
+  )
+  const triggerKey = schemaSupersessionKey(targetAnchors)
+  const folded = foldSupersessionLineage(bundles, {
+    windowBuilds: Number.MAX_SAFE_INTEGER,
+    asOfBuildOrdinal: buildOrdinal,
+  }).get(triggerKey)
+  const latest = folded?.latestSupersessionOrdinal
+  if (latest === undefined || buildOrdinal - latest < STABLE_WINDOW_BUILDS) return
+
+  for (const unknown of unresolvedUnknownsWithPrefix(input, `thrash:${triggerKey}:window:`)) {
+    pushUnknownResolution(state, {
+      targetId: unknown.recordId,
+      reason: 'thrash-stable-window',
+    })
   }
 }
 
@@ -575,6 +737,7 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     }
   }
 
+  armThrashTripAndClosure(dispositionInput, lookup, state)
   if (state.blastRadiusAnchorKey !== undefined) {
     const seen = input.drainState.supersedesSeenByAnchorKey.get(state.blastRadiusAnchorKey) ?? 0
     input.drainState.supersedesSeenByAnchorKey.set(state.blastRadiusAnchorKey, seen + 1)
@@ -586,6 +749,12 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     ...(measurement.measurementAppend === undefined
       ? {}
       : { measurementAppend: measurement.measurementAppend }),
+    ...(state.unknownMintIntents === undefined
+      ? {}
+      : { unknownMintIntents: state.unknownMintIntents }),
+    ...(state.unknownResolutionIntents === undefined
+      ? {}
+      : { unknownResolutionIntents: state.unknownResolutionIntents }),
     ...(measurement.confirmedDriftSupersede
       && dispositionInput.profile.mode === 'drain-to-active'
       ? { bornActive: true as const }

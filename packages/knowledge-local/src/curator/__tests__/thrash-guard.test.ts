@@ -36,6 +36,12 @@ import {
 } from '../../index.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
 import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
+import {
+  THRASH_MAX_SUPERSESSIONS,
+  THRASH_WINDOW_BUILDS,
+  foldSupersessionLineage,
+  scanCanonicalBundles,
+} from '../lineage-fold.js'
 
 const scope = { tier: 'product', key: 'storefront' } as const
 const anchors: Anchor[] = [
@@ -288,6 +294,47 @@ function tripThrashGuard() {
 }
 
 describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
+  it('folds only superseded events across the locked trailing window', () => {
+    tripThrashGuard()
+    const folded = foldSupersessionLineage(scanCanonicalBundles(knowledgeRoot), {
+      windowBuilds: THRASH_WINDOW_BUILDS,
+      asOfBuildOrdinal: 4,
+    }).get(supersessionKey(anchors))
+
+    expect(THRASH_MAX_SUPERSESSIONS).toBe(3)
+    expect(folded).toMatchObject({
+      supersededDepthInWindow: 3,
+      latestSupersessionOrdinal: 4,
+      windowOpenOrdinal: 1,
+    })
+    expect(folded?.chainRecordIds).toHaveLength(4)
+  })
+
+  it('folds a Confirm-only widened lineage to superseded depth zero', () => {
+    const widened = publishGeneration(1, 1)
+    appendLifecycleEvent(widened.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('widen-confirm-2'),
+      curationJobId: 'widen-job-2',
+      buildOrdinal: 2,
+      origin: 'agent-verified',
+    })
+    appendLifecycleEvent(widened.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('widen-confirm-3'),
+      curationJobId: 'widen-job-3',
+      buildOrdinal: 3,
+      origin: 'agent-verified',
+    })
+
+    expect(
+      foldSupersessionLineage(scanCanonicalBundles(knowledgeRoot), {
+        windowBuilds: THRASH_WINDOW_BUILDS,
+        asOfBuildOrdinal: 3,
+      }).get(supersessionKey(anchors)),
+    ).toMatchObject({ supersededDepthInWindow: 0, chainRecordIds: [] })
+  })
+
   it('commits the third supersession and one self-contained anchor unknown', () => {
     const { lineage, tripping, replacementId } = tripThrashGuard()
     const committedUnknowns = unknowns()
@@ -318,6 +365,10 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
         .map((relation) => relation.targetId)
         .sort(),
     ).toEqual(evidenceRecordIds)
+    expect(unknown.provenance).toMatchObject({
+      mode: 'run-linked',
+      authorship: { path: 'deterministic-fallback' },
+    })
     expect(deriveBundleTrust(unknown).status).toBe('candidate')
 
     const replay = commitCurationDelta(deps(), tripping.claimed, tripping.authored)

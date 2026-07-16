@@ -51,7 +51,12 @@ import type { ClaimedCurationJob } from '../queue/curation-queue.js'
 import { writeJobState } from '../queue/job-state.js'
 import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
 import { disposeDelta } from './disposition.js'
-import type { DispositionDrainState, RelationIntent } from './disposition.js'
+import type {
+  DispositionDrainState,
+  RelationIntent,
+  UnknownMintIntent,
+  UnknownResolutionIntent,
+} from './disposition.js'
 import { assessEmbeddingInput } from './embed-gate.js'
 import { assertRestrictedFallbackDelta } from './fallback.js'
 
@@ -460,6 +465,148 @@ function storeConfig(
   }
 }
 
+function unknownEvidenceRecordIds(
+  intent: UnknownMintIntent,
+  committedBundleId: RecordId,
+): RecordId[] {
+  const ids = [
+    ...intent.evidenceRecordIds,
+    ...(intent.includeCommittedBundle ? [committedBundleId] : []),
+  ]
+  return ids.filter((id, index) => ids.indexOf(id) === index).sort()
+}
+
+function unknownDraft(
+  intent: UnknownMintIntent,
+  evidenceRecordIds: readonly RecordId[],
+  job: CommitCurationJob,
+): BundleDraft {
+  const payload = intent.kind === 'thrash'
+    ? {
+        kind: intent.kind,
+        triggerKey: intent.triggerKey,
+        windowOpenOrdinal: intent.windowOpenOrdinal,
+        windowCloseOrdinal: intent.windowCloseOrdinal,
+        evidenceRecordIds,
+      }
+    : {
+        kind: intent.kind,
+        scopeKey: intent.triggerKey,
+        windowOpenOrdinal: intent.windowOpenOrdinal,
+        windowCloseOrdinal: intent.windowCloseOrdinal,
+        firstSeenCount: intent.firstSeenCount,
+        evidenceRecordIds,
+      }
+  return {
+    kind: 'unknown',
+    anchors: [{ t: 'flow', name: intent.marker }],
+    scope: intent.scope,
+    summary: intent.kind === 'thrash'
+      ? `Memory disabled for churning anchor ${intent.triggerKey}`
+      : `High-cardinality restructuring detected for ${intent.triggerKey}`,
+    body: canonicalJson(payload),
+    distilledEvidenceRef: {
+      id: `${intent.kind}:${job.candidateId}`,
+      sha: job.candidateId,
+    },
+    originStage: 'run-curation',
+  }
+}
+
+function commitUnknownMintIntent(
+  deps: CommitCurationDependencies,
+  job: CommitCurationJob,
+  checkpoint: AuthoredCheckpoint,
+  intent: UnknownMintIntent,
+  committedBundleId: RecordId,
+): CommitCurationOutcome | undefined {
+  const evidenceRecordIds = unknownEvidenceRecordIds(intent, committedBundleId)
+  const deterministicAuthorship = {
+    path: 'deterministic-fallback' as const,
+    executionContext: checkpoint.authorship.executionContext,
+  }
+  const delta: Extract<Delta, { kind: 'MintUnknown' }> = {
+    kind: 'MintUnknown',
+    origin: 'system',
+    scope: intent.scope,
+    citedIds: [...evidenceRecordIds],
+    conflict: { recordIds: [...evidenceRecordIds], kind: 'drift' },
+    authorship: deterministicAuthorship,
+  }
+  const draft = unknownDraft(intent, evidenceRecordIds, job)
+  const config = storeConfig(deps, intent.scope.key, job.leaseId)
+  const published = publishBundle(config, {
+    draft,
+    discriminant: discriminant(draft, delta, []),
+    originClass: originClass(delta),
+    createdAtOrdinal: job.payload.buildOrdinal,
+    screenStates: [],
+    initialEvents: [confirmedEvent(job, delta)],
+    relations: evidenceRecordIds.map((targetId) => ({
+      type: 'conflicts-with' as const,
+      targetId,
+      addedAtOrdinal: job.payload.buildOrdinal,
+      curationJobId: job.candidateId,
+    })),
+    provenance: {
+      mode: 'run-linked',
+      runId: job.payload.sourceRunId,
+      testId: job.payload.attributingObservationId,
+      stepIndex: job.payload.distilledObservations[0]?.step.ordinal ?? 0,
+      curationJobId: job.candidateId,
+      sourceBuildOrdinal: job.payload.buildOrdinal,
+      authorship: deterministicAuthorship,
+    },
+    evidenceMarkdown: `${draft.body}\n`,
+    distilledObservations: [],
+    artifacts: [],
+  })
+  if (published.kind === 'egress-blocked') {
+    return { kind: 'withheld', reason: 'egress-blocked', detections: published.detections }
+  }
+  if (published.kind === 'identity-collision') {
+    return {
+      kind: 'failed',
+      reason: 'identity-collision',
+      collisionReason: published.reason,
+    }
+  }
+  applyIndexDeltaForBundle({ knowledgeRoot: deps.knowledgeRoot, bundleId: published.id })
+  return undefined
+}
+
+function commitUnknownResolutionIntent(
+  deps: CommitCurationDependencies,
+  job: CommitCurationJob,
+  intent: UnknownResolutionIntent,
+): CommitCurationOutcome | undefined {
+  const config = storeConfig(
+    deps,
+    productForBundle(deps.knowledgeRoot, intent.targetId, job.payload.scope.key),
+    job.leaseId,
+  )
+  const evidenceToken = asEvidenceToken(
+    sha256hex(canonicalJson({
+      token: job.payload.evidenceToken,
+      event: intent.reason,
+      targetId: intent.targetId,
+    })),
+  )
+  // The intent is armed disposition-side as maintenance origin `system`; the
+  // autonomous-deprecate guard blocks only agent-origin removals.
+  const appended = appendOutcomeEvent(config, intent.targetId, {
+    type: 'deprecated',
+    evidenceToken,
+    curationJobId: job.candidateId,
+    buildOrdinal: job.payload.buildOrdinal,
+    reason: intent.reason,
+  })
+  const failure = appendFailure(appended)
+  if (failure !== undefined) return failure
+  applyIndexDeltaForBundle({ knowledgeRoot: deps.knowledgeRoot, bundleId: intent.targetId })
+  return undefined
+}
+
 function productForBundle(
   knowledgeRoot: string,
   bundleId: RecordId,
@@ -765,6 +912,8 @@ export function commitCurationDelta(
           const hasDeterministicTail =
             disposed.measurementAppend !== undefined
             || (disposed.kind === 'apply' && disposed.bornActive === true)
+            || (disposed.unknownMintIntents?.length ?? 0) > 0
+            || (disposed.unknownResolutionIntents?.length ?? 0) > 0
           if (!hasDeterministicTail) {
             clearCommitIntent(deps.knowledgeRoot, job.candidateId)
             markDone(deps, job)
@@ -956,6 +1105,15 @@ export function commitCurationDelta(
       ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
       ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
     })
+
+    for (const intent of disposed.unknownMintIntents ?? []) {
+      const failure = commitUnknownMintIntent(deps, job, checkpoint, intent, bundleId)
+      if (failure !== undefined) return failure
+    }
+    for (const intent of disposed.unknownResolutionIntents ?? []) {
+      const failure = commitUnknownResolutionIntent(deps, job, intent)
+      if (failure !== undefined) return failure
+    }
     deps.hooks?.afterIndexApplied?.(bundleId)
     clearCommitIntent(deps.knowledgeRoot, job.candidateId)
     markDone(deps, job)
