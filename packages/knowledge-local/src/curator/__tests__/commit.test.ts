@@ -1650,7 +1650,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(operation.mock.calls[0]?.[0].profile).toEqual({ mode: 'propose-only' })
   })
 
-  it('leaves canary attribution and promotion as typed phase-owned stubs', async () => {
+  it('leaves canary attribution as the typed Phase 380-owned stub', async () => {
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
       auditBaseDir,
@@ -1669,11 +1669,6 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       name: 'KnowledgeStoreNotImplementedError',
       operation: 'recordCanaryOutcome',
       ownerPhase: 380,
-    } satisfies Partial<KnowledgeStoreNotImplementedError>)
-    await expect(store.promote(asRecordId('candidate-record'))).rejects.toMatchObject({
-      name: 'KnowledgeStoreNotImplementedError',
-      operation: 'promote',
-      ownerPhase: 379,
     } satisfies Partial<KnowledgeStoreNotImplementedError>)
   })
 })
