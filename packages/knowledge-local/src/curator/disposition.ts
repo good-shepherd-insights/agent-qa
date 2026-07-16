@@ -21,9 +21,13 @@ import {
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
 import {
+  SCOPE_BURST_THRESHOLD,
+  SCOPE_BURST_WINDOW_BUILDS,
   STABLE_WINDOW_BUILDS,
   THRASH_MAX_SUPERSESSIONS,
   THRASH_WINDOW_BUILDS,
+  anchorScopeKey,
+  foldFirstSeenAnchorsByScope,
   foldSupersessionLineage,
   scanCanonicalBundles,
   type CanonicalBundleSnapshot,
@@ -55,6 +59,17 @@ export interface DispositionDrainState {
   onCanonicalBundleScan?: () => void
   /** Prevent two jobs in one drain from arming the same not-yet-published unknown. */
   unknownMarkersSeen?: Set<string>
+  /** New anchor groups observed by earlier jobs after the once-per-drain snapshot. */
+  firstSeenAnchorsByScope?: Map<string, Map<string, {
+    buildOrdinal: number
+    recordId?: RecordId
+  }>>
+}
+
+export interface FirstSeenRegistration {
+  scopeKey: string
+  supersessionKey: string
+  buildOrdinal: number
 }
 
 export interface UnknownMintIntent {
@@ -96,6 +111,7 @@ export type DispositionOutcome =
       measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
       unknownMintIntents?: UnknownMintIntent[]
       unknownResolutionIntents?: UnknownResolutionIntent[]
+      firstSeenRegistration?: FirstSeenRegistration
     }
   | {
       kind: 'downgraded'
@@ -106,6 +122,7 @@ export type DispositionOutcome =
       measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
       unknownMintIntents?: UnknownMintIntent[]
       unknownResolutionIntents?: UnknownResolutionIntent[]
+      firstSeenRegistration?: FirstSeenRegistration
     }
   | { kind: 'requeue-resynthesis'; reason: string }
   | { kind: 'noop'; reason: string }
@@ -131,6 +148,7 @@ interface EvaluationState {
   blastRadiusAnchorKey?: string
   unknownMintIntents?: UnknownMintIntent[]
   unknownResolutionIntents?: UnknownResolutionIntent[]
+  firstSeenRegistration?: FirstSeenRegistration
 }
 
 const PASS: CheckVerdict = { kind: 'pass' }
@@ -222,8 +240,6 @@ function unknownMarkerAlreadyArmed(input: DisposeDeltaInput, marker: string): bo
   if (input.drainState.unknownMarkersSeen?.has(marker) === true) return true
   return canonicalBundles(input).some((bundle) =>
     bundle.kind === 'unknown'
-    && bundle.status !== 'deprecated'
-    && bundle.status !== 'superseded'
     && flowMarker(bundle) === marker,
   )
 }
@@ -316,6 +332,91 @@ function armThrashTripAndClosure(
       reason: 'thrash-stable-window',
     })
   }
+}
+
+function createdAnchors(delta: Delta): readonly Anchor[] | undefined {
+  if (delta.kind === 'Add') return delta.bundle.anchors
+  if (delta.kind === 'Supersede') return delta.newBundle.anchors
+  return undefined
+}
+
+/**
+ * D-09/Open Question 3: evaluate the O(store) first-seen fold once per drain,
+ * then increment it with committed jobs carried in drain state. Crossing the
+ * provisional threshold arms one scope/window unknown without rewriting the
+ * triggering Add or Supersede.
+ */
+function armScopeBurst(
+  input: DisposeDeltaInput,
+  state: EvaluationState,
+): void {
+  const anchors = createdAnchors(input.delta)
+  const buildOrdinal = input.candidate?.buildOrdinal
+  if (anchors === undefined || buildOrdinal === undefined) return
+
+  const scopeKey = anchorScopeKey(anchors)
+  if (scopeKey === undefined) return
+  const candidateKey = schemaSupersessionKey(anchors)
+  const bundles = canonicalBundles(input)
+  const matchingCanonical = bundles.filter((bundle) =>
+    bundle.kind !== 'unknown'
+    && schemaSupersessionKey(bundle.anchors) === candidateKey,
+  )
+  const replayedCandidate = matchingCanonical.find((bundle) =>
+    input.candidate?.curationJobId !== undefined
+    && bundle.curationJobId === input.candidate.curationJobId,
+  )
+  if (matchingCanonical.some((bundle) => bundle !== replayedCandidate)) return
+  const baselineBundles = replayedCandidate === undefined
+    ? bundles
+    : bundles.filter((bundle) => bundle.recordId !== replayedCandidate.recordId)
+
+  input.drainState.firstSeenAnchorsByScope ??= new Map()
+  const entries = input.drainState.firstSeenAnchorsByScope.get(scopeKey) ?? new Map()
+  input.drainState.firstSeenAnchorsByScope.set(scopeKey, entries)
+  if (entries.has(candidateKey)) return
+
+  const baseline = foldFirstSeenAnchorsByScope(baselineBundles, {
+    windowBuilds: SCOPE_BURST_WINDOW_BUILDS,
+    asOfBuildOrdinal: buildOrdinal,
+  }).get(scopeKey)
+  const windowOpenOrdinal = baseline?.windowOpenOrdinal
+    ?? Math.max(1, buildOrdinal - SCOPE_BURST_WINDOW_BUILDS + 1)
+  const inWindowEntries = [...entries.entries()].filter(
+    ([, entry]) => entry.buildOrdinal >= windowOpenOrdinal,
+  )
+  const countBefore = (baseline?.firstSeenCount ?? 0) + inWindowEntries.length
+  entries.set(candidateKey, {
+    buildOrdinal,
+    ...(replayedCandidate === undefined ? {} : { recordId: replayedCandidate.recordId }),
+  })
+  state.firstSeenRegistration = {
+    scopeKey,
+    supersessionKey: candidateKey,
+    buildOrdinal,
+  }
+  const countAfter = countBefore + 1
+  if (countBefore > SCOPE_BURST_THRESHOLD || countAfter <= SCOPE_BURST_THRESHOLD) return
+
+  const marker = `scope-burst:${scopeKey}:window:${windowOpenOrdinal}`
+  if (unknownMarkerAlreadyArmed(input, marker)) return
+  pushUnknownMint(state, {
+    kind: 'scope-burst',
+    marker,
+    triggerKey: scopeKey,
+    scope: input.delta.scope,
+    windowOpenOrdinal,
+    windowCloseOrdinal: buildOrdinal,
+    firstSeenCount: countAfter,
+    evidenceRecordIds: [
+      ...(baseline?.recordIds ?? []),
+      ...inWindowEntries.flatMap(([, entry]) =>
+        entry.recordId === undefined ? [] : [entry.recordId],
+      ),
+    ].filter((id, index, values) => values.indexOf(id) === index).sort(),
+    includeCommittedBundle: true,
+  })
+  armUnknownMarker(input, marker)
 }
 
 interface MeasurementDisposition {
@@ -719,6 +820,9 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     const fallback = dispositionInput.delta.kind === 'Supersede'
       ? addCandidate(dispositionInput.delta)
       : mintUnknown(dispositionInput.delta, 'propose-only', 'clarification')
+    if (fallback.kind === 'Add') {
+      armScopeBurst({ ...dispositionInput, delta: fallback }, state)
+    }
     return {
       kind: 'downgraded',
       delta: fallback,
@@ -734,10 +838,17 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
             ],
           }
         : {}),
+      ...(state.unknownMintIntents === undefined
+        ? {}
+        : { unknownMintIntents: state.unknownMintIntents }),
+      ...(state.firstSeenRegistration === undefined
+        ? {}
+        : { firstSeenRegistration: state.firstSeenRegistration }),
     }
   }
 
   armThrashTripAndClosure(dispositionInput, lookup, state)
+  armScopeBurst(dispositionInput, state)
   if (state.blastRadiusAnchorKey !== undefined) {
     const seen = input.drainState.supersedesSeenByAnchorKey.get(state.blastRadiusAnchorKey) ?? 0
     input.drainState.supersedesSeenByAnchorKey.set(state.blastRadiusAnchorKey, seen + 1)
@@ -755,6 +866,9 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     ...(state.unknownResolutionIntents === undefined
       ? {}
       : { unknownResolutionIntents: state.unknownResolutionIntents }),
+    ...(state.firstSeenRegistration === undefined
+      ? {}
+      : { firstSeenRegistration: state.firstSeenRegistration }),
     ...(measurement.confirmedDriftSupersede
       && dispositionInput.profile.mode === 'drain-to-active'
       ? { bornActive: true as const }

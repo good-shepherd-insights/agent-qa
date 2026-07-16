@@ -53,6 +53,7 @@ import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.j
 import { disposeDelta } from './disposition.js'
 import type {
   DispositionDrainState,
+  FirstSeenRegistration,
   RelationIntent,
   UnknownMintIntent,
   UnknownResolutionIntent,
@@ -474,6 +475,20 @@ function unknownEvidenceRecordIds(
     ...(intent.includeCommittedBundle ? [committedBundleId] : []),
   ]
   return ids.filter((id, index) => ids.indexOf(id) === index).sort()
+}
+
+function recordFirstSeenBundle(
+  state: DispositionDrainState,
+  registration: FirstSeenRegistration,
+  recordId: RecordId,
+): void {
+  state.firstSeenAnchorsByScope ??= new Map()
+  const entries = state.firstSeenAnchorsByScope.get(registration.scopeKey) ?? new Map()
+  entries.set(registration.supersessionKey, {
+    buildOrdinal: registration.buildOrdinal,
+    recordId,
+  })
+  state.firstSeenAnchorsByScope.set(registration.scopeKey, entries)
 }
 
 function unknownDraft(
@@ -1105,6 +1120,10 @@ export function commitCurationDelta(
       ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
       ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
     })
+
+    if (disposed.firstSeenRegistration !== undefined) {
+      recordFirstSeenBundle(deps.drainState, disposed.firstSeenRegistration, bundleId)
+    }
 
     for (const intent of disposed.unknownMintIntents ?? []) {
       const failure = commitUnknownMintIntent(deps, job, checkpoint, intent, bundleId)

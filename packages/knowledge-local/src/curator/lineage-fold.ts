@@ -46,6 +46,7 @@ export interface CanonicalBundleSnapshot {
   createdAtOrdinal: number
   events: readonly BundleOutcomeEvent[]
   status: BundleStatus
+  curationJobId?: string
 }
 
 export interface SupersessionLineageFold {
@@ -118,6 +119,10 @@ export function scanCanonicalBundles(knowledgeRoot: string): CanonicalBundleSnap
         createdAtOrdinal: loaded.bundle.manifest.createdAtOrdinal,
         events: loaded.bundle.events,
         status: trust.status,
+        ...(loaded.bundle.provenance.mode === 'run-linked'
+          && loaded.bundle.provenance.curationJobId !== undefined
+          ? { curationJobId: loaded.bundle.provenance.curationJobId }
+          : {}),
       }]
     })
     .sort(compareSnapshots)
