@@ -76,6 +76,25 @@ describe('evaluatePromotionGate fact evidence (D-16/D-18)', () => {
     }))).toEqual({ verdict: 'promote' })
   })
 
+  it('holds a fact until a surviving confirmed outcome supplies V4 evidence', () => {
+    expect(evaluatePromotionGate(factInput())).toEqual({
+      verdict: 'hold',
+      reason: 'no-confirmed-evidence',
+    })
+  })
+
+  it('holds ambiguous multi-element evidence instead of accepting one matching element', () => {
+    expect(evaluatePromotionGate(factInput({
+      distilledObservations: [
+        { element: { naturalKey: 'button:submit order:0' } },
+        { element: { naturalKey: 'button:cancel order:1' } },
+      ],
+    }))).toEqual({
+      verdict: 'hold',
+      reason: 'no-element-observation',
+    })
+  })
+
   it('keys on evidence rather than authorship path while holding bare fallback Adds', () => {
     expect(evaluatePromotionGate(factInput({ originClass: 'agent-observed' })))
       .toEqual({ verdict: 'promote' })

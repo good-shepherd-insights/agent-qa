@@ -33,6 +33,7 @@ import {
   writeMeasurementBaseline,
 } from '../../bundle-append.js'
 import { deriveBundleTrust, loadBundle, readMeasurements } from '../../bundle-read.js'
+import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import type {
   BundleStoreConfig,
@@ -169,6 +170,37 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       originStage: 'run-curation',
       ...overrides,
     }
+  }
+
+  function verifiedFactDraft(overrides: Partial<BundleDraft> = {}): BundleDraft {
+    return draft({
+      anchors: [
+        { t: 'el', role: 'button', name: 'Checkout', ordinal: 0 },
+        checkoutAnchors[1]!,
+        checkoutAnchors[2]!,
+      ],
+      ...overrides,
+    })
+  }
+
+  function verifiedFactJob(
+    overrides: Partial<Omit<BuildCurationCandidateAddressFieldsInput, 'captureReceipt'>> = {},
+    captureReceipt: CurationCaptureReceipt = artifactFreeCaptureReceipt(),
+  ): CommitCurationJob {
+    return job(captureReceipt, {
+      anchors: verifiedFactDraft().anchors,
+      distilledObservations: [
+        {
+          schemaVersion: 1,
+          step: { naturalKey: 'checkout-click', ordinal: 0 },
+          platform: 'web',
+          element: { naturalKey: 'button:checkout:0' },
+          locator: { selector: '[data-testid="checkout"]' },
+          observedAtOrdinal: 42,
+        },
+      ],
+      ...overrides,
+    })
   }
 
   function measurementDraft(value: string): BundleDraft {
@@ -577,6 +609,251 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     })
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
     expect(readJobState(knowledgeRoot, claimed.candidateId).kind).toBe('absent')
+  })
+
+  it('admits a verified fact as candidate first and promotes it in the same drain', () => {
+    const claimed = verifiedFactJob()
+    const outcome = commitCurationDelta(
+      deps(),
+      claimed,
+      checkpoint(addDelta(verifiedFactDraft())),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'applied' })
+    if (outcome.kind !== 'applied') throw new Error('expected applied verified fact')
+    const loaded = loadBundle(outcome.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded verified fact')
+    expect(loaded.bundle.events.map(({ type }) => type)).toEqual(['confirmed', 'promoted'])
+    expect(deriveBundleTrust(loaded.bundle).status).toBe('active')
+    expect(indexedRow(outcome.bundleId)).toMatchObject({ status: 'active' })
+  })
+
+  it('promotes only cautions carrying a typed learnable root-cause class', () => {
+    const cautionAnchors: Anchor[] = [{ t: 'error', message: 'checkout timed out' }]
+    const cautionDraft = draft({
+      kind: 'caution',
+      subtype: undefined,
+      anchors: cautionAnchors,
+      summary: 'Checkout can time out',
+      body: 'Retry after a deterministic timeout attribution.',
+    })
+    const typedJob = job(artifactFreeCaptureReceipt(), {
+      kind: 'caution',
+      subtype: undefined,
+      rootCauseClass: 'timeout',
+      anchors: cautionAnchors,
+      summarySeed: cautionDraft.summary,
+      bodySeed: cautionDraft.body,
+      distilledObservations: [
+        {
+          schemaVersion: 1,
+          step: { naturalKey: 'checkout', ordinal: 0 },
+          error: { naturalKey: 'checkout timed out', rootCauseClass: 'timeout' },
+          observedAtOrdinal: 42,
+        },
+      ],
+      attributingObservationId: 'typed-caution',
+    })
+    const typed = commitCurationDelta(deps(), typedJob, checkpoint(addDelta(cautionDraft)))
+    expect(typed.kind).toBe('applied')
+    if (typed.kind !== 'applied') throw new Error('expected typed caution')
+    const typedBundle = loadBundle(typed.bundleDir)
+    expect(typedBundle.kind).toBe('loaded')
+    if (typedBundle.kind !== 'loaded') throw new Error('expected loaded typed caution')
+    expect(deriveBundleTrust(typedBundle.bundle).status).toBe('active')
+
+    const untypedJob = job(artifactFreeCaptureReceipt(), {
+      kind: 'caution',
+      subtype: undefined,
+      anchors: cautionAnchors,
+      summarySeed: cautionDraft.summary,
+      bodySeed: cautionDraft.body,
+      distilledObservations: [
+        {
+          schemaVersion: 1,
+          step: { naturalKey: 'checkout', ordinal: 0 },
+          error: { naturalKey: 'timeout: checkout timed out' },
+          observedAtOrdinal: 43,
+        },
+      ],
+      buildOrdinal: 43,
+      evidenceToken: 'untyped-caution-evidence',
+      attributingObservationId: 'untyped-caution',
+    })
+    const untypedDraft = { ...cautionDraft, summary: 'Untyped checkout timeout' }
+    const untyped = commitCurationDelta(
+      deps(),
+      untypedJob,
+      checkpoint(addDelta(untypedDraft)),
+    )
+    expect(untyped).toMatchObject({
+      kind: 'applied',
+      promotionHoldReason: 'missing-root-cause',
+    })
+    if (untyped.kind !== 'applied') throw new Error('expected untyped caution candidate')
+    const untypedBundle = loadBundle(untyped.bundleDir)
+    expect(untypedBundle.kind).toBe('loaded')
+    if (untypedBundle.kind !== 'loaded') throw new Error('expected loaded untyped caution')
+    expect(deriveBundleTrust(untypedBundle.bundle).status).toBe('candidate')
+  })
+
+  it('records typed exception-bucket holds for unsafe, incomplete, ambiguous, and excluded writes', () => {
+    const withheldJob = verifiedFactJob({
+      injectionFlagged: true,
+      attributingObservationId: 'promotion-withheld',
+    })
+    expect(commitCurationDelta(
+      deps(),
+      withheldJob,
+      checkpoint(addDelta(verifiedFactDraft())),
+    )).toMatchObject({
+      kind: 'withheld',
+      promotionHoldReason: 'withheld',
+    })
+
+    const incompleteJob = verifiedFactJob(
+      {
+        attributingObservationId: 'promotion-incomplete',
+      },
+      passwordReceipt({
+        omissions: [{
+          stepIndex: 4,
+          ref: 'promotion-evidence-omission',
+          role: 'screenshot',
+          originalName: 'promotion-evidence.png',
+          reason: 'capture-blacklist',
+        }],
+      }),
+    )
+    expect(commitCurationDelta(
+      deps(),
+      incompleteJob,
+      checkpoint(addDelta(verifiedFactDraft())),
+    )).toMatchObject({
+      kind: 'applied',
+      promotionHoldReason: 'evidence-incomplete',
+    })
+
+    const ambiguousJob = verifiedFactJob({
+      distilledObservations: [
+        {
+          schemaVersion: 1,
+          step: { naturalKey: 'checkout-click', ordinal: 0 },
+          platform: 'web',
+          element: { naturalKey: 'button:checkout:0' },
+          observedAtOrdinal: 42,
+        },
+        {
+          schemaVersion: 1,
+          step: { naturalKey: 'checkout-cancel', ordinal: 1 },
+          platform: 'web',
+          element: { naturalKey: 'button:cancel:1' },
+          observedAtOrdinal: 42,
+        },
+      ],
+      attributingObservationId: 'promotion-ambiguous',
+    })
+    expect(commitCurationDelta(
+      deps(),
+      ambiguousJob,
+      checkpoint(addDelta(verifiedFactDraft({ summary: 'Ambiguous checkout control' }))),
+    )).toMatchObject({
+      kind: 'applied',
+      promotionHoldReason: 'no-element-observation',
+    })
+
+    const procedureDraft = draft({
+      kind: 'procedure',
+      subtype: undefined,
+      anchors: [{ t: 'flow', name: 'checkout' }],
+      summary: 'Checkout procedure',
+      body: 'Complete checkout across multiple states.',
+    })
+    const procedureJob = job(artifactFreeCaptureReceipt(), {
+      kind: 'procedure',
+      subtype: undefined,
+      anchors: procedureDraft.anchors,
+      summarySeed: procedureDraft.summary,
+      bodySeed: procedureDraft.body,
+      attributingObservationId: 'promotion-procedure',
+    })
+    expect(commitCurationDelta(
+      deps(),
+      procedureJob,
+      checkpoint(addDelta(procedureDraft)),
+    )).toMatchObject({
+      kind: 'applied',
+      promotionHoldReason: 'kind-excluded',
+    })
+
+    const enrichmentDraft = {
+      ...verifiedFactDraft({ summary: 'Fallback checkout control' }),
+      needsEnrichment: true as const,
+    }
+    const enrichmentJob = verifiedFactJob({
+      summarySeed: enrichmentDraft.summary,
+      attributingObservationId: 'promotion-needs-enrichment',
+    })
+    expect(commitCurationDelta(
+      deps(),
+      enrichmentJob,
+      checkpoint(addDelta(enrichmentDraft)),
+    )).toMatchObject({
+      kind: 'applied',
+      promotionHoldReason: 'needs-enrichment',
+    })
+  })
+
+  it('never runs the promotion floor under a propose-only profile', () => {
+    const claimed = verifiedFactJob({ executionContext: 'ci' })
+    const outcome = commitCurationDelta(
+      deps({ mode: 'propose-only' }),
+      claimed,
+      checkpoint(addDelta(verifiedFactDraft())),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'applied' })
+    expect(outcome).not.toHaveProperty('promotionHoldReason')
+    if (outcome.kind !== 'applied') throw new Error('expected propose-only candidate')
+    const loaded = loadBundle(outcome.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded propose-only candidate')
+    expect(deriveBundleTrust(loaded.bundle).status).toBe('candidate')
+  })
+
+  it('keeps bridge-minted payloads without durable observations in the candidate bucket', async () => {
+    const store = createLocalKnowledgeStore({
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'local-interactive',
+      epoch,
+    })
+
+    await store.commit([addDelta(verifiedFactDraft({ summary: 'Bridge checkout fact' }))])
+
+    const entries = enumerateBundleDirs(knowledgeRoot)
+    expect(entries).toHaveLength(1)
+    const loaded = loadBundle(entries[0]!.dir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected bridge-minted bundle')
+    expect(deriveBundleTrust(loaded.bundle).status).toBe('candidate')
+    expect(loaded.bundle.events.some(({ type }) => type === 'promoted')).toBe(false)
+  })
+
+  it('replays same-drain promotion without duplicating the promoted event', () => {
+    const claimed = verifiedFactJob({ attributingObservationId: 'promotion-replay' })
+    const authored = checkpoint(addDelta(verifiedFactDraft()))
+    const first = commitCurationDelta(deps(), claimed, authored)
+    expect(first.kind).toBe('applied')
+    if (first.kind !== 'applied') throw new Error('expected first promoted commit')
+
+    commitCurationDelta(deps(), claimed, authored)
+
+    const loaded = loadBundle(first.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected replayed promotion bundle')
+    expect(loaded.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
   })
 
   it('writes a measurement baseline from the admitted observation when its window opens', () => {
