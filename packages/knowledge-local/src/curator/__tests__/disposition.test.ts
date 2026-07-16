@@ -9,6 +9,8 @@ import {
   type Anchor,
   type CompareAndSet,
   type Delta,
+  type MeasurementBaseline,
+  type MeasurementObservation,
   type RecordId,
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -16,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vites
 
 import {
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+  appendMeasurementObservation,
   authoredCheckpointSchema,
   deriveBundleTrust,
   disposeDelta,
@@ -23,6 +26,7 @@ import {
   parseAuthoredCheckpoint,
   publishBundle,
   resolveDispositionProfile,
+  writeMeasurementBaseline,
   type AuthoredCheckpoint,
   type AuthorOutcome,
   type CurationJobView,
@@ -150,11 +154,111 @@ function supersedeDelta(
 }
 
 function candidate(anchors: Anchor[], buildOrdinal = 41, candidateScope: ScopeKey = scope) {
-  return { anchors, buildOrdinal, scope: candidateScope }
+  return {
+    anchors,
+    buildOrdinal,
+    scope: candidateScope,
+    curationJobId: 'candidate-job',
+  }
 }
 
 function drainState(): { supersedesSeenByAnchorKey: Map<string, number> } {
   return { supersedesSeenByAnchorKey: new Map() }
+}
+
+const measurementAnchors: Anchor[] = [
+  { t: 'flow', name: 'measurement:reported-value' },
+  { t: 'platform', platform: 'web' },
+]
+
+function measurementObservation(value: number, buildOrdinal: number): MeasurementObservation {
+  return {
+    value,
+    buildOrdinal,
+    evidenceToken: `measurement-${buildOrdinal}`,
+    curationJobId: `measurement-job-${buildOrdinal}`,
+  }
+}
+
+function publishMeasurement(
+  baseline: MeasurementBaseline,
+  observations: readonly MeasurementObservation[],
+): { id: RecordId; dir: string } {
+  const draft = makeBundleDraftFixture({
+    subtype: 'measurement',
+    anchors: measurementAnchors,
+    scope,
+    summary: 'reported-value measured as 100',
+    body: 'Verified reported-value value: 100.',
+  })
+  const published = publishBundle(
+    {
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir: join(root, '.agent-qa'),
+      commitArtifacts: 'none',
+    },
+    {
+      draft,
+      discriminant: makeDiscriminantFixture('fact', 'measurement'),
+      originClass: 'agent-verified',
+      createdAtOrdinal: baseline.openedAtOrdinal,
+      screenStates: [],
+      initialEvents: [
+        BundleOutcomeEventSchema.parse({
+          type: 'promoted',
+          evidenceToken: `promoted-${baseline.openedAtOrdinal}`,
+          curationJobId: `publish-${baseline.openedAtOrdinal}`,
+          buildOrdinal: baseline.openedAtOrdinal,
+        }),
+      ],
+      relations: [],
+      provenance: { mode: 'standalone', sourceDescription: 'measurement fixture' },
+      artifacts: [],
+    },
+  )
+  if (published.kind !== 'published') throw new Error(`expected publish, got ${published.kind}`)
+
+  const config = {
+    knowledgeRoot,
+    productKey: 'storefront',
+    auditBaseDir: join(root, '.agent-qa'),
+    commitArtifacts: 'none' as const,
+  }
+  expect(writeMeasurementBaseline(config, published.id, baseline).kind).toBe('appended')
+  for (const observation of observations) {
+    expect(appendMeasurementObservation(config, published.id, observation).kind).toBe('appended')
+  }
+  return { id: published.id, dir: published.dir }
+}
+
+function measurementSupersede(
+  victimId: RecordId,
+  value: string,
+): Extract<Delta, { kind: 'Supersede' }> {
+  return {
+    kind: 'Supersede',
+    origin: 'agent',
+    scope,
+    citedIds: [victimId],
+    precondition: [observed(victimId)],
+    victimId,
+    newBundle: makeBundleDraftFixture({
+      subtype: 'measurement',
+      anchors: measurementAnchors,
+      scope,
+      summary: `reported-value measured as ${value}`,
+      body: `Verified reported-value value: ${value}.`,
+    }),
+    evidenceToken: asEvidenceToken(`supersede-${victimId}-${value}`),
+  }
+}
+
+function measurementCandidate(value: string, buildOrdinal: number) {
+  return {
+    ...candidate(measurementAnchors, buildOrdinal),
+    measurementValue: value,
+  }
 }
 
 describe('Curator author contract (CUR-01/SAFE-01)', () => {
@@ -515,6 +619,183 @@ describe('disposeDelta deterministic authority (CUR-01/SAFE-01)', () => {
       reason: expect.any(String),
       original: delta,
       delta: expect.objectContaining({ kind: expect.any(String) }),
+    })
+  })
+})
+
+describe('disposeDelta measurement mechanism #9 (DCAY-02)', () => {
+  const baseline: MeasurementBaseline = {
+    mu0: 100,
+    sigma0: 1,
+    n0: 5,
+    openedAtOrdinal: 40,
+  }
+
+  function disposeMeasurementSupersede(
+    victimId: RecordId,
+    value: string,
+    buildOrdinal: number,
+    mode: 'drain-to-active' | 'propose-only' = 'drain-to-active',
+  ) {
+    const delta = measurementSupersede(victimId, value)
+    const precondition = observed(victimId)
+    return {
+      delta,
+      outcome: disposeDelta({
+        delta,
+        checkpoint: checkpoint(delta, [victimId], [precondition]),
+        profile: { mode },
+        knowledgeRoot,
+        candidate: measurementCandidate(value, buildOrdinal),
+        drainState: drainState(),
+      }),
+    }
+  }
+
+  it('widens a below-minimum measurement Supersede into Confirm plus append intent', () => {
+    const victim = publishMeasurement(baseline, [
+      measurementObservation(101, 41),
+      measurementObservation(99, 42),
+    ])
+    const { delta, outcome } = disposeMeasurementSupersede(victim.id, '100', 43)
+
+    expect(outcome).toMatchObject({
+      kind: 'apply',
+      delta: {
+        kind: 'Confirm',
+        targetId: victim.id,
+        evidenceToken: delta.evidenceToken,
+      },
+      measurementAppend: {
+        victimId: victim.id,
+        observation: {
+          value: 100,
+          buildOrdinal: 43,
+          evidenceToken: delta.evidenceToken,
+          curationJobId: 'candidate-job',
+        },
+      },
+    })
+    expect(outcome).not.toHaveProperty('bornActive')
+  })
+
+  it('arms bornActive for confirmed drift only in drain-to-active', () => {
+    const victim = publishMeasurement(baseline, [
+      measurementObservation(200, 41),
+      measurementObservation(201, 42),
+      measurementObservation(202, 43),
+      measurementObservation(203, 44),
+    ])
+    const { delta, outcome } = disposeMeasurementSupersede(victim.id, '204', 45)
+
+    expect(outcome).toMatchObject({ kind: 'apply', delta, bornActive: true })
+    expect(outcome).not.toHaveProperty('measurementAppend')
+  })
+
+  it('keeps the same confirmed drift candidate-only under propose-only', () => {
+    const victim = publishMeasurement(baseline, [
+      measurementObservation(200, 41),
+      measurementObservation(201, 42),
+      measurementObservation(202, 43),
+      measurementObservation(203, 44),
+    ])
+    const { delta, outcome } = disposeMeasurementSupersede(
+      victim.id,
+      '204',
+      45,
+      'propose-only',
+    )
+
+    expect(outcome).toMatchObject({
+      kind: 'downgraded',
+      reason: 'propose-only',
+      original: delta,
+      delta: { kind: 'Add', bundle: delta.newBundle },
+      relationIntents: [
+        { type: 'proposed-supersession-of', targetId: victim.id },
+      ],
+    })
+    expect(outcome).not.toHaveProperty('bornActive')
+  })
+
+  it('widens an oscillating two-band measurement instead of superseding it', () => {
+    const bimodalBaseline: MeasurementBaseline = {
+      mu0: 10,
+      sigma0: 1,
+      n0: 5,
+      openedAtOrdinal: 40,
+    }
+    const victim = publishMeasurement(bimodalBaseline, [
+      measurementObservation(10, 41),
+      measurementObservation(100, 42),
+      measurementObservation(11, 43),
+      measurementObservation(101, 44),
+      measurementObservation(12, 45),
+    ])
+    const { outcome } = disposeMeasurementSupersede(victim.id, '102', 46)
+
+    expect(outcome).toMatchObject({
+      kind: 'apply',
+      delta: { kind: 'Confirm', targetId: victim.id },
+      measurementAppend: {
+        victimId: victim.id,
+        observation: { value: 102, buildOrdinal: 46 },
+      },
+    })
+    expect(outcome).not.toHaveProperty('bornActive')
+  })
+
+  it('bypasses numeric drift for non-numeric measurement values', () => {
+    const victim = publishMeasurement(baseline, [
+      measurementObservation(200, 41),
+      measurementObservation(201, 42),
+      measurementObservation(202, 43),
+      measurementObservation(203, 44),
+    ])
+    const { delta, outcome } = disposeMeasurementSupersede(victim.id, 'not-a-number', 45)
+
+    expect(outcome).toMatchObject({ kind: 'apply', delta })
+    expect(outcome).not.toHaveProperty('measurementAppend')
+    expect(outcome).not.toHaveProperty('bornActive')
+  })
+
+  it('routes a measurement Confirm through the same append discipline', () => {
+    const victim = publishMeasurement(baseline, [
+      measurementObservation(101, 41),
+      measurementObservation(99, 42),
+    ])
+    const precondition = observed(victim.id)
+    const delta: Delta = {
+      kind: 'Confirm',
+      origin: 'agent',
+      scope,
+      citedIds: [victim.id],
+      precondition: [precondition],
+      targetId: victim.id,
+      evidenceToken: asEvidenceToken('confirm-measurement-100'),
+    }
+
+    const outcome = disposeDelta({
+      delta,
+      checkpoint: checkpoint(delta, [victim.id], [precondition]),
+      profile: { mode: 'drain-to-active' },
+      knowledgeRoot,
+      candidate: measurementCandidate('100', 43),
+      drainState: drainState(),
+    })
+
+    expect(outcome).toMatchObject({
+      kind: 'apply',
+      delta,
+      measurementAppend: {
+        victimId: victim.id,
+        observation: {
+          value: 100,
+          buildOrdinal: 43,
+          evidenceToken: delta.evidenceToken,
+          curationJobId: 'candidate-job',
+        },
+      },
     })
   })
 })
