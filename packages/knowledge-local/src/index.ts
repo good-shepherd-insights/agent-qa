@@ -292,6 +292,11 @@ export type {
   DrainReport,
   WriterPassReport,
 } from './curator/drain.js'
+export { purgeRecord } from './purge.js'
+export type {
+  PurgeRecordInput,
+  PurgeRecordOutcome,
+} from './purge.js'
 export {
   createLocalKnowledgeStore,
   KnowledgeCommitError,
