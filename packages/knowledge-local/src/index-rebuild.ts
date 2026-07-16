@@ -958,9 +958,7 @@ function refreshContextualRenderings(db: DatabaseSync, force = false): number {
 
 function removeMissingBundles(
   db: DatabaseSync,
-  vec: VecCapability,
   seenBundleIds: ReadonlySet<string>,
-  activeProfile: EmbeddingProfile,
 ): number {
   const missing = db
     .prepare('SELECT record_rowid, bundle_id, kind FROM records ORDER BY record_rowid')
@@ -976,22 +974,16 @@ function removeMissingBundles(
       WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
     `)
     const deleteRecord = db.prepare('DELETE FROM records WHERE record_rowid = ?')
-    const tableName = vec === 'vec0'
-      ? vecTableName(activeProfile)
-      : undefined
-    const deleteVec = tableName === undefined
-      ? undefined
-      : db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`)
 
     for (const row of missing) {
       const recordRowid = Number(row.record_rowid)
       const bundleId = String(row.bundle_id)
       const kind = row.kind as LoadedBundle['frontmatter']['kind']
       const recordNode = recordGraphNode(kind, bundleId)
+      deleteRecordFromAllSchemaVecTables(db, recordRowid)
       deleteFts.run(recordRowid)
       deleteAnchors.run(recordRowid)
       deleteEdges.run(recordRowid, recordNode.nodeId, recordNode.nodeId)
-      deleteVec?.run(BigInt(recordRowid))
       deleteRecord.run(recordRowid)
     }
   })
@@ -1187,12 +1179,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       }
     }
 
-    report.removed = removeMissingBundles(
-      writer.db,
-      writer.vec,
-      seenBundleIds,
-      activeProfile,
-    )
+    report.removed = removeMissingBundles(writer.db, seenBundleIds)
     emitRelationEdges(writer.db, relationSources)
     emitObservationEdges(writer.db, opts.knowledgeRoot, relationSources, report.scanIssues)
     emitEquivalentToBridges(writer.db)
