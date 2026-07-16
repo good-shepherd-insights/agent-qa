@@ -125,7 +125,7 @@ export function applyLifecycleTrustTreatments<T extends RerankEntry>(
     // D-06 binding: sovereign user knowledge is exempt from autonomous decay.
     if (
       entry.originClass !== 'user'
-      && asOfBuild - entry.lastConfirmedOrdinal > unconfirmedWindow(entry)
+      && asOfBuild - entry.lastConfirmedOrdinal >= unconfirmedWindow(entry)
     ) {
       trust *= UNCONFIRMED_DOWNRANK_FACTOR
       unconfirmedSinceOrdinal = entry.lastConfirmedOrdinal
