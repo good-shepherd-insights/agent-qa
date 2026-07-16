@@ -39,6 +39,8 @@ import {
 import {
   INDEX_DB_FILE,
   INDEX_RENDERING_SCHEMA_VERSION,
+  INDEX_SCHEMA_VERSION,
+  MIN_READABLE_INDEX_SCHEMA_VERSION,
   readIndexMaintenanceState,
 } from '../index-open.js'
 import { readRebuildRequest, requestRebuild } from '../rebuild-marker.js'
@@ -261,6 +263,120 @@ describe('IDX-01 derived-index rebuild projection', () => {
     writeFileSync(join(indexDir, INDEX_DB_FILE), 'not a sqlite database', 'utf8')
 
     expect(() => readIndexMaintenanceState(knowledgeRoot)).toThrow()
+  })
+
+  it('projects the latest surviving confirmation ordinal into records', async () => {
+    const published = publish('Confirmation Ordinal Product', {
+      createdAtOrdinal: 1,
+      initialEvents: [
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'index-confirmed-ordinal-three',
+          curationJobId: 'index-confirmed-ordinal-three-job',
+          buildOrdinal: 3,
+          origin: 'agent-verified',
+        }),
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'index-confirmed-ordinal-seven',
+          curationJobId: 'index-confirmed-ordinal-seven-job',
+          buildOrdinal: 7,
+          origin: 'agent-verified',
+        }),
+      ],
+    })
+
+    expect(await rebuildApi().rebuildIndex({ knowledgeRoot })).toMatchObject({
+      projected: 1,
+      scanIssues: [],
+    })
+
+    const reader = openReader()
+    try {
+      expect(
+        reader.db
+          .prepare('SELECT last_confirmed_ordinal FROM records WHERE bundle_id = ?')
+          .get(published.id),
+      ).toEqual({ last_confirmed_ordinal: 7 })
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('marks a v2 index for schema reset and fully re-projects confirmation ordinals', async () => {
+    expect(INDEX_SCHEMA_VERSION).toBe(3)
+    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(3)
+
+    const published = publish('Schema Reset Confirmation Product', {
+      createdAtOrdinal: 1,
+      initialEvents: [
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'index-schema-reset-confirmed-three',
+          curationJobId: 'index-schema-reset-confirmed-three-job',
+          buildOrdinal: 3,
+          origin: 'agent-verified',
+        }),
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'index-schema-reset-confirmed-seven',
+          curationJobId: 'index-schema-reset-confirmed-seven-job',
+          buildOrdinal: 7,
+          origin: 'agent-verified',
+        }),
+      ],
+    })
+    await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+
+    const dbPath = join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE)
+    const previousSchema = new DatabaseSync(dbPath)
+    try {
+      const columns = previousSchema
+        .prepare('PRAGMA table_info(records)')
+        .all()
+        .map((row) => String(row.name))
+      if (columns.includes('last_confirmed_ordinal')) {
+        previousSchema.exec('ALTER TABLE records DROP COLUMN last_confirmed_ordinal')
+      }
+      previousSchema
+        .prepare("UPDATE meta SET v = '2' WHERE k = 'index_schema_version'")
+        .run()
+      previousSchema.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } finally {
+      previousSchema.close()
+    }
+
+    const degraded = knowledgeLocal.openKnowledgeReader(knowledgeRoot)
+    try {
+      expect(degraded.source).toBe('scan')
+      expect(degraded.getById(published.id)?.bundleId).toBe(published.id)
+    } finally {
+      degraded.close()
+    }
+    expect(readRebuildRequest(knowledgeRoot)).toMatchObject({
+      present: true,
+      request: { reason: 'schema-version' },
+    })
+
+    expect(
+      await rebuildApi().rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() }),
+    ).toMatchObject({ projected: 1, scanIssues: [], maintenanceRemaining: false })
+
+    const reader = openReader()
+    try {
+      expect(
+        reader.db
+          .prepare('SELECT last_confirmed_ordinal FROM records WHERE bundle_id = ?')
+          .get(published.id),
+      ).toEqual({ last_confirmed_ordinal: 7 })
+      expect(
+        reader.db
+          .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
+          .get(),
+      ).toEqual({ v: '3' })
+    } finally {
+      reader.db.close()
+    }
   })
 
   it('projects records, trust, FTS, anchors, graph edges, and pending vectors from bundles', async () => {
