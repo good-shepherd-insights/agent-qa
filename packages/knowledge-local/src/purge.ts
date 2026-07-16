@@ -37,10 +37,9 @@ import type { LoadedBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
 import { fsyncDirectory, fsyncFile } from './durable-fs.js'
 import {
+  deleteRecordFromAllSchemaVecTables,
   indexDbPath,
   openIndexWriter,
-  resolveActiveProfile,
-  vecTableName,
 } from './index-open.js'
 import { jobStatePath, queueRoot } from './queue/queue-layout.js'
 import { curationCandidatePayloadSchema } from './queue/queue-payload.js'
@@ -160,22 +159,17 @@ function purgeIndexSurfaces(
       .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
       .get(recordId)
     const recordNode = recordGraphNode(kind, recordId)
-    const activeProfile = resolveActiveProfile(writer.db)
 
     transaction(() => {
       if (row !== undefined) {
         const recordRowid = Number(row.record_rowid)
+        deleteRecordFromAllSchemaVecTables(writer.db, recordRowid)
         writer.db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
         writer.db.prepare('DELETE FROM anchors WHERE record_rowid = ?').run(recordRowid)
         writer.db.prepare(`
           DELETE FROM graph_edges
           WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
         `).run(recordRowid, recordNode.nodeId, recordNode.nodeId)
-        if (writer.vec === 'vec0') {
-          writer.db
-            .prepare(`DELETE FROM ${vecTableName(activeProfile)} WHERE record_rowid = ?`)
-            .run(BigInt(recordRowid))
-        }
         writer.db.prepare('DELETE FROM records WHERE record_rowid = ?').run(recordRowid)
       } else {
         // A stale graph projection can outlive a missing records row; remove both directions.
@@ -421,11 +415,14 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   )
   const kind = matches[0]!.bundle.frontmatter.kind
 
+  // Projection cleanup must prove every materialized vec table was writable before any
+  // irreversible bundle, queue, or receipt mutation can attest success.
+  purgeIndexSurfaces(input.knowledgeRoot, input.recordId, kind)
+
   // Capture metadata above before the only true-delete operation removes the committed tree.
   for (const match of matches) {
     rmSync(match.dir, { recursive: true, force: true })
   }
-  purgeIndexSurfaces(input.knowledgeRoot, input.recordId, kind)
   sweepQueuePayloads(input.knowledgeRoot, anchors)
 
   const writeOutcome = writeReceiptExclusive(
