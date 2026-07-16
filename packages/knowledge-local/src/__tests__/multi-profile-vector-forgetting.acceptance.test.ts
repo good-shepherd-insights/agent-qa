@@ -32,6 +32,7 @@ import type {
   PublishBundleInput,
   PublishBundleOutcome,
 } from '../index.js'
+import { enqueueArtifactFreeCandidateProjection } from './fixtures/curation-candidate-fixture.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
@@ -318,6 +319,42 @@ describe('multi-profile vector forgetting acceptance', () => {
     )).toEqual({ kind: 'appended' })
   }
 
+  function enqueuePurgeCandidate(): string {
+    const outcome = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: {
+        sourceRunId: 'multi-profile-purge-queue-run',
+        scope: { tier: 'product', key: 'multi-profile-purge' },
+        buildOrdinal: 80,
+        executionContext: 'local-interactive',
+        secretFlagged: false,
+        injectionFlagged: false,
+        kind: 'fact',
+        subtype: 'selector',
+        anchors: [
+          { t: 'el', role: 'Button', name: 'Target record' },
+          { t: 'page', route: '/multi-profile/target-record' },
+          { t: 'platform', platform: 'web' },
+        ],
+        summarySeed: 'Multi-profile purge queue target',
+        bodySeed: 'Queue payload sharing the purge target anchors.',
+        distilledObservations: [],
+        evidenceToken: 'multi-profile-purge-queue-evidence',
+        attributingObservationId: 'multi-profile-purge-queue-observation',
+        emittedAt: '2026-07-16T00:00:00.000Z',
+      },
+    })
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') {
+      throw new Error(`expected purge queue admission, got ${outcome.kind}`)
+    }
+    return outcome.candidateId
+  }
+
+  function receiptPath(recordId: string): string {
+    return join(knowledgeRoot, 'memory', 'receipts', `purge-${recordId}.json`)
+  }
+
   it('materialized table authority is closed, ordered, capability-independent, and idempotent', async () => {
     const authority = schemaVecAuthorityApi()
     const migrated = await migrateTwoRecords()
@@ -558,6 +595,150 @@ describe('multi-profile vector forgetting acceptance', () => {
       ).toBeDefined()
       expect(
         reader.db.prepare('SELECT 1 FROM graph_edges WHERE record_rowid = ?').get(targetRowid),
+      ).toBeDefined()
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('sovereign purge removes the target from every profile before publishing success', async () => {
+    const migrated = await migrateTwoRecords()
+    const sentinelWriter = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      sentinelWriter.db.exec(`
+        CREATE TABLE vec_non_schema_purge_sentinel (
+          record_rowid INTEGER PRIMARY KEY,
+          marker TEXT NOT NULL
+        )
+      `)
+      sentinelWriter.db
+        .prepare(`
+          INSERT INTO vec_non_schema_purge_sentinel (record_rowid, marker)
+          VALUES (?, ?)
+        `)
+        .run(migrated.targetRowid, 'preserve')
+    } finally {
+      sentinelWriter.close()
+    }
+
+    const first = knowledgeLocal.purgeRecord({
+      knowledgeRoot,
+      recordId: migrated.target.id,
+      initiator: 'multi-profile-purge-user',
+      auditBaseDir: join(root, '.agent-qa'),
+    })
+    expect(first.kind).toBe('purged')
+    expect(existsSync(migrated.target.dir)).toBe(false)
+    expect(existsSync(receiptPath(migrated.target.id))).toBe(true)
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(hasVecRow(reader.db, profile, migrated.targetRowid)).toBe(false)
+        expect(hasVecRow(reader.db, profile, migrated.liveRowid)).toBe(true)
+      }
+      expect(
+        reader.db.prepare('SELECT 1 FROM records WHERE record_rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM anchors WHERE record_rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM graph_edges WHERE record_rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db
+          .prepare('SELECT marker FROM vec_non_schema_purge_sentinel WHERE record_rowid = ?')
+          .get(migrated.targetRowid)?.marker,
+      ).toBe('preserve')
+    } finally {
+      reader.db.close()
+    }
+
+    const second = knowledgeLocal.purgeRecord({
+      knowledgeRoot,
+      recordId: migrated.target.id,
+      initiator: 'different-user-must-not-overwrite',
+    })
+    expect(second.kind).toBe('already-purged')
+    if (first.kind !== 'purged' || second.kind !== 'already-purged') {
+      throw new Error('expected purged then already-purged outcomes')
+    }
+    expect(second.receipt).toEqual(first.receipt)
+
+    const repeatReader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(hasVecRow(repeatReader.db, profile, migrated.targetRowid)).toBe(false)
+        expect(hasVecRow(repeatReader.db, profile, migrated.liveRowid)).toBe(true)
+      }
+    } finally {
+      repeatReader.db.close()
+    }
+  })
+
+  it('sovereign purge fails closed before bundle queue and receipt deletion under brute', async () => {
+    const migrated = await migrateTwoRecords()
+    const queuedCandidateId = enqueuePurgeCandidate()
+    const queuedCandidateDir = knowledgeLocal.queuedCandidateDir(
+      knowledgeRoot,
+      queuedCandidateId,
+    )
+    expect(existsSync(queuedCandidateDir)).toBe(true)
+
+    vecLoadable.override = join(root, 'missing-sqlite-vec-extension')
+    let outcome: knowledgeLocal.PurgeRecordOutcome | undefined
+    expect(() => {
+      outcome = knowledgeLocal.purgeRecord({
+        knowledgeRoot,
+        recordId: migrated.target.id,
+        initiator: 'multi-profile-purge-user',
+        auditBaseDir: join(root, '.agent-qa'),
+      })
+    }).toThrow(/schema-owned vec table/u)
+    expect(outcome).toBeUndefined()
+    expect(existsSync(migrated.target.dir)).toBe(true)
+    expect(existsSync(queuedCandidateDir)).toBe(true)
+    expect(existsSync(receiptPath(migrated.target.id))).toBe(false)
+
+    vecLoadable.override = undefined
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(hasVecRow(reader.db, profile, migrated.targetRowid)).toBe(true)
+        expect(hasVecRow(reader.db, profile, migrated.liveRowid)).toBe(true)
+      }
+      expect(
+        reader.db.prepare('SELECT 1 FROM records WHERE record_rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeDefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeDefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM anchors WHERE record_rowid = ?')
+          .get(migrated.targetRowid),
+      ).toBeDefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM graph_edges WHERE record_rowid = ?')
+          .get(migrated.targetRowid),
       ).toBeDefined()
     } finally {
       reader.db.close()
