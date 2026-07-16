@@ -69,6 +69,26 @@ describe('BundleOutcomeEventSchema (D-08/D-09/D-10)', () => {
       schemaVersion: 1,
     }).success).toBe(false)
   })
+
+  it('parses the strict retracted restoration event', () => {
+    const event = {
+      ...baseEvent,
+      type: 'retracted',
+      retractsEvidenceToken: asEvidenceToken('evidence-target'),
+      retractsCurationJobId: 'curation-target',
+      rollbackReceiptId: 'rollback-receipt-a',
+    }
+
+    expect(BundleOutcomeEventSchema.parse(event)).toEqual(event)
+    expect(BundleOutcomeEventSchema.safeParse({
+      ...event,
+      rollbackReceiptId: undefined,
+    }).success).toBe(false)
+    expect(BundleOutcomeEventSchema.safeParse({
+      ...event,
+      derivedRestorationStatus: 'active',
+    }).success).toBe(false)
+  })
 })
 
 describe('outcome-event deduplication', () => {
@@ -92,5 +112,20 @@ describe('outcome-event deduplication', () => {
     }
 
     expect(dedupeEvents([first, duplicate, reobservation])).toEqual([first, reobservation])
+  })
+
+  it('gives a retraction its own replay identity instead of colliding with its target', () => {
+    const target: BundleOutcomeEvent = { ...baseEvent, type: 'confirmed' }
+    const retraction = BundleOutcomeEventSchema.parse({
+      ...baseEvent,
+      evidenceToken: asEvidenceToken('retraction-evidence'),
+      curationJobId: 'rollback-job',
+      type: 'retracted',
+      retractsEvidenceToken: target.evidenceToken,
+      retractsCurationJobId: target.curationJobId,
+      rollbackReceiptId: 'rollback-receipt-a',
+    })
+
+    expect(eventDedupKey(retraction)).not.toBe(eventDedupKey(target))
   })
 })
