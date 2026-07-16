@@ -284,10 +284,23 @@ export {
 } from './knowledge/index'
 export type { BundleStatus, DerivedTrustState } from './knowledge/index'
 export {
+  BIMODAL_GAP_THRESHOLD,
+  BIMODAL_MIN_MODE_N,
+  CI_SEPARATION_Z,
+  CUSUM_DECISION_H,
+  CUSUM_SLACK_K,
+  DRIFT_RELATIVE_THRESHOLD,
+  DRIFT_SIGMA_K,
+  KIND_CV_FLOOR,
+  KIND_DEFAULT_CV,
+  MEASUREMENT_MIN_N,
+  MULTIMODAL_TRAILING_BUILDS,
+  SHRINKAGE_PSEUDO_N,
   decideMeasurementDrift,
   foldMeasurements,
   measurementBaselineSchema,
   measurementObservationSchema,
+  shrunkSigma,
 } from './knowledge/index'
 export type {
   MeasurementBaseline,
