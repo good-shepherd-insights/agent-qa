@@ -12,13 +12,19 @@ import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 
 import {
+  candidateContentAddress,
+  curationCandidatePayloadSchema,
+  publishBundle,
   queuedCandidateDir,
+  type CurationCandidatePayload,
   type EnqueueCurationCandidateProjectionOptions,
   type EnqueueCurationCandidateProjectionOutcome,
 } from '@vostride/agent-qa-knowledge-local'
 import {
+  asEvidenceToken,
   asRef,
   asRunId,
+  canonicalJson,
   type CompletedRunHandoff,
   type ElementInfo,
   type PerTestOutcome,
@@ -376,6 +382,19 @@ describe('projectCurationCandidates (CUR-04/SAFE-01)', () => {
     const cautionCandidates = projectCurationCandidates(handoff(learnable), policy)
     expect(cautionCandidates).toHaveLength(3)
     expect(cautionCandidates.every((candidate) => candidate.kind === 'caution')).toBe(true)
+    expect(cautionCandidates.map((candidate) => candidate.rootCauseClass)).toEqual([
+      'environment',
+      'timeout',
+      'flake',
+    ])
+    expect(cautionCandidates.map((candidate) => candidate.bodySeed)).toEqual([
+      'environment: environment failure',
+      'timeout: timeout failure',
+      'flake: flake failure',
+    ])
+    expect(cautionCandidates.map(
+      (candidate) => candidate.distilledObservations[0]?.error?.rootCauseClass,
+    )).toEqual(['environment', 'timeout', 'flake'])
 
     const unknownOnly = handoff([
       testOutcome(
@@ -462,6 +481,14 @@ function treeBytes(root: string): number {
     const path = join(root, entry.name)
     return total + (entry.isDirectory() ? treeBytes(path) : statSync(path).size)
   }, 0)
+}
+
+function queuedPayload(knowledgeRoot: string, candidateId: string): CurationCandidatePayload {
+  return curationCandidatePayloadSchema.parse(
+    JSON.parse(
+      readFileSync(join(queuedCandidateDir(knowledgeRoot, candidateId), 'payload.json'), 'utf8'),
+    ),
+  )
 }
 
 describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
@@ -551,11 +578,117 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       throw new Error('enqueued detail must carry the queue-finalized candidate id')
     }
     const queuedDir = queuedCandidateDir(fixture.knowledgeRoot, candidate.candidateId)
-    expect(JSON.parse(readFileSync(join(queuedDir, 'payload.json'), 'utf8'))).toMatchObject({
+    const payload = curationCandidatePayloadSchema.parse(
+      JSON.parse(readFileSync(join(queuedDir, 'payload.json'), 'utf8')),
+    )
+    expect(payload).toMatchObject({
       candidateId: candidate.candidateId,
       artifactInventory: [
         expect.objectContaining({ bytes: Buffer.byteLength('verified checkout evidence') }),
       ],
+    })
+    expect(payload).not.toHaveProperty('rootCauseClass')
+  })
+
+  it('addresses typed caution root causes and persists them into committed observations', () => {
+    const fixture = emitFixture()
+    const cautionHandoff = handoff([
+      testOutcome(
+        {
+          outcome: 'failed',
+          rootCause: rootCause('environment', 0),
+        },
+        [],
+      ),
+    ])
+
+    const report = emitCurationCandidates({ ...fixture, handoff: cautionHandoff })
+    const candidateId = report.details[0]?.candidateId
+    if (candidateId === undefined) throw new Error('expected finalized caution candidate id')
+    const payload = queuedPayload(fixture.knowledgeRoot, candidateId)
+    expect(payload).toMatchObject({
+      kind: 'caution',
+      rootCauseClass: 'environment',
+      bodySeed: 'environment: environment failure',
+      distilledObservations: [
+        expect.objectContaining({
+          error: expect.objectContaining({ rootCauseClass: 'environment' }),
+        }),
+      ],
+    })
+
+    const { candidateId: _candidateId, rootCauseClass: _rootCauseClass, ...legacyFields } = payload
+    const legacyCandidateId = candidateContentAddress(legacyFields)
+    expect(curationCandidatePayloadSchema.parse({
+      candidateId: legacyCandidateId,
+      ...legacyFields,
+    })).not.toHaveProperty('rootCauseClass')
+    expect(candidateContentAddress({
+      ...legacyFields,
+      rootCauseClass: 'environment',
+    })).not.toBe(candidateContentAddress({
+      ...legacyFields,
+      rootCauseClass: 'timeout',
+    }))
+
+    const published = publishBundle(
+      {
+        knowledgeRoot: join(fixture.root, 'committed-knowledge'),
+        productKey: 'storefront',
+        auditBaseDir: join(fixture.root, '.agent-qa-commit'),
+        commitArtifacts: 'none',
+      },
+      {
+        draft: {
+          kind: 'caution',
+          anchors: payload.anchors,
+          scope: payload.scope,
+          summary: payload.summarySeed,
+          body: payload.bodySeed,
+          distilledEvidenceRef: {
+            id: `curation-candidate-${candidateId}`,
+            sha: candidateId,
+          },
+          originStage: 'run-curation',
+        },
+        discriminant: {
+          kind: 'caution',
+          errorKey: canonicalJson(payload.anchors),
+        },
+        originClass: 'agent-verified',
+        createdAtOrdinal: payload.buildOrdinal,
+        screenStates: [],
+        initialEvents: [{
+          type: 'confirmed',
+          evidenceToken: asEvidenceToken(payload.evidenceToken),
+          curationJobId: candidateId,
+          buildOrdinal: payload.buildOrdinal,
+          observationId: payload.attributingObservationId,
+          origin: 'agent-verified',
+        }],
+        relations: [],
+        provenance: {
+          mode: 'run-linked',
+          runId: payload.sourceRunId,
+          testId: payload.attributingObservationId,
+          stepIndex: payload.distilledObservations[0]?.step.ordinal ?? 0,
+          curationJobId: candidateId,
+          sourceBuildOrdinal: payload.buildOrdinal,
+        },
+        artifacts: [],
+        distilledObservations: payload.distilledObservations,
+      },
+    )
+    if (published.kind !== 'published') throw new Error('expected caution bundle publication')
+    const [observationLine] = readFileSync(
+      join(published.dir, 'observations.jsonl'),
+      'utf8',
+    ).trimEnd().split('\n')
+    expect(JSON.parse(observationLine!)).toMatchObject({
+      error: {
+        naturalKey: 'environment:environment failure',
+        rootCauseClass: 'environment',
+      },
     })
   })
 
