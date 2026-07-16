@@ -913,9 +913,19 @@ export function commitCurationDelta(
   try {
     if (draft !== undefined) {
       const preCopy = preCopyArtifacts(job, preflightDir)
+      const identityDelta =
+        disposed.kind === 'downgraded'
+        && disposed.original.kind === 'Supersede'
+        && draft.kind === 'fact'
+        && draft.subtype === 'measurement'
+          // D-02 propose-only keeps the replacement candidate distinct from its active victim.
+          // The downgraded Add still represents a new validity window, so retain the original
+          // code-derived evidence token in the measurement discriminant without mutating state.
+          ? disposed.original
+          : delta
       const renderInput: RenderBundlePartsInput = {
         draft,
-        discriminant: discriminant(draft, delta, stepKeys(job)),
+        discriminant: discriminant(draft, identityDelta, stepKeys(job)),
         originClass: originClass(delta),
         createdAtOrdinal: job.payload.buildOrdinal,
         screenStates: job.screenStates ?? [],
