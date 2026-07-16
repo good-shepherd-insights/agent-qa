@@ -26,7 +26,14 @@ const surfaceSchema = z.object({
 }).strict()
 const elementSchema = z.object({ naturalKey: z.string() }).strict()
 const locatorSchema = z.object({ selector: z.string() }).strict()
-const errorSchema = z.object({ naturalKey: z.string() }).strict()
+const errorSchema = z.object({
+  naturalKey: z.string(),
+  /**
+   * 379 D-16 typed caution evidence. When present, this is identity-bearing evidence and joins
+   * the candidate content address; Plan 379-04 plumbs it from the deterministic emit pre-pass.
+   */
+  rootCauseClass: z.enum(['environment', 'timeout', 'flake']).optional(),
+}).strict()
 
 export const distilledObservationSchema = z.object({
   schemaVersion: z.number().int().positive(),

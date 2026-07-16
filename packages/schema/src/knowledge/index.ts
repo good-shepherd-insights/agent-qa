@@ -7,6 +7,13 @@ export {
   foldBundleTrust,
 } from './trust-fold'
 export type { BundleStatus, DerivedTrustState } from './trust-fold'
+export { evaluatePromotionGate } from './promotion-gate'
+export type {
+  PromotionGateHoldReason,
+  PromotionGateInput,
+  PromotionGateObservation,
+  PromotionGateVerdict,
+} from './promotion-gate'
 export {
   BIMODAL_GAP_THRESHOLD,
   BIMODAL_MIN_MODE_N,
