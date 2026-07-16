@@ -23,6 +23,8 @@ function entry(
     createdAtOrdinal: 10,
     originClass: 'agent',
     anchors: [submitAnchor],
+    subtype: 'selector',
+    lastConfirmedOrdinal: 10,
     ...overrides,
   }
 }

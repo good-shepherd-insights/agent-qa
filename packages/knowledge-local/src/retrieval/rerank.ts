@@ -1,5 +1,13 @@
-import { supersessionKey } from '@vostride/agent-qa-schema'
-import type { Anchor, ScopeKey } from '@vostride/agent-qa-schema'
+import {
+  COLD_START_TRUST_DISCOUNT,
+  isVettedCandidate,
+  supersessionKey,
+} from '@vostride/agent-qa-schema'
+import type {
+  Anchor,
+  ScopeKey,
+  VettedCandidateInput,
+} from '@vostride/agent-qa-schema'
 
 import { DIVERSITY_CAP_PER_ANCHOR } from './constants.js'
 
@@ -19,6 +27,11 @@ export interface RerankEntry {
   readonly createdAtOrdinal: number
   readonly originClass: 'agent' | 'user'
   readonly anchors: readonly Anchor[]
+  readonly subtype: string | null
+  readonly lastConfirmedOrdinal: number
+  readonly vettedCandidateInput?: VettedCandidateInput
+  readonly unconfirmedSinceOrdinal?: number
+  readonly unverified?: boolean
   readonly conflict?: ConflictAnnotation
 }
 
@@ -46,6 +59,21 @@ const SCOPE_ORDER: Readonly<Record<ScopeKey['tier'], number>> = {
   global: 3,
 }
 
+/**
+ * PROVISIONAL D-05 trust dampener. M3 owns calibration from attributed outcomes;
+ * this remains an internal constitution value, never a config key.
+ */
+export const UNCONFIRMED_DOWNRANK_FACTOR = 0.6
+
+/** LOCKED D-05 durable-fact default: authority softens only after five builds. */
+export const UNCONFIRMED_WINDOW_DURABLE_BUILDS = 5
+
+/**
+ * PROVISIONAL D-06 volatile window. Measurements age sooner than the locked
+ * durable default; M3 owns calibration, never user configuration.
+ */
+export const UNCONFIRMED_WINDOW_VOLATILE_BUILDS = 3
+
 function compareBundleIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
@@ -67,6 +95,53 @@ export function rerankPrecedence<T extends RerankEntry>(entries: readonly T[]): 
       right.recencyOrdinal - left.recencyOrdinal ||
       compareBundleIds(left.bundleId, right.bundleId),
   )
+}
+
+function unconfirmedWindow(entry: RerankEntry): number {
+  return entry.subtype === 'measurement'
+    ? UNCONFIRMED_WINDOW_VOLATILE_BUILDS
+    : UNCONFIRMED_WINDOW_DURABLE_BUILDS
+}
+
+/**
+ * Apply D-05/D-06 staleness and D-20 cold-start treatment as trust modulation
+ * before precedence sorting. Validity remains the first comparator axis: this
+ * function never filters, changes validity, or adds another sort dimension.
+ * Every annotation is re-derived from the supplied as-of ordinal; nothing is stored.
+ */
+export function applyLifecycleTrustTreatments<T extends RerankEntry>(
+  entries: readonly T[],
+  asOfBuild: number,
+): T[] {
+  return entries.map((entry) => {
+    const {
+      unconfirmedSinceOrdinal: _priorUnconfirmed,
+      unverified: _priorUnverified,
+      ...base
+    } = entry
+    let trust = entry.trust
+    let unconfirmedSinceOrdinal: number | undefined
+
+    // D-06 binding: sovereign user knowledge is exempt from autonomous decay.
+    if (
+      entry.originClass !== 'user'
+      && asOfBuild - entry.lastConfirmedOrdinal > unconfirmedWindow(entry)
+    ) {
+      trust *= UNCONFIRMED_DOWNRANK_FACTOR
+      unconfirmedSinceOrdinal = entry.lastConfirmedOrdinal
+    }
+
+    const unverified = entry.vettedCandidateInput !== undefined
+      && isVettedCandidate(entry.vettedCandidateInput)
+    if (unverified) trust *= COLD_START_TRUST_DISCOUNT
+
+    return {
+      ...base,
+      trust,
+      ...(unconfirmedSinceOrdinal === undefined ? {} : { unconfirmedSinceOrdinal }),
+      ...(unverified ? { unverified: true } : {}),
+    } as T
+  })
 }
 
 function annotateConflicts<T extends RerankEntry>(

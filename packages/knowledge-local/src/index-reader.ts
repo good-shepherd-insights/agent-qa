@@ -81,6 +81,7 @@ export type AuthoritativeKnowledgeHit<THit extends KnowledgeHit = KnowledgeHit> 
   createdAtOrdinal: number
   originClass: OriginClass
   relations: readonly BundleRelation[]
+  lastConfirmedOrdinal: number
 }
 
 /** Internal snapshot context that lets the public retrieve function compose on this facade. */
@@ -105,6 +106,7 @@ export type KnowledgeRetrievalOperation<TResult> = (
 interface IndexedRecord {
   hit: KnowledgeHit
   recordRowid: number
+  lastConfirmedOrdinal: number
 }
 
 type RefreshedHit<THit extends KnowledgeHit> = Omit<THit, keyof KnowledgeHit> & KnowledgeHit
@@ -123,6 +125,7 @@ const RECORD_COLUMNS = `
   r.subtype,
   r.status,
   r.trust,
+  r.last_confirmed_ordinal,
   r.opened_at_ordinal,
   r.closed_at_ordinal,
   r.summary,
@@ -172,8 +175,14 @@ function queryLimit(k: number | undefined): number {
 
 function rowToIndexedRecord(row: Record<string, unknown>): IndexedRecord {
   const closedAt = row.closed_at_ordinal
+  const lastConfirmed = row.last_confirmed_ordinal
   return {
     recordRowid: Number(row.record_rowid),
+    lastConfirmedOrdinal: Number(
+      lastConfirmed === null || lastConfirmed === undefined
+        ? row.opened_at_ordinal
+        : lastConfirmed,
+    ),
     hit: {
       bundleId: String(row.bundle_id),
       product: String(row.product),
@@ -243,6 +252,7 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
         createdAtOrdinal: outcome.bundle.frontmatter.createdAtOrdinal,
         originClass: outcome.bundle.frontmatter.originClass,
         relations: outcome.bundle.relations.relations,
+        lastConfirmedOrdinal: trust.lastConfirmedOrdinal,
       } as AuthoritativeKnowledgeHit<THit>)
     } catch {
       // A changing, unreadable, or invalid bundle is never safe to serve from a stale index row.
@@ -263,6 +273,7 @@ function recheckHits<THit extends KnowledgeHit>(
       createdAtOrdinal: _createdAtOrdinal,
       originClass: _originClass,
       relations: _relations,
+      lastConfirmedOrdinal: _lastConfirmedOrdinal,
       ...refreshed
     } = hit
     return refreshed as unknown as RefreshedHit<THit>

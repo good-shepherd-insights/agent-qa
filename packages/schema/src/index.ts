@@ -301,6 +301,17 @@ export type {
   PromotionGateVerdict,
 } from './knowledge/index'
 export {
+  COLD_START_MAX_BUDGET_FRACTION,
+  COLD_START_MAX_RECORDS,
+  COLD_START_TRUST_DISCOUNT,
+  applyColdStartSubCap,
+  isVettedCandidate,
+} from './knowledge/index'
+export type {
+  ColdStartBudgetEntry,
+  VettedCandidateInput,
+} from './knowledge/index'
+export {
   cautionRootCauseClassSchema,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   distilledObservationSchema,

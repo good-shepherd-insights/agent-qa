@@ -20,7 +20,6 @@ function vettedCandidate(
 ): VettedCandidateInput {
   return {
     kind: 'fact',
-    subtype: 'selector',
     status: 'candidate',
     validityOpen: true,
     anchors: [anchor],

@@ -40,6 +40,7 @@ import {
 import { preFilterPredicate } from './retrieval/pre-filter.js'
 import {
   applyDiversityCaps,
+  applyLifecycleTrustTreatments,
   collapseByOrdinal,
   rerankPrecedence,
   type MintUnknownConflict,
@@ -83,6 +84,7 @@ interface PipelineCandidate extends KnowledgeHit {
   readonly originClass: 'agent' | 'user'
   readonly recencyOrdinal: number
   readonly validityClass: ValidityClass
+  readonly lastConfirmedOrdinal: number
   readonly servedAs?: 'current' | 'prior-build-hypothesis'
   readonly audit?: { status: string; openedAtOrdinal: number; closedAtOrdinal: number | null }
   readonly conflict?: { peerRecordId: string; unknownRecordId: string }
@@ -188,6 +190,12 @@ function hydrateFusedCandidate(
   candidate: FusedCandidate<LegCandidate>,
 ): PipelineCandidate {
   const hit = asKnowledgeHit(candidate)
+  const confirmation = db.prepare(`
+    SELECT last_confirmed_ordinal
+    FROM records
+    WHERE record_rowid = ?
+  `).get(candidate.recordRowid)
+  const lastConfirmed = confirmation?.last_confirmed_ordinal
   return {
     ...hit,
     recordRowid: candidate.recordRowid,
@@ -206,6 +214,11 @@ function hydrateFusedCandidate(
     originClass: candidate.originClass === 'user' ? 'user' : 'agent',
     recencyOrdinal: candidate.createdAtOrdinal,
     validityClass: 'current',
+    lastConfirmedOrdinal: Number(
+      lastConfirmed === null || lastConfirmed === undefined
+        ? candidate.openedAtOrdinal
+        : lastConfirmed,
+    ),
   }
 }
 
@@ -368,7 +381,11 @@ function applyAssembly(
           }
         : {}),
   }))
-  const reranked = rerankPrecedence(valid)
+  // D-05/D-20 are ordinary serving treatments. Audit reads preserve raw authority.
+  const treated = audit || resolvedAsOf === undefined
+    ? valid
+    : applyLifecycleTrustTreatments(valid, resolvedAsOf)
+  const reranked = rerankPrecedence(treated)
   const collapsed = collapseByOrdinal(reranked, { audit, conflicts })
   return applyDiversityCaps(collapsed, audit)
 }
@@ -380,6 +397,9 @@ function finalRecheck(
   options: RetrieveOptions,
 ): RetrieveResult {
   const audit = options.includeSuperseded === true || options.asOfRange !== undefined
+  const servedTrust = new Map(
+    candidates.map((candidate) => [candidate.bundleId, candidate.trust] as const),
+  )
   const refreshed = audit
     ? context.recheck(candidates, true)
     : candidates.flatMap((candidate) => {
@@ -401,7 +421,9 @@ function finalRecheck(
         ...(candidate.subtype === null ? {} : { subtype: candidate.subtype }),
         title: candidate.summary,
         summary: candidate.summary,
-        trust: candidate.trust,
+        trust: audit
+          ? candidate.trust
+          : (servedTrust.get(candidate.bundleId) ?? candidate.trust),
         anchors: candidate.anchors,
         status: candidate.status,
         servedAsCanary: false,
@@ -636,6 +658,7 @@ async function retrieveFromScan(
       originClass: source.originClass === 'user' ? 'user' as const : 'agent' as const,
       recencyOrdinal: source.createdAtOrdinal,
       validityClass: 'current' as const,
+      lastConfirmedOrdinal: source.lastConfirmedOrdinal,
     }]
   })
   const assembled = applyAssembly(candidates, [], options)
