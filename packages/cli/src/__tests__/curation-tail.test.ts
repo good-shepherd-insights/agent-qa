@@ -78,6 +78,7 @@ function successfulOperations(
       failureDetails: [],
       reconcile: undefined,
       writerPass: { kind: 'not-requested' as const },
+      gc: { kind: 'not-run' as const },
     })),
     ...overrides,
   }
@@ -162,6 +163,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           failureDetails: [],
           reconcile: undefined,
           writerPass: { kind: 'not-requested' },
+          gc: { kind: 'not-run' },
         }
       },
     })
@@ -208,6 +210,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             failureDetails: [],
             reconcile: undefined,
             writerPass: { kind: 'not-requested' },
+            gc: { kind: 'not-run' },
           }
         },
       })
@@ -295,6 +298,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
         failureDetails: [],
         reconcile: undefined,
         writerPass: { kind: 'skipped' as const, reason: 'aborted' as const },
+        gc: { kind: 'skipped' as const, reason: 'aborted' as const },
       }
     })
     const operations = successfulOperations({ drainQueue })

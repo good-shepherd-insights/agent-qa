@@ -2,6 +2,7 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -87,7 +88,9 @@ function markerAndBlock(
   markerPath: string,
   details: Record<string, string | number>,
 ): never {
-  writeFileSync(markerPath, `${JSON.stringify(details)}\n`, 'utf8')
+  const stagingPath = `${markerPath}.${process.pid}.tmp`
+  writeFileSync(stagingPath, `${JSON.stringify(details)}\n`, 'utf8')
+  renameSync(stagingPath, markerPath)
   const wait = new Int32Array(
     new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
   )
