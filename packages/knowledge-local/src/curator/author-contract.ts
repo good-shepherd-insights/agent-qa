@@ -25,6 +25,7 @@ export type CurationJobView = Pick<
   | 'candidateId'
   | 'kind'
   | 'subtype'
+  | 'rootCauseClass'
   | 'anchors'
   | 'summarySeed'
   | 'bodySeed'

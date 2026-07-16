@@ -70,9 +70,19 @@ function assertStructurallyPossibleJob(job: CurationJobView): void {
 }
 
 function requiresCapableModelEnrichment(job: CurationJobView): boolean {
-  const anchorsFullyDerivable =
-    job.kind === 'fact' && (job.subtype === 'selector' || job.subtype === 'measurement')
-  return !anchorsFullyDerivable || job.summarySeed.trim() === ''
+  const evidenceFullyDerivable =
+    (
+      job.kind === 'fact'
+      && (job.subtype === 'selector' || job.subtype === 'measurement')
+    )
+    || (
+      job.kind === 'caution'
+      && job.rootCauseClass !== undefined
+      && job.distilledObservations.some(
+        (observation) => observation.error?.rootCauseClass === job.rootCauseClass,
+      )
+    )
+  return !evidenceFullyDerivable || job.summarySeed.trim() === ''
 }
 
 function fallbackAuthorship(job: CurationJobView): CurationAuthorship {

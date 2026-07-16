@@ -280,6 +280,9 @@ function jobView(payload: CurationCandidatePayload): CurationJobView {
     candidateId: payload.candidateId,
     kind: payload.kind,
     ...(payload.subtype === undefined ? {} : { subtype: payload.subtype }),
+    ...(payload.rootCauseClass === undefined
+      ? {}
+      : { rootCauseClass: payload.rootCauseClass }),
     anchors: payload.anchors,
     summarySeed: payload.summarySeed,
     bodySeed: payload.bodySeed,
