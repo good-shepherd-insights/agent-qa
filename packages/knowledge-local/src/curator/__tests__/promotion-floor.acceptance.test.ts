@@ -155,6 +155,10 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
+        runKnowledgeGc: () => ({
+          trimmedRecordIds: [],
+          skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
+        }),
       },
     })
     expect(report).toMatchObject({ jobsProcessed: 1, failures: 0 })

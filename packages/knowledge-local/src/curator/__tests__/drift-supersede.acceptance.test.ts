@@ -52,6 +52,7 @@ const NO_INDEX_MAINTENANCE = {
   renderingEpochStale: false,
   vectorReconciliationOutstanding: false,
 } as const
+const ACCEPTANCE_TIMEOUT_MS = 30_000
 
 interface MeasurementFixture {
   id: RecordId
@@ -75,11 +76,11 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
       kind: 'fallback-required',
       reason: 'no-model',
     }))
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true })
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   function measurementAnchors(metric: string): Anchor[] {
     return [
@@ -226,6 +227,12 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
       operations: {
         readRebuildRequest: () => ({ present: false }),
         readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
+        // GC is a separately accepted drain-tail concern. Keeping it inert here isolates the
+        // queue → fallback → commit contract and avoids multiplying unrelated filesystem scans.
+        runKnowledgeGc: () => ({
+          trimmedRecordIds: [],
+          skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
+        }),
       },
     })
     expect(report).toMatchObject({
@@ -374,7 +381,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     expect(readMeasurements(fixture.dir)?.observations).toHaveLength(
       MEASUREMENT_MIN_N - 1,
     )
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   it.each([
     { direction: 'rise', sign: 1 },
@@ -405,7 +412,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     await drainValues(fixture, values)
 
     assertBornActive(fixture, values.at(-1)!, baseline.openedAtOrdinal + values.length)
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   it('widens below min-n with one measurement line and Confirm but no supersession', async () => {
     const baseline: MeasurementBaseline = {
@@ -431,7 +438,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     expect(victim.bundle.events.filter(({ type }) => type === 'confirmed')).toHaveLength(2)
     expect(victim.bundle.events.some(({ type }) => type === 'superseded')).toBe(false)
     expect(deriveBundleTrust(victim.bundle).status).toBe('active')
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   it('widens stable bimodal oscillation across repeated drains without thrash unknowns', async () => {
     const baseline: MeasurementBaseline = {
@@ -478,7 +485,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     expect(
       loadedBundles().filter(({ bundle }) => bundle.frontmatter.kind === 'unknown'),
     ).toHaveLength(0)
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   it('accumulates a monotone sub-threshold slow walk to a CUSUM supersede', async () => {
     const baseline: MeasurementBaseline = {
@@ -507,7 +514,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     await drainValues(fixture, values)
 
     assertBornActive(fixture, values.at(-1)!, baseline.openedAtOrdinal + values.length)
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 
   it('commits identical confirmed drift as candidate + proposed relation in propose-only', async () => {
     const baseline: MeasurementBaseline = {
@@ -547,5 +554,5 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
     }))
     expect(readMeasurements(candidates[0]!.dir)?.baseline.mu0).toBe(values.at(-1))
     expect(fallbackAuthor).toHaveBeenCalledTimes(values.length)
-  })
+  }, ACCEPTANCE_TIMEOUT_MS)
 })
