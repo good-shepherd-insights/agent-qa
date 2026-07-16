@@ -53,6 +53,20 @@ export const BundleOutcomeEventSchema = z.discriminatedUnion('type', [
     type: z.literal('superseded'),
     byRecordId: z.string().transform(asRecordId),
   }).strict(),
+  /**
+   * 379 D-15 RATIFICATION: one retracted event replaces a bespoke window-reopen
+   * event. Matching the retracted evidence/job identity inverts confirmed,
+   * deprecated, superseded, and window-close effects through one fold rule, so
+   * retracting a victim's superseded and window-close events is the typed
+   * restoration that both reopens its window and re-derives its prior status.
+   */
+  z.object({
+    ...commonEventShape,
+    type: z.literal('retracted'),
+    retractsEvidenceToken: z.string().transform(asEvidenceToken),
+    retractsCurationJobId: z.string(),
+    rollbackReceiptId: z.string(),
+  }).strict(),
   z.object({
     ...commonEventShape,
     type: z.literal('deprecated'),
