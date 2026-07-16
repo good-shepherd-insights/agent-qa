@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -12,10 +13,13 @@ import { join } from 'node:path'
 import {
   asEvidenceToken,
   asRecordId,
+  canonicalJson,
   sha256hex,
   type Anchor,
   type BundleDraft,
   type Delta,
+  type MeasurementBaseline,
+  type MeasurementObservation,
 } from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
@@ -23,7 +27,12 @@ import {
 } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
-import { loadBundle } from '../../bundle-read.js'
+import {
+  MEASUREMENTS_REL_PATH,
+  appendMeasurementObservation,
+  writeMeasurementBaseline,
+} from '../../bundle-append.js'
+import { deriveBundleTrust, loadBundle, readMeasurements } from '../../bundle-read.js'
 import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import type {
   BundleStoreConfig,
@@ -32,6 +41,7 @@ import type {
 } from '../../bundle-publish.js'
 import { openIndexReaderConnection } from '../../index-open.js'
 import { listCommitIntents } from '../../journal/intent-journal.js'
+import { recoverExpiredBundleMutations } from '../../journal/bundle-mutation.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
 import { readJobState } from '../../queue/job-state.js'
 import {
@@ -58,6 +68,10 @@ const checkoutAnchors: Anchor[] = [
   { t: 'el', role: 'button', name: 'Checkout' },
   { t: 'page', route: '/checkout' },
   { t: 'selector', literal: '[data-testid="checkout"]' },
+]
+const measurementAnchors: Anchor[] = [
+  { t: 'flow', name: 'measurement:reported-value' },
+  { t: 'platform', platform: 'web' },
 ]
 
 describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-03)', () => {
@@ -154,6 +168,114 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       },
       originStage: 'run-curation',
       ...overrides,
+    }
+  }
+
+  function measurementDraft(value: string): BundleDraft {
+    return draft({
+      subtype: 'measurement',
+      anchors: measurementAnchors,
+      summary: `reported-value measured as ${value}`,
+      body: `Verified reported-value value: ${value}.`,
+    })
+  }
+
+  function measurementJob(value: string, buildOrdinal: number): CommitCurationJob {
+    return job(artifactFreeCaptureReceipt(), {
+      kind: 'fact',
+      subtype: 'measurement',
+      anchors: measurementAnchors,
+      summarySeed: `reported-value measured as ${value}`,
+      bodySeed: `Verified reported-value value: ${value}.`,
+      buildOrdinal,
+      evidenceToken: `measurement-evidence-${buildOrdinal}-${value}`,
+      attributingObservationId: `measurement-observation-${buildOrdinal}-${value}`,
+    })
+  }
+
+  function measurementObservation(
+    value: number,
+    buildOrdinal: number,
+  ): MeasurementObservation {
+    return {
+      value,
+      buildOrdinal,
+      evidenceToken: `seed-measurement-${buildOrdinal}`,
+      curationJobId: `seed-measurement-job-${buildOrdinal}`,
+    }
+  }
+
+  function seedMeasurementVictim(
+    value: string,
+    observations: readonly MeasurementObservation[] = [],
+  ): Extract<ReturnType<typeof commitCurationDelta>, { kind: 'applied' }> {
+    const claimed = measurementJob(value, 42)
+    const outcome = commitCurationDelta(
+      deps(),
+      claimed,
+      checkpoint(addDelta(measurementDraft(value))),
+    )
+    if (outcome.kind !== 'applied') throw new Error('expected applied measurement Add')
+
+    const config = {
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir,
+      commitArtifacts: 'none' as const,
+      writerLeaseId: claimed.leaseId,
+    }
+    const baseline: MeasurementBaseline = {
+      mu0: Number(value),
+      sigma0: 0,
+      n0: 1,
+      openedAtOrdinal: 42,
+    }
+    expect(['appended', 'duplicate']).toContain(
+      writeMeasurementBaseline(config, outcome.bundleId, baseline).kind,
+    )
+    for (const observation of observations) {
+      expect(appendMeasurementObservation(config, outcome.bundleId, observation).kind).toBe(
+        'appended',
+      )
+    }
+    return outcome
+  }
+
+  function measurementSupersede(
+    victimId: string,
+    value: string,
+    buildOrdinal: number,
+  ): {
+    claimed: CommitCurationJob
+    delta: Extract<Delta, { kind: 'Supersede' }>
+    authored: AuthoredCheckpoint
+  } {
+    const claimed = measurementJob(value, buildOrdinal)
+    const delta: Extract<Delta, { kind: 'Supersede' }> = {
+      kind: 'Supersede',
+      origin: 'agent',
+      scope: claimed.payload.scope,
+      citedIds: [asRecordId(victimId)],
+      precondition: [
+        {
+          recordId: asRecordId(victimId),
+          observedStatus: 'candidate',
+          observedOrdinal: 42,
+        },
+      ],
+      authorship: {
+        path: 'llm',
+        model: { id: 'curator-fixture' },
+        executionContext: 'local-interactive',
+      },
+      victimId: asRecordId(victimId),
+      newBundle: measurementDraft(value),
+      evidenceToken: asEvidenceToken(claimed.payload.evidenceToken),
+    }
+    return {
+      claimed,
+      delta,
+      authored: checkpoint(delta, [asRecordId(victimId)]),
     }
   }
 
@@ -455,6 +577,156 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     })
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
     expect(readJobState(knowledgeRoot, claimed.candidateId).kind).toBe('absent')
+  })
+
+  it('writes a measurement baseline from the admitted observation when its window opens', () => {
+    const claimed = measurementJob('123.5', 42)
+    const outcome = commitCurationDelta(
+      deps(),
+      claimed,
+      checkpoint(addDelta(measurementDraft('123.5'))),
+    )
+
+    expect(outcome.kind).toBe('applied')
+    if (outcome.kind !== 'applied') throw new Error('expected applied measurement Add')
+    expect(readMeasurements(outcome.bundleDir)).toEqual({
+      baseline: {
+        mu0: 123.5,
+        sigma0: 0,
+        n0: 1,
+        openedAtOrdinal: 42,
+      },
+      observations: [],
+    })
+  })
+
+  it('recovers a widen append byte-identically and replays without a duplicate line', () => {
+    const victim = seedMeasurementVictim('100')
+    const replacement = measurementSupersede(victim.bundleId, '101', 43)
+    const crashingDeps = deps(undefined, {
+      hooks: {
+        afterMutableReplacement(relativePath) {
+          if (relativePath === MEASUREMENTS_REL_PATH) {
+            throw new Error('injected commit measurement stop')
+          }
+        },
+      },
+    })
+
+    expect(() =>
+      commitCurationDelta(
+        crashingDeps,
+        replacement.claimed,
+        replacement.authored,
+      ),
+    ).toThrow('injected commit measurement stop')
+    const stagingRoot = join(victim.bundleDir, '..', '.staging')
+    expect(readdirSync(stagingRoot).some((name) => name.includes('-mutation-'))).toBe(true)
+
+    expect(
+      recoverExpiredBundleMutations(knowledgeRoot, [replacement.claimed.leaseId]),
+    ).toEqual({ mutationsRecovered: 1, recoveredBundleIds: [victim.bundleId] })
+    expect(readMeasurements(victim.bundleDir)).toEqual({
+      baseline: { mu0: 100, sigma0: 0, n0: 1, openedAtOrdinal: 42 },
+      observations: [
+        {
+          value: 101,
+          buildOrdinal: 43,
+          evidenceToken: replacement.delta.evidenceToken,
+          curationJobId: replacement.claimed.candidateId,
+        },
+      ],
+    })
+    const recoveredBytes = {
+      measurements: readFileSync(join(victim.bundleDir, MEASUREMENTS_REL_PATH)),
+      outcomes: readFileSync(join(victim.bundleDir, 'evidence/outcomes.jsonl')),
+      manifest: readFileSync(join(victim.bundleDir, 'manifest.json')),
+    }
+
+    expect(
+      commitCurationDelta(deps(), replacement.claimed, replacement.authored),
+    ).toMatchObject({ kind: 'noop', reason: 'evidence-token-consumed' })
+    expect(readFileSync(join(victim.bundleDir, MEASUREMENTS_REL_PATH))).toEqual(
+      recoveredBytes.measurements,
+    )
+    expect(readFileSync(join(victim.bundleDir, 'evidence/outcomes.jsonl'))).toEqual(
+      recoveredBytes.outcomes,
+    )
+    expect(readFileSync(join(victim.bundleDir, 'manifest.json'))).toEqual(
+      recoveredBytes.manifest,
+    )
+  })
+
+  it('publishes confirmed drift born active and closes the victim in one job', () => {
+    const victim = seedMeasurementVictim('100', [
+      measurementObservation(200, 43),
+      measurementObservation(201, 44),
+      measurementObservation(202, 45),
+      measurementObservation(203, 46),
+    ])
+    const replacement = measurementSupersede(victim.bundleId, '204', 47)
+
+    const outcome = commitCurationDelta(deps(), replacement.claimed, replacement.authored)
+
+    expect(outcome.kind).toBe('applied')
+    if (outcome.kind !== 'applied') throw new Error('expected applied drift Supersede')
+    const loadedReplacement = loadBundle(outcome.bundleDir)
+    expect(loadedReplacement.kind).toBe('loaded')
+    if (loadedReplacement.kind !== 'loaded') throw new Error('expected replacement bundle')
+    expect(deriveBundleTrust(loadedReplacement.bundle).status).toBe('active')
+    expect(readMeasurements(outcome.bundleDir)).toEqual({
+      baseline: { mu0: 204, sigma0: 0, n0: 1, openedAtOrdinal: 47 },
+      observations: [],
+    })
+    expect(loadedReplacement.bundle.events).toContainEqual({
+      type: 'promoted',
+      evidenceToken: asEvidenceToken(
+        sha256hex(canonicalJson({
+          token: replacement.delta.evidenceToken,
+          event: 'promoted',
+        })),
+      ),
+      curationJobId: replacement.claimed.candidateId,
+      buildOrdinal: 47,
+    })
+
+    const loadedVictim = loadBundle(victim.bundleDir)
+    expect(loadedVictim.kind).toBe('loaded')
+    if (loadedVictim.kind !== 'loaded') throw new Error('expected victim bundle')
+    expect(deriveBundleTrust(loadedVictim.bundle)).toMatchObject({
+      status: 'superseded',
+      validity: { openedAtOrdinal: 42, closedAtOrdinal: 47 },
+    })
+  })
+
+  it('keeps born-active promotion and baseline singular on an idempotent re-run', () => {
+    const victim = seedMeasurementVictim('100', [
+      measurementObservation(200, 43),
+      measurementObservation(201, 44),
+      measurementObservation(202, 45),
+      measurementObservation(203, 46),
+    ])
+    const replacement = measurementSupersede(victim.bundleId, '204', 47)
+    const first = commitCurationDelta(deps(), replacement.claimed, replacement.authored)
+    if (first.kind !== 'applied') throw new Error('expected applied drift Supersede')
+    const before = {
+      measurements: readFileSync(join(first.bundleDir, MEASUREMENTS_REL_PATH)),
+      outcomes: readFileSync(join(first.bundleDir, 'evidence/outcomes.jsonl')),
+    }
+
+    expect(
+      commitCurationDelta(deps(), replacement.claimed, replacement.authored),
+    ).toMatchObject({ kind: 'requeue-resynthesis', reason: 'compare-and-set' })
+    expect(readFileSync(join(first.bundleDir, MEASUREMENTS_REL_PATH))).toEqual(
+      before.measurements,
+    )
+    expect(readFileSync(join(first.bundleDir, 'evidence/outcomes.jsonl'))).toEqual(
+      before.outcomes,
+    )
+    const loaded = loadBundle(first.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected replacement bundle')
+    expect(loaded.bundle.events.filter((event) => event.type === 'promoted')).toHaveLength(1)
   })
 
   it('abandons stale epochs before intent and between intent and publish without bundle mutation', () => {
