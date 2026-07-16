@@ -1,6 +1,5 @@
 import {
-  dedupeEvents,
-  eventDedupKey,
+  survivingOutcomeEvents,
   type BundleOutcomeEvent,
   type OriginClass,
 } from './outcome-event'
@@ -87,16 +86,7 @@ export function foldBundleTrust(
     createdAtOrdinal: number
   },
 ): DerivedTrustState {
-  const dedupedEvents = dedupeEvents(events)
-  const retractedEventKeys = new Set<string>()
-  for (const event of dedupedEvents) {
-    if (event.type !== 'retracted') continue
-    retractedEventKeys.add(eventDedupKey({
-      ...event,
-      evidenceToken: event.retractsEvidenceToken,
-      curationJobId: event.retractsCurationJobId,
-    }))
-  }
+  const survivingEvents = survivingOutcomeEvents(events)
 
   const counters = {
     confirmed: 0,
@@ -109,9 +99,7 @@ export function foldBundleTrust(
   let latestClose: { buildOrdinal: number; closedAtOrdinal: number } | undefined
   let lastConfirmedOrdinal: number | undefined
 
-  for (const event of dedupedEvents) {
-    if (event.type === 'retracted' || retractedEventKeys.has(eventDedupKey(event))) continue
-
+  for (const event of survivingEvents) {
     switch (event.type) {
       case 'confirmed':
         counters.confirmed += 1

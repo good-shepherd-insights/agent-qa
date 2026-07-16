@@ -107,3 +107,29 @@ export function dedupeEvents(events: readonly BundleOutcomeEvent[]): BundleOutco
 
   return deduped
 }
+
+/**
+ * Canonical lifecycle-effect sequence after append replay and rollback are
+ * interpreted. Retraction audit lines remain in the input log but never become
+ * effects themselves. Dedupe must run before target collection so a replayed
+ * retraction identity retains the same first-wins law as every other event.
+ */
+export function survivingOutcomeEvents(
+  events: readonly BundleOutcomeEvent[],
+): BundleOutcomeEvent[] {
+  const dedupedEvents = dedupeEvents(events)
+  const retractedEventKeys = new Set<string>()
+
+  for (const event of dedupedEvents) {
+    if (event.type !== 'retracted') continue
+    retractedEventKeys.add(eventDedupKey({
+      ...event,
+      evidenceToken: event.retractsEvidenceToken,
+      curationJobId: event.retractsCurationJobId,
+    }))
+  }
+
+  return dedupedEvents.filter(
+    (event) => event.type !== 'retracted' && !retractedEventKeys.has(eventDedupKey(event)),
+  )
+}
