@@ -17,12 +17,14 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  appendOutcomeEvent,
   createLocalKnowledgeStore,
   deriveBundleTrust,
   drainQueue,
   enumerateBundleDirs,
   loadBundle,
   publishBundle,
+  type BundleStoreConfig,
   type CuratorAuthor,
   type LoadedBundle,
 } from '../../index.js'
@@ -191,6 +193,95 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     expect(bundle.provenance.authorship).not.toHaveProperty('model')
   }
 
+  function publishHeldCandidate(seed: string) {
+    const displayName = `Held checkout ${seed}`
+    const normalizedName = displayName.toLowerCase()
+    const anchors: Anchor[] = [
+      { t: 'el', role: 'button', name: displayName, ordinal: 0 },
+      { t: 'page', route: '/checkout' },
+      { t: 'selector', literal: `[data-testid="held-checkout-${seed}"]` },
+    ]
+    const observation: DistilledObservation = {
+      schemaVersion: 1,
+      step: { naturalKey: `held-checkout-${seed}`, ordinal: 0 },
+      platform: 'web',
+      element: { naturalKey: `button:${normalizedName}:0` },
+      locator: { selector: `[data-testid="held-checkout-${seed}"]` },
+      observedAtOrdinal: 42,
+    }
+    const draft: BundleDraft = {
+      kind: 'fact',
+      subtype: 'selector',
+      anchors,
+      scope: { tier: 'product', key: 'storefront' },
+      summary: `${displayName} selector`,
+      body: `The ${displayName} button was resolved and verified.`,
+      distilledEvidenceRef: { id: `held-checkout-${seed}`, sha: 'a'.repeat(64) },
+      originStage: 'run-curation',
+    }
+    const published = publishBundle({
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'promotion-floor-fixture',
+    }, {
+      draft,
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: 'button', name: displayName },
+      },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 42,
+      screenStates: [],
+      initialEvents: [],
+      relations: [],
+      provenance: {
+        mode: 'run-linked',
+        runId: `held-checkout-${seed}-run`,
+        testId: `held-checkout-${seed}-test`,
+        stepIndex: 0,
+        curationJobId: `held-checkout-${seed}-seed`,
+        sourceBuildOrdinal: 42,
+        authorship: {
+          path: 'deterministic-fallback',
+          executionContext: 'local-interactive',
+        },
+      },
+      artifacts: [],
+      evidenceMarkdown: 'Held pending canonical confirmation.\n',
+      distilledObservations: [observation],
+    })
+    if (published.kind !== 'published') {
+      throw new Error(`expected held candidate publish, got ${published.kind}`)
+    }
+    return { draft, published }
+  }
+
+  function outcomeAppendConfig(): BundleStoreConfig {
+    return {
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'promotion-floor-fixture',
+      policy,
+    }
+  }
+
+  function promotionStore(sourceBuildOrdinal: number) {
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected promotion fixture writer lease')
+    return createLocalKnowledgeStore({
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'local-interactive',
+      epoch: lease.epoch,
+      sourceBuildOrdinal,
+    })
+  }
+
   it('RATIFIED A2: fallback-authored evidence-complete fact drains queue → gate → active', async () => {
     const { report } = await drainWithoutModel(selectorProjection('primary'))
 
@@ -280,76 +371,8 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
   })
 
   it('promote() re-evaluates later Confirm evidence and remains idempotent', async () => {
-    const anchors: Anchor[] = [
-      { t: 'el', role: 'button', name: 'Held checkout', ordinal: 0 },
-      { t: 'page', route: '/checkout' },
-      { t: 'selector', literal: '[data-testid="held-checkout"]' },
-    ]
-    const observation: DistilledObservation = {
-      schemaVersion: 1,
-      step: { naturalKey: 'held-checkout', ordinal: 0 },
-      platform: 'web',
-      element: { naturalKey: 'button:held checkout:0' },
-      locator: { selector: '[data-testid="held-checkout"]' },
-      observedAtOrdinal: 42,
-    }
-    const draft: BundleDraft = {
-      kind: 'fact',
-      subtype: 'selector',
-      anchors,
-      scope: { tier: 'product', key: 'storefront' },
-      summary: 'Held checkout selector',
-      body: 'The held checkout button was resolved and verified.',
-      distilledEvidenceRef: { id: 'held-checkout', sha: 'a'.repeat(64) },
-      originStage: 'run-curation',
-    }
-    const published = publishBundle({
-      knowledgeRoot,
-      productKey: 'storefront',
-      auditBaseDir,
-      commitArtifacts: 'none',
-      writerLeaseId: 'promotion-floor-fixture',
-    }, {
-      draft,
-      discriminant: {
-        kind: 'fact',
-        subtype: 'selector',
-        elementRef: { role: 'button', name: 'Held checkout' },
-      },
-      originClass: 'agent-verified',
-      createdAtOrdinal: 42,
-      screenStates: [],
-      initialEvents: [],
-      relations: [],
-      provenance: {
-        mode: 'run-linked',
-        runId: 'held-checkout-run',
-        testId: 'held-checkout-test',
-        stepIndex: 0,
-        curationJobId: 'held-checkout-seed',
-        sourceBuildOrdinal: 42,
-        authorship: {
-          path: 'deterministic-fallback',
-          executionContext: 'local-interactive',
-        },
-      },
-      artifacts: [],
-      evidenceMarkdown: 'Held pending canonical confirmation.\n',
-      distilledObservations: [observation],
-    })
-    if (published.kind !== 'published') {
-      throw new Error(`expected held candidate publish, got ${published.kind}`)
-    }
-    const lease = acquireWriterLease(knowledgeRoot)
-    if (lease.kind !== 'acquired') throw new Error('expected promotion fixture writer lease')
-
-    const store = createLocalKnowledgeStore({
-      knowledgeRoot,
-      auditBaseDir,
-      executionContext: 'local-interactive',
-      epoch: lease.epoch,
-      sourceBuildOrdinal: 43,
-    })
+    const { draft, published } = publishHeldCandidate('later-confirm')
+    const store = promotionStore(43)
     await expect(store.promote(published.id)).rejects.toMatchObject({
       reason: 'no-confirmed-evidence',
     })
@@ -378,6 +401,129 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     const promoted = loadBundle(published.dir)
     if (promoted.kind !== 'loaded') throw new Error('expected promoted bundle')
     expect(deriveBundleTrust(promoted.bundle).status).toBe('active')
+    expect(promoted.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
+  })
+
+  it('keeps an exact retracted confirmation inert until an adjacent job survives', async () => {
+    const { published } = publishHeldCandidate('retracted-confirmation')
+    const config = outcomeAppendConfig()
+    const sharedEvidenceToken = asEvidenceToken('held-shared-confirmation')
+    const originalConfirmation = {
+      type: 'confirmed' as const,
+      evidenceToken: sharedEvidenceToken,
+      curationJobId: 'held-confirmation-original-job',
+      buildOrdinal: 43,
+      origin: 'agent-verified' as const,
+    }
+    expect(appendOutcomeEvent(config, published.id, originalConfirmation).kind).toBe('appended')
+    const beforeRetraction = loadBundle(published.dir)
+    if (beforeRetraction.kind !== 'loaded') throw new Error('expected confirmed candidate')
+    expect(beforeRetraction.bundle.events).toContainEqual(originalConfirmation)
+    expect(deriveBundleTrust(beforeRetraction.bundle).status).toBe('candidate')
+
+    const retraction = {
+      type: 'retracted' as const,
+      evidenceToken: asEvidenceToken('held-confirmation-retraction'),
+      curationJobId: 'rollback-held-confirmation',
+      buildOrdinal: 44,
+      retractsEvidenceToken: sharedEvidenceToken,
+      retractsCurationJobId: originalConfirmation.curationJobId,
+      rollbackReceiptId: 'rollback:held-confirmation',
+    }
+    expect(appendOutcomeEvent(config, published.id, retraction).kind).toBe('appended')
+
+    const store = promotionStore(45)
+    await expect(store.promote(published.id)).rejects.toMatchObject({
+      reason: 'no-confirmed-evidence',
+    })
+    const afterRetraction = loadBundle(published.dir)
+    if (afterRetraction.kind !== 'loaded') throw new Error('expected retracted candidate')
+    expect(afterRetraction.bundle.events).toEqual([originalConfirmation, retraction])
+    expect(deriveBundleTrust(afterRetraction.bundle).status).toBe('candidate')
+
+    const adjacentConfirmation = {
+      ...originalConfirmation,
+      curationJobId: 'held-confirmation-adjacent-job',
+      buildOrdinal: 45,
+    }
+    expect(appendOutcomeEvent(config, published.id, adjacentConfirmation).kind).toBe('appended')
+    await store.promote(published.id)
+    await store.promote(published.id)
+
+    const promoted = loadBundle(published.dir)
+    if (promoted.kind !== 'loaded') throw new Error('expected adjacent confirmation promotion')
+    expect(deriveBundleTrust(promoted.bundle).status).toBe('active')
+    expect(promoted.bundle.events).toEqual(expect.arrayContaining([
+      originalConfirmation,
+      retraction,
+      adjacentConfirmation,
+    ]))
+    expect(promoted.bundle.events.filter(({ type }) => type === 'confirmed')).toHaveLength(2)
+    expect(promoted.bundle.events.filter(({ type }) => type === 'retracted')).toHaveLength(1)
+    expect(promoted.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
+  })
+
+  it('removes only the exact deprecation hold before explicit promotion', async () => {
+    const { published } = publishHeldCandidate('retracted-deprecation')
+    const config = outcomeAppendConfig()
+    expect(appendOutcomeEvent(config, published.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('held-deprecation-confirmation'),
+      curationJobId: 'held-deprecation-confirmation-job',
+      buildOrdinal: 43,
+      origin: 'agent-verified',
+    }).kind).toBe('appended')
+
+    const sharedDeprecationToken = asEvidenceToken('held-shared-deprecation')
+    const firstDeprecation = {
+      type: 'deprecated' as const,
+      evidenceToken: sharedDeprecationToken,
+      curationJobId: 'held-deprecation-first-job',
+      buildOrdinal: 44,
+      reason: 'first exact deprecation',
+    }
+    const adjacentDeprecation = {
+      ...firstDeprecation,
+      curationJobId: 'held-deprecation-adjacent-job',
+      buildOrdinal: 45,
+      reason: 'adjacent surviving deprecation',
+    }
+    expect(appendOutcomeEvent(config, published.id, firstDeprecation).kind).toBe('appended')
+    expect(appendOutcomeEvent(config, published.id, adjacentDeprecation).kind).toBe('appended')
+
+    const store = promotionStore(48)
+    await expect(store.promote(published.id)).rejects.toMatchObject({
+      reason: 'not-candidate',
+    })
+    expect(appendOutcomeEvent(config, published.id, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('held-first-deprecation-retraction'),
+      curationJobId: 'rollback-held-first-deprecation',
+      buildOrdinal: 46,
+      retractsEvidenceToken: sharedDeprecationToken,
+      retractsCurationJobId: firstDeprecation.curationJobId,
+      rollbackReceiptId: 'rollback:held-first-deprecation',
+    }).kind).toBe('appended')
+    await expect(store.promote(published.id)).rejects.toMatchObject({
+      reason: 'not-candidate',
+    })
+
+    expect(appendOutcomeEvent(config, published.id, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('held-adjacent-deprecation-retraction'),
+      curationJobId: 'rollback-held-adjacent-deprecation',
+      buildOrdinal: 47,
+      retractsEvidenceToken: sharedDeprecationToken,
+      retractsCurationJobId: adjacentDeprecation.curationJobId,
+      rollbackReceiptId: 'rollback:held-adjacent-deprecation',
+    }).kind).toBe('appended')
+    await store.promote(published.id)
+
+    const promoted = loadBundle(published.dir)
+    if (promoted.kind !== 'loaded') throw new Error('expected promotion after deprecation rollback')
+    expect(deriveBundleTrust(promoted.bundle).status).toBe('active')
+    expect(promoted.bundle.events.filter(({ type }) => type === 'deprecated')).toHaveLength(2)
+    expect(promoted.bundle.events.filter(({ type }) => type === 'retracted')).toHaveLength(2)
     expect(promoted.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
   })
 })
