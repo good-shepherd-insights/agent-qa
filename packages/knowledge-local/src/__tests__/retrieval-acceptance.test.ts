@@ -341,7 +341,7 @@ describe('ROADMAP success criterion 3 — fail-closed filters, audit, and fallba
 
     const embedder = makeFakeEmbedder()
     const queryEmbedding = await embedder.embedQuery('acceptance raw status-filtered KNN')
-    expect(rawVecIds(vecRoot, queryEmbedding, false)).toContain(ids.superseded)
+    expect(rawVecIds(vecRoot, queryEmbedding, false)).not.toContain(ids.superseded)
     expect(rawVecIds(vecRoot, queryEmbedding, true)).not.toContain(ids.superseded)
     expect(rawVecIds(vecRoot, queryEmbedding, false)).not.toContain(ids.sibling)
 

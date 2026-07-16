@@ -166,6 +166,7 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
       trust: 0.5,
       counters: { confirmed: 0, contradicted: 0, helpful: 0, harmful: 0 },
       validity: { openedAtOrdinal: 1 },
+      lastConfirmedOrdinal: 1,
     }
     expect(isServable({ ...baseTrust, status: 'candidate' })).toBe(true)
     expect(isServable({ ...baseTrust, status: 'active' })).toBe(true)

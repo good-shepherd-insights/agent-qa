@@ -378,7 +378,7 @@ function bootstrapSchema(
       contradicted INTEGER NOT NULL,
       helpful INTEGER NOT NULL,
       harmful INTEGER NOT NULL,
-      last_confirmed_ordinal INTEGER NOT NULL,
+      last_confirmed_ordinal INTEGER,
       opened_at_ordinal REAL NOT NULL,
       closed_at_ordinal REAL,
       created_at_ordinal REAL NOT NULL,

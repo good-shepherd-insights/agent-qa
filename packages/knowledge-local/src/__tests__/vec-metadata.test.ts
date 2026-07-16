@@ -113,7 +113,7 @@ describe('vec0 metadata lifecycle', () => {
     }
   })
 
-  it('excludes a superseded record inside a raw filtered KNN scan', async () => {
+  it('physically removes a superseded record before raw filtered KNN', async () => {
     const published = publishFixture()
     const embedder = makeFakeEmbedder()
     expect(await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder })).toMatchObject({
@@ -173,7 +173,16 @@ describe('vec0 metadata lifecycle', () => {
         reader.db
           .prepare(`SELECT status FROM ${tableName} WHERE record_rowid = ?`)
           .get(BigInt(Number(record?.record_rowid))),
-      ).toEqual({ status: 'superseded' })
+      ).toBeUndefined()
+      expect(
+        reader.db
+          .prepare(`
+            SELECT status, embed_status, embedding
+            FROM records
+            WHERE record_rowid = ?
+          `)
+          .get(Number(record?.record_rowid)),
+      ).toEqual({ status: 'superseded', embed_status: 'suppressed', embedding: null })
     } finally {
       reader.db.close()
     }

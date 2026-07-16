@@ -19,6 +19,7 @@ import {
   recordGraphNode,
 } from '@vostride/agent-qa-schema'
 import type {
+  BundleStatus,
   DistilledObservation,
   EmbeddingProfile,
   GraphNodeNaturalKey,
@@ -242,7 +243,7 @@ function upsertRecord(
   db: DatabaseSync,
   bundle: LoadedBundle,
   product: string,
-): number {
+): { recordRowid: number; status: BundleStatus } {
   const trust = deriveBundleTrust(bundle)
   db.prepare(`
     INSERT INTO records (
@@ -300,7 +301,7 @@ function upsertRecord(
     .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
     .get(bundle.manifest.id)
   if (row === undefined) throw new Error(`record upsert lost bundle ${bundle.manifest.id}`)
-  return Number(row.record_rowid)
+  return { recordRowid: Number(row.record_rowid), status: trust.status }
 }
 
 function replaceFtsAndAnchors(
@@ -462,6 +463,58 @@ function refreshVecMetadata(
   )
 }
 
+function isDeadStatus(status: unknown): status is 'superseded' | 'deprecated' {
+  return status === 'superseded' || status === 'deprecated'
+}
+
+function deleteOrphanGraphNodes(db: DatabaseSync): void {
+  db.exec(`
+    DELETE FROM graph_nodes
+    WHERE node_id NOT IN (
+      SELECT src_node_id FROM graph_edges
+      UNION
+      SELECT dst_node_id FROM graph_edges
+    )
+  `)
+}
+
+/**
+ * 379 D-10/D-11 structural forgetting lives inside the canonical projection unit. Every full or
+ * single-bundle projection therefore re-derives the scrub: lexical/vector/graph recall rows die,
+ * while records and anchors deliberately survive for includeSuperseded/as-of audit reads. The
+ * status pre-filter remains the second wall during the commit-to-projection gap.
+ */
+function scrubDeadRecallRows(
+  db: DatabaseSync,
+  vec: VecCapability,
+  bundle: LoadedBundle,
+  recordRowid: number,
+  activeProfile: EmbeddingProfile,
+): void {
+  db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
+  if (vec === 'vec0') {
+    db.prepare(`DELETE FROM ${vecTableName(activeProfile)} WHERE record_rowid = ?`)
+      .run(BigInt(recordRowid))
+  }
+  /**
+   * RATIFICATION: reuse SAFE-02's proven terminal suppressed state. Ordinary backfill selects
+   * pending exactly, rendering refresh preserves suppressed, and reconciliation requires present
+   * canonical bytes, so no later dense pass can resurrect a withdrawn record.
+   */
+  db.prepare(`
+    UPDATE records
+    SET embedding = NULL, embed_status = ?
+    WHERE record_rowid = ?
+  `).run(EMBED_STATUS_SUPPRESSED, recordRowid)
+
+  const recordNode = recordGraphNode(bundle.frontmatter.kind, bundle.manifest.id)
+  db.prepare(`
+    DELETE FROM graph_edges
+    WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
+  `).run(recordRowid, recordNode.nodeId, recordNode.nodeId)
+  deleteOrphanGraphNodes(db)
+}
+
 function projectBundle(
   db: DatabaseSync,
   vec: VecCapability,
@@ -469,9 +522,17 @@ function projectBundle(
   activeProfile: EmbeddingProfile,
 ): void {
   transaction(db, () => {
-    const recordRowid = upsertRecord(db, projected.bundle, projected.product)
-    refreshVecMetadata(db, vec, recordRowid, activeProfile)
+    const { recordRowid, status } = upsertRecord(
+      db,
+      projected.bundle,
+      projected.product,
+    )
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
+    if (isDeadStatus(status)) {
+      scrubDeadRecallRows(db, vec, projected.bundle, recordRowid, activeProfile)
+      return
+    }
+    refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
   })
 }
@@ -485,11 +546,12 @@ function applyProjectionSafety(
   suppressDense: boolean,
 ): void {
   const row = db
-    .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+    .prepare('SELECT record_rowid, status FROM records WHERE bundle_id = ?')
     .get(bundle.manifest.id)
   if (row === undefined) {
     throw new Error(`projection safety source bundle ${bundle.manifest.id} is missing`)
   }
+  if (isDeadStatus(row.status)) return
   const recordRowid = Number(row.record_rowid)
   const situatingLine = buildSituatingLine(db, recordRowid)
   const contextualRendering = renderContextual(lexicalInput, situatingLine)
@@ -583,17 +645,17 @@ function emitRelationEdges(db: DatabaseSync, relationSources: readonly Projected
   transaction(db, () => {
     for (const { bundle, product } of relationSources) {
       const sourceRow = db
-        .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+        .prepare('SELECT record_rowid, status FROM records WHERE bundle_id = ?')
         .get(bundle.manifest.id)
-      if (sourceRow === undefined) continue
+      if (sourceRow === undefined || isDeadStatus(sourceRow.status)) continue
       const recordRowid = Number(sourceRow.record_rowid)
       const sourceNode = recordGraphNode(bundle.frontmatter.kind, bundle.manifest.id)
 
       for (const relation of bundle.relations.relations) {
         const targetRow = db
-          .prepare('SELECT kind FROM records WHERE bundle_id = ?')
+          .prepare('SELECT kind, status FROM records WHERE bundle_id = ?')
           .get(relation.targetId)
-        if (targetRow === undefined) continue
+        if (targetRow === undefined || isDeadStatus(targetRow.status)) continue
         const targetKind = targetRow.kind as LoadedBundle['frontmatter']['kind']
         const targetNode = recordGraphNode(targetKind, relation.targetId)
         insertGraphNode(db, targetNode, product)
@@ -699,10 +761,15 @@ function emitObservationEdges(
   const recordRowids: number[] = []
   for (const source of sources) {
     const row = db
-      .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+      .prepare('SELECT record_rowid, status FROM records WHERE bundle_id = ?')
       .get(source.bundle.manifest.id)
     if (row === undefined) continue
     const recordRowid = Number(row.record_rowid)
+    if (isDeadStatus(row.status)) {
+      // Rule 2: the unconditional observation pass is another graph resurrection vector.
+      recordRowids.push(recordRowid)
+      continue
+    }
     const context: GraphDerivationContext = {
       bundleId: source.bundle.manifest.id,
       recordRowid,
@@ -808,27 +875,21 @@ function emitEquivalentToBridges(db: DatabaseSync): void {
 
 function removeOrphanGraphNodes(db: DatabaseSync): void {
   transaction(db, () => {
-    db.exec(`
-      DELETE FROM graph_nodes
-      WHERE node_id NOT IN (
-        SELECT src_node_id FROM graph_edges
-        UNION
-        SELECT dst_node_id FROM graph_edges
-      )
-    `)
+    deleteOrphanGraphNodes(db)
   })
 }
 
 /** Recompute graph-derived prose only after every graph-producing pass has converged. */
 function refreshContextualRenderings(db: DatabaseSync, force = false): number {
   const rows = db.prepare(`
-    SELECT record_rowid, embedding_input, contextual_rendering
+    SELECT record_rowid, embedding_input, contextual_rendering, status
     FROM records
     ORDER BY record_rowid
   `).all()
   let refreshed = 0
 
   for (const row of rows) {
+    if (isDeadStatus(row.status)) continue
     const recordRowid = Number(row.record_rowid)
     const situatingLine = buildSituatingLine(db, recordRowid)
     const contextualRendering = renderContextual(

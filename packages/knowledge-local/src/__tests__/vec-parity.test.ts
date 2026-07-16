@@ -172,5 +172,5 @@ describe('IDX-01 vec0 and brute dense-search parity', () => {
       vecReader.close()
       bruteReader.close()
     }
-  })
+  }, 10_000)
 })

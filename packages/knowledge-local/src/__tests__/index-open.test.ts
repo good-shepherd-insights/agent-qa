@@ -147,6 +147,7 @@ describe('index-open', () => {
         'contradicted',
         'helpful',
         'harmful',
+        'last_confirmed_ordinal',
         'opened_at_ordinal',
         'closed_at_ordinal',
         'created_at_ordinal',
