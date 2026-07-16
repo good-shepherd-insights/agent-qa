@@ -8,15 +8,22 @@ import {
   type OriginClass,
   type RecordId,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   GC_SUPERSEDED_RETAIN_K,
   appendOutcomeEvent,
+  drainQueue,
   openIndexReaderConnection,
   publishBundle,
   rebuildIndex,
   runKnowledgeGc,
+  type CuratorAuthor,
+  type GcSummary,
   type PublishBundleOutcome,
 } from '../index.js'
 import { makeBundleDraftFixture } from './fixtures/bundle-fixture.js'
@@ -25,6 +32,24 @@ type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 
 const PRODUCT = 'gc-storefront'
 const SCOPE = { tier: 'product', key: PRODUCT } as const
+const EMPTY_GC_SUMMARY: GcSummary = {
+  trimmedRecordIds: [],
+  skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
+}
+const NO_INDEX_MAINTENANCE = {
+  indexAbsent: false,
+  pendingEmbeddings: 0,
+  renderingEpochStale: false,
+  vectorReconciliationOutstanding: false,
+} as const
+const EMPTY_RECONCILE = {
+  intentsCleared: 0,
+  intentsReplayed: 0,
+  intentsDiscarded: 0,
+  jobsRequeued: 0,
+  orphansRemoved: 0,
+  malformed: 0,
+} as const
 
 let root: string
 let knowledgeRoot: string
@@ -274,5 +299,97 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
       skipped: { unknownRef: 0, withinK: 3, userOrigin: 1, horizon: 0 },
     })
     expect(existsSync(userGeneration.dir)).toBe(true)
+  })
+})
+
+describe('drain-tail GC diagnostics (DCAY-05)', () => {
+  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+  const author = vi.fn<CuratorAuthor>()
+
+  function baseOperations() {
+    return {
+      reconcileOnDrainStart: () => EMPTY_RECONCILE,
+      claimNextJob: () => undefined,
+      readRebuildRequest: () => ({ present: false } as const),
+      readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
+    }
+  }
+
+  it('runs GC after the writer pass and pins the M2 none horizon in the report', async () => {
+    const order: string[] = []
+    const summary: GcSummary = {
+      trimmedRecordIds: ['trimmed-record' as RecordId],
+      skipped: { unknownRef: 1, withinK: 3, userOrigin: 1, horizon: 0 },
+    }
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...baseOperations(),
+        readRebuildRequest: () => {
+          order.push('writer-pass')
+          return { present: false }
+        },
+        runKnowledgeGc: (input) => {
+          order.push('gc')
+          expect(input).toEqual({ knowledgeRoot, horizon: { kind: 'none' } })
+          return summary
+        },
+      },
+    })
+
+    expect(order).toEqual(['writer-pass', 'gc'])
+    expect(report.gc).toEqual({ kind: 'completed', summary })
+  })
+
+  it('skips GC before it starts when the drain budget is exhausted', async () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(100)
+    const gc = vi.fn(() => EMPTY_GC_SUMMARY)
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      budgetMs: 100,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      now,
+      operations: { ...baseOperations(), runKnowledgeGc: gc },
+    })
+
+    expect(report.writerPass).toEqual({ kind: 'not-requested' })
+    expect(report.gc).toEqual({ kind: 'skipped', reason: 'budget-exhausted' })
+    expect(gc).not.toHaveBeenCalled()
+  })
+
+  it('contains a GC failure as diagnostics without failing the drain', async () => {
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...baseOperations(),
+        runKnowledgeGc: () => {
+          throw new Error('simulated GC failure')
+        },
+      },
+    })
+
+    expect(report.kind).toBe('drained')
+    expect(report.gc).toEqual({ kind: 'failed', message: 'simulated GC failure' })
+    expect(report.failureDetails).toContainEqual({
+      stage: 'gc',
+      message: 'simulated GC failure',
+    })
   })
 })
