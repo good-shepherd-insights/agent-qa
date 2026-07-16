@@ -463,6 +463,79 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
     ).toMatchObject({ supersededDepthInWindow: 0, chainRecordIds: [] })
   })
 
+  it('gives a rollback-retracted supersession zero lineage effect', () => {
+    const first = publishGeneration(1, 1)
+    const second = publishGeneration(2, 2)
+    const superseded: BundleOutcomeEvent = {
+      type: 'superseded',
+      evidenceToken: asEvidenceToken('retracted-supersession'),
+      curationJobId: 'retracted-supersession-job',
+      buildOrdinal: 2,
+      byRecordId: second.id,
+    }
+    appendLifecycleEvent(first.id, superseded)
+    appendLifecycleEvent(first.id, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('rollback-retraction'),
+      curationJobId: 'rollback-job',
+      buildOrdinal: 3,
+      retractsEvidenceToken: superseded.evidenceToken,
+      retractsCurationJobId: superseded.curationJobId,
+      rollbackReceiptId: 'rollback-receipt-a',
+    })
+
+    const folded = foldSupersessionLineage(scanCanonicalBundles(knowledgeRoot), {
+      windowBuilds: THRASH_WINDOW_BUILDS,
+      asOfBuildOrdinal: 3,
+    }).get(supersessionKey(anchors))
+
+    expect(folded).toEqual({
+      supersededDepthInWindow: 0,
+      chainRecordIds: [],
+      windowOpenOrdinal: 1,
+    })
+  })
+
+  it('keeps an adjacent same-token different-job supersession as the latest lineage', () => {
+    const first = publishGeneration(1, 1)
+    const second = publishGeneration(2, 2)
+    const third = publishGeneration(3, 3)
+    const retractedNewest: BundleOutcomeEvent = {
+      type: 'superseded',
+      evidenceToken: asEvidenceToken('shared-supersession-token'),
+      curationJobId: 'retracted-newest-job',
+      buildOrdinal: 6,
+      byRecordId: second.id,
+    }
+    appendLifecycleEvent(first.id, retractedNewest)
+    appendLifecycleEvent(second.id, {
+      type: 'superseded',
+      evidenceToken: retractedNewest.evidenceToken,
+      curationJobId: 'surviving-adjacent-job',
+      buildOrdinal: 4,
+      byRecordId: third.id,
+    })
+    appendLifecycleEvent(first.id, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('rollback-newest-retraction'),
+      curationJobId: 'rollback-job',
+      buildOrdinal: 7,
+      retractsEvidenceToken: retractedNewest.evidenceToken,
+      retractsCurationJobId: retractedNewest.curationJobId,
+      rollbackReceiptId: 'rollback-receipt-a',
+    })
+
+    expect(foldSupersessionLineage(scanCanonicalBundles(knowledgeRoot), {
+      windowBuilds: 8,
+      asOfBuildOrdinal: 8,
+    }).get(supersessionKey(anchors))).toEqual({
+      supersededDepthInWindow: 1,
+      latestSupersessionOrdinal: 4,
+      chainRecordIds: [second.id, third.id].sort(),
+      windowOpenOrdinal: 1,
+    })
+  })
+
   it('commits the third supersession and one self-contained anchor unknown', () => {
     const { lineage, tripping, replacementId } = tripThrashGuard()
     const committedUnknowns = unknowns()
@@ -529,6 +602,31 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
       buildOrdinal: 9,
       reason: 'thrash-stable-window',
     }))
+  })
+
+  it('does not let a retracted newest supersession delay stable-window closure', () => {
+    const { replacementId } = tripThrashGuard()
+    const unknownId = asRecordId(unknowns()[0]!.manifest.id)
+    const retractedNewest: BundleOutcomeEvent = {
+      type: 'superseded',
+      evidenceToken: asEvidenceToken('rolled-back-newest-supersession'),
+      curationJobId: 'rolled-back-newest-job',
+      buildOrdinal: 7,
+      byRecordId: asRecordId('rolled-back-replacement'),
+    }
+    appendLifecycleEvent(replacementId, retractedNewest)
+    appendLifecycleEvent(replacementId, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('rolled-back-newest-retraction'),
+      curationJobId: 'rollback-job',
+      buildOrdinal: 8,
+      retractsEvidenceToken: retractedNewest.evidenceToken,
+      retractsCurationJobId: retractedNewest.curationJobId,
+      rollbackReceiptId: 'rollback-receipt-a',
+    })
+
+    expect(confirm(replacementId, 9).kind).toBe('applied')
+    expect(deriveBundleTrust(loadById(unknownId)).status).toBe('deprecated')
   })
 
   it('keeps the expected trigger payload canonical and value-free', () => {
