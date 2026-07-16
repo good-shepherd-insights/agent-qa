@@ -9,6 +9,7 @@ import {
   asRecordId,
   canonicalJson,
   committedFileText,
+  foldMeasurements,
   guardBundleManifest,
   guardBundleRelations,
 } from '@vostride/agent-qa-schema'
@@ -290,9 +291,13 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
   })
 
   it('appends strict measurement observations and reads the stream in append order', () => {
-    const first = measurementObservation()
+    const persistedBaseline: MeasurementBaseline = {
+      ...MEASUREMENT_BASELINE,
+      mu0: 10,
+    }
+    const first = measurementObservation({ value: 20 })
     const second = measurementObservation({
-      value: 118,
+      value: 0,
       buildOrdinal: 44,
       evidenceToken: 'measurement-observation-2',
       curationJobId: 'measurement-job-2',
@@ -301,7 +306,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(appendMeasurementObservation(config, id, first)).toEqual<AppendOutcome>({
       kind: 'not-found',
     })
-    expect(writeMeasurementBaseline(config, id, MEASUREMENT_BASELINE)).toEqual<AppendOutcome>({
+    expect(writeMeasurementBaseline(config, id, persistedBaseline)).toEqual<AppendOutcome>({
       kind: 'appended',
     })
 
@@ -311,14 +316,19 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(appendMeasurementObservation(config, id, second)).toEqual<AppendOutcome>({
       kind: 'appended',
     })
-    expect(readMeasurements(bundleDir)).toEqual({
-      baseline: MEASUREMENT_BASELINE,
+    const measurements = readMeasurements(bundleDir)
+    expect(measurements).toEqual({
+      baseline: persistedBaseline,
       observations: [first, second],
     })
+    expect(measurements?.observations.map(({ value }) => value)).toEqual([20, 0])
+    const folded = foldMeasurements(measurements!.baseline, measurements!.observations)
+    expect(folded.ewma).toBeCloseTo(9.6, 12)
+    expect(folded.mean).toBe(10)
 
     writeFileSync(
       join(bundleDir, MEASUREMENTS_REL_PATH),
-      `${canonicalJson(MEASUREMENT_BASELINE)}\n${canonicalJson(first)}\n{"value":"bad"}\n`,
+      `${canonicalJson(persistedBaseline)}\n${canonicalJson(first)}\n{"value":"bad"}\n`,
       'utf8',
     )
     expect(() => readMeasurements(bundleDir)).toThrow()
@@ -346,10 +356,23 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
   })
 
   it('recovers a crashed measurement append byte-identically and keeps second recovery inert', () => {
-    expect(writeMeasurementBaseline(config, id, MEASUREMENT_BASELINE)).toEqual<AppendOutcome>({
+    const persistedBaseline: MeasurementBaseline = {
+      ...MEASUREMENT_BASELINE,
+      mu0: 10,
+    }
+    const firstObservation = measurementObservation({ value: 20 })
+    const secondObservation = measurementObservation({
+      value: 0,
+      buildOrdinal: 44,
+      evidenceToken: 'measurement-observation-2',
+      curationJobId: 'measurement-job-2',
+    })
+    expect(writeMeasurementBaseline(config, id, persistedBaseline)).toEqual<AppendOutcome>({
       kind: 'appended',
     })
-    const observation = measurementObservation()
+    expect(
+      appendMeasurementObservation(config, id, firstObservation),
+    ).toEqual<AppendOutcome>({ kind: 'appended' })
     config.hooks = {
       afterMutableReplacement(relPath) {
         if (relPath === MEASUREMENTS_REL_PATH) {
@@ -358,7 +381,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
       },
     }
 
-    expect(() => appendMeasurementObservation(config, id, observation)).toThrow(
+    expect(() => appendMeasurementObservation(config, id, secondObservation)).toThrow(
       'injected measurement append stop',
     )
     const [transactionName] = mutationDirs()
@@ -375,10 +398,17 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(
       recoverExpiredBundleMutations(config.knowledgeRoot, [config.writerLeaseId!]),
     ).toEqual({ mutationsRecovered: 1, recoveredBundleIds: [id] })
-    expect(readMeasurements(bundleDir)).toEqual({
-      baseline: MEASUREMENT_BASELINE,
-      observations: [observation],
+    const recoveredMeasurements = readMeasurements(bundleDir)
+    expect(recoveredMeasurements).toEqual({
+      baseline: persistedBaseline,
+      observations: [firstObservation, secondObservation],
     })
+    const recoveredFold = foldMeasurements(
+      recoveredMeasurements!.baseline,
+      recoveredMeasurements!.observations,
+    )
+    expect(recoveredFold.ewma).toBeCloseTo(9.6, 12)
+    expect(recoveredFold.mean).toBe(10)
     const firstRecoveryBytes = {
       measurements: readFileSync(join(bundleDir, MEASUREMENTS_REL_PATH)),
       manifest: readFileSync(join(bundleDir, 'manifest.json')),
@@ -393,6 +423,11 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     expect(readFileSync(join(bundleDir, 'manifest.json'))).toEqual(
       firstRecoveryBytes.manifest,
     )
+    const secondRecoveryMeasurements = readMeasurements(bundleDir)
+    expect(foldMeasurements(
+      secondRecoveryMeasurements!.baseline,
+      secondRecoveryMeasurements!.observations,
+    )).toEqual(recoveredFold)
   })
 
   it('rejects traversal and unexpected mutable targets before changing canonical bytes', () => {
