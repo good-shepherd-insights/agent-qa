@@ -6,19 +6,17 @@ import {
   asEvidenceToken,
   canonicalJson,
   computeStepSequenceSignature,
-  dedupeEvents,
   evaluatePromotionGate,
-  eventDedupKey,
   guardDistilledObservation,
   renderEmbeddingInput,
   sha256hex,
+  survivingOutcomeEvents,
   supersessionKey,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   BundleDiscriminant,
   BundleDraft,
-  BundleOutcomeEvent,
   BundleRelation,
   Delta,
   EvidenceToken,
@@ -165,24 +163,6 @@ function promotionObservations(
     .slice(0, -1)
     .split('\n')
     .map((line) => guardDistilledObservation(JSON.parse(line)))
-}
-
-function survivingOutcomeEvents(
-  events: readonly BundleOutcomeEvent[],
-): BundleOutcomeEvent[] {
-  const deduped = dedupeEvents(events)
-  const retractedKeys = new Set<string>()
-  for (const event of deduped) {
-    if (event.type !== 'retracted') continue
-    retractedKeys.add(eventDedupKey({
-      ...event,
-      evidenceToken: event.retractsEvidenceToken,
-      curationJobId: event.retractsCurationJobId,
-    }))
-  }
-  return deduped.filter(
-    (event) => event.type !== 'retracted' && !retractedKeys.has(eventDedupKey(event)),
-  )
 }
 
 function memoryOffForBundle(
@@ -395,7 +375,7 @@ function confirmedEvent(
   job: CommitCurationJob,
   delta: Delta,
   evidenceToken = job.payload.evidenceToken,
-): BundleOutcomeEvent {
+): Extract<LoadedBundle['events'][number], { type: 'confirmed' }> {
   return {
     type: 'confirmed',
     evidenceToken: asEvidenceToken(evidenceToken),
