@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 
-import { asRecordId } from '@vostride/agent-qa-schema'
+import { asRecordId, survivingOutcomeEvents } from '@vostride/agent-qa-schema'
 import type {
   DerivedTrustState,
   RecordId,
@@ -107,7 +107,7 @@ function latestBuildOrdinal(bundles: readonly CanonicalBundleSnapshot[]): number
 
 function latestSupersessionOrdinal(bundle: CanonicalBundleSnapshot): number {
   let latest = bundle.createdAtOrdinal
-  for (const event of bundle.events) {
+  for (const event of survivingOutcomeEvents(bundle.events)) {
     if (event.type === 'superseded') latest = Math.max(latest, event.buildOrdinal)
   }
   return latest
