@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import {
   MEASUREMENTS_REL_PATH,
   appendMeasurementObservation,
+  appendOutcomeEvent,
   writeMeasurementBaseline,
 } from '../../bundle-append.js'
 import { deriveBundleTrust, loadBundle, readMeasurements } from '../../bundle-read.js'
@@ -53,6 +54,7 @@ import {
   type CurationCaptureReceipt,
 } from '../../queue/queue-payload.js'
 import {
+  assemblePromotionGateInput,
   commitCurationDelta,
   type CommitCurationDependencies,
   type CommitCurationJob,
@@ -369,6 +371,27 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     }
   }
 
+  function promotionInput(bundleDir: string) {
+    const loaded = loadBundle(bundleDir)
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded promotion fixture')
+    return assemblePromotionGateInput({
+      knowledgeRoot,
+      bundleDir,
+      bundle: loaded.bundle,
+    })
+  }
+
+  function outcomeAppendConfig(): BundleStoreConfig {
+    return {
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'promotion-retraction-fixture',
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    }
+  }
+
   function mutableBundleBytes(bundleDir: string): Record<string, Buffer> {
     return Object.fromEntries(
       [
@@ -627,6 +650,111 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(loaded.bundle.events.map(({ type }) => type)).toEqual(['confirmed', 'promoted'])
     expect(deriveBundleTrust(loaded.bundle).status).toBe('active')
     expect(indexedRow(outcome.bundleId)).toMatchObject({ status: 'active' })
+  })
+
+  it('routes promotion retraction survival through the schema authority', () => {
+    const source = readFileSync(new URL('../commit.ts', import.meta.url), 'utf8')
+
+    expect(source).toContain('  survivingOutcomeEvents,')
+    expect(source).not.toContain('function survivingOutcomeEvents(')
+    expect(source).not.toContain('  dedupeEvents,')
+    expect(source).not.toContain('  eventDedupKey,')
+  })
+
+  it('assembles promotion confirmations with exact retraction identity and first-wins replay', () => {
+    const claimed = verifiedFactJob({
+      evidenceToken: 'promotion-shared-confirmation',
+      attributingObservationId: 'promotion-retraction-confirmation',
+    })
+    const outcome = commitCurationDelta(
+      deps({ mode: 'propose-only' }),
+      claimed,
+      checkpoint(addDelta(verifiedFactDraft())),
+    )
+    if (outcome.kind !== 'applied') throw new Error('expected candidate confirmation fixture')
+
+    const loaded = loadBundle(outcome.bundleDir)
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded confirmation fixture')
+    const original = loaded.bundle.events.find((event) => event.type === 'confirmed')
+    if (original === undefined) throw new Error('expected original confirmation')
+    expect(promotionInput(outcome.bundleDir).confirmedOutcomeEvidenceTokens).toEqual([
+      original.evidenceToken,
+    ])
+
+    const config = outcomeAppendConfig()
+    expect(appendOutcomeEvent(config, outcome.bundleId, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('promotion-confirmation-retraction'),
+      curationJobId: 'rollback-promotion-confirmation',
+      buildOrdinal: 43,
+      retractsEvidenceToken: original.evidenceToken,
+      retractsCurationJobId: original.curationJobId,
+      rollbackReceiptId: 'rollback:promotion-confirmation',
+    }).kind).toBe('appended')
+    expect(promotionInput(outcome.bundleDir).confirmedOutcomeEvidenceTokens).toEqual([])
+
+    expect(appendOutcomeEvent(config, outcome.bundleId, {
+      ...original,
+      buildOrdinal: 44,
+    }).kind).toBe('duplicate')
+    expect(promotionInput(outcome.bundleDir).confirmedOutcomeEvidenceTokens).toEqual([])
+
+    expect(appendOutcomeEvent(config, outcome.bundleId, {
+      ...original,
+      curationJobId: `${original.curationJobId}:adjacent`,
+      buildOrdinal: 44,
+    }).kind).toBe('appended')
+    expect(promotionInput(outcome.bundleDir).confirmedOutcomeEvidenceTokens).toEqual([
+      original.evidenceToken,
+    ])
+  })
+
+  it('assembles promotion deprecation holds from only the surviving exact identity', () => {
+    const claimed = verifiedFactJob({
+      evidenceToken: 'promotion-deprecation-confirmation',
+      attributingObservationId: 'promotion-retraction-deprecation',
+    })
+    const outcome = commitCurationDelta(
+      deps({ mode: 'propose-only' }),
+      claimed,
+      checkpoint(addDelta(verifiedFactDraft())),
+    )
+    if (outcome.kind !== 'applied') throw new Error('expected candidate deprecation fixture')
+
+    const config = outcomeAppendConfig()
+    const deprecation = {
+      type: 'deprecated' as const,
+      evidenceToken: asEvidenceToken('promotion-deprecation'),
+      curationJobId: 'promotion-deprecation-job',
+      buildOrdinal: 43,
+      reason: 'promotion deprecation fixture',
+    }
+    expect(appendOutcomeEvent(config, outcome.bundleId, deprecation).kind).toBe('appended')
+    expect(promotionInput(outcome.bundleDir).hasUserDeprecateInLineage).toBe(true)
+
+    expect(appendOutcomeEvent(config, outcome.bundleId, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('promotion-deprecation-retraction'),
+      curationJobId: 'rollback-promotion-deprecation',
+      buildOrdinal: 44,
+      retractsEvidenceToken: deprecation.evidenceToken,
+      retractsCurationJobId: deprecation.curationJobId,
+      rollbackReceiptId: 'rollback:promotion-deprecation',
+    }).kind).toBe('appended')
+    expect(promotionInput(outcome.bundleDir).hasUserDeprecateInLineage).toBe(false)
+
+    expect(appendOutcomeEvent(config, outcome.bundleId, {
+      ...deprecation,
+      reason: 'replayed promotion deprecation fixture',
+    }).kind).toBe('duplicate')
+    expect(promotionInput(outcome.bundleDir).hasUserDeprecateInLineage).toBe(false)
+
+    expect(appendOutcomeEvent(config, outcome.bundleId, {
+      ...deprecation,
+      curationJobId: `${deprecation.curationJobId}:adjacent`,
+      buildOrdinal: 45,
+    }).kind).toBe('appended')
+    expect(promotionInput(outcome.bundleDir).hasUserDeprecateInLineage).toBe(true)
   })
 
   it('promotes only cautions carrying a typed learnable root-cause class', () => {
