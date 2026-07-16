@@ -296,6 +296,7 @@ export type {
   DrainFailureStage,
   DrainOptions,
   DrainReport,
+  GcPassReport,
   WriterPassReport,
 } from './curator/drain.js'
 export {

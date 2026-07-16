@@ -18,6 +18,7 @@ import {
 } from '../index-open.js'
 import { rebuildIndex, type RebuildReport } from '../index-rebuild.js'
 import { acquireEmbedder } from '../embedder-acquire.js'
+import { runKnowledgeGc, type GcSummary } from '../gc.js'
 import {
   readRebuildRequest,
   type RebuildRequest,
@@ -89,6 +90,7 @@ export type DrainFailureStage =
   | 'requeue'
   | 'release'
   | 'writer-pass'
+  | 'gc'
 
 export interface DrainFailure {
   stage: DrainFailureStage
@@ -106,6 +108,12 @@ export type WriterPassReport =
     }
   | { kind: 'failed'; message: string }
 
+export type GcPassReport =
+  | { kind: 'not-run' }
+  | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
+  | { kind: 'completed'; summary: GcSummary }
+  | { kind: 'failed'; message: string }
+
 interface DrainReportBase {
   jobsProcessed: number
   committed: number
@@ -116,6 +124,7 @@ interface DrainReportBase {
   failureDetails: DrainFailure[]
   reconcile: ReconcileReport | undefined
   writerPass: WriterPassReport
+  gc: GcPassReport
 }
 
 export type DrainReport = DrainReportBase &
@@ -149,6 +158,7 @@ export interface DrainOperations {
   readIndexMaintenanceState: typeof readIndexMaintenanceState
   acquireEmbedder: typeof acquireEmbedder
   rebuildIndex: typeof rebuildIndex
+  runKnowledgeGc: typeof runKnowledgeGc
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
   applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
   deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
@@ -216,6 +226,7 @@ const DEFAULT_OPERATIONS: DrainOperations = {
   readIndexMaintenanceState,
   acquireEmbedder,
   rebuildIndex,
+  runKnowledgeGc,
   hasIndexRow,
   applyIndexDeltaForBundle,
   deriveIndexRowFromBundle,
@@ -246,6 +257,7 @@ function emptyReport(): DrainReportBase {
     failureDetails: [],
     reconcile: undefined,
     writerPass: { kind: 'not-requested' },
+    gc: { kind: 'not-run' },
   }
 }
 
@@ -604,6 +616,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   const lease = operations.acquireWriterLease(options.knowledgeRoot)
   if (lease.kind === 'held') {
     report.writerPass = { kind: 'skipped', reason: 'lease-held' }
+    report.gc = { kind: 'skipped', reason: 'lease-held' }
     return { ...report, kind: 'handed-off', holder: lease.holder }
   }
 
@@ -745,14 +758,37 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
 
     if (result.kind === 'aborted') {
       result.writerPass = { kind: 'skipped', reason: 'aborted' }
+      result.gc = { kind: 'skipped', reason: 'aborted' }
     } else if (now() - startedAt >= limit) {
       result.writerPass = { kind: 'skipped', reason: 'budget-exhausted' }
+      result.gc = { kind: 'skipped', reason: 'budget-exhausted' }
     } else {
       try {
         result.writerPass = await runWriterPass(operations, options.knowledgeRoot)
       } catch (error) {
         recordFailure(result, 'writer-pass', error)
         result.writerPass = { kind: 'failed', message: errorMessage(error) }
+      }
+      if (now() - startedAt >= limit) {
+        result.gc = { kind: 'skipped', reason: 'budget-exhausted' }
+      } else {
+        try {
+          /**
+           * D-13 M2 has no gate receipts. Phase 380 adds live canary-reference
+           * exclusions; M3 supplies the real ordinal horizon through this seam.
+           * Budget gates the start only and never interrupts whole-dir trims.
+           */
+          result.gc = {
+            kind: 'completed',
+            summary: operations.runKnowledgeGc({
+              knowledgeRoot: options.knowledgeRoot,
+              horizon: { kind: 'none' },
+            }),
+          }
+        } catch (error) {
+          recordFailure(result, 'gc', error)
+          result.gc = { kind: 'failed', message: errorMessage(error) }
+        }
       }
     }
     return result

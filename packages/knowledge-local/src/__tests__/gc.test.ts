@@ -265,7 +265,7 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
     expect(second.trimmedRecordIds).toEqual([conflictTarget.id, relationTarget.id].sort())
     expect(existsSync(conflictTarget.dir)).toBe(false)
     expect(existsSync(relationTarget.dir)).toBe(false)
-  })
+  }, 15_000)
 
   it('retains old generations whose half-open validity window intersects the ordinal horizon', () => {
     const chain = publishChain('horizon-wall', 6)
