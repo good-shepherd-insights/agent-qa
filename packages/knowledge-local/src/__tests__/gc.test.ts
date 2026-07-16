@@ -187,7 +187,7 @@ function existingRecordIds(): string[] {
       .all()
       .map((row) => String(row.bundle_id))
   } finally {
-    reader.close()
+    reader.db.close()
   }
 }
 

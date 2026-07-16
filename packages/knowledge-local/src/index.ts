@@ -96,6 +96,12 @@ export { retrieve } from './retrieve.js'
 export type { RetrieveOptions, RetrieveResult } from './retrieve.js'
 export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
+export { GC_SUPERSEDED_RETAIN_K, runKnowledgeGc } from './gc.js'
+export type {
+  GateHorizon,
+  GcSummary,
+  RunKnowledgeGcInput,
+} from './gc.js'
 export { setActiveEmbeddingProfile } from './profile-migration.js'
 export type {
   MigrationOutcome,
