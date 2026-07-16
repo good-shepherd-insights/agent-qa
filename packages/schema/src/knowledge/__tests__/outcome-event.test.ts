@@ -5,6 +5,7 @@ import {
   BundleOutcomeEventSchema,
   dedupeEvents,
   eventDedupKey,
+  survivingOutcomeEvents,
   type BundleOutcomeEvent,
   type OriginClass,
 } from '../outcome-event'
@@ -127,5 +128,71 @@ describe('outcome-event deduplication', () => {
     })
 
     expect(eventDedupKey(retraction)).not.toBe(eventDedupKey(target))
+  })
+})
+
+describe('survivingOutcomeEvents', () => {
+  function retraction(
+    target: BundleOutcomeEvent,
+    evidenceToken: string,
+    curationJobId = `rollback-${evidenceToken}`,
+  ): BundleOutcomeEvent {
+    return BundleOutcomeEventSchema.parse({
+      ...baseEvent,
+      evidenceToken,
+      curationJobId,
+      type: 'retracted',
+      retractsEvidenceToken: target.evidenceToken,
+      retractsCurationJobId: target.curationJobId,
+      rollbackReceiptId: 'rollback-receipt-a',
+    })
+  }
+
+  it('removes only the exact evidence-token and curation-job target identity', () => {
+    const target: BundleOutcomeEvent = { ...baseEvent, type: 'confirmed' }
+    const adjacentIdentity: BundleOutcomeEvent = {
+      ...baseEvent,
+      type: 'helpful',
+      curationJobId: 'curation-b',
+    }
+    const retractTarget = retraction(target, 'retraction-evidence')
+    const input = [target, adjacentIdentity, retractTarget]
+
+    expect(survivingOutcomeEvents(input)).toEqual([adjacentIdentity])
+    expect(input).toEqual([target, adjacentIdentity, retractTarget])
+  })
+
+  it('returns deterministic empty boundaries for no events and only retractions', () => {
+    const absentTarget: BundleOutcomeEvent = { ...baseEvent, type: 'confirmed' }
+
+    expect(survivingOutcomeEvents([])).toEqual([])
+    expect(survivingOutcomeEvents([
+      retraction(absentTarget, 'orphan-retraction'),
+    ])).toEqual([])
+  })
+
+  it('deduplicates first-wins before collecting conflicting replayed retractions', () => {
+    const firstTarget: BundleOutcomeEvent = { ...baseEvent, type: 'confirmed' }
+    const secondTarget: BundleOutcomeEvent = {
+      ...baseEvent,
+      type: 'harmful',
+      evidenceToken: asEvidenceToken('evidence-b'),
+    }
+    const firstRetraction = retraction(firstTarget, 'same-retraction', 'rollback-job')
+    const replayedRetraction = retraction(secondTarget, 'same-retraction', 'rollback-job')
+
+    expect(survivingOutcomeEvents([
+      firstTarget,
+      secondTarget,
+      firstRetraction,
+      replayedRetraction,
+    ])).toEqual([secondTarget])
+  })
+
+  it('removes a target even when its retraction appears earlier in append order', () => {
+    const target: BundleOutcomeEvent = { ...baseEvent, type: 'confirmed' }
+    const retractTarget = retraction(target, 'earlier-retraction')
+
+    expect(survivingOutcomeEvents([retractTarget, target])).toEqual([])
   })
 })
