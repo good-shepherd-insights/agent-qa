@@ -9,6 +9,12 @@ export const CUSUM_SLACK_K = 0.5
 export const CUSUM_DECISION_H = 5
 
 /**
+ * PROVISIONAL D-03 EWMA smoothing factor. The moving average is descriptive
+ * distribution output only; it is never detector authority or a config key.
+ */
+export const MEASUREMENT_EWMA_ALPHA = 0.2
+
+/**
  * PROVISIONAL D-04 weighted-gap significance and minimum mode size. M3 owns
  * calibration; these are internal constitution values, never config keys.
  */
@@ -61,6 +67,7 @@ export type MeasurementObservation = z.infer<typeof measurementObservationSchema
 export interface MeasurementFoldState {
   n: number
   mean: number
+  ewma: number
   /** Welford sum of squared deviations. */
   m2: number
   values: number[]
@@ -78,6 +85,8 @@ export interface MeasurementBand {
 export interface DerivedMeasurementState {
   n: number
   mean: number
+  /** Baseline-seeded descriptive EWMA; drift decisions never read this field. */
+  ewma: number
   /** Population sigma over the fresh observation window. */
   sigma: number
   /** Nearest-rank pooled quantile; absent when the fresh window is empty. */
@@ -335,6 +344,7 @@ export function foldMeasurements(
   const state: MeasurementFoldState = {
     n: 0,
     mean: 0,
+    ewma: baseline.mu0,
     m2: 0,
     values: [],
     cusumPos: 0,
@@ -342,6 +352,10 @@ export function foldMeasurements(
   }
 
   for (const line of lines) {
+    state.ewma = (
+      MEASUREMENT_EWMA_ALPHA * line.value
+      + (1 - MEASUREMENT_EWMA_ALPHA) * state.ewma
+    )
     state.n += 1
     const delta = line.value - state.mean
     state.mean += delta / state.n
@@ -365,6 +379,7 @@ export function foldMeasurements(
   return {
     n: state.n,
     mean: state.mean,
+    ewma: state.ewma,
     sigma,
     p50: nearestRank(sorted, 0.5),
     p95: nearestRank(sorted, 0.95),
