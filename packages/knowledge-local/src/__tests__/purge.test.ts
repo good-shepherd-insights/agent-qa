@@ -1,7 +1,7 @@
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -36,6 +36,25 @@ interface PurgeRecordInput {
 
 interface PurgeRecordOutcome {
   kind: string
+  receipt?: PurgeReceipt
+  detections?: readonly { label: string; detector: string }[]
+}
+
+interface PurgeReceipt {
+  schemaVersion: number
+  purgedRecordId: string
+  purgedAtOrdinal: number
+  initiator: string
+  affectedPaths: string[]
+  firstCommittedOrdinal: number
+}
+
+interface PurgeReceiptSchemaApi {
+  PURGE_RECEIPT_SCHEMA_VERSION: number
+  purgeReceiptSchema: {
+    safeParse(value: unknown): { success: boolean }
+  }
+  guardPurgeReceipt(value: unknown): PurgeReceipt
 }
 
 interface PurgeApi {
@@ -50,6 +69,18 @@ function purgeApi(): PurgeApi {
     throw new Error('purgeRecord public API is not implemented')
   }
   return candidate as PurgeApi
+}
+
+function purgeReceiptSchemaApi(): PurgeReceiptSchemaApi {
+  const candidate = knowledgeLocal as unknown as Partial<PurgeReceiptSchemaApi>
+  if (
+    typeof candidate.PURGE_RECEIPT_SCHEMA_VERSION !== 'number'
+    || candidate.purgeReceiptSchema === undefined
+    || typeof candidate.guardPurgeReceipt !== 'function'
+  ) {
+    throw new Error('purge receipt schema public API is not implemented')
+  }
+  return candidate as PurgeReceiptSchemaApi
 }
 
 describe('DCAY-05 sovereign purge', () => {
@@ -409,5 +440,133 @@ describe('DCAY-05 sovereign purge', () => {
     expect(await auditIds()).toContain(target.id)
     expect(purge(target.id).kind).toBe('purged')
     expect(await auditIds()).not.toContain(target.id)
+  })
+
+  it('writes a strict provenance receipt containing paths and ordinals but no bundle content', () => {
+    const plantedMarker = 'PURGED-BUNDLE-BODY-MARKER-DO-NOT-COPY'
+    const anchorName = 'Receipt anchor must stay out of receipt bytes'
+    const anchors = [
+      { t: 'el', role: 'button', name: anchorName },
+      { t: 'page', route: '/purge/receipt-content' },
+      { t: 'platform', platform: 'web' },
+    ] satisfies Anchor[]
+    const target = publish('receipt-content', anchors, {
+      draft: makeBundleDraftFixture({
+        anchors,
+        scope: { tier: 'product', key: PRODUCT },
+        summary: 'Receipt summary must stay out of receipt bytes',
+        body: `Confirmed-sensitive body ${plantedMarker}`,
+      }),
+      initialEvents: [
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: 'purge-receipt-confirmed',
+          curationJobId: 'purge-receipt-confirmed-job',
+          buildOrdinal: 47,
+          origin: 'agent-verified',
+        }),
+      ],
+    })
+
+    const outcome = purge(target.id)
+
+    expect(outcome.kind).toBe('purged')
+    expect(outcome.receipt).toBeDefined()
+    const receiptPath = join(
+      knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${target.id}.json`,
+    )
+    const receiptText = readFileSync(receiptPath, 'utf8')
+    const receipt = JSON.parse(receiptText) as PurgeReceipt
+    const bundleRelPath = relative(knowledgeRoot, target.dir)
+    expect(receipt).toEqual({
+      schemaVersion: 1,
+      purgedRecordId: target.id,
+      purgedAtOrdinal: 47,
+      initiator: 'user',
+      affectedPaths: expect.arrayContaining([
+        bundleRelPath,
+        `${bundleRelPath}/record.md`,
+        `${bundleRelPath}/provenance.json`,
+        `${bundleRelPath}/manifest.json`,
+      ]),
+      firstCommittedOrdinal: 42,
+    })
+    expect(outcome.receipt).toEqual(receipt)
+    expect(receiptText).not.toContain(plantedMarker)
+    expect(receiptText).not.toContain(anchorName)
+    expect(receiptText).not.toContain('Receipt summary must stay out of receipt bytes')
+
+    const schemaApi = purgeReceiptSchemaApi()
+    expect(schemaApi.PURGE_RECEIPT_SCHEMA_VERSION).toBe(1)
+    expect(schemaApi.purgeReceiptSchema.safeParse(receipt).success).toBe(true)
+    expect(
+      schemaApi.purgeReceiptSchema.safeParse({ ...receipt, unexpected: plantedMarker })
+        .success,
+    ).toBe(false)
+    expect(() => schemaApi.guardPurgeReceipt({ ...receipt, schemaVersion: 2 })).toThrow(
+      /schemaVersion 2 is not supported/u,
+    )
+  })
+
+  it('refuses a detector-shaped receipt input before deleting any surface', () => {
+    const awsKey = 'AKIAIOSFODNN7EXAMPLE'
+    const target = publish('receipt-egress-refusal', [
+      { t: 'el', role: 'button', name: 'Receipt egress refusal' },
+      { t: 'page', route: '/purge/receipt-egress-refusal' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const receiptPath = join(
+      knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${target.id}.json`,
+    )
+
+    const blocked = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: target.id,
+      initiator: awsKey,
+    })
+
+    expect(blocked.kind).toBe('egress-blocked')
+    expect(blocked.detections).toContainEqual({
+      label: `memory/receipts/purge-${target.id}.json`,
+      detector: 'awsKey',
+    })
+    expect(existsSync(target.dir)).toBe(true)
+    expect(existsSync(receiptPath)).toBe(false)
+    expect(readFileSync(join(root, '.agent-qa', 'guardrail_audit.jsonl'), 'utf8'))
+      .toContain('knowledge-bundle:memory/receipts/purge-')
+  })
+
+  it('returns a typed noop and preserves the original receipt on repeat purge', () => {
+    const target = publish('receipt-idempotent', [
+      { t: 'el', role: 'button', name: 'Receipt idempotent' },
+      { t: 'page', route: '/purge/receipt-idempotent' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const receiptDir = join(knowledgeRoot, 'memory', 'receipts')
+    const receiptPath = join(receiptDir, `purge-${target.id}.json`)
+
+    const first = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: target.id,
+      initiator: 'user',
+    })
+    const firstBytes = readFileSync(receiptPath)
+    const second = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: target.id,
+      initiator: 'different-user-must-not-overwrite',
+    })
+
+    expect(first.kind).toBe('purged')
+    expect(second.kind).toBe('already-purged')
+    expect(second.receipt).toEqual(first.receipt)
+    expect(readFileSync(receiptPath)).toEqual(firstBytes)
+    expect(readdirSync(receiptDir)).toEqual([`purge-${target.id}.json`])
   })
 })
