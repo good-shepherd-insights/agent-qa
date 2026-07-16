@@ -8,18 +8,26 @@
 import { isAbsolute } from 'node:path'
 
 import {
+  asEvidenceToken,
   asRecordId,
   canonicalJson,
+  eventDedupKey,
   sha256hex,
   supersessionKey,
   type BundleOutcomeEvent,
+  type Delta,
   type OriginClass,
   type RecordId,
 } from '@vostride/agent-qa-schema'
 
-import { loadBundle } from './bundle-read.js'
+import { appendOutcomeEvent } from './bundle-append.js'
+import { deriveBundleTrust, loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
+import type { BundleStoreConfig } from './bundle-publish.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
+import { applyIndexDeltaForBundle } from './curator/commit.js'
+import type { AuthoredCheckpoint } from './curator/author-contract.js'
+import { disposeDelta } from './curator/disposition.js'
 
 export type RollbackKind = 'job' | 'campaign'
 
@@ -197,16 +205,6 @@ function publicAffectedSet(resolution: RollbackResolution): RollbackAffectedSet 
   }
 }
 
-function emptyReport(resolution: RollbackResolution): RollbackReport {
-  return {
-    receiptId: resolution.receiptId,
-    inverseCount: 0,
-    restoredVictims: [],
-    deprecatedBundles: [],
-    affected: publicAffectedSet(resolution),
-  }
-}
-
 function counterEventsFor(
   bundles: readonly CanonicalRollbackBundle[],
   mintedIds: ReadonlySet<RecordId>,
@@ -309,12 +307,218 @@ function resolveCampaign(input: RollbackCampaignInput): RollbackResolution {
   }
 }
 
-/** Resolve one curation job. Task 2 emits the ratified inverse map from this exact set. */
-export function rollbackCurationJob(input: RollbackCurationJobInput): RollbackReport {
-  return emptyReport(resolveCurationJob(input))
+function bundleConfig(
+  input: RollbackBaseInput,
+  productKey: string,
+): BundleStoreConfig {
+  return {
+    knowledgeRoot: input.knowledgeRoot,
+    productKey,
+    auditBaseDir: input.auditBaseDir,
+    commitArtifacts: 'none',
+  }
 }
 
-/** Resolve an AND-composed ordinal / anchor-cluster / origin-class campaign. */
+/**
+ * Every inverse token binds the receipt, target, and exact effect key. The existing
+ * (recordId, evidenceToken, curationJobId) append dedup therefore makes a repeated rollback a
+ * byte-level noop while a different resolution horizon receives a different audit identity.
+ */
+function inverseEvidenceToken(
+  receiptId: string,
+  targetRecordId: RecordId,
+  retractedKey: string,
+) {
+  return asEvidenceToken(sha256hex(canonicalJson({
+    rollbackReceiptId: receiptId,
+    targetRecordId,
+    retractedKey,
+  })))
+}
+
+function appendedOrThrow(
+  outcome: ReturnType<typeof appendOutcomeEvent>,
+  targetRecordId: RecordId,
+): boolean {
+  switch (outcome.kind) {
+    case 'appended':
+      return true
+    case 'duplicate':
+      return false
+    case 'egress-blocked':
+      throw new Error(
+        `rollback inverse for ${targetRecordId} was blocked at committed egress`,
+      )
+    case 'not-found':
+      throw new Error(`rollback target ${targetRecordId} disappeared during commit`)
+  }
+}
+
+function maintenanceCheckpoint(delta: Delta, targetRecordId: RecordId): AuthoredCheckpoint {
+  const authorship = {
+    path: 'deterministic-fallback' as const,
+    executionContext: 'local-interactive' as const,
+  }
+  return {
+    schemaVersion: 1,
+    delta,
+    neighborIds: [targetRecordId],
+    preconditions: [],
+    authorship,
+  }
+}
+
+/**
+ * RATIFICATION / Pitfall 8: inverse Deprecates are mechanical maintenance deltas with origin
+ * `system`. They pass the ordinary deterministic disposition floor; `agent` would be downgraded
+ * for an active target, while `user` would incorrectly make this lifecycle choice sovereign and
+ * permanent. The disposed delta is then emitted through the canonical append + projection tail.
+ */
+function appendInverseDeprecate(
+  input: RollbackBaseInput,
+  resolution: RollbackResolution,
+  target: CanonicalRollbackBundle,
+): boolean {
+  const delta: Extract<Delta, { kind: 'Deprecate' }> = {
+    kind: 'Deprecate',
+    origin: 'system',
+    scope: target.bundle.frontmatter.scope,
+    citedIds: [],
+    targetId: target.recordId,
+    reason: `rollback:${resolution.receiptId}`,
+    authorship: {
+      path: 'deterministic-fallback',
+      executionContext: 'local-interactive',
+    },
+  }
+  const targetAlreadyDeprecated = deriveBundleTrust(target.bundle).status === 'deprecated'
+  const disposed = targetAlreadyDeprecated
+    ? { kind: 'apply' as const, delta }
+    : disposeDelta({
+        delta,
+        checkpoint: maintenanceCheckpoint(delta, target.recordId),
+        profile: { mode: 'drain-to-active' },
+        knowledgeRoot: input.knowledgeRoot,
+        drainState: { supersedesSeenByAnchorKey: new Map() },
+      })
+  if (disposed.kind !== 'apply' || disposed.delta.kind !== 'Deprecate') {
+    throw new Error(
+      `rollback maintenance Deprecate for ${target.recordId} did not pass disposition`,
+    )
+  }
+
+  return appendedOrThrow(
+    appendOutcomeEvent(
+      bundleConfig(input, target.product),
+      target.recordId,
+      {
+        type: 'deprecated',
+        evidenceToken: inverseEvidenceToken(
+          resolution.receiptId,
+          target.recordId,
+          'minted-bundle',
+        ),
+        curationJobId: resolution.receiptId,
+        buildOrdinal: input.resolvedAtOrdinal,
+        reason: disposed.delta.reason,
+      },
+    ),
+    target.recordId,
+  )
+}
+
+function appendRetraction(
+  input: RollbackBaseInput,
+  resolution: RollbackResolution,
+  counter: ResolvedCounterEvent,
+  targetEvidenceToken: string,
+): boolean {
+  const retractedKey = eventDedupKey({
+    ...counter.event,
+    evidenceToken: asEvidenceToken(targetEvidenceToken),
+    curationJobId: counter.curationJobId,
+  })
+  return appendedOrThrow(
+    appendOutcomeEvent(
+      bundleConfig(input, counter.product),
+      counter.recordId,
+      {
+        type: 'retracted',
+        evidenceToken: inverseEvidenceToken(
+          resolution.receiptId,
+          counter.recordId,
+          retractedKey,
+        ),
+        curationJobId: resolution.receiptId,
+        buildOrdinal: input.resolvedAtOrdinal,
+        retractsEvidenceToken: asEvidenceToken(targetEvidenceToken),
+        retractsCurationJobId: counter.curationJobId,
+        rollbackReceiptId: resolution.receiptId,
+      },
+    ),
+    counter.recordId,
+  )
+}
+
+function emitRollback(
+  input: RollbackBaseInput,
+  resolution: RollbackResolution,
+): RollbackReport {
+  let inverseCount = 0
+  const touched = new Set<RecordId>()
+  const restoredVictims = new Set<RecordId>()
+
+  for (const minted of resolution.mintedBundles) {
+    if (appendInverseDeprecate(input, resolution, minted)) inverseCount += 1
+    touched.add(minted.recordId)
+  }
+
+  for (const counter of resolution.counterEvents) {
+    if (appendRetraction(
+      input,
+      resolution,
+      counter,
+      counter.evidenceToken,
+    )) {
+      inverseCount += 1
+    }
+    touched.add(counter.recordId)
+
+    if (counter.type === 'superseded') {
+      const closeToken = asEvidenceToken(sha256hex(canonicalJson({
+        token: counter.evidenceToken,
+        event: 'window-close',
+      })))
+      if (appendRetraction(input, resolution, counter, closeToken)) {
+        inverseCount += 1
+      }
+      restoredVictims.add(counter.recordId)
+    }
+  }
+
+  // Re-project every touched bundle even on duplicate replay. This is the same healing property
+  // as commitCurationDelta's append-before-index recovery: canonical truth always wins.
+  for (const recordId of [...touched].sort(compareText)) {
+    applyIndexDeltaForBundle({ knowledgeRoot: input.knowledgeRoot, bundleId: recordId })
+  }
+
+  return {
+    receiptId: resolution.receiptId,
+    inverseCount,
+    restoredVictims: [...restoredVictims].sort(compareText),
+    deprecatedBundles: resolution.mintedBundles
+      .map(({ recordId }) => recordId)
+      .sort(compareText),
+    affected: publicAffectedSet(resolution),
+  }
+}
+
+/** Resolve and append the ratified inverse map for one curation job. */
+export function rollbackCurationJob(input: RollbackCurationJobInput): RollbackReport {
+  return emitRollback(input, resolveCurationJob(input))
+}
+
+/** Resolve and append the inverse map for an AND-composed provenance campaign. */
 export function rollbackCampaign(input: RollbackCampaignInput): RollbackReport {
-  return emptyReport(resolveCampaign(input))
+  return emitRollback(input, resolveCampaign(input))
 }
