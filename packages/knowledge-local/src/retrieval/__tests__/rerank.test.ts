@@ -74,6 +74,11 @@ describe('read-side lifecycle trust treatments (379 D-05/D-06/D-20)', () => {
       trust: UNCONFIRMED_DOWNRANK_FACTOR,
       unconfirmedSinceOrdinal: asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS,
     })
+    expect(treated.map(({ bundleId }) => bundleId)).toEqual([
+      'r_stale',
+      'r_recent',
+      'r_prior',
+    ])
     expect(rerankPrecedence(treated).map(({ bundleId }) => bundleId)).toEqual([
       'r_recent',
       'r_stale',
@@ -92,6 +97,7 @@ describe('read-side lifecycle trust treatments (379 D-05/D-06/D-20)', () => {
 
     expect(treated).toMatchObject({ trust: 1 })
     expect(treated).not.toHaveProperty('unconfirmedSinceOrdinal')
+    expect(treated).not.toHaveProperty('unverified')
   })
 
   it('dampens a volatile fact at the exact shorter window', () => {
@@ -121,27 +127,55 @@ describe('read-side lifecycle trust treatments (379 D-05/D-06/D-20)', () => {
 
     expect(treated).toMatchObject({ trust: 1 })
     expect(treated).not.toHaveProperty('unconfirmedSinceOrdinal')
+    expect(treated).not.toHaveProperty('unverified')
   })
 
-  it('exempts sovereign user records from every autonomous decay window', () => {
-    const [treated] = applyLifecycleTrustTreatments([
-      entry('r_user', {
-        originClass: 'user',
-        lastConfirmedOrdinal: -4,
-      }),
-    ], 16)
-
-    expect(treated).toMatchObject({ trust: 1 })
-    expect(treated).not.toHaveProperty('unconfirmedSinceOrdinal')
-  })
-
-  it('never filters an over-window entry', () => {
+  it('exempts sovereign user records at and beyond both decay windows', () => {
+    const asOfBuild = 15
     const treated = applyLifecycleTrustTreatments([
-      entry('r_stale', { lastConfirmedOrdinal: 1 }),
-      entry('r_recent', { lastConfirmedOrdinal: 16 }),
-    ], 16)
+      entry('r_user_durable', {
+        originClass: 'user',
+        lastConfirmedOrdinal: asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS,
+      }),
+      entry('r_user_measurement', {
+        originClass: 'user',
+        subtype: 'measurement',
+        lastConfirmedOrdinal:
+          asOfBuild - UNCONFIRMED_WINDOW_VOLATILE_BUILDS - 1,
+      }),
+    ], asOfBuild)
 
-    expect(treated.map(({ bundleId }) => bundleId)).toEqual(['r_stale', 'r_recent'])
+    expect(treated).toHaveLength(2)
+    for (const userEntry of treated) {
+      expect(userEntry).toMatchObject({ trust: 1 })
+      expect(userEntry).not.toHaveProperty('unconfirmedSinceOrdinal')
+      expect(userEntry).not.toHaveProperty('unverified')
+    }
+  })
+
+  it('keeps a dampened current fact ahead of a greater-trust worse-validity fact', () => {
+    const asOfBuild = 16
+    const treated = applyLifecycleTrustTreatments([
+      entry('r_stale', {
+        lastConfirmedOrdinal: asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS,
+      }),
+      entry('r_prior', {
+        validityClass: 'priorBuildHypothesis',
+        trust: 100,
+        lastConfirmedOrdinal: asOfBuild,
+      }),
+    ], asOfBuild)
+
+    expect(treated).toHaveLength(2)
+    expect(treated[0]).toMatchObject({
+      bundleId: 'r_stale',
+      trust: UNCONFIRMED_DOWNRANK_FACTOR,
+      unconfirmedSinceOrdinal: asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS,
+    })
+    expect(rerankPrecedence(treated).map(({ bundleId }) => bundleId)).toEqual([
+      'r_stale',
+      'r_prior',
+    ])
   })
 
   it('discounts only candidates admitted by the canonical vetted predicate', () => {
