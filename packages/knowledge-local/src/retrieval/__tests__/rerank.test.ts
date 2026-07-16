@@ -10,6 +10,8 @@ import {
   applyLifecycleTrustTreatments,
   rerankPrecedence,
   UNCONFIRMED_DOWNRANK_FACTOR,
+  UNCONFIRMED_WINDOW_DURABLE_BUILDS,
+  UNCONFIRMED_WINDOW_VOLATILE_BUILDS,
 } from '../rerank.js'
 import type { RerankEntry } from '../rerank.js'
 
@@ -54,20 +56,23 @@ function entry(
 }
 
 describe('read-side lifecycle trust treatments (379 D-05/D-06/D-20)', () => {
-  it('dampens a six-build confirmation gap without crossing the validity wall', () => {
+  it('dampens a durable fact at the exact window without crossing the validity wall', () => {
+    const asOfBuild = 15
     const treated = applyLifecycleTrustTreatments([
-      entry('r_stale'),
-      entry('r_recent', { trust: 0.8, lastConfirmedOrdinal: 16 }),
+      entry('r_stale', {
+        lastConfirmedOrdinal: asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS,
+      }),
+      entry('r_recent', { trust: 0.8, lastConfirmedOrdinal: asOfBuild }),
       entry('r_prior', {
         validityClass: 'priorBuildHypothesis',
         trust: 100,
-        lastConfirmedOrdinal: 16,
+        lastConfirmedOrdinal: asOfBuild,
       }),
-    ], 16)
+    ], asOfBuild)
 
     expect(treated.find(({ bundleId }) => bundleId === 'r_stale')).toMatchObject({
       trust: UNCONFIRMED_DOWNRANK_FACTOR,
-      unconfirmedSinceOrdinal: 10,
+      unconfirmedSinceOrdinal: asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS,
     })
     expect(rerankPrecedence(treated).map(({ bundleId }) => bundleId)).toEqual([
       'r_recent',
@@ -76,21 +81,46 @@ describe('read-side lifecycle trust treatments (379 D-05/D-06/D-20)', () => {
     ])
   })
 
-  it('uses the shorter volatile window for measurement facts', () => {
-    const treated = applyLifecycleTrustTreatments([
-      entry('r_measurement', { subtype: 'measurement', lastConfirmedOrdinal: 12 }),
-      entry('r_durable', { subtype: 'selector', lastConfirmedOrdinal: 12 }),
-    ], 16)
-
-    expect(treated).toEqual([
-      expect.objectContaining({
-        bundleId: 'r_measurement',
-        trust: UNCONFIRMED_DOWNRANK_FACTOR,
-        unconfirmedSinceOrdinal: 12,
+  it('leaves a durable fact unchanged one build below the window', () => {
+    const asOfBuild = 14
+    const [treated] = applyLifecycleTrustTreatments([
+      entry('r_durable', {
+        lastConfirmedOrdinal:
+          asOfBuild - UNCONFIRMED_WINDOW_DURABLE_BUILDS + 1,
       }),
-      expect.objectContaining({ bundleId: 'r_durable', trust: 1 }),
-    ])
-    expect(treated[1]).not.toHaveProperty('unconfirmedSinceOrdinal')
+    ], asOfBuild)
+
+    expect(treated).toMatchObject({ trust: 1 })
+    expect(treated).not.toHaveProperty('unconfirmedSinceOrdinal')
+  })
+
+  it('dampens a volatile fact at the exact shorter window', () => {
+    const asOfBuild = 15
+    const [treated] = applyLifecycleTrustTreatments([
+      entry('r_measurement', {
+        subtype: 'measurement',
+        lastConfirmedOrdinal: asOfBuild - UNCONFIRMED_WINDOW_VOLATILE_BUILDS,
+      }),
+    ], asOfBuild)
+
+    expect(treated).toMatchObject({
+      trust: UNCONFIRMED_DOWNRANK_FACTOR,
+      unconfirmedSinceOrdinal: asOfBuild - UNCONFIRMED_WINDOW_VOLATILE_BUILDS,
+    })
+  })
+
+  it('leaves a volatile fact unchanged one build below its shorter window', () => {
+    const asOfBuild = 14
+    const [treated] = applyLifecycleTrustTreatments([
+      entry('r_measurement', {
+        subtype: 'measurement',
+        lastConfirmedOrdinal:
+          asOfBuild - UNCONFIRMED_WINDOW_VOLATILE_BUILDS + 1,
+      }),
+    ], asOfBuild)
+
+    expect(treated).toMatchObject({ trust: 1 })
+    expect(treated).not.toHaveProperty('unconfirmedSinceOrdinal')
   })
 
   it('exempts sovereign user records from every autonomous decay window', () => {
