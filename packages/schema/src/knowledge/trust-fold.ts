@@ -1,4 +1,9 @@
-import { dedupeEvents, type BundleOutcomeEvent, type OriginClass } from './outcome-event'
+import {
+  dedupeEvents,
+  eventDedupKey,
+  type BundleOutcomeEvent,
+  type OriginClass,
+} from './outcome-event'
 
 /**
  * PROVISIONAL origin priors for §7.5. M3 owns calibration once real attributed
@@ -38,6 +43,13 @@ export interface DerivedTrustState {
     openedAtOrdinal: number
     closedAtOrdinal?: number
   }
+  /**
+   * 379 D-05 RATIFICATION: the latest surviving real confirmation. Retraction and
+   * window restoration never refresh this ordinal; staleness is derived as
+   * asOfBuild minus this value. Index projections must bump their schema version
+   * when adding this field so every existing bundle is re-projected (Plan 379-05).
+   */
+  lastConfirmedOrdinal: number
 }
 
 const STATUS_PRECEDENCE: Record<BundleStatus, number> = {
@@ -75,6 +87,17 @@ export function foldBundleTrust(
     createdAtOrdinal: number
   },
 ): DerivedTrustState {
+  const dedupedEvents = dedupeEvents(events)
+  const retractedEventKeys = new Set<string>()
+  for (const event of dedupedEvents) {
+    if (event.type !== 'retracted') continue
+    retractedEventKeys.add(eventDedupKey({
+      ...event,
+      evidenceToken: event.retractsEvidenceToken,
+      curationJobId: event.retractsCurationJobId,
+    }))
+  }
+
   const counters = {
     confirmed: 0,
     contradicted: 0,
@@ -84,11 +107,18 @@ export function foldBundleTrust(
   let status: BundleStatus = 'candidate'
   let statusBuildOrdinal = opts.createdAtOrdinal
   let latestClose: { buildOrdinal: number; closedAtOrdinal: number } | undefined
+  let lastConfirmedOrdinal: number | undefined
 
-  for (const event of dedupeEvents(events)) {
+  for (const event of dedupedEvents) {
+    if (event.type === 'retracted' || retractedEventKeys.has(eventDedupKey(event))) continue
+
     switch (event.type) {
       case 'confirmed':
         counters.confirmed += 1
+        lastConfirmedOrdinal = Math.max(
+          lastConfirmedOrdinal ?? event.buildOrdinal,
+          event.buildOrdinal,
+        )
         break
       case 'contradicted':
         counters.contradicted += 1
@@ -152,5 +182,6 @@ export function foldBundleTrust(
           openedAtOrdinal: opts.createdAtOrdinal,
           closedAtOrdinal: latestClose.closedAtOrdinal,
         },
+    lastConfirmedOrdinal: lastConfirmedOrdinal ?? opts.createdAtOrdinal,
   }
 }
