@@ -292,8 +292,15 @@ export type {
   DrainReport,
   WriterPassReport,
 } from './curator/drain.js'
-export { purgeRecord } from './purge.js'
+export {
+  guardPurgeReceipt,
+  PURGE_RECEIPT_SCHEMA_VERSION,
+  PurgeReceiptSchema,
+  purgeReceiptSchema,
+  purgeRecord,
+} from './purge.js'
 export type {
+  PurgeReceipt,
   PurgeRecordInput,
   PurgeRecordOutcome,
 } from './purge.js'
