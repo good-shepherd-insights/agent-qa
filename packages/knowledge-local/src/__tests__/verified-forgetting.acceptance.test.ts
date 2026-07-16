@@ -1,10 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { SQLInputValue } from 'node:sqlite'
 
 import {
   BundleOutcomeEventSchema,
   asEvidenceToken,
+  recordGraphNode,
   type Anchor,
   type BundleOutcomeEvent,
   type Delta,
@@ -66,20 +68,27 @@ vi.mock('../embedder-acquire.js', async (importOriginal) => {
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  INDEX_SCHEMA_VERSION,
   artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
+  deriveBundleTrust,
+  loadBundle,
   openIndexReaderConnection,
+  openIndexWriter,
   openKnowledgeReader,
   publishBundle,
   rebuildIndex,
+  resolveActiveProfile,
   retrieve,
+  vecTableName,
   type AuthoredCheckpoint,
   type BuildCurationCandidateAddressFieldsInput,
   type BundleStoreConfig,
   type CommitCurationDependencies,
   type CommitCurationJob,
   type PublishBundleOutcome,
+  type RetrieveOptions,
   type RetrievalQueryInput,
 } from '../index.js'
 import {
@@ -327,6 +336,7 @@ function dependencies(
 async function query(
   input: RetrievalQueryInput,
   asOfBuild: number,
+  options: Partial<RetrieveOptions> = {},
 ): Promise<Awaited<ReturnType<typeof retrieve>>> {
   const reader = openKnowledgeReader(knowledgeRoot)
   try {
@@ -334,6 +344,7 @@ async function query(
       n: 16,
       product: PRODUCT,
       asOfBuild,
+      ...options,
     })
   } finally {
     reader.close()
@@ -373,6 +384,79 @@ function ids(entries: Awaited<ReturnType<typeof retrieve>>): string[] {
   return entries.map(({ id }) => String(id))
 }
 
+interface RecallProjectionState {
+  status: string
+  embedStatus: string
+  embeddingPresent: boolean
+  ftsRows: number
+  anchorRows: number
+  graphRows: number
+  vecRows: number
+}
+
+function recallProjectionState(triggerId: RecordId): RecallProjectionState {
+  const connection = openIndexReaderConnection(knowledgeRoot)
+  try {
+    const record = connection.db.prepare(`
+      SELECT record_rowid, status, embed_status, embedding
+      FROM records
+      WHERE bundle_id = ?
+    `).get(triggerId)
+    if (record === undefined) throw new Error(`missing trigger record ${triggerId}`)
+    const recordRowid = Number(record.record_rowid)
+    const recordNodeId = recordGraphNode('caution', triggerId).nodeId
+    const count = (sql: string, ...binds: SQLInputValue[]): number =>
+      Number(connection.db.prepare(sql).get(...binds)?.count ?? 0)
+    const vecRows = connection.vec === 'vec0'
+      ? count(
+          `SELECT COUNT(*) AS count FROM ${vecTableName(resolveActiveProfile(connection.db))}
+           WHERE record_rowid = ?`,
+          BigInt(recordRowid),
+        )
+      : 0
+    return {
+      status: String(record.status),
+      embedStatus: String(record.embed_status),
+      embeddingPresent: record.embedding !== null && record.embedding !== undefined,
+      ftsRows: count('SELECT COUNT(*) AS count FROM fts_records WHERE rowid = ?', recordRowid),
+      anchorRows: count(
+        'SELECT COUNT(*) AS count FROM anchors WHERE record_rowid = ?',
+        recordRowid,
+      ),
+      graphRows: count(
+        `SELECT COUNT(*) AS count
+         FROM graph_edges
+         WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?`,
+        recordRowid,
+        recordNodeId,
+        recordNodeId,
+      ),
+      vecRows,
+    }
+  } finally {
+    connection.db.close()
+  }
+}
+
+function expectStructurallyForgotten(triggerId: RecordId): void {
+  expect(recallProjectionState(triggerId)).toEqual({
+    status: 'deprecated',
+    embedStatus: 'suppressed',
+    embeddingPresent: false,
+    ftsRows: 0,
+    anchorRows: 3,
+    graphRows: 0,
+    vecRows: 0,
+  })
+}
+
+async function expectZeroRecall(triggerId: RecordId, asOfBuild: number): Promise<void> {
+  const results = await recallByServingLegs(asOfBuild)
+  expect(ids(results.fts)).not.toContain(triggerId)
+  expect(ids(results.dense)).not.toContain(triggerId)
+  expect(ids(results.graph)).not.toContain(triggerId)
+}
+
 describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
   it('proves positive then zero recall across FTS, dense, graph, renderings, and anchors', async () => {
     const corpus = publishCorpus()
@@ -405,10 +489,7 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
       rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
     ).resolves.toMatchObject({ scanIssues: [], pendingEmbeddings: 0 })
 
-    const after = await recallByServingLegs(DEPRECATION_ORDINAL + 1)
-    expect(ids(after.fts)).not.toContain(corpus.trigger.id)
-    expect(ids(after.dense)).not.toContain(corpus.trigger.id)
-    expect(ids(after.graph)).not.toContain(corpus.trigger.id)
+    await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
     expect(
       neighborSituatingLines(corpus).every((line) =>
         !line.includes(denseHarness.triggerToken)),
@@ -423,5 +504,162 @@ describe('verified forgetting acceptance (DCAY-04 D-12)', () => {
     )
     expect(ids(anchorResults)).not.toContain(corpus.trigger.id)
     expect(anchorResults.every(({ status }) => status === 'active')).toBe(true)
+  })
+
+  it('preserves audit truth and prevents resurrection across full rebuild and maintenance', async () => {
+    const corpus = publishCorpus()
+    await rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder })
+    const job = deprecationJob('audit-and-rebuild')
+    expect(
+      commitCurationDelta(
+        dependencies(),
+        job,
+        deprecationCheckpoint(corpus.trigger.id, job),
+      ),
+    ).toMatchObject({ kind: 'applied', deltaKind: 'Deprecate' })
+    await rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder })
+
+    expectStructurallyForgotten(corpus.trigger.id)
+    const loaded = loadBundle(corpus.trigger.dir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected canonical trigger bundle')
+    expect(deriveBundleTrust(loaded.bundle)).toMatchObject({
+      status: 'deprecated',
+      validity: {
+        openedAtOrdinal: TRIGGER_ORDINAL,
+      },
+    })
+
+    const audit = await query(
+      { intent: '', anchors: [TRIGGER_ANCHOR] },
+      DEPRECATION_ORDINAL + 1,
+      {
+        includeSuperseded: true,
+        asOfRange: { lo: TRIGGER_ORDINAL, hi: DEPRECATION_ORDINAL },
+      },
+    )
+    expect(audit.find(({ id }) => id === corpus.trigger.id)).toMatchObject({
+      id: corpus.trigger.id,
+      status: 'deprecated',
+      validity: 'current',
+      audit: {
+        status: 'deprecated',
+        openedAtOrdinal: TRIGGER_ORDINAL,
+        closedAtOrdinal: null,
+      },
+    })
+
+    const reset = openIndexWriter(knowledgeRoot)
+    try {
+      reset.db.prepare(`
+        UPDATE meta
+        SET v = ?
+        WHERE k = 'index_schema_version'
+      `).run(String(INDEX_SCHEMA_VERSION - 1))
+    } finally {
+      reset.close()
+    }
+
+    await expect(
+      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+    ).resolves.toMatchObject({
+      projected: 3,
+      scanIssues: [],
+      pendingEmbeddings: 0,
+      maintenanceRemaining: false,
+    })
+    await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
+    expectStructurallyForgotten(corpus.trigger.id)
+    expect(
+      neighborSituatingLines(corpus).every((line) =>
+        !line.includes(denseHarness.triggerToken)),
+    ).toBe(true)
+
+    // rebuildIndex always runs pending-vector backfill and vec reconciliation after projection.
+    await expect(
+      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+    ).resolves.toMatchObject({
+      projected: 0,
+      backfilled: 0,
+      scanIssues: [],
+      pendingEmbeddings: 0,
+      maintenanceRemaining: false,
+    })
+    expectStructurallyForgotten(corpus.trigger.id)
+  })
+
+  it('closes the crash gap before the writer pass and then physically removes stale rows', async () => {
+    const corpus = publishCorpus()
+    await rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder })
+    const before = recallProjectionState(corpus.trigger.id)
+    expect(before).toMatchObject({
+      status: 'active',
+      embedStatus: 'present',
+      embeddingPresent: true,
+      ftsRows: 1,
+      anchorRows: 3,
+      vecRows: 1,
+    })
+    expect(before.graphRows).toBeGreaterThan(0)
+
+    const job = deprecationJob('gap-window')
+    expect(() =>
+      commitCurationDelta(
+        dependencies({
+          afterMutableReplacement(targetRelPath) {
+            if (targetRelPath === 'manifest.json') {
+              throw new Error('verified-forgetting-crash-before-index-projection')
+            }
+          },
+        }),
+        job,
+        deprecationCheckpoint(corpus.trigger.id, job),
+      )).toThrowError('verified-forgetting-crash-before-index-projection')
+
+    const canonical = loadBundle(corpus.trigger.dir)
+    expect(canonical.kind).toBe('loaded')
+    if (canonical.kind !== 'loaded') throw new Error('expected crash-durable trigger bundle')
+    expect(deriveBundleTrust(canonical.bundle).status).toBe('deprecated')
+    expect(recallProjectionState(corpus.trigger.id)).toMatchObject({
+      status: 'active',
+      ftsRows: 1,
+      embeddingPresent: true,
+    })
+    await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
+
+    // Model the metadata-first half of a lagging writer: recall rows remain stale, but the shared
+    // SQL status predicate must close every indexed leg before the physical scrub catches up.
+    const metadataOnly = openIndexWriter(knowledgeRoot)
+    try {
+      metadataOnly.db.prepare(`
+        UPDATE records
+        SET status = 'deprecated'
+        WHERE bundle_id = ?
+      `).run(corpus.trigger.id)
+    } finally {
+      metadataOnly.close()
+    }
+    const staleRows = recallProjectionState(corpus.trigger.id)
+    expect(staleRows).toMatchObject({
+      status: 'deprecated',
+      embedStatus: 'present',
+      embeddingPresent: true,
+      ftsRows: 1,
+      anchorRows: 3,
+      vecRows: 1,
+    })
+    expect(staleRows.graphRows).toBeGreaterThan(0)
+    await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
+
+    await expect(
+      rebuildIndex({ knowledgeRoot, embedder: denseHarness.embedder }),
+    ).resolves.toMatchObject({
+      projected: 1,
+      scanIssues: [],
+      pendingEmbeddings: 0,
+      maintenanceRemaining: false,
+    })
+    expectStructurallyForgotten(corpus.trigger.id)
+    await expectZeroRecall(corpus.trigger.id, DEPRECATION_ORDINAL + 1)
   })
 })
