@@ -61,6 +61,50 @@ describe('measurement line schemas (D-03)', () => {
 })
 
 describe('foldMeasurements deterministic distribution (D-03)', () => {
+  it('seeds EWMA from the baseline and applies the exact one-line recurrence', () => {
+    const empty = foldMeasurements(baseline, [])
+    const oneLine = foldMeasurements(baseline, [observation(20, 0)])
+
+    expect(empty).toEqual({
+      n: 0,
+      mean: 0,
+      sigma: 0,
+      ewma: baseline.mu0,
+      p50: undefined,
+      p95: undefined,
+      bands: [],
+      cusumPos: 0,
+      cusumNeg: 0,
+    })
+    expect(oneLine.ewma).toBe(12)
+    expect(oneLine.n).toBe(1)
+    expect(oneLine.mean).toBe(20)
+  })
+
+  it('keeps EWMA order-sensitive while Welford statistics and quantiles are not', () => {
+    const lines = [20, 0].map((value, index) => observation(value, index))
+    const forward = foldMeasurements(baseline, lines)
+    const reverse = foldMeasurements(baseline, [lines[1]!, lines[0]!])
+
+    expect(forward.ewma).toBeCloseTo(9.6, 12)
+    expect(reverse.ewma).toBeCloseTo(10.4, 12)
+    expect({
+      n: forward.n,
+      mean: forward.mean,
+      sigma: forward.sigma,
+      p50: forward.p50,
+      p95: forward.p95,
+      bands: forward.bands,
+    }).toEqual({
+      n: reverse.n,
+      mean: reverse.mean,
+      sigma: reverse.sigma,
+      p50: reverse.p50,
+      p95: reverse.p95,
+      bands: reverse.bands,
+    })
+  })
+
   it('derives population Welford sigma and nearest-rank p50/p95 in one fold', () => {
     const lines = [2, 4, 4, 4, 5, 5].map((value, index) => observation(value, index))
     const state = foldMeasurements(baseline, lines)
@@ -167,6 +211,20 @@ describe('D-04 locked measurement drift decision tree', () => {
       decision: 'widen',
       reason: 'below-min-n',
     })
+  })
+
+  it('does not let descriptive EWMA influence drift disposition', () => {
+    const observations = Array.from({ length: MEASUREMENT_MIN_N }, (_, index) =>
+      observation(30, index),
+    )
+    const state = foldMeasurements(baseline, observations)
+    const verdict = decideMeasurementDrift({ baseline, state })
+
+    expect(Number.isFinite(state.ewma)).toBe(true)
+    expect(decideMeasurementDrift({
+      baseline,
+      state: { ...state, ewma: state.ewma - 10_000 },
+    })).toEqual(verdict)
   })
 
   it('shrinks low-n variance toward the exact CV pseudo-count prior', () => {
