@@ -17,7 +17,7 @@ import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -39,6 +39,9 @@ import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candi
 import {
   THRASH_MAX_SUPERSESSIONS,
   THRASH_WINDOW_BUILDS,
+  SCOPE_BURST_THRESHOLD,
+  SCOPE_BURST_WINDOW_BUILDS,
+  foldFirstSeenAnchorsByScope,
   foldSupersessionLineage,
   scanCanonicalBundles,
 } from '../lineage-fold.js'
@@ -285,6 +288,131 @@ function loadById(id: RecordId): LoadedBundle {
   return bundle
 }
 
+function burstAnchors(index: number, route = '/catalog'): Anchor[] {
+  return [
+    { t: 'el', role: 'button', name: `Catalog item ${index} action` },
+    { t: 'page', route },
+  ]
+}
+
+function burstDraft(index: number, route = '/catalog'): BundleDraft {
+  return {
+    kind: 'fact',
+    subtype: 'selector',
+    anchors: burstAnchors(index, route),
+    scope,
+    summary: `Catalog item ${index} selector`,
+    body: `Catalog item ${index} was first observed on ${route}.`,
+    distilledEvidenceRef: {
+      id: `burst-item-${index}`,
+      sha: (10_000 + index).toString(16).padStart(64, '0'),
+    },
+    originStage: 'run-curation',
+  }
+}
+
+function publishFirstSeen(index: number, buildOrdinal: number, route = '/catalog') {
+  const itemAnchors = burstAnchors(index, route)
+  const published = publishBundle(storeConfig(), {
+    draft: burstDraft(index, route),
+    discriminant: {
+      kind: 'fact',
+      subtype: 'selector',
+      elementRef: { role: 'button', name: `Catalog item ${index} action` },
+    },
+    originClass: 'agent-verified',
+    createdAtOrdinal: buildOrdinal,
+    screenStates: [],
+    initialEvents: [
+      {
+        type: 'confirmed',
+        evidenceToken: asEvidenceToken(`first-seen-${route}-${index}`),
+        curationJobId: `first-seen-job-${route}-${index}`,
+        buildOrdinal,
+        origin: 'agent-verified',
+      },
+    ],
+    relations: [],
+    provenance: { mode: 'standalone', sourceDescription: 'scope burst fixture' },
+    artifacts: [],
+  })
+  if (published.kind !== 'published') {
+    throw new Error(`expected first-seen publish, got ${published.kind}`)
+  }
+  expect(itemAnchors).toEqual(burstDraft(index, route).anchors)
+  return published
+}
+
+function seedFirstSeen(count: number, route = '/catalog', indexOffset = 0): RecordId[] {
+  return Array.from({ length: count }, (_, offset) =>
+    publishFirstSeen(indexOffset + offset + 1, 1 + Math.floor(offset / 2), route).id,
+  )
+}
+
+function burstJob(index: number, buildOrdinal: number): CommitCurationJob {
+  const itemDraft = burstDraft(index)
+  const fields = candidateAddressFixture({
+    schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+    sourceRunId: `run-burst-${index}`,
+    scope,
+    buildOrdinal,
+    executionContext: 'local-interactive',
+    secretFlagged: false,
+    injectionFlagged: false,
+    kind: 'fact',
+    subtype: 'selector',
+    anchors: itemDraft.anchors,
+    summarySeed: itemDraft.summary,
+    bodySeed: itemDraft.body,
+    distilledObservations: [],
+    evidenceToken: `burst-evidence-${index}-${buildOrdinal}`,
+    attributingObservationId: `burst-observation-${index}-${buildOrdinal}`,
+    artifactInventory: [],
+    captureReceipt: artifactFreeCaptureReceipt(),
+    emittedAt: '2026-07-16T00:00:00.000Z',
+  })
+  const payload = { candidateId: candidateContentAddress(fields), ...fields }
+  const candidateDir = join(root, 'claimed', payload.candidateId)
+  const artifactsDir = join(candidateDir, 'artifacts')
+  mkdirSync(artifactsDir, { recursive: true })
+  return {
+    kind: 'claimed',
+    candidateId: payload.candidateId,
+    leaseId: 'burst-fixture-lease',
+    payload,
+    candidateDir,
+    payloadPath: join(candidateDir, 'payload.json'),
+    artifactsDir,
+    screenStates: [],
+  }
+}
+
+function addFirstSeen(
+  index: number,
+  buildOrdinal: number,
+  state = drainState(),
+) {
+  const claimed = burstJob(index, buildOrdinal)
+  const delta: Extract<Delta, { kind: 'Add' }> = {
+    kind: 'Add',
+    origin: 'agent',
+    scope,
+    citedIds: [],
+    bundle: burstDraft(index),
+    authorship: {
+      path: 'llm',
+      model: { id: 'curator-fixture' },
+      executionContext: 'local-interactive',
+    },
+  }
+  const authored = checkpoint(delta)
+  return {
+    claimed,
+    authored,
+    outcome: commitCurationDelta(deps(state), claimed, authored),
+  }
+}
+
 function tripThrashGuard() {
   const lineage = seedTwoSupersessions()
   const tripping = supersede(lineage.third.id, 4, 4)
@@ -406,5 +534,68 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
   it('keeps the expected trigger payload canonical and value-free', () => {
     const triggerKey = supersessionKey(anchors)
     expect(canonicalJson({ kind: 'thrash', triggerKey })).not.toContain('Checkout lineage')
+  })
+})
+
+describe('scope-windowed first-seen burst guard (DCAY-03)', () => {
+  it('folds nine first-seen page anchors above the provisional threshold and four below it', () => {
+    seedFirstSeen(9)
+    seedFirstSeen(4, '/small-catalog', 100)
+
+    const folded = foldFirstSeenAnchorsByScope(scanCanonicalBundles(knowledgeRoot), {
+      windowBuilds: SCOPE_BURST_WINDOW_BUILDS,
+      asOfBuildOrdinal: 5,
+    })
+    expect(SCOPE_BURST_THRESHOLD).toBe(8)
+    expect(folded.get('page:/catalog')).toMatchObject({
+      firstSeenCount: 9,
+      windowOpenOrdinal: 1,
+    })
+    expect(folded.get('page:/small-catalog')).toMatchObject({
+      firstSeenCount: 4,
+      windowOpenOrdinal: 1,
+    })
+  })
+
+  it('mints one scope/window unknown while the ninth Add stays a candidate', () => {
+    const seededRecordIds = seedFirstSeen(8)
+    const crossing = addFirstSeen(9, 5)
+    expect(crossing.outcome.kind).toBe('applied')
+    if (crossing.outcome.kind !== 'applied') throw new Error('expected applied burst Add')
+
+    const committedUnknowns = unknowns()
+    expect(committedUnknowns).toHaveLength(1)
+    const unknown = committedUnknowns[0]!
+    const evidenceRecordIds = [...seededRecordIds, crossing.outcome.bundleId].sort()
+    expect(unknown.frontmatter.anchors[0]?.normalized).toEqual({
+      t: 'flow',
+      name: 'scope-burst:page:/catalog:window:1',
+    })
+    expect(JSON.parse(unknown.body)).toEqual({
+      kind: 'scope-burst',
+      scopeKey: 'page:/catalog',
+      windowOpenOrdinal: 1,
+      windowCloseOrdinal: 5,
+      firstSeenCount: 9,
+      evidenceRecordIds,
+    })
+    expect(deriveBundleTrust(loadById(crossing.outcome.bundleId)).status).toBe('candidate')
+  })
+
+  it('runs the O(store) fold once per drain and mints no duplicate in the window or replay', () => {
+    seedFirstSeen(8)
+    const onCanonicalBundleScan = vi.fn()
+    const sharedDrain = {
+      supersedesSeenByAnchorKey: new Map<string, number>(),
+      onCanonicalBundleScan,
+    }
+    const crossing = addFirstSeen(9, 5, sharedDrain)
+    expect(crossing.outcome.kind).toBe('applied')
+    expect(addFirstSeen(10, 5, sharedDrain).outcome.kind).toBe('applied')
+    expect(onCanonicalBundleScan).toHaveBeenCalledTimes(1)
+    expect(unknowns()).toHaveLength(1)
+
+    expect(commitCurationDelta(deps(), crossing.claimed, crossing.authored).kind).toBe('noop')
+    expect(unknowns()).toHaveLength(1)
   })
 })
