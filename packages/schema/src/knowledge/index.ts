@@ -1,4 +1,9 @@
-export { BundleOutcomeEventSchema, dedupeEvents, eventDedupKey } from './outcome-event'
+export {
+  BundleOutcomeEventSchema,
+  dedupeEvents,
+  eventDedupKey,
+  survivingOutcomeEvents,
+} from './outcome-event'
 export type { BundleOutcomeEvent, OriginClass } from './outcome-event'
 export {
   EVIDENCE_INCOMPLETE_ALPHA_DISCOUNT,

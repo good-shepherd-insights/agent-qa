@@ -1,7 +1,7 @@
 import {
   asRecordId,
-  dedupeEvents,
   normalizeAnchor,
+  survivingOutcomeEvents,
   supersessionKey,
   type Anchor,
   type BundleOutcomeEvent,
@@ -159,7 +159,7 @@ export function foldSupersessionLineage(
       mutable.set(key, folded)
     }
 
-    for (const event of dedupeEvents(bundle.events)) {
+    for (const event of survivingOutcomeEvents(bundle.events)) {
       if (
         event.type !== 'superseded'
         || event.buildOrdinal < openOrdinal

@@ -274,7 +274,12 @@ export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch }
 export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
 
 // 374 D-03/BNDL-03: pure event vocabulary and derivations stay storage-neutral.
-export { BundleOutcomeEventSchema, dedupeEvents, eventDedupKey } from './knowledge/index'
+export {
+  BundleOutcomeEventSchema,
+  dedupeEvents,
+  eventDedupKey,
+  survivingOutcomeEvents,
+} from './knowledge/index'
 export type { BundleOutcomeEvent, OriginClass } from './knowledge/index'
 export {
   EVIDENCE_INCOMPLETE_ALPHA_DISCOUNT,
