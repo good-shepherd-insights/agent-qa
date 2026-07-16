@@ -27,6 +27,18 @@ function event(
   })
 }
 
+function retraction(
+  target: BundleOutcomeEvent,
+  token: string,
+  buildOrdinal = target.buildOrdinal + 1,
+): BundleOutcomeEvent {
+  return event('retracted', token, buildOrdinal, {
+    retractsEvidenceToken: target.evidenceToken,
+    retractsCurationJobId: target.curationJobId,
+    rollbackReceiptId: 'rollback-receipt-a',
+  })
+}
+
 function fold(
   events: readonly BundleOutcomeEvent[],
   originClass: OriginClass = 'user',
@@ -156,5 +168,88 @@ describe('foldBundleTrust lifecycle derivation', () => {
       openedAtOrdinal: 5,
       closedAtOrdinal: 20,
     })
+  })
+})
+
+describe('foldBundleTrust retraction restoration (379 D-15)', () => {
+  it('restores the pre-supersession status and reopens the validity window', () => {
+    const confirmed = event('confirmed', 'confirmed-at-5', 5)
+    const superseded = event('superseded', 'superseded-at-8', 8, {
+      byRecordId: 'record-next',
+    })
+    const windowClose = event('window-close', 'window-close-at-8', 8, {
+      closedAtOrdinal: 8,
+    })
+    const supersededState = fold([confirmed, superseded, windowClose])
+
+    expect(supersededState.status).toBe('superseded')
+    expect(supersededState.validity).toEqual({ openedAtOrdinal: 5, closedAtOrdinal: 8 })
+
+    const restoredState = fold([
+      confirmed,
+      superseded,
+      windowClose,
+      retraction(superseded, 'retract-superseded', 9),
+      retraction(windowClose, 'retract-window-close', 9),
+    ])
+
+    expect(restoredState.status).toBe('candidate')
+    expect(restoredState.validity).toEqual({ openedAtOrdinal: 5 })
+  })
+
+  it('restores counters, trust, and deprecated status through the same exclusion rule', () => {
+    const initialConfirmed = event('confirmed', 'initial-confirmed', 5)
+    const laterConfirmed = event('confirmed', 'later-confirmed', 7)
+    const deprecated = event('deprecated', 'deprecated-at-9', 9, { reason: 'obsolete' })
+    const before = fold([initialConfirmed, laterConfirmed, deprecated])
+    const after = fold([
+      initialConfirmed,
+      laterConfirmed,
+      deprecated,
+      retraction(laterConfirmed, 'retract-later-confirmed', 10),
+      retraction(deprecated, 'retract-deprecated', 10),
+    ])
+
+    expect(before.counters.confirmed).toBe(2)
+    expect(before.status).toBe('deprecated')
+    expect(before.trust).toBeCloseTo(5 / 6)
+    expect(after.counters.confirmed).toBe(1)
+    expect(after.status).toBe('candidate')
+    expect(after.trust).toBeCloseTo(4 / 5)
+  })
+
+  it('applies one retraction once when its append is replayed', () => {
+    const confirmed = event('confirmed', 'confirmed-to-retract', 5)
+    const retractConfirmed = retraction(confirmed, 'retract-confirmed', 6)
+
+    expect(fold([confirmed, retractConfirmed, retractConfirmed])).toEqual(
+      fold([confirmed, retractConfirmed]),
+    )
+    expect(fold([confirmed, retractConfirmed, retractConfirmed]).counters.confirmed).toBe(0)
+  })
+
+  it('tracks the latest surviving real confirmation and never a restoration append', () => {
+    const confirmedAt3 = event('confirmed', 'confirmed-at-3', 3)
+    const confirmedAt7 = event('confirmed', 'confirmed-at-7', 7)
+    const deprecated = event('deprecated', 'deprecated-at-9', 9, { reason: 'obsolete' })
+
+    expect(fold([confirmedAt3, confirmedAt7, deprecated])).toHaveProperty(
+      'lastConfirmedOrdinal',
+      7,
+    )
+    expect(fold([
+      confirmedAt3,
+      confirmedAt7,
+      deprecated,
+      retraction(confirmedAt7, 'retract-confirmed-at-7', 10),
+    ])).toHaveProperty('lastConfirmedOrdinal', 3)
+
+    const initialConfirmed = event('confirmed', 'initial-confirmed-only', 5)
+    expect(fold([initialConfirmed])).toHaveProperty('lastConfirmedOrdinal', 5)
+    expect(fold([
+      initialConfirmed,
+      deprecated,
+      retraction(deprecated, 'late-restoration-append', 100),
+    ])).toHaveProperty('lastConfirmedOrdinal', 5)
   })
 })
