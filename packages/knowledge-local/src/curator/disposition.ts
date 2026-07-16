@@ -554,6 +554,12 @@ function hasSharedAnchor(
     )
 }
 
+/**
+ * 379 D-22 / RATIFICATION A3: `renamed-from` is the concrete realization of
+ * memory.md §9.6's alias edge. It already round-trips from relations.json into
+ * graph_edges and is traversed by retrieval expansion, so no synonym edge type
+ * is added.
+ */
 function renameBridge(
   newAnchors: readonly Anchor[],
   victimAnchors: readonly Anchor[],
@@ -835,6 +841,7 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
                 type: 'proposed-supersession-of' as const,
                 targetId: dispositionInput.delta.victimId,
               },
+              ...(state.renameBridge === undefined ? [] : [state.renameBridge]),
             ],
           }
         : {}),
