@@ -28,10 +28,13 @@ import type {
   SkippedArtifact,
 } from '../artifact-copy.js'
 import {
+  appendMeasurementObservation,
   appendOutcomeEvent,
   appendOutcomeEventWithEnrichment,
   appendRelation,
+  writeMeasurementBaseline,
 } from '../bundle-append.js'
+import { readMeasurements } from '../bundle-read.js'
 import { renderBundleParts } from '../bundle-parts.js'
 import type { RenderBundlePartsInput } from '../bundle-parts.js'
 import { publishBundle } from '../bundle-publish.js'
@@ -174,7 +177,14 @@ function discriminant(
         return {
           kind: 'fact',
           subtype: 'measurement',
-          metricKey: canonicalJson(draft.anchors),
+          // A superseding validity window keeps the same anchor-level supersession key while its
+          // code-derived evidence token gives the replacement a distinct, replay-stable identity.
+          metricKey: canonicalJson({
+            anchors: draft.anchors,
+            ...(delta.kind === 'Supersede'
+              ? { validityWindowEvidenceToken: delta.evidenceToken }
+              : {}),
+          }),
         }
       }
       return { kind: 'fact', subtype: draft.subtype, elementRef: elementRef(draft.anchors) }
@@ -243,6 +253,26 @@ function evidenceMarkdown(job: CommitCurationJob): string {
 
 function observationOrdinal(job: CommitCurationJob): number | undefined {
   return job.payload.distilledObservations[0]?.observedAtOrdinal
+}
+
+function measurementSeedValue(job: CommitCurationJob): string | undefined {
+  if (job.payload.kind !== 'fact' || job.payload.subtype !== 'measurement') return undefined
+  const metric = job.payload.anchors.find(
+    (anchor): anchor is Extract<Anchor, { t: 'flow' }> =>
+      anchor.t === 'flow' && anchor.name.startsWith('measurement:'),
+  )
+  if (metric === undefined) return undefined
+  const prefix = `${metric.name.slice('measurement:'.length)} measured as `
+  return job.payload.summarySeed.startsWith(prefix)
+    ? job.payload.summarySeed.slice(prefix.length)
+    : undefined
+}
+
+function numericMeasurementSeed(job: CommitCurationJob): number | undefined {
+  const value = measurementSeedValue(job)
+  if (value === undefined) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
 }
 
 function confirmedEvent(
@@ -451,6 +481,7 @@ function markDone(deps: CommitCurationDependencies, job: CommitCurationJob): voi
 
 function appendFailure(
   outcome:
+    | ReturnType<typeof appendMeasurementObservation>
     | ReturnType<typeof appendOutcomeEvent>
     | ReturnType<typeof appendOutcomeEventWithEnrichment>
     | ReturnType<typeof appendRelation>,
@@ -460,6 +491,29 @@ function appendFailure(
   }
   if (outcome.kind === 'not-found') return { kind: 'failed', reason: 'append-failed' }
   return undefined
+}
+
+function appendMeasurementObservationOnce(
+  config: BundleStoreConfig,
+  victimId: RecordId,
+  observation: Parameters<typeof appendMeasurementObservation>[2],
+): ReturnType<typeof appendMeasurementObservation> {
+  const entry = enumerateBundleDirs(config.knowledgeRoot).find(
+    (candidate) => candidate.dir.endsWith(`/${victimId}`),
+  )
+  const existing = entry === undefined ? undefined : readMeasurements(entry.dir)
+  const consumed = existing?.observations.find(
+    (candidate) =>
+      candidate.evidenceToken === observation.evidenceToken
+      && candidate.curationJobId === observation.curationJobId,
+  )
+  if (consumed !== undefined) {
+    if (canonicalJson(consumed) !== canonicalJson(observation)) {
+      throw new TypeError('measurement observation identity resolved to different canonical bytes')
+    }
+    return { kind: 'duplicate' }
+  }
+  return appendMeasurementObservation(config, victimId, observation)
 }
 
 function mutationTarget(delta: Delta): RecordId | undefined {
@@ -555,6 +609,10 @@ export function commitCurationDelta(
       anchors: job.payload.anchors,
       scope: job.payload.scope,
       buildOrdinal: job.payload.buildOrdinal,
+      curationJobId: job.candidateId,
+      ...(measurementSeedValue(job) === undefined
+        ? {}
+        : { measurementValue: measurementSeedValue(job) }),
     },
     drainState: deps.drainState,
   })
@@ -646,6 +704,9 @@ export function commitCurationDelta(
     if (beforePublish !== undefined) return beforePublish
 
     let convertedConfirm = false
+    let confirmedEventDuplicate = false
+    let measurementAppendDuplicate = false
+    let freshlyPublished = false
     const config = storeConfig(deps, productKey, job.leaseId)
     if (publishInput !== undefined) {
       const published = (deps.operations?.publishBundle ?? publishBundle)(config, publishInput)
@@ -701,15 +762,73 @@ export function commitCurationDelta(
           appended.kind === 'duplicate'
           && (!('enriched' in appended) || appended.enriched === false)
         ) {
-          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-          markDone(deps, job)
-          return { kind: 'noop', reason: 'evidence-token-consumed' }
+          const hasDeterministicTail =
+            disposed.measurementAppend !== undefined
+            || (disposed.kind === 'apply' && disposed.bornActive === true)
+          if (!hasDeterministicTail) {
+            clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+            markDone(deps, job)
+            return { kind: 'noop', reason: 'evidence-token-consumed' }
+          }
+          confirmedEventDuplicate = true
         }
         convertedConfirm = true
       } else {
         bundleDir = published.dir
-        deps.hooks?.afterBundlePublished?.(published.id)
+        freshlyPublished = true
       }
+
+      const measurementValue = numericMeasurementSeed(job)
+      if (
+        draft?.kind === 'fact'
+        && draft.subtype === 'measurement'
+        && measurementValue !== undefined
+      ) {
+        const baselineFailure = appendFailure(
+          writeMeasurementBaseline(config, published.id, {
+            mu0: measurementValue,
+            sigma0: 0,
+            n0: 1,
+            openedAtOrdinal: job.payload.buildOrdinal,
+          }),
+        )
+        if (baselineFailure !== undefined) {
+          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+          markDone(deps, job)
+          return baselineFailure
+        }
+      }
+
+      if (disposed.kind === 'apply' && disposed.bornActive === true) {
+        if (delta.kind !== 'Supersede') {
+          throw new TypeError('born-active disposition requires a Supersede delta')
+        }
+        // §5.5.5 carve-out: a deterministic drift Supersede is exempt from candidate-gating
+        // and born active. Only drain-to-active disposition can set this D-02 marker.
+        const promotedToken = asEvidenceToken(
+          sha256hex(canonicalJson({ token: delta.evidenceToken, event: 'promoted' })),
+        )
+        const promotedFailure = appendFailure(
+          appendOutcomeEvent(config, published.id, {
+            type: 'promoted',
+            evidenceToken: promotedToken,
+            curationJobId: job.candidateId,
+            buildOrdinal: job.payload.buildOrdinal,
+          }),
+        )
+        if (promotedFailure !== undefined) {
+          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+          markDone(deps, job)
+          return promotedFailure
+        }
+        applyIndexDeltaForBundle({
+          knowledgeRoot: deps.knowledgeRoot,
+          bundleId: published.id,
+          lexicalInput: embedGate.redactedLexicalInput,
+          suppressDense: embedGate.suppressDense,
+        })
+      }
+      if (freshlyPublished) deps.hooks?.afterBundlePublished?.(published.id)
     } else if (delta.kind === 'Confirm') {
       const targetConfig = storeConfig(
         deps,
@@ -728,9 +847,12 @@ export function commitCurationDelta(
         return failure
       }
       if (appended.kind === 'duplicate') {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return { kind: 'noop', reason: 'evidence-token-consumed' }
+        if (disposed.measurementAppend === undefined) {
+          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+          markDone(deps, job)
+          return { kind: 'noop', reason: 'evidence-token-consumed' }
+        }
+        confirmedEventDuplicate = true
       }
     } else if (delta.kind === 'Deprecate') {
       const targetConfig = storeConfig(
@@ -751,6 +873,27 @@ export function commitCurationDelta(
         markDone(deps, job)
         return failure
       }
+    }
+
+    if (disposed.measurementAppend !== undefined) {
+      const { victimId, observation } = disposed.measurementAppend
+      const measurementConfig = storeConfig(
+        deps,
+        productForBundle(deps.knowledgeRoot, victimId, productKey),
+        job.leaseId,
+      )
+      const appended = appendMeasurementObservationOnce(
+        measurementConfig,
+        victimId,
+        observation,
+      )
+      const failure = appendFailure(appended)
+      if (failure !== undefined) {
+        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+        markDone(deps, job)
+        return failure
+      }
+      measurementAppendDuplicate = appended.kind === 'duplicate'
     }
 
     const canonicalConfig = storeConfig(
@@ -814,6 +957,10 @@ export function commitCurationDelta(
     deps.hooks?.afterIndexApplied?.(bundleId)
     clearCommitIntent(deps.knowledgeRoot, job.candidateId)
     markDone(deps, job)
+
+    if (confirmedEventDuplicate && measurementAppendDuplicate) {
+      return { kind: 'noop', reason: 'evidence-token-consumed' }
+    }
 
     const result: CommittedBundleResult = {
       bundleId,

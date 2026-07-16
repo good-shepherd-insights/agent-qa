@@ -213,7 +213,17 @@ function disposeMeasurementDrift(
     evidenceToken: delta.evidenceToken,
     curationJobId: input.candidate.curationJobId,
   }
-  const observations = [...measurements.observations, observation]
+  const consumed = measurements.observations.find(
+    (candidate) =>
+      candidate.evidenceToken === observation.evidenceToken
+      && candidate.curationJobId === observation.curationJobId,
+  )
+  if (consumed !== undefined && canonicalJson(consumed) !== canonicalJson(observation)) {
+    throw new TypeError('measurement observation identity resolved to different canonical bytes')
+  }
+  const observations = consumed === undefined
+    ? [...measurements.observations, observation]
+    : measurements.observations
   const decision = decideMeasurementDrift({
     baseline: measurements.baseline,
     state: foldMeasurements(measurements.baseline, observations),
