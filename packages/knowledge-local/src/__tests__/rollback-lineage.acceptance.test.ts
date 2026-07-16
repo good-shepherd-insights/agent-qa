@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import {
   asEvidenceToken,
@@ -32,6 +32,7 @@ import {
   loadBundle,
   publishBundle,
   rollbackCurationJob,
+  runKnowledgeGc,
   type AuthoredCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
@@ -546,5 +547,89 @@ describe('rollback-aware lineage acceptance (DCAY-03/DCAY-05)', () => {
       buildOrdinal: 9,
       reason: 'thrash-stable-window',
     }))
+  })
+})
+
+describe('rollback-aware GC recent-K acceptance (DCAY-05)', () => {
+  it('GC recent-K ignores a retracted newer supersession when choosing the retained generation', () => {
+    const generationA = publishGeneration(21, 1)
+    const generationB = publishGeneration(22, 3)
+    const survivingHead = publishGeneration(23, 9)
+    appendSupersession(
+      generationA.id,
+      generationB.id,
+      2,
+      'generation-a-older-surviving-supersession',
+    )
+    appendSupersession(
+      generationB.id,
+      survivingHead.id,
+      8,
+      'generation-b-newest-surviving-supersession',
+    )
+    const rolledBack = commitSupersede(
+      generationA.id,
+      24,
+      10,
+      'generation-a-rolled-back-newer-supersession',
+    )
+
+    expect(lineage(10, Number.MAX_SAFE_INTEGER)).toEqual({
+      supersededDepthInWindow: 3,
+      latestSupersessionOrdinal: 10,
+      chainRecordIds: [
+        generationA.id,
+        generationB.id,
+        survivingHead.id,
+        rolledBack.replacementId,
+      ].sort(),
+      windowOpenOrdinal: 1,
+    })
+
+    const controlKnowledgeRoot = join(root, 'control-agent-qa-knowledge')
+    cpSync(knowledgeRoot, controlKnowledgeRoot, { recursive: true })
+    const controlSummary = runKnowledgeGc({
+      knowledgeRoot: controlKnowledgeRoot,
+      horizon: { kind: 'none' },
+      retainK: 1,
+    })
+    const controlDir = (published: PublishedBundle) =>
+      join(controlKnowledgeRoot, relative(knowledgeRoot, published.dir))
+
+    expect(controlSummary).toEqual({
+      trimmedRecordIds: [generationB.id],
+      skipped: { unknownRef: 0, withinK: 1, userOrigin: 0, horizon: 0 },
+    })
+    expect(existsSync(controlDir(generationA))).toBe(true)
+    expect(existsSync(controlDir(generationB))).toBe(false)
+
+    const report = rollbackJob(rolledBack.claimed.candidateId, 11)
+    expect(report).toMatchObject({
+      inverseCount: 3,
+      restoredVictims: [generationA.id],
+      deprecatedBundles: [rolledBack.replacementId],
+    })
+    expect(retractedTargets(loadById(generationA.id), report.receiptId)).toHaveLength(2)
+    expect(lineage(11, Number.MAX_SAFE_INTEGER)).toEqual({
+      supersededDepthInWindow: 2,
+      latestSupersessionOrdinal: 8,
+      chainRecordIds: [generationA.id, generationB.id, survivingHead.id].sort(),
+      windowOpenOrdinal: 1,
+    })
+
+    const restoredSummary = runKnowledgeGc({
+      knowledgeRoot,
+      horizon: { kind: 'none' },
+      retainK: 1,
+    })
+
+    expect(restoredSummary).toEqual({
+      trimmedRecordIds: [generationA.id],
+      skipped: { unknownRef: 0, withinK: 1, userOrigin: 0, horizon: 0 },
+    })
+    expect(existsSync(generationA.dir)).toBe(false)
+    expect(existsSync(generationB.dir)).toBe(true)
+    expect(existsSync(survivingHead.dir)).toBe(true)
+    expect(existsSync(rolledBack.outcome.bundleDir)).toBe(true)
   })
 })
