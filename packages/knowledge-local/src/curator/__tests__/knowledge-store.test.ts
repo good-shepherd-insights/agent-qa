@@ -85,7 +85,7 @@ describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
       ? {
           kind,
           subtype: 'selector',
-          anchors: FACT_ANCHORS,
+          anchors: [...FACT_ANCHORS],
           scope: { tier: 'product', key: 'storefront' },
           summary: 'Checkout button selector',
           body: 'The checkout button was resolved and verified.',

@@ -5,6 +5,7 @@ import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import {
   canonicalJson,
   committedFileText,
+  evaluatePromotionGate,
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -14,6 +15,7 @@ import type {
   Delta,
   ExecutionContext,
   GuardrailPolicy,
+  PromotionGateHoldReason,
   RecordId,
   ScreenState,
 } from '@vostride/agent-qa-schema'
@@ -22,8 +24,10 @@ import {
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
 
+import { appendOutcomeEvent } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import type { LoadedBundle } from '../bundle-read.js'
+import type { BundleStoreConfig } from '../bundle-publish.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import { readCurrentEpoch } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
@@ -39,7 +43,12 @@ import type {
 } from '../queue/queue-payload.js'
 import { resolveDispositionProfile } from './author-contract.js'
 import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
-import { commitCurationDelta } from './commit.js'
+import {
+  applyIndexDeltaForBundle,
+  assemblePromotionGateInput,
+  commitCurationDelta,
+  derivePromotedEvidenceToken,
+} from './commit.js'
 import type {
   CommitCurationDependencies,
   CommitCurationJob,
@@ -64,14 +73,39 @@ export interface CreateLocalKnowledgeStoreConfig {
 }
 
 export class KnowledgeStoreNotImplementedError extends Error {
-  readonly operation: 'recordCanaryOutcome' | 'promote'
-  readonly ownerPhase: 379 | 380
+  readonly operation: 'recordCanaryOutcome'
+  readonly ownerPhase: 380
 
-  constructor(operation: 'recordCanaryOutcome' | 'promote', ownerPhase: 379 | 380) {
+  constructor(operation: 'recordCanaryOutcome', ownerPhase: 380) {
     super(`${operation} is not implemented; Phase ${ownerPhase} owns this KnowledgePort seam`)
     this.name = 'KnowledgeStoreNotImplementedError'
     this.operation = operation
     this.ownerPhase = ownerPhase
+  }
+}
+
+export type KnowledgePromotionErrorReason =
+  | PromotionGateHoldReason
+  | 'propose-only'
+  | 'not-found'
+  | 'egress-blocked'
+
+/** Typed refusal for the evidence-gated promote port; callers never receive a force path. */
+export class KnowledgePromotionError extends Error {
+  readonly candidateId: RecordId
+  readonly reason: KnowledgePromotionErrorReason
+  readonly detections?: readonly { label: string; detector: string }[]
+
+  constructor(
+    candidateId: RecordId,
+    reason: KnowledgePromotionErrorReason,
+    detections?: readonly { label: string; detector: string }[],
+  ) {
+    super(`knowledge promotion refused for ${candidateId}: ${reason}`)
+    this.name = 'KnowledgePromotionError'
+    this.candidateId = candidateId
+    this.reason = reason
+    if (detections !== undefined) this.detections = detections
   }
 }
 
@@ -88,6 +122,8 @@ export class KnowledgeCommitError extends Error {
 interface ResolvedTruth {
   id: RecordId
   bundle: LoadedBundle
+  bundleDir: string
+  product: string
   observedStatus: string
   observedOrdinal: number
 }
@@ -100,6 +136,8 @@ function resolveTruth(knowledgeRoot: string, id: RecordId): ResolvedTruth | unde
     return {
       id,
       bundle: loaded.bundle,
+      bundleDir: entry.dir,
+      product: entry.product,
       observedStatus: trust.status,
       observedOrdinal: trust.validity.closedAtOrdinal ?? trust.validity.openedAtOrdinal,
     }
@@ -238,6 +276,16 @@ function completed(outcome: CommitCurationOutcome): boolean {
     || (outcome.kind === 'withheld' && outcome.reason === 'injection-restricted')
 }
 
+function promotionBuildOrdinal(
+  config: CreateLocalKnowledgeStoreConfig,
+  bundle: LoadedBundle,
+): number {
+  return config.sourceBuildOrdinal ?? Math.max(
+    bundle.frontmatter.createdAtOrdinal,
+    ...bundle.events.map(({ buildOrdinal }) => buildOrdinal),
+  )
+}
+
 /**
  * Realizes the four-method agent port over one mutation function. D-08 propose-only is a
  * disposition profile inside commitCurationDelta, never a second mutation path. Because the port
@@ -285,8 +333,55 @@ export function createLocalKnowledgeStore(
     async recordCanaryOutcome(_outcome: CanaryOutcome): Promise<void> {
       throw new KnowledgeStoreNotImplementedError('recordCanaryOutcome', 380)
     },
-    async promote(_candidateId: RecordId): Promise<void> {
-      throw new KnowledgeStoreNotImplementedError('promote', 379)
+    async promote(candidateId: RecordId): Promise<void> {
+      /**
+       * D-17: later callers add evidence first, then ask this same gate to judge it. The
+       * execution posture is deliberately resolved at call time, and no override input exists.
+       */
+      if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
+        throw new KnowledgePromotionError(candidateId, 'propose-only')
+      }
+
+      const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+      if (resolved === undefined) {
+        throw new KnowledgePromotionError(candidateId, 'not-found')
+      }
+      if (resolved.observedStatus === 'active') {
+        // Heal append-before-projection retries while preserving the already-active noop contract.
+        applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
+        return
+      }
+
+      const gate = evaluatePromotionGate(assemblePromotionGateInput({
+        knowledgeRoot: config.knowledgeRoot,
+        bundleDir: resolved.bundleDir,
+        bundle: resolved.bundle,
+      }))
+      if (gate.verdict === 'hold') {
+        throw new KnowledgePromotionError(candidateId, gate.reason)
+      }
+
+      const appendConfig: BundleStoreConfig = {
+        knowledgeRoot: config.knowledgeRoot,
+        productKey: resolved.product,
+        auditBaseDir: config.auditBaseDir,
+        commitArtifacts: 'none',
+        writerLeaseId: 'knowledge-port',
+        policy,
+      }
+      const appended = appendOutcomeEvent(appendConfig, candidateId, {
+        type: 'promoted',
+        evidenceToken: derivePromotedEvidenceToken(candidateId),
+        curationJobId: `promote:${candidateId}`,
+        buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
+      })
+      if (appended.kind === 'egress-blocked') {
+        throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
+      }
+      if (appended.kind === 'not-found') {
+        throw new KnowledgePromotionError(candidateId, appended.kind)
+      }
+      applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
     },
   }
 }

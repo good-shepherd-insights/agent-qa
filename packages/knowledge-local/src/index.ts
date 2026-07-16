@@ -307,9 +307,13 @@ export type {
 export {
   createLocalKnowledgeStore,
   KnowledgeCommitError,
+  KnowledgePromotionError,
   KnowledgeStoreNotImplementedError,
 } from './curator/knowledge-store.js'
-export type { CreateLocalKnowledgeStoreConfig } from './curator/knowledge-store.js'
+export type {
+  CreateLocalKnowledgeStoreConfig,
+  KnowledgePromotionErrorReason,
+} from './curator/knowledge-store.js'
 
 export type LocalKnowledgeStore = KnowledgePort
 export type LocalKnowledgeReader = KnowledgeHintReader
