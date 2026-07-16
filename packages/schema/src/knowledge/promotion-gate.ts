@@ -1,5 +1,6 @@
 import type { BundleKind, FactSubtype } from '../delta/envelope'
 import type { Anchor } from '../identity/anchor'
+import type { EvidenceToken } from '../ids/record-id'
 import type { DistilledObservation } from './distilled-observation'
 import type { OriginClass } from './outcome-event'
 import type { BundleStatus } from './trust-fold'
@@ -18,6 +19,8 @@ export interface PromotionGateInput {
   needsEnrichment: boolean
   evidenceIncomplete: boolean
   distilledObservations: readonly PromotionGateObservation[]
+  /** V4: surviving code-derived confirmation identities from canonical outcome truth. */
+  confirmedOutcomeEvidenceTokens: readonly EvidenceToken[]
   hasUserDeprecateInLineage: boolean
   memoryOffForAnchorGroup: boolean
 }
@@ -29,6 +32,7 @@ export type PromotionGateHoldReason =
   | 'withheld'
   | 'needs-enrichment'
   | 'evidence-incomplete'
+  | 'no-confirmed-evidence'
   | 'no-element-observation'
   | 'missing-root-cause'
   | 'memory-off-anchor'
@@ -57,9 +61,10 @@ function hasMatchingElementObservation(input: PromotionGateInput): boolean {
   const anchor = promotionElementAnchor(input)
   if (anchor?.ordinal === undefined) return false
   const naturalKey = `${anchor.role}:${anchor.name}:${anchor.ordinal}`
-  return input.distilledObservations.some(
-    (observation) => observation.element?.naturalKey === naturalKey,
+  const elements = input.distilledObservations.flatMap((observation) =>
+    observation.element === undefined ? [] : [observation.element],
   )
+  return elements.length === 1 && elements[0]?.naturalKey === naturalKey
 }
 
 /**
@@ -75,6 +80,9 @@ export function evaluatePromotionGate(input: PromotionGateInput): PromotionGateV
   if (input.withheld) return hold('withheld')
   if (input.needsEnrichment) return hold('needs-enrichment')
   if (input.evidenceIncomplete) return hold('evidence-incomplete')
+  if (!input.confirmedOutcomeEvidenceTokens.some((token) => token.length > 0)) {
+    return hold('no-confirmed-evidence')
+  }
   if (input.memoryOffForAnchorGroup) return hold('memory-off-anchor')
   if (input.hasUserDeprecateInLineage) return hold('user-deprecated')
 

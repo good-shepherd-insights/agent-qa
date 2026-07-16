@@ -293,6 +293,13 @@ export type {
   MeasurementBaseline,
   MeasurementObservation,
 } from './knowledge/index'
+export { evaluatePromotionGate } from './knowledge/index'
+export type {
+  PromotionGateHoldReason,
+  PromotionGateInput,
+  PromotionGateObservation,
+  PromotionGateVerdict,
+} from './knowledge/index'
 export {
   cautionRootCauseClassSchema,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,

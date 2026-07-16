@@ -663,17 +663,20 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     if (typedBundle.kind !== 'loaded') throw new Error('expected loaded typed caution')
     expect(deriveBundleTrust(typedBundle.bundle).status).toBe('active')
 
+    const untypedAnchors: Anchor[] = [
+      { t: 'error', message: 'checkout stalled without classification' },
+    ]
     const untypedJob = job(artifactFreeCaptureReceipt(), {
       kind: 'caution',
       subtype: undefined,
-      anchors: cautionAnchors,
+      anchors: untypedAnchors,
       summarySeed: cautionDraft.summary,
       bodySeed: cautionDraft.body,
       distilledObservations: [
         {
           schemaVersion: 1,
           step: { naturalKey: 'checkout', ordinal: 0 },
-          error: { naturalKey: 'timeout: checkout timed out' },
+          error: { naturalKey: 'timeout: checkout stalled without classification' },
           observedAtOrdinal: 43,
         },
       ],
@@ -681,7 +684,11 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       evidenceToken: 'untyped-caution-evidence',
       attributingObservationId: 'untyped-caution',
     })
-    const untypedDraft = { ...cautionDraft, summary: 'Untyped checkout timeout' }
+    const untypedDraft = {
+      ...cautionDraft,
+      anchors: untypedAnchors,
+      summary: 'Untyped checkout timeout',
+    }
     const untyped = commitCurationDelta(
       deps(),
       untypedJob,
@@ -712,8 +719,21 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       promotionHoldReason: 'withheld',
     })
 
+    const incompleteAnchors: Anchor[] = [
+      { t: 'el', role: 'button', name: 'Incomplete checkout', ordinal: 0 },
+      checkoutAnchors[1]!,
+      checkoutAnchors[2]!,
+    ]
     const incompleteJob = verifiedFactJob(
       {
+        anchors: incompleteAnchors,
+        distilledObservations: [{
+          schemaVersion: 1,
+          step: { naturalKey: 'incomplete-checkout', ordinal: 0 },
+          platform: 'web',
+          element: { naturalKey: 'button:incomplete checkout:0' },
+          observedAtOrdinal: 42,
+        }],
         attributingObservationId: 'promotion-incomplete',
       },
       passwordReceipt({
@@ -729,19 +749,25 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(commitCurationDelta(
       deps(),
       incompleteJob,
-      checkpoint(addDelta(verifiedFactDraft())),
+      checkpoint(addDelta(verifiedFactDraft({ anchors: incompleteAnchors }))),
     )).toMatchObject({
       kind: 'applied',
       promotionHoldReason: 'evidence-incomplete',
     })
 
+    const ambiguousAnchors: Anchor[] = [
+      { t: 'el', role: 'button', name: 'Ambiguous checkout', ordinal: 0 },
+      checkoutAnchors[1]!,
+      checkoutAnchors[2]!,
+    ]
     const ambiguousJob = verifiedFactJob({
+      anchors: ambiguousAnchors,
       distilledObservations: [
         {
           schemaVersion: 1,
           step: { naturalKey: 'checkout-click', ordinal: 0 },
           platform: 'web',
-          element: { naturalKey: 'button:checkout:0' },
+          element: { naturalKey: 'button:ambiguous checkout:0' },
           observedAtOrdinal: 42,
         },
         {
@@ -757,7 +783,10 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(commitCurationDelta(
       deps(),
       ambiguousJob,
-      checkpoint(addDelta(verifiedFactDraft({ summary: 'Ambiguous checkout control' }))),
+      checkpoint(addDelta(verifiedFactDraft({
+        anchors: ambiguousAnchors,
+        summary: 'Ambiguous checkout control',
+      }))),
     )).toMatchObject({
       kind: 'applied',
       promotionHoldReason: 'no-element-observation',
@@ -787,11 +816,27 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       promotionHoldReason: 'kind-excluded',
     })
 
+    const enrichmentAnchors: Anchor[] = [
+      { t: 'el', role: 'button', name: 'Fallback checkout', ordinal: 0 },
+      checkoutAnchors[1]!,
+      checkoutAnchors[2]!,
+    ]
     const enrichmentDraft = {
-      ...verifiedFactDraft({ summary: 'Fallback checkout control' }),
+      ...verifiedFactDraft({
+        anchors: enrichmentAnchors,
+        summary: 'Fallback checkout control',
+      }),
       needsEnrichment: true as const,
     }
     const enrichmentJob = verifiedFactJob({
+      anchors: enrichmentAnchors,
+      distilledObservations: [{
+        schemaVersion: 1,
+        step: { naturalKey: 'fallback-checkout', ordinal: 0 },
+        platform: 'web',
+        element: { naturalKey: 'button:fallback checkout:0' },
+        observedAtOrdinal: 42,
+      }],
       summarySeed: enrichmentDraft.summary,
       attributingObservationId: 'promotion-needs-enrichment',
     })

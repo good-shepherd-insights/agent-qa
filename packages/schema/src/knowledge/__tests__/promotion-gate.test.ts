@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
+import { asEvidenceToken } from '../../ids/record-id'
 import { distilledObservationSchema } from '../distilled-observation'
 import {
   evaluatePromotionGate,
@@ -30,6 +31,7 @@ function factInput(overrides: Partial<PromotionGateInput> = {}): PromotionGateIn
     distilledObservations: [
       { element: { naturalKey: 'button:submit order:0' } },
     ],
+    confirmedOutcomeEvidenceTokens: [asEvidenceToken('confirmed-submit-order')],
     hasUserDeprecateInLineage: false,
     memoryOffForAnchorGroup: false,
     ...overrides,
@@ -54,6 +56,7 @@ function cautionInput(overrides: Partial<PromotionGateInput> = {}): PromotionGat
         },
       },
     ],
+    confirmedOutcomeEvidenceTokens: [asEvidenceToken('confirmed-checkout-caution')],
     hasUserDeprecateInLineage: false,
     memoryOffForAnchorGroup: false,
     ...overrides,
@@ -77,7 +80,7 @@ describe('evaluatePromotionGate fact evidence (D-16/D-18)', () => {
   })
 
   it('holds a fact until a surviving confirmed outcome supplies V4 evidence', () => {
-    expect(evaluatePromotionGate(factInput())).toEqual({
+    expect(evaluatePromotionGate(factInput({ confirmedOutcomeEvidenceTokens: [] }))).toEqual({
       verdict: 'hold',
       reason: 'no-confirmed-evidence',
     })

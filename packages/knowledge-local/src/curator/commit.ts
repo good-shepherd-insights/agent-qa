@@ -1,13 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
   asEvidenceToken,
   canonicalJson,
   computeStepSequenceSignature,
+  dedupeEvents,
+  evaluatePromotionGate,
+  eventDedupKey,
+  guardDistilledObservation,
   renderEmbeddingInput,
   sha256hex,
+  supersessionKey,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
@@ -16,7 +21,10 @@ import type {
   BundleOutcomeEvent,
   BundleRelation,
   Delta,
+  EvidenceToken,
   GuardrailPolicy,
+  PromotionGateHoldReason,
+  PromotionGateInput,
   RecordId,
   ScreenState,
 } from '@vostride/agent-qa-schema'
@@ -34,7 +42,8 @@ import {
   appendRelation,
   writeMeasurementBaseline,
 } from '../bundle-append.js'
-import { readMeasurements } from '../bundle-read.js'
+import { deriveBundleTrust, loadBundle, readMeasurements } from '../bundle-read.js'
+import type { LoadedBundle } from '../bundle-read.js'
 import { renderBundleParts } from '../bundle-parts.js'
 import type { RenderBundlePartsInput } from '../bundle-parts.js'
 import { publishBundle } from '../bundle-publish.js'
@@ -60,6 +69,7 @@ import type {
 } from './disposition.js'
 import { assessEmbeddingInput } from './embed-gate.js'
 import { assertRestrictedFallbackDelta } from './fallback.js'
+import { scanCanonicalBundles } from './lineage-fold.js'
 
 type CheckpointDraft = BundleDraft & { needsEnrichment?: true }
 
@@ -96,6 +106,8 @@ interface CommittedBundleResult {
   bundleId: RecordId
   bundleDir: string
   deltaKind: Delta['kind']
+  /** D-16 exception-bucket observability; absent when the gate promotes or never runs. */
+  promotionHoldReason?: PromotionGateHoldReason
 }
 
 export type CommitCurationOutcome =
@@ -108,6 +120,7 @@ export type CommitCurationOutcome =
       detections?: readonly { label: string; detector: string }[]
       bundleId?: RecordId
       bundleDir?: string
+      promotionHoldReason?: PromotionGateHoldReason
     }
   | { kind: 'abandoned-stale-epoch'; observedEpoch: number }
   | {
@@ -136,6 +149,103 @@ export function applyIndexDeltaForBundle(input: ApplyIndexDeltaForBundleInput): 
 /** Recovery alias deliberately delegates to the same projection unit as the live tail. */
 export function deriveIndexRowFromBundle(input: ApplyIndexDeltaForBundleInput): void {
   projectBundleIndexRow(input)
+}
+
+function promotionObservations(
+  bundleDir: string,
+): PromotionGateInput['distilledObservations'] {
+  const file = join(bundleDir, 'observations.jsonl')
+  if (!existsSync(file)) return []
+  const text = readFileSync(file, 'utf8')
+  if (text === '') return []
+  if (!text.endsWith('\n')) {
+    throw new SyntaxError('observations.jsonl must end with a newline')
+  }
+  return text
+    .slice(0, -1)
+    .split('\n')
+    .map((line) => guardDistilledObservation(JSON.parse(line)))
+}
+
+function survivingOutcomeEvents(
+  events: readonly BundleOutcomeEvent[],
+): BundleOutcomeEvent[] {
+  const deduped = dedupeEvents(events)
+  const retractedKeys = new Set<string>()
+  for (const event of deduped) {
+    if (event.type !== 'retracted') continue
+    retractedKeys.add(eventDedupKey({
+      ...event,
+      evidenceToken: event.retractsEvidenceToken,
+      curationJobId: event.retractsCurationJobId,
+    }))
+  }
+  return deduped.filter(
+    (event) => event.type !== 'retracted' && !retractedKeys.has(eventDedupKey(event)),
+  )
+}
+
+function memoryOffForBundle(
+  knowledgeRoot: string,
+  bundle: LoadedBundle,
+): boolean {
+  const anchors = bundle.frontmatter.anchors.map(({ normalized }) => normalized)
+  const markerPrefix = `thrash:${supersessionKey(anchors)}:window:`
+  const scope = canonicalJson(bundle.frontmatter.scope)
+  return scanCanonicalBundles(knowledgeRoot).some((candidate) =>
+    candidate.kind === 'unknown'
+    && candidate.status !== 'deprecated'
+    && candidate.status !== 'superseded'
+    && canonicalJson(candidate.scope) === scope
+    && candidate.anchors[0]?.t === 'flow'
+    && candidate.anchors[0].name.startsWith(markerPrefix),
+  )
+}
+
+/**
+ * D-16/D-17 one durable evidence assembly for both admission and later promote().
+ * The pure schema gate remains the only verdict authority; this storage-side view
+ * performs strict loading and folds current canonical truth without index authority.
+ */
+export function assemblePromotionGateInput(input: {
+  knowledgeRoot: string
+  bundleDir: string
+  bundle: LoadedBundle
+}): PromotionGateInput {
+  const trust = deriveBundleTrust(input.bundle)
+  const survivingEvents = survivingOutcomeEvents(input.bundle.events)
+  const runLinkedProvenance = input.bundle.provenance.mode === 'run-linked'
+    ? input.bundle.provenance
+    : undefined
+  return {
+    kind: input.bundle.frontmatter.kind,
+    ...(input.bundle.frontmatter.subtype === undefined
+      ? {}
+      : { subtype: input.bundle.frontmatter.subtype }),
+    status: trust.status,
+    validityOpen: trust.validity.closedAtOrdinal === undefined,
+    anchors: input.bundle.frontmatter.anchors.map(({ normalized }) => normalized),
+    originClass: input.bundle.frontmatter.originClass,
+    withheld: runLinkedProvenance?.withheld === true,
+    needsEnrichment: runLinkedProvenance?.needsEnrichment === true,
+    evidenceIncomplete: input.bundle.manifest.evidenceIncomplete,
+    distilledObservations: promotionObservations(input.bundleDir),
+    confirmedOutcomeEvidenceTokens: survivingEvents.flatMap((event) =>
+      event.type === 'confirmed' ? [event.evidenceToken] : [],
+    ),
+    // The current lifecycle event shape does not carry Deprecate origin. Treating
+    // any surviving deprecation as sovereign is the fail-closed interpretation;
+    // a retracted deprecation is removed above before this evidence is assembled.
+    hasUserDeprecateInLineage: survivingEvents.some((event) => event.type === 'deprecated'),
+    memoryOffForAnchorGroup: memoryOffForBundle(input.knowledgeRoot, input.bundle),
+  }
+}
+
+/** Plan 379-06's replay-safe promoted-token composition, shared by both seams. */
+export function derivePromotedEvidenceToken(sourceToken: string): EvidenceToken {
+  return asEvidenceToken(
+    sha256hex(canonicalJson({ token: sourceToken, event: 'promoted' })),
+  )
 }
 
 function staleEpoch(
@@ -869,6 +979,8 @@ export function commitCurationDelta(
     let confirmedEventDuplicate = false
     let measurementAppendDuplicate = false
     let freshlyPublished = false
+    let promotionAppended = false
+    let promotionHoldReason: PromotionGateHoldReason | undefined
     const config = storeConfig(deps, productKey, job.leaseId)
     if (publishInput !== undefined) {
       const published = (deps.operations?.publishBundle ?? publishBundle)(config, publishInput)
@@ -927,6 +1039,10 @@ export function commitCurationDelta(
           const hasDeterministicTail =
             disposed.measurementAppend !== undefined
             || (disposed.kind === 'apply' && disposed.bornActive === true)
+            || (
+              deps.profile.mode === 'drain-to-active'
+              && !(disposed.kind === 'apply' && disposed.bornActive === true)
+            )
             || (disposed.unknownMintIntents?.length ?? 0) > 0
             || (disposed.unknownResolutionIntents?.length ?? 0) > 0
           if (!hasDeterministicTail) {
@@ -940,6 +1056,53 @@ export function commitCurationDelta(
       } else {
         bundleDir = published.dir
         freshlyPublished = true
+      }
+
+      if (
+        deps.profile.mode === 'drain-to-active'
+        && !(disposed.kind === 'apply' && disposed.bornActive === true)
+      ) {
+        /**
+         * D-16: candidate is the exception bucket, not a waiting room. Admission
+         * always writes candidate first; this immediate stricter re-check makes
+         * clean facts active in the same drain. D-02 is flat: propose-only never
+         * reaches this branch, and promote() re-evaluates posture at call time.
+         */
+        const promotionBundleDir = published.kind === 'published'
+          ? published.dir
+          : enumerateBundleDirs(deps.knowledgeRoot).find(
+              (entry) => entry.dir.endsWith(`/${published.id}`),
+            )?.dir
+        const loaded = promotionBundleDir === undefined
+          ? { kind: 'not-found' as const }
+          : loadBundle(promotionBundleDir)
+        if (loaded.kind !== 'loaded' || promotionBundleDir === undefined) {
+          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+          markDone(deps, job)
+          return { kind: 'failed', reason: 'append-failed' }
+        }
+        const gate = evaluatePromotionGate(assemblePromotionGateInput({
+          knowledgeRoot: deps.knowledgeRoot,
+          bundleDir: promotionBundleDir,
+          bundle: loaded.bundle,
+        }))
+        if (gate.verdict === 'promote') {
+          const promoted = appendOutcomeEvent(config, published.id, {
+            type: 'promoted',
+            evidenceToken: derivePromotedEvidenceToken(job.payload.evidenceToken),
+            curationJobId: job.candidateId,
+            buildOrdinal: job.payload.buildOrdinal,
+          })
+          const promotedFailure = appendFailure(promoted)
+          if (promotedFailure !== undefined) {
+            clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+            markDone(deps, job)
+            return promotedFailure
+          }
+          promotionAppended = promoted.kind === 'appended'
+        } else {
+          promotionHoldReason = gate.reason
+        }
       }
 
       const measurementValue = numericMeasurementSeed(job)
@@ -969,13 +1132,10 @@ export function commitCurationDelta(
         }
         // §5.5.5 carve-out: a deterministic drift Supersede is exempt from candidate-gating
         // and born active. Only drain-to-active disposition can set this D-02 marker.
-        const promotedToken = asEvidenceToken(
-          sha256hex(canonicalJson({ token: delta.evidenceToken, event: 'promoted' })),
-        )
         const promotedFailure = appendFailure(
           appendOutcomeEvent(config, published.id, {
             type: 'promoted',
-            evidenceToken: promotedToken,
+            evidenceToken: derivePromotedEvidenceToken(delta.evidenceToken),
             curationJobId: job.candidateId,
             buildOrdinal: job.payload.buildOrdinal,
           }),
@@ -1140,6 +1300,16 @@ export function commitCurationDelta(
     if (confirmedEventDuplicate && measurementAppendDuplicate) {
       return { kind: 'noop', reason: 'evidence-token-consumed' }
     }
+    if (
+      confirmedEventDuplicate
+      && disposed.measurementAppend === undefined
+      && !promotionAppended
+      && !(disposed.kind === 'apply' && disposed.bornActive === true)
+      && (disposed.unknownMintIntents?.length ?? 0) === 0
+      && (disposed.unknownResolutionIntents?.length ?? 0) === 0
+    ) {
+      return { kind: 'noop', reason: 'evidence-token-consumed' }
+    }
 
     const result: CommittedBundleResult = {
       bundleId,
@@ -1149,6 +1319,7 @@ export function commitCurationDelta(
           ?.dir
         ?? '',
       deltaKind: delta.kind,
+      ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
     }
     if (injectionRestricted) {
       return {
@@ -1156,6 +1327,7 @@ export function commitCurationDelta(
         reason: 'injection-restricted',
         bundleId: result.bundleId,
         bundleDir: result.bundleDir,
+        ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
       }
     }
     if (convertedConfirm) return { kind: 'converted-confirm', ...result }
