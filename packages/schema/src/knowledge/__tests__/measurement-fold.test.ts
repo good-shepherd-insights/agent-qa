@@ -52,7 +52,10 @@ describe('measurement line schemas (D-03)', () => {
     expect(measurementObservationSchema.parse(line)).toEqual(line)
     expect(measurementObservationSchema.safeParse({ ...line, recordedAt: 'now' }).success)
       .toBe(false)
-    expect(measurementObservationSchema.safeParse({ ...line, value: Number.POSITIVE_INFINITY }).success)
+    expect(measurementObservationSchema.safeParse({
+      ...line,
+      value: Number.POSITIVE_INFINITY,
+    }).success)
       .toBe(false)
   })
 })
@@ -71,14 +74,17 @@ describe('foldMeasurements deterministic distribution (D-03)', () => {
     expect(state.bands).toEqual([{ lo: 2, hi: 5, n: 6, mean: 4 }])
   })
 
-  it('replays byte-equivalent order deterministically and treats permutation as different input', () => {
-    const lines = [13, 7].map((value, index) => observation(value, index))
-    const first = foldMeasurements(baseline, lines)
+  it(
+    'replays byte-equivalent order deterministically and treats permutation as different input',
+    () => {
+      const lines = [13, 7].map((value, index) => observation(value, index))
+      const first = foldMeasurements(baseline, lines)
 
-    expect(foldMeasurements(baseline, lines)).toEqual(first)
-    expect(foldMeasurements(baseline, [lines[1]!, lines[0]!]))
-      .not.toEqual(first)
-  })
+      expect(foldMeasurements(baseline, lines)).toEqual(first)
+      expect(foldMeasurements(baseline, [lines[1]!, lines[0]!]))
+        .not.toEqual(first)
+    },
+  )
 })
 
 describe('fixed-baseline two-sided CUSUM (D-04 ratification)', () => {
