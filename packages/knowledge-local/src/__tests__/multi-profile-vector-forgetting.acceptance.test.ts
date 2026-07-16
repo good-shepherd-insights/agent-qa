@@ -1,10 +1,11 @@
-import { rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
+  asEvidenceToken,
   BundleOutcomeEventSchema,
   DEFAULT_EMBEDDING_PROFILE,
   STATIC_FLOOR_EMBEDDING_PROFILE,
@@ -74,6 +75,16 @@ function tableRows(
   }))
 }
 
+function hasVecRow(
+  db: DatabaseSync,
+  profile: EmbeddingProfile,
+  recordRowid: number,
+): boolean {
+  return db
+    .prepare(`SELECT 1 FROM ${knowledgeLocal.vecTableName(profile)} WHERE record_rowid = ?`)
+    .get(BigInt(recordRowid)) !== undefined
+}
+
 describe('multi-profile vector forgetting acceptance', () => {
   let root: string
   let knowledgeRoot: string
@@ -135,6 +146,108 @@ describe('multi-profile vector forgetting acceptance', () => {
       throw new Error(`expected publication, got ${outcome.kind}`)
     }
     return outcome
+  }
+
+  function publishGcGeneration(generation: number): PublishedBundle {
+    const outcome = knowledgeLocal.publishBundle(config(), {
+      draft: makeBundleDraftFixture({
+        subtype: 'measurement',
+        anchors: [
+          { t: 'el', role: 'button', name: 'GC chain control' },
+          { t: 'page', route: '/multi-profile/gc-chain' },
+          { t: 'platform', platform: 'web' },
+        ],
+        scope: { tier: 'product', key: 'multi-profile-gc-chain' },
+        summary: `GC chain generation ${generation}`,
+        body: `Canonical multi-profile GC generation ${generation}.`,
+      }),
+      discriminant: {
+        kind: 'fact',
+        subtype: 'measurement',
+        metricKey: `multi-profile-gc-generation-${generation}`,
+      },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 60 + generation,
+      screenStates: [],
+      initialEvents: [
+        {
+          type: 'promoted',
+          evidenceToken: asEvidenceToken(`multi-profile-gc-promoted-${generation}`),
+          curationJobId: `multi-profile-gc-publish-${generation}`,
+          buildOrdinal: 60 + generation,
+        },
+      ],
+      relations: [],
+      provenance: {
+        mode: 'standalone',
+        sourceDescription: 'multi-profile GC acceptance fixture',
+      },
+      artifacts: [],
+    })
+    expect(outcome.kind).toBe('published')
+    if (outcome.kind !== 'published') {
+      throw new Error(`expected GC generation publication, got ${outcome.kind}`)
+    }
+    return outcome
+  }
+
+  function supersedeForGc(target: PublishedBundle, replacement: PublishedBundle): void {
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'superseded',
+      evidenceToken: asEvidenceToken('multi-profile-gc-superseded'),
+      curationJobId: 'multi-profile-gc-supersede-job',
+      buildOrdinal: 70,
+      byRecordId: replacement.id,
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'window-close',
+      evidenceToken: asEvidenceToken('multi-profile-gc-window-close'),
+      curationJobId: 'multi-profile-gc-supersede-job',
+      buildOrdinal: 70,
+      closedAtOrdinal: 70,
+    })).toEqual({ kind: 'appended' })
+  }
+
+  async function migratePublishedRecords(
+    records: readonly PublishedBundle[],
+  ): Promise<Map<string, number>> {
+    await expect(knowledgeLocal.rebuildIndex({
+      knowledgeRoot,
+      embedder: makeFakeEmbedder(DEFAULT_EMBEDDING_PROFILE.dim),
+    })).resolves.toMatchObject({
+      vec: 'vec0',
+      projected: records.length,
+      pendingEmbeddings: 0,
+    })
+
+    const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
+    try {
+      await expect(knowledgeLocal.setActiveEmbeddingProfile({
+        db: writer.db,
+        vec: writer.vec,
+        target: {
+          profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+          embedder: makeFakeEmbedder(STATIC_FLOOR_EMBEDDING_PROFILE.dim),
+        },
+      })).resolves.toMatchObject({ flipped: true })
+
+      const rowids = new Map(
+        writer.db
+          .prepare('SELECT bundle_id, record_rowid FROM records ORDER BY bundle_id')
+          .all()
+          .map((row) => [String(row.bundle_id), Number(row.record_rowid)] as const),
+      )
+      const expectedIds = records.map(({ id }) => id).sort()
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(tableRows(writer.db, profile).map(({ bundleId }) => bundleId)).toEqual(expectedIds)
+      }
+      return rowids
+    } finally {
+      writer.close()
+    }
   }
 
   async function migrateTwoRecords(): Promise<{
@@ -323,6 +436,128 @@ describe('multi-profile vector forgetting acceptance', () => {
         reader.db
           .prepare('SELECT 1 FROM fts_records WHERE rowid = ?')
           .get(migrated.targetRowid),
+      ).toBeDefined()
+    } finally {
+      reader.db.close()
+    }
+  })
+
+  it('GC cleanup removes a trimmed target from every profile and preserves live neighbors', async () => {
+    const target = publishGcGeneration(1)
+    const replacement = publishGcGeneration(2)
+    const unrelated = publish('GC unrelated live record')
+    const rowids = await migratePublishedRecords([target, replacement, unrelated])
+    const targetRowid = rowids.get(target.id)
+    if (targetRowid === undefined) throw new Error('GC target rowid is missing')
+
+    supersedeForGc(target, replacement)
+    const gc = knowledgeLocal.runKnowledgeGc({
+      knowledgeRoot,
+      horizon: { kind: 'none' },
+      retainK: 0,
+    })
+    expect(gc.trimmedRecordIds).toEqual([target.id])
+    expect(existsSync(target.dir)).toBe(false)
+    expect(existsSync(replacement.dir)).toBe(true)
+    expect(existsSync(unrelated.dir)).toBe(true)
+
+    await expect(knowledgeLocal.rebuildIndex({ knowledgeRoot })).resolves.toMatchObject({
+      vec: 'vec0',
+      removed: 1,
+    })
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(hasVecRow(reader.db, profile, targetRowid)).toBe(false)
+        expect(tableRows(reader.db, profile).map(({ bundleId }) => bundleId)).toEqual(
+          [replacement.id, unrelated.id].sort(),
+        )
+      }
+      expect(
+        reader.db.prepare('SELECT 1 FROM records WHERE record_rowid = ?').get(targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?').get(targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM anchors WHERE record_rowid = ?').get(targetRowid),
+      ).toBeUndefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM graph_edges WHERE record_rowid = ?').get(targetRowid),
+      ).toBeUndefined()
+    } finally {
+      reader.db.close()
+    }
+
+    await expect(knowledgeLocal.rebuildIndex({ knowledgeRoot })).resolves.toMatchObject({
+      removed: 0,
+    })
+    const secondReader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(hasVecRow(secondReader.db, profile, targetRowid)).toBe(false)
+        expect(tableRows(secondReader.db, profile).map(({ bundleId }) => bundleId)).toEqual(
+          [replacement.id, unrelated.id].sort(),
+        )
+      }
+    } finally {
+      secondReader.db.close()
+    }
+  })
+
+  it('GC cleanup fails closed and rolls back when migrated vec0 tables are unloaded', async () => {
+    const target = publishGcGeneration(1)
+    const replacement = publishGcGeneration(2)
+    const unrelated = publish('GC brute live record')
+    const rowids = await migratePublishedRecords([target, replacement, unrelated])
+    const targetRowid = rowids.get(target.id)
+    if (targetRowid === undefined) throw new Error('GC brute target rowid is missing')
+
+    supersedeForGc(target, replacement)
+    expect(knowledgeLocal.runKnowledgeGc({
+      knowledgeRoot,
+      horizon: { kind: 'none' },
+      retainK: 0,
+    }).trimmedRecordIds).toEqual([target.id])
+
+    let report: knowledgeLocal.RebuildReport | undefined
+    await expect((async () => {
+      report = await knowledgeLocal.rebuildIndex({
+        knowledgeRoot,
+        vecLoadablePath: join(root, 'missing-sqlite-vec-extension'),
+      })
+    })()).rejects.toThrow(/schema-owned vec table/u)
+    expect(report).toBeUndefined()
+
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      for (const profile of [
+        DEFAULT_EMBEDDING_PROFILE,
+        STATIC_FLOOR_EMBEDDING_PROFILE,
+      ]) {
+        expect(hasVecRow(reader.db, profile, targetRowid)).toBe(true)
+        expect(tableRows(reader.db, profile).map(({ bundleId }) => bundleId)).toEqual(
+          [replacement.id, target.id, unrelated.id].sort(),
+        )
+      }
+      expect(
+        reader.db.prepare('SELECT 1 FROM records WHERE record_rowid = ?').get(targetRowid),
+      ).toBeDefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?').get(targetRowid),
+      ).toBeDefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM anchors WHERE record_rowid = ?').get(targetRowid),
+      ).toBeDefined()
+      expect(
+        reader.db.prepare('SELECT 1 FROM graph_edges WHERE record_rowid = ?').get(targetRowid),
       ).toBeDefined()
     } finally {
       reader.db.close()
