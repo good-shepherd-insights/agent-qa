@@ -284,6 +284,8 @@ export {
 } from './knowledge/index'
 export type { BundleStatus, DerivedTrustState } from './knowledge/index'
 export {
+  decideMeasurementDrift,
+  foldMeasurements,
   measurementBaselineSchema,
   measurementObservationSchema,
 } from './knowledge/index'

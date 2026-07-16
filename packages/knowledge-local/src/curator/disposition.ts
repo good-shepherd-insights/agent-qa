@@ -1,15 +1,23 @@
 import {
   canonicalJson,
+  decideMeasurementDrift,
+  foldMeasurements,
   normalizeAnchor,
   supersessionKey as schemaSupersessionKey,
   type Anchor,
   type BundleStatus,
   type Delta,
+  type MeasurementObservation,
   type RecordId,
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
 
-import { deriveBundleTrust, loadBundle, type LoadedBundle } from '../bundle-read.js'
+import {
+  deriveBundleTrust,
+  loadBundle,
+  readMeasurements,
+  type LoadedBundle,
+} from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
 
@@ -20,6 +28,10 @@ export interface DispositionCandidateContext {
   anchors: readonly Anchor[]
   scope: ScopeKey
   buildOrdinal: number
+  /** Durable queue address used as the observation's idempotency identity. */
+  curationJobId?: string
+  /** Original measurement seed value; prose authored by a model is never parsed for authority. */
+  measurementValue?: string
 }
 
 export interface RelationIntent {
@@ -45,18 +57,26 @@ export interface DisposeDeltaInput {
 }
 
 export type DispositionOutcome =
-  | { kind: 'apply'; delta: Delta; relationIntents?: RelationIntent[] }
+  | {
+      kind: 'apply'
+      delta: Delta
+      relationIntents?: RelationIntent[]
+      bornActive?: true
+      measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
+    }
   | {
       kind: 'downgraded'
       delta: Delta
       reason: string
       original: Delta
       relationIntents?: RelationIntent[]
+      measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
     }
   | { kind: 'requeue-resynthesis'; reason: string }
   | { kind: 'noop'; reason: string }
 
 interface BundleTruth {
+  dir: string
   bundle: LoadedBundle
   status: BundleStatus
   openedAtOrdinal: number
@@ -120,6 +140,7 @@ function truthLookup(knowledgeRoot: string): TruthLookup {
       if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) continue
       const trust = deriveBundleTrust(loaded.bundle)
       const truth: BundleTruth = {
+        dir: entry.dir,
         bundle: loaded.bundle,
         status: trust.status,
         openedAtOrdinal: trust.validity.openedAtOrdinal,
@@ -132,6 +153,98 @@ function truthLookup(knowledgeRoot: string): TruthLookup {
 
     cache.set(id, undefined)
     return undefined
+  }
+}
+
+interface MeasurementDisposition {
+  input: DisposeDeltaInput
+  measurementAppend?: { victimId: RecordId; observation: MeasurementObservation }
+  confirmedDriftSupersede: boolean
+}
+
+/**
+ * RATIFICATION A6: non-numeric measurement values retain the existing inequality-supersede
+ * semantics outside the drift tree. Otherwise string-valued measurements could never widen.
+ */
+function finiteMeasurementValue(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/**
+ * Mechanism #9: discipline measurement Confirm/Supersede deltas against canonical bundle truth
+ * before the six existing checks compose their final verdict.
+ */
+function disposeMeasurementDrift(
+  input: DisposeDeltaInput,
+  lookup: TruthLookup,
+): MeasurementDisposition {
+  const delta = input.delta
+  if (delta.kind !== 'Confirm' && delta.kind !== 'Supersede') {
+    return { input, confirmedDriftSupersede: false }
+  }
+  const victimId = delta.kind === 'Confirm' ? delta.targetId : delta.victimId
+
+  const victim = lookup(victimId)
+  if (
+    victim === undefined
+    || victim.bundle.frontmatter.kind !== 'fact'
+    || victim.bundle.frontmatter.subtype !== 'measurement'
+  ) {
+    return { input, confirmedDriftSupersede: false }
+  }
+
+  const value = finiteMeasurementValue(input.candidate?.measurementValue)
+  if (value === undefined) {
+    return { input, confirmedDriftSupersede: false }
+  }
+  if (input.candidate?.curationJobId === undefined) {
+    throw new TypeError('numeric measurement disposition requires a durable curation job id')
+  }
+
+  const measurements = readMeasurements(victim.dir)
+  if (measurements === undefined) {
+    throw new TypeError('numeric measurement disposition requires a stored baseline')
+  }
+  const observation: MeasurementObservation = {
+    value,
+    buildOrdinal: input.candidate.buildOrdinal,
+    evidenceToken: delta.evidenceToken,
+    curationJobId: input.candidate.curationJobId,
+  }
+  const observations = [...measurements.observations, observation]
+  const decision = decideMeasurementDrift({
+    baseline: measurements.baseline,
+    state: foldMeasurements(measurements.baseline, observations),
+    windowBuilds: { observations },
+  })
+
+  if (delta.kind === 'Confirm') {
+    // Confirm carries observation authority but no replacement draft. Keep accumulating canonical
+    // evidence so a later measurement Supersede can realize a confirmed regime change.
+    return {
+      input,
+      measurementAppend: { victimId, observation },
+      confirmedDriftSupersede: false,
+    }
+  }
+
+  if (decision.decision === 'supersede') {
+    return { input, confirmedDriftSupersede: true }
+  }
+
+  // Pitfall 5: a widen emits no superseded event and therefore never feeds the thrash counter.
+  const confirm: Delta = {
+    kind: 'Confirm',
+    ...envelope(delta),
+    targetId: victimId,
+    evidenceToken: delta.evidenceToken,
+  }
+  return {
+    input: { ...input, delta: confirm },
+    measurementAppend: { victimId, observation },
+    confirmedDriftSupersede: false,
   }
 }
 
@@ -394,14 +507,16 @@ function downgraded(
  */
 export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
   const lookup = truthLookup(input.knowledgeRoot)
+  const measurement = disposeMeasurementDrift(input, lookup)
+  const dispositionInput = measurement.input
   const state: EvaluationState = {}
   const checks = [
-    () => checkCitedIdIntegrity(input, lookup),
-    () => checkAnchorConsistency(input, lookup, state),
-    () => checkSupersessionKey(input, lookup, state),
-    () => checkAutonomousDeprecate(input, lookup),
-    () => checkCompareAndSet(input, lookup),
-    () => checkBlastRadius(input, state),
+    () => checkCitedIdIntegrity(dispositionInput, lookup),
+    () => checkAnchorConsistency(dispositionInput, lookup, state),
+    () => checkSupersessionKey(dispositionInput, lookup, state),
+    () => checkAutonomousDeprecate(dispositionInput, lookup),
+    () => checkCompareAndSet(dispositionInput, lookup),
+    () => checkBlastRadius(dispositionInput, state),
   ]
 
   for (const check of checks) {
@@ -409,28 +524,40 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     if (verdict.kind === 'requeue') {
       return { kind: 'requeue-resynthesis', reason: verdict.reason }
     }
-    if (verdict.kind === 'downgrade') return downgraded(input.delta, verdict)
+    if (verdict.kind === 'downgrade') {
+      return {
+        ...downgraded(dispositionInput.delta, verdict),
+        ...(measurement.measurementAppend === undefined
+          ? {}
+          : { measurementAppend: measurement.measurementAppend }),
+      }
+    }
   }
 
-  if (input.delta.kind === 'Noop') return { kind: 'noop', reason: 'delta-noop' }
+  if (dispositionInput.delta.kind === 'Noop') return { kind: 'noop', reason: 'delta-noop' }
   if (
-    input.profile.mode === 'propose-only'
-    && (input.delta.kind === 'Supersede' || input.delta.kind === 'Deprecate')
+    dispositionInput.profile.mode === 'propose-only'
+    && (
+      dispositionInput.delta.kind === 'Supersede'
+      || dispositionInput.delta.kind === 'Deprecate'
+    )
   ) {
-    const fallback = input.delta.kind === 'Supersede'
-      ? addCandidate(input.delta)
-      : mintUnknown(input.delta, 'propose-only', 'clarification')
+    // D-02 flat invariant: propose-only has zero exceptions. Even deterministically confirmed
+    // drift remains a candidate plus proposed-supersession relation in CI/cloud/headless contexts.
+    const fallback = dispositionInput.delta.kind === 'Supersede'
+      ? addCandidate(dispositionInput.delta)
+      : mintUnknown(dispositionInput.delta, 'propose-only', 'clarification')
     return {
       kind: 'downgraded',
       delta: fallback,
       reason: 'propose-only',
-      original: input.delta,
-      ...(input.delta.kind === 'Supersede'
+      original: dispositionInput.delta,
+      ...(dispositionInput.delta.kind === 'Supersede'
         ? {
             relationIntents: [
               {
                 type: 'proposed-supersession-of' as const,
-                targetId: input.delta.victimId,
+                targetId: dispositionInput.delta.victimId,
               },
             ],
           }
@@ -444,7 +571,14 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
   }
   return {
     kind: 'apply',
-    delta: input.delta,
+    delta: dispositionInput.delta,
     ...(state.renameBridge === undefined ? {} : { relationIntents: [state.renameBridge] }),
+    ...(measurement.measurementAppend === undefined
+      ? {}
+      : { measurementAppend: measurement.measurementAppend }),
+    ...(measurement.confirmedDriftSupersede
+      && dispositionInput.profile.mode === 'drain-to-active'
+      ? { bornActive: true as const }
+      : {}),
   }
 }
