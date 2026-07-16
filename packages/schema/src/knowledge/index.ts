@@ -8,6 +8,27 @@ export {
 } from './trust-fold'
 export type { BundleStatus, DerivedTrustState } from './trust-fold'
 export {
+  BIMODAL_GAP_THRESHOLD,
+  BIMODAL_MIN_MODE_N,
+  CUSUM_DECISION_H,
+  CUSUM_SLACK_K,
+  bimodalSplit,
+  cusumStep,
+  foldMeasurements,
+  measurementBaselineSchema,
+  measurementObservationSchema,
+} from './measurement-fold'
+export type {
+  BimodalSplit,
+  CusumState,
+  CusumStepResult,
+  DerivedMeasurementState,
+  MeasurementBand,
+  MeasurementBaseline,
+  MeasurementFoldState,
+  MeasurementObservation,
+} from './measurement-fold'
+export {
   ArtifactsIndexSchema,
   BUNDLE_SCHEMA_VERSION,
   BundleManifestSchema,

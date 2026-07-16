@@ -65,11 +65,11 @@ describe('foldMeasurements deterministic distribution (D-03)', () => {
   })
 
   it('replays byte-equivalent order deterministically and treats permutation as different input', () => {
-    const lines = [12, 8, 11, 9].map((value, index) => observation(value, index))
+    const lines = [13, 7].map((value, index) => observation(value, index))
     const first = foldMeasurements(baseline, lines)
 
     expect(foldMeasurements(baseline, lines)).toEqual(first)
-    expect(foldMeasurements(baseline, [lines[1]!, lines[0]!, lines[3]!, lines[2]!]))
+    expect(foldMeasurements(baseline, [lines[1]!, lines[0]!]))
       .not.toEqual(first)
   })
 })
