@@ -242,6 +242,63 @@ export function vecTableName(profile: EmbeddingProfile): string {
   return `vec_${identity}`
 }
 
+/**
+ * The closed set of embedding profiles whose per-profile vec tables belong to this schema.
+ *
+ * Active-profile resolution, profile migration, and destructive projection maintenance must
+ * share this exact authority. Adding a profile therefore cannot silently make an old vec table
+ * invisible to forgetting or purge.
+ */
+export const SCHEMA_OWNED_EMBEDDING_PROFILES = [
+  DEFAULT_EMBEDDING_PROFILE,
+  STATIC_FLOOR_EMBEDDING_PROFILE,
+] as const satisfies readonly EmbeddingProfile[]
+
+/**
+ * Enumerate only materialized vec tables derived from the closed schema profile list.
+ *
+ * sqlite_master is safe to inspect even when this connection could not load sqlite-vec. Names
+ * are bound as data, then returned in profile-list order; no caller-controlled identifier reaches
+ * the dynamic DELETE statements used by maintenance.
+ */
+export function materializedSchemaVecTableNames(db: DatabaseSync): string[] {
+  const schemaNames = SCHEMA_OWNED_EMBEDDING_PROFILES.map(vecTableName)
+  const present = new Set(
+    db.prepare(`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN (?, ?)
+    `).all(...schemaNames).map((row) => String(row.name)),
+  )
+  return schemaNames.filter((name) => present.has(name))
+}
+
+/**
+ * Delete one record from every materialized schema-owned vec table, independent of capability.
+ *
+ * An existing vec0 table on a brute connection is not a valid no-op: preparing its DML fails
+ * when sqlite-vec is unavailable. Preserve that failure with table context so the caller's
+ * transaction rolls back and no maintenance report or purge receipt can claim partial success.
+ */
+export function deleteRecordFromAllSchemaVecTables(
+  db: DatabaseSync,
+  recordRowid: number,
+): void {
+  for (const tableName of materializedSchemaVecTableNames(db)) {
+    try {
+      db.prepare(`DELETE FROM ${tableName} WHERE record_rowid = ?`)
+        .run(BigInt(recordRowid))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `deleting record ${recordRowid} from schema-owned vec table ${tableName} failed: ${message}`,
+        { cause: error },
+      )
+    }
+  }
+}
+
 /** Stable identity persisted in meta and used to select a closed-list profile. */
 export function embeddingProfileKey(profile: EmbeddingProfile): string {
   return canonicalJson({
@@ -335,11 +392,9 @@ export function isEmbeddingVecCleanupCurrent(db: DatabaseSync): boolean {
 export function resolveActiveProfile(db: DatabaseSync): EmbeddingProfile {
   const stamp = readEmbeddingProfileStamp(db)
 
-  const knownProfiles = [
-    DEFAULT_EMBEDDING_PROFILE,
-    STATIC_FLOOR_EMBEDDING_PROFILE,
-  ] as const
-  return knownProfiles.find((profile) => embeddingProfileKey(profile) === stamp)
+  return SCHEMA_OWNED_EMBEDDING_PROFILES.find(
+    (profile) => embeddingProfileKey(profile) === stamp,
+  )
     ?? DEFAULT_EMBEDDING_PROFILE
 }
 

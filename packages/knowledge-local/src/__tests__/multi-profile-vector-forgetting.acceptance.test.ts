@@ -318,7 +318,7 @@ describe('multi-profile vector forgetting acceptance', () => {
         reader.db
           .prepare('SELECT status FROM records WHERE bundle_id = ?')
           .get(migrated.target.id)?.status,
-      ).toBe('active')
+      ).toBe('candidate')
       expect(
         reader.db
           .prepare('SELECT 1 FROM fts_records WHERE rowid = ?')

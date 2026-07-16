@@ -8,10 +8,6 @@
  */
 import type { DatabaseSync } from 'node:sqlite'
 
-import {
-  DEFAULT_EMBEDDING_PROFILE,
-  STATIC_FLOOR_EMBEDDING_PROFILE,
-} from '@vostride/agent-qa-schema'
 import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 
 import {
@@ -21,6 +17,7 @@ import {
 } from './embed-cache.js'
 import type { EmbedderPort } from './embedder-port.js'
 import {
+  SCHEMA_OWNED_EMBEDDING_PROFILES,
   embeddingProfileKey,
   resolveActiveProfile,
   vecTableName,
@@ -92,10 +89,9 @@ function knownProfile(profile: EmbeddingProfile): {
   profile: EmbeddingProfile
 } {
   const key = embeddingProfileKey(profile)
-  const known = [
-    DEFAULT_EMBEDDING_PROFILE,
-    STATIC_FLOOR_EMBEDDING_PROFILE,
-  ].find((candidate) => embeddingProfileKey(candidate) === key)
+  const known = SCHEMA_OWNED_EMBEDDING_PROFILES.find(
+    (candidate) => embeddingProfileKey(candidate) === key,
+  )
 
   if (known === undefined) {
     throw new TypeError(`embedding profile ${key} is not schema-owned`)

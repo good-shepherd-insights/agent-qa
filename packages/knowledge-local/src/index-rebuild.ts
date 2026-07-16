@@ -49,6 +49,7 @@ import type {
 } from './graph-derive.js'
 import {
   CHECKPOINT_EVERY_N_BUNDLES,
+  deleteRecordFromAllSchemaVecTables,
   isEmbeddingVecCleanupCurrent,
   openIndexWriter,
   resolveActiveProfile,
@@ -486,16 +487,11 @@ function deleteOrphanGraphNodes(db: DatabaseSync): void {
  */
 function scrubDeadRecallRows(
   db: DatabaseSync,
-  vec: VecCapability,
   bundle: LoadedBundle,
   recordRowid: number,
-  activeProfile: EmbeddingProfile,
 ): void {
   db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
-  if (vec === 'vec0') {
-    db.prepare(`DELETE FROM ${vecTableName(activeProfile)} WHERE record_rowid = ?`)
-      .run(BigInt(recordRowid))
-  }
+  deleteRecordFromAllSchemaVecTables(db, recordRowid)
   /**
    * RATIFICATION: reuse SAFE-02's proven terminal suppressed state. Ordinary backfill selects
    * pending exactly, rendering refresh preserves suppressed, and reconciliation requires present
@@ -531,7 +527,7 @@ function projectBundle(
     )
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     if (isDeadStatus(status)) {
-      scrubDeadRecallRows(db, vec, projected.bundle, recordRowid, activeProfile)
+      scrubDeadRecallRows(db, projected.bundle, recordRowid)
       return
     }
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
