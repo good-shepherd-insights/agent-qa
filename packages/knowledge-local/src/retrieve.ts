@@ -8,12 +8,16 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import {
   asRecordId,
+  canonicalJson,
+  supersessionKey,
   type Anchor,
   type IndexEntry,
   type ScopeKey,
+  type VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 
-import type { KnowledgeHit } from './bundle-scan.js'
+import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
+import { enumerateBundleDirs, type KnowledgeHit } from './bundle-scan.js'
 import type { KnowledgeReader } from './index-reader.js'
 import {
   withKnowledgeReadSnapshot,
@@ -85,6 +89,10 @@ interface PipelineCandidate extends KnowledgeHit {
   readonly recencyOrdinal: number
   readonly validityClass: ValidityClass
   readonly lastConfirmedOrdinal: number
+  readonly vettedCandidateInput?: VettedCandidateInput
+  readonly unconfirmedSinceOrdinal?: number
+  readonly unverified?: boolean
+  readonly memoryOffTriggerKey?: string
   readonly servedAs?: 'current' | 'prior-build-hypothesis'
   readonly audit?: { status: string; openedAtOrdinal: number; closedAtOrdinal: number | null }
   readonly conflict?: { peerRecordId: string; unknownRecordId: string }
@@ -103,6 +111,132 @@ function compareText(left: string, right: string): number {
 
 function candidateLimit(n: number): number {
   return Math.max(32, Math.min(MAX_SQL_LIMIT, n > MAX_SQL_LIMIT / 4 ? MAX_SQL_LIMIT : n * 4))
+}
+
+function auditMode(options: RetrieveOptions): boolean {
+  return options.includeSuperseded === true || options.asOfRange !== undefined
+}
+
+function memoryOffGroupKey(scope: ScopeKey, triggerKey: string): string {
+  return canonicalJson([scope.tier, scope.key, triggerKey])
+}
+
+function factMemoryOffGroup(candidate: PipelineCandidate): string | undefined {
+  return candidate.kind === 'fact'
+    ? memoryOffGroupKey(candidate.scope, supersessionKey(candidate.anchors))
+    : undefined
+}
+
+function thrashTriggerKey(anchor: Anchor | undefined): string | undefined {
+  if (anchor?.t !== 'flow') return undefined
+  const match = /^thrash:([0-9a-f]{64}):window:[0-9]+$/.exec(anchor.name)
+  return match?.[1]
+}
+
+/**
+ * D-07 targeted canonical lookup: a derived index may disappear, so the committed
+ * unresolved unknown remains the serving switch. Only digest-verified unknowns
+ * matching a retrieved fact group can suppress or enter this query.
+ */
+function attachMemoryOffUnknowns(
+  knowledgeRoot: string,
+  candidates: readonly PipelineCandidate[],
+  options: RetrieveOptions,
+): PipelineCandidate[] {
+  if (auditMode(options)) return [...candidates]
+
+  const relevantGroups = new Set(
+    candidates.flatMap((candidate) => {
+      const key = factMemoryOffGroup(candidate)
+      return key === undefined ? [] : [key]
+    }),
+  )
+  if (relevantGroups.size === 0) return [...candidates]
+
+  const augmented = [...candidates]
+  const candidateIndexById = new Map(
+    augmented.map((candidate, index) => [candidate.bundleId, index] as const),
+  )
+  let syntheticRowid = -1
+
+  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
+    if (!verifyBundleIntegrity(entry.dir).ok) continue
+    const loaded = loadBundle(entry.dir)
+    if (loaded.kind !== 'loaded' || loaded.bundle.frontmatter.kind !== 'unknown') continue
+
+    const trust = deriveBundleTrust(loaded.bundle)
+    if (
+      (trust.status !== 'active' && trust.status !== 'candidate')
+      || trust.validity.closedAtOrdinal !== undefined
+    ) {
+      continue
+    }
+
+    const anchors = loaded.bundle.frontmatter.anchors.map(({ normalized }) => normalized)
+    const triggerKey = thrashTriggerKey(anchors[0])
+    if (triggerKey === undefined) continue
+    const markerKey = memoryOffGroupKey(loaded.bundle.frontmatter.scope, triggerKey)
+    if (!relevantGroups.has(markerKey)) continue
+
+    const existingIndex = candidateIndexById.get(loaded.bundle.manifest.id)
+    if (existingIndex !== undefined) {
+      augmented[existingIndex] = {
+        ...augmented[existingIndex]!,
+        memoryOffTriggerKey: markerKey,
+      }
+      continue
+    }
+
+    augmented.push({
+      bundleId: loaded.bundle.manifest.id,
+      product: entry.product,
+      kind: 'unknown',
+      subtype: null,
+      status: trust.status,
+      trust: trust.trust,
+      validity: trust.validity,
+      summary: loaded.bundle.summary,
+      embeddingInput: loaded.bundle.manifest.embeddingInput,
+      recordRowid: syntheticRowid,
+      source: 'expanded',
+      legRanks: { memoryOffUnknown: Math.abs(syntheticRowid) },
+      rawScores: {},
+      fusedScore: 0,
+      anchors,
+      scope: loaded.bundle.frontmatter.scope,
+      openedAtOrdinal: trust.validity.openedAtOrdinal,
+      closedAtOrdinal: trust.validity.closedAtOrdinal ?? null,
+      createdAtOrdinal: loaded.bundle.frontmatter.createdAtOrdinal,
+      originClass: loaded.bundle.frontmatter.originClass === 'user' ? 'user' : 'agent',
+      recencyOrdinal: loaded.bundle.frontmatter.createdAtOrdinal,
+      validityClass: 'current',
+      lastConfirmedOrdinal: trust.lastConfirmedOrdinal,
+      memoryOffTriggerKey: markerKey,
+    })
+    candidateIndexById.set(loaded.bundle.manifest.id, augmented.length - 1)
+    syntheticRowid -= 1
+  }
+
+  return augmented
+}
+
+function suppressMemoryOffFacts(
+  candidates: readonly PipelineCandidate[],
+  audit: boolean,
+): PipelineCandidate[] {
+  if (audit) return [...candidates]
+  const suppressedGroups = new Set(
+    candidates.flatMap((candidate) =>
+      candidate.memoryOffTriggerKey === undefined
+        ? []
+        : [candidate.memoryOffTriggerKey]),
+  )
+  if (suppressedGroups.size === 0) return [...candidates]
+
+  return candidates.filter((candidate) => {
+    const key = factMemoryOffGroup(candidate)
+    return key === undefined || !suppressedGroups.has(key)
+  })
 }
 
 function retrievalScope(options: RetrieveOptions): RetrievalLegScope {
@@ -220,6 +354,22 @@ function hydrateFusedCandidate(
         : lastConfirmed,
     ),
   }
+}
+
+function refreshPipelineCandidates(
+  context: KnowledgeRetrievalContext,
+  candidates: readonly PipelineCandidate[],
+): PipelineCandidate[] {
+  return context.recheck(candidates, true).map((candidate) => ({
+    ...candidate,
+    openedAtOrdinal: candidate.validity.openedAtOrdinal,
+    closedAtOrdinal: candidate.validity.closedAtOrdinal ?? null,
+    originClass: candidate.originClass === 'user' ? 'user' : 'agent',
+    recencyOrdinal: candidate.createdAtOrdinal,
+    validityClass: 'current',
+    lastConfirmedOrdinal: candidate.lastConfirmedOrdinal,
+    vettedCandidateInput: candidate.vettedCandidateInput,
+  }))
 }
 
 function rowToExpandedLeg(
@@ -353,7 +503,7 @@ function applyAssembly(
   conflicts: readonly MintUnknownConflict[],
   options: RetrieveOptions,
 ): PipelineCandidate[] {
-  const audit = options.includeSuperseded === true || options.asOfRange !== undefined
+  const audit = auditMode(options)
   const resolvedAsOf = resolveAsOfBuild({
     product: options.product,
     candidates,
@@ -387,7 +537,8 @@ function applyAssembly(
     : applyLifecycleTrustTreatments(valid, resolvedAsOf)
   const reranked = rerankPrecedence(treated)
   const collapsed = collapseByOrdinal(reranked, { audit, conflicts })
-  return applyDiversityCaps(collapsed, audit)
+  const memorySafe = suppressMemoryOffFacts(collapsed, audit)
+  return applyDiversityCaps(memorySafe, audit)
 }
 
 function finalRecheck(
@@ -396,7 +547,7 @@ function finalRecheck(
   scope: RetrievalLegScope,
   options: RetrieveOptions,
 ): RetrieveResult {
-  const audit = options.includeSuperseded === true || options.asOfRange !== undefined
+  const audit = auditMode(options)
   const servedTrust = new Map(
     candidates.map((candidate) => [candidate.bundleId, candidate.trust] as const),
   )
@@ -428,6 +579,10 @@ function finalRecheck(
         status: candidate.status,
         servedAsCanary: false,
         ...(candidate.servedAs === undefined ? {} : { servedAs: candidate.servedAs }),
+        ...(candidate.unconfirmedSinceOrdinal === undefined
+          ? {}
+          : { unconfirmedSinceOrdinal: candidate.unconfirmedSinceOrdinal }),
+        ...(candidate.unverified === true ? { unverified: true } : {}),
         ...(candidate.conflict === undefined
           ? {}
           : {
@@ -534,7 +689,17 @@ async function retrieveFromIndex(
   ]
   const capped = capExpansion(fuseWeightedRrf(finalLegs), options.n)
   const candidates = capped.map((candidate) => hydrateFusedCandidate(connection.db, candidate))
-  const assembled = applyAssembly(candidates, mintUnknownConflicts(connection.db), options)
+  const authoritative = refreshPipelineCandidates(context, candidates)
+  const withMemoryOffUnknowns = attachMemoryOffUnknowns(
+    context.knowledgeRoot,
+    authoritative,
+    options,
+  )
+  const assembled = applyAssembly(
+    withMemoryOffUnknowns,
+    mintUnknownConflicts(connection.db),
+    options,
+  )
   return finalRecheck(context, assembled, scope, options).slice(0, options.n)
 }
 
@@ -659,9 +824,15 @@ async function retrieveFromScan(
       recencyOrdinal: source.createdAtOrdinal,
       validityClass: 'current' as const,
       lastConfirmedOrdinal: source.lastConfirmedOrdinal,
+      vettedCandidateInput: source.vettedCandidateInput,
     }]
   })
-  const assembled = applyAssembly(candidates, [], options)
+  const withMemoryOffUnknowns = attachMemoryOffUnknowns(
+    context.knowledgeRoot,
+    candidates,
+    options,
+  )
+  const assembled = applyAssembly(withMemoryOffUnknowns, [], options)
   return finalRecheck(context, assembled, scope, options).slice(0, options.n)
 }
 

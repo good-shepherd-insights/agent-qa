@@ -150,7 +150,17 @@ describe('RETR-01 composed retrieval pipeline', () => {
       anchor,
       identity: 'agent-new',
       createdAtOrdinal: 20,
-      initialEvents: [event('confirmed', 'agent-new-a', 21), event('confirmed', 'agent-new-b', 22)],
+      initialEvents: [
+        event('confirmed', 'agent-new-a', 21),
+        event('confirmed', 'agent-new-b', 22),
+        event('confirmed', 'agent-new-current', 100),
+        BundleOutcomeEventSchema.parse({
+          type: 'promoted',
+          evidenceToken: 'agent-new-promoted-100',
+          curationJobId: 'agent-new-promoted-100-job',
+          buildOrdinal: 100,
+        }),
+      ],
     })
     const userNew = publishFact({
       anchor,

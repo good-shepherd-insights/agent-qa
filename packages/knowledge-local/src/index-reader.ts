@@ -19,6 +19,7 @@ import type {
   BundleRelation,
   OriginClass,
   ScopeKey,
+  VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
@@ -41,6 +42,7 @@ import type { IndexReaderConnection, VecCapability } from './index-open.js'
 import { requestRebuild } from './rebuild-marker.js'
 import type { RebuildReason } from './rebuild-marker.js'
 import { buildLexicalMatchExpression } from './retrieval/fts-match.js'
+import { assemblePromotionGateInput } from './curator/commit.js'
 
 export interface KnowledgeSearchOptions {
   product?: string
@@ -82,10 +84,12 @@ export type AuthoritativeKnowledgeHit<THit extends KnowledgeHit = KnowledgeHit> 
   originClass: OriginClass
   relations: readonly BundleRelation[]
   lastConfirmedOrdinal: number
+  vettedCandidateInput: VettedCandidateInput
 }
 
 /** Internal snapshot context that lets the public retrieve function compose on this facade. */
 export interface KnowledgeRetrievalContext {
+  readonly knowledgeRoot: string
   readonly source: 'index' | 'scan'
   readonly vec: VecCapability | 'none'
   readonly connection: IndexReaderConnection | undefined
@@ -253,6 +257,11 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
         originClass: outcome.bundle.frontmatter.originClass,
         relations: outcome.bundle.relations.relations,
         lastConfirmedOrdinal: trust.lastConfirmedOrdinal,
+        vettedCandidateInput: assemblePromotionGateInput({
+          knowledgeRoot,
+          bundleDir,
+          bundle: outcome.bundle,
+        }),
       } as AuthoritativeKnowledgeHit<THit>)
     } catch {
       // A changing, unreadable, or invalid bundle is never safe to serve from a stale index row.
@@ -274,6 +283,7 @@ function recheckHits<THit extends KnowledgeHit>(
       originClass: _originClass,
       relations: _relations,
       lastConfirmedOrdinal: _lastConfirmedOrdinal,
+      vettedCandidateInput: _vettedCandidateInput,
       ...refreshed
     } = hit
     return refreshed as unknown as RefreshedHit<THit>
@@ -378,6 +388,7 @@ function scanReader(knowledgeRoot: string): InternalKnowledgeReader {
       operation: KnowledgeRetrievalOperation<TResult>,
     ): Promise<TResult> {
       return operation({
+        knowledgeRoot,
         source: 'scan',
         vec: 'none',
         connection: undefined,
@@ -604,6 +615,7 @@ function indexReader(
     ): Promise<TResult> {
       return withAsyncReadSnapshot(db, () =>
         operation({
+          knowledgeRoot,
           source: 'index',
           vec: connection.vec,
           connection,
