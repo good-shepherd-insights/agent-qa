@@ -17,6 +17,8 @@ import {
   guardBundleManifest,
   guardBundleProvenance,
   guardBundleRelations,
+  measurementBaselineSchema,
+  measurementObservationSchema,
   parseRecordMarkdown,
   renderEmbeddingInput,
   slugBranch,
@@ -27,11 +29,14 @@ import type {
   CurationAuthorship,
   BundleRelation,
   BundleRelations,
+  MeasurementBaseline,
+  MeasurementObservation,
   RecordId,
 } from '@vostride/agent-qa-schema'
 
 import { checkpointCommittedParts } from './bundle-egress.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
+import { readMeasurements } from './bundle-read.js'
 import { commitBundleMutation } from './journal/bundle-mutation.js'
 
 export type AppendOutcome =
@@ -52,6 +57,7 @@ export interface BundleProseEnrichment {
 }
 
 const OUTCOMES_REL_PATH = 'evidence/outcomes.jsonl'
+export const MEASUREMENTS_REL_PATH = 'evidence/measurements.json'
 const RELATIONS_REL_PATH = 'relations.json'
 const ARTIFACTS_INDEX_REL_PATH = 'artifacts.index.json'
 
@@ -80,10 +86,12 @@ function completeManifest(dir: string): BundleManifest | null {
 }
 
 function mutableStateHash(contentHashes: BundleManifest['contentHashes']): string {
+  const measurements = contentHashes[MEASUREMENTS_REL_PATH]
   return computeMutableStateHash({
     outcomes: contentHashes[OUTCOMES_REL_PATH] ?? null,
     relations: contentHashes[RELATIONS_REL_PATH] ?? null,
     artifactsIndex: contentHashes[ARTIFACTS_INDEX_REL_PATH] ?? null,
+    ...(measurements === undefined ? {} : { measurements }),
   })
 }
 
@@ -191,6 +199,77 @@ export function appendOutcomeEvent(
     dir,
     id,
     OUTCOMES_REL_PATH,
+    appendedText,
+    rewrittenText,
+    manifestText,
+  )
+}
+
+/**
+ * Persist D-03's immutable validity-window snapshot. An existing measurements
+ * file is an idempotent refusal: baseline bytes are never rewritten.
+ */
+export function writeMeasurementBaseline(
+  config: BundleStoreConfig,
+  id: RecordId,
+  baseline: MeasurementBaseline,
+): AppendOutcome {
+  const dir = bundleDir(config, id)
+  const manifest = completeManifest(dir)
+  if (manifest === null) return { kind: 'not-found' }
+
+  const file = join(dir, MEASUREMENTS_REL_PATH)
+  if (existsSync(file)) return { kind: 'duplicate' }
+
+  const parsedBaseline = measurementBaselineSchema.parse(baseline)
+  const baselineText = `${canonicalJson(parsedBaseline)}\n`
+  const manifestText = rewriteManifest(
+    manifest,
+    MEASUREMENTS_REL_PATH,
+    baselineText,
+  )
+  return checkpointAndRewrite(
+    config,
+    dir,
+    id,
+    MEASUREMENTS_REL_PATH,
+    baselineText,
+    baselineText,
+    manifestText,
+  )
+}
+
+/**
+ * Append one observation through the full journaled replacement path. Existing
+ * lines remain byte-for-byte unchanged; only the new canonical line is added.
+ */
+export function appendMeasurementObservation(
+  config: BundleStoreConfig,
+  id: RecordId,
+  observation: MeasurementObservation,
+): AppendOutcome {
+  const dir = bundleDir(config, id)
+  const manifest = completeManifest(dir)
+  if (manifest === null) return { kind: 'not-found' }
+
+  const measurements = readMeasurements(dir)
+  if (measurements === undefined) return { kind: 'not-found' }
+
+  const file = join(dir, MEASUREMENTS_REL_PATH)
+  const existingText = readFileSync(file, 'utf8')
+  const parsedObservation = measurementObservationSchema.parse(observation)
+  const appendedText = `${canonicalJson(parsedObservation)}\n`
+  const rewrittenText = `${existingText}${appendedText}`
+  const manifestText = rewriteManifest(
+    manifest,
+    MEASUREMENTS_REL_PATH,
+    rewrittenText,
+  )
+  return checkpointAndRewrite(
+    config,
+    dir,
+    id,
+    MEASUREMENTS_REL_PATH,
     appendedText,
     rewrittenText,
     manifestText,

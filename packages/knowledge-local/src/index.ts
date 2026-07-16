@@ -26,10 +26,26 @@ export type {
   PublishBundleInput,
   PublishBundleOutcome,
 } from './bundle-publish.js'
-export { appendOutcomeEvent, appendRelation } from './bundle-append.js'
+export {
+  MEASUREMENTS_REL_PATH,
+  appendMeasurementObservation,
+  appendOutcomeEvent,
+  appendRelation,
+  writeMeasurementBaseline,
+} from './bundle-append.js'
 export type { AppendOutcome } from './bundle-append.js'
-export { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
-export type { IntegrityReport, LoadedBundle, LoadBundleOutcome } from './bundle-read.js'
+export {
+  deriveBundleTrust,
+  loadBundle,
+  readMeasurements,
+  verifyBundleIntegrity,
+} from './bundle-read.js'
+export type {
+  IntegrityReport,
+  LoadedBundle,
+  LoadBundleOutcome,
+  Measurements,
+} from './bundle-read.js'
 export {
   enumerateBundleDirs,
   isServable,

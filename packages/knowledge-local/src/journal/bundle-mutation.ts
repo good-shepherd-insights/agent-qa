@@ -24,10 +24,15 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const JOURNAL_FILE = 'mutation.json'
 const RECOVERY_DIR = 'recovery'
 const DIRECT_LIBRARY_LEASE_ID = 'direct-library'
+/**
+ * 378-17 canonical mutable-target order, additively extended by 379 D-03:
+ * record, provenance, outcomes, measurements, relations, then manifest.
+ */
 const MUTABLE_TARGETS = new Set([
   'record.md',
   'provenance.json',
   'evidence/outcomes.jsonl',
+  'evidence/measurements.json',
   'relations.json',
   'manifest.json',
 ])

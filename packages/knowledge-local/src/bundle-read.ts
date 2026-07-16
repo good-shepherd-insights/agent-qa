@@ -17,6 +17,8 @@ import {
   guardBundleManifest,
   guardBundleProvenance,
   guardBundleRelations,
+  measurementBaselineSchema,
+  measurementObservationSchema,
   parseRecordMarkdown,
   renderEmbeddingInput,
   verifyManifestIdentity,
@@ -28,6 +30,8 @@ import type {
   BundleProvenance,
   BundleRelations,
   DerivedTrustState,
+  MeasurementBaseline,
+  MeasurementObservation,
   RecordFrontmatter,
   ScreenState,
 } from '@vostride/agent-qa-schema'
@@ -57,6 +61,7 @@ export interface IntegrityReport {
 }
 
 const OUTCOMES_REL_PATH = 'evidence/outcomes.jsonl'
+const MEASUREMENTS_REL_PATH = 'evidence/measurements.json'
 const RELATIONS_REL_PATH = 'relations.json'
 const ARTIFACTS_INDEX_REL_PATH = 'artifacts.index.json'
 const SNAPSHOT_REL_PATH = /^evidence\/screenstates\/step-(\d+)\.json$/
@@ -91,6 +96,32 @@ function parseOutcomeLog(
       setCurrentFile(`${OUTCOMES_REL_PATH} line ${index + 1}`)
       return BundleOutcomeEventSchema.parse(JSON.parse(line))
     })
+}
+
+export interface Measurements {
+  baseline: MeasurementBaseline
+  observations: MeasurementObservation[]
+}
+
+/**
+ * Read D-03's baseline-first append stream. Absence is normal for non-measurement
+ * bundles; any present malformed line fails loudly through the strict schemas.
+ */
+export function readMeasurements(bundleDir: string): Measurements | undefined {
+  const file = join(bundleDir, MEASUREMENTS_REL_PATH)
+  if (!existsSync(file)) return undefined
+
+  const text = readFileSync(file, 'utf8')
+  if (text === '' || !text.endsWith('\n')) {
+    throw new SyntaxError(`${MEASUREMENTS_REL_PATH} must contain a baseline and end with a newline`)
+  }
+  const lines = text.slice(0, -1).split('\n')
+  return {
+    baseline: measurementBaselineSchema.parse(JSON.parse(lines[0]!)),
+    observations: lines.slice(1).map((line) =>
+      measurementObservationSchema.parse(JSON.parse(line)),
+    ),
+  }
 }
 
 export function loadBundle(bundleDir: string): LoadBundleOutcome {
@@ -276,10 +307,12 @@ export function verifyBundleIntegrity(bundleDir: string): IntegrityReport {
     }
   }
 
+  const measurements = actualDigests[MEASUREMENTS_REL_PATH]
   const mutableStateHash = computeMutableStateHash({
     outcomes: actualDigests[OUTCOMES_REL_PATH] ?? null,
     relations: actualDigests[RELATIONS_REL_PATH] ?? null,
     artifactsIndex: actualDigests[ARTIFACTS_INDEX_REL_PATH] ?? null,
+    ...(measurements === undefined ? {} : { measurements }),
   })
   if (mutableStateHash !== manifest.mutableStateHash) {
     violations.push('manifest.json: mutableStateHash mismatch')

@@ -263,6 +263,11 @@ export interface MutableStateHashInput {
   outcomes: string | null
   relations: string | null
   artifactsIndex: string | null
+  /**
+   * D-03 additive measurement stream digest. Optionality preserves the exact
+   * mutable-state hash of bundles created before measurements.json exists.
+   */
+  measurements?: string | null
 }
 
 /**

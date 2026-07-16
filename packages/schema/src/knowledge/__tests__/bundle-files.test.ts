@@ -133,7 +133,7 @@ describe('computeMutableStateHash (BNDL-02)', () => {
     artifactsIndex: DIGEST_C,
   }
 
-  it.each(['outcomes', 'relations', 'artifactsIndex'] as const)(
+  it.each(['outcomes', 'relations', 'artifactsIndex', 'measurements'] as const)(
     'changes when the %s digest changes',
     (field) => {
       expect(computeMutableStateHash({ ...input, [field]: DIGEST_D }))
@@ -156,6 +156,7 @@ describe('computeMutableStateHash (BNDL-02)', () => {
       outcomes: string | null
       relations: string | null
       artifactsIndex: string | null
+      measurements?: string | null
     }>()
   })
 })

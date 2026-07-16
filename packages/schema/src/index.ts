@@ -284,6 +284,14 @@ export {
 } from './knowledge/index'
 export type { BundleStatus, DerivedTrustState } from './knowledge/index'
 export {
+  measurementBaselineSchema,
+  measurementObservationSchema,
+} from './knowledge/index'
+export type {
+  MeasurementBaseline,
+  MeasurementObservation,
+} from './knowledge/index'
+export {
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   distilledObservationSchema,
   guardDistilledObservation,
