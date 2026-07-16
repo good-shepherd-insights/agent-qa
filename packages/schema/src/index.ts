@@ -292,11 +292,15 @@ export type {
   MeasurementObservation,
 } from './knowledge/index'
 export {
+  cautionRootCauseClassSchema,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   distilledObservationSchema,
   guardDistilledObservation,
 } from './knowledge/distilled-observation'
-export type { DistilledObservation } from './knowledge/distilled-observation'
+export type {
+  CautionRootCauseClass,
+  DistilledObservation,
+} from './knowledge/distilled-observation'
 export {
   ArtifactsIndexSchema,
   BUNDLE_SCHEMA_VERSION,

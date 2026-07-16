@@ -538,6 +538,9 @@ function finalizeProjection(
       injectionFlagged: projection.injectionFlagged,
       kind: projection.kind,
       ...(projection.subtype === undefined ? {} : { subtype: projection.subtype }),
+      ...(projection.rootCauseClass === undefined
+        ? {}
+        : { rootCauseClass: projection.rootCauseClass }),
       anchors: projection.anchors,
       summarySeed: projection.summarySeed,
       bodySeed: projection.bodySeed,

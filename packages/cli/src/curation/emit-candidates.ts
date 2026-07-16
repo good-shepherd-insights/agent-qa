@@ -13,6 +13,7 @@ import {
   deriveEvidenceToken,
   type Anchor,
   type ArtifactRef,
+  type CautionRootCauseClass,
   type CompletedRunHandoff,
   type DistilledObservation,
   type ElementInfo,
@@ -29,9 +30,7 @@ export const LEARNABLE_CAUTION_ROOT_CAUSES = [
   'environment',
   'timeout',
   'flake',
-] as const
-
-type LearnableCautionRootCause = (typeof LEARNABLE_CAUTION_ROOT_CAUSES)[number]
+] as const satisfies readonly CautionRootCauseClass[]
 
 interface ResolvedElementEvidence {
   subAction: SubActionEvidence
@@ -318,6 +317,7 @@ function commonFields(
   input: {
     kind: CurationCandidateProjection['kind']
     subtype?: FactSubtype
+    rootCauseClass?: CautionRootCauseClass
     anchors: Anchor[]
     summarySeed: string
     bodySeed: string
@@ -345,6 +345,9 @@ function commonFields(
     injectionFlagged: candidateInjectionFlag(evidence, policy),
     kind: input.kind,
     ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
+    ...(input.rootCauseClass === undefined
+      ? {}
+      : { rootCauseClass: input.rootCauseClass }),
     anchors: evidence.anchors,
     summarySeed: evidence.summarySeed,
     bodySeed: evidence.bodySeed,
@@ -528,7 +531,7 @@ function projectMeasurements(
 
 function isLearnableCaution(
   value: string,
-): value is LearnableCautionRootCause {
+): value is CautionRootCauseClass {
   return (LEARNABLE_CAUTION_ROOT_CAUSES as readonly string[]).includes(value)
 }
 
@@ -559,7 +562,10 @@ function projectCaution(
     step: { naturalKey: id, ordinal: stepIndex },
     ...(platform === undefined ? {} : { platform: observationPlatform(platform) }),
     test: { id: test.testId },
-    error: { naturalKey: `${rootCause.class}:${rootCause.evidence.rationale}` },
+    error: {
+      naturalKey: `${rootCause.class}:${rootCause.evidence.rationale}`,
+      rootCauseClass: rootCause.class,
+    },
     observedAtOrdinal: handoff.buildOrdinal,
   }
 
@@ -567,6 +573,7 @@ function projectCaution(
     handoff,
     {
       kind: 'caution',
+      rootCauseClass: rootCause.class,
       anchors,
       summarySeed: `${rootCause.class} caution for ${test.testId}`,
       bodySeed: `${rootCause.class}: ${rootCause.evidence.rationale}`,

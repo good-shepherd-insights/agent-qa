@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import {
   canonicalJson,
+  cautionRootCauseClassSchema,
   distilledObservationSchema,
   sha256hex,
 } from '@vostride/agent-qa-schema'
@@ -9,6 +10,7 @@ import type {
   Anchor,
   ArtifactRef,
   BundleKind,
+  CautionRootCauseClass,
   ExecutionContext,
   FactSubtype,
   ScopeKey,
@@ -194,6 +196,11 @@ const candidateSeedShape = {
   injectionFlagged: z.boolean(),
   kind: bundleKindSchema,
   subtype: factSubtypeSchema.optional(),
+  /**
+   * 379 D-16 additive-optional typed caution evidence. Existing queue-v2
+   * bytes remain valid; when present this real evidence joins the address.
+   */
+  rootCauseClass: cautionRootCauseClassSchema.optional(),
   anchors: z.array(anchorSchema).min(1),
   summarySeed: z.string(),
   bodySeed: z.string(),
@@ -227,6 +234,7 @@ function validateKindSemantics(
   value: {
     kind: BundleKind
     subtype?: FactSubtype
+    rootCauseClass?: CautionRootCauseClass
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -244,12 +252,20 @@ function validateKindSemantics(
       message: 'only fact candidates may carry a fact subtype',
     })
   }
+  if (value.rootCauseClass !== undefined && value.kind !== 'caution') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rootCauseClass'],
+      message: 'only caution candidates may carry a root-cause class',
+    })
+  }
 }
 
 function validateProjectionSemantics(
   value: {
     kind: BundleKind
     subtype?: FactSubtype
+    rootCauseClass?: CautionRootCauseClass
     artifactDescriptors: readonly { ref: ArtifactRef }[]
   },
   ctx: z.RefinementCtx,
@@ -272,6 +288,7 @@ function validateAddressSemantics(
   value: {
     kind: BundleKind
     subtype?: FactSubtype
+    rootCauseClass?: CautionRootCauseClass
     artifactInventory: readonly {
       relativePath: string
       sha256: string
