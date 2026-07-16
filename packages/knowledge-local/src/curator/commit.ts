@@ -821,6 +821,9 @@ export function commitCurationDelta(
           markDone(deps, job)
           return promotedFailure
         }
+      }
+      if (freshlyPublished) deps.hooks?.afterBundlePublished?.(published.id)
+      if (disposed.kind === 'apply' && disposed.bornActive === true) {
         applyIndexDeltaForBundle({
           knowledgeRoot: deps.knowledgeRoot,
           bundleId: published.id,
@@ -828,7 +831,6 @@ export function commitCurationDelta(
           suppressDense: embedGate.suppressDense,
         })
       }
-      if (freshlyPublished) deps.hooks?.afterBundlePublished?.(published.id)
     } else if (delta.kind === 'Confirm') {
       const targetConfig = storeConfig(
         deps,
