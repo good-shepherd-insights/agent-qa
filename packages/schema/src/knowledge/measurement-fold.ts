@@ -15,6 +15,24 @@ export const CUSUM_DECISION_H = 5
 export const BIMODAL_GAP_THRESHOLD = 2.25
 export const BIMODAL_MIN_MODE_N = 3
 
+/** Locked §9.2 evidence and drift thresholds; these are laws, not knobs. */
+export const MEASUREMENT_MIN_N = 5
+export const DRIFT_SIGMA_K = 3
+export const DRIFT_RELATIVE_THRESHOLD = 0.5
+
+/**
+ * PROVISIONAL D-04 confidence and kind-variance prior values. Measurement
+ * metrics have no common absolute scale, so the kind prior is coefficient-of-
+ * variation based. M3 owns calibration; these are never config keys.
+ */
+export const CI_SEPARATION_Z = 1.96
+export const KIND_DEFAULT_CV = 0.3
+export const KIND_CV_FLOOR = 1
+export const SHRINKAGE_PSEUDO_N = 5
+
+/** PROVISIONAL D-04 revisit window for the stable-multimodal discriminator. */
+export const MULTIMODAL_TRAILING_BUILDS = 5
+
 const finiteNumberSchema = z.number().refine(Number.isFinite, 'Expected a finite number')
 
 /**
@@ -72,6 +90,31 @@ export interface DerivedMeasurementState {
   bands: MeasurementBand[]
   cusumPos: number
   cusumNeg: number
+}
+
+export type MeasurementDriftDecision =
+  | {
+      decision: 'widen'
+      reason: 'below-min-n' | 'ci-overlap' | 'within-threshold' | 'stable-multimodal'
+    }
+  | {
+      decision: 'supersede'
+      reason: 'threshold' | 'relative' | 'cusum' | 'regime-walk'
+    }
+
+export interface MeasurementDriftWindowBuilds {
+  /** Ordered source lines used to distinguish revisited modes from a regime walk. */
+  observations?: readonly MeasurementObservation[]
+  /** Inclusive trailing build-ordinal width; defaults to the provisional M2 value. */
+  trailingBuilds?: number
+  /** Reserved for Plan 379-07's lineage/thrash fold without changing this seam. */
+  lastSupersessionGapBuilds?: number
+}
+
+export interface DecideMeasurementDriftInput {
+  baseline: MeasurementBaseline
+  state: DerivedMeasurementState
+  windowBuilds?: MeasurementDriftWindowBuilds
 }
 
 export interface CusumState {
@@ -169,6 +212,109 @@ export function bimodalSplit(sorted: readonly number[]): BimodalSplit | undefine
   }
 }
 
+/**
+ * Ratified D-04 weak variance prior. A scale-free kind CV is necessary because
+ * measurement values are generic string-sourced metrics with no shared unit.
+ */
+export function shrunkSigma(sampleSigma: number, n: number, mu0: number): number {
+  const evidenceN = Math.max(0, n)
+  const kindSigma = KIND_DEFAULT_CV * Math.max(Math.abs(mu0), KIND_CV_FLOOR)
+  const variance = (
+    evidenceN * sampleSigma * sampleSigma
+    + SHRINKAGE_PSEUDO_N * kindSigma * kindSigma
+  ) / (evidenceN + SHRINKAGE_PSEUDO_N)
+
+  return Math.sqrt(variance)
+}
+
+function trailingModeVisits(
+  bands: readonly MeasurementBand[],
+  windowBuilds: MeasurementDriftWindowBuilds | undefined,
+): { hasChronology: boolean; stable: boolean } {
+  const observations = windowBuilds?.observations ?? []
+  if (bands.length < 2 || observations.length === 0) {
+    return { hasChronology: false, stable: false }
+  }
+
+  let latestBuildOrdinal = observations[0]!.buildOrdinal
+  for (const line of observations) {
+    latestBuildOrdinal = Math.max(latestBuildOrdinal, line.buildOrdinal)
+  }
+
+  const requestedWidth = windowBuilds?.trailingBuilds ?? MULTIMODAL_TRAILING_BUILDS
+  const trailingBuilds = Math.max(1, Math.trunc(requestedWidth))
+  const earliestBuildOrdinal = latestBuildOrdinal - trailingBuilds + 1
+  const recent = observations.filter((line) => line.buildOrdinal >= earliestBuildOrdinal)
+  const insideAnyBand = recent.every((line) =>
+    bands.some((candidate) => line.value >= candidate.lo && line.value <= candidate.hi),
+  )
+  const everyBandRevisited = bands.every((candidate) =>
+    recent.some((line) => line.value >= candidate.lo && line.value <= candidate.hi),
+  )
+
+  return {
+    hasChronology: recent.length > 0,
+    stable: insideAnyBand && everyBandRevisited,
+  }
+}
+
+/**
+ * The D-04 decision order is intentionally linear and locked: minimum evidence,
+ * confidence separation, absolute/relative thresholds, fixed-baseline CUSUM,
+ * then the multimodal discriminator before any supersession is minted. Widen
+ * decisions append evidence only and must never count toward thrash depth.
+ */
+export function decideMeasurementDrift(
+  input: Readonly<DecideMeasurementDriftInput>,
+): MeasurementDriftDecision {
+  const { baseline, state } = input
+
+  // Step 1: young distributions can only widen, regardless of poisoned outliers.
+  if (state.n < MEASUREMENT_MIN_N) {
+    return { decision: 'widen', reason: 'below-min-n' }
+  }
+
+  const baselineSigma = shrunkSigma(baseline.sigma0, baseline.n0, baseline.mu0)
+  const windowSigma = shrunkSigma(state.sigma, state.n, baseline.mu0)
+  const difference = Math.abs(state.mean - baseline.mu0)
+
+  // Step 2: no downstream arm bypasses confidence-interval separation.
+  const separation = CI_SEPARATION_Z * Math.sqrt(
+    baselineSigma * baselineSigma / baseline.n0
+    + windowSigma * windowSigma / state.n,
+  )
+  if (difference <= separation) {
+    return { decision: 'widen', reason: 'ci-overlap' }
+  }
+
+  // Steps 3 and 4 arm supersession independently; reason precedence follows D-04.
+  const sigmaThresholdPassed = difference > DRIFT_SIGMA_K * baselineSigma
+  const relativeThresholdPassed = (
+    difference > DRIFT_RELATIVE_THRESHOLD * Math.abs(baseline.mu0)
+  )
+  const cusumPassed = (
+    state.cusumPos > CUSUM_DECISION_H * baselineSigma
+    || state.cusumNeg > CUSUM_DECISION_H * baselineSigma
+  )
+
+  if (!sigmaThresholdPassed && !relativeThresholdPassed && !cusumPassed) {
+    return { decision: 'widen', reason: 'within-threshold' }
+  }
+
+  // Step 5: revisiting both significant bands widens; abandoning one is a walk.
+  const modeVisits = trailingModeVisits(state.bands, input.windowBuilds)
+  if (modeVisits.stable) {
+    return { decision: 'widen', reason: 'stable-multimodal' }
+  }
+  if (state.bands.length > 1 && modeVisits.hasChronology) {
+    return { decision: 'supersede', reason: 'regime-walk' }
+  }
+
+  if (sigmaThresholdPassed) return { decision: 'supersede', reason: 'threshold' }
+  if (relativeThresholdPassed) return { decision: 'supersede', reason: 'relative' }
+  return { decision: 'supersede', reason: 'cusum' }
+}
+
 function nearestRank(sorted: readonly number[], quantile: number): number | undefined {
   if (sorted.length === 0) return undefined
   const index = Math.max(0, Math.ceil(quantile * sorted.length) - 1)
@@ -185,6 +331,7 @@ export function foldMeasurements(
   baseline: MeasurementBaseline,
   lines: readonly MeasurementObservation[],
 ): DerivedMeasurementState {
+  const baselineSigma = shrunkSigma(baseline.sigma0, baseline.n0, baseline.mu0)
   const state: MeasurementFoldState = {
     n: 0,
     mean: 0,
@@ -205,7 +352,7 @@ export function foldMeasurements(
       { pos: state.cusumPos, neg: state.cusumNeg },
       line.value,
       baseline.mu0,
-      baseline.sigma0,
+      baselineSigma,
     )
     state.cusumPos = cusum.pos
     state.cusumNeg = cusum.neg
