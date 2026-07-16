@@ -3,11 +3,18 @@ import { describe, expect, it } from 'vitest'
 import {
   BIMODAL_MIN_MODE_N,
   CUSUM_DECISION_H,
+  DRIFT_RELATIVE_THRESHOLD,
+  DRIFT_SIGMA_K,
+  KIND_DEFAULT_CV,
+  MEASUREMENT_MIN_N,
+  SHRINKAGE_PSEUDO_N,
   bimodalSplit,
   cusumStep,
+  decideMeasurementDrift,
   foldMeasurements,
   measurementBaselineSchema,
   measurementObservationSchema,
+  shrunkSigma,
   type MeasurementBaseline,
   type MeasurementObservation,
 } from '../measurement-fold'
@@ -128,5 +135,134 @@ describe('weighted largest-gap bimodality (D-04 ratification)', () => {
     expect(bimodalSplit([1, 2, 3, 4, 5, 6])).toBeUndefined()
     expect(bimodalSplit(Array.from({ length: 2 * BIMODAL_MIN_MODE_N - 1 }, (_, i) => i)))
       .toBeUndefined()
+  })
+})
+
+describe('D-04 locked measurement drift decision tree', () => {
+  function decision(
+    decisionBaseline: MeasurementBaseline,
+    values: readonly number[],
+    buildOrdinals = values.map((_, index) => 101 + index),
+  ) {
+    const observations = values.map((value, index) =>
+      observation(value, index, buildOrdinals[index]),
+    )
+
+    return decideMeasurementDrift({
+      baseline: decisionBaseline,
+      state: foldMeasurements(decisionBaseline, observations),
+      windowBuilds: { observations, trailingBuilds: 5 },
+    })
+  }
+
+  it('runs the locked minimum-n gate before every supersession arm', () => {
+    expect(MEASUREMENT_MIN_N).toBe(5)
+    expect(decision(baseline, [100, 100, 100, 100])).toEqual({
+      decision: 'widen',
+      reason: 'below-min-n',
+    })
+  })
+
+  it('shrinks low-n variance toward the exact CV pseudo-count prior', () => {
+    expect(KIND_DEFAULT_CV).toBe(0.3)
+    expect(SHRINKAGE_PSEUDO_N).toBe(5)
+    expect(shrunkSigma(0, 1, 10)).toBeCloseTo(Math.sqrt(7.5), 12)
+    expect(shrunkSigma(2, 5, 10)).toBeCloseTo(Math.sqrt(6.5), 12)
+  })
+
+  it('widens on CI overlap before a tiny-baseline relative trigger can fire', () => {
+    const tinyBaseline: MeasurementBaseline = {
+      mu0: 0.01,
+      sigma0: 1,
+      n0: 5,
+      openedAtOrdinal: 100,
+    }
+
+    expect(0.02 - tinyBaseline.mu0).toBeGreaterThan(
+      DRIFT_RELATIVE_THRESHOLD * Math.abs(tinyBaseline.mu0),
+    )
+    expect(decision(tinyBaseline, [0.02, 0.02, 0.02, 0.02, 0.02])).toEqual({
+      decision: 'widen',
+      reason: 'ci-overlap',
+    })
+  })
+
+  it('supersedes on the locked 3-sigma arm in both directions', () => {
+    const thresholdBaseline: MeasurementBaseline = {
+      mu0: 100,
+      sigma0: 5,
+      n0: 100,
+      openedAtOrdinal: 100,
+    }
+
+    expect(DRIFT_SIGMA_K).toBe(3)
+    expect(decision(thresholdBaseline, [130, 130, 130, 130, 130])).toEqual({
+      decision: 'supersede',
+      reason: 'threshold',
+    })
+    expect(decision(thresholdBaseline, [70, 70, 70, 70, 70])).toEqual({
+      decision: 'supersede',
+      reason: 'threshold',
+    })
+  })
+
+  it('supersedes on the locked relative arm in both directions independently of sigma', () => {
+    const relativeBaseline: MeasurementBaseline = {
+      mu0: 100,
+      sigma0: 50,
+      n0: 100,
+      openedAtOrdinal: 100,
+    }
+
+    expect(DRIFT_RELATIVE_THRESHOLD).toBe(0.5)
+    expect(decision(relativeBaseline, [160, 160, 160, 160, 160])).toEqual({
+      decision: 'supersede',
+      reason: 'relative',
+    })
+    expect(decision(relativeBaseline, [40, 40, 40, 40, 40])).toEqual({
+      decision: 'supersede',
+      reason: 'relative',
+    })
+  })
+
+  it('lets fixed-baseline CUSUM catch a sustained shift below both window thresholds', () => {
+    const cusumBaseline: MeasurementBaseline = {
+      mu0: 100,
+      sigma0: 2,
+      n0: 100,
+      openedAtOrdinal: 100,
+    }
+
+    expect(decision(cusumBaseline, Array.from({ length: 50 }, () => 108))).toEqual({
+      decision: 'supersede',
+      reason: 'cusum',
+    })
+  })
+
+  it('widens revisited modes but supersedes a walk that abandons the old band', () => {
+    const multimodalBaseline: MeasurementBaseline = {
+      mu0: 10,
+      sigma0: 5,
+      n0: 100,
+      openedAtOrdinal: 100,
+    }
+
+    expect(decision(
+      multimodalBaseline,
+      [10, 100, 11, 101, 9, 99],
+      [101, 102, 103, 104, 105, 106],
+    )).toEqual({
+      decision: 'widen',
+      reason: 'stable-multimodal',
+    })
+
+    expect(decision(
+      multimodalBaseline,
+      [9, 10, 11, 99, 100, 101],
+      [100, 101, 102, 110, 111, 112],
+    )).toEqual({
+      decision: 'supersede',
+      reason: 'regime-walk',
+    })
   })
 })
