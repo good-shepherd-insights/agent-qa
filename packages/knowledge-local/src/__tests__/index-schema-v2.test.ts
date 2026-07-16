@@ -97,7 +97,7 @@ function replaceWithLegacyV1Shape(db: DatabaseSync, vecTable: string | undefined
   db.prepare("UPDATE meta SET v = '1' WHERE k = 'index_schema_version'").run()
 }
 
-describe('index schema v2 reset', () => {
+describe('disposable index schema reset', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -145,24 +145,28 @@ describe('index schema v2 reset', () => {
     return outcome
   }
 
-  it('bootstraps fresh writers with the complete v2 projection shape', () => {
+  it('bootstraps fresh writers with the complete current projection shape', () => {
     const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
     try {
-      expect(knowledgeLocal.INDEX_SCHEMA_VERSION).toBe(2)
-      expect(knowledgeLocal.MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(2)
+      expect(knowledgeLocal.INDEX_SCHEMA_VERSION).toBe(3)
+      expect(knowledgeLocal.MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(3)
       expect(knowledgeLocal.INDEX_RENDERING_SCHEMA_VERSION).toBe(2)
       expect(
         writer.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get()?.v,
-      ).toBe('2')
+      ).toBe('3')
       expect(
         writer.db
           .prepare("SELECT v FROM meta WHERE k = 'rendering_schema_version'")
           .get()?.v,
       ).toBe('2')
       expect(columnNames(writer.db, 'records')).toEqual(
-        expect.arrayContaining(['situating_line', 'contextual_rendering']),
+        expect.arrayContaining([
+          'last_confirmed_ordinal',
+          'situating_line',
+          'contextual_rendering',
+        ]),
       )
       expect(columnNames(writer.db, 'fts_records')).toEqual([
         'identity',
@@ -212,8 +216,9 @@ describe('index schema v2 reset', () => {
         reset.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get()?.v,
-      ).toBe('2')
+      ).toBe('3')
       expect(columnNames(reset.db, 'records')).toContain('contextual_rendering')
+      expect(columnNames(reset.db, 'records')).toContain('last_confirmed_ordinal')
       expect(columnNames(reset.db, 'fts_records')).toEqual([
         'identity',
         'content',
@@ -265,7 +270,7 @@ describe('index schema v2 reset', () => {
         brute.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get()?.v,
-      ).toBe('2')
+      ).toBe('3')
       expect(
         brute.db
           .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")

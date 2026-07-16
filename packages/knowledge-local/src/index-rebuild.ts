@@ -247,10 +247,10 @@ function upsertRecord(
   db.prepare(`
     INSERT INTO records (
       bundle_id, product, mutable_state_hash, kind, subtype, scope_tier, scope_key,
-      status, trust, confirmed, contradicted, helpful, harmful, opened_at_ordinal,
-      closed_at_ordinal, created_at_ordinal, origin_class, summary, embedding_input,
-      situating_line, contextual_rendering
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, trust, confirmed, contradicted, helpful, harmful, last_confirmed_ordinal,
+      opened_at_ordinal, closed_at_ordinal, created_at_ordinal, origin_class, summary,
+      embedding_input, situating_line, contextual_rendering
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(bundle_id) DO UPDATE SET
       product = excluded.product,
       mutable_state_hash = excluded.mutable_state_hash,
@@ -264,6 +264,7 @@ function upsertRecord(
       contradicted = excluded.contradicted,
       helpful = excluded.helpful,
       harmful = excluded.harmful,
+      last_confirmed_ordinal = excluded.last_confirmed_ordinal,
       opened_at_ordinal = excluded.opened_at_ordinal,
       closed_at_ordinal = excluded.closed_at_ordinal,
       created_at_ordinal = excluded.created_at_ordinal,
@@ -284,6 +285,7 @@ function upsertRecord(
     trust.counters.contradicted,
     trust.counters.helpful,
     trust.counters.harmful,
+    trust.lastConfirmedOrdinal,
     trust.validity.openedAtOrdinal,
     trust.validity.closedAtOrdinal ?? null,
     bundle.frontmatter.createdAtOrdinal,

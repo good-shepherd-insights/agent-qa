@@ -23,11 +23,11 @@ import { getLoadablePath } from './sqlite-vec-loadable.js'
 
 export const INDEX_DB_FILE = 'knowledge.db'
 
-/** Phase 377 D-03 schema; older disposable projections reset instead of migrating virtual tables. */
-export const INDEX_SCHEMA_VERSION = 2
+/** Phase 379 D-05 schema; older disposable projections reset instead of migrating in place. */
+export const INDEX_SCHEMA_VERSION = 3
 
-/** Phase 377 readers reject pre-D-03 projections until a writer performs the v2 reset. */
-export const MIN_READABLE_INDEX_SCHEMA_VERSION = 2
+/** Phase 379 readers reject pre-D-05 projections until a writer performs the v3 reset. */
+export const MIN_READABLE_INDEX_SCHEMA_VERSION = 3
 
 /**
  * Phase 377 D-04 rendering epoch.
@@ -378,6 +378,7 @@ function bootstrapSchema(
       contradicted INTEGER NOT NULL,
       helpful INTEGER NOT NULL,
       harmful INTEGER NOT NULL,
+      last_confirmed_ordinal INTEGER NOT NULL,
       opened_at_ordinal REAL NOT NULL,
       closed_at_ordinal REAL,
       created_at_ordinal REAL NOT NULL,
