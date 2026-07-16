@@ -15,22 +15,31 @@ import {
 import type {
   BundleOutcomeEvent,
   BundleRelation,
+  MeasurementBaseline,
+  MeasurementObservation,
   RecordId,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  MEASUREMENTS_REL_PATH,
+  appendMeasurementObservation,
   appendOutcomeEvent,
   appendOutcomeEventWithEnrichment,
   appendRelation,
   type AppendOutcome,
+  writeMeasurementBaseline,
 } from '../bundle-append.js'
+import { readMeasurements } from '../bundle-read.js'
 import {
   publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../bundle-publish.js'
-import { commitBundleMutation } from '../journal/bundle-mutation.js'
+import {
+  commitBundleMutation,
+  recoverExpiredBundleMutations,
+} from '../journal/bundle-mutation.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
@@ -38,6 +47,25 @@ import {
 } from './fixtures/bundle-fixture.js'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
+
+const MEASUREMENT_BASELINE: MeasurementBaseline = {
+  mu0: 125,
+  sigma0: 8,
+  n0: 6,
+  openedAtOrdinal: 42,
+}
+
+function measurementObservation(
+  overrides: Partial<MeasurementObservation> = {},
+): MeasurementObservation {
+  return {
+    value: 131,
+    buildOrdinal: 43,
+    evidenceToken: 'measurement-observation',
+    curationJobId: 'measurement-job',
+    ...overrides,
+  }
+}
 
 function event(
   overrides: Partial<Extract<BundleOutcomeEvent, { type: 'confirmed' }>> = {},
@@ -239,6 +267,134 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     }
   })
 
+  it('writes the immutable measurement baseline once and refuses any overwrite', () => {
+    const measurementsPath = join(bundleDir, MEASUREMENTS_REL_PATH)
+
+    expect(writeMeasurementBaseline(config, id, MEASUREMENT_BASELINE)).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+    expect(readFileSync(measurementsPath, 'utf8')).toBe(
+      `${canonicalJson(MEASUREMENT_BASELINE)}\n`,
+    )
+    const measurementsBefore = readFileSync(measurementsPath)
+    const manifestBefore = readFileSync(join(bundleDir, 'manifest.json'))
+
+    expect(
+      writeMeasurementBaseline(config, id, {
+        ...MEASUREMENT_BASELINE,
+        mu0: 999,
+      }),
+    ).toEqual<AppendOutcome>({ kind: 'duplicate' })
+    expect(readFileSync(measurementsPath)).toEqual(measurementsBefore)
+    expect(readFileSync(join(bundleDir, 'manifest.json'))).toEqual(manifestBefore)
+  })
+
+  it('appends strict measurement observations and reads the stream in append order', () => {
+    const first = measurementObservation()
+    const second = measurementObservation({
+      value: 118,
+      buildOrdinal: 44,
+      evidenceToken: 'measurement-observation-2',
+      curationJobId: 'measurement-job-2',
+    })
+    expect(readMeasurements(bundleDir)).toBeUndefined()
+    expect(appendMeasurementObservation(config, id, first)).toEqual<AppendOutcome>({
+      kind: 'not-found',
+    })
+    expect(writeMeasurementBaseline(config, id, MEASUREMENT_BASELINE)).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+
+    expect(appendMeasurementObservation(config, id, first)).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+    expect(appendMeasurementObservation(config, id, second)).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+    expect(readMeasurements(bundleDir)).toEqual({
+      baseline: MEASUREMENT_BASELINE,
+      observations: [first, second],
+    })
+
+    writeFileSync(
+      join(bundleDir, MEASUREMENTS_REL_PATH),
+      `${canonicalJson(MEASUREMENT_BASELINE)}\n${canonicalJson(first)}\n{"value":"bad"}\n`,
+      'utf8',
+    )
+    expect(() => readMeasurements(bundleDir)).toThrow()
+  })
+
+  it('advances mutable state without changing bundle identity on a measurement append', () => {
+    expect(writeMeasurementBaseline(config, id, MEASUREMENT_BASELINE)).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+    const before = manifest()
+
+    expect(
+      appendMeasurementObservation(config, id, measurementObservation()),
+    ).toEqual<AppendOutcome>({ kind: 'appended' })
+
+    const after = manifest()
+    expect(after.contentHashes[MEASUREMENTS_REL_PATH]).not.toBe(
+      before.contentHashes[MEASUREMENTS_REL_PATH],
+    )
+    expect(after.mutableStateHash).not.toBe(before.mutableStateHash)
+    expect({ id: after.id, identityHash: after.identityHash }).toEqual({
+      id: before.id,
+      identityHash: before.identityHash,
+    })
+  })
+
+  it('recovers a crashed measurement append byte-identically and keeps second recovery inert', () => {
+    expect(writeMeasurementBaseline(config, id, MEASUREMENT_BASELINE)).toEqual<AppendOutcome>({
+      kind: 'appended',
+    })
+    const observation = measurementObservation()
+    config.hooks = {
+      afterMutableReplacement(relPath) {
+        if (relPath === MEASUREMENTS_REL_PATH) {
+          throw new Error('injected measurement append stop')
+        }
+      },
+    }
+
+    expect(() => appendMeasurementObservation(config, id, observation)).toThrow(
+      'injected measurement append stop',
+    )
+    const [transactionName] = mutationDirs()
+    const transactionDir = join(bundleDir, '..', '.staging', transactionName!)
+    const journal = JSON.parse(
+      readFileSync(join(transactionDir, 'mutation.json'), 'utf8'),
+    ) as { replacements: { targetRelPath: string }[] }
+    expect(journal.replacements.map(({ targetRelPath }) => targetRelPath)).toEqual([
+      MEASUREMENTS_REL_PATH,
+      'manifest.json',
+    ])
+
+    config.hooks = undefined
+    expect(
+      recoverExpiredBundleMutations(config.knowledgeRoot, [config.writerLeaseId!]),
+    ).toEqual({ mutationsRecovered: 1, recoveredBundleIds: [id] })
+    expect(readMeasurements(bundleDir)).toEqual({
+      baseline: MEASUREMENT_BASELINE,
+      observations: [observation],
+    })
+    const firstRecoveryBytes = {
+      measurements: readFileSync(join(bundleDir, MEASUREMENTS_REL_PATH)),
+      manifest: readFileSync(join(bundleDir, 'manifest.json')),
+    }
+
+    expect(
+      recoverExpiredBundleMutations(config.knowledgeRoot, [config.writerLeaseId!]),
+    ).toEqual({ mutationsRecovered: 0, recoveredBundleIds: [] })
+    expect(readFileSync(join(bundleDir, MEASUREMENTS_REL_PATH))).toEqual(
+      firstRecoveryBytes.measurements,
+    )
+    expect(readFileSync(join(bundleDir, 'manifest.json'))).toEqual(
+      firstRecoveryBytes.manifest,
+    )
+  })
+
   it('rejects traversal and unexpected mutable targets before changing canonical bytes', () => {
     const recordBefore = readFileSync(join(bundleDir, 'record.md'))
     const manifestBefore = readFileSync(join(bundleDir, 'manifest.json'))
@@ -258,6 +414,16 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
         ],
       }),
     ).toThrow()
+    expect(() =>
+      commitBundleMutation({
+        ...baseInput,
+        replacements: [
+          { targetRelPath: MEASUREMENTS_REL_PATH, text: 'first' },
+          { targetRelPath: MEASUREMENTS_REL_PATH, text: 'duplicate' },
+          { targetRelPath: 'manifest.json', text: manifestBefore.toString('utf8') },
+        ],
+      }),
+    ).toThrow('duplicate mutable bundle target')
     expect(() =>
       commitBundleMutation({
         ...baseInput,
