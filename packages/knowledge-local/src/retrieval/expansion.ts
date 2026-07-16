@@ -85,6 +85,29 @@ function readNeighbors(
   const hubClause = hubNodeIds.length === 0
     ? ''
     : `AND incident.neighbor_node_id NOT IN (${hubNodeIds.map(() => '?').join(', ')})`
+  const hasRecordNodes = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'graph_nodes'")
+    .get() !== undefined
+  // D-22 completes undirected record-relation traversal. The ordinary incident rows retain
+  // edge-owner provenance; this extra arm materializes an outgoing record-node target so a live
+  // rename replacement can reach its scrubbed predecessor when audit posture re-admits it.
+  const outgoingRecordTargets = hasRecordNodes
+    ? `
+      UNION ALL
+
+      SELECT
+        edge.dst_node_id AS neighbor_node_id,
+        edge.edge_type,
+        target_record.record_rowid,
+        edge.recency_ordinal
+      FROM graph_edges AS edge
+      JOIN graph_nodes AS target ON target.node_id = edge.dst_node_id
+      JOIN records AS target_record
+        ON target_record.bundle_id = json_extract(target.natural_key_json, '$')
+      WHERE edge.src_node_id = ?
+        AND target.node_type IN ('fact', 'procedure', 'caution', 'unknown', 'policy')
+    `
+    : ''
 
   return db.prepare(`
     WITH incident AS (
@@ -105,6 +128,8 @@ function readNeighbors(
         edge.recency_ordinal
       FROM graph_edges AS edge
       WHERE edge.dst_node_id = ?
+
+      ${outgoingRecordTargets}
     )
     SELECT
       r.record_rowid,
@@ -131,6 +156,7 @@ function readNeighbors(
   `).all(
     seedNodeId,
     seedNodeId,
+    ...(hasRecordNodes ? [seedNodeId] : []),
     ...predicate.binds,
     ...hubNodeIds,
     FAN_OUT_CAP,

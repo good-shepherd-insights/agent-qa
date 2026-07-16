@@ -43,7 +43,10 @@ type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 const PRODUCT = 'rename-bridge-storefront'
 const SCOPE = { tier: 'product', key: PRODUCT } as const
 const PAGE: Anchor = { t: 'page', route: '/checkout' }
-const SELECTOR: Anchor = { t: 'selector', literal: '[data-testid="checkout-submit"]' }
+const SELECTOR = {
+  t: 'selector',
+  literal: '[data-testid="checkout-submit"]',
+} as const satisfies Anchor
 const OLD_ELEMENT: Anchor = {
   t: 'el',
   role: 'button',
@@ -264,7 +267,7 @@ function dependencies(): CommitCurationDependencies {
 }
 
 describe('rename bridge fixture acceptance (DCAY-03/DCAY-04 D-22)', () => {
-  it('closes the old window, suppresses stale recall, and preserves new-to-old audit traversal after scrub', async () => {
+  it('closes old recall and preserves scrub-safe new-to-old audit traversal', async () => {
     const victim = publishVictim()
     publishLexicalDistractors()
     const job = replacementJob()

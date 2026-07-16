@@ -510,7 +510,9 @@ function scrubDeadRecallRows(
   const recordNode = recordGraphNode(bundle.frontmatter.kind, bundle.manifest.id)
   db.prepare(`
     DELETE FROM graph_edges
-    WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
+    WHERE record_rowid = ?
+      OR src_node_id = ?
+      OR (dst_node_id = ? AND edge_type <> 'renamed-from')
   `).run(recordRowid, recordNode.nodeId, recordNode.nodeId)
   deleteOrphanGraphNodes(db)
 }
@@ -655,7 +657,17 @@ function emitRelationEdges(db: DatabaseSync, relationSources: readonly Projected
         const targetRow = db
           .prepare('SELECT kind, status FROM records WHERE bundle_id = ?')
           .get(relation.targetId)
-        if (targetRow === undefined || isDeadStatus(targetRow.status)) continue
+        if (
+          targetRow === undefined
+          || (isDeadStatus(targetRow.status) && relation.type !== 'renamed-from')
+        ) {
+          continue
+        }
+        /**
+         * D-22: `renamed-from` is the one intentional dead-target relation. The live replacement
+         * owns the edge, so audit expansion can still traverse new → old after the victim's own
+         * recall rows and edges are structurally scrubbed. Every other dead target stays omitted.
+         */
         const targetKind = targetRow.kind as LoadedBundle['frontmatter']['kind']
         const targetNode = recordGraphNode(targetKind, relation.targetId)
         insertGraphNode(db, targetNode, product)
