@@ -312,6 +312,19 @@ export type {
   PurgeRecordOutcome,
 } from './purge.js'
 export {
+  rollbackCampaign,
+  rollbackCurationJob,
+  rollbackReceiptId,
+} from './rollback.js'
+export type {
+  RollbackAffectedSet,
+  RollbackCampaignInput,
+  RollbackCounterEvent,
+  RollbackCurationJobInput,
+  RollbackKind,
+  RollbackReport,
+} from './rollback.js'
+export {
   createLocalKnowledgeStore,
   KnowledgeCommitError,
   KnowledgePromotionError,
