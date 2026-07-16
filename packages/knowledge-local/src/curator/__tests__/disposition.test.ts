@@ -432,6 +432,42 @@ describe('disposeDelta deterministic authority (CUR-01/SAFE-01)', () => {
     })
   })
 
+  it('preserves rename lineage when propose-only downgrades Supersede to Add', () => {
+    const originalAnchors = [
+      primary,
+      page,
+      { t: 'selector', literal: '[data-action="sign-in"]' },
+    ] as Anchor[]
+    const victim = publishActive(originalAnchors)
+    const victimPrecondition = observed(victim.id)
+    const renamedAnchors = [
+      { t: 'el', role: 'button', name: 'Log in' },
+      page,
+      originalAnchors[2]!,
+    ] as Anchor[]
+    const delta = supersedeDelta(victim.id, renamedAnchors, victimPrecondition)
+
+    const proposed = disposeDelta({
+      delta,
+      checkpoint: checkpoint(delta, [victim.id], [victimPrecondition]),
+      profile: { mode: 'propose-only' },
+      knowledgeRoot,
+      candidate: candidate(renamedAnchors),
+      drainState: drainState(),
+    })
+
+    expect(proposed).toMatchObject({
+      kind: 'downgraded',
+      reason: 'propose-only',
+      original: delta,
+      delta: { kind: 'Add', bundle: delta.newBundle },
+    })
+    expect(proposed).toHaveProperty('relationIntents', [
+      { type: 'proposed-supersession-of', targetId: victim.id },
+      { type: 'renamed-from', targetId: victim.id },
+    ])
+  })
+
   it('requires the shared supersession key and a strictly greater candidate ordinal', () => {
     const victim = publishActive([primary, page])
     const precondition = observed(victim.id)
@@ -572,10 +608,10 @@ describe('disposeDelta deterministic authority (CUR-01/SAFE-01)', () => {
       reason: 'propose-only',
       original: delta,
       delta: { kind: 'Add', bundle: delta.newBundle },
-      relationIntents: [
-        { type: 'proposed-supersession-of', targetId: victim.id },
-      ],
     })
+    expect(proposed).toHaveProperty('relationIntents', [
+      { type: 'proposed-supersession-of', targetId: victim.id },
+    ])
 
     const loadedVictim = loadBundle(victim.dir)
     expect(loadedVictim.kind).toBe('loaded')
