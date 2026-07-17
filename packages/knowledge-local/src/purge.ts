@@ -23,12 +23,8 @@ import {
   committedFileText,
   createVersionGuard,
   recordGraphNode,
-  supersessionKey,
 } from '@vostride/agent-qa-schema'
-import type {
-  Anchor,
-  RecordId,
-} from '@vostride/agent-qa-schema'
+import type { RecordId } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import { checkpointCommittedParts } from './bundle-egress.js'
@@ -234,23 +230,6 @@ function payloadDirectories(root: string): string[] {
   return found.sort()
 }
 
-function anchorKeys(anchors: readonly Anchor[]): Set<string> {
-  return new Set(
-    anchors
-      .filter((anchor) => anchor.t !== 'platform')
-      .map((anchor) => supersessionKey([anchor])),
-  )
-}
-
-function intersectsAnchorKeys(
-  anchors: readonly Anchor[],
-  purgedKeys: ReadonlySet<string>,
-): boolean {
-  return anchors.some(
-    (anchor) => anchor.t !== 'platform' && purgedKeys.has(supersessionKey([anchor])),
-  )
-}
-
 function removeEmptyQueueParents(candidateDir: string, root: string): void {
   let current = dirname(candidateDir)
   while (current !== root && current.startsWith(`${root}${sep}`)) {
@@ -269,10 +248,68 @@ function removeEmptyQueueParents(candidateDir: string, root: string): void {
   }
 }
 
-function sweepQueuePayloads(knowledgeRoot: string, purgedAnchors: readonly Anchor[]): void {
-  const root = queueRoot(knowledgeRoot)
-  const purgedKeys = anchorKeys(purgedAnchors)
-  for (const candidateDir of payloadDirectories(root)) {
+/** One exact queue deletion decided before any destruction (CR-03). */
+export interface QueueSweepTarget {
+  candidateDir: string
+  candidateId: string
+}
+
+/** Ordinary curation-job ids are 64-hex queue content addresses; prefixed maintenance receipt ids are not queue identities. */
+const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
+
+function lineageCandidateIds(matches: readonly ResolvedBundle[]): Set<string> {
+  const ids = new Set<string>()
+  for (const { bundle } of matches) {
+    const jobIds = [
+      ...(bundle.provenance.mode === 'run-linked'
+        && bundle.provenance.curationJobId !== undefined
+        ? [bundle.provenance.curationJobId]
+        : []),
+      ...bundle.events.map((event) => event.curationJobId),
+      ...bundle.relations.relations.map((relation) => relation.curationJobId),
+    ]
+    for (const jobId of jobIds) {
+      if (QUEUE_CANDIDATE_ID.test(jobId)) ids.add(jobId)
+    }
+  }
+  return ids
+}
+
+function contentSeeds(matches: readonly ResolvedBundle[]): Set<string> {
+  const seeds = new Set<string>()
+  for (const { bundle } of matches) {
+    if (bundle.summary !== '') seeds.add(bundle.summary)
+    if (bundle.body !== '') seeds.add(bundle.body)
+  }
+  return seeds
+}
+
+function artifactDigests(matches: readonly ResolvedBundle[]): Set<string> {
+  const digests = new Set<string>()
+  for (const { bundle } of matches) {
+    for (const digest of Object.values(bundle.manifest.contentHashes)) {
+      digests.add(digest)
+    }
+  }
+  return digests
+}
+
+/**
+ * D-14/CR-03 deletion authority: a queue payload is destroyed iff it carries the purged content
+ * or curation-job lineage — candidateId lineage, exact seed equality, or artifact digest
+ * intersection. Anchor overlap never selects. The full set is resolved before any irreversible
+ * mutation so the exact deletion intent exists ahead of destruction.
+ */
+export function resolveQueueSweepTargets(
+  knowledgeRoot: string,
+  matches: readonly ResolvedBundle[],
+): QueueSweepTarget[] {
+  const lineage = lineageCandidateIds(matches)
+  const seeds = contentSeeds(matches)
+  const digests = artifactDigests(matches)
+
+  const targets: QueueSweepTarget[] = []
+  for (const candidateDir of payloadDirectories(queueRoot(knowledgeRoot))) {
     let payload: unknown
     try {
       payload = JSON.parse(readFileSync(join(candidateDir, 'payload.json'), 'utf8'))
@@ -280,11 +317,35 @@ function sweepQueuePayloads(knowledgeRoot: string, purgedAnchors: readonly Ancho
       continue
     }
     const parsed = curationCandidatePayloadSchema.safeParse(payload)
-    if (!parsed.success || !intersectsAnchorKeys(parsed.data.anchors, purgedKeys)) continue
+    if (!parsed.success) continue
 
-    rmSync(candidateDir, { recursive: true, force: true })
-    rmSync(jobStatePath(knowledgeRoot, parsed.data.candidateId), { force: true })
-    removeEmptyQueueParents(candidateDir, root)
+    const { candidateId, summarySeed, bodySeed, artifactInventory } = parsed.data
+    const carriesPurgedIdentity =
+      lineage.has(candidateId)
+      || seeds.has(summarySeed)
+      || seeds.has(bodySeed)
+      || artifactInventory.some((artifact) => digests.has(artifact.sha256))
+    if (carriesPurgedIdentity) targets.push({ candidateDir, candidateId })
+  }
+  return targets.sort((left, right) =>
+    left.candidateDir < right.candidateDir
+      ? -1
+      : left.candidateDir > right.candidateDir
+        ? 1
+        : 0,
+  )
+}
+
+/** Pure destruction pass over the pre-resolved exact deletion set. */
+function sweepQueuePayloads(
+  knowledgeRoot: string,
+  targets: readonly QueueSweepTarget[],
+): void {
+  const root = queueRoot(knowledgeRoot)
+  for (const target of targets) {
+    rmSync(target.candidateDir, { recursive: true, force: true })
+    rmSync(jobStatePath(knowledgeRoot, target.candidateId), { force: true })
+    removeEmptyQueueParents(target.candidateDir, root)
   }
 }
 
@@ -410,10 +471,11 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   )
   if (checkpoint.kind === 'egress-blocked') return checkpoint
 
-  const anchors = matches.flatMap(({ bundle }) =>
-    bundle.frontmatter.anchors.map(({ raw }) => raw),
-  )
   const kind = matches[0]!.bundle.frontmatter.kind
+
+  // Resolve the exact queue deletion set before the first irreversible mutation; Plan 26
+  // persists this resolved intent so destruction never re-derives its own authority.
+  const queueSweepTargets = resolveQueueSweepTargets(input.knowledgeRoot, matches)
 
   // Projection cleanup must prove every materialized vec table was writable before any
   // irreversible bundle, queue, or receipt mutation can attest success.
@@ -423,7 +485,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   for (const match of matches) {
     rmSync(match.dir, { recursive: true, force: true })
   }
-  sweepQueuePayloads(input.knowledgeRoot, anchors)
+  sweepQueuePayloads(input.knowledgeRoot, queueSweepTargets)
 
   const writeOutcome = writeReceiptExclusive(
     input.knowledgeRoot,

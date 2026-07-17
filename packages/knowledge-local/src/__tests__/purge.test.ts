@@ -214,6 +214,11 @@ describe('DCAY-05 sovereign purge', () => {
     if (outcome.kind !== 'enqueued') {
       throw new Error(`expected ${identity} queue admission, got ${outcome.kind}`)
     }
+    knowledgeLocal.writeJobState({
+      knowledgeRoot,
+      candidateId: outcome.candidateId,
+      lifecycle: 'queued',
+    })
     return outcome.candidateId
   }
 
@@ -514,6 +519,11 @@ describe('DCAY-05 sovereign purge', () => {
       throw new Error(`expected digest payload admission, got ${enqueued.kind}`)
     }
     const digestMatchId = enqueued.candidateId
+    knowledgeLocal.writeJobState({
+      knowledgeRoot,
+      candidateId: digestMatchId,
+      lifecycle: 'queued',
+    })
     const survivorId = enqueue('queue-digest-survivor', [
       { t: 'el', role: 'link', name: 'Digest survivor control' },
       { t: 'page', route: '/purge/queue/digest-survivor' },
