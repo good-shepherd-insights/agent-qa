@@ -24,6 +24,7 @@ import type { ActionPlanCache } from '../cache/port.js'
 import type { StorageStatePort } from '../storage-state/port.js'
 import type { UniqueValueGenerator } from '../compound/dispatch-mint.js'
 import type { Planner, Verifier, PlannerConfig } from './types.js'
+import type { RecordLedger } from './record-ledger.js'
 
 /** Compression output — v1's CompressResult shape (Pitfall 9). */
 export interface CompressedScreenshot {
@@ -202,8 +203,25 @@ export interface LoopPorts {
    */
   toolSchemaDigest?: string
   compressor?: ScreenshotCompressor
-  /** D-05 optional L2 reader — the loop degrades gracefully when absent. */
+  /** D-05 optional read-only knowledge reader — the loop degrades gracefully when absent. */
   knowledgeReader?: KnowledgeHintReader
+  /**
+   * D-02/D-15/D-17 knowledge budgets are computed beside model token accounting at the
+   * composition root and arrive here as plain numbers. The provider-neutral loop never derives
+   * model ceilings or imports token-accounting policy; absent bindings use provisional floors.
+   */
+  knowledgeBudgets?: {
+    brief: number
+    caution: number
+    readBody: number
+    recordCap: number
+  }
+  /**
+   * D-17 loop-controlled turn ledger. A composition root that registers Channel-2 tools binds
+   * the same object into their closures; the loop owns reset timing and Channel 3 consults it
+   * directly. Absent is legal and creates a step-local ledger for Channel-1 accounting only.
+   */
+  recordLedger?: RecordLedger
   /** D-05 v48 safety seam (context/tool_call/tool_result); unpopulated until Phase 362. */
   safetyHooks?: SafetyHookRunner
   plannerConfig?: PlannerConfig

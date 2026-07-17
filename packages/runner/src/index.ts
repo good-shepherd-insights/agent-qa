@@ -234,6 +234,8 @@ export {
   isTestTimeoutMessage,
 } from './run/verdict.js'
 export type { LoopEventEmitPort } from './loop/ports.js'
+export { createRecordLedger } from './loop/record-ledger.js'
+export type { RecordAdmission, RecordLedger } from './loop/record-ledger.js'
 export {
   buildCacheableStepInput,
   CACHE_ENV_DIGEST_SALT,

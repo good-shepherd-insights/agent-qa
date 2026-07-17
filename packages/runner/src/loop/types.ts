@@ -107,13 +107,22 @@ export interface StepContext {
   modelId?: string
   variables?: Record<string, string>
   /**
-   * D-12/D-13 knowledge-brief channel (volatile tier). The pre-rendered L2 brief text,
-   * framed as hypotheses by `buildVolatileTier` — one of the two v2 channels that replace
-   * the retired opaque single memory-context string. Sourced via the `KnowledgeHintReader`
-   * port (rendered upstream from its `BriefBlock`); empty/undefined until M2 binds an impl,
-   * at which point the volatile tier omits the brief section and degrades to no-brief.
+   * D-12/D-13 compatibility slot for a directly supplied learned brief. Reader-backed runs use
+   * the structured L1/L2/truncation fields below; buildVolatileTier applies the same hypotheses
+   * frame to either source. Empty/undefined omits the learned section entirely.
    */
   knowledgeBrief?: string
+  /**
+   * BRIF-01 human-authored/sovereign L0 policy material. It is isolated from learned spans so
+   * buildContextTier can keep only this byte-stable material in the cached-prefix region.
+   */
+  knowledgePolicyL0?: string
+  /** BRIF-01 learned caution summaries rendered under the volatile hypotheses frame. */
+  knowledgeBriefL1?: string
+  /** BRIF-01 learned procedure/high-trust-fact summaries rendered in the volatile tier. */
+  knowledgeBriefL2?: string
+  /** BRIF-01 reader-provided clipping signal; empty/undefined means no signal is rendered. */
+  knowledgeBriefTruncation?: string
   /**
    * D-12/D-13 working-memory channel (structured turn content). The run-scoped
    * `WorkingMemoryStore` set, injected verbatim as its own turn message by `composeTurnMessages`

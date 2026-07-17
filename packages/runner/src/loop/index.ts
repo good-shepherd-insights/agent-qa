@@ -93,6 +93,7 @@ import {
   DEFAULT_REVISITATION_WINDOW,
   type EffectAnchor,
 } from './progress/index.js'
+import { createRecordLedger } from './record-ledger.js'
 
 // v1's context-window overflow classification (loop.ts:277-286) — kept byte-equivalent
 // (D-04, Pitfall 10): a planning error matching one of these is surfaced with the
@@ -121,10 +122,10 @@ function isRefResolutionFailure(errorMsg: string): boolean {
 
 const CANCELLED_MESSAGE = 'Step cancelled by user'
 
-// D-12 knowledge-brief seam: the token budget the volatile-tier brief may consume when a
-// KnowledgeHintReader is bound. Small by design (the brief is L3 hypotheses, not commands);
-// inert in M1 while the port is unbound, at which point no brief is sourced at all.
-const KNOWLEDGE_BRIEF_BUDGET = 512
+// Provisional fallbacks used only until the composition root supplies model-derived numbers
+// (380 D-02/D-15/D-17). They are deliberately not config keys; the loop consumes plain budgets.
+const PROVISIONAL_BRIEF_TOKEN_BUDGET = 512
+const PROVISIONAL_DISTINCT_RECORD_CAP = 8
 
 // D-09/D-16 settle-gate bounds. The poll is deliberately small (Pitfall 4/5): the first
 // observation doubles as stateBefore (no extra capture), so only the extra poll iterations
@@ -182,6 +183,12 @@ export async function executeStep(
   })
   const maskValue = ports.masking?.mask ?? ((value: string) => value)
   context.subActionHistory = []
+  // D-17: one ledger object lives where turns live. A bound object is shared with Channel-2 tool
+  // closures; otherwise this step-local instance still accounts for the frozen Channel-1 brief.
+  const recordLedger = ports.recordLedger ?? createRecordLedger({
+    cap: ports.knowledgeBudgets?.recordCap ?? PROVISIONAL_DISTINCT_RECORD_CAP,
+    seedIds: [],
+  })
 
   // Phase 358 progress subsystem (CYCLE-01..03). Fresh per-step instances (the Plan 04
   // documented scope): the revisitation window is per-step bookkeeping, the stagnation tree
@@ -647,17 +654,35 @@ export async function executeStep(
     if (!cached) {
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
-      // Knowledge-brief sourcing seam (D-12): source the volatile-tier brief through the
+      // Knowledge-brief sourcing seam (D-12): source the full three-tier brief through the
       // optional KnowledgeHintReader port, mirroring the safetyHooks optional-chain idiom
       // above. In M1 `ports.knowledgeReader` is unbound, so this yields undefined and the
-      // slot stays empty — the volatile tier renders no brief and NEVER throws. When M2
-      // binds a reader, the served BriefBlock's assembled tier lands here with no assembly
-      // rework. `scope` is a test-tier ScopeKey (D-15 discretion; inert while unbound).
+      // slots stay empty and NEVER throw. D-05 routes only sovereign/authored L0 into the
+      // cached-prefix context tier; learned L1/L2 remain volatile and are always framed as
+      // hypotheses, never instructions. Channel 1 is deterministic, Channel 2 has planner
+      // agency, and Channel 3 has no agency; all three share the distinct-id ledger below.
+      const briefScope = { tier: 'test', key: context.testName } as const
+      const briefBudget = ports.knowledgeBudgets?.brief ?? PROVISIONAL_BRIEF_TOKEN_BUDGET
       const brief = ports.knowledgeReader?.getRunBrief(
-        { tier: 'test', key: context.testName },
-        KNOWLEDGE_BRIEF_BUDGET,
+        briefScope,
+        briefBudget,
       )
-      context.knowledgeBrief = brief?.tiers.L2 ?? context.knowledgeBrief
+      if (brief !== undefined) {
+        context.knowledgePolicyL0 = brief.tiers.L0.trim().length > 0 ? brief.tiers.L0 : undefined
+        context.knowledgeBriefL1 = brief.tiers.L1.trim().length > 0 ? brief.tiers.L1 : undefined
+        context.knowledgeBriefL2 = brief.tiers.L2.trim().length > 0 ? brief.tiers.L2 : undefined
+        context.knowledgeBriefTruncation = brief.truncation.trim().length > 0
+          ? brief.truncation
+          : undefined
+        // Preserve the pre-380 string slot until Task 2's tier renderer consumes the structured
+        // fields above. The live reader path never drops L1 while migrating off the old L2-only seam.
+        const learnedTiers = [brief.tiers.L1, brief.tiers.L2]
+          .filter((tier) => tier.trim().length > 0)
+        context.knowledgeBrief = learnedTiers.length > 0 ? learnedTiers.join('\n') : undefined
+      }
+      // The brief rides every planning turn, so its distinct ids are already spent before any
+      // agentic search/read or automatic failure caution can admit a record (Pitfall 9).
+      recordLedger.resetTurn(brief?.lines.map((line) => line.id) ?? [])
       // WM-01 serve (D-11): the whole run-scoped set is served verbatim to every planning turn
       // via the optional workingMemory port (the knowledgeReader idiom). Unbound ⇒ left as-is,
       // the loop runs memory-less. The served set is what finalize snapshots masked.
