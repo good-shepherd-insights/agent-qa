@@ -3,7 +3,7 @@
 // Per planning turn the model may make up to K non-action tool calls — each is
 // executed, its result appended as a tool message, the conversation continues — and
 // the turn terminates when the model emits exactly one action tool call. K is an
-// internal runner constant (default 2), injectable via options for tests, and NEVER
+// internal runner constant (default 4), injectable via options for tests, and NEVER
 // user-facing config (D-06): it is not threaded through LoopPorts or any config schema.
 //
 // Zero non-action tools ship in 353 (D-07). The always-send-all law holds: the full
@@ -38,11 +38,13 @@ import { toolCallToActionPlan } from '../tools/builder.js'
 import type { ToolRegistry } from '../tools/registry.js'
 
 /**
- * K — the per-turn non-action tool-call budget (D-06). Internal runner constant;
- * injectable via ExecutePlanningTurnOptions.budget for tests only. Do NOT promote to
- * user-facing config or thread through LoopPorts / any config schema.
+ * K — the per-turn non-action tool-call budget (D-06/D-10). Channel 2's designed
+ * search→read sequence needs two calls, and one retry pair must fit in the same turn.
+ * This remains an internal provisional constant, injectable via
+ * ExecutePlanningTurnOptions.budget for tests only. Do NOT promote it to user-facing
+ * config or thread it through LoopPorts / any config schema.
  */
-export const DEFAULT_NON_ACTION_TOOL_BUDGET = 2
+export const DEFAULT_NON_ACTION_TOOL_BUDGET = 4
 
 const BUDGET_EXHAUSTED_MESSAGE =
   'Tool budget exhausted — you must now choose exactly one action tool.'

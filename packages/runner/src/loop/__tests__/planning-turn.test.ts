@@ -5,7 +5,7 @@
 // prove the machinery:
 //   1. immediate action call → plan, zero exchanges (the v1-equivalent one-shot path)
 //   2. two non-action calls then an action → both executed in order, exchanges recorded
-//   3. D-08(a) 3rd non-action call gets the budget-exhausted result; a further
+//   3. D-08(a) the first over-budget non-action call gets the exhausted result; a further
 //      non-action-only response → planning failure, no throw
 //   4. D-08(b) text-only response → exactly one re-prompt, then planning failure
 //   5. D-08(c) [non-action, action, action] → process first, terminate on second,
@@ -77,8 +77,8 @@ describe('executePlanningTurn', () => {
     toolCallSeq = 0
   })
 
-  it('exposes K as an internal constant defaulting to 2 (D-06)', () => {
-    expect(DEFAULT_NON_ACTION_TOOL_BUDGET).toBe(2)
+  it('exposes K as an internal constant defaulting to 4 (D-10)', () => {
+    expect(DEFAULT_NON_ACTION_TOOL_BUDGET).toBe(4)
   })
 
   it('Test 1: an immediate action call returns the plan with zero exchanges (v1 one-shot path)', async () => {
@@ -118,11 +118,14 @@ describe('executePlanningTurn', () => {
 
   it('Test 3 (D-08a): the over-budget call gets the exhausted result; a further non-action-only response fails, no throw', async () => {
     const note = fakeNonActionTool()
+    const withinBudget = Array.from({ length: DEFAULT_NON_ACTION_TOOL_BUDGET }, (_, index) => ({
+      toolCalls: [nonActionCall('fake_note', { q: String(index + 1) })],
+      usage: USAGE,
+    }))
     await scriptResponses([
-      { toolCalls: [nonActionCall('fake_note', { q: '1' })], usage: USAGE },
-      { toolCalls: [nonActionCall('fake_note', { q: '2' })], usage: USAGE },
-      { toolCalls: [nonActionCall('fake_note', { q: '3' })], usage: USAGE }, // over budget → error injected
-      { toolCalls: [nonActionCall('fake_note', { q: '4' })], usage: USAGE }, // still no action → failure
+      ...withinBudget,
+      { toolCalls: [nonActionCall('fake_note', { q: 'over-budget' })], usage: USAGE },
+      { toolCalls: [nonActionCall('fake_note', { q: 'still-no-action' })], usage: USAGE },
     ])
 
     const res = await executePlanningTurn(turnOptions({ nonActionTools: { fake_note: note } }))
@@ -130,11 +133,13 @@ describe('executePlanningTurn', () => {
     expect(res.ok).toBe(false)
     if (res.ok) throw new Error('expected failure')
     expect(res.reason).toBe('non_action_tool_budget_exhausted')
-    expect(res.exchanges).toHaveLength(DEFAULT_NON_ACTION_TOOL_BUDGET) // only the first 2 executed
-    expect(note.execute).toHaveBeenCalledTimes(2)
-    // the 4th generateText call carries the budget-exhausted tool-result from response 3
+    expect(res.exchanges).toHaveLength(DEFAULT_NON_ACTION_TOOL_BUDGET)
+    expect(note.execute).toHaveBeenCalledTimes(DEFAULT_NON_ACTION_TOOL_BUDGET)
+    // The call after the over-budget response carries its structured exhausted result.
     const calls = await generateTextCalls()
-    expect(JSON.stringify(calls[3][0].messages)).toContain('Tool budget exhausted')
+    expect(
+      JSON.stringify(calls[DEFAULT_NON_ACTION_TOOL_BUDGET + 1][0].messages),
+    ).toContain('Tool budget exhausted')
   })
 
   it('Test 4 (D-08b): a text-only response triggers exactly one re-prompt then a planning failure', async () => {
