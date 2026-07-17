@@ -226,6 +226,31 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     expect(outcomes).toEqual([])
   })
 
+  it('uses the live grounding resolution instead of a stale planned ref', () => {
+    const grounded = subAction({ ref: 'stale', beforeUrl: '/cart' })
+    grounded.stateBefore = screen([element('checkout'), element('stale')], '/cart')
+    grounded.grounding = {
+      descriptor: { role: 'button', name: 'Checkout' },
+      attempts: [{ stage: 'tree-search', outcome: 'resolved', resolvedRef: asRef('checkout') }],
+    }
+    const outcomes = project(
+      handoff([step({ subActions: [grounded] })]),
+      new Map([[CANDIDATE, [{
+        t: 'el',
+        role: 'button',
+        name: 'checkout',
+        ordinal: 0,
+      }]]]),
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        candidateId: CANDIDATE,
+        exercisedAnchor: { t: 'el', role: 'button', name: 'checkout', ordinal: 0 },
+      }),
+    ])
+  })
+
   it('excludes environment, timeout, and flake failures but attributes other failures', () => {
     const candidateAnchors = new Map([[CANDIDATE, [{
       t: 'el' as const,

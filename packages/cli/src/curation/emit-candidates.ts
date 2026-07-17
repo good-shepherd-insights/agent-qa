@@ -16,28 +16,29 @@ import {
   type CautionRootCauseClass,
   type CompletedRunHandoff,
   type DistilledObservation,
-  type ElementInfo,
   type FactSubtype,
   type GuardrailPolicy,
   type PerTestOutcome,
   type Platform,
   type StepEvidence,
-  type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 import { scan } from '@vostride/agent-qa-safety'
+
+import {
+  actionRefs,
+  classifySubActionRoute,
+  elementAnchor,
+  elementNaturalKey,
+  resolvedElementEvidence,
+  uniqueAnchors,
+  type ResolvedElementEvidence,
+} from './handoff-anchors.js'
 
 export const LEARNABLE_CAUTION_ROOT_CAUSES = [
   'environment',
   'timeout',
   'flake',
 ] as const satisfies readonly CautionRootCauseClass[]
-
-interface ResolvedElementEvidence {
-  subAction: SubActionEvidence
-  element: ElementInfo
-  ordinal: number
-  locator?: string
-}
 
 interface MeasurementSeed {
   metric: string
@@ -72,111 +73,6 @@ function observationId(
 
 function observationPlatform(platform: Platform): 'web' | 'mobile' {
   return platform === 'web' ? 'web' : 'mobile'
-}
-
-function ordinalForElement(element: ElementInfo, elements: readonly ElementInfo[]): number {
-  let ordinal = 0
-  for (const candidate of elements) {
-    if (
-      candidate.role !== element.role ||
-      candidate.nameNormalized !== element.nameNormalized
-    ) {
-      continue
-    }
-    if (candidate.ref === element.ref) return ordinal
-    ordinal += 1
-  }
-  return ordinal
-}
-
-function quoteAttribute(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
-}
-
-function locatorForElement(element: ElementInfo): string | undefined {
-  const explicit =
-    element.attributes.selector ??
-    element.attributes.cssSelector ??
-    element.attributes.xpath
-  if (explicit !== undefined && explicit.trim() !== '') return explicit.trim()
-
-  const testId = element.attributes['data-testid'] ?? element.labels.testId
-  if (testId !== undefined && testId !== '') {
-    return `[data-testid="${quoteAttribute(testId)}"]`
-  }
-
-  const resourceId = element.attributes['resource-id']
-  if (resourceId !== undefined && resourceId !== '') {
-    return `[resource-id="${quoteAttribute(resourceId)}"]`
-  }
-
-  const accessibilityId = element.attributes['accessibility-id']
-  if (accessibilityId !== undefined && accessibilityId !== '') {
-    return `[accessibility-id="${quoteAttribute(accessibilityId)}"]`
-  }
-
-  const id = element.attributes.id
-  return id === undefined || id === '' ? undefined : `[id="${quoteAttribute(id)}"]`
-}
-
-function actionRefs(subAction: SubActionEvidence): string[] {
-  const action = subAction.plannedAction
-  const refs: string[] = []
-  if ('ref' in action && typeof action.ref === 'string') refs.push(action.ref)
-  if ('fromRef' in action && typeof action.fromRef === 'string') refs.push(action.fromRef)
-  if ('toRef' in action && typeof action.toRef === 'string') refs.push(action.toRef)
-  return refs
-}
-
-function resolvedElementEvidence(step: StepEvidence): ResolvedElementEvidence[] {
-  const byIdentity = new Map<string, ResolvedElementEvidence>()
-  for (const subAction of step.subActions) {
-    for (const ref of actionRefs(subAction)) {
-      const element = subAction.stateBefore.elements.find((candidate) => candidate.ref === ref)
-      if (element === undefined) continue
-      const ordinal = ordinalForElement(element, subAction.stateBefore.elements)
-      const identity = [
-        subAction.stateBefore.platform,
-        element.role,
-        element.nameNormalized,
-        ordinal,
-      ].join('\u0000')
-      if (!byIdentity.has(identity)) {
-        byIdentity.set(identity, {
-          subAction,
-          element,
-          ordinal,
-          ...(locatorForElement(element) === undefined
-            ? {}
-            : { locator: locatorForElement(element) }),
-        })
-      }
-    }
-  }
-  return [...byIdentity.values()]
-}
-
-function elementNaturalKey(evidence: ResolvedElementEvidence): string {
-  return `${evidence.element.role}:${evidence.element.nameNormalized}:${evidence.ordinal}`
-}
-
-function elementAnchor(evidence: ResolvedElementEvidence): Extract<Anchor, { t: 'el' }> {
-  return {
-    t: 'el',
-    role: evidence.element.role,
-    name: evidence.element.nameNormalized,
-    ordinal: evidence.ordinal,
-  }
-}
-
-function uniqueAnchors(anchors: readonly Anchor[]): Anchor[] {
-  const seen = new Set<string>()
-  return anchors.filter((anchor) => {
-    const key = JSON.stringify(anchor)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
 }
 
 function artifactDescriptor(
@@ -368,10 +264,9 @@ function commonFields(
 function factSubtype(
   evidence: ResolvedElementEvidence,
 ): { subtype: FactSubtype; route?: string } {
-  const before = evidence.subAction.stateBefore.url
-  const after = evidence.subAction.stateAfter?.url
-  if (before !== undefined && after !== undefined && before !== after) {
-    return { subtype: 'navigational', route: after }
+  const classification = classifySubActionRoute(evidence.subAction)
+  if (classification.navigated && classification.route !== undefined) {
+    return { subtype: 'navigational', route: classification.route }
   }
   return evidence.locator === undefined
     ? { subtype: 'behavioral' }
