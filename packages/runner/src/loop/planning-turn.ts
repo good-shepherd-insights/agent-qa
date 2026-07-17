@@ -36,6 +36,7 @@ import type { TokenUsage } from '../result.js'
 import type { LoopScopedLogger } from './ports.js'
 import { toolCallToActionPlan } from '../tools/builder.js'
 import type { ToolRegistry } from '../tools/registry.js'
+import { bindApiToolNames } from './api-tool-names.js'
 
 /**
  * K — the per-turn non-action tool-call budget (D-06/D-10). Channel 2's designed
@@ -225,11 +226,26 @@ export async function executePlanningTurn(
   const nonActionTools = options.nonActionTools ?? {}
   const effectiveSampling = appliedSampling(options.sampling)
 
-  // Always-send-all: the full v45 action slice plus any caller-registered non-action
-  // tools. The surface never shrinks or gates (D-07).
-  const combinedTools: ToolSet = { ...options.actionTools }
-  for (const [id, handler] of Object.entries(nonActionTools)) {
-    combinedTools[id] = handler.tool
+  // Always-send-all: the full v45 action slice plus any caller-registered non-action tools. The
+  // logical ids remain untouched in contracts/evidence, while the provider ToolSet receives only
+  // conservative API-safe aliases. Returned calls reverse through this binding; follow-up
+  // assistant/tool messages intentionally retain the provider alias for wire coherence.
+  const toolBindings = bindApiToolNames([
+    ...Object.entries(options.actionTools).map(([logicalName, boundTool]) => ({
+      kind: 'action' as const,
+      logicalName,
+      value: { tool: boundTool },
+    })),
+    ...Object.entries(nonActionTools).map(([logicalName, handler]) => ({
+      kind: 'non-action' as const,
+      logicalName,
+      value: { tool: handler.tool, handler },
+    })),
+  ])
+  const combinedTools: ToolSet = {}
+  const bindingByApiName = new Map(toolBindings.map((binding) => [binding.apiName, binding]))
+  for (const binding of toolBindings) {
+    combinedTools[binding.apiName] = binding.value.tool
   }
 
   const messages: ModelMessage[] = [...options.messages]
@@ -319,19 +335,25 @@ export async function executePlanningTurn(
     // Scan tool calls in order until the first action call (D-08c).
     const toolResultParts: ToolResultPart[] = []
     let actionCall:
-      | { name: string; args: Record<string, unknown>; tc: (typeof toolCalls)[number]; index: number }
+      | {
+          name: string
+          args: Record<string, unknown>
+          tc: (typeof toolCalls)[number]
+          index: number
+        }
       | undefined
     let discardedAfterAction = 0
     let sawOverBudgetNonAction = false
 
     for (let i = 0; i < toolCalls.length; i++) {
       const tc = toolCalls[i]
-      const name = tc.toolName
+      const binding = bindingByApiName.get(tc.toolName)
+      const name = binding?.logicalName ?? tc.toolName
       const args = extractArgs(tc)
 
-      // Action tool → terminate. Membership in the non-action map is the classifier;
-      // everything else (the always-sent v45 slice) is an action.
-      if (!(name in nonActionTools)) {
+      // Action tool → terminate. The provider alias binding is the classifier; an unknown name
+      // preserves the old fail-loud action path and reaches toolCallToActionPlan unchanged.
+      if (binding?.kind !== 'non-action') {
         actionCall = { name, args, tc, index: i }
         discardedAfterAction = toolCalls.length - i - 1
         break
@@ -344,7 +366,7 @@ export async function executePlanningTurn(
         toolResultParts.push(errorResultPart(tc, BUDGET_EXHAUSTED_MESSAGE))
         continue
       }
-      const execResult = await nonActionTools[name].execute(args)
+      const execResult = await nonActionTools[name]!.execute(args)
       exchanges.push({ tool: name, args, result: execResult })
       toolResultParts.push(jsonResultPart(tc, execResult))
       budget -= 1

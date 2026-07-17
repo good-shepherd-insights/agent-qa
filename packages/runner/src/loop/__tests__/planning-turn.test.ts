@@ -116,6 +116,42 @@ describe('executePlanningTurn', () => {
     expect(search.execute).toHaveBeenCalledTimes(1)
   })
 
+  it('binds a dotted logical id to an API-safe name and reverse-maps evidence and execution', async () => {
+    const search = fakeNonActionTool()
+    const { generateText } = await import('ai')
+    let providerName = ''
+    vi.mocked(generateText)
+      .mockImplementationOnce(async (options) => {
+        const tools = options.tools as Record<string, unknown>
+        providerName = Object.keys(tools).find((name) => tools[name] === search.tool) ?? ''
+        expect(providerName).not.toBe('memory.search')
+        expect(providerName).toMatch(/^[A-Za-z0-9_-]+$/)
+        expect(providerName.length).toBeLessThanOrEqual(64)
+        return {
+          toolCalls: [nonActionCall(providerName, { q: 'checkout' })],
+          usage: USAGE,
+        } as never
+      })
+      .mockResolvedValueOnce({
+        toolCalls: [actionCall('web_click', { ref: 'e1', ...ENVELOPE })],
+        usage: USAGE,
+      } as never)
+
+    const res = await executePlanningTurn(turnOptions({
+      nonActionTools: { 'memory.search': search },
+    }))
+
+    expect(res.ok).toBe(true)
+    expect(res.exchanges).toEqual([{
+      tool: 'memory.search',
+      args: { q: 'checkout' },
+      result: { echoed: { q: 'checkout' } },
+    }])
+    const calls = await generateTextCalls()
+    expect(JSON.stringify(calls[1][0].messages)).toContain(providerName)
+    expect(JSON.stringify(calls[1][0].messages)).not.toContain('memory.search')
+  })
+
   it('Test 3 (D-08a): the over-budget call gets the exhausted result; a further non-action-only response fails, no throw', async () => {
     const note = fakeNonActionTool()
     const withinBudget = Array.from({ length: DEFAULT_NON_ACTION_TOOL_BUDGET }, (_, index) => ({
