@@ -1,7 +1,10 @@
 import {
+  asEvidenceToken,
   asRecordId,
+  COLD_START_TRUST_DISCOUNT,
   type Anchor,
   type IndexEntry,
+  type VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -32,7 +35,41 @@ function names(entries: readonly IndexEntry[]): string[] {
   return entries.map(({ id }) => id)
 }
 
+function vettedCandidate(entry: IndexEntry): VettedCandidateInput {
+  return {
+    kind: entry.kind,
+    status: entry.status,
+    validityOpen: true,
+    anchors: entry.anchors,
+    originClass: 'agent-verified',
+    withheld: false,
+    needsEnrichment: false,
+    evidenceIncomplete: false,
+    confirmedOutcomeEvidenceTokens: [asEvidenceToken(`confirmed-${entry.id}`)],
+    hasUserDeprecateInLineage: false,
+    memoryOffForAnchorGroup: false,
+  }
+}
+
 describe('Channel-1 serving selection', () => {
+  it('returns an empty selection for an empty candidate set', () => {
+    expect(selectServingRecords({
+      candidates: [],
+      scope,
+      channelBudget: 8,
+      recordCap: 8,
+    })).toEqual([])
+  })
+
+  it('selects one fitting candidate under a generous budget', () => {
+    expect(names(selectServingRecords({
+      candidates: [candidate('r_only')],
+      scope,
+      channelBudget: 8,
+      recordCap: 8,
+    }))).toEqual(['r_only'])
+  })
+
   it('is input-order independent and breaks equal scores by record id', () => {
     const entries = [candidate('r_c'), candidate('r_a'), candidate('r_b')]
     const input = { scope, channelBudget: 8, recordCap: 8 }
@@ -118,5 +155,47 @@ describe('Channel-1 serving selection', () => {
 
     expect(selected).toHaveLength(2)
     expect(new Set(names(selected))).toHaveLength(2)
+  })
+
+  it('skips an oversized candidate and continues filling from later records', () => {
+    const selected = selectServingRecords({
+      candidates: [
+        candidate('r_oversized', { kind: 'caution', summary: 'x'.repeat(40) }),
+        candidate('r_fits'),
+      ],
+      scope,
+      channelBudget: 8,
+      recordCap: 8,
+    })
+
+    expect(names(selected)).toEqual(['r_fits'])
+  })
+
+  it('admits vetted candidates only through the schema cold-start record and budget walls', () => {
+    const entries = ['r_candidate_a', 'r_candidate_b', 'r_candidate_c'].map((id) => (
+      candidate(id, { status: 'candidate' })
+    ))
+    const candidateVetting = Object.fromEntries(
+      entries.map((entry) => [String(entry.id), vettedCandidate(entry)]),
+    )
+    const input = {
+      candidates: entries,
+      candidateVetting,
+      scope,
+      recordCap: 8,
+    }
+
+    const recordCapped = selectServingRecords({ ...input, channelBudget: 20 })
+    expect(names(recordCapped)).toEqual(['r_candidate_a', 'r_candidate_b'])
+    expect(recordCapped).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        trust: COLD_START_TRUST_DISCOUNT,
+        unverified: true,
+      }),
+    ]))
+
+    expect(names(selectServingRecords({ ...input, channelBudget: 6 }))).toEqual([
+      'r_candidate_a',
+    ])
   })
 })
