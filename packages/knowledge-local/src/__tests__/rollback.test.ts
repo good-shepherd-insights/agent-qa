@@ -38,6 +38,7 @@ interface RollbackReport {
   inverseCount: number
   restoredVictims: string[]
   deprecatedBundles: string[]
+  retractedPromotions: string[]
   affected: {
     mintedBundleIds: string[]
     counterEvents: RollbackCounterEvent[]
@@ -560,5 +561,228 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(report.deprecatedBundles).toEqual([unknown.id])
     expect(knowledgeLocal.deriveBundleTrust(loaded(unknown)).status).toBe('deprecated')
     expect(await retrieveIds([factAnchors[0]!])).toEqual([fact.id])
+  })
+
+  it('retracts a conversion job\'s confirmed and promoted events so the fold returns candidate after rollback', () => {
+    const equalOrdinal = publishForJob({
+      identity: 'conversion-equal',
+      curationJobId: 'job-equal-mint',
+      sourceBuildOrdinal: 4,
+      initialEvents: [],
+    })
+    const distinctOrdinal = publishForJob({
+      identity: 'conversion-distinct',
+      curationJobId: 'job-distinct-mint',
+      sourceBuildOrdinal: 4,
+      initialEvents: [],
+    })
+    const conversions = [
+      { published: equalOrdinal, prefix: 'equal', confirmedOrdinal: 9, promotedOrdinal: 9 },
+      { published: distinctOrdinal, prefix: 'distinct', confirmedOrdinal: 9, promotedOrdinal: 12 },
+    ] as const
+    for (const conversion of conversions) {
+      expect(knowledgeLocal.appendOutcomeEvent(config(), conversion.published.id, {
+        type: 'confirmed',
+        evidenceToken: asEvidenceToken(`${conversion.prefix}-conversion-confirmed`),
+        curationJobId: 'job-conversion',
+        buildOrdinal: conversion.confirmedOrdinal,
+        origin: 'agent-verified',
+      })).toEqual({ kind: 'appended' })
+      expect(knowledgeLocal.appendOutcomeEvent(config(), conversion.published.id, {
+        type: 'promoted',
+        evidenceToken: asEvidenceToken(`${conversion.prefix}-conversion-promoted`),
+        curationJobId: 'job-conversion',
+        buildOrdinal: conversion.promotedOrdinal,
+      })).toEqual({ kind: 'appended' })
+      expect(knowledgeLocal.deriveBundleTrust(loaded(conversion.published)).status).toBe('active')
+    }
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-conversion',
+      resolvedAtOrdinal: 20,
+    })
+
+    expect(report.inverseCount).toBe(4)
+    expect(report.affected.mintedBundleIds).toEqual([])
+    expect(report.affected.counterEvents).toHaveLength(4)
+    expect(report.affected.counterEvents.map(({ type }) => type).sort()).toEqual([
+      'confirmed',
+      'confirmed',
+      'promoted',
+      'promoted',
+    ])
+    // Direct retraction of the job's own promotion is not a support-loss cascade.
+    expect(report.retractedPromotions).toEqual([])
+    for (const conversion of conversions) {
+      const trust = knowledgeLocal.deriveBundleTrust(loaded(conversion.published))
+      expect(trust.status).toBe('candidate')
+      expect(trust.counters.confirmed).toBe(0)
+    }
+  })
+
+  it('cascades promoted retraction when a rollback removes the last surviving confirmation', () => {
+    const target = publishForJob({
+      identity: 'cascade-target',
+      curationJobId: 'job-cascade-mint',
+      sourceBuildOrdinal: 4,
+    })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('cascade-keeper-confirmed'),
+      curationJobId: 'job-cascade-keeper',
+      buildOrdinal: 8,
+      origin: 'agent-verified',
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'promoted',
+      evidenceToken: asEvidenceToken('cascade-promoted-token'),
+      curationJobId: 'promote:cascade',
+      buildOrdinal: 9,
+    })).toEqual({ kind: 'appended' })
+    // Crash-window state from a partially-applied prior rollback: the mint confirmation is
+    // already retracted, leaving job-cascade-keeper holding the only surviving confirmation.
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('prior-rollback-retraction'),
+      curationJobId: 'rollback:manual-prior',
+      buildOrdinal: 10,
+      retractsEvidenceToken: asEvidenceToken('job-cascade-mint-mint-confirmed'),
+      retractsCurationJobId: 'job-cascade-mint',
+      rollbackReceiptId: 'rollback:manual-prior',
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target))).toMatchObject({
+      status: 'active',
+      counters: { confirmed: 1 },
+    })
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-cascade-keeper',
+      resolvedAtOrdinal: 20,
+    })
+    const bundle = loaded(target)
+    const trust = knowledgeLocal.deriveBundleTrust(bundle)
+
+    expect(report.inverseCount).toBe(2)
+    expect(report.retractedPromotions).toEqual([target.id])
+    expect(bundle.events).toContainEqual(expect.objectContaining({
+      type: 'retracted',
+      curationJobId: report.receiptId,
+      retractsEvidenceToken: 'cascade-promoted-token',
+      retractsCurationJobId: 'promote:cascade',
+      rollbackReceiptId: report.receiptId,
+    }))
+    expect(trust.status).toBe('candidate')
+    expect(trust.counters.confirmed).toBe(0)
+  })
+
+  it('does not cascade promoted retraction while another job\'s confirmation survives', () => {
+    const target = publishForJob({
+      identity: 'cascade-survivor',
+      curationJobId: 'job-survivor-mint',
+      sourceBuildOrdinal: 4,
+    })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('survivor-keeper-confirmed'),
+      curationJobId: 'job-survivor-keeper',
+      buildOrdinal: 8,
+      origin: 'agent-verified',
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'promoted',
+      evidenceToken: asEvidenceToken('survivor-promoted-token'),
+      curationJobId: 'promote:survivor',
+      buildOrdinal: 9,
+    })).toEqual({ kind: 'appended' })
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-survivor-keeper',
+      resolvedAtOrdinal: 20,
+    })
+    const bundle = loaded(target)
+    const trust = knowledgeLocal.deriveBundleTrust(bundle)
+
+    expect(report.inverseCount).toBe(1)
+    expect(report.retractedPromotions).toEqual([])
+    // The mint confirmation still supports the promotion, so authority survives.
+    expect(trust.status).toBe('active')
+    expect(trust.counters.confirmed).toBe(1)
+    expect(bundle.events).not.toContainEqual(expect.objectContaining({
+      type: 'retracted',
+      retractsEvidenceToken: 'survivor-promoted-token',
+    }))
+  })
+
+  it('retracts promoted events by exact byte identity so a near-miss token survives', () => {
+    const target = publishForJob({
+      identity: 'byte-identity',
+      curationJobId: 'job-byte-mint',
+      sourceBuildOrdinal: 4,
+    })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'promoted',
+      evidenceToken: asEvidenceToken('byte-target-token'),
+      curationJobId: 'job-byte-victim',
+      buildOrdinal: 9,
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'promoted',
+      evidenceToken: asEvidenceToken('byte-target-tokeN'),
+      curationJobId: 'promote:near-miss',
+      buildOrdinal: 10,
+    })).toEqual({ kind: 'appended' })
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-byte-victim',
+      resolvedAtOrdinal: 20,
+    })
+    const bundle = loaded(target)
+    const retractions = bundle.events.flatMap((event) =>
+      event.type === 'retracted'
+        ? [`${event.retractsEvidenceToken}:${event.retractsCurationJobId}`]
+        : [],
+    )
+
+    expect(report.inverseCount).toBe(1)
+    expect(report.affected.counterEvents).toEqual([{
+      recordId: target.id,
+      evidenceToken: 'byte-target-token',
+      curationJobId: 'job-byte-victim',
+      type: 'promoted',
+    }])
+    expect(retractions).toEqual(['byte-target-token:job-byte-victim'])
+    // The promotion whose token differs in one byte survives and keeps the record active.
+    expect(knowledgeLocal.deriveBundleTrust(bundle).status).toBe('active')
+  })
+
+  it('returns an empty no-op report when the rollback matches nothing', () => {
+    const bystander = publishForJob({
+      identity: 'empty-set-bystander',
+      curationJobId: 'job-bystander',
+      sourceBuildOrdinal: 5,
+    })
+    const before = readFileSync(join(bystander.dir, 'evidence', 'outcomes.jsonl'), 'utf8')
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-never-existed',
+      resolvedAtOrdinal: 20,
+    })
+
+    expect(report.inverseCount).toBe(0)
+    expect(report.restoredVictims).toEqual([])
+    expect(report.deprecatedBundles).toEqual([])
+    expect(report.retractedPromotions).toEqual([])
+    expect(report.affected).toEqual({ mintedBundleIds: [], counterEvents: [] })
+    expect(readFileSync(join(bystander.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
   })
 })
