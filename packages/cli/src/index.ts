@@ -22,3 +22,14 @@ export type {
   RunCurationTailOptions,
   RunVerdictFirstCurationTailOptions,
 } from './curation/curation-tail.js'
+export {
+  emitCanaryOutcomes,
+  projectCanaryOutcomes,
+} from './curation/emit-canary-outcomes.js'
+export type {
+  EmitCanaryOutcomeDetail,
+  EmitCanaryOutcomeReport,
+  EmitCanaryOutcomeResult,
+  EmitCanaryOutcomesOptions,
+  ProjectCanaryOutcomesInput,
+} from './curation/emit-canary-outcomes.js'
