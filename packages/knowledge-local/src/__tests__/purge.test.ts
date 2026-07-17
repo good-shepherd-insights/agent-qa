@@ -1117,4 +1117,247 @@ describe('DCAY-05 sovereign purge', () => {
       expect(receiptText).not.toContain(fixture.sentinels.anchorName)
     })
   })
+
+  describe('DCAY-05 revive-then-purge receipt series', () => {
+    function seriesReceiptPath(recordId: string, cycle: number): string {
+      return join(
+        knowledgeRoot,
+        'memory',
+        'receipts',
+        cycle === 1 ? `purge-${recordId}.json` : `purge-${recordId}.${cycle}.json`,
+      )
+    }
+
+    function seriesIntentPath(recordId: string): string {
+      return join(knowledgeRoot, 'memory', 'receipts', `purge-${recordId}.intent.json`)
+    }
+
+    function projectionRows(recordId: string): {
+      records: boolean
+      fts: boolean
+      anchors: boolean
+    } {
+      const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+      try {
+        const row = reader.db
+          .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+          .get(recordId)
+        if (row === undefined) return { records: false, fts: false, anchors: false }
+        const rowid = Number(row.record_rowid)
+        return {
+          records: true,
+          fts:
+            reader.db.prepare('SELECT 1 FROM fts_records WHERE rowid = ?').get(rowid)
+            !== undefined,
+          anchors:
+            reader.db.prepare('SELECT 1 FROM anchors WHERE record_rowid = ?').get(rowid)
+            !== undefined,
+        }
+      } finally {
+        reader.db.close()
+      }
+    }
+
+    const reviveSentinels = {
+      summary: 'SENTINEL-REVIVE-SUMMARY stays out of every series member',
+      body: 'SENTINEL-REVIVE-BODY confirmed-sensitive content re-learned after purge',
+      anchorName: 'Sentinel revive anchor',
+    }
+
+    function revivePublishInput(): Parameters<typeof publish> {
+      const anchors = [
+        { t: 'el', role: 'button', name: reviveSentinels.anchorName },
+        { t: 'page', route: '/purge/revive/cycle' },
+        { t: 'platform', platform: 'web' },
+      ] satisfies Anchor[]
+      return [
+        'revive-cycle',
+        anchors,
+        {
+          draft: makeBundleDraftFixture({
+            anchors: [...anchors],
+            scope: { tier: 'product', key: PRODUCT },
+            summary: reviveSentinels.summary,
+            body: reviveSentinels.body,
+          }),
+        },
+      ]
+    }
+
+    function confirmRevived(
+      recordId: Parameters<typeof knowledgeLocal.appendOutcomeEvent>[1],
+      buildOrdinal: number,
+    ): void {
+      const appended = knowledgeLocal.appendOutcomeEvent(
+        config(),
+        recordId,
+        BundleOutcomeEventSchema.parse({
+          type: 'confirmed',
+          evidenceToken: `revive-confirmed-${buildOrdinal}`,
+          curationJobId: `revive-confirmed-job-${buildOrdinal}`,
+          buildOrdinal,
+          origin: 'agent-verified',
+        }),
+      )
+      expect(appended.kind).toBe('appended')
+    }
+
+    it('runs a fresh destruction cycle over revived live surfaces and appends the cycle-2 receipt', async () => {
+      const first = publish(...revivePublishInput())
+      await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+
+      expect(purge(first.id).kind).toBe('purged')
+      const cycleOneBytes = readFileSync(seriesReceiptPath(first.id, 1))
+
+      // Revival through the public writer: identical content re-mints the SAME content address.
+      const revived = publish(...revivePublishInput())
+      expect(revived.id).toBe(first.id)
+      confirmRevived(revived.id, 77)
+      await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+      expect(projectionRows(first.id)).toEqual({ records: true, fts: true, anchors: true })
+
+      const matchedId = enqueue(
+        'revive-matched',
+        [
+          { t: 'el', role: 'link', name: 'Disjoint revive matched control' },
+          { t: 'page', route: '/purge/revive/matched' },
+          { t: 'platform', platform: 'web' },
+        ],
+        { bodySeed: reviveSentinels.body },
+      )
+      const survivorId = enqueue('revive-survivor', [
+        { t: 'el', role: 'link', name: 'Unrelated revive survivor control' },
+        { t: 'page', route: '/purge/revive/survivor' },
+        { t: 'platform', platform: 'web' },
+      ])
+
+      let intentText = ''
+      const second = purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: first.id,
+        initiator: 'user',
+        hooks: {
+          afterIntentWritten: () => {
+            intentText = readFileSync(seriesIntentPath(first.id), 'utf8')
+          },
+        },
+      })
+
+      // A false already-purged over live surfaces is the defect under test.
+      expect(second.kind).toBe('purged')
+      expect(existsSync(seriesReceiptPath(first.id, 2))).toBe(true)
+      const cycleTwoText = readFileSync(seriesReceiptPath(first.id, 2), 'utf8')
+      const cycleTwo = purgeReceiptSchemaApi().guardPurgeReceipt(JSON.parse(cycleTwoText))
+      expect(cycleTwo.purgedRecordId).toBe(first.id)
+      expect(cycleTwo.purgedAtOrdinal).toBe(77)
+      expect(second.receipt).toEqual(cycleTwo)
+
+      // The original audit fact never changes: the series is append-only.
+      expect(readFileSync(seriesReceiptPath(first.id, 1))).toEqual(cycleOneBytes)
+
+      expect(existsSync(revived.dir)).toBe(false)
+      expect(projectionRows(first.id)).toEqual({ records: false, fts: false, anchors: false })
+      expect(
+        existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedId)),
+      ).toBe(false)
+      expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedId))).toBe(false)
+      expect(
+        existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, survivorId)),
+      ).toBe(true)
+      expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
+
+      // Series content-freedom: every member of the deletion trail stays sentinel-free.
+      const revivalIntent = purgeIntentSchemaApi().guardPurgeIntent(JSON.parse(intentText))
+      expect(revivalIntent.receiptCycle).toBe(2)
+      for (const bytes of [cycleTwoText, intentText]) {
+        expect(bytes).not.toContain(reviveSentinels.summary)
+        expect(bytes).not.toContain(reviveSentinels.body)
+        expect(bytes).not.toContain(reviveSentinels.anchorName)
+      }
+      expect(existsSync(seriesIntentPath(first.id))).toBe(false)
+    })
+
+    it('attests already-purged with the latest series receipt over verified-dead surfaces', () => {
+      const first = publish(...revivePublishInput())
+      expect(purge(first.id).kind).toBe('purged')
+
+      const revived = publish(...revivePublishInput())
+      expect(revived.id).toBe(first.id)
+      confirmRevived(revived.id, 77)
+      expect(purge(first.id).kind).toBe('purged')
+
+      const third = purge(first.id)
+      expect(third.kind).toBe('already-purged')
+      const cycleTwo = JSON.parse(
+        readFileSync(seriesReceiptPath(first.id, 2), 'utf8'),
+      ) as PurgeReceipt
+      expect(third.receipt).toEqual(cycleTwo)
+      expect(third.receipt?.purgedAtOrdinal).toBe(77)
+      expect(existsSync(seriesIntentPath(first.id))).toBe(false)
+      expect(existsSync(seriesReceiptPath(first.id, 3))).toBe(false)
+    })
+
+    it('recovers a crashed revival purge to the intent own cycle with earlier cycles untouched', () => {
+      const first = publish(...revivePublishInput())
+      expect(purge(first.id).kind).toBe('purged')
+      const second = publish(...revivePublishInput())
+      expect(second.id).toBe(first.id)
+      expect(purge(first.id).kind).toBe('purged')
+      const third = publish(...revivePublishInput())
+      expect(third.id).toBe(first.id)
+
+      const cycleOneBytes = readFileSync(seriesReceiptPath(first.id, 1))
+      const cycleTwoBytes = readFileSync(seriesReceiptPath(first.id, 2))
+
+      expect(() =>
+        purgeApi().purgeRecord({
+          knowledgeRoot,
+          recordId: first.id,
+          initiator: 'user',
+          hooks: {
+            beforeReceiptPublish: () => {
+              throw new Error('injected crash at beforeReceiptPublish')
+            },
+          },
+        }),
+      ).toThrow('injected crash at beforeReceiptPublish')
+
+      const intent = purgeIntentSchemaApi().guardPurgeIntent(
+        JSON.parse(readFileSync(seriesIntentPath(first.id), 'utf8')),
+      )
+      expect(intent.receiptCycle).toBe(3)
+      expect(existsSync(seriesReceiptPath(first.id, 3))).toBe(false)
+
+      const retry = purge(first.id)
+      expect(retry.kind).toBe('purged')
+      expect(retry.receipt).toEqual(intent.receipt)
+      expect(
+        JSON.parse(readFileSync(seriesReceiptPath(first.id, 3), 'utf8')),
+      ).toEqual(intent.receipt)
+      expect(readFileSync(seriesReceiptPath(first.id, 1))).toEqual(cycleOneBytes)
+      expect(readFileSync(seriesReceiptPath(first.id, 2))).toEqual(cycleTwoBytes)
+      expect(existsSync(seriesIntentPath(first.id))).toBe(false)
+      expect(existsSync(third.dir)).toBe(false)
+    })
+
+    it('rejects a dotted record id so the receipt series namespace stays injective', () => {
+      const target = publish('dotted-guard', [
+        { t: 'el', role: 'button', name: 'Dotted guard target' },
+        { t: 'page', route: '/purge/revive/dotted-guard' },
+        { t: 'platform', platform: 'web' },
+      ])
+
+      // Record X's cycle-2 receipt path must never be addressable as record id `X.2`.
+      expect(() =>
+        purgeApi().purgeRecord({
+          knowledgeRoot,
+          recordId: `${target.id}.2`,
+          initiator: 'user',
+        }),
+      ).toThrow(TypeError)
+
+      expect(existsSync(target.dir)).toBe(true)
+      expect(existsSync(join(knowledgeRoot, 'memory', 'receipts'))).toBe(false)
+    })
+  })
 })
