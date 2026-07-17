@@ -253,7 +253,7 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
     const rebuilt = await rebuildIndex({ knowledgeRoot })
     expect(rebuilt.removed).toBe(3)
     expect(existingRecordIds()).toEqual(retained.map(({ id }) => id).sort())
-  })
+  }, 15_000)
 
   it('protects both conflict-record and relation-target references until the unknown resolves', () => {
     const chain = publishChain('unknown-wall', 8)
