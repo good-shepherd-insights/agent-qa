@@ -1,7 +1,12 @@
 import { join } from 'node:path'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
-import { drainQueue } from '@vostride/agent-qa-knowledge-local'
+import {
+  drainQueue,
+  openKnowledgeReader,
+  type OpenServingKnowledgeReaderConfig,
+} from '@vostride/agent-qa-knowledge-local'
+import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
@@ -19,6 +24,7 @@ import {
   buildCuratorAuthor,
   type BuildCuratorAuthorDependencies,
 } from './curator-author.js'
+import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
 import { emitCurationCandidates } from './emit-candidates.js'
 
 export type CurationTailModelDeps = Pick<
@@ -35,6 +41,8 @@ export interface CurationTailOperations {
   resolveKnowledgeRoot: typeof resolveKnowledgeRoot
   runSafetyScope: typeof runSafetyScope
   emitCurationCandidates: typeof emitCurationCandidates
+  openKnowledgeReader(config: OpenServingKnowledgeReaderConfig): KnowledgeHintReader
+  emitCanaryOutcomes: typeof emitCanaryOutcomes
   buildCuratorAuthor: typeof buildCuratorAuthor
   drainQueue: typeof drainQueue
 }
@@ -62,6 +70,8 @@ function defaultOperations(): CurationTailOperations {
     resolveKnowledgeRoot,
     runSafetyScope,
     emitCurationCandidates,
+    openKnowledgeReader,
+    emitCanaryOutcomes,
     buildCuratorAuthor,
     drainQueue,
   }
@@ -103,6 +113,15 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
           runDir,
           knowledgeRoot,
           policy: opts.policy,
+        })
+        // D-20: 378 D-01's post-verdict projection is applied twice. The candidate and canary
+        // queue drops share this scope and crash boundary; diverging their semantics is a bug.
+        const reader = operations.openKnowledgeReader({ knowledgeRoot })
+        operations.emitCanaryOutcomes({
+          handoff,
+          knowledgeRoot,
+          runDir,
+          emit: reader.emitCanaryOutcome.bind(reader),
         })
         const author =
           opts.modelDeps === undefined

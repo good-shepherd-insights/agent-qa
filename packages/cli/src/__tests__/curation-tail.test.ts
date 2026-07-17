@@ -7,10 +7,12 @@ import {
   RUNS_SUBDIR,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
+import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import type {
   AuditSink,
 } from '@vostride/agent-qa-safety'
 import type {
+  CanaryOutcome,
   CompletedRunHandoff,
   GuardrailPolicy,
   MaskingContext,
@@ -34,6 +36,34 @@ const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
 function handoff(executionContext: CompletedRunHandoff['executionContext'] = 'ci') {
   return { executionContext } as CompletedRunHandoff
+}
+
+function attributableHandoff(): CompletedRunHandoff {
+  return {
+    executionContext: 'ci',
+    runId: 'run-curation-tail',
+    buildOrdinal: 42,
+    tests: [{
+      steps: [{
+        stepIndex: 0,
+        servedBrief: {
+          briefDigest: 'brief-digest-0',
+          channel1: [{ id: 'candidate-checkout', servedAsCanary: true }],
+        },
+        verifierVerdict: { pass: true },
+        subActions: [{
+          plannedAction: { type: 'click', ref: 'checkout' },
+          stateBefore: {
+            elements: [{
+              ref: 'checkout',
+              role: 'button',
+              nameNormalized: 'checkout',
+            }],
+          },
+        }],
+      }],
+    }],
+  } as CompletedRunHandoff
 }
 
 function baseOptions(
@@ -63,6 +93,8 @@ function successfulOperations(
     resolveKnowledgeRoot: () => knowledgeRoot,
     runSafetyScope: (_bundle, fn) => fn(),
     emitCurationCandidates: vi.fn(),
+    openKnowledgeReader: () => ({ emitCanaryOutcome: vi.fn() }) as unknown as KnowledgeHintReader,
+    emitCanaryOutcomes: vi.fn(() => ({ emitted: 0, refused: 0, details: [] })),
     buildCuratorAuthor: () => vi.fn(async () => ({
       kind: 'fallback-required' as const,
       reason: 'no-model' as const,
@@ -85,11 +117,21 @@ function successfulOperations(
 }
 
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
-  it('loads the canonical handoff, uses its posture in a live scope, emits, then drains with the same AbortSignal', async () => {
+  it('loads the handoff, emits candidates and canary outcomes in one scope, then drains', async () => {
     const order: string[] = []
     const controller = new AbortController()
     const ambientExecutionContext = 'local-interactive'
-    const completed = handoff('ci')
+    const completed = attributableHandoff()
+    const canaryOutcome: CanaryOutcome = {
+      candidateId: 'candidate-checkout' as CanaryOutcome['candidateId'],
+      runOutcome: 'positive',
+      runId,
+      buildOrdinal: 42,
+      stepIndex: 0,
+      briefDigest: 'brief-digest-0',
+      attribution: 'candidate-checkout matched checkout on passing step 0',
+      exercisedAnchor: { t: 'el', role: 'button', name: 'checkout', ordinal: 0 },
+    }
     const author = vi.fn(async () => ({
       kind: 'fallback-required' as const,
       reason: 'no-model' as const,
@@ -136,6 +178,34 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           details: [],
         }
       },
+      openKnowledgeReader(config) {
+        order.push('reader')
+        expect(config).toEqual({ knowledgeRoot })
+        return {
+          emitCanaryOutcome(outcome) {
+            order.push('queue')
+            expect(outcome).toEqual(canaryOutcome)
+          },
+        } as unknown as KnowledgeHintReader
+      },
+      emitCanaryOutcomes(options) {
+        order.push('canary-emit')
+        expect(options).toMatchObject({
+          handoff: completed,
+          runDir: join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
+          knowledgeRoot,
+        })
+        options.emit(canaryOutcome)
+        return {
+          emitted: 1,
+          refused: 0,
+          details: [{
+            candidateId: canaryOutcome.candidateId,
+            stepIndex: 0,
+            outcome: { kind: 'emitted' },
+          }],
+        }
+      },
       buildCuratorAuthor(deps) {
         order.push('author')
         expect(deps).toBe(modelDeps)
@@ -177,12 +247,15 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       'knowledge-root',
       'scope',
       'emit',
+      'reader',
+      'canary-emit',
+      'queue',
       'author',
       'drain',
     ])
   })
 
-  it.each(['emit', 'drain'] as const)(
+  it.each(['emit', 'canary-emit', 'drain'] as const)(
     'swallows a %s failure and warns that incomplete curation resumes on the next run',
     async (failureStage) => {
       const warn = vi.fn()
@@ -196,6 +269,10 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             refused: 0,
             details: [],
           }
+        },
+        emitCanaryOutcomes() {
+          if (failureStage === 'canary-emit') throw new Error('canary emit failed')
+          return { emitted: 0, refused: 0, details: [] }
         },
         async drainQueue() {
           if (failureStage === 'drain') throw new Error('drain failed')
@@ -229,12 +306,16 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     async (condition) => {
       const warn = vi.fn()
       const emitCurationCandidates = vi.fn()
+      const openKnowledgeReader = vi.fn()
+      const emitCanaryOutcomes = vi.fn()
       const drainQueue = vi.fn()
       const operations = successfulOperations({
         loadCompletedRunHandoff() {
           throw new Error(`${condition} handoff`)
         },
         emitCurationCandidates,
+        openKnowledgeReader,
+        emitCanaryOutcomes,
         drainQueue,
       })
 
@@ -245,6 +326,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       expect(warn.mock.calls[0]?.[0]).toMatch(/skip/i)
       expect(warn.mock.calls[0]?.[0]).toMatch(/handoff/i)
       expect(emitCurationCandidates).not.toHaveBeenCalled()
+      expect(openKnowledgeReader).not.toHaveBeenCalled()
+      expect(emitCanaryOutcomes).not.toHaveBeenCalled()
       expect(drainQueue).not.toHaveBeenCalled()
     },
   )
