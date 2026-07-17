@@ -19,6 +19,7 @@ import type {
   AiJudgmentEvidence,
   AssertValueEvidence,
   BoundingBox,
+  BriefBlock,
   CycleEvidence,
   Decision,
   DeclaredModelProfile,
@@ -66,6 +67,26 @@ export function makeEmptyServedBrief(scope: ScopeKey, asOfBuild: number): Served
   // computeBriefDigest canonicalizes every field EXCEPT briefDigest, so digesting the
   // brief with an empty digest field yields the stable content digest.
   return { ...brief, briefDigest: computeBriefDigest(brief) }
+}
+
+function makeChannel1ServedBrief(input: {
+  scope: ScopeKey
+  asOfBuild: number
+  budget: number
+  block: BriefBlock
+}): ServedBrief {
+  const served: ServedBrief = {
+    scope: input.scope,
+    asOfBuild: input.asOfBuild,
+    budget: input.budget,
+    truncation: input.block.truncation,
+    channel1: [...input.block.lines],
+    // D-03: Channel 2 read traces and Channel 3 cautions are populated by 380-07/380-09.
+    channel2: [],
+    channel3: [],
+    briefDigest: '',
+  }
+  return { ...served, briefDigest: computeBriefDigest(served) }
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +353,20 @@ export class EvidenceRecorder {
    */
   recordWorkingMemory(entries: WorkingMemoryEntry[]): void {
     this.workingMemory = entries
+  }
+
+  /**
+   * Record the real deterministic Channel-1 brief served to this step. The recording type is the
+   * schema-owned ServedBrief; the digest is always recomputed over the populated channels.
+   * makeEmptyServedBrief remains exclusively the no-reader constructor fallback.
+   */
+  recordServedBrief(input: {
+    scope: ScopeKey
+    asOfBuild: number
+    budget: number
+    block: BriefBlock
+  }): void {
+    this.servedBrief = makeChannel1ServedBrief(input)
   }
 
   /**

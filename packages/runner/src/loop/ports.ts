@@ -216,6 +216,8 @@ export interface LoopPorts {
     readBody: number
     recordCap: number
   }
+  /** D-21 run-fixed build ordinal copied into ServedBrief attribution when a reader is bound. */
+  knowledgeAsOfBuild?: number
   /**
    * D-17 loop-controlled turn ledger. A composition root that registers Channel-2 tools binds
    * the same object into their closures; the loop owns reset timing and Channel 3 consults it

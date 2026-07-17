@@ -674,11 +674,15 @@ export async function executeStep(
         context.knowledgeBriefTruncation = brief.truncation.trim().length > 0
           ? brief.truncation
           : undefined
-        // Preserve the pre-380 string slot until Task 2's tier renderer consumes the structured
-        // fields above. The live reader path never drops L1 while migrating off the old L2-only seam.
-        const learnedTiers = [brief.tiers.L1, brief.tiers.L2]
-          .filter((tier) => tier.trim().length > 0)
-        context.knowledgeBrief = learnedTiers.length > 0 ? learnedTiers.join('\n') : undefined
+        // Reader-backed runs use the structured fields above; clear the compatibility string so
+        // an empty real block cannot accidentally resurrect caller-supplied learned material.
+        context.knowledgeBrief = undefined
+        recorder.recordServedBrief({
+          scope: briefScope,
+          asOfBuild: ports.knowledgeAsOfBuild ?? 0,
+          budget: briefBudget,
+          block: brief,
+        })
       }
       // The brief rides every planning turn, so its distinct ids are already spent before any
       // agentic search/read or automatic failure caution can admit a record (Pitfall 9).

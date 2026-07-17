@@ -131,6 +131,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         planner: makePlanner([makeActionPlan({ stepComplete: true })]),
         knowledgeReader: reader,
         knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+        knowledgeAsOfBuild: 42,
       },
       context(),
     )
@@ -138,6 +139,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
     expect(result.status).toBe('passed')
     expect(requestedBudgets).toEqual([256])
     expect(result.evidence?.servedBrief.channel1).toEqual(block.lines)
+    expect(result.evidence?.servedBrief.asOfBuild).toBe(42)
     expect(result.evidence?.servedBrief.budget).toBe(256)
     expect(result.evidence?.servedBrief.truncation).toBe(block.truncation)
     expect(result.evidence?.servedBrief.briefDigest)
