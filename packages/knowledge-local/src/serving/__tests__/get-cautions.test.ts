@@ -154,4 +154,47 @@ describe('Channel-3 caution selection (BRIF-02 / D-14)', () => {
     expect(summary).toContain(APP_OBSERVED_DATA_OPEN)
     expect(summary).toContain(APP_OBSERVED_DATA_CLOSE)
   })
+
+  it('serves the single best caution when the floor budget fits one line', () => {
+    const result = selectCautions({
+      candidates: [
+        caution('c_only', {
+          trust: 0.1,
+          anchors: [{ t: 'el', role: 'button', name: 'Place order' }],
+        }),
+      ],
+      anchors: [{ t: 'el', role: 'button', name: 'Place order' }],
+      budget: 2,
+    })
+
+    expect(result.block.cautions.map(({ id }) => id)).toEqual(['c_only'])
+    expect(result.block.budgetUsed).toBe(1)
+    expect(result.overflow).toBeUndefined()
+  })
+
+  it('ranks a mixed el-and-page match in the el group and counts it once', () => {
+    const result = selectCautions({
+      candidates: [
+        caution('c_page', {
+          trust: 100,
+          anchors: [{ t: 'page', route: '/checkout' }],
+        }),
+        caution('c_mixed', {
+          trust: 0.1,
+          anchors: [
+            { t: 'page', route: '/checkout' },
+            { t: 'el', role: 'button', name: 'Place order' },
+          ],
+        }),
+      ],
+      anchors: [
+        { t: 'el', role: 'button', name: 'Place order' },
+        { t: 'page', route: '/checkout' },
+      ],
+      budget: 2,
+    })
+
+    expect(result.block.cautions.map(({ id }) => id)).toEqual(['c_mixed', 'c_page'])
+    expect(result.block.cautions.filter(({ id }) => id === 'c_mixed')).toHaveLength(1)
+  })
 })
