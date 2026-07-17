@@ -1,0 +1,338 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import {
+  asRecordId,
+  canonicalJson,
+  deriveEvidenceToken,
+  type BundleDiscriminant,
+  type BundleDraft,
+  type CanaryOutcome,
+  type DistilledObservation,
+} from '@vostride/agent-qa-schema'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import {
+  enqueueArtifactFreeCandidateProjection,
+} from '../../__tests__/fixtures/curation-candidate-fixture.js'
+import { scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
+import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
+import {
+  publishBundle,
+  type BundleStoreConfig,
+  type PublishBundleInput,
+} from '../../bundle-publish.js'
+import { buildRetrievalQuery } from '../../query-helper.js'
+import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
+import { listQueuedCandidates } from '../../queue/curation-queue.js'
+import { readJobState, writeJobState } from '../../queue/job-state.js'
+import type { CuratorAuthor } from '../author-contract.js'
+import {
+  drainQueue,
+  type DrainOperations,
+} from '../drain.js'
+import { canaryOutcomeObservationId } from '../disposition.js'
+import { createLocalKnowledgeStore } from '../knowledge-store.js'
+
+const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+const FACT_ANCHORS = [
+  { t: 'el', role: 'button', name: 'Checkout', ordinal: 0 },
+  { t: 'page', route: '/checkout' },
+  { t: 'selector', literal: '[data-testid="checkout"]' },
+] as const
+const ELEMENT_OBSERVATION: DistilledObservation = {
+  schemaVersion: 1,
+  step: { naturalKey: 'checkout-click', ordinal: 0 },
+  platform: 'web',
+  element: { naturalKey: 'button:Checkout:0' },
+  locator: { selector: '[data-testid="checkout"]' },
+  observedAtOrdinal: 42,
+}
+
+describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
+  let root: string
+  let knowledgeRoot: string
+  let auditBaseDir: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-canary-disposition-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    auditBaseDir = join(root, '.agent-qa')
+    scaffoldKnowledgeRoot(knowledgeRoot)
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function bundleConfig(): BundleStoreConfig {
+    return {
+      knowledgeRoot,
+      productKey: 'storefront',
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'canary-disposition-test',
+      policy,
+    }
+  }
+
+  function seedCandidate(kind: 'fact' | 'policy' = 'fact') {
+    const draft: BundleDraft = {
+      kind,
+      ...(kind === 'fact' ? { subtype: 'selector' as const } : {}),
+      anchors: [...FACT_ANCHORS],
+      scope: { tier: 'product', key: 'storefront' },
+      summary: kind === 'fact'
+        ? 'Checkout button selector'
+        : 'Checkout approval policy proposal',
+      body: kind === 'fact'
+        ? 'The checkout button was resolved and verified.'
+        : 'Only approved users may activate checkout.',
+      distilledEvidenceRef: {
+        id: `${kind}-checkout-evidence`,
+        sha: kind === 'fact' ? 'a'.repeat(64) : 'b'.repeat(64),
+      },
+      originStage: 'run-curation',
+    }
+    const discriminant: BundleDiscriminant = kind === 'fact'
+      ? {
+          kind,
+          subtype: 'selector',
+          elementRef: { role: 'button', name: 'Checkout' },
+        }
+      : { kind, ruleKey: 'only approved users may activate checkout' }
+    const input: PublishBundleInput = {
+      draft,
+      discriminant,
+      originClass: 'agent-verified',
+      createdAtOrdinal: 42,
+      screenStates: [],
+      initialEvents: [],
+      relations: [],
+      provenance: {
+        mode: 'run-linked',
+        runId: 'run-canary-seed',
+        testId: 'test-canary-seed',
+        stepIndex: 0,
+        curationJobId: `seed-${kind}-candidate`,
+        sourceBuildOrdinal: 42,
+      },
+      artifacts: [],
+      evidenceMarkdown: 'Deterministically observed during checkout.\n',
+      distilledObservations: [ELEMENT_OBSERVATION],
+    }
+    const published = publishBundle(bundleConfig(), input)
+    if (published.kind !== 'published') {
+      throw new Error(`expected candidate publish, got ${published.kind}`)
+    }
+    return published
+  }
+
+  function outcome(
+    candidateId: ReturnType<typeof asRecordId>,
+    runOutcome: CanaryOutcome['runOutcome'] = 'positive',
+  ): CanaryOutcome {
+    return {
+      candidateId,
+      runOutcome,
+      runId: 'run-canary-disposition',
+      buildOrdinal: 43,
+      stepIndex: 2,
+      briefDigest: 'brief-digest-canary-disposition',
+      attribution: 'The served checkout hypothesis was exercised by the attributed step.',
+      exercisedAnchor: FACT_ANCHORS[0],
+    }
+  }
+
+  function store() {
+    return createLocalKnowledgeStore({
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'local-interactive',
+      sourceBuildOrdinal: 43,
+      sourceRunId: 'run-canary-disposition',
+      policy,
+    })
+  }
+
+  function loaded(bundleDir: string) {
+    const result = loadBundle(bundleDir)
+    if (result.kind !== 'loaded') throw new Error(`expected loaded bundle, got ${result.kind}`)
+    return { bundle: result.bundle, trust: deriveBundleTrust(result.bundle) }
+  }
+
+  it('commits a positive attributed outcome before promoting with the schema evidence recipe', async () => {
+    const published = seedCandidate()
+    const attributed = outcome(published.id)
+
+    await store().recordCanaryOutcome(attributed)
+
+    const result = loaded(published.dir)
+    const expectedToken = deriveEvidenceToken({
+      attributingObservationId: canaryOutcomeObservationId(attributed),
+      anchor: attributed.exercisedAnchor,
+      buildOrdinal: attributed.buildOrdinal,
+    })
+    const confirmedIndex = result.bundle.events.findIndex(
+      (event) => event.type === 'confirmed' && event.evidenceToken === expectedToken,
+    )
+    const promotedIndex = result.bundle.events.findIndex((event) => event.type === 'promoted')
+
+    expect(confirmedIndex).toBeGreaterThanOrEqual(0)
+    expect(promotedIndex).toBeGreaterThan(confirmedIndex)
+    expect(result.trust.status).toBe('active')
+    expect(result.trust.counters.confirmed).toBe(1)
+  })
+
+  it('replays the same positive outcome as a trust-preserving no-op', async () => {
+    const published = seedCandidate()
+    const attributed = outcome(published.id)
+    const knowledgeStore = store()
+
+    await knowledgeStore.recordCanaryOutcome(attributed)
+    const first = loaded(published.dir)
+    const firstEvidence = canonicalJson({
+      events: first.bundle.events,
+      counters: first.trust.counters,
+      trust: first.trust.trust,
+      status: first.trust.status,
+    })
+
+    await knowledgeStore.recordCanaryOutcome(attributed)
+    const replayed = loaded(published.dir)
+
+    expect(canonicalJson({
+      events: replayed.bundle.events,
+      counters: replayed.trust.counters,
+      trust: replayed.trust.trust,
+      status: replayed.trust.status,
+    })).toBe(firstEvidence)
+    expect(replayed.trust.counters.confirmed).toBe(1)
+  })
+
+  it('appends replay-safe negative evidence through the existing trust disposition', async () => {
+    const published = seedCandidate()
+    const attributed = outcome(published.id, 'negative')
+    const knowledgeStore = store()
+    const before = loaded(published.dir)
+
+    await knowledgeStore.recordCanaryOutcome(attributed)
+    const first = loaded(published.dir)
+    await knowledgeStore.recordCanaryOutcome(attributed)
+    const replayed = loaded(published.dir)
+
+    expect(first.trust.counters.contradicted).toBe(1)
+    expect(first.trust.trust).toBeLessThan(before.trust.trust)
+    expect(first.trust.status).toBe('candidate')
+    expect(replayed.trust).toEqual(first.trust)
+    expect(replayed.bundle.events).toEqual(first.bundle.events)
+  })
+
+  it('drains mixed canary and curation jobs without spending author or query work on canaries', async () => {
+    const published = seedCandidate()
+    const canary = enqueueCanaryOutcome(knowledgeRoot, outcome(published.id))
+    const curation = enqueueArtifactFreeCandidateProjection({
+      knowledgeRoot,
+      projectionInput: {
+        sourceRunId: 'run-mixed-curation',
+        scope: { tier: 'product', key: 'storefront' },
+        buildOrdinal: 44,
+        executionContext: 'local-interactive',
+        secretFlagged: false,
+        injectionFlagged: false,
+        kind: 'fact',
+        subtype: 'selector',
+        anchors: [{ t: 'el', role: 'button', name: 'Pay now', ordinal: 0 }],
+        summarySeed: 'Pay now button selector',
+        bodySeed: 'The Pay now button was observed during checkout.',
+        distilledObservations: [
+          {
+            schemaVersion: 1,
+            step: { naturalKey: 'pay-now-click', ordinal: 0 },
+            platform: 'web',
+            element: { naturalKey: 'button:Pay now:0' },
+            observedAtOrdinal: 44,
+          },
+        ],
+        evidenceToken: 'mixed-curation-evidence',
+        attributingObservationId: 'run-mixed-curation:test-0:step-0',
+        emittedAt: '2026-07-18T00:00:00.000Z',
+      },
+    })
+    if (curation.kind !== 'enqueued') throw new Error(`expected curation enqueue, got ${curation.kind}`)
+
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      if (job.candidateId !== curation.candidateId) {
+        throw new Error(`canary job ${job.candidateId} reached the author`)
+      }
+      return { kind: 'fallback-required', reason: 'no-model' }
+    })
+    const build = vi.fn(buildRetrievalQuery)
+    const commit = vi.fn<DrainOperations['commitCurationDelta']>((_dependencies, job) => {
+      writeJobState({
+        knowledgeRoot,
+        candidateId: job.candidateId,
+        lifecycle: 'done',
+      })
+      return {
+        kind: 'applied',
+        bundleId: asRecordId(`bundle-${job.candidateId}`),
+        bundleDir: join(knowledgeRoot, 'memory', 'storefront', 'bundles', job.candidateId),
+        deltaKind: 'Add',
+      }
+    })
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        readRebuildRequest: () => ({ present: false }),
+        readIndexMaintenanceState: () => ({
+          indexAbsent: false,
+          pendingEmbeddings: 0,
+          renderingEpochStale: false,
+          vectorReconciliationOutstanding: false,
+        }),
+        openKnowledgeReader: () => fakeReader(),
+        buildRetrievalQuery: build,
+        retrieve: async () => [],
+        commitCurationDelta: commit,
+      },
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 2,
+      committed: 2,
+      failures: 0,
+    })
+    expect(author).toHaveBeenCalledOnce()
+    expect(author.mock.calls[0]?.[0].candidateId).toBe(curation.candidateId)
+    expect(build).toHaveBeenCalledOnce()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(loaded(published.dir).trust.status).toBe('active')
+    expect(readJobState(knowledgeRoot, canary.entryId).kind).toBe('absent')
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+  })
+})
+
+function fakeReader() {
+  return {
+    source: 'scan' as const,
+    vec: 'none' as const,
+    getById: vi.fn(),
+    searchLexical: vi.fn(() => []),
+    lookupAnchor: vi.fn(() => []),
+    searchDense: vi.fn(() => []),
+    recheck: vi.fn((hits) => [...hits]),
+    close: vi.fn(),
+  }
+}
