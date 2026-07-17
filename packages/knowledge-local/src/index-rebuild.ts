@@ -50,6 +50,7 @@ import type {
 import {
   CHECKPOINT_EVERY_N_BUNDLES,
   deleteRecordFromAllSchemaVecTables,
+  indexDbPath,
   isEmbeddingVecCleanupCurrent,
   openIndexWriter,
   resolveActiveProfile,
@@ -956,6 +957,24 @@ function refreshContextualRenderings(db: DatabaseSync, force = false): number {
   return refreshed
 }
 
+/** The total per-record projection deletion set shared by the missing-bundle and drain-tail passes. */
+function deleteRecordProjectionRows(
+  db: DatabaseSync,
+  recordRowid: number,
+  bundleId: string,
+  kind: LoadedBundle['frontmatter']['kind'],
+): void {
+  const recordNode = recordGraphNode(kind, bundleId)
+  deleteRecordFromAllSchemaVecTables(db, recordRowid)
+  db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
+  db.prepare('DELETE FROM anchors WHERE record_rowid = ?').run(recordRowid)
+  db.prepare(`
+    DELETE FROM graph_edges
+    WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
+  `).run(recordRowid, recordNode.nodeId, recordNode.nodeId)
+  db.prepare('DELETE FROM records WHERE record_rowid = ?').run(recordRowid)
+}
+
 function removeMissingBundles(
   db: DatabaseSync,
   seenBundleIds: ReadonlySet<string>,
@@ -967,28 +986,56 @@ function removeMissingBundles(
   if (missing.length === 0) return 0
 
   transaction(db, () => {
-    const deleteFts = db.prepare('DELETE FROM fts_records WHERE rowid = ?')
-    const deleteAnchors = db.prepare('DELETE FROM anchors WHERE record_rowid = ?')
-    const deleteEdges = db.prepare(`
-      DELETE FROM graph_edges
-      WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
-    `)
-    const deleteRecord = db.prepare('DELETE FROM records WHERE record_rowid = ?')
-
     for (const row of missing) {
-      const recordRowid = Number(row.record_rowid)
-      const bundleId = String(row.bundle_id)
-      const kind = row.kind as LoadedBundle['frontmatter']['kind']
-      const recordNode = recordGraphNode(kind, bundleId)
-      deleteRecordFromAllSchemaVecTables(db, recordRowid)
-      deleteFts.run(recordRowid)
-      deleteAnchors.run(recordRowid)
-      deleteEdges.run(recordRowid, recordNode.nodeId, recordNode.nodeId)
-      deleteRecord.run(recordRowid)
+      deleteRecordProjectionRows(
+        db,
+        Number(row.record_rowid),
+        String(row.bundle_id),
+        row.kind as LoadedBundle['frontmatter']['kind'],
+      )
     }
   })
 
   return missing.length
+}
+
+/**
+ * WR-01 record-scoped healing: delete the total projection set for exactly the supplied bundle
+ * ids inside one transaction and return the number of records removed. An absent index db,
+ * empty ids, and ids without records rows are no-ops; embed_cache is untouched (purge-only A4).
+ */
+export function removeBundleProjectionRows(
+  knowledgeRoot: string,
+  bundleIds: readonly string[],
+): number {
+  if (bundleIds.length === 0 || !existsSync(indexDbPath(knowledgeRoot))) return 0
+
+  const writer = openIndexWriter(knowledgeRoot)
+  try {
+    const selectRecord = writer.db.prepare(
+      'SELECT record_rowid, kind FROM records WHERE bundle_id = ?',
+    )
+    const found = bundleIds.flatMap((bundleId) => {
+      const row = selectRecord.get(bundleId)
+      return row === undefined
+        ? []
+        : [{
+            recordRowid: Number(row.record_rowid),
+            bundleId,
+            kind: row.kind as LoadedBundle['frontmatter']['kind'],
+          }]
+    })
+    if (found.length === 0) return 0
+
+    transaction(writer.db, () => {
+      for (const row of found) {
+        deleteRecordProjectionRows(writer.db, row.recordRowid, row.bundleId, row.kind)
+      }
+    })
+    return found.length
+  } finally {
+    writer.close()
+  }
 }
 
 async function backfillPendingEmbeddings(
