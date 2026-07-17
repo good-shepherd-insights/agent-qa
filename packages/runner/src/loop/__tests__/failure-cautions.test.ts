@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   asRecordId,
+  computeBriefDigest,
   type Anchor,
   type BriefBlock,
   type CautionBlock,
@@ -381,5 +382,42 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
     expect(prompts[1]).toContain('Reader truncated 4 of 7 matching cautions.')
     expect(admitted).toEqual([asRecordId('caution-normal')])
     expect(ledger.size()).toBe(1)
+  })
+
+  it('records injected cautions in channel3 with a recomputed digest and leaves ordinary steps empty', async () => {
+    const injected = caution('caution-evidence', 'Capture this failure-adjacent observation.')
+    const knowledgeReader = reader({
+      cautions: { cautions: [injected], budgetUsed: 8 },
+    })
+    const replanned = await executeStep(
+      'Click Log in',
+      ports({
+        reader: knowledgeReader,
+        planner: scriptedPlanner([
+          makeActionPlan({ action: { type: 'click', ref: 'e2' } }),
+          makeActionPlan({ action: { type: 'click', ref: 'e1' } }),
+        ]),
+        executeResults: [
+          { success: false, error: 'Browser process disconnected' },
+          { success: true },
+        ],
+      }),
+      flowContext(),
+    )
+
+    expect(replanned.evidence?.servedBrief.channel3).toEqual([injected])
+    expect(replanned.evidence?.servedBrief.briefDigest)
+      .toBe(computeBriefDigest(replanned.evidence!.servedBrief))
+
+    const ordinary = await executeStep(
+      'Click Log in',
+      ports({
+        reader: reader(),
+        planner: scriptedPlanner([makeActionPlan()]),
+        executeResults: [{ success: true }],
+      }),
+      flowContext(),
+    )
+    expect(ordinary.evidence?.servedBrief.channel3).toEqual([])
   })
 })

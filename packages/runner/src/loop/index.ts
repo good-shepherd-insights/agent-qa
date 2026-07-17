@@ -733,6 +733,7 @@ export async function executeStep(
         const observations = injected.map((caution) => caution.summary)
         if (refused > 0) observations.push(`truncated ${refused} of ${recordCount}`)
         if (observations.length > 0) {
+          recorder.recordServedCautions(injected)
           const frame = `Failure-adjacent caution observations:\n${observations.join('\n')}`
           context.knowledgeBriefL1 = context.knowledgeBriefL1?.trim()
             ? `${context.knowledgeBriefL1}\n\n${frame}`

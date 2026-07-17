@@ -20,6 +20,7 @@ import type {
   AssertValueEvidence,
   BoundingBox,
   BriefBlock,
+  CautionLine,
   CycleEvidence,
   Decision,
   DeclaredModelProfile,
@@ -366,7 +367,31 @@ export class EvidenceRecorder {
     budget: number
     block: BriefBlock
   }): void {
-    this.servedBrief = makeChannel1ServedBrief(input)
+    const channel1 = makeChannel1ServedBrief(input)
+    const served: ServedBrief = {
+      ...channel1,
+      // A step may replan more than once. Re-reading the frozen Channel-1 block must not erase
+      // direct-read or failure-caution evidence already served by an earlier turn in this step.
+      channel2: [...this.servedBrief.channel2],
+      channel3: [...this.servedBrief.channel3],
+      briefDigest: '',
+    }
+    this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }
+  }
+
+  /**
+   * Append the exact Channel-3 CautionLines injected into a live replan turn. Refused records
+   * never enter this method; the reserved reader overflow line does because its summary was
+   * actually rendered. Digest recomputation keeps ServedBrief content-addressed after mutation.
+   */
+  recordServedCautions(cautions: readonly CautionLine[]): void {
+    if (cautions.length === 0) return
+    const served: ServedBrief = {
+      ...this.servedBrief,
+      channel3: [...this.servedBrief.channel3, ...cautions],
+      briefDigest: '',
+    }
+    this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }
   }
 
   /**
