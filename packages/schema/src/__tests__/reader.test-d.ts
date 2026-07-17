@@ -113,15 +113,27 @@ expectTypeOf<SearchOptions['asOfRange']>().toEqualTypeOf<BuildRange | undefined>
 
 expectTypeOf<ReadOptions>().toEqualTypeOf<{
   detailLevel?: string
+  budget?: number
 }>()
 
 expectTypeOf<CanaryOutcome>().toEqualTypeOf<{
   candidateId: RecordId
-  runOutcome: string
+  runOutcome: 'positive' | 'negative'
+  runId: string
+  buildOrdinal: number
+  stepIndex: number
+  briefDigest: string
   attribution: string
   exercisedAnchor: Anchor
 }>()
 
 expectTypeOf<keyof CanaryOutcome>().toEqualTypeOf<
-  'candidateId' | 'runOutcome' | 'attribution' | 'exercisedAnchor'
+  | 'candidateId'
+  | 'runOutcome'
+  | 'runId'
+  | 'buildOrdinal'
+  | 'stepIndex'
+  | 'briefDigest'
+  | 'attribution'
+  | 'exercisedAnchor'
 >()

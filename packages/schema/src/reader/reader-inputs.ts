@@ -19,11 +19,25 @@ export interface SearchOptions {
 
 export interface ReadOptions {
   detailLevel?: string
+  /** D-11: the tool wrapper passes its remaining read-body budget for reader-side truncation. */
+  budget?: number
 }
 
 export interface CanaryOutcome {
+  /** Pin 3: the exact candidate whose served hypothesis was exercised. */
   candidateId: RecordId
-  runOutcome: string
+  /** D-21: only attributed step verdicts move trust; ambiguous outcomes are never emitted. */
+  runOutcome: 'positive' | 'negative'
+  /** Pin 3: run identity participates in the replay-safe evidence token. */
+  runId: string
+  /** D-21: deterministic build ordinal only; wall-clock time is never attribution authority. */
+  buildOrdinal: number
+  /** D-21: per-step granularity prevents run-level noise from moving trust. */
+  stepIndex: number
+  /** D-01/Pin 3: binds attribution to the frozen ServedBrief used by the step. */
+  briefDigest: string
+  /** Human-readable attribution rationale; deliberately non-load-bearing. */
   attribution: string
+  /** D-21: the normalized candidate anchor actually exercised by the attributed step. */
   exercisedAnchor: Anchor
 }
