@@ -379,6 +379,41 @@ describe('runMemberTest — per-test responsibilities', () => {
     expect(captured[0].evidenceArtifacts).toBeUndefined()
   })
 
+  it('threads the live knowledge reader, budgets, ordinal, ledger, and turn reset into LoopPorts', async () => {
+    const reader = { getRunBrief: vi.fn() } as never
+    const budgets = { brief: 512, caution: 96, readBody: 1_024, recordCap: 12 }
+    const ledger = {
+      admit: vi.fn(),
+      resetTurn: vi.fn(),
+      size: vi.fn(),
+    } as never
+    const beginMemoryTurn = vi.fn()
+    const captured: LoopPorts[] = []
+    const capturing: (i: string, p: LoopPorts, c: StepContext) => Promise<StepResult> = async (_i, p) => {
+      captured.push(p)
+      p.events?.stepFinalized({} as never, { status: 'passed', durationMs: 1 })
+      return stepResult()
+    }
+
+    await runMemberTest(
+      member({ steps: ['only'] }),
+      baseConfig({
+        executeStep: capturing,
+        knowledgeReader: reader,
+        knowledgeBudgets: budgets,
+        knowledgeAsOfBuild: 41,
+        recordLedger: ledger,
+        beginMemoryTurn,
+      }),
+    )
+
+    expect(captured[0].knowledgeReader).toBe(reader)
+    expect(captured[0].knowledgeBudgets).toBe(budgets)
+    expect(captured[0].knowledgeAsOfBuild).toBe(41)
+    expect(captured[0].recordLedger).toBe(ledger)
+    expect(captured[0].beginMemoryTurn).toBe(beginMemoryTurn)
+  })
+
   it('runs an inline appium directive through the injected appiumScript handler', async () => {
     const rec = recordingExecuteStep([stepResult()])
     const appiumScript = vi.fn(async () => ({ success: true, data: { ok: 1 } }))

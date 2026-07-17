@@ -132,6 +132,15 @@ export interface MemberRunConfig {
   compressor?: ScreenshotCompressor
   safetyHooks?: SafetyHookRunner
   knowledgeReader?: KnowledgeHintReader
+  knowledgeBudgets?: {
+    brief: number
+    caution: number
+    readBody: number
+    recordCap: number
+  }
+  knowledgeAsOfBuild?: number
+  recordLedger?: LoopPorts['recordLedger']
+  beginMemoryTurn?: LoopPorts['beginMemoryTurn']
   uniqueValueGenerator?: UniqueValueGenerator
   guardBlob?: (value: unknown) => string | undefined
   configDigests?: ConfigDigests
@@ -642,6 +651,10 @@ async function runMemberAttempt(
       compressor: config.compressor,
       safetyHooks: config.safetyHooks,
       knowledgeReader: config.knowledgeReader,
+      knowledgeBudgets: config.knowledgeBudgets,
+      knowledgeAsOfBuild: config.knowledgeAsOfBuild,
+      recordLedger: config.recordLedger,
+      beginMemoryTurn: config.beginMemoryTurn,
       uniqueValueGenerator: config.uniqueValueGenerator,
       guardBlob: config.guardBlob,
       plannerConfig: config.plannerConfig,

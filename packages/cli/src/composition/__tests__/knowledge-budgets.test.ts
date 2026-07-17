@@ -1,5 +1,14 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ModelCapabilities } from '@vostride/agent-qa-schema'
+import { LLMPlanner } from '@vostride/agent-qa-runner'
+import type { KnowledgeHintReader, NonActionToolMap } from '@vostride/agent-qa-runner'
+import {
+  createFrozenKnowledgeReader,
+  openRunKnowledgeComposition,
+} from '../../run-session-composition.js'
 import {
   BRIEF_CEILING,
   BRIEF_FRACTION,
@@ -80,5 +89,93 @@ describe('memoryToolGate', () => {
       Math.max(1, Math.floor(GLOBAL_RECORD_CAP * WEAK_MODEL_CAP_SCALE)),
     )
     expect(scaledRecordCap(capabilities())).toBe(GLOBAL_RECORD_CAP)
+  })
+})
+
+describe('run knowledge composition', () => {
+  it('freezes one byte-identical brief per canonical scope for a multi-test run', () => {
+    let calls = 0
+    const reader: KnowledgeHintReader = {
+      getRunBrief(scope) {
+        calls += 1
+        return {
+          tiers: { L0: '', L1: '', L2: `${scope.tier}:${scope.key}:${calls}` },
+          lines: [],
+          truncation: '',
+        }
+      },
+      search: () => [],
+      read: () => { throw new Error('not used') },
+      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getProcedure: () => undefined,
+      emitCanaryOutcome: () => {},
+    }
+    const frozen = createFrozenKnowledgeReader(reader)
+    const firstScope = { tier: 'test', key: 'checkout' } as const
+    const secondScope = { tier: 'test', key: 'refund' } as const
+
+    const first = frozen.getRunBrief(firstScope, 256)
+    const repeated = frozen.getRunBrief({ ...firstScope }, 2_048)
+    const second = frozen.getRunBrief(secondScope, 256)
+    const secondRepeated = frozen.getRunBrief({ ...secondScope }, 2_048)
+
+    expect(repeated).toBe(first)
+    expect(secondRepeated).toBe(second)
+    expect(second).not.toBe(first)
+    expect(calls).toBe(2)
+  })
+
+  it('constructs LLMPlanner with no memory surface for text-only models and both tools for capable models', () => {
+    const knowledgeRoot = mkdtempSync(join(tmpdir(), 'knowledge-composition-'))
+    const accounting = {
+      getCeilings: () => ({ contextWindow: 32_768, maxOutput: 4_096 }),
+      estimate: () => 32,
+    }
+    const scope = { tier: 'test', key: 'checkout' } as const
+    const weak = openRunKnowledgeComposition({
+      knowledgeRoot,
+      product: 'shop',
+      scope,
+      asOfBuild: 7,
+      capabilities: capabilities({ vision: false, contextWindow: 32_768 }),
+      accounting,
+      qaRulesText: 'rules',
+      workingContextText: 'checkout context',
+    })
+    const capable = openRunKnowledgeComposition({
+      knowledgeRoot,
+      product: 'shop',
+      scope,
+      asOfBuild: 7,
+      capabilities: capabilities({ contextWindow: 32_768 }),
+      accounting,
+      qaRulesText: 'rules',
+      workingContextText: 'checkout context',
+    })
+
+    const weakPlanner = new LLMPlanner(
+      {} as never,
+      'web',
+      undefined,
+      undefined,
+      accounting as never,
+      undefined,
+      weak.nonActionTools,
+    )
+    const capablePlanner = new LLMPlanner(
+      {} as never,
+      'web',
+      undefined,
+      undefined,
+      accounting as never,
+      undefined,
+      capable.nonActionTools,
+    )
+
+    expect(Reflect.get(weakPlanner, 'nonActionTools')).toBeUndefined()
+    expect(Object.keys(Reflect.get(capablePlanner, 'nonActionTools') as NonActionToolMap).sort()).toEqual([
+      'memory.read',
+      'memory.search',
+    ])
   })
 })

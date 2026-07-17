@@ -228,6 +228,8 @@ vi.mock('@vostride/agent-qa-core', () => ({
   createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   createMemoryProvider: vi.fn(),
   resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => `${configDir}/agent-qa-memory`),
+  resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
+    path.resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   V1_MEMORY_DEFAULTS: {
     enabled: true,
     provider: 'local',

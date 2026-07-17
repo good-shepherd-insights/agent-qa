@@ -438,6 +438,8 @@ vi.mock('@vostride/agent-qa-core', () => {
   // Mirrors the real resolveMemoryRoot with the retired config surface gone (KDIR-03):
   // callers pass undefined, so the root is always the internal default under configDir.
   resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => resolve(configDir, 'agent-qa-memory')),
+  resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
+    resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   V1_MEMORY_DEFAULTS: {
     enabled: true,
     provider: 'local',
@@ -1103,7 +1105,7 @@ describe('run command — reduced flag surface and target resolution', () => {
     )
     // 355-07 supplies role-separated accounting ports. 366-07 adds each role's declared
     // model profile and preserves that exact DTO reference through member-run recording.
-    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(6)
+    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(7)
     expect(mockLLMPlanner.mock.calls[0][0]).toBe(mockCreateModel.mock.results[0].value)
     expect(mockLLMPlanner.mock.calls[0][1]).toBe('web')
     const plannerAccounting = mockLLMPlanner.mock.calls[0][4]
@@ -1120,6 +1122,10 @@ describe('run command — reduced flag surface and target resolution', () => {
       vision: expect.any(Boolean),
       maxOutputTokens: expect.any(Number),
     }))
+    expect(Object.keys(mockLLMPlanner.mock.calls[0][6]).sort()).toEqual([
+      'memory.read',
+      'memory.search',
+    ])
     expect(plannerDeclared).not.toHaveProperty('sampling')
 
     expect(mockLLMVerifier.mock.calls[0]).toHaveLength(3)

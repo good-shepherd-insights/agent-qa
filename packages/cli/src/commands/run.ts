@@ -3,7 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveMemoryRoot, resolveMobileRunConfig, V1_MEMORY_DEFAULTS, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMemoryRoot, resolveMobileRunConfig, V1_MEMORY_DEFAULTS, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
@@ -12,8 +12,8 @@ import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type Reso
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
-import type { DeclaredModelProfile } from '@vostride/agent-qa-schema'
-import type { SecretStore, SecretRedactor, HookDefinition, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
+import type { DeclaredModelProfile, ModelCapabilities } from '@vostride/agent-qa-schema'
+import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
@@ -34,12 +34,15 @@ import {
   buildRunAuditSink,
   buildRunSafetyHooks,
   extractAuthStateSensitiveStrings,
+  openRunKnowledgeComposition,
   attachRunSubscribers,
   createLivePauseController,
   type RunSubscriberHandle,
   type SuiteMemberBinding,
   type RunMaskingContext,
+  type RunKnowledgeComposition,
 } from '../run-session-composition.js'
+import { memoryToolGate } from '../composition/knowledge-budgets.js'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   defaultGuardrailPolicyInput,
@@ -1132,6 +1135,14 @@ async function executeSuites(
     suiteWorkingMemory: WorkingMemoryStore
     authStateStoragePath: string | undefined
     suiteAttributes: RunAttributes
+    knowledgeSeed: {
+      accounting: ReturnType<typeof createTokenAccounting>
+      capabilities: ModelCapabilities
+      qaRulesText: string
+      workingContextText: string
+      deferredNonActionTools?: NonActionToolMap
+    }
+    knowledge?: RunKnowledgeComposition
   }
 
   const prepareSuite = async (suiteFile: string, suite: SuiteDefinition): Promise<PreparedSuite> => {
@@ -1509,7 +1520,22 @@ async function executeSuites(
     if (suiteLogCapture?.network === false) {
       suiteCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
     }
-    const planner = new LLMPlanner(plannerModel, suitePlatform, logger.createScopedLogger('planner'), suiteCapabilityNotes.trim() || undefined, plannerAccounting, plannerDeclared)
+    // The suite planner is constructed while suites are prepared, before the run-fixed build
+    // ordinal is minted. A capable profile receives one stable map now; the real memory handlers
+    // are installed into that same map after the ordinal is known and before startRun executes.
+    // A weak profile receives undefined, preserving D-09 non-registration structurally.
+    const deferredNonActionTools: NonActionToolMap | undefined = memoryToolGate(plannerCapabilities)
+      ? {}
+      : undefined
+    const planner = new LLMPlanner(
+      plannerModel,
+      suitePlatform,
+      logger.createScopedLogger('planner'),
+      suiteCapabilityNotes.trim() || undefined,
+      plannerAccounting,
+      plannerDeclared,
+      deferredNonActionTools,
+    )
     const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
 
     // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
@@ -1700,6 +1726,20 @@ async function executeSuites(
       suiteWorkingMemory,
       authStateStoragePath: suiteAuthState?.storageStatePath,
       suiteAttributes,
+      knowledgeSeed: {
+        accounting: plannerAccounting,
+        capabilities: plannerCapabilities,
+        qaRulesText: suiteCapabilityNotes,
+        workingContextText: JSON.stringify({
+          suite: { name: suite.name, context: (suite as { context?: string }).context },
+          tests: testEntries.map(([entry]) => ({
+            name: entry.name,
+            context: entry.context,
+            steps: entry.steps,
+          })),
+        }),
+        deferredNonActionTools,
+      },
     }
   }
 
@@ -1973,6 +2013,11 @@ async function executeSuites(
             compressor: suiteConfig.compressor,
             // SEAM-03 (D-04): the per-run SafetyHookRunner (read at call time — bindings predate the mint).
             safetyHooks: runSafetyHooks,
+            knowledgeReader: prepared.knowledge?.reader,
+            knowledgeBudgets: prepared.knowledge?.budgets,
+            knowledgeAsOfBuild: buildOrdinal,
+            recordLedger: prepared.knowledge?.recordLedger,
+            beginMemoryTurn: prepared.knowledge?.beginMemoryTurn,
             configDigests: perMemberDigests[globalIndex],
             plannerModel: suiteConfig.plannerModel,
             verifierModel: suiteConfig.verifierModel,
@@ -1997,6 +2042,7 @@ async function executeSuites(
             logCapture: suiteConfig.logCapture,
             vision: suiteConfig.vision,
             visionGate: suiteConfig.visionGate,
+            contextWindow: prepared.knowledgeSeed.capabilities.contextWindow,
             suiteContext: (prepared.suite as any).context,
             filePath,
           }), {
@@ -2087,6 +2133,28 @@ async function executeSuites(
   })
   const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct, buildTag })
   const runPorts = buildRunPorts({ configDir, runId })
+
+  // D-23 live bind: the build ordinal is now fixed, so open one memoized reader/ledger/tool
+  // composition per prepared planner before any member can execute. Capable suite planners hold
+  // the stable map created at construction; populate that same identity with both memory tools.
+  const knowledgeRoot = resolveKnowledgeRoot(config.knowledge, configDir)
+  for (const prepared of preparedSuites) {
+    const knowledge = openRunKnowledgeComposition({
+      knowledgeRoot,
+      product: prepared.product ?? runProduct,
+      scope: { tier: 'product', key: prepared.product ?? runProduct },
+      asOfBuild: buildOrdinal,
+      capabilities: prepared.knowledgeSeed.capabilities,
+      accounting: prepared.knowledgeSeed.accounting,
+      qaRulesText: prepared.knowledgeSeed.qaRulesText,
+      workingContextText: prepared.knowledgeSeed.workingContextText,
+    })
+    prepared.knowledge = knowledge
+    const deferred = prepared.knowledgeSeed.deferredNonActionTools
+    if (deferred !== undefined && knowledge.nonActionTools !== undefined) {
+      Object.assign(deferred, knowledge.nonActionTools)
+    }
+  }
 
   // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
   // RunConfig into the deterministic root-cause classifier. A probe failure is a value (its own
@@ -2651,6 +2719,8 @@ export function createRunCommand(): Command {
         let singleMaskingContext: RunMaskingContext | undefined
         let singleSafetyHooks: SafetyHookRunner | undefined
         let singleCurationModelDeps: CurationTailModelDeps | undefined
+        let singleRunProduct = 'unknown'
+        let singleBuildOrdinal = 0
 
         // WM-01/WM-02: one run-scoped working-memory store per run, constructed with the run's
         // SecretRedactor (capture-time redaction live); threaded into the loop and flushed
@@ -2964,7 +3034,28 @@ export function createRunCommand(): Command {
             if (testLogCapture?.network === false) {
               testCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
             }
-            const planner = new LLMPlanner(plannerModel, testPlatform, logger.createScopedLogger('planner'), testCapabilityNotes.trim() || undefined, plannerAccounting, plannerDeclared)
+            const knowledge = openRunKnowledgeComposition({
+              knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+              product: testResolvedTarget.product,
+              scope: { tier: 'test', key: testDef.name },
+              asOfBuild: singleBuildOrdinal,
+              capabilities: plannerCapabilities,
+              accounting: plannerAccounting,
+              qaRulesText: testCapabilityNotes,
+              workingContextText: JSON.stringify({
+                context: testDef.context,
+                steps: testDef.steps,
+              }),
+            })
+            const planner = new LLMPlanner(
+              plannerModel,
+              testPlatform,
+              logger.createScopedLogger('planner'),
+              testCapabilityNotes.trim() || undefined,
+              plannerAccounting,
+              plannerDeclared,
+              knowledge.nonActionTools,
+            )
             const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
 
             // Per-test timeouts from merged config
@@ -3135,6 +3226,11 @@ export function createRunCommand(): Command {
               // SEAM-01/03: the ONE run context + gate, ungated from cache enablement (D-09/356).
               masking: singleMaskingContext,
               safetyHooks: singleSafetyHooks,
+              knowledgeReader: knowledge.reader,
+              knowledgeBudgets: knowledge.budgets,
+              knowledgeAsOfBuild: singleBuildOrdinal,
+              recordLedger: knowledge.recordLedger,
+              beginMemoryTurn: knowledge.beginMemoryTurn,
               workingMemory: singleWorkingMemory,
               storageState: singleStorageState,
               configDigests: perMemberDigest,
@@ -3396,7 +3492,6 @@ export function createRunCommand(): Command {
         }
 
         const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
-        let singleRunProduct = 'unknown'
         let singleBaselineProbe: BaselineProbeResult | undefined
         try {
           const singleResolvedTarget = resolveTarget(config, filtered[0].target!)
@@ -3413,7 +3508,7 @@ export function createRunCommand(): Command {
           env: process.env.AGENT_QA_BUILD_TAG,
           use: config.use,
         })
-        const singleBuildOrdinal = await resolveRunBuildOrdinal({
+        singleBuildOrdinal = await resolveRunBuildOrdinal({
           configDir,
           product: singleRunProduct,
           buildTag: singleBuildTag,

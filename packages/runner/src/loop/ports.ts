@@ -224,6 +224,12 @@ export interface LoopPorts {
    * directly. Absent is legal and creates a step-local ledger for Channel-1 accounting only.
    */
   recordLedger?: RecordLedger
+  /**
+   * D-11 Channel-2 turn reset owned by the memory-tool wrapper. The loop invokes it only after
+   * reseeding the shared distinct-record ledger from the frozen brief, so both ledgers begin the
+   * live planning turn from the same boundary.
+   */
+  beginMemoryTurn?: () => void
   /** D-05 v48 safety seam (context/tool_call/tool_result); unpopulated until Phase 362. */
   safetyHooks?: SafetyHookRunner
   plannerConfig?: PlannerConfig

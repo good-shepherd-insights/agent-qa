@@ -236,6 +236,9 @@ export {
 export type { LoopEventEmitPort } from './loop/ports.js'
 export { createRecordLedger } from './loop/record-ledger.js'
 export type { RecordAdmission, RecordLedger } from './loop/record-ledger.js'
+// Phase 380 composition seam: the CLI owns capability gating and binds these runner-owned,
+// provider-neutral tool handlers into LLMPlanner's optional non-action surface.
+export { createMemoryTools } from './loop/memory-tools.js'
 export {
   buildCacheableStepInput,
   CACHE_ENV_DIGEST_SALT,

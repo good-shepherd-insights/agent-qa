@@ -707,6 +707,9 @@ export async function executeStep(
       // The brief rides every planning turn, so its distinct ids are already spent before any
       // agentic search/read or automatic failure caution can admit a record (Pitfall 9).
       recordLedger.resetTurn(brief?.lines.map((line) => line.id) ?? [])
+      // D-11: reset the independent cumulative read-body counter only after the shared distinct-id
+      // ledger has been reseeded for this turn. An unregistered Channel-2 surface leaves this absent.
+      ports.beginMemoryTurn?.()
       // D-13/D-16/D-17 Channel 3 has no agency: surface the staged records as failure-adjacent
       // observations inside the existing hypotheses frame, then clear them. Re-emphasizing an
       // id already present in Channel 1 is intentionally free — the planner should not have to

@@ -6,6 +6,7 @@ import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import { executeStep } from '../index.js'
 import { EvidenceRecorder } from '../evidence.js'
 import { buildContextTier, buildVolatileTier } from '../prompts.js'
+import type { RecordLedger } from '../record-ledger.js'
 import type { StepContext } from '../types.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext } from './loop-harness.js'
 
@@ -144,5 +145,37 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
     expect(result.evidence?.servedBrief.truncation).toBe(block.truncation)
     expect(result.evidence?.servedBrief.briefDigest)
       .toBe(computeBriefDigest(result.evidence!.servedBrief))
+  })
+
+  it('resets the Channel-2 read ledger after reseeding the shared record ledger', async () => {
+    const order: string[] = []
+    const recordLedger: RecordLedger = {
+      admit: () => ({ admitted: true }),
+      resetTurn: (ids) => { order.push(`records:${ids.join(',')}`) },
+      size: () => 0,
+    }
+    const reader: KnowledgeHintReader = {
+      getRunBrief: () => block,
+      search: () => [],
+      read: () => { throw new Error('not used') },
+      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getProcedure: () => undefined,
+      emitCanaryOutcome: () => {},
+    }
+
+    await executeStep(
+      'Place the order',
+      {
+        adapter: makeAdapter(),
+        planner: makePlanner([makeActionPlan({ stepComplete: true })]),
+        knowledgeReader: reader,
+        knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+        recordLedger,
+        beginMemoryTurn: () => { order.push('read-body') },
+      },
+      context(),
+    )
+
+    expect(order).toEqual(['records:caution-overlay,fact-order-number', 'read-body'])
   })
 })

@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
-import type { LanguageModel } from 'ai'
+import type { LanguageModel, ModelMessage } from 'ai'
 import {
   createMaskingContext,
   registerFirstPartySafetyHooks,
@@ -42,7 +42,14 @@ import type {
 // Type-only (erased at build; schema is a type-only devDependency, 363-07). The bus subscriber
 // handlers name the real envelope type without a runtime schema coupling.
 import { guardToolOutput } from '@vostride/agent-qa-model'
-import type { MaskingContext, RunEventEnvelope } from '@vostride/agent-qa-schema'
+import type { TokenAccounting } from '@vostride/agent-qa-model'
+import { openKnowledgeReader } from '@vostride/agent-qa-knowledge-local'
+import type {
+  MaskingContext,
+  ModelCapabilities,
+  RunEventEnvelope,
+  ScopeKey,
+} from '@vostride/agent-qa-schema'
 import {
   FsEventLog,
   FsEvidenceArtifactStore,
@@ -57,6 +64,8 @@ import {
 import type { ScreenshotCompressorLogger } from '@vostride/agent-qa-runner-local'
 import {
   coerceRunJSResult,
+  createMemoryTools,
+  createRecordLedger,
   resolveSecretEnv,
   resolveSecretTemplatesInValue,
 } from '@vostride/agent-qa-runner'
@@ -79,9 +88,12 @@ import type {
   MemberTest,
   MemberTestExecutor,
   MemberTestRunContext,
+  NonActionToolMap,
   PlannerConfig,
   Planner,
   PlatformAdapter,
+  KnowledgeHintReader,
+  RecordLedger,
   RunArtifactStorePort,
   RunJsHandler,
   RunMemberDescriptor,
@@ -94,6 +106,12 @@ import type {
   Verifier,
   WorkingMemoryPort,
 } from '@vostride/agent-qa-runner'
+import {
+  computeKnowledgeBudgets,
+  memoryToolGate,
+  scaledRecordCap,
+  type KnowledgeBudgets,
+} from './composition/knowledge-budgets.js'
 
 // ---- Local structural types -----------------------------------------------------------------
 // The CLI does not take a `@vostride/agent-qa-schema` dependency purely to name these injected
@@ -102,6 +120,115 @@ import type {
 
 /** Mirror of schema's ExecutionContext union (safety-local's detectExecutionContext returns it). */
 export type RunExecutionContext = 'local-interactive' | 'local-headless' | 'ci' | 'cloud'
+
+// ---- (0) run-scoped knowledge serving composition (D-01/D-02/D-09/D-15/D-17/D-23) ----------
+
+type KnowledgeAccounting = Pick<TokenAccounting, 'estimate' | 'getCeilings'>
+
+export interface RunKnowledgeComposition {
+  reader: KnowledgeHintReader
+  budgets: KnowledgeBudgets
+  recordLedger: RecordLedger
+  nonActionTools?: NonActionToolMap
+  beginMemoryTurn?: () => void
+}
+
+/**
+ * Freeze Channel 1 at the composition root. The budget is deliberately absent from the key:
+ * budgets are run-fixed, while canonical `[tier,key]` material gives one immutable memo entry per
+ * scope. All other reader methods remain live pass-throughs for Channels 2, 3, and canary output.
+ */
+export function createFrozenKnowledgeReader(reader: KnowledgeHintReader): KnowledgeHintReader {
+  const briefs = new Map<string, ReturnType<KnowledgeHintReader['getRunBrief']>>()
+  const scopeKey = (scope: ScopeKey): string => JSON.stringify([scope.tier, scope.key])
+
+  return {
+    getRunBrief(scope, budget) {
+      const key = scopeKey(scope)
+      const existing = briefs.get(key)
+      if (existing !== undefined) return existing
+      const brief = reader.getRunBrief(scope, budget)
+      briefs.set(key, brief)
+      return brief
+    },
+    search: (query, options) => reader.search(query, options),
+    read: (id, options) => reader.read(id, options),
+    getCautions: (anchors, budget) => reader.getCautions(anchors, budget),
+    getProcedure: (intent, screenState) => reader.getProcedure(intent, screenState),
+    emitCanaryOutcome: (payload) => reader.emitCanaryOutcome(payload),
+  }
+}
+
+export interface OpenRunKnowledgeCompositionInput {
+  knowledgeRoot: string
+  product?: string
+  scope: ScopeKey
+  asOfBuild: number
+  capabilities: ModelCapabilities
+  accounting: KnowledgeAccounting
+  qaRulesText: string
+  workingContextText: string
+}
+
+/**
+ * Open and bind the complete serving stack once per run/planner scope. The CLI can estimate only
+ * prompt material it owns, so `qaRulesText` is the run-start capability/rules appendix and
+ * `workingContextText` is the resolved suite/test context plus steps. Both ride the same model
+ * accounting estimator as planning calls; static runner rules remain covered by the reserved
+ * output and conservative fractional allocation rather than a second character heuristic.
+ */
+export function openRunKnowledgeComposition(
+  input: OpenRunKnowledgeCompositionInput,
+): RunKnowledgeComposition {
+  const ceilings = input.accounting.getCeilings()
+  const qaRulesTokens = input.accounting.estimate([
+    { role: 'system', content: input.qaRulesText } as ModelMessage,
+  ])
+  const workingContextTokens = input.accounting.estimate([
+    { role: 'user', content: input.workingContextText } as ModelMessage,
+  ])
+  const computed = computeKnowledgeBudgets({
+    contextWindow: ceilings.contextWindow,
+    reservedOutput: ceilings.maxOutput,
+    qaRulesTokens,
+    workingContextTokens,
+  })
+  const budgets: KnowledgeBudgets = {
+    ...computed,
+    recordCap: scaledRecordCap(input.capabilities),
+  }
+  const reader = createFrozenKnowledgeReader(openKnowledgeReader({
+    knowledgeRoot: input.knowledgeRoot,
+    ...(input.product === undefined ? {} : { product: input.product }),
+    scopeDefaults: { asOfBuild: input.asOfBuild },
+    budgets: { recordCap: budgets.recordCap },
+  }))
+  const recordLedger = createRecordLedger({ cap: budgets.recordCap, seedIds: [] })
+
+  // D-09/T-380-29: the planner's action slice remains whole under the always-send-all law. The
+  // optional non-action slice is composed only for capable models, so non-registration itself is
+  // the gate and no model-visible flag can elevate a weak profile into Channel 2.
+  const memory = memoryToolGate(input.capabilities)
+    ? createMemoryTools({
+        reader,
+        scope: input.scope,
+        asOfBuild: input.asOfBuild,
+        readBodyBudget: budgets.readBody,
+        recordLedger,
+        estimateTokens: (text) => input.accounting.estimate([
+          { role: 'user', content: text } as ModelMessage,
+        ]),
+      })
+    : undefined
+
+  return {
+    reader,
+    budgets,
+    recordLedger,
+    nonActionTools: memory?.tools,
+    beginMemoryTurn: memory?.beginTurn,
+  }
+}
 
 // ---- (1) computeRunConfigDigests — the ONE digest mint (D-20) --------------------------------
 
@@ -802,6 +929,11 @@ export interface BuildMemberRunConfigInput {
   storageState?: StorageStatePort
   compressor?: ScreenshotCompressor
   safetyHooks?: SafetyHookRunner
+  knowledgeReader?: KnowledgeHintReader
+  knowledgeBudgets?: KnowledgeBudgets
+  knowledgeAsOfBuild?: number
+  recordLedger?: RecordLedger
+  beginMemoryTurn?: () => void
   configDigests?: ConfigDigests
   // models
   plannerModel: LanguageModel
@@ -859,6 +991,11 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     guardBlob: guardToolOutput,
     compressor: input.compressor,
     safetyHooks: input.safetyHooks,
+    knowledgeReader: input.knowledgeReader,
+    knowledgeBudgets: input.knowledgeBudgets,
+    knowledgeAsOfBuild: input.knowledgeAsOfBuild,
+    recordLedger: input.recordLedger,
+    beginMemoryTurn: input.beginMemoryTurn,
     configDigests: input.configDigests,
 
     plannerModel: input.plannerModel,
