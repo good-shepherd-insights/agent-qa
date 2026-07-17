@@ -72,14 +72,26 @@ function normalizeLimit(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
 }
 
-function recordCost(record: IndexEntry): number {
-  return Math.max(1, Math.ceil(record.summary.length / CHARS_PER_TOKEN_ESTIMATE))
+export function estimateServingSummaryCost(summary: string): number {
+  return Math.max(1, Math.ceil(summary.length / CHARS_PER_TOKEN_ESTIMATE))
 }
 
-function lexicalId(left: IndexEntry, right: IndexEntry): number {
+function recordCost(record: IndexEntry): number {
+  return estimateServingSummaryCost(record.summary)
+}
+
+export function compareServingRecordIds(left: IndexEntry, right: IndexEntry): number {
   const leftId = String(left.id)
   const rightId = String(right.id)
   return leftId < rightId ? -1 : leftId > rightId ? 1 : 0
+}
+
+function servingTrust(entry: IndexEntry): number {
+  return Number.isFinite(entry.trust) ? Math.max(0, entry.trust) : 0
+}
+
+export function compareServingTrustThenId(left: IndexEntry, right: IndexEntry): number {
+  return servingTrust(right) - servingTrust(left) || compareServingRecordIds(left, right)
 }
 
 function normalizedAnchorText(anchor: Anchor): string {
@@ -254,8 +266,63 @@ function compareScored(
     kindPrecedence(left.candidate.record.kind) - kindPrecedence(right.candidate.record.kind)
     || right.score - left.score
     // PROVISIONAL deterministic tie-break; M3 may retune scoring, never input-order dependence.
-    || lexicalId(left.candidate.record, right.candidate.record)
+    || compareServingRecordIds(left.candidate.record, right.candidate.record)
   )
+}
+
+export interface ServingAdmissionState {
+  readonly selectedIds: Set<string>
+  readonly sourceCosts: Map<string, number>
+  readonly clusterCosts: Map<string, number>
+  selectedCount: number
+  usedBudget: number
+}
+
+export function createServingAdmissionState(): ServingAdmissionState {
+  return {
+    selectedIds: new Set<string>(),
+    sourceCosts: new Map<string, number>(),
+    clusterCosts: new Map<string, number>(),
+    selectedCount: 0,
+    usedBudget: 0,
+  }
+}
+
+export interface ServingAdmissionInput {
+  readonly record: IndexEntry
+  readonly cost: number
+  readonly channelBudget: number
+  readonly recordCap: number
+}
+
+/**
+ * Shared D-18 greedy admission wall. Channel-specific selectors own ranking, while this helper
+ * keeps budget, distinct-record, source-bundle, and normalized-anchor-cluster accounting exact.
+ */
+export function tryAdmitServingRecord(
+  input: ServingAdmissionInput,
+  state: ServingAdmissionState,
+): boolean {
+  const channelBudget = normalizeLimit(input.channelBudget)
+  const recordCap = normalizeLimit(input.recordCap)
+  const cost = normalizeLimit(input.cost)
+  if (recordCap === 0 || cost === 0 || state.selectedCount >= recordCap) return false
+
+  const sourceId = String(input.record.id)
+  if (state.selectedIds.has(sourceId) || state.usedBudget + cost > channelBudget) return false
+
+  const cluster = clusterKey(input.record.anchors)
+  const nextSourceCost = (state.sourceCosts.get(sourceId) ?? 0) + cost
+  const nextClusterCost = (state.clusterCosts.get(cluster) ?? 0) + cost
+  // D-18's ≤50% boundary is integer-only: equality is admitted; strictly above is skipped.
+  if (2 * nextSourceCost > channelBudget || 2 * nextClusterCost > channelBudget) return false
+
+  state.selectedIds.add(sourceId)
+  state.sourceCosts.set(sourceId, nextSourceCost)
+  state.clusterCosts.set(cluster, nextClusterCost)
+  state.selectedCount += 1
+  state.usedBudget += cost
+  return true
 }
 
 function scoreCandidates(
@@ -315,32 +382,19 @@ export function selectServingRecords(input: SelectServingRecordsInput): IndexEnt
   if (channelBudget === 0 || recordCap === 0 || input.candidates.length === 0) return []
 
   const selected: IndexEntry[] = []
-  const selectedIds = new Set<string>()
-  const sourceCosts = new Map<string, number>()
-  const clusterCosts = new Map<string, number>()
-  let usedBudget = 0
+  const admission = createServingAdmissionState()
 
   for (const { candidate } of stageCandidates(input, channelBudget)) {
-    if (selected.length >= recordCap) break
-
+    if (admission.selectedCount >= recordCap) break
     const record = reflectedRecord(candidate)
-    const sourceId = candidate.bundleId
-    if (selectedIds.has(sourceId)) continue
-
-    const cost = candidate.tokenEstimate
-    if (usedBudget + cost > channelBudget) continue
-
-    const cluster = clusterKey(candidate.anchors)
-    const nextSourceCost = (sourceCosts.get(sourceId) ?? 0) + cost
-    const nextClusterCost = (clusterCosts.get(cluster) ?? 0) + cost
-    // D-18's ≤50% boundary is integer-only: equality is admitted; strictly above is skipped.
-    if (2 * nextSourceCost > channelBudget || 2 * nextClusterCost > channelBudget) continue
+    if (!tryAdmitServingRecord({
+      record,
+      cost: candidate.tokenEstimate,
+      channelBudget,
+      recordCap,
+    }, admission)) continue
 
     selected.push(record)
-    selectedIds.add(sourceId)
-    sourceCosts.set(sourceId, nextSourceCost)
-    clusterCosts.set(cluster, nextClusterCost)
-    usedBudget += cost
   }
 
   return selected
