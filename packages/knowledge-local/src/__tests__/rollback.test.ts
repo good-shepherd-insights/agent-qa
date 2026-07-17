@@ -842,11 +842,13 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       identity: 'campaign-early',
       curationJobId: 'job-campaign-early',
       sourceBuildOrdinal: 5,
+      initialEvents: activeEvents('job-campaign-early', 5),
     })
     const late = publishForJob({
       identity: 'campaign-late',
       curationJobId: 'job-campaign-late',
       sourceBuildOrdinal: 10,
+      initialEvents: activeEvents('job-campaign-late', 10),
     })
     const before = {
       early: readFileSync(join(early.dir, 'evidence', 'outcomes.jsonl'), 'utf8'),
