@@ -36,6 +36,9 @@ function names(entries: readonly IndexEntry[]): string[] {
 }
 
 function vettedCandidate(entry: IndexEntry): VettedCandidateInput {
+  if (entry.kind !== 'fact' || entry.status !== 'candidate') {
+    throw new TypeError('serving fixture must be a fact candidate')
+  }
   return {
     kind: entry.kind,
     status: entry.status,
