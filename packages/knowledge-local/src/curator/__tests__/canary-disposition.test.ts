@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  asEvidenceToken,
   asRecordId,
   canonicalJson,
   deriveEvidenceToken,
+  evaluatePromotionGate,
+  isVettedCandidate,
   type BundleDiscriminant,
   type BundleDraft,
   type CanaryOutcome,
@@ -329,6 +332,66 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     expect(loaded(published.dir).trust.status).toBe('active')
     expect(readJobState(knowledgeRoot, canary.entryId).kind).toBe('absent')
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+  })
+
+  // D-08 wall 1: serving a proposed-but-unapproved rule as a hypothesis is the
+  // confused-deputy shape — a rule is either sovereign or it is not yet a rule.
+  it('holds a promotion-ready policy candidate at the kind allowlist', () => {
+    const otherwisePromotionReady = {
+      status: 'candidate' as const,
+      validityOpen: true,
+      anchors: [
+        { t: 'el' as const, role: 'button', name: 'checkout', ordinal: 0 },
+        { t: 'page' as const, route: '/checkout' },
+      ],
+      originClass: 'agent-verified' as const,
+      withheld: false,
+      needsEnrichment: false,
+      evidenceIncomplete: false,
+      distilledObservations: [
+        { element: { naturalKey: 'button:checkout:0' } },
+      ],
+      confirmedOutcomeEvidenceTokens: [asEvidenceToken('policy-confirmed-evidence')],
+      hasUserDeprecateInLineage: false,
+      memoryOffForAnchorGroup: false,
+    }
+
+    expect(evaluatePromotionGate({
+      ...otherwisePromotionReady,
+      kind: 'fact',
+      subtype: 'selector',
+    })).toEqual({ verdict: 'promote' })
+    expect(evaluatePromotionGate({
+      ...otherwisePromotionReady,
+      kind: 'policy',
+    })).toEqual({ verdict: 'hold', reason: 'kind-excluded' })
+  })
+
+  it('records positive policy evidence without moving the candidate to active', async () => {
+    const published = seedCandidate('policy')
+
+    await store().recordCanaryOutcome(outcome(published.id))
+
+    const result = loaded(published.dir)
+    expect(result.trust.counters.confirmed).toBe(1)
+    expect(result.trust.status).toBe('candidate')
+    expect(result.bundle.events.some((event) => event.type === 'promoted')).toBe(false)
+  })
+
+  it('excludes policy candidates from the cold-start vetted sub-cap', () => {
+    expect(isVettedCandidate({
+      kind: 'policy',
+      status: 'candidate',
+      validityOpen: true,
+      anchors: [{ t: 'page', route: '/checkout' }],
+      originClass: 'agent-verified',
+      withheld: false,
+      needsEnrichment: false,
+      evidenceIncomplete: false,
+      confirmedOutcomeEvidenceTokens: [asEvidenceToken('policy-vetted-evidence')],
+      hasUserDeprecateInLineage: false,
+      memoryOffForAnchorGroup: false,
+    })).toBe(false)
   })
 })
 
