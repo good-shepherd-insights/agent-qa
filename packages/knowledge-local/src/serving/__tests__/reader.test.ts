@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -30,7 +31,10 @@ import {
 } from '../../bundle-publish.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
-import { openKnowledgeReader } from '../reader.js'
+import {
+  KnowledgeRecordNotFoundError,
+  openKnowledgeReader,
+} from '../reader.js'
 
 const PRODUCT = 'reader-storefront'
 const SCOPE: ScopeKey = { tier: 'product', key: PRODUCT }
@@ -121,7 +125,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
   let seeded: SeededStore
 
   beforeEach(async () => {
-    root = join(tmpdir(), `knowledge-serving-reader-${crypto.randomUUID()}`)
+    root = join(tmpdir(), `knowledge-serving-reader-${randomUUID()}`)
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     auditBaseDir = join(root, '.agent-qa')
     seeded = await seedStore()
@@ -206,7 +210,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     return outcome.id
   }
 
-  async function seedStore(): Promise<SeededStore> {
+  async function seedStore(reversePublicationOrder = false): Promise<SeededStore> {
     mkdirSync(join(knowledgeRoot, 'policies'), { recursive: true })
     writeFileSync(
       join(knowledgeRoot, 'policies', 'global.md'),
@@ -219,32 +223,45 @@ describe('openKnowledgeReader synchronous serving port', () => {
       'utf8',
     )
 
-    const activeFact = seedRecord({ key: 'active-fact' })
-    const observedFact = seedRecord({
-      key: 'observed-fact',
-      originClass: 'agent-observed',
-      body: 'First observed checkout line.\nSecond observed checkout line.\nThird observed checkout line.',
-    })
-    const candidateFact = seedRecord({ key: 'candidate-fact', status: 'candidate' })
-    const supersededFact = seedRecord({ key: 'superseded-fact', status: 'superseded' })
-    const deprecatedFact = seedRecord({ key: 'deprecated-fact', status: 'deprecated' })
-    const policy = seedRecord({ key: 'stored-policy', kind: 'policy' })
-    const cautions = ['a', 'b', 'c'].map((key) => seedRecord({
-      key: `caution-${key}`,
-      kind: 'caution',
-      anchors: [CHECKOUT_ANCHOR],
-      summary: `Checkout caution ${key}`,
-    }))
+    const definitions: SeedRecordOptions[] = [
+      { key: 'active-fact' },
+      {
+        key: 'observed-fact',
+        originClass: 'agent-observed',
+        body: 'First observed checkout line.\nSecond observed checkout line.\nThird observed checkout line.',
+      },
+      { key: 'candidate-fact', status: 'candidate' },
+      { key: 'superseded-fact', status: 'superseded' },
+      { key: 'deprecated-fact', status: 'deprecated' },
+      { key: 'stored-policy', kind: 'policy' },
+      ...['a', 'b', 'c'].map((key): SeedRecordOptions => ({
+        key: `caution-${key}`,
+        kind: 'caution',
+        anchors: [CHECKOUT_ANCHOR],
+        summary: `Checkout caution ${key}`,
+      })),
+    ]
+    const orderedDefinitions = reversePublicationOrder
+      ? [...definitions].reverse()
+      : definitions
+    const ids = new Map(
+      orderedDefinitions.map((definition) => [definition.key, seedRecord(definition)]),
+    )
+    const id = (key: string): RecordId => {
+      const recordId = ids.get(key)
+      if (recordId === undefined) throw new Error(`missing seeded record ${key}`)
+      return recordId
+    }
 
     await rebuildIndex({ knowledgeRoot })
     return {
-      activeFact,
-      observedFact,
-      candidateFact,
-      supersededFact,
-      deprecatedFact,
-      policy,
-      cautions,
+      activeFact: id('active-fact'),
+      observedFact: id('observed-fact'),
+      candidateFact: id('candidate-fact'),
+      supersededFact: id('superseded-fact'),
+      deprecatedFact: id('deprecated-fact'),
+      policy: id('stored-policy'),
+      cautions: ['a', 'b', 'c'].map((key) => id(`caution-${key}`)),
     }
   }
 
@@ -346,5 +363,52 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(complete.cautions).not.toContainEqual(expect.objectContaining({
       id: 'caution:truncated',
     }))
+  })
+
+  it('keeps brief bytes stable when committed bundles arrive in reverse order', async () => {
+    const forward = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+      .getRunBrief(SCOPE, 200)
+    const primaryKnowledgeRoot = knowledgeRoot
+    const primaryAuditBaseDir = auditBaseDir
+
+    try {
+      knowledgeRoot = join(root, 'reverse-agent-qa-knowledge')
+      auditBaseDir = join(root, '.reverse-agent-qa')
+      await seedStore(true)
+      const reverse = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+        .getRunBrief(SCOPE, 200)
+
+      expect(JSON.stringify(reverse)).toBe(JSON.stringify(forward))
+    } finally {
+      knowledgeRoot = primaryKnowledgeRoot
+      auditBaseDir = primaryAuditBaseDir
+    }
+  })
+
+  it('serves an empty L0 when the store has no authored policy files', () => {
+    rmSync(join(knowledgeRoot, 'policies'), { recursive: true, force: true })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(reader.getRunBrief(SCOPE, 200).tiers.L0).toBe('')
+  })
+
+  it('returns a structured empty result for an empty search query', () => {
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(reader.search('', { scope: SCOPE })).toEqual([])
+  })
+
+  it('throws the typed reader not-found error for a missing record id', () => {
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    const missingId = asRecordId('reader-record-does-not-exist')
+
+    // The non-optional RecordBody contract uses a typed throw; the tool wrapper maps it.
+    expect(() => reader.read(missingId)).toThrow(
+      expect.objectContaining({
+        name: 'KnowledgeRecordNotFoundError',
+        recordId: missingId,
+      }),
+    )
+    expect(() => reader.read(missingId)).toThrow(KnowledgeRecordNotFoundError)
   })
 })
