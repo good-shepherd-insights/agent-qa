@@ -42,7 +42,14 @@ import { curationCandidatePayloadSchema } from './queue/queue-payload.js'
 
 export const PURGE_RECEIPT_SCHEMA_VERSION = 1
 
-const SAFE_RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+/**
+ * WR-04: the receipt series derives filenames by suffixing one directory — purge-{id}.json,
+ * purge-{id}.intent.json, purge-{id}.{N}.json — so the dot must not be a legal id character:
+ * record id `X.2`'s base receipt path would be byte-identical to record `X`'s cycle-2 receipt
+ * path, letting one id address, forge, or shadow another id's series member. Canonical record
+ * ids are 64-lowercase-hex, so no legitimate caller changes.
+ */
+const SAFE_RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 /** Ordinary curation-job ids are 64-hex queue content addresses; prefixed maintenance receipt ids are not queue identities. */
 const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
 const receiptRelativePathSchema = z.string().refine((value) => {
@@ -80,7 +87,7 @@ export function guardPurgeReceipt(value: unknown): PurgeReceipt {
   return PurgeReceiptSchema.parse(guardPurgeReceiptVersion(value))
 }
 
-export const PURGE_INTENT_SCHEMA_VERSION = 1
+export const PURGE_INTENT_SCHEMA_VERSION = 2
 
 /**
  * D-14/CR-04: the durable, content-free purge intent published before the first irreversible
@@ -89,11 +96,16 @@ export const PURGE_INTENT_SCHEMA_VERSION = 1
  * persisted identities and completes to byte-identical receipt publication instead of returning
  * not-found over half-destroyed state. Every list is deterministically sorted at construction;
  * purged prose, anchors, observations, and vectors have no representable field.
+ *
+ * v2 adds receiptCycle: the cycle number the intent's receipt publishes at, derived once from
+ * the durable series on disk and persisted so a crash-interrupted revival purge resumes to the
+ * SAME cycle's byte-identical receipt and never re-derives a different cycle (DCAY-05 ordering).
  */
 export const PurgeIntentSchema = z.object({
   schemaVersion: z.literal(PURGE_INTENT_SCHEMA_VERSION),
   purgedRecordId: z.string().regex(SAFE_RECORD_ID),
   receipt: PurgeReceiptSchema,
+  receiptCycle: z.number().int().positive(),
   bundleDirs: z.array(receiptRelativePathSchema).min(1),
   queueCandidateIds: z.array(z.string().regex(QUEUE_CANDIDATE_ID)),
   queuePayloadDirs: z.array(receiptRelativePathSchema),
@@ -106,7 +118,14 @@ export type PurgeIntent = z.infer<typeof PurgeIntentSchema>
 const guardPurgeIntentVersion = createVersionGuard<PurgeIntent>({
   name: 'PurgeIntent',
   current: PURGE_INTENT_SCHEMA_VERSION,
-  migrations: {},
+  migrations: {
+    // v1 intents predate the receipt series and always addressed the base (cycle-1) receipt.
+    1: (doc) => ({
+      ...(doc as Record<string, unknown>),
+      schemaVersion: 2,
+      receiptCycle: 1,
+    }),
+  },
 })
 
 export function guardPurgeIntent(value: unknown): PurgeIntent {
@@ -403,23 +422,60 @@ function sweepQueuePayloads(
   }
 }
 
-function receiptRelativePath(recordId: RecordId): string {
-  return `memory/receipts/purge-${recordId}.json`
+/**
+ * The append-only receipt series: cycle 1 IS the pre-existing base receipt path, cycle N >= 2
+ * lives beside it with the cycle number suffixed. Each destruction of a record id is its own
+ * auditable event; earlier cycles' bytes never change.
+ */
+function receiptCycleRelativePath(recordId: RecordId, cycle: number): string {
+  return cycle === 1
+    ? `memory/receipts/purge-${recordId}.json`
+    : `memory/receipts/purge-${recordId}.${cycle}.json`
 }
 
-function receiptPath(knowledgeRoot: string, recordId: RecordId): string {
-  return join(knowledgeRoot, receiptRelativePath(recordId))
+function receiptCyclePath(knowledgeRoot: string, recordId: RecordId, cycle: number): string {
+  const fileName = receiptCycleRelativePath(recordId, cycle).split('/').at(-1)!
+  return join(knowledgeRoot, 'memory', 'receipts', fileName)
 }
 
-/** The intent lives beside the receipt it completes into. */
+/** The intent lives beside the receipt series it completes into. */
 function intentPath(knowledgeRoot: string, recordId: RecordId): string {
   return join(knowledgeRoot, 'memory', 'receipts', `purge-${recordId}.intent.json`)
 }
 
-function readExistingReceipt(knowledgeRoot: string, recordId: RecordId): PurgeReceipt | undefined {
-  const file = receiptPath(knowledgeRoot, recordId)
+function readReceiptAtCycle(
+  knowledgeRoot: string,
+  recordId: RecordId,
+  cycle: number,
+): PurgeReceipt | undefined {
+  const file = receiptCyclePath(knowledgeRoot, recordId, cycle)
   if (!existsSync(file)) return undefined
   return guardPurgeReceipt(JSON.parse(readFileSync(file, 'utf8')))
+}
+
+interface ReceiptSeries {
+  /** The most recent destruction receipt, undefined when the series is empty. */
+  latestReceipt: PurgeReceipt | undefined
+  /** The first free cycle slot; cycles are dense from 1 by construction. */
+  nextCycle: number
+}
+
+/**
+ * Probe the durable series upward from the base path. Cycles are published exclusively and in
+ * order, so the first missing slot is the next cycle and the slot before it holds the latest
+ * receipt — the derivation is deterministic over store state alone.
+ */
+function resolveReceiptSeries(knowledgeRoot: string, recordId: RecordId): ReceiptSeries {
+  let cycle = 1
+  while (existsSync(receiptCyclePath(knowledgeRoot, recordId, cycle))) cycle += 1
+  const latestCycle = cycle - 1
+  return {
+    latestReceipt:
+      latestCycle === 0
+        ? undefined
+        : readReceiptAtCycle(knowledgeRoot, recordId, latestCycle),
+    nextCycle: cycle,
+  }
 }
 
 function readExistingIntent(knowledgeRoot: string, recordId: RecordId): PurgeIntent | undefined {
@@ -517,6 +573,7 @@ function writeDurableExclusive(finalPath: string, text: string): 'written' | 'al
 function buildIntent(
   input: PurgeRecordInput,
   receipt: PurgeReceipt,
+  receiptCycle: number,
   matches: readonly ResolvedBundle[],
   targets: readonly QueueSweepTarget[],
 ): PurgeIntent {
@@ -524,6 +581,7 @@ function buildIntent(
     schemaVersion: PURGE_INTENT_SCHEMA_VERSION,
     purgedRecordId: input.recordId,
     receipt,
+    receiptCycle,
     bundleDirs: matches
       .map((match) => toReceiptPath(input.knowledgeRoot, match.dir))
       .sort(),
@@ -542,18 +600,19 @@ function retireIntent(knowledgeRoot: string, recordId: RecordId): void {
   fsyncDirectory(dirname(file))
 }
 
-/** Publish the completion receipt exclusively, then retire the fulfilled intent. */
+/** Publish the completion receipt exclusively at its cycle path, then retire the intent. */
 function publishReceiptAndRetire(
   input: PurgeRecordInput,
   receiptText: string,
   receipt: PurgeReceipt,
+  receiptCycle: number,
 ): PurgeRecordOutcome {
   const writeOutcome = writeDurableExclusive(
-    receiptPath(input.knowledgeRoot, input.recordId),
+    receiptCyclePath(input.knowledgeRoot, input.recordId, receiptCycle),
     receiptText,
   )
   if (writeOutcome === 'already-exists') {
-    const racedReceipt = readExistingReceipt(input.knowledgeRoot, input.recordId)
+    const racedReceipt = readReceiptAtCycle(input.knowledgeRoot, input.recordId, receiptCycle)
     if (racedReceipt === undefined) {
       throw new Error('purge receipt disappeared during exclusive publication')
     }
@@ -583,7 +642,13 @@ function survivingBundleKind(
 /**
  * Replay the irreversible phase from the intent's persisted identities only — never a second
  * resolution over destroyed state. Every deletion is idempotent and the receipt publishes
- * byte-identically from the embedded payload.
+ * byte-identically from the embedded payload at the intent's OWN receiptCycle (never recomputed).
+ *
+ * A fulfilled intent (its receipt already published; a crash lost only the retirement) resolves
+ * here too: the exclusive publish returns already-exists at the exact cycle path, yielding
+ * already-purged plus intent retirement. A revival racing into that tiny publish-to-retirement
+ * window may be swept by this resume — that sweep is still truthfully receipted, because the
+ * content address means the revived bundle occupies the identical paths the intent persisted.
  */
 function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRecordOutcome {
   purgeIndexSurfaces(
@@ -603,7 +668,12 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
   for (const candidateId of intent.queueCandidateIds) {
     rmSync(jobStatePath(input.knowledgeRoot, candidateId), { force: true })
   }
-  return publishReceiptAndRetire(input, committedFileText(intent.receipt), intent.receipt)
+  return publishReceiptAndRetire(
+    input,
+    committedFileText(intent.receipt),
+    intent.receipt,
+    intent.receiptCycle,
+  )
 }
 
 /**
@@ -612,26 +682,39 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
  * Recovery invariant (CR-04): nothing irreversible ever precedes a durable intent, so a retry
  * either re-resolves intact state (crash before the intent) or replays the intent's persisted
  * identities to the identical completion receipt (crash at any later boundary).
+ *
+ * Revival ratification (SC-4/DCAY-05, option a): bundle ids are deterministic content addresses,
+ * so purged-then-re-learned content re-mints the SAME record id. Receipt-exists-but-live-surfaces
+ * therefore runs a FRESH destruction cycle publishing the next append-only versioned receipt in
+ * the series; original audit receipts are never rewritten, and already-purged is attested only
+ * over verified-dead surfaces (live resolution always precedes any receipt-based attestation).
  */
 export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   assertInput(input)
-  const existingReceipt = readExistingReceipt(input.knowledgeRoot, input.recordId)
-  if (existingReceipt !== undefined) {
-    // A crash between receipt publication and intent retirement leaves a fulfilled intent.
-    retireIntent(input.knowledgeRoot, input.recordId)
-    return { kind: 'already-purged', receipt: existingReceipt }
-  }
 
+  // An existing intent is the standing durable destruction authority — resume it before any
+  // fresh resolution (this also retires fulfilled intents left by a crash after publication).
   const persistedIntent = readExistingIntent(input.knowledgeRoot, input.recordId)
   if (persistedIntent !== undefined) return resumeFromIntent(input, persistedIntent)
 
+  // Resolve live surfaces BEFORE consulting the receipt series, so every attestation below
+  // reflects actually-resolved state, never a stale audit fact.
   const matches = resolveBundles(input.knowledgeRoot, input.recordId)
-  if (matches.length === 0) return { kind: 'not-found' }
+  const series = resolveReceiptSeries(input.knowledgeRoot, input.recordId)
+  if (matches.length === 0) {
+    // Verified-dead surfaces: attest already-purged carrying the LATEST series receipt, or
+    // not-found when no destruction was ever receipted. Nothing mutates on this path.
+    return series.latestReceipt === undefined
+      ? { kind: 'not-found' }
+      : { kind: 'already-purged', receipt: series.latestReceipt }
+  }
 
+  // Live surfaces run a fresh destruction cycle REGARDLESS of existing receipts (option a).
+  const receiptCycle = series.nextCycle
   const receipt = buildReceipt(input, matches)
   const receiptText = committedFileText(receipt)
   const checkpoint = checkpointCommittedParts(
-    [{ label: receiptRelativePath(input.recordId), text: receiptText }],
+    [{ label: receiptCycleRelativePath(input.recordId, receiptCycle), text: receiptText }],
     { auditBaseDir: auditBaseDir(input) },
   )
   if (checkpoint.kind === 'egress-blocked') return checkpoint
@@ -643,7 +726,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   const queueSweepTargets = resolveQueueSweepTargets(input.knowledgeRoot, matches)
 
   // The intent publication is the LAST act before the first irreversible mutation (CR-04).
-  const intent = buildIntent(input, receipt, matches, queueSweepTargets)
+  const intent = buildIntent(input, receipt, receiptCycle, matches, queueSweepTargets)
   const intentOutcome = writeDurableExclusive(
     intentPath(input.knowledgeRoot, input.recordId),
     committedFileText(intent),
@@ -673,5 +756,5 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   input.hooks?.afterQueueSweep?.()
 
   input.hooks?.beforeReceiptPublish?.()
-  return publishReceiptAndRetire(input, receiptText, receipt)
+  return publishReceiptAndRetire(input, receiptText, receipt, receiptCycle)
 }

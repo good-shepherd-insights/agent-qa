@@ -85,6 +85,7 @@ interface PurgeIntent {
   schemaVersion: number
   purgedRecordId: string
   receipt: PurgeReceipt
+  receiptCycle: number
   bundleDirs: string[]
   queueCandidateIds: string[]
   queuePayloadDirs: string[]
@@ -1095,14 +1096,18 @@ describe('DCAY-05 sovereign purge', () => {
 
       const schemaApi = purgeIntentSchemaApi()
       const intent = JSON.parse(intentText) as Record<string, unknown>
-      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(1)
+      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(2)
       expect(schemaApi.purgeIntentSchema.safeParse(intent).success).toBe(true)
       expect(
         schemaApi.purgeIntentSchema.safeParse({ ...intent, unexpected: 'field' }).success,
       ).toBe(false)
-      expect(() => schemaApi.guardPurgeIntent({ ...intent, schemaVersion: 2 })).toThrow(
-        /schemaVersion 2 is not supported/u,
+      expect(() => schemaApi.guardPurgeIntent({ ...intent, schemaVersion: 3 })).toThrow(
+        /schemaVersion 3 is not supported/u,
       )
+      const { receiptCycle: _dropped, ...v1Shape } = intent
+      const migrated = schemaApi.guardPurgeIntent({ ...v1Shape, schemaVersion: 1 })
+      expect(migrated.schemaVersion).toBe(2)
+      expect(migrated.receiptCycle).toBe(1)
 
       const retry = purge(fixture.targetId)
       expect(retry.kind).toBe('purged')
