@@ -292,12 +292,12 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
     const whole = reader.read(seeded.observedFact)
-    const bounded = reader.read(seeded.observedFact, { budget: 25 })
+    const bounded = reader.read(seeded.observedFact, { budget: 35 })
 
     expect(whole.body).toContain('Third observed checkout line.')
     expect(whole.body.startsWith(APP_OBSERVED_DATA_OPEN)).toBe(true)
     expect(whole.body.endsWith(APP_OBSERVED_DATA_CLOSE)).toBe(true)
-    expect(Math.ceil(bounded.body.length / 4)).toBeLessThanOrEqual(25)
+    expect(Math.ceil(bounded.body.length / 4)).toBeLessThanOrEqual(35)
     expect(bounded.body).toContain('First observed checkout line.')
     expect(bounded.body).not.toContain('Second observed checkout line.')
     expect(bounded.body.startsWith(APP_OBSERVED_DATA_OPEN)).toBe(true)

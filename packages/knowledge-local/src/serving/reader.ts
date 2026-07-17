@@ -1,0 +1,464 @@
+import { existsSync } from 'node:fs'
+import { basename } from 'node:path'
+
+import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
+import { wrapAppObservedData } from '@vostride/agent-qa-safety'
+import {
+  asRecordId,
+  canonicalJson,
+  isVettedCandidate,
+  normalizeAnchor,
+  slugBranch,
+  type Anchor,
+  type CanaryOutcome,
+  type CautionBlock,
+  type IndexEntry,
+  type ReadOptions,
+  type RecordBody,
+  type RecordId,
+  type ScopeKey,
+  type SearchOptions,
+} from '@vostride/agent-qa-schema'
+
+import {
+  deriveBundleTrust,
+  loadBundle,
+  readMeasurements,
+  verifyBundleIntegrity,
+  type LoadedBundle,
+} from '../bundle-read.js'
+import { enumerateBundleDirs } from '../bundle-scan.js'
+import { assemblePromotionGateInput } from '../curator/commit.js'
+import {
+  indexDbPath,
+  openIndexReaderConnection,
+} from '../index-open.js'
+import {
+  openKnowledgeReader as openIndexKnowledgeReader,
+  type KnowledgeReader,
+  type OpenKnowledgeReaderOptions,
+} from '../index-reader.js'
+import { enqueueCanaryOutcome } from '../queue/canary-queue.js'
+import { selectCautions } from './get-cautions.js'
+import { assembleRunBrief } from './get-run-brief.js'
+import { readPolicyLadder } from './policy-ladder.js'
+
+const DEFAULT_RECORD_CAP = 20
+const CHARS_PER_TOKEN_ESTIMATE = 4
+
+export interface OpenServingKnowledgeReaderConfig {
+  knowledgeRoot: string
+  product?: string
+  scopeDefaults?: { asOfBuild?: number }
+  budgets?: { recordCap?: number }
+}
+
+interface IndexRow {
+  bundle_id: string
+  product: string
+  scope_tier: string
+  scope_key: string
+}
+
+interface HydratedEntry {
+  dir: string
+  bundle: LoadedBundle
+  entry: IndexEntry
+}
+
+type OriginStampedEntry = IndexEntry & {
+  originClass: LoadedBundle['frontmatter']['originClass']
+}
+
+/** Typed failure used by the tool wrapper to map missing ids to a structured result. */
+export class KnowledgeRecordNotFoundError extends Error {
+  readonly recordId: RecordId
+
+  constructor(recordId: RecordId) {
+    super(`knowledge record not found: ${recordId}`)
+    this.name = 'KnowledgeRecordNotFoundError'
+    this.recordId = recordId
+  }
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function normalizedRecordCap(config: OpenServingKnowledgeReaderConfig): number {
+  const configured = config.budgets?.recordCap ?? DEFAULT_RECORD_CAP
+  return Number.isFinite(configured) ? Math.max(0, Math.floor(configured)) : 0
+}
+
+function productSlug(config: OpenServingKnowledgeReaderConfig): string | undefined {
+  return config.product === undefined ? undefined : slugBranch(config.product)
+}
+
+function readIndexRows(
+  config: OpenServingKnowledgeReaderConfig,
+  scope?: ScopeKey,
+): IndexRow[] {
+  if (!existsSync(indexDbPath(config.knowledgeRoot))) return []
+
+  const reader = openIndexReaderConnection(config.knowledgeRoot)
+  try {
+    const boundProduct = productSlug(config)
+    const clauses: string[] = []
+    const binds: string[] = []
+    if (boundProduct !== undefined) {
+      clauses.push("(r.product = ? OR r.scope_tier = 'global')")
+      binds.push(boundProduct)
+    }
+    if (scope !== undefined) {
+      clauses.push("((r.scope_tier = ? AND r.scope_key = ?) OR r.scope_tier = 'global')")
+      binds.push(scope.tier, scope.key)
+    }
+    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join('\nAND ')}`
+    return reader.db.prepare(`
+      SELECT r.bundle_id, r.product, r.scope_tier, r.scope_key
+      FROM records r
+      ${where}
+      ORDER BY r.product, r.bundle_id
+    `).all(...binds).map((row) => ({
+      bundle_id: String(row.bundle_id),
+      product: String(row.product),
+      scope_tier: String(row.scope_tier),
+      scope_key: String(row.scope_key),
+    }))
+  } finally {
+    reader.db.close()
+  }
+}
+
+function bundleDirs(config: OpenServingKnowledgeReaderConfig): Map<string, {
+  dir: string
+  product: string
+}> {
+  return new Map(
+    enumerateBundleDirs(config.knowledgeRoot).map(({ dir, product }) => [
+      basename(dir),
+      { dir, product },
+    ]),
+  )
+}
+
+function hydrateRows(
+  config: OpenServingKnowledgeReaderConfig,
+  rows: readonly IndexRow[],
+  audit: boolean,
+): HydratedEntry[] {
+  const dirs = bundleDirs(config)
+  return rows.flatMap((row): HydratedEntry[] => {
+    const found = dirs.get(row.bundle_id)
+    if (found === undefined || found.product !== row.product) return []
+    const loaded = loadBundle(found.dir)
+    if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(found.dir).ok) return []
+
+    const { bundle } = loaded
+    const trust = deriveBundleTrust(bundle)
+    const vetted = trust.status === 'candidate' && isVettedCandidate(
+      assemblePromotionGateInput({
+        knowledgeRoot: config.knowledgeRoot,
+        bundleDir: found.dir,
+        bundle,
+      }),
+    )
+    const entry: OriginStampedEntry = {
+      id: asRecordId(bundle.manifest.id),
+      kind: bundle.frontmatter.kind,
+      ...(bundle.frontmatter.subtype === undefined
+        ? {}
+        : { subtype: bundle.frontmatter.subtype }),
+      title: bundle.summary,
+      summary: bundle.summary,
+      trust: trust.trust,
+      anchors: bundle.frontmatter.anchors.map(({ normalized }) => normalized),
+      status: trust.status,
+      servedAsCanary: vetted,
+      ...(vetted ? { unverified: true } : {}),
+      ...(audit
+        ? {
+            audit: {
+              status: trust.status,
+              openedAtOrdinal: trust.validity.openedAtOrdinal,
+              closedAtOrdinal: trust.validity.closedAtOrdinal ?? null,
+            },
+          }
+        : {}),
+      scope: bundle.frontmatter.scope,
+      validity: trust.validity.closedAtOrdinal === undefined
+        ? 'current'
+        : `${trust.validity.openedAtOrdinal}:${trust.validity.closedAtOrdinal}`,
+      originClass: bundle.frontmatter.originClass,
+    }
+    return [{ dir: found.dir, bundle, entry }]
+  })
+}
+
+function currentServingEntries(entries: readonly HydratedEntry[]): IndexEntry[] {
+  return entries.flatMap(({ entry }) => {
+    if (entry.kind === 'policy') return []
+    if (entry.status === 'active') return [entry]
+    return entry.status === 'candidate' && entry.unverified === true ? [entry] : []
+  })
+}
+
+function normalizedAnchorKey(anchor: Anchor): string {
+  return canonicalJson(normalizeAnchor(anchor))
+}
+
+function anchorMatches(entry: IndexEntry, anchors: readonly Anchor[]): boolean {
+  if (anchors.length === 0) return false
+  const requested = new Set(anchors.map(normalizedAnchorKey))
+  return entry.anchors.some((anchor) => requested.has(normalizedAnchorKey(anchor)))
+}
+
+function lexicalMatches(bundle: LoadedBundle, query: string): boolean {
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+  if (tokens.length === 0) return false
+  const text = [
+    bundle.summary,
+    bundle.body,
+    bundle.manifest.embeddingInput,
+    ...bundle.frontmatter.anchors.map(({ normalized }) => canonicalJson(normalized)),
+  ].join('\n').toLowerCase()
+  return tokens.every((token) => text.includes(token))
+}
+
+function overlapsRange(
+  openedAtOrdinal: number,
+  closedAtOrdinal: number | undefined,
+  range: NonNullable<SearchOptions['asOfRange']>,
+): boolean {
+  const from = range.from ?? Number.NEGATIVE_INFINITY
+  const to = range.to ?? Number.POSITIVE_INFINITY
+  return openedAtOrdinal <= to && (closedAtOrdinal === undefined || closedAtOrdinal > from)
+}
+
+function validAtBuild(
+  openedAtOrdinal: number,
+  closedAtOrdinal: number | undefined,
+  buildOrdinal: number,
+): boolean {
+  return openedAtOrdinal <= buildOrdinal
+    && (closedAtOrdinal === undefined || buildOrdinal < closedAtOrdinal)
+}
+
+function searchEntries(
+  config: OpenServingKnowledgeReaderConfig,
+  query: string,
+  options: SearchOptions,
+): IndexEntry[] {
+  const anchors = options.anchors ?? []
+  if (query.trim() === '' && anchors.length === 0) return []
+
+  const auditMode = options.includeSuperseded === true || options.asOfRange !== undefined
+  const hydrated = hydrateRows(config, readIndexRows(config, options.scope), auditMode)
+  return hydrated
+    .filter(({ bundle, entry }) => (
+      lexicalMatches(bundle, query) || anchorMatches(entry, anchors)
+    ))
+    .filter(({ bundle, entry }) => {
+      if (entry.kind === 'policy') return false
+      if (options.kind !== undefined && entry.kind !== options.kind) return false
+      if (entry.status === 'candidate') {
+        return options.includeCandidates === true && entry.unverified === true
+      }
+      if (
+        !auditMode
+        && (entry.status === 'deprecated' || entry.status === 'superseded')
+      ) {
+        return false
+      }
+      const trust = deriveBundleTrust(bundle)
+      if (
+        options.asOfBuild !== undefined
+        && !validAtBuild(
+          trust.validity.openedAtOrdinal,
+          trust.validity.closedAtOrdinal,
+          options.asOfBuild,
+        )
+      ) {
+        return false
+      }
+      return options.asOfRange === undefined || overlapsRange(
+        trust.validity.openedAtOrdinal,
+        trust.validity.closedAtOrdinal,
+        options.asOfRange,
+      )
+    })
+    .map(({ bundle, entry }): IndexEntry => {
+      const appObserved = bundle.frontmatter.originClass === 'agent-observed'
+      return {
+        ...entry,
+        summary: appObserved ? wrapAppObservedData(entry.summary) : entry.summary,
+        ...(options.asOfBuild !== undefined && entry.status !== 'active'
+          ? { servedAs: 'prior-build-hypothesis' as const }
+          : {}),
+      }
+    })
+    .sort((left, right) => (
+      Number(anchorMatches(right, anchors)) - Number(anchorMatches(left, anchors))
+      || right.trust - left.trust
+      || compareText(String(left.id), String(right.id))
+    ))
+}
+
+function findBundle(
+  config: OpenServingKnowledgeReaderConfig,
+  id: RecordId,
+): { dir: string; bundle: LoadedBundle } | undefined {
+  const boundProduct = productSlug(config)
+  for (const candidate of enumerateBundleDirs(config.knowledgeRoot)) {
+    if (basename(candidate.dir) !== id) continue
+    if (boundProduct !== undefined && candidate.product !== boundProduct) continue
+    const loaded = loadBundle(candidate.dir)
+    if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(candidate.dir).ok) return undefined
+    return { dir: candidate.dir, bundle: loaded.bundle }
+  }
+  return undefined
+}
+
+function estimatedBodyCost(body: string): number {
+  return Math.ceil(body.length / CHARS_PER_TOKEN_ESTIMATE)
+}
+
+function renderedBody(body: string, appObserved: boolean): string {
+  return appObserved ? wrapAppObservedData(body) : body
+}
+
+function truncateBody(
+  body: string,
+  appObserved: boolean,
+  budget: number | undefined,
+): string {
+  if (budget === undefined) return renderedBody(body, appObserved)
+  const limit = Number.isFinite(budget) ? Math.max(0, Math.floor(budget)) : 0
+  const whole = renderedBody(body, appObserved)
+  if (estimatedBodyCost(whole) <= limit) return whole
+
+  const admitted: string[] = []
+  for (const line of body.split('\n')) {
+    const candidate = renderedBody([...admitted, line].join('\n'), appObserved)
+    if (estimatedBodyCost(candidate) > limit) break
+    admitted.push(line)
+  }
+  if (admitted.length === 0) return ''
+  return renderedBody(admitted.join('\n'), appObserved)
+}
+
+function readRecord(
+  config: OpenServingKnowledgeReaderConfig,
+  id: RecordId,
+  options?: ReadOptions,
+): RecordBody {
+  const found = findBundle(config, id)
+  if (found === undefined) throw new KnowledgeRecordNotFoundError(id)
+
+  const { bundle } = found
+  const measurements = readMeasurements(found.dir)
+  return {
+    id: asRecordId(bundle.manifest.id),
+    title: bundle.summary,
+    body: truncateBody(
+      bundle.body,
+      bundle.frontmatter.originClass === 'agent-observed',
+      options?.budget,
+    ),
+    anchors: bundle.frontmatter.anchors.map(({ normalized }) => normalized),
+    evidenceDigest: bundle.manifest.contentHashes['evidence/evidence.md']
+      ?? bundle.manifest.contentHashes['record.md']
+      ?? bundle.manifest.identityHash,
+    ...(measurements === undefined
+      ? {}
+      : { measurement: canonicalJson(measurements) }),
+    relations: bundle.relations.relations.map((relation) => ({
+      kind: relation.type,
+      targetId: asRecordId(relation.targetId),
+    })),
+  }
+}
+
+function servingReader(
+  config: OpenServingKnowledgeReaderConfig,
+): KnowledgeHintReader {
+  return {
+    getRunBrief(scope, budget) {
+      const entries = currentServingEntries(
+        hydrateRows(config, readIndexRows(config, scope), true),
+      )
+      return assembleRunBrief({
+        candidates: entries,
+        policy: readPolicyLadder(config.knowledgeRoot, config.product),
+        scope,
+        budget,
+        recordCap: normalizedRecordCap(config),
+        ...(config.scopeDefaults?.asOfBuild === undefined
+          ? {}
+          : { asOfBuild: config.scopeDefaults.asOfBuild }),
+      })
+    },
+
+    search(query, options) {
+      return searchEntries(config, query, options)
+    },
+
+    read(id, options) {
+      return readRecord(config, id, options)
+    },
+
+    getCautions(anchors, budget) {
+      const selected = selectCautions({
+        candidates: currentServingEntries(
+          hydrateRows(config, readIndexRows(config), false),
+        ),
+        anchors,
+        budget,
+        recordCap: normalizedRecordCap(config),
+      })
+      if (selected.overflow === undefined) return selected.block
+
+      /**
+       * Reserved terminal id: consumers must display this cap signal but skip it for ledger
+       * admission because it is not a committed knowledge record.
+       */
+      const overflowLine: CautionBlock['cautions'][number] = {
+        id: asRecordId('caution:truncated'),
+        anchors: [],
+        summary: `truncated ${selected.overflow.served} of ${selected.overflow.eligible}`,
+      }
+      return {
+        ...selected.block,
+        cautions: [...selected.block.cautions, overflowLine],
+      }
+    },
+
+    /** Phase 381 owns procedure matching and replaces this typed stub. */
+    getProcedure() {
+      return undefined
+    },
+
+    emitCanaryOutcome(payload: CanaryOutcome) {
+      // D-20: one synchronous, atomic, content-addressed emit pattern.
+      enqueueCanaryOutcome(config.knowledgeRoot, payload)
+    },
+  }
+}
+
+export function openKnowledgeReader(
+  config: OpenServingKnowledgeReaderConfig,
+): KnowledgeHintReader
+export function openKnowledgeReader(
+  knowledgeRoot: string,
+  opts?: OpenKnowledgeReaderOptions,
+): KnowledgeReader
+export function openKnowledgeReader(
+  configOrKnowledgeRoot: OpenServingKnowledgeReaderConfig | string,
+  opts?: OpenKnowledgeReaderOptions,
+): KnowledgeHintReader | KnowledgeReader {
+  // Preserve the established low-level index-reader overload while the new object form is the
+  // KnowledgeHintReader composition seam used by the runner.
+  return typeof configOrKnowledgeRoot === 'string'
+    ? openIndexKnowledgeReader(configOrKnowledgeRoot, opts)
+    : servingReader(configOrKnowledgeRoot)
+}

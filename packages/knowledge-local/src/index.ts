@@ -82,7 +82,11 @@ export type {
   IndexWriterHandle,
   VecCapability,
 } from './index-open.js'
-export { openKnowledgeReader } from './index-reader.js'
+export {
+  KnowledgeRecordNotFoundError,
+  openKnowledgeReader,
+} from './serving/reader.js'
+export type { OpenServingKnowledgeReaderConfig } from './serving/reader.js'
 export type {
   DenseHit,
   DenseSearchOptions,
