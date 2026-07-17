@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -15,10 +15,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as knowledgeLocal from '../index.js'
 import type {
   BundleStoreConfig,
+  LoadedBundle,
   PublishBundleInput,
   PublishBundleOutcome,
 } from '../index.js'
-import { enqueueArtifactFreeCandidateProjection } from './fixtures/curation-candidate-fixture.js'
+import * as purgeModule from '../purge.js'
+import {
+  candidateProjectionFixture,
+  enqueueArtifactFreeCandidateProjection,
+} from './fixtures/curation-candidate-fixture.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,
@@ -61,6 +66,18 @@ interface PurgeApi {
   purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome
 }
 
+interface QueueSweepTarget {
+  candidateDir: string
+  candidateId: string
+}
+
+interface QueueSweepApi {
+  resolveQueueSweepTargets(
+    knowledgeRoot: string,
+    matches: readonly { dir: string; bundle: LoadedBundle }[],
+  ): QueueSweepTarget[]
+}
+
 const PRODUCT = 'purge-storefront'
 
 function purgeApi(): PurgeApi {
@@ -69,6 +86,14 @@ function purgeApi(): PurgeApi {
     throw new Error('purgeRecord public API is not implemented')
   }
   return candidate as PurgeApi
+}
+
+function queueSweepApi(): QueueSweepApi {
+  const candidate = purgeModule as unknown as Partial<QueueSweepApi>
+  if (typeof candidate.resolveQueueSweepTargets !== 'function') {
+    throw new Error('resolveQueueSweepTargets public API is not implemented')
+  }
+  return candidate as QueueSweepApi
 }
 
 function purgeReceiptSchemaApi(): PurgeReceiptSchemaApi {
@@ -160,7 +185,11 @@ describe('DCAY-05 sovereign purge', () => {
     return purgeApi().purgeRecord({ knowledgeRoot, recordId, initiator: 'user' })
   }
 
-  function enqueue(identity: string, anchors: readonly Anchor[]): string {
+  function enqueue(
+    identity: string,
+    anchors: readonly Anchor[],
+    seeds: { summarySeed?: string; bodySeed?: string } = {},
+  ): string {
     const outcome = enqueueArtifactFreeCandidateProjection({
       knowledgeRoot,
       projectionInput: {
@@ -173,8 +202,8 @@ describe('DCAY-05 sovereign purge', () => {
         kind: 'fact',
         subtype: 'selector',
         anchors: [...anchors],
-        summarySeed: `${identity} queue summary`,
-        bodySeed: `${identity} queue body`,
+        summarySeed: seeds.summarySeed ?? `${identity} queue summary`,
+        bodySeed: seeds.bodySeed ?? `${identity} queue body`,
         distilledObservations: [],
         evidenceToken: `${identity}-queue-evidence`,
         attributingObservationId: `${identity}-queue-observation`,
@@ -186,6 +215,29 @@ describe('DCAY-05 sovereign purge', () => {
       throw new Error(`expected ${identity} queue admission, got ${outcome.kind}`)
     }
     return outcome.candidateId
+  }
+
+  function loadedMatch(dir: string): { dir: string; bundle: LoadedBundle } {
+    const outcome = knowledgeLocal.loadBundle(dir)
+    if (outcome.kind !== 'loaded') {
+      throw new Error(`expected a loaded bundle at ${dir}, got ${outcome.kind}`)
+    }
+    return { dir, bundle: outcome.bundle }
+  }
+
+  function sortedTargets(candidateIds: readonly string[]): QueueSweepTarget[] {
+    return candidateIds
+      .map((candidateId) => ({
+        candidateDir: knowledgeLocal.queuedCandidateDir(knowledgeRoot, candidateId),
+        candidateId,
+      }))
+      .sort((left, right) =>
+        left.candidateDir < right.candidateDir
+          ? -1
+          : left.candidateDir > right.candidateDir
+            ? 1
+            : 0,
+      )
   }
 
   it('removes the complete committed bundle directory', () => {
@@ -290,35 +342,223 @@ describe('DCAY-05 sovereign purge', () => {
     expectAbsentFromEveryProjection()
   })
 
-  it('sweeps only queue payloads whose normalized anchors intersect the purged record', () => {
-    const sharedAnchor = {
-      t: 'el',
-      role: 'button',
-      name: 'Queue intersection target',
-    } satisfies Anchor
-    const target = publish('queue-target', [
-      sharedAnchor,
-      { t: 'page', route: '/purge/queue/target' },
+  it('deletes queue payloads carrying the purged content under entirely different anchors', () => {
+    const purgedSummary = 'Confirmed-sensitive queue summary replicated verbatim'
+    const purgedBody =
+      'Confirmed-sensitive queue body replicated verbatim into the curation queue.'
+    const targetAnchors = [
+      { t: 'el', role: 'button', name: 'Same content target' },
+      { t: 'page', route: '/purge/queue/same-content' },
       { t: 'platform', platform: 'web' },
-    ])
-    const matchingCandidateId = enqueue('queue-matching', [
-      sharedAnchor,
-      { t: 'page', route: '/purge/queue/different-page' },
-      { t: 'platform', platform: 'web' },
-    ])
-    const unrelatedCandidateId = enqueue('queue-unrelated', [
+    ] satisfies Anchor[]
+    const target = publish('queue-same-content', targetAnchors, {
+      draft: makeBundleDraftFixture({
+        anchors: [...targetAnchors],
+        scope: { tier: 'product', key: PRODUCT },
+        summary: purgedSummary,
+        body: purgedBody,
+      }),
+    })
+    const bodyMatchId = enqueue(
+      'queue-body-match',
+      [
+        { t: 'el', role: 'link', name: 'Entirely different control' },
+        { t: 'page', route: '/purge/queue/disjoint-body' },
+        { t: 'platform', platform: 'web' },
+      ],
+      { bodySeed: purgedBody },
+    )
+    const summaryMatchId = enqueue(
+      'queue-summary-match',
+      [
+        { t: 'el', role: 'link', name: 'Another entirely different control' },
+        { t: 'page', route: '/purge/queue/disjoint-summary' },
+        { t: 'platform', platform: 'web' },
+      ],
+      { summarySeed: purgedSummary },
+    )
+    const survivorId = enqueue('queue-content-survivor', [
       { t: 'el', role: 'button', name: 'Unrelated queue payload' },
       { t: 'page', route: '/purge/queue/unrelated' },
       { t: 'platform', platform: 'web' },
     ])
 
+    const targets = queueSweepApi().resolveQueueSweepTargets(knowledgeRoot, [
+      loadedMatch(target.dir),
+    ])
+    expect(targets).toEqual(sortedTargets([bodyMatchId, summaryMatchId]))
+
     expect(purge(target.id).kind).toBe('purged')
 
+    expect(readdirSync(knowledgeLocal.queuedRoot(knowledgeRoot)).sort()).toEqual([survivorId])
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, bodyMatchId))).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, summaryMatchId))).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
+  })
+
+  it('preserves a queue payload sharing page and element anchors but carrying different content', () => {
+    const sharedElement = {
+      t: 'el',
+      role: 'button',
+      name: 'Shared anchor control',
+    } satisfies Anchor
+    const sharedPage = { t: 'page', route: '/purge/queue/shared-anchor' } satisfies Anchor
+    const target = publish('queue-anchor-only', [
+      sharedElement,
+      sharedPage,
+      { t: 'platform', platform: 'web' },
+    ])
+    const survivorId = enqueue('queue-anchor-survivor', [
+      sharedElement,
+      sharedPage,
+      { t: 'platform', platform: 'web' },
+    ])
+    const survivorDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, survivorId)
+    const payloadBytesBefore = readFileSync(join(survivorDir, 'payload.json'))
+
+    expect(purge(target.id).kind).toBe('purged')
+
+    expect(readdirSync(knowledgeLocal.queuedRoot(knowledgeRoot))).toEqual([survivorId])
+    expect(readFileSync(join(survivorDir, 'payload.json'))).toEqual(payloadBytesBefore)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
+  })
+
+  it('deletes a queue payload whose candidateId is the purged record curation-job lineage', () => {
+    const lineageId = enqueue('queue-lineage', [
+      { t: 'el', role: 'link', name: 'Lineage payload control' },
+      { t: 'page', route: '/purge/queue/lineage' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const survivorId = enqueue('queue-lineage-survivor', [
+      { t: 'el', role: 'link', name: 'Lineage survivor control' },
+      { t: 'page', route: '/purge/queue/lineage-survivor' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const target = publish(
+      'queue-lineage-target',
+      [
+        { t: 'el', role: 'button', name: 'Lineage target' },
+        { t: 'page', route: '/purge/queue/lineage-target' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        provenance: {
+          mode: 'run-linked',
+          runId: 'purge-queue-lineage-run',
+          testId: 'purge-queue-lineage-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 42,
+          curationJobId: lineageId,
+        },
+      },
+    )
+
+    expect(purge(target.id).kind).toBe('purged')
+
+    expect(readdirSync(knowledgeLocal.queuedRoot(knowledgeRoot))).toEqual([survivorId])
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, lineageId))).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
+  })
+
+  it('deletes a queue payload sharing an artifact digest with the purged manifests', () => {
+    const target = publish('queue-digest-target', [
+      { t: 'el', role: 'button', name: 'Digest target' },
+      { t: 'page', route: '/purge/queue/digest-target' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const digest = loadedMatch(target.dir).bundle.manifest.contentHashes['record.md']
+    if (digest === undefined) {
+      throw new Error('expected record.md digest in the purged manifest')
+    }
+    const sourcePath = join(root, 'digest-artifact-source.bin')
+    copyFileSync(join(target.dir, 'record.md'), sourcePath)
+    const enqueued = knowledgeLocal.enqueueCurationCandidateProjection({
+      knowledgeRoot,
+      projection: candidateProjectionFixture({
+        sourceRunId: 'purge-queue-digest-match',
+        scope: { tier: 'product', key: PRODUCT },
+        buildOrdinal: 43,
+        executionContext: 'local-interactive',
+        secretFlagged: false,
+        injectionFlagged: false,
+        kind: 'fact',
+        subtype: 'selector',
+        anchors: [
+          { t: 'el', role: 'link', name: 'Digest payload control' },
+          { t: 'page', route: '/purge/queue/digest-payload' },
+          { t: 'platform', platform: 'web' },
+        ],
+        summarySeed: 'queue-digest-match queue summary',
+        bodySeed: 'queue-digest-match queue body',
+        distilledObservations: [],
+        evidenceToken: 'queue-digest-match-queue-evidence',
+        attributingObservationId: 'queue-digest-match-queue-observation',
+        emittedAt: '2026-07-16T00:00:00.000Z',
+        artifactDescriptors: [
+          {
+            ref: { id: 'queue-digest-match-artifact', sha: digest },
+            stepIndex: 0,
+            role: 'opaque-evidence',
+            originalName: 'record-copy.bin',
+          },
+        ],
+        captureEvidence: { elements: [] },
+        stepInteractions: [],
+      }),
+      artifactSources: [
+        { artifactId: 'queue-digest-match-artifact', sourcePath },
+      ],
+    })
+    expect(enqueued.kind).toBe('enqueued')
+    if (enqueued.kind !== 'enqueued') {
+      throw new Error(`expected digest payload admission, got ${enqueued.kind}`)
+    }
+    const digestMatchId = enqueued.candidateId
+    const survivorId = enqueue('queue-digest-survivor', [
+      { t: 'el', role: 'link', name: 'Digest survivor control' },
+      { t: 'page', route: '/purge/queue/digest-survivor' },
+      { t: 'platform', platform: 'web' },
+    ])
+
+    expect(purge(target.id).kind).toBe('purged')
+
+    expect(readdirSync(knowledgeLocal.queuedRoot(knowledgeRoot))).toEqual([survivorId])
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, digestMatchId))).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
+  })
+
+  it('resolves an empty queue sweep and deletes no payload or job state', () => {
+    const target = publish('queue-empty-target', [
+      { t: 'el', role: 'button', name: 'Empty resolution target' },
+      { t: 'page', route: '/purge/queue/empty-target' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const firstId = enqueue('queue-empty-first', [
+      { t: 'el', role: 'link', name: 'Empty resolution first payload' },
+      { t: 'page', route: '/purge/queue/empty-first' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const secondId = enqueue('queue-empty-second', [
+      { t: 'el', role: 'link', name: 'Empty resolution second payload' },
+      { t: 'page', route: '/purge/queue/empty-second' },
+      { t: 'platform', platform: 'web' },
+    ])
+
+    const targets = queueSweepApi().resolveQueueSweepTargets(knowledgeRoot, [
+      loadedMatch(target.dir),
+    ])
+    expect(targets).toEqual([])
+
+    expect(purge(target.id).kind).toBe('purged')
+
+    expect(existsSync(target.dir)).toBe(false)
+    expect(readdirSync(knowledgeLocal.queuedRoot(knowledgeRoot)).sort()).toEqual(
+      [firstId, secondId].sort(),
+    )
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, firstId))).toBe(true)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, secondId))).toBe(true)
     expect(
-      existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchingCandidateId)),
-    ).toBe(false)
-    expect(
-      existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, unrelatedCandidateId)),
+      existsSync(join(knowledgeRoot, 'memory', 'receipts', `purge-${target.id}.json`)),
     ).toBe(true)
   })
 
