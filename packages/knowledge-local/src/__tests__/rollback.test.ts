@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   asEvidenceToken,
   canonicalJson,
+  DEFAULT_EMBEDDING_PROFILE,
   sha256hex,
   supersessionKey,
   type Anchor,
@@ -22,7 +23,15 @@ import type {
   BundleStoreConfig,
   PublishBundleOutcome,
 } from '../index.js'
+import {
+  EMBED_STATUS_PENDING,
+  EMBED_STATUS_PRESENT,
+  EMBED_STATUS_SCRUBBED,
+  EMBED_STATUS_SUPPRESSED,
+  projectBundleIndexRow,
+} from '../index-rebuild.js'
 import { makeBundleDraftFixture } from './fixtures/bundle-fixture.js'
+import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 
 type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
 
@@ -203,6 +212,34 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
         JOIN records AS record ON record.record_rowid = fts.rowid
         WHERE record.bundle_id = ?
       `).get(bundleId) !== undefined
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  function embedState(bundleId: string): {
+    embedStatus: string
+    embeddingPresent: boolean
+    vecRows: number
+  } {
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      const record = reader.db
+        .prepare('SELECT record_rowid, embed_status, embedding FROM records WHERE bundle_id = ?')
+        .get(bundleId)
+      if (record === undefined) throw new Error(`records row for ${bundleId} is missing`)
+      const vecRow = reader.db
+        .prepare(`
+          SELECT 1
+          FROM ${knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)}
+          WHERE record_rowid = ?
+        `)
+        .get(BigInt(Number(record.record_rowid)))
+      return {
+        embedStatus: String(record.embed_status),
+        embeddingPresent: record.embedding !== null && record.embedding !== undefined,
+        vecRows: vecRow === undefined ? 0 : 1,
+      }
     } finally {
       reader.db.close()
     }
@@ -448,6 +485,14 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
         curationJobId: 'job-poisoned-supersede',
       }],
     })
+    // The victim starts densely served: present canonical bytes and an active vec row.
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_PRESENT,
+      embeddingPresent: true,
+      vecRows: 1,
+    })
+
     const supersedeToken = asEvidenceToken('poisoned-supersede-token')
     const closeToken = asEvidenceToken(sha256hex(canonicalJson({
       token: supersedeToken,
@@ -467,9 +512,15 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       buildOrdinal: 9,
       closedAtOrdinal: 9,
     })).toEqual({ kind: 'appended' })
-    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id })
     expect(hasFtsRow(victim.id)).toBe(false)
     expect(hasFtsRow(replacement.id)).toBe(true)
+    // Structural death takes the reversible scrubbed value and empties dense recall.
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_SCRUBBED,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
 
     const rollbackInput = {
       knowledgeRoot,
@@ -501,6 +552,13 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     ]))
     expect(hasFtsRow(victim.id)).toBe(true)
     expect(hasFtsRow(replacement.id)).toBe(false)
+    // The restore re-projection reaches the revival reset on the default projection path:
+    // the structurally-scrubbed victim re-enters the ordinary backfill pipeline as pending.
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_PENDING,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
 
     const beforeReplay = {
       victim: readFileSync(join(victim.dir, 'evidence', 'outcomes.jsonl'), 'utf8'),
@@ -518,6 +576,96 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
         'utf8',
       ),
     }).toEqual(beforeReplay)
+    // Duplicate replay re-projects the touched bundles, but the reset is a no-op outside
+    // the structural state: pending stays pending.
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_PENDING,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
+
+    // Ordinary backfill — no bespoke invalidation — restores dense retrieval for the victim.
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_PRESENT,
+      embeddingPresent: true,
+      vecRows: 1,
+    })
+  })
+
+  it('never revives a SAFE-02 suppressed record through supersede, restore, and backfill', async () => {
+    const anchors: Anchor[] = [
+      { t: 'el', role: 'button', name: 'redacted checkout' },
+      { t: 'page', route: '/rollback/redacted-checkout' },
+      { t: 'platform', platform: 'web' },
+    ]
+    const victim = publishForJob({
+      identity: 'redacted-victim',
+      curationJobId: 'job-redacted-victim',
+      sourceBuildOrdinal: 3,
+      anchors,
+      initialEvents: activeEvents('job-redacted-victim', 3),
+    })
+    const replacement = publishForJob({
+      identity: 'redacted-replacement',
+      curationJobId: 'job-redacted-supersede',
+      sourceBuildOrdinal: 9,
+      anchors,
+      initialEvents: activeEvents('job-redacted-supersede', 9),
+      relations: [{
+        type: 'supersedes',
+        targetId: victim.id,
+        addedAtOrdinal: 9,
+        curationJobId: 'job-redacted-supersede',
+      }],
+    })
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+
+    // SAFE-02 governed redaction takes the terminal dense suppression while the record is live.
+    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id, suppressDense: true })
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_SUPPRESSED,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
+
+    expect(knowledgeLocal.appendOutcomeEvent(config(), victim.id, {
+      type: 'superseded',
+      evidenceToken: asEvidenceToken('redacted-supersede-token'),
+      curationJobId: 'job-redacted-supersede',
+      buildOrdinal: 9,
+      byRecordId: replacement.id,
+    })).toEqual({ kind: 'appended' })
+    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id })
+    // Both suppressions touched one row and terminal wins through structural death.
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_SUPPRESSED,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-redacted-supersede',
+      resolvedAtOrdinal: 20,
+    })
+    expect(report.restoredVictims).toEqual([victim.id])
+    expect(knowledgeLocal.deriveBundleTrust(loaded(victim)).status).toBe('active')
+    // The revival reset must be unable to match the SAFE-02 terminal value on restore.
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_SUPPRESSED,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
+
+    // No backfill sequence converts the terminal state: no vec row ever appears.
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+    expect(embedState(victim.id)).toEqual({
+      embedStatus: EMBED_STATUS_SUPPRESSED,
+      embeddingPresent: false,
+      vecRows: 0,
+    })
   })
 
   it('deprecates a rolled-back thrash unknown so memory-off suppression lifts', async () => {
