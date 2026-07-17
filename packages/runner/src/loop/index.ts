@@ -26,13 +26,15 @@
 // was planned against; stateAfter is attached only at the three D-15 boundaries by
 // reuse of an observation the loop already takes — never an extra capture.
 
-import { computeCacheKey, toRecordedActionResult } from '@vostride/agent-qa-schema'
+import { computeCacheKey, normalizeAnchor, toRecordedActionResult } from '@vostride/agent-qa-schema'
 import type {
   Action as SchemaAction,
   ActionAnnotation,
   ActionResult as SchemaActionResult,
+  Anchor,
   AssertValueOp,
   CacheKey,
+  CautionLine,
   Decision,
   ElementInfo,
   GroundingAttempt,
@@ -125,7 +127,9 @@ const CANCELLED_MESSAGE = 'Step cancelled by user'
 // Provisional fallbacks used only until the composition root supplies model-derived numbers
 // (380 D-02/D-15/D-17). They are deliberately not config keys; the loop consumes plain budgets.
 const PROVISIONAL_BRIEF_TOKEN_BUDGET = 512
+const PROVISIONAL_CAUTION_TOKEN_BUDGET = 64
 const PROVISIONAL_DISTINCT_RECORD_CAP = 8
+const CAUTION_TRUNCATION_ID = 'caution:truncated'
 
 // D-09/D-16 settle-gate bounds. The poll is deliberately small (Pitfall 4/5): the first
 // observation doubles as stateBefore (no extra capture), so only the extra poll iterations
@@ -217,6 +221,22 @@ export async function executeStep(
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
   let lastPlannedAction: Action | undefined
+  // D-13: a failure retrieves once at the failure moment, then the returned block is consumed
+  // by the immediately-following live planning turn. Clearing happens before that turn renders,
+  // so a successful follow-up cannot make the caution sticky; a recurring failure stages anew.
+  let pendingCautions: CautionLine[] | undefined
+
+  const stageFailureCautions = (
+    failedAction: Action,
+    failureState: ScreenState,
+  ): void => {
+    const anchors = deriveFailureCautionAnchors(failedAction, failureState, context.testName)
+    const block = ports.knowledgeReader?.getCautions(
+      anchors,
+      ports.knowledgeBudgets?.caution ?? PROVISIONAL_CAUTION_TOKEN_BUDGET,
+    )
+    pendingCautions = block && block.cautions.length > 0 ? [...block.cautions] : undefined
+  }
 
   // D-09 policy-denied terminal marker (the 353/D-08 discriminated no-throw idiom, precedent:
   // PlanningTurnFailureReason). Set by executeResolvedAction when the async gate denies at ANY of
@@ -687,6 +707,38 @@ export async function executeStep(
       // The brief rides every planning turn, so its distinct ids are already spent before any
       // agentic search/read or automatic failure caution can admit a record (Pitfall 9).
       recordLedger.resetTurn(brief?.lines.map((line) => line.id) ?? [])
+      // D-13/D-16/D-17 Channel 3 has no agency: surface the staged records as failure-adjacent
+      // observations inside the existing hypotheses frame, then clear them. Re-emphasizing an
+      // id already present in Channel 1 is intentionally free — the planner should not have to
+      // remember the caution after demonstrating the exact failure it warns about. New ids still
+      // consume the shared distinct-record cap, and every refusal is visible rather than clipped.
+      const cautionsForTurn = pendingCautions
+      pendingCautions = undefined
+      if (cautionsForTurn && cautionsForTurn.length > 0) {
+        const injected: CautionLine[] = []
+        let refused = 0
+        let recordCount = 0
+        for (const caution of cautionsForTurn) {
+          if (caution.id === CAUTION_TRUNCATION_ID) {
+            // 380-10's reserved terminal line is a reader-owned overflow signal, not a durable
+            // record. Render it, but never spend or mint a ledger admission for it.
+            injected.push(caution)
+            continue
+          }
+          recordCount++
+          if (recordLedger.admit(caution.id).admitted) injected.push(caution)
+          else refused++
+        }
+
+        const observations = injected.map((caution) => caution.summary)
+        if (refused > 0) observations.push(`truncated ${refused} of ${recordCount}`)
+        if (observations.length > 0) {
+          const frame = `Failure-adjacent caution observations:\n${observations.join('\n')}`
+          context.knowledgeBriefL1 = context.knowledgeBriefL1?.trim()
+            ? `${context.knowledgeBriefL1}\n\n${frame}`
+            : frame
+        }
+      }
       // WM-01 serve (D-11): the whole run-scoped set is served verbatim to every planning turn
       // via the optional workingMemory port (the knowledgeReader idiom). Unbound ⇒ left as-is,
       // the loop runs memory-less. The served set is what finalize snapshots masked.
@@ -1156,6 +1208,10 @@ export async function executeStep(
         index: failedIdx,
         failed: { plan: reasoning, plannedAction: action as unknown as SchemaAction, result: toRecordedActionResult(toSchemaResult(execResult, annotation)) },
       }
+      // D-13: a grounding miss is a failed action in substance. It reaches this same branch after
+      // the conservative re-ground-first heal has exhausted, so all execution-failure shapes stage
+      // exactly one caution lookup for the next replan turn.
+      stageFailureCautions(action, screenState)
       continue
     }
 
@@ -1301,6 +1357,7 @@ export async function executeStep(
         index: failedIdx,
         failed: { plan: reasoning, plannedAction: action as unknown as SchemaAction, result: toRecordedActionResult(toSchemaResult(execResult, annotation)) },
       }
+      stageFailureCautions(action, afterState)
       // Non-completing decision — not cached (only the step-completing plan is persisted).
       continue
     }
@@ -1454,6 +1511,37 @@ function firstRefFieldEntry(action: Action): { field: string; ref: string } | un
     if (typeof value === 'string') return { field, ref: value }
   }
   return undefined
+}
+
+/**
+ * D-14 precise-first failure anchors. Element identity comes from the failed action's resolved
+ * ref and the matching live ElementInfo, then page and flow broaden the recall seed. Every lane
+ * goes through schema's shared normalizeAnchor authority; this module owns no normalization copy.
+ */
+function deriveFailureCautionAnchors(
+  action: Action,
+  screenState: ScreenState,
+  flowName: string | undefined,
+): Anchor[] {
+  const anchors: Anchor[] = []
+  const ref = firstRefField(action)
+  const failedElement = ref === undefined
+    ? undefined
+    : screenState.elements.find((element) => element.ref === ref)
+  if (failedElement) {
+    anchors.push(normalizeAnchor({
+      t: 'el',
+      role: failedElement.role,
+      name: failedElement.nameNormalized,
+    }))
+  }
+  if (screenState.url && screenState.url.trim().length > 0) {
+    anchors.push(normalizeAnchor({ t: 'page', route: screenState.url }))
+  }
+  if (flowName && flowName.trim().length > 0) {
+    anchors.push(normalizeAnchor({ t: 'flow', name: flowName }))
+  }
+  return anchors
 }
 
 function patchRef(action: Action, field: string, ref: Ref): Action {
