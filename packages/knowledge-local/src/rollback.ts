@@ -14,6 +14,7 @@ import {
   eventDedupKey,
   sha256hex,
   supersessionKey,
+  survivingOutcomeEvents,
   type BundleOutcomeEvent,
   type Delta,
   type OriginClass,
@@ -35,7 +36,7 @@ export interface RollbackCounterEvent {
   recordId: RecordId
   evidenceToken: string
   curationJobId: string
-  type: 'confirmed' | 'deprecated' | 'superseded'
+  type: 'confirmed' | 'deprecated' | 'superseded' | 'promoted'
 }
 
 export interface RollbackAffectedSet {
@@ -48,6 +49,8 @@ export interface RollbackReport {
   inverseCount: number
   restoredVictims: RecordId[]
   deprecatedBundles: RecordId[]
+  /** Bundles whose surviving promoted events were cascade-retracted after support loss. */
+  retractedPromotions: RecordId[]
   /** Auditable exact resolution that drove inverse construction. */
   affected: RollbackAffectedSet
 }
@@ -189,6 +192,7 @@ function isCounterEvent(
   return event.type === 'confirmed'
     || event.type === 'deprecated'
     || event.type === 'superseded'
+    || event.type === 'promoted'
 }
 
 function publicAffectedSet(resolution: RollbackResolution): RollbackAffectedSet {
@@ -467,6 +471,8 @@ function emitRollback(
   let inverseCount = 0
   const touched = new Set<RecordId>()
   const restoredVictims = new Set<RecordId>()
+  const retractedPromotions = new Set<RecordId>()
+  const counterProducts = new Map<RecordId, string>()
 
   for (const minted of resolution.mintedBundles) {
     if (appendInverseDeprecate(input, resolution, minted)) inverseCount += 1
@@ -483,6 +489,7 @@ function emitRollback(
       inverseCount += 1
     }
     touched.add(counter.recordId)
+    counterProducts.set(counter.recordId, counter.product)
 
     if (counter.type === 'superseded') {
       const closeToken = asEvidenceToken(sha256hex(canonicalJson({
@@ -493,6 +500,56 @@ function emitRollback(
         inverseCount += 1
       }
       restoredVictims.add(counter.recordId)
+    }
+  }
+
+  /**
+   * D-15/D-17 support-loss cascade: the V4 promotion-gate support
+   * (`confirmedOutcomeEvidenceTokens` in assemblePromotionGateInput) is at least one surviving
+   * confirmation, so a promotion whose last qualifying support this rollback removed is
+   * retracted here under the same auditable receipt. If surviving evidence still merits
+   * promotion, the D-17 gate re-grants it on the next drain; authority is never left standing
+   * on retracted support. Cascade targets are exact eventDedupKey identities and every inverse
+   * is an append — existing outcome lines are never rewritten.
+   */
+  const cascadeTargets = [...counterProducts.entries()]
+    .sort(([left], [right]) => compareText(left, right))
+  if (cascadeTargets.length > 0) {
+    const bundleDirs = enumerateBundleDirs(input.knowledgeRoot)
+    for (const [recordId, product] of cascadeTargets) {
+      const dir = bundleDirs.find((entry) => entry.dir.endsWith(`/${recordId}`))?.dir
+      if (dir === undefined) {
+        throw new Error(`rollback target ${recordId} disappeared during commit`)
+      }
+      const reloaded = loadBundle(dir)
+      if (reloaded.kind !== 'loaded') {
+        throw new Error(`rollback target ${recordId} disappeared during commit`)
+      }
+      const surviving = survivingOutcomeEvents(reloaded.bundle.events)
+      const survivingPromoted = surviving.filter((event) => event.type === 'promoted')
+      if (
+        surviving.some((event) => event.type === 'confirmed')
+        || survivingPromoted.length === 0
+      ) {
+        continue
+      }
+      for (const promoted of survivingPromoted) {
+        const appended = appendRetraction(
+          input,
+          resolution,
+          {
+            recordId,
+            evidenceToken: promoted.evidenceToken,
+            curationJobId: promoted.curationJobId,
+            type: 'promoted',
+            event: promoted,
+            product,
+          },
+          promoted.evidenceToken,
+        )
+        if (appended) inverseCount += 1
+      }
+      retractedPromotions.add(recordId)
     }
   }
 
@@ -509,6 +566,7 @@ function emitRollback(
     deprecatedBundles: resolution.mintedBundles
       .map(({ recordId }) => recordId)
       .sort(compareText),
+    retractedPromotions: [...retractedPromotions].sort(compareText),
     affected: publicAffectedSet(resolution),
   }
 }
