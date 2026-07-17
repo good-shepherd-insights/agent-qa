@@ -118,7 +118,7 @@ export interface RequeueClaimedOptions {
   leaseId: string
 }
 
-function removeEmptyDir(dir: string): void {
+export function removeEmptyDir(dir: string): void {
   try {
     rmdirSync(dir)
   } catch (error) {
@@ -127,7 +127,7 @@ function removeEmptyDir(dir: string): void {
   }
 }
 
-function durableWrite(file: string, bytes: string | Uint8Array): void {
+export function durableWrite(file: string, bytes: string | Uint8Array): void {
   mkdirSync(dirname(file), { recursive: true })
   const fd = openSync(file, 'wx')
   try {
@@ -138,7 +138,7 @@ function durableWrite(file: string, bytes: string | Uint8Array): void {
   }
 }
 
-function bestEffortFsyncDirectory(dir: string): void {
+export function bestEffortFsyncDirectory(dir: string): void {
   let fd: number | undefined
   try {
     fd = openSync(dir, 'r')
@@ -151,6 +151,28 @@ function bestEffortFsyncDirectory(dir: string): void {
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
+}
+
+export type PublishStagedQueueEntryOutcome = 'published' | 'coalesced'
+
+/** Publish one fully durable staging directory, coalescing an existing content address. */
+export function publishStagedQueueEntry(
+  stagingDir: string,
+  finalDir: string,
+  queueDir: string,
+): PublishStagedQueueEntryOutcome {
+  mkdirSync(queueDir, { recursive: true })
+  try {
+    renameSync(stagingDir, finalDir)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(finalDir)) {
+      return 'coalesced'
+    }
+    throw error
+  }
+  bestEffortFsyncDirectory(queueDir)
+  return 'published'
 }
 
 function directoryNames(dir: string): string[] {
@@ -599,17 +621,12 @@ export function enqueueCurationCandidateProjection(
     durableWrite(join(stagingDir, 'payload.json'), `${canonicalJson(payload)}\n`)
     bestEffortFsyncDirectory(join(stagingDir, 'artifacts'))
     bestEffortFsyncDirectory(stagingDir)
-    mkdirSync(queuedRoot(opts.knowledgeRoot), { recursive: true })
-    try {
-      renameSync(stagingDir, finalDir)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(finalDir)) {
-        return { kind: 'coalesced', candidateId }
-      }
-      throw error
-    }
-    bestEffortFsyncDirectory(queuedRoot(opts.knowledgeRoot))
+    const published = publishStagedQueueEntry(
+      stagingDir,
+      finalDir,
+      queuedRoot(opts.knowledgeRoot),
+    )
+    if (published === 'coalesced') return { kind: 'coalesced', candidateId }
     return { kind: 'enqueued', candidateId }
   } finally {
     rmSync(stagingDir, { recursive: true, force: true })
