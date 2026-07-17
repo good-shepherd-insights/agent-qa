@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import {
   asEvidenceToken,
+  recordGraphNode,
   type Anchor,
   type OriginClass,
   type RecordId,
@@ -26,6 +27,8 @@ import {
   type GcSummary,
   type PublishBundleOutcome,
 } from '../index.js'
+import { indexDbPath } from '../index-open.js'
+import { removeBundleProjectionRows } from '../index-rebuild.js'
 import { makeBundleDraftFixture } from './fixtures/bundle-fixture.js'
 
 type PublishedBundle = Extract<PublishBundleOutcome, { kind: 'published' }>
@@ -216,6 +219,20 @@ function existingRecordIds(): string[] {
   }
 }
 
+function recordRowids(): Map<string, number> {
+  const reader = openIndexReaderConnection(knowledgeRoot)
+  try {
+    return new Map(
+      reader.db
+        .prepare('SELECT bundle_id, record_rowid FROM records')
+        .all()
+        .map((row) => [String(row.bundle_id), Number(row.record_rowid)]),
+    )
+  } finally {
+    reader.db.close()
+  }
+}
+
 describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
   it('retains the latest K superseded generations plus the live head and lets rebuild remove orphans', async () => {
     const chain = publishChain('depth', 6)
@@ -302,6 +319,22 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
   })
 })
 
+describe('removeBundleProjectionRows scoping (WR-01)', () => {
+  it('returns 0 without creating an index db when the db is absent or ids are empty', () => {
+    expect(removeBundleProjectionRows(knowledgeRoot, ['missing-record'])).toBe(0)
+    expect(existsSync(indexDbPath(knowledgeRoot))).toBe(false)
+    expect(removeBundleProjectionRows(knowledgeRoot, [])).toBe(0)
+  })
+
+  it('skips ids without records rows and leaves existing projections untouched', async () => {
+    const chain = publishChain('noop-scope', 0)
+    await rebuildIndex({ knowledgeRoot })
+
+    expect(removeBundleProjectionRows(knowledgeRoot, ['unknown-bundle-id'])).toBe(0)
+    expect(existingRecordIds()).toEqual([chain.head.id])
+  })
+})
+
 describe('drain-tail GC diagnostics (DCAY-05)', () => {
   const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
   const author = vi.fn<CuratorAuthor>()
@@ -368,6 +401,111 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     expect(report.writerPass).toEqual({ kind: 'not-requested' })
     expect(report.gc).toEqual({ kind: 'skipped', reason: 'budget-exhausted' })
     expect(gc).not.toHaveBeenCalled()
+  })
+
+  it('heals trimmed projections in the same drain (WR-01)', async () => {
+    const chain = publishChain('same-drain', 4)
+    await rebuildIndex({ knowledgeRoot })
+    const victim = chain.superseded[0]!
+    const retained = [...chain.superseded.slice(1), chain.head]
+    const rowids = recordRowids()
+    const victimRowid = rowids.get(victim.id)!
+    const victimNodeId = recordGraphNode('fact', victim.id).nodeId
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: baseOperations(),
+    })
+
+    expect(report.kind).toBe('drained')
+    expect(report.failureDetails).toEqual([])
+    expect(report.gc).toEqual({
+      kind: 'completed',
+      summary: {
+        trimmedRecordIds: [victim.id],
+        skipped: { unknownRef: 0, withinK: 3, userOrigin: 0, horizon: 0 },
+      },
+      projectionRowsRemoved: 1,
+    })
+
+    const reader = openIndexReaderConnection(knowledgeRoot)
+    try {
+      const count = (sql: string, ...params: (string | number)[]): number => {
+        const row = reader.db.prepare(sql).get(...params)
+        return Number(row?.n ?? 0)
+      }
+      expect(count('SELECT COUNT(*) AS n FROM records WHERE bundle_id = ?', victim.id)).toBe(0)
+      expect(count('SELECT COUNT(*) AS n FROM anchors WHERE record_rowid = ?', victimRowid)).toBe(0)
+      expect(count('SELECT COUNT(*) AS n FROM fts_records WHERE rowid = ?', victimRowid)).toBe(0)
+      expect(count(
+        'SELECT COUNT(*) AS n FROM graph_edges WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?',
+        victimRowid,
+        victimNodeId,
+        victimNodeId,
+      )).toBe(0)
+      for (const bundle of retained) {
+        expect(count('SELECT COUNT(*) AS n FROM records WHERE bundle_id = ?', bundle.id)).toBe(1)
+        expect(count(
+          'SELECT COUNT(*) AS n FROM anchors WHERE record_rowid = ?',
+          rowids.get(bundle.id)!,
+        )).toBeGreaterThan(0)
+      }
+    } finally {
+      reader.db.close()
+    }
+  }, 15_000)
+
+  it('records a projection-cleanup failure while preserving the completed GC summary', async () => {
+    const summary: GcSummary = {
+      trimmedRecordIds: ['trimmed-record' as RecordId],
+      skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
+    }
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...baseOperations(),
+        runKnowledgeGc: () => summary,
+        removeBundleProjectionRows: () => {
+          throw new Error('simulated projection cleanup failure')
+        },
+      },
+    })
+
+    expect(report.kind).toBe('drained')
+    expect(report.gc).toEqual({ kind: 'completed', summary })
+    expect(report.gc).not.toHaveProperty('projectionRowsRemoved')
+    expect(report.failureDetails).toContainEqual({
+      stage: 'gc',
+      message: 'simulated projection cleanup failure',
+    })
+  })
+
+  it('skips projection cleanup entirely on a zero-trim GC', async () => {
+    const cleanup = vi.fn(() => 0)
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...baseOperations(),
+        runKnowledgeGc: () => EMPTY_GC_SUMMARY,
+        removeBundleProjectionRows: cleanup,
+      },
+    })
+
+    expect(cleanup).not.toHaveBeenCalled()
+    expect(report.gc).toEqual({ kind: 'completed', summary: EMPTY_GC_SUMMARY })
+    expect(report.gc).not.toHaveProperty('projectionRowsRemoved')
   })
 
   it('contains a GC failure as diagnostics without failing the drain', async () => {
