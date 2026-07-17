@@ -1072,7 +1072,7 @@ describe('embedding profile stamp transitions', () => {
     } finally {
       reader.db.close()
     }
-  }, 15_000)
+  })
 
   it('evicts a vec0 row whose present canonical blob has the wrong length', async () => {
     const published = publishFixture()

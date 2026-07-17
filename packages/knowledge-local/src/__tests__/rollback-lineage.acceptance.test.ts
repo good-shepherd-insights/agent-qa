@@ -631,5 +631,5 @@ describe('rollback-aware GC recent-K acceptance (DCAY-05)', () => {
     expect(existsSync(generationB.dir)).toBe(true)
     expect(existsSync(survivingHead.dir)).toBe(true)
     expect(existsSync(rolledBack.outcome.bundleDir)).toBe(true)
-  }, 15_000)
+  })
 })

@@ -1275,7 +1275,7 @@ describe('DCAY-05 sovereign purge', () => {
         expect(bytes).not.toContain(reviveSentinels.anchorName)
       }
       expect(existsSync(seriesIntentPath(first.id))).toBe(false)
-    }, 15_000)
+    })
 
     it('attests already-purged with the latest series receipt over verified-dead surfaces', () => {
       const first = publish(...revivePublishInput())

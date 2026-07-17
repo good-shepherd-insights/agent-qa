@@ -362,7 +362,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       anchorClusterKey: supersessionKey(alphaAnchors),
       originClass: 'agent-observed',
     }).affected.mintedBundleIds).toEqual([highAlphaObserved.id])
-  }, 15_000)
+  })
 
   it('derives the receipt from canonical kind, keys, and resolution ordinal bytes', () => {
     const keys = {
