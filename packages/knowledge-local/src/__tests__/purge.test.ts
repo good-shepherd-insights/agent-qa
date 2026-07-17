@@ -1,4 +1,12 @@
-import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -37,6 +45,13 @@ interface PurgeRecordInput {
   knowledgeRoot: string
   recordId: string
   initiator: string
+  hooks?: {
+    afterIntentWritten?: () => void
+    afterProjectionPurge?: () => void
+    afterBundleRemoval?: () => void
+    afterQueueSweep?: () => void
+    beforeReceiptPublish?: () => void
+  }
 }
 
 interface PurgeRecordOutcome {
@@ -64,6 +79,23 @@ interface PurgeReceiptSchemaApi {
 
 interface PurgeApi {
   purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome
+}
+
+interface PurgeIntent {
+  schemaVersion: number
+  purgedRecordId: string
+  receipt: PurgeReceipt
+  bundleDirs: string[]
+  queueCandidateIds: string[]
+  queuePayloadDirs: string[]
+}
+
+interface PurgeIntentSchemaApi {
+  PURGE_INTENT_SCHEMA_VERSION: number
+  purgeIntentSchema: {
+    safeParse(value: unknown): { success: boolean }
+  }
+  guardPurgeIntent(value: unknown): PurgeIntent
 }
 
 interface QueueSweepTarget {
@@ -94,6 +126,18 @@ function queueSweepApi(): QueueSweepApi {
     throw new Error('resolveQueueSweepTargets public API is not implemented')
   }
   return candidate as QueueSweepApi
+}
+
+function purgeIntentSchemaApi(): PurgeIntentSchemaApi {
+  const candidate = purgeModule as unknown as Partial<PurgeIntentSchemaApi>
+  if (
+    typeof candidate.PURGE_INTENT_SCHEMA_VERSION !== 'number'
+    || candidate.purgeIntentSchema === undefined
+    || typeof candidate.guardPurgeIntent !== 'function'
+  ) {
+    throw new Error('purge intent schema public API is not implemented')
+  }
+  return candidate as PurgeIntentSchemaApi
 }
 
 function purgeReceiptSchemaApi(): PurgeReceiptSchemaApi {
@@ -818,5 +862,254 @@ describe('DCAY-05 sovereign purge', () => {
     expect(second.receipt).toEqual(first.receipt)
     expect(readFileSync(receiptPath)).toEqual(firstBytes)
     expect(readdirSync(receiptDir)).toEqual([`purge-${target.id}.json`])
+  })
+
+  describe('CR-04 crash-durable purge intent', () => {
+    const BOUNDARIES = [
+      'afterIntentWritten',
+      'afterProjectionPurge',
+      'afterBundleRemoval',
+      'afterQueueSweep',
+      'beforeReceiptPublish',
+    ] as const
+    type CrashBoundary = (typeof BOUNDARIES)[number]
+
+    const bundleSurvivesCrash: Record<CrashBoundary, boolean> = {
+      afterIntentWritten: true,
+      afterProjectionPurge: true,
+      afterBundleRemoval: false,
+      afterQueueSweep: false,
+      beforeReceiptPublish: false,
+    }
+    const projectionRowSurvivesCrash: Record<CrashBoundary, boolean> = {
+      afterIntentWritten: true,
+      afterProjectionPurge: false,
+      afterBundleRemoval: false,
+      afterQueueSweep: false,
+      beforeReceiptPublish: false,
+    }
+    const matchedPayloadSurvivesCrash: Record<CrashBoundary, boolean> = {
+      afterIntentWritten: true,
+      afterProjectionPurge: true,
+      afterBundleRemoval: true,
+      afterQueueSweep: false,
+      beforeReceiptPublish: false,
+    }
+
+    function intentFilePath(recordId: string): string {
+      return join(knowledgeRoot, 'memory', 'receipts', `purge-${recordId}.intent.json`)
+    }
+
+    function receiptFilePath(recordId: string): string {
+      return join(knowledgeRoot, 'memory', 'receipts', `purge-${recordId}.json`)
+    }
+
+    function recordsRowPresent(recordId: string): boolean {
+      const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+      try {
+        return (
+          reader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(recordId)
+          !== undefined
+        )
+      } finally {
+        reader.db.close()
+      }
+    }
+
+    interface CrashFixture {
+      targetId: string
+      targetDir: string
+      matchedId: string
+      survivorId: string
+      sentinels: { summary: string; body: string; anchorName: string }
+    }
+
+    async function publishCrashFixture(identity: string): Promise<CrashFixture> {
+      const sentinels = {
+        summary: `SENTINEL-SUMMARY-${identity} stays out of durable purge artifacts`,
+        body: `SENTINEL-BODY-${identity} confirmed-sensitive content never copied forward`,
+        anchorName: `Sentinel anchor ${identity}`,
+      }
+      const anchors = [
+        { t: 'el', role: 'button', name: sentinels.anchorName },
+        { t: 'page', route: `/purge/crash/${identity}` },
+        { t: 'platform', platform: 'web' },
+      ] satisfies Anchor[]
+      const target = publish(identity, anchors, {
+        draft: makeBundleDraftFixture({
+          anchors: [...anchors],
+          scope: { tier: 'product', key: PRODUCT },
+          summary: sentinels.summary,
+          body: sentinels.body,
+        }),
+      })
+      const matchedId = enqueue(
+        `${identity}-matched`,
+        [
+          { t: 'el', role: 'link', name: `Disjoint matched control ${identity}` },
+          { t: 'page', route: `/purge/crash/${identity}/matched` },
+          { t: 'platform', platform: 'web' },
+        ],
+        { bodySeed: sentinels.body },
+      )
+      const survivorId = enqueue(`${identity}-survivor`, [
+        { t: 'el', role: 'link', name: `Unrelated survivor control ${identity}` },
+        { t: 'page', route: `/purge/crash/${identity}/survivor` },
+        { t: 'platform', platform: 'web' },
+      ])
+      await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
+      return {
+        targetId: target.id,
+        targetDir: target.dir,
+        matchedId,
+        survivorId,
+        sentinels,
+      }
+    }
+
+    function crashingPurge(
+      recordId: string,
+      boundary: CrashBoundary,
+    ): () => PurgeRecordOutcome {
+      const hooks: NonNullable<PurgeRecordInput['hooks']> = {}
+      hooks[boundary] = () => {
+        throw new Error(`injected crash at ${boundary}`)
+      }
+      return () =>
+        purgeApi().purgeRecord({ knowledgeRoot, recordId, initiator: 'user', hooks })
+    }
+
+    for (const boundary of BOUNDARIES) {
+      it(`recovers to the identical receipt after a crash at ${boundary}`, async () => {
+        const fixture = await publishCrashFixture(`crash-${boundary.toLowerCase()}`)
+        const matchedDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, fixture.matchedId)
+        const survivorDir = knowledgeLocal.queuedCandidateDir(
+          knowledgeRoot,
+          fixture.survivorId,
+        )
+
+        expect(crashingPurge(fixture.targetId, boundary)).toThrow(
+          `injected crash at ${boundary}`,
+        )
+
+        expect(existsSync(receiptFilePath(fixture.targetId))).toBe(false)
+        const intentText = readFileSync(intentFilePath(fixture.targetId), 'utf8')
+        const intent = purgeIntentSchemaApi().guardPurgeIntent(JSON.parse(intentText))
+        expect(intent.purgedRecordId).toBe(fixture.targetId)
+        expect(intent.queueCandidateIds).toEqual([fixture.matchedId])
+        expect(intent.bundleDirs).toEqual([relative(knowledgeRoot, fixture.targetDir)])
+
+        expect(existsSync(fixture.targetDir)).toBe(bundleSurvivesCrash[boundary])
+        expect(recordsRowPresent(fixture.targetId)).toBe(projectionRowSurvivesCrash[boundary])
+        expect(existsSync(matchedDir)).toBe(matchedPayloadSurvivesCrash[boundary])
+        expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, fixture.matchedId))).toBe(
+          matchedPayloadSurvivesCrash[boundary],
+        )
+        expect(existsSync(survivorDir)).toBe(true)
+
+        const retry = purge(fixture.targetId)
+        expect(retry.kind).toBe('purged')
+        expect(retry.receipt).toEqual(intent.receipt)
+        expect(
+          JSON.parse(readFileSync(receiptFilePath(fixture.targetId), 'utf8')),
+        ).toEqual(intent.receipt)
+        expect(existsSync(fixture.targetDir)).toBe(false)
+        expect(recordsRowPresent(fixture.targetId)).toBe(false)
+        expect(existsSync(matchedDir)).toBe(false)
+        expect(
+          existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, fixture.matchedId)),
+        ).toBe(false)
+        expect(existsSync(survivorDir)).toBe(true)
+        expect(
+          existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, fixture.survivorId)),
+        ).toBe(true)
+        expect(existsSync(intentFilePath(fixture.targetId))).toBe(false)
+
+        const third = purge(fixture.targetId)
+        expect(third.kind).toBe('already-purged')
+        expect(third.receipt).toEqual(intent.receipt)
+      })
+    }
+
+    it('leaves every surface intact when a crash precedes the intent and a plain retry completes', async () => {
+      const fixture = await publishCrashFixture('crash-pre-intent')
+      const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+      mkdirSync(join(knowledgeRoot, 'memory'), { recursive: true })
+      writeFileSync(receiptsDir, 'blocks the receipts directory so durable publication fails')
+
+      expect(() => purge(fixture.targetId)).toThrow()
+
+      expect(existsSync(fixture.targetDir)).toBe(true)
+      expect(recordsRowPresent(fixture.targetId)).toBe(true)
+      expect(
+        existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, fixture.matchedId)),
+      ).toBe(true)
+      expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, fixture.matchedId))).toBe(
+        true,
+      )
+      expect(existsSync(intentFilePath(fixture.targetId))).toBe(false)
+
+      rmSync(receiptsDir, { force: true })
+      const retry = purge(fixture.targetId)
+      expect(retry.kind).toBe('purged')
+      expect(existsSync(receiptFilePath(fixture.targetId))).toBe(true)
+      expect(existsSync(fixture.targetDir)).toBe(false)
+      expect(recordsRowPresent(fixture.targetId)).toBe(false)
+      expect(
+        existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, fixture.matchedId)),
+      ).toBe(false)
+      expect(
+        existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, fixture.survivorId)),
+      ).toBe(true)
+      expect(existsSync(intentFilePath(fixture.targetId))).toBe(false)
+    })
+
+    it('derives byte-identical intent text over identical store state', async () => {
+      const fixture = await publishCrashFixture('intent-determinism')
+
+      expect(crashingPurge(fixture.targetId, 'afterIntentWritten')).toThrow(
+        'injected crash at afterIntentWritten',
+      )
+      const firstIntentText = readFileSync(intentFilePath(fixture.targetId), 'utf8')
+
+      rmSync(intentFilePath(fixture.targetId), { force: true })
+
+      expect(crashingPurge(fixture.targetId, 'afterIntentWritten')).toThrow(
+        'injected crash at afterIntentWritten',
+      )
+      const secondIntentText = readFileSync(intentFilePath(fixture.targetId), 'utf8')
+
+      expect(secondIntentText).toBe(firstIntentText)
+    })
+
+    it('keeps purged content out of intent and receipt bytes', async () => {
+      const fixture = await publishCrashFixture('intent-content-free')
+
+      expect(crashingPurge(fixture.targetId, 'beforeReceiptPublish')).toThrow(
+        'injected crash at beforeReceiptPublish',
+      )
+      const intentText = readFileSync(intentFilePath(fixture.targetId), 'utf8')
+      expect(intentText).not.toContain(fixture.sentinels.summary)
+      expect(intentText).not.toContain(fixture.sentinels.body)
+      expect(intentText).not.toContain(fixture.sentinels.anchorName)
+
+      const schemaApi = purgeIntentSchemaApi()
+      const intent = JSON.parse(intentText) as Record<string, unknown>
+      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(1)
+      expect(schemaApi.purgeIntentSchema.safeParse(intent).success).toBe(true)
+      expect(
+        schemaApi.purgeIntentSchema.safeParse({ ...intent, unexpected: 'field' }).success,
+      ).toBe(false)
+      expect(() => schemaApi.guardPurgeIntent({ ...intent, schemaVersion: 2 })).toThrow(
+        /schemaVersion 2 is not supported/u,
+      )
+
+      const retry = purge(fixture.targetId)
+      expect(retry.kind).toBe('purged')
+      const receiptText = readFileSync(receiptFilePath(fixture.targetId), 'utf8')
+      expect(receiptText).not.toContain(fixture.sentinels.summary)
+      expect(receiptText).not.toContain(fixture.sentinels.body)
+      expect(receiptText).not.toContain(fixture.sentinels.anchorName)
+    })
   })
 })
