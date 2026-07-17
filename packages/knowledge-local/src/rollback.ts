@@ -89,6 +89,27 @@ interface RollbackResolution {
   counterEvents: ResolvedCounterEvent[]
 }
 
+/**
+ * CR-02: a rollback must never attest success at a resolution ordinal that is powerless to
+ * change lifecycle status. At equal buildOrdinal the trust fold's fixed STATUS_PRECEDENCE keeps
+ * active above deprecated, and an older event can never replace a newer status, so a
+ * non-strictly-later resolvedAtOrdinal cannot causally invert a minted bundle.
+ */
+export class RollbackCausalityError extends Error {
+  readonly offendingRecordIds: RecordId[]
+  readonly minimumRequiredOrdinal: number
+
+  constructor(offendingRecordIds: RecordId[], minimumRequiredOrdinal: number) {
+    super(
+      `rollback resolvedAtOrdinal must be at least ${minimumRequiredOrdinal} `
+      + `to invert ${offendingRecordIds.join(', ')}`,
+    )
+    this.name = 'RollbackCausalityError'
+    this.offendingRecordIds = offendingRecordIds
+    this.minimumRequiredOrdinal = minimumRequiredOrdinal
+  }
+}
+
 const ORIGIN_CLASSES = new Set<OriginClass>([
   'user',
   'agent-verified',
@@ -464,15 +485,69 @@ function appendRetraction(
   )
 }
 
+function latestSurvivingLifecycleOrdinal(bundle: LoadedBundle): number {
+  let latest = bundle.manifest.createdAtOrdinal
+  for (const event of survivingOutcomeEvents(bundle.events)) {
+    // Window-close and observation events never derive status, so they cannot gate causality.
+    if (
+      (event.type === 'promoted' || event.type === 'superseded' || event.type === 'deprecated')
+      && event.buildOrdinal > latest
+    ) {
+      latest = event.buildOrdinal
+    }
+  }
+  return latest
+}
+
+/**
+ * Atomic strictly-later causal preflight (CR-02). Runs before ANY append or projection write:
+ * every minted bundle in the resolved set must be invertible at input.resolvedAtOrdinal. A
+ * bundle is admitted when its surviving fold status is already deprecated (the inverse
+ * end-state already holds) or when its log already carries this receipt's exact
+ * inverse-deprecate identity (byte replay). Otherwise the resolution must be strictly later
+ * than the bundle's latest surviving lifecycle ordinal — at an equal ordinal the fold's fixed
+ * status precedence makes the inverse deprecation lose, so success would be a lie. All
+ * violators are collected first and reported in one throw; no partial mutation ever precedes it.
+ */
+function assertCausalResolution(
+  input: RollbackBaseInput,
+  resolution: RollbackResolution,
+): void {
+  const offenders: { recordId: RecordId; latestOrdinal: number }[] = []
+  for (const minted of resolution.mintedBundles) {
+    if (deriveBundleTrust(minted.bundle).status === 'deprecated') continue
+    const inverseToken = inverseEvidenceToken(
+      resolution.receiptId,
+      minted.recordId,
+      'minted-bundle',
+    )
+    const alreadyInverted = minted.bundle.events.some((event) =>
+      event.evidenceToken === inverseToken
+      && event.curationJobId === resolution.receiptId,
+    )
+    if (alreadyInverted) continue
+    const latestOrdinal = latestSurvivingLifecycleOrdinal(minted.bundle)
+    if (input.resolvedAtOrdinal > latestOrdinal) continue
+    offenders.push({ recordId: minted.recordId, latestOrdinal })
+  }
+  if (offenders.length === 0) return
+  throw new RollbackCausalityError(
+    offenders.map(({ recordId }) => recordId).sort(compareText),
+    1 + Math.max(...offenders.map(({ latestOrdinal }) => latestOrdinal)),
+  )
+}
+
 function emitRollback(
   input: RollbackBaseInput,
   resolution: RollbackResolution,
 ): RollbackReport {
+  assertCausalResolution(input, resolution)
+
   let inverseCount = 0
   const touched = new Set<RecordId>()
   const restoredVictims = new Set<RecordId>()
   const retractedPromotions = new Set<RecordId>()
-  const counterProducts = new Map<RecordId, string>()
+  const supportLossCandidates = new Map<RecordId, string>()
 
   for (const minted of resolution.mintedBundles) {
     if (appendInverseDeprecate(input, resolution, minted)) inverseCount += 1
@@ -489,7 +564,9 @@ function emitRollback(
       inverseCount += 1
     }
     touched.add(counter.recordId)
-    counterProducts.set(counter.recordId, counter.product)
+    if (counter.type === 'confirmed') {
+      supportLossCandidates.set(counter.recordId, counter.product)
+    }
 
     if (counter.type === 'superseded') {
       const closeToken = asEvidenceToken(sha256hex(canonicalJson({
@@ -507,12 +584,15 @@ function emitRollback(
    * D-15/D-17 support-loss cascade: the V4 promotion-gate support
    * (`confirmedOutcomeEvidenceTokens` in assemblePromotionGateInput) is at least one surviving
    * confirmation, so a promotion whose last qualifying support this rollback removed is
-   * retracted here under the same auditable receipt. If surviving evidence still merits
-   * promotion, the D-17 gate re-grants it on the next drain; authority is never left standing
-   * on retracted support. Cascade targets are exact eventDedupKey identities and every inverse
-   * is an append — existing outcome lines are never rewritten.
+   * retracted here under the same auditable receipt. The cascade fires only where THIS
+   * rollback retracted a confirmed event and no confirmation survives: a promotion that never
+   * had confirmed support was not deposed by this receipt and is left to the D-17 gate. If
+   * surviving evidence still merits promotion, the gate re-grants it on the next drain;
+   * authority is never left standing on support this rollback removed. Cascade targets are
+   * exact eventDedupKey identities and every inverse is an append — existing outcome lines are
+   * never rewritten.
    */
-  const cascadeTargets = [...counterProducts.entries()]
+  const cascadeTargets = [...supportLossCandidates.entries()]
     .sort(([left], [right]) => compareText(left, right))
   if (cascadeTargets.length > 0) {
     const bundleDirs = enumerateBundleDirs(input.knowledgeRoot)

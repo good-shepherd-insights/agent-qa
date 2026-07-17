@@ -313,6 +313,7 @@ export type {
 } from './purge.js'
 export {
   rollbackCampaign,
+  RollbackCausalityError,
   rollbackCurationJob,
   rollbackReceiptId,
 } from './rollback.js'
