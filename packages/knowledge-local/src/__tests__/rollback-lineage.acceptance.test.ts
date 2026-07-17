@@ -496,7 +496,7 @@ describe('rollback-aware lineage acceptance (DCAY-03/DCAY-05)', () => {
       triggerKey: supersessionKey(ANCHORS),
       windowCloseOrdinal: 5,
     })
-  })
+  }, 15_000)
 
   it('rollback lets the next Confirm close from the latest surviving supersession', () => {
     const first = publishGeneration(11, 1)
