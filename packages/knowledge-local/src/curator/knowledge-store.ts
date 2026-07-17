@@ -78,15 +78,17 @@ export interface CreateLocalKnowledgeStoreConfig {
   }
 }
 
+/**
+ * @deprecated `recordCanaryOutcome` is implemented. The exported class remains only so code
+ * compiled against the pre-380 package surface does not lose its named import.
+ */
 export class KnowledgeStoreNotImplementedError extends Error {
   readonly operation: 'recordCanaryOutcome'
-  readonly ownerPhase: 380
 
-  constructor(operation: 'recordCanaryOutcome', ownerPhase: 380) {
-    super(`${operation} is not implemented; Phase ${ownerPhase} owns this KnowledgePort seam`)
+  constructor(operation: 'recordCanaryOutcome', _retiredOwnerPhase?: 380) {
+    super(`${operation} compatibility error is retired because the operation is implemented`)
     this.name = 'KnowledgeStoreNotImplementedError'
     this.operation = operation
-    this.ownerPhase = ownerPhase
   }
 }
 
