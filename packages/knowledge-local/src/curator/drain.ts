@@ -1,8 +1,10 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import {
   canonicalJson,
+  asRecordId,
   type BundleKind,
+  type CanaryOutcome,
   type ExecutionContext,
   type FactSubtype,
   type GuardrailPolicy,
@@ -44,7 +46,12 @@ import {
   claimNextJob,
   requeueClaimed,
   type ClaimedCurationJob,
+  type MalformedClaimedCurationJob,
 } from '../queue/curation-queue.js'
+import {
+  canaryOutcomeContentAddress,
+  canaryOutcomePayloadSchema,
+} from '../queue/canary-payload.js'
 import {
   persistAuthoredCheckpoint,
   readJobState,
@@ -68,6 +75,7 @@ import {
 } from './commit.js'
 import type { DispositionDrainState } from './disposition.js'
 import { constructFallbackDeltas } from './fallback.js'
+import { createLocalKnowledgeStore } from './knowledge-store.js'
 
 /** Ratified M2 one-shot budget. It gates job starts only, never an in-flight author request. */
 export const DRAIN_BUDGET_MS = 60_000
@@ -245,6 +253,34 @@ const DEFAULT_OPERATIONS: DrainOperations = {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function readClaimedCanaryOutcome(
+  claimed: MalformedClaimedCurationJob,
+): CanaryOutcome | undefined {
+  try {
+    const parsed = canaryOutcomePayloadSchema.safeParse(
+      JSON.parse(readFileSync(claimed.payloadPath, 'utf8')),
+    )
+    if (
+      !parsed.success
+      || canaryOutcomeContentAddress(parsed.data) !== claimed.candidateId
+    ) {
+      return undefined
+    }
+    return {
+      candidateId: asRecordId(parsed.data.candidateId),
+      runOutcome: parsed.data.outcome,
+      runId: parsed.data.runId,
+      buildOrdinal: parsed.data.buildOrdinal,
+      stepIndex: parsed.data.stepIndex,
+      briefDigest: parsed.data.briefDigest,
+      attribution: parsed.data.attribution,
+      exercisedAnchor: parsed.data.exercisedAnchor,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 function isEmbeddingCrash(error: unknown, seen = new Set<object>()): boolean {
@@ -668,10 +704,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       }
       if (claimed === undefined) break
       result.jobsProcessed += 1
-      if (claimed.kind === 'malformed') {
-        recordFailure(result, 'job-state', 'claimed candidate payload is malformed', claimed.candidateId)
-        continue
-      }
 
       const heartbeat = operations.heartbeatLease({
         knowledgeRoot: options.knowledgeRoot,
@@ -680,6 +712,43 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       if (heartbeat.kind === 'refused') {
         recordFailure(result, 'heartbeat', heartbeat.reason, claimed.candidateId)
         break
+      }
+
+      if (claimed.kind === 'malformed') {
+        // D-22: the strict sibling payload branches before checkpoint lookup, retrieval, or
+        // author construction. A canary job therefore has no control-flow path to an LLM and
+        // consumes none of the search-before-create query budget.
+        const canaryOutcome = readClaimedCanaryOutcome(claimed)
+        if (canaryOutcome === undefined) {
+          recordFailure(
+            result,
+            'job-state',
+            'claimed candidate payload is malformed',
+            claimed.candidateId,
+          )
+          continue
+        }
+        try {
+          const store = createLocalKnowledgeStore({
+            knowledgeRoot: options.knowledgeRoot,
+            auditBaseDir: options.auditBaseDir,
+            executionContext: options.executionContext,
+            epoch: lease.epoch,
+            sourceBuildOrdinal: canaryOutcome.buildOrdinal,
+            sourceRunId: canaryOutcome.runId,
+            policy: options.policy,
+          })
+          await store.recordCanaryOutcome(canaryOutcome)
+          operations.writeJobState({
+            knowledgeRoot: options.knowledgeRoot,
+            candidateId: claimed.candidateId,
+            lifecycle: 'done',
+          })
+          result.committed += 1
+        } catch (error) {
+          recordFailure(result, 'commit', error, claimed.candidateId)
+        }
+        continue
       }
 
       let checkpoint: AuthoredCheckpoint

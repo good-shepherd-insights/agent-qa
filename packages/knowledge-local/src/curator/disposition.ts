@@ -1,11 +1,13 @@
 import {
   canonicalJson,
   decideMeasurementDrift,
+  sha256hex,
   foldMeasurements,
   normalizeAnchor,
   supersessionKey as schemaSupersessionKey,
   type Anchor,
   type BundleStatus,
+  type CanaryOutcome,
   type Delta,
   type MeasurementObservation,
   type RecordId,
@@ -35,6 +37,21 @@ import {
 
 /** Provisional §7.3.1 cap. Phase 379 may retune it only through an explicit constant edit. */
 export const BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN = 1
+
+/**
+ * D-22: bind one canary observation to the served candidate and attributed step. The schema
+ * evidence-token recipe adds the exercised anchor and build ordinal; together those fields are
+ * the complete replay identity required by §7.5.1.
+ */
+export function canaryOutcomeObservationId(
+  outcome: Pick<CanaryOutcome, 'candidateId' | 'runId' | 'stepIndex'>,
+): string {
+  return `canary-outcome:${sha256hex(canonicalJson({
+    candidateId: outcome.candidateId,
+    runId: outcome.runId,
+    stepIndex: outcome.stepIndex,
+  }))}`
+}
 
 export interface DispositionCandidateContext {
   anchors: readonly Anchor[]

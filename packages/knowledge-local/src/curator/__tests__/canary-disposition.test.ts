@@ -28,6 +28,7 @@ import {
   type PublishBundleInput,
 } from '../../bundle-publish.js'
 import { buildRetrievalQuery } from '../../query-helper.js'
+import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
 import { readJobState, writeJobState } from '../../queue/job-state.js'
@@ -49,7 +50,7 @@ const ELEMENT_OBSERVATION: DistilledObservation = {
   schemaVersion: 1,
   step: { naturalKey: 'checkout-click', ordinal: 0 },
   platform: 'web',
-  element: { naturalKey: 'button:Checkout:0' },
+  element: { naturalKey: 'button:checkout:0' },
   locator: { selector: '[data-testid="checkout"]' },
   observedAtOrdinal: 42,
 }
@@ -58,12 +59,18 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
   let root: string
   let knowledgeRoot: string
   let auditBaseDir: string
+  let epoch: number
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-canary-disposition-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     auditBaseDir = join(root, '.agent-qa')
     scaffoldKnowledgeRoot(knowledgeRoot)
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
+    epoch = lease.epoch
+    const released = releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
+    if (released.kind !== 'released') throw new Error('expected writer lease release')
   })
 
   afterEach(() => {
@@ -156,6 +163,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       executionContext: 'local-interactive',
       sourceBuildOrdinal: 43,
       sourceRunId: 'run-canary-disposition',
+      epoch,
       policy,
     })
   }

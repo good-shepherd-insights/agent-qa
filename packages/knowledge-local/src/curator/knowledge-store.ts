@@ -6,6 +6,7 @@ import {
   asEvidenceToken,
   canonicalJson,
   committedFileText,
+  deriveEvidenceToken,
   evaluatePromotionGate,
   eventDedupKey,
   foldBundleTrust,
@@ -53,6 +54,7 @@ import {
   commitCurationDelta,
   derivePromotedEvidenceToken,
 } from './commit.js'
+import { canaryOutcomeObservationId } from './disposition.js'
 import type {
   CommitCurationDependencies,
   CommitCurationJob,
@@ -290,6 +292,16 @@ function promotionBuildOrdinal(
   )
 }
 
+function expectedPromotionHold(error: unknown): error is KnowledgePromotionError {
+  return error instanceof KnowledgePromotionError
+    && error.reason !== 'not-found'
+    && error.reason !== 'egress-blocked'
+}
+
+function unreachableCanaryOutcome(outcome: never): never {
+  throw new TypeError(`unsupported canary outcome: ${canonicalJson(outcome)}`)
+}
+
 /**
  * Realizes the four-method agent port over one mutation function. D-08 propose-only is a
  * disposition profile inside commitCurationDelta, never a second mutation path. Because the port
@@ -327,15 +339,91 @@ export function createLocalKnowledgeStore(
     }
   }
 
-  return {
+  const store: KnowledgePort = {
     proposeDeltas(deltas: Delta[]): Promise<void> {
       return commitWithProfile(deltas, { mode: 'propose-only' })
     },
     commit(deltas: Delta[]): Promise<void> {
       return commitWithProfile(deltas, resolveDispositionProfile(config.executionContext))
     },
-    async recordCanaryOutcome(_outcome: CanaryOutcome): Promise<void> {
-      throw new KnowledgeStoreNotImplementedError('recordCanaryOutcome', 380)
+    async recordCanaryOutcome(outcome: CanaryOutcome): Promise<void> {
+      const resolved = resolveTruth(config.knowledgeRoot, outcome.candidateId)
+      if (resolved === undefined) {
+        throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
+      }
+
+      const observationId = canaryOutcomeObservationId(outcome)
+      const evidenceToken = deriveEvidenceToken({
+        attributingObservationId: observationId,
+        anchor: outcome.exercisedAnchor,
+        buildOrdinal: outcome.buildOrdinal,
+      })
+
+      switch (outcome.runOutcome) {
+        case 'positive': {
+          // D-22: the LLM never re-enters candidate lifecycle disposition. The one commit path
+          // appends the replay-safe Confirm before the existing promotion gate re-evaluates it.
+          const confirm: Extract<Delta, { kind: 'Confirm' }> = {
+            kind: 'Confirm',
+            origin: 'system',
+            scope: resolved.bundle.frontmatter.scope,
+            citedIds: [outcome.candidateId],
+            targetId: outcome.candidateId,
+            evidenceToken,
+            authorship: {
+              path: 'deterministic-fallback',
+              executionContext: config.executionContext,
+            },
+          }
+          await store.commit([confirm])
+          try {
+            await store.promote(outcome.candidateId)
+          } catch (error) {
+            // A gate hold or propose-only posture means "not yet". The durable Confirm remains
+            // valid evidence and must not turn a crash replay into a permanently failing job.
+            if (!expectedPromotionHold(error)) throw error
+          }
+          return
+        }
+        case 'negative': {
+          // D-22: negative canary evidence joins the canonical outcome log and therefore reuses
+          // the existing deterministic trust/status fold; no parallel lifecycle logic is added.
+          const appendConfig: BundleStoreConfig = {
+            knowledgeRoot: config.knowledgeRoot,
+            productKey: resolved.product,
+            auditBaseDir: config.auditBaseDir,
+            commitArtifacts: 'none',
+            writerLeaseId: 'knowledge-port',
+            policy,
+          }
+          const appended = appendOutcomeEvent(appendConfig, outcome.candidateId, {
+            type: 'contradicted',
+            evidenceToken,
+            curationJobId: observationId,
+            buildOrdinal: outcome.buildOrdinal,
+            observationOrdinal: outcome.stepIndex,
+            observationId,
+            origin: 'agent-verified',
+          })
+          if (appended.kind === 'egress-blocked') {
+            throw new KnowledgePromotionError(
+              outcome.candidateId,
+              appended.kind,
+              appended.detections,
+            )
+          }
+          if (appended.kind === 'not-found') {
+            throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
+          }
+          applyIndexDeltaForBundle({
+            knowledgeRoot: config.knowledgeRoot,
+            bundleId: outcome.candidateId,
+          })
+          return
+        }
+        default:
+          return unreachableCanaryOutcome(outcome.runOutcome)
+      }
     },
     async promote(candidateId: RecordId): Promise<void> {
       /**
@@ -441,4 +529,5 @@ export function createLocalKnowledgeStore(
       applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
     },
   }
+  return store
 }
