@@ -43,6 +43,8 @@ import { curationCandidatePayloadSchema } from './queue/queue-payload.js'
 export const PURGE_RECEIPT_SCHEMA_VERSION = 1
 
 const SAFE_RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+/** Ordinary curation-job ids are 64-hex queue content addresses; prefixed maintenance receipt ids are not queue identities. */
+const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
 const receiptRelativePathSchema = z.string().refine((value) => {
   if (value === '' || value.startsWith('/') || value.includes('\\')) return false
   return value
@@ -78,6 +80,39 @@ export function guardPurgeReceipt(value: unknown): PurgeReceipt {
   return PurgeReceiptSchema.parse(guardPurgeReceiptVersion(value))
 }
 
+export const PURGE_INTENT_SCHEMA_VERSION = 1
+
+/**
+ * D-14/CR-04: the durable, content-free purge intent published before the first irreversible
+ * mutation. It embeds the complete receipt payload plus the exact resolved bundle dirs, queue
+ * candidate ids, and queue payload dirs, so a retry after a crash replays destruction from
+ * persisted identities and completes to byte-identical receipt publication instead of returning
+ * not-found over half-destroyed state. Every list is deterministically sorted at construction;
+ * purged prose, anchors, observations, and vectors have no representable field.
+ */
+export const PurgeIntentSchema = z.object({
+  schemaVersion: z.literal(PURGE_INTENT_SCHEMA_VERSION),
+  purgedRecordId: z.string().regex(SAFE_RECORD_ID),
+  receipt: PurgeReceiptSchema,
+  bundleDirs: z.array(receiptRelativePathSchema).min(1),
+  queueCandidateIds: z.array(z.string().regex(QUEUE_CANDIDATE_ID)),
+  queuePayloadDirs: z.array(receiptRelativePathSchema),
+}).strict()
+
+/** Lower-camel schema alias follows the existing knowledge-local committed-file convention. */
+export const purgeIntentSchema = PurgeIntentSchema
+export type PurgeIntent = z.infer<typeof PurgeIntentSchema>
+
+const guardPurgeIntentVersion = createVersionGuard<PurgeIntent>({
+  name: 'PurgeIntent',
+  current: PURGE_INTENT_SCHEMA_VERSION,
+  migrations: {},
+})
+
+export function guardPurgeIntent(value: unknown): PurgeIntent {
+  return PurgeIntentSchema.parse(guardPurgeIntentVersion(value))
+}
+
 export interface PurgeRecordInput {
   knowledgeRoot: string
   recordId: RecordId
@@ -85,6 +120,19 @@ export interface PurgeRecordInput {
   initiator: string
   /** Optional explicit runtime audit root; omission uses the knowledge root's stable sibling. */
   auditBaseDir?: string
+  /** Test/chaos seam between purge phases; production callers omit it (commit.ts precedent). */
+  hooks?: {
+    /** Immediately after the durable intent publication. */
+    afterIntentWritten?: () => void
+    /** After the transactional projection purge. */
+    afterProjectionPurge?: () => void
+    /** After every committed bundle tree removal. */
+    afterBundleRemoval?: () => void
+    /** After the queue payload sweep. */
+    afterQueueSweep?: () => void
+    /** Immediately before the completion receipt publication. */
+    beforeReceiptPublish?: () => void
+  }
 }
 
 export type PurgeRecordOutcome =
@@ -145,19 +193,28 @@ function transaction(operation: () => void, db: ReturnType<typeof openIndexWrite
 function purgeIndexSurfaces(
   knowledgeRoot: string,
   recordId: RecordId,
-  kind: LoadedBundle['frontmatter']['kind'],
+  kind?: LoadedBundle['frontmatter']['kind'],
 ): void {
   if (!existsSync(indexDbPath(knowledgeRoot))) return
 
   const writer = openIndexWriter(knowledgeRoot)
   try {
     const row = writer.db
-      .prepare('SELECT record_rowid FROM records WHERE bundle_id = ?')
+      .prepare('SELECT record_rowid, kind FROM records WHERE bundle_id = ?')
       .get(recordId)
-    const recordNode = recordGraphNode(kind, recordId)
+    // A resume over destroyed bundles derives the graph identity from the projection row; when
+    // both are gone the pre-removal projection purge already committed and only the idempotent
+    // orphan-node and cache cleanup remains.
+    const resolvedKind =
+      kind
+      ?? (row === undefined
+        ? undefined
+        : (String(row.kind) as LoadedBundle['frontmatter']['kind']))
+    const recordNode =
+      resolvedKind === undefined ? undefined : recordGraphNode(resolvedKind, recordId)
 
     transaction(() => {
-      if (row !== undefined) {
+      if (row !== undefined && recordNode !== undefined) {
         const recordRowid = Number(row.record_rowid)
         deleteRecordFromAllSchemaVecTables(writer.db, recordRowid)
         writer.db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
@@ -167,7 +224,7 @@ function purgeIndexSurfaces(
           WHERE record_rowid = ? OR src_node_id = ? OR dst_node_id = ?
         `).run(recordRowid, recordNode.nodeId, recordNode.nodeId)
         writer.db.prepare('DELETE FROM records WHERE record_rowid = ?').run(recordRowid)
-      } else {
+      } else if (recordNode !== undefined) {
         // A stale graph projection can outlive a missing records row; remove both directions.
         writer.db.prepare(`
           DELETE FROM graph_edges
@@ -253,9 +310,6 @@ export interface QueueSweepTarget {
   candidateDir: string
   candidateId: string
 }
-
-/** Ordinary curation-job ids are 64-hex queue content addresses; prefixed maintenance receipt ids are not queue identities. */
-const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
 
 function lineageCandidateIds(matches: readonly ResolvedBundle[]): Set<string> {
   const ids = new Set<string>()
@@ -357,10 +411,21 @@ function receiptPath(knowledgeRoot: string, recordId: RecordId): string {
   return join(knowledgeRoot, receiptRelativePath(recordId))
 }
 
+/** The intent lives beside the receipt it completes into. */
+function intentPath(knowledgeRoot: string, recordId: RecordId): string {
+  return join(knowledgeRoot, 'memory', 'receipts', `purge-${recordId}.intent.json`)
+}
+
 function readExistingReceipt(knowledgeRoot: string, recordId: RecordId): PurgeReceipt | undefined {
   const file = receiptPath(knowledgeRoot, recordId)
   if (!existsSync(file)) return undefined
   return guardPurgeReceipt(JSON.parse(readFileSync(file, 'utf8')))
+}
+
+function readExistingIntent(knowledgeRoot: string, recordId: RecordId): PurgeIntent | undefined {
+  const file = intentPath(knowledgeRoot, recordId)
+  if (!existsSync(file)) return undefined
+  return guardPurgeIntent(JSON.parse(readFileSync(file, 'utf8')))
 }
 
 function toReceiptPath(knowledgeRoot: string, absolutePath: string): string {
@@ -421,16 +486,12 @@ function auditBaseDir(input: PurgeRecordInput): string {
 }
 
 /**
- * Publish a complete new receipt without exposing partial bytes and without ever overwriting an
- * existing audit fact. The hard link is the exclusive atomic visibility step; the temp file is
- * fsynced first and resides in the same directory.
+ * Publish one complete durable artifact without exposing partial bytes and without ever
+ * overwriting an existing audit fact. The hard link is the exclusive atomic visibility step; the
+ * temp file is fsynced first and resides in the same directory. Intent and receipt publication
+ * share this one pattern.
  */
-function writeReceiptExclusive(
-  knowledgeRoot: string,
-  recordId: RecordId,
-  text: string,
-): 'written' | 'already-exists' {
-  const finalPath = receiptPath(knowledgeRoot, recordId)
+function writeDurableExclusive(finalPath: string, text: string): 'written' | 'already-exists' {
   const directory = dirname(finalPath)
   mkdirSync(directory, { recursive: true })
   const temporary = `${finalPath}.tmp-${randomUUID()}`
@@ -452,13 +513,117 @@ function writeReceiptExclusive(
   }
 }
 
-/** Hard-remove one confirmed-sensitive record from every recoverable local-store surface. */
+/** Persist the complete destruction authority as one deterministically sorted intent payload. */
+function buildIntent(
+  input: PurgeRecordInput,
+  receipt: PurgeReceipt,
+  matches: readonly ResolvedBundle[],
+  targets: readonly QueueSweepTarget[],
+): PurgeIntent {
+  return PurgeIntentSchema.parse({
+    schemaVersion: PURGE_INTENT_SCHEMA_VERSION,
+    purgedRecordId: input.recordId,
+    receipt,
+    bundleDirs: matches
+      .map((match) => toReceiptPath(input.knowledgeRoot, match.dir))
+      .sort(),
+    queueCandidateIds: targets.map((target) => target.candidateId).sort(),
+    queuePayloadDirs: targets
+      .map((target) => toReceiptPath(input.knowledgeRoot, target.candidateDir))
+      .sort(),
+  })
+}
+
+/** Remove the fulfilled intent; the durable receipt is now the sole audit fact. */
+function retireIntent(knowledgeRoot: string, recordId: RecordId): void {
+  const file = intentPath(knowledgeRoot, recordId)
+  if (!existsSync(file)) return
+  rmSync(file, { force: true })
+  fsyncDirectory(dirname(file))
+}
+
+/** Publish the completion receipt exclusively, then retire the fulfilled intent. */
+function publishReceiptAndRetire(
+  input: PurgeRecordInput,
+  receiptText: string,
+  receipt: PurgeReceipt,
+): PurgeRecordOutcome {
+  const writeOutcome = writeDurableExclusive(
+    receiptPath(input.knowledgeRoot, input.recordId),
+    receiptText,
+  )
+  if (writeOutcome === 'already-exists') {
+    const racedReceipt = readExistingReceipt(input.knowledgeRoot, input.recordId)
+    if (racedReceipt === undefined) {
+      throw new Error('purge receipt disappeared during exclusive publication')
+    }
+    retireIntent(input.knowledgeRoot, input.recordId)
+    return { kind: 'already-purged', receipt: racedReceipt }
+  }
+  retireIntent(input.knowledgeRoot, input.recordId)
+  return { kind: 'purged', receipt }
+}
+
+/**
+ * A crash at or after the intent may leave any prefix of the bundle removals applied. Any
+ * surviving intent bundle still carries the record kind for the projection purge; when none
+ * survives, bundle removal started, which proves the preceding projection purge committed.
+ */
+function survivingBundleKind(
+  knowledgeRoot: string,
+  intent: PurgeIntent,
+): LoadedBundle['frontmatter']['kind'] | undefined {
+  for (const dir of intent.bundleDirs) {
+    const loaded = loadBundle(join(knowledgeRoot, dir))
+    if (loaded.kind === 'loaded') return loaded.bundle.frontmatter.kind
+  }
+  return undefined
+}
+
+/**
+ * Replay the irreversible phase from the intent's persisted identities only — never a second
+ * resolution over destroyed state. Every deletion is idempotent and the receipt publishes
+ * byte-identically from the embedded payload.
+ */
+function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRecordOutcome {
+  purgeIndexSurfaces(
+    input.knowledgeRoot,
+    input.recordId,
+    survivingBundleKind(input.knowledgeRoot, intent),
+  )
+  for (const dir of intent.bundleDirs) {
+    rmSync(join(input.knowledgeRoot, dir), { recursive: true, force: true })
+  }
+  const root = queueRoot(input.knowledgeRoot)
+  for (const dir of intent.queuePayloadDirs) {
+    const candidateDir = join(input.knowledgeRoot, dir)
+    rmSync(candidateDir, { recursive: true, force: true })
+    removeEmptyQueueParents(candidateDir, root)
+  }
+  for (const candidateId of intent.queueCandidateIds) {
+    rmSync(jobStatePath(input.knowledgeRoot, candidateId), { force: true })
+  }
+  return publishReceiptAndRetire(input, committedFileText(intent.receipt), intent.receipt)
+}
+
+/**
+ * Hard-remove one confirmed-sensitive record from every recoverable local-store surface.
+ *
+ * Recovery invariant (CR-04): nothing irreversible ever precedes a durable intent, so a retry
+ * either re-resolves intact state (crash before the intent) or replays the intent's persisted
+ * identities to the identical completion receipt (crash at any later boundary).
+ */
 export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   assertInput(input)
   const existingReceipt = readExistingReceipt(input.knowledgeRoot, input.recordId)
   if (existingReceipt !== undefined) {
+    // A crash between receipt publication and intent retirement leaves a fulfilled intent.
+    retireIntent(input.knowledgeRoot, input.recordId)
     return { kind: 'already-purged', receipt: existingReceipt }
   }
+
+  const persistedIntent = readExistingIntent(input.knowledgeRoot, input.recordId)
+  if (persistedIntent !== undefined) return resumeFromIntent(input, persistedIntent)
 
   const matches = resolveBundles(input.knowledgeRoot, input.recordId)
   if (matches.length === 0) return { kind: 'not-found' }
@@ -473,31 +638,40 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
 
   const kind = matches[0]!.bundle.frontmatter.kind
 
-  // Resolve the exact queue deletion set before the first irreversible mutation; Plan 26
-  // persists this resolved intent so destruction never re-derives its own authority.
+  // Resolve the exact queue deletion set before the first irreversible mutation so the durable
+  // intent persists the complete destruction authority (CR-03).
   const queueSweepTargets = resolveQueueSweepTargets(input.knowledgeRoot, matches)
+
+  // The intent publication is the LAST act before the first irreversible mutation (CR-04).
+  const intent = buildIntent(input, receipt, matches, queueSweepTargets)
+  const intentOutcome = writeDurableExclusive(
+    intentPath(input.knowledgeRoot, input.recordId),
+    committedFileText(intent),
+  )
+  if (intentOutcome === 'already-exists') {
+    // A concurrent purge published its intent first; that durable authority wins.
+    const publishedIntent = readExistingIntent(input.knowledgeRoot, input.recordId)
+    if (publishedIntent === undefined) {
+      throw new Error('purge intent disappeared during exclusive publication')
+    }
+    return resumeFromIntent(input, publishedIntent)
+  }
+  input.hooks?.afterIntentWritten?.()
 
   // Projection cleanup must prove every materialized vec table was writable before any
   // irreversible bundle, queue, or receipt mutation can attest success.
   purgeIndexSurfaces(input.knowledgeRoot, input.recordId, kind)
+  input.hooks?.afterProjectionPurge?.()
 
   // Capture metadata above before the only true-delete operation removes the committed tree.
   for (const match of matches) {
     rmSync(match.dir, { recursive: true, force: true })
   }
-  sweepQueuePayloads(input.knowledgeRoot, queueSweepTargets)
+  input.hooks?.afterBundleRemoval?.()
 
-  const writeOutcome = writeReceiptExclusive(
-    input.knowledgeRoot,
-    input.recordId,
-    receiptText,
-  )
-  if (writeOutcome === 'already-exists') {
-    const racedReceipt = readExistingReceipt(input.knowledgeRoot, input.recordId)
-    if (racedReceipt === undefined) {
-      throw new Error('purge receipt disappeared during exclusive publication')
-    }
-    return { kind: 'already-purged', receipt: racedReceipt }
-  }
-  return { kind: 'purged', receipt }
+  sweepQueuePayloads(input.knowledgeRoot, queueSweepTargets)
+  input.hooks?.afterQueueSweep?.()
+
+  input.hooks?.beforeReceiptPublish?.()
+  return publishReceiptAndRetire(input, receiptText, receipt)
 }
