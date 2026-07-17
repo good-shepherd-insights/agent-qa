@@ -3,10 +3,14 @@ import { join } from 'node:path'
 
 import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import {
+  asEvidenceToken,
   canonicalJson,
   committedFileText,
   evaluatePromotionGate,
+  eventDedupKey,
+  foldBundleTrust,
   sha256hex,
+  survivingOutcomeEvents,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleDraft,
@@ -346,10 +350,72 @@ export function createLocalKnowledgeStore(
       if (resolved === undefined) {
         throw new KnowledgePromotionError(candidateId, 'not-found')
       }
+      const appendConfig: BundleStoreConfig = {
+        knowledgeRoot: config.knowledgeRoot,
+        productKey: resolved.product,
+        auditBaseDir: config.auditBaseDir,
+        commitArtifacts: 'none',
+        writerLeaseId: 'knowledge-port',
+        policy,
+      }
       if (resolved.observedStatus === 'active') {
-        // Heal append-before-projection retries while preserving the already-active noop contract.
+        /**
+         * CR-01: the active fast path is a gate re-validation, never a bypass. A crash
+         * between a rollback's confirmation retraction and its Plan-23 promotion cascade
+         * leaves canonical active-with-zero-support until replay; attesting success over
+         * that stale authority would launder a rolled-back promotion. The same pure gate
+         * (D-17) is re-evaluated over the promoted-set-aside status: the status the record
+         * would hold if its promoted authority were set aside.
+         */
+        const gateInput = assemblePromotionGateInput({
+          knowledgeRoot: config.knowledgeRoot,
+          bundleDir: resolved.bundleDir,
+          bundle: resolved.bundle,
+        })
+        const setAside = foldBundleTrust(
+          survivingOutcomeEvents(resolved.bundle.events)
+            .filter(({ type }) => type !== 'promoted'),
+          {
+            originClass: resolved.bundle.frontmatter.originClass,
+            evidenceIncomplete: resolved.bundle.manifest.evidenceIncomplete,
+            createdAtOrdinal: resolved.bundle.frontmatter.createdAtOrdinal,
+          },
+        )
+        const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
+        if (revalidated.verdict === 'promote') {
+          // Still authorized: heal append-before-projection retries while preserving the
+          // already-active noop contract byte-for-byte.
+          applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
+          return
+        }
+        // Stale authority: append-only retraction of every surviving promoted event under a
+        // deterministic replay-safe identity, then re-project and refuse with the gate's
+        // hold reason. History is never rewritten; replayed heals dedup to no-ops.
+        const survivingPromoted = survivingOutcomeEvents(resolved.bundle.events)
+          .filter(({ type }) => type === 'promoted')
+        const healReceiptId = `promote-heal:${candidateId}`
+        for (const promoted of survivingPromoted) {
+          const appended = appendOutcomeEvent(appendConfig, candidateId, {
+            type: 'retracted',
+            evidenceToken: asEvidenceToken(sha256hex(canonicalJson({
+              healedPromotedEventKey: eventDedupKey(promoted),
+              candidateId,
+            }))),
+            curationJobId: healReceiptId,
+            buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
+            retractsEvidenceToken: promoted.evidenceToken,
+            retractsCurationJobId: promoted.curationJobId,
+            rollbackReceiptId: healReceiptId,
+          })
+          if (appended.kind === 'egress-blocked') {
+            throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
+          }
+          if (appended.kind === 'not-found') {
+            throw new KnowledgePromotionError(candidateId, appended.kind)
+          }
+        }
         applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
-        return
+        throw new KnowledgePromotionError(candidateId, revalidated.reason)
       }
 
       const gate = evaluatePromotionGate(assemblePromotionGateInput({
@@ -359,15 +425,6 @@ export function createLocalKnowledgeStore(
       }))
       if (gate.verdict === 'hold') {
         throw new KnowledgePromotionError(candidateId, gate.reason)
-      }
-
-      const appendConfig: BundleStoreConfig = {
-        knowledgeRoot: config.knowledgeRoot,
-        productKey: resolved.product,
-        auditBaseDir: config.auditBaseDir,
-        commitArtifacts: 'none',
-        writerLeaseId: 'knowledge-port',
-        policy,
       }
       const appended = appendOutcomeEvent(appendConfig, candidateId, {
         type: 'promoted',
