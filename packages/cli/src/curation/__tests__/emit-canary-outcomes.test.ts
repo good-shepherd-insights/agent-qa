@@ -163,10 +163,13 @@ function rootCause(kind: Verdict['class']): Verdict {
 }
 
 function handoff(steps: StepEvidence[], cause?: Verdict): CompletedRunHandoff {
+  const aggregateVerdict = steps.every((entry) => entry.verifierVerdict.pass)
+    ? 'passed'
+    : 'failed'
   const test: PerTestOutcome = {
     testId: 'checkout::happy-path',
     testIndex: 0,
-    outcome: steps.every((entry) => entry.verifierVerdict.pass) ? 'passed' : 'failed',
+    outcome: aggregateVerdict,
     steps,
     ...(cause === undefined ? {} : { rootCause: cause }),
   }
@@ -176,7 +179,7 @@ function handoff(steps: StepEvidence[], cause?: Verdict): CompletedRunHandoff {
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,
     executionContext: 'local-interactive',
-    aggregateVerdict: test.outcome,
+    aggregateVerdict,
     configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
     startedAt: 1_750_000_000_000,
     endedAt: 1_750_000_001_000,

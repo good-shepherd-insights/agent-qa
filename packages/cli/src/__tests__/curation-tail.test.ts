@@ -182,7 +182,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         order.push('reader')
         expect(config).toEqual({ knowledgeRoot })
         return {
-          emitCanaryOutcome(outcome) {
+          emitCanaryOutcome(outcome: CanaryOutcome) {
             order.push('queue')
             expect(outcome).toEqual(canaryOutcome)
           },
