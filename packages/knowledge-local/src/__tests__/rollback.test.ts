@@ -763,6 +763,181 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(knowledgeLocal.deriveBundleTrust(bundle).status).toBe('active')
   })
 
+  it('rejects an equal-ordinal resolution with RollbackCausalityError before any append', async () => {
+    const target = publishForJob({
+      identity: 'causality-equal',
+      curationJobId: 'job-causality-equal',
+      sourceBuildOrdinal: 5,
+      initialEvents: activeEvents('job-causality-equal', 5),
+    })
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    expect(hasFtsRow(target.id)).toBe(true)
+    const before = readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')
+
+    let caught: unknown
+    try {
+      rollbackApi().rollbackCurationJob({
+        knowledgeRoot,
+        auditBaseDir,
+        curationJobId: 'job-causality-equal',
+        resolvedAtOrdinal: 5,
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect(caught).toMatchObject({
+      name: 'RollbackCausalityError',
+      offendingRecordIds: [target.id],
+      minimumRequiredOrdinal: 6,
+    })
+    expect(readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('active')
+    expect(hasFtsRow(target.id)).toBe(true)
+
+    // The strictly-later boundary N+1 succeeds with the existing behavior unchanged.
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-causality-equal',
+      resolvedAtOrdinal: 6,
+    })
+    expect(report.deprecatedBundles).toEqual([target.id])
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('deprecated')
+  })
+
+  it('rejects a lower-ordinal resolution with RollbackCausalityError before any append', () => {
+    const target = publishForJob({
+      identity: 'causality-lower',
+      curationJobId: 'job-causality-lower',
+      sourceBuildOrdinal: 5,
+      initialEvents: activeEvents('job-causality-lower', 5),
+    })
+    const before = readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')
+
+    let caught: unknown
+    try {
+      rollbackApi().rollbackCurationJob({
+        knowledgeRoot,
+        auditBaseDir,
+        curationJobId: 'job-causality-lower',
+        resolvedAtOrdinal: 4,
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toMatchObject({
+      name: 'RollbackCausalityError',
+      offendingRecordIds: [target.id],
+      minimumRequiredOrdinal: 6,
+    })
+    expect(readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('active')
+  })
+
+  it('rejects a campaign rollback atomically when any affected bundle is not strictly later', () => {
+    const early = publishForJob({
+      identity: 'campaign-early',
+      curationJobId: 'job-campaign-early',
+      sourceBuildOrdinal: 5,
+    })
+    const late = publishForJob({
+      identity: 'campaign-late',
+      curationJobId: 'job-campaign-late',
+      sourceBuildOrdinal: 10,
+    })
+    const before = {
+      early: readFileSync(join(early.dir, 'evidence', 'outcomes.jsonl'), 'utf8'),
+      late: readFileSync(join(late.dir, 'evidence', 'outcomes.jsonl'), 'utf8'),
+    }
+
+    let caught: unknown
+    try {
+      rollbackApi().rollbackCampaign({
+        knowledgeRoot,
+        auditBaseDir,
+        fromOrdinal: 1,
+        resolvedAtOrdinal: 10,
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toMatchObject({
+      name: 'RollbackCausalityError',
+      offendingRecordIds: [late.id],
+      minimumRequiredOrdinal: 11,
+    })
+    // The whole resolved set is rejected atomically: neither bundle gained an event.
+    expect({
+      early: readFileSync(join(early.dir, 'evidence', 'outcomes.jsonl'), 'utf8'),
+      late: readFileSync(join(late.dir, 'evidence', 'outcomes.jsonl'), 'utf8'),
+    }).toEqual(before)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(early)).status).toBe('active')
+    expect(knowledgeLocal.deriveBundleTrust(loaded(late)).status).toBe('active')
+  })
+
+  it('admits byte replay at the original ordinal as a duplicate no-op', () => {
+    const target = publishForJob({
+      identity: 'replay-admission',
+      curationJobId: 'job-replay-admission',
+      sourceBuildOrdinal: 5,
+      initialEvents: activeEvents('job-replay-admission', 5),
+    })
+    const rollbackInput = {
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-replay-admission',
+      resolvedAtOrdinal: 20,
+    }
+    const first = rollbackApi().rollbackCurationJob(rollbackInput)
+    expect(first.inverseCount).toBe(1)
+    // Later truth re-promotes the bundle, so the replay preflight cannot rely on an
+    // already-deprecated fold: only the exact inverse identity admits it.
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'promoted',
+      evidenceToken: asEvidenceToken('replay-revive-promoted'),
+      curationJobId: 'promote:revive',
+      buildOrdinal: 21,
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('active')
+    const before = readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')
+
+    const second = rollbackApi().rollbackCurationJob(rollbackInput)
+
+    expect(second.inverseCount).toBe(0)
+    expect(readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('active')
+  })
+
+  it('admits a minted bundle already deprecated by earlier truth without a throw', () => {
+    const target = publishForJob({
+      identity: 'already-deprecated',
+      curationJobId: 'job-already-deprecated',
+      sourceBuildOrdinal: 5,
+    })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'deprecated',
+      evidenceToken: asEvidenceToken('manual-deprecation-token'),
+      curationJobId: 'job-manual-deprecate',
+      buildOrdinal: 9,
+      reason: 'manual maintenance',
+    })).toEqual({ kind: 'appended' })
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('deprecated')
+
+    const report = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-already-deprecated',
+      resolvedAtOrdinal: 9,
+    })
+
+    expect(report.deprecatedBundles).toEqual([target.id])
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('deprecated')
+  })
+
   it('returns an empty no-op report when the rollback matches nothing', () => {
     const bystander = publishForJob({
       identity: 'empty-set-bystander',
