@@ -23,11 +23,19 @@ import { getLoadablePath } from './sqlite-vec-loadable.js'
 
 export const INDEX_DB_FILE = 'knowledge.db'
 
-/** Phase 379 D-05 schema; older disposable projections reset instead of migrating in place. */
-export const INDEX_SCHEMA_VERSION = 3
+/**
+ * Phase 379 round-4 embed-status vocabulary split; older disposable projections reset instead of
+ * migrating in place. v3 projections carry an ambiguous terminal embed status (structural scrub
+ * and SAFE-02 redaction conflated in 'suppressed') that cannot be split in place, so they reset
+ * and re-derive from canonical bundles.
+ */
+export const INDEX_SCHEMA_VERSION = 4
 
-/** Phase 379 readers reject pre-D-05 projections until a writer performs the v3 reset. */
-export const MIN_READABLE_INDEX_SCHEMA_VERSION = 3
+/**
+ * Phase 379 readers reject pre-split projections until a writer performs the v4 reset — an
+ * ambiguous v3 row must never be read as either suppression kind.
+ */
+export const MIN_READABLE_INDEX_SCHEMA_VERSION = 4
 
 /**
  * Phase 377 D-04 rendering epoch.

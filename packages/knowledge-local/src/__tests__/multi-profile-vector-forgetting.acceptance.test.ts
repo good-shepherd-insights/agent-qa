@@ -432,7 +432,7 @@ describe('multi-profile vector forgetting acceptance', () => {
         reader.db
           .prepare('SELECT status, embed_status, embedding FROM records WHERE bundle_id = ?')
           .get(migrated.target.id),
-      ).toMatchObject({ status: 'deprecated', embed_status: 'suppressed', embedding: null })
+      ).toMatchObject({ status: 'deprecated', embed_status: 'scrubbed', embedding: null })
       expect(
         reader.db
           .prepare('SELECT COUNT(*) AS count FROM anchors WHERE record_rowid = ?')

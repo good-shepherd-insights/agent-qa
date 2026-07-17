@@ -441,7 +441,7 @@ function recallProjectionState(triggerId: RecordId): RecallProjectionState {
 function expectStructurallyForgotten(triggerId: RecordId): void {
   expect(recallProjectionState(triggerId)).toEqual({
     status: 'deprecated',
-    embedStatus: 'suppressed',
+    embedStatus: 'scrubbed',
     embeddingPresent: false,
     ftsRows: 0,
     anchorRows: 3,

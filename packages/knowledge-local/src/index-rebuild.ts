@@ -89,6 +89,14 @@ export const EMBED_STATUS_PENDING = 'pending'
 export const EMBED_STATUS_PRESENT = 'present'
 /** SAFE-02 terminal state: lexical projection exists, but dense bytes must never be backfilled. */
 export const EMBED_STATUS_SUPPRESSED = 'suppressed'
+/**
+ * Structurally-dead dense suppression (Deprecate/Supersede scrub), distinct from the SAFE-02
+ * terminal above. The contract pair: structural death is reversible — projecting the record live
+ * again (e.g. a rollback restore) resets this value to pending so ordinary backfill re-embeds it —
+ * while SAFE-02 redaction (EMBED_STATUS_SUPPRESSED via applyProjectionSafety's suppressDense) is
+ * terminal and survives everything, including a death-and-revival cycle.
+ */
+export const EMBED_STATUS_SCRUBBED = 'scrubbed'
 
 export interface PendingEmbeddingRow {
   record_rowid: number
@@ -494,15 +502,21 @@ function scrubDeadRecallRows(
   db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
   deleteRecordFromAllSchemaVecTables(db, recordRowid)
   /**
-   * RATIFICATION: reuse SAFE-02's proven terminal suppressed state. Ordinary backfill selects
-   * pending exactly, rendering refresh preserves suppressed, and reconciliation requires present
-   * canonical bytes, so no later dense pass can resurrect a withdrawn record.
+   * RATIFICATION (revised, round 4): the round-1 ratification reused SAFE-02's terminal suppressed
+   * state here. Round-4 verification proved that conflation makes a rollback-restored supersession
+   * victim permanently lose dense recall — the restore re-projection cannot distinguish structural
+   * death from governed redaction, and D-15 requires the scrub effect to be invertible. Structural
+   * death therefore takes its own reversible scrubbed value, while a row already redacted under
+   * SAFE-02 before dying keeps the terminal value through death (terminal wins) so revival can
+   * never resurrect redacted content. While dead, both values stay outside the pending backfill
+   * selector, rendering refresh, and present-only reconciliation exactly as before the split.
    */
   db.prepare(`
     UPDATE records
-    SET embedding = NULL, embed_status = ?
+    SET embedding = NULL,
+        embed_status = CASE WHEN embed_status = ? THEN ? ELSE ? END
     WHERE record_rowid = ?
-  `).run(EMBED_STATUS_SUPPRESSED, recordRowid)
+  `).run(EMBED_STATUS_SUPPRESSED, EMBED_STATUS_SUPPRESSED, EMBED_STATUS_SCRUBBED, recordRowid)
 
   const recordNode = recordGraphNode(bundle.frontmatter.kind, bundle.manifest.id)
   db.prepare(`
@@ -531,6 +545,18 @@ function projectBundle(
       scrubDeadRecallRows(db, projected.bundle, recordRowid)
       return
     }
+    /**
+     * D-15 revival seam: a rollback restore re-projects through applyIndexDeltaForBundle with no
+     * lexicalInput/suppressDense, so the reset must live on this default projection path, not
+     * behind applyProjectionSafety's gate. The WHERE clause makes it a no-op for pending/present
+     * rows and deliberately unable to match the SAFE-02 terminal value — only a structurally
+     * scrubbed row projecting live again re-enters the ordinary backfill pipeline.
+     */
+    db.prepare(`
+      UPDATE records
+      SET embed_status = ?
+      WHERE record_rowid = ? AND embed_status = ?
+    `).run(EMBED_STATUS_PENDING, recordRowid, EMBED_STATUS_SCRUBBED)
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
   })

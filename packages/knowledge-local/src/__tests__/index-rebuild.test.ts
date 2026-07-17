@@ -37,6 +37,7 @@ import {
   type PublishBundleOutcome,
 } from '../bundle-publish.js'
 import {
+  EMBED_STATUS_SCRUBBED,
   EMBED_STATUS_SUPPRESSED,
   projectBundleIndexRow,
 } from '../index-rebuild.js'
@@ -308,8 +309,8 @@ describe('IDX-01 derived-index rebuild projection', () => {
   })
 
   it('marks a v2 index for schema reset and fully re-projects confirmation ordinals', async () => {
-    expect(INDEX_SCHEMA_VERSION).toBe(3)
-    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(3)
+    expect(INDEX_SCHEMA_VERSION).toBe(4)
+    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(4)
 
     const published = publish('Schema Reset Confirmation Product', {
       createdAtOrdinal: 1,
@@ -377,7 +378,7 @@ describe('IDX-01 derived-index rebuild projection', () => {
         reader.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get(),
-      ).toEqual({ v: '3' })
+      ).toEqual({ v: '4' })
     } finally {
       reader.db.close()
     }
@@ -974,7 +975,7 @@ describe('IDX-01 derived-index rebuild projection', () => {
             `)
             .get(dead.id)
           expect(projected?.status).toBe(deadStatus)
-          expect(projected?.embed_status).toBe(EMBED_STATUS_SUPPRESSED)
+          expect(projected?.embed_status).toBe(EMBED_STATUS_SCRUBBED)
           expect(projected?.embedding).toBeNull()
           expect(
             reader.db
@@ -1046,6 +1047,56 @@ describe('IDX-01 derived-index rebuild projection', () => {
       expectScrubbed()
     })
   }
+
+  it('keeps the SAFE-02 terminal value when a suppressed row is structurally scrubbed', async () => {
+    const product = 'Dual Suppression Terminal Product'
+    const target = publishNamed(product, 'Dual suppression live replacement')
+    const victim = publishNamed(product, 'Dual suppression redacted victim')
+
+    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id, suppressDense: true })
+
+    const reader = openReader()
+    try {
+      expect(
+        reader.db
+          .prepare('SELECT embed_status FROM records WHERE bundle_id = ?')
+          .get(victim.id)?.embed_status,
+      ).toBe(EMBED_STATUS_SUPPRESSED)
+    } finally {
+      reader.db.close()
+    }
+
+    expect(
+      appendOutcomeEvent(
+        config(product),
+        victim.id,
+        BundleOutcomeEventSchema.parse({
+          type: 'superseded',
+          evidenceToken: 'dual-suppression-superseded',
+          curationJobId: 'dual-suppression-superseded-job',
+          buildOrdinal: 50,
+          byRecordId: target.id,
+        }),
+      ),
+    ).toEqual({ kind: 'appended' })
+
+    projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id })
+
+    const scrubbedReader = openReader()
+    try {
+      expect(
+        scrubbedReader.db
+          .prepare('SELECT status, embed_status, embedding FROM records WHERE bundle_id = ?')
+          .get(victim.id),
+      ).toMatchObject({
+        status: 'superseded',
+        embed_status: EMBED_STATUS_SUPPRESSED,
+        embedding: null,
+      })
+    } finally {
+      scrubbedReader.db.close()
+    }
+  })
 
   it('removes deleted bundle projections, incoming edges, vec rows, and orphan nodes', async () => {
     const target = publishNamed('Removal Target Product', 'Removal target')

@@ -182,7 +182,7 @@ describe('vec0 metadata lifecycle', () => {
             WHERE record_rowid = ?
           `)
           .get(Number(record?.record_rowid)),
-      ).toEqual({ status: 'superseded', embed_status: 'suppressed', embedding: null })
+      ).toEqual({ status: 'superseded', embed_status: 'scrubbed', embedding: null })
     } finally {
       reader.db.close()
     }
