@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { asRecordId } from '@vostride/agent-qa-schema'
 import type {
   IndexEntry,
+  ReadTrace,
   RecordBody,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -64,7 +65,7 @@ function factory(
     readBodyBudget?: number
     recordLedger?: ReturnType<typeof createRecordLedger>
     estimateTokens?: (text: string) => number
-    onReadTrace?: ReturnType<typeof vi.fn>
+    onReadTrace?: (trace: ReadTrace) => void
   } = {},
 ) {
   return createMemoryTools({
@@ -223,11 +224,13 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     const read = vi.fn(() => undefined) as unknown as KnowledgeHintReader['read']
     const { tools } = factory(stubReader({ search: vi.fn(() => []), read }))
 
-    await expect(
-      tools['memory.search'].execute({ query: 'no match' }),
-    ).resolves.toEqual({ kind: 'empty-result', entries: [] })
-    await expect(
-      tools['memory.read'].execute({ id: missingId }),
-    ).resolves.toEqual({ kind: 'not-found', id: missingId })
+    expect(tools['memory.search'].execute({ query: 'no match' })).toEqual({
+      kind: 'empty-result',
+      entries: [],
+    })
+    expect(tools['memory.read'].execute({ id: missingId })).toEqual({
+      kind: 'not-found',
+      id: missingId,
+    })
   })
 })
