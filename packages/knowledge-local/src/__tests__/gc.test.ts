@@ -375,7 +375,8 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     })
 
     expect(order).toEqual(['writer-pass', 'gc'])
-    expect(report.gc).toEqual({ kind: 'completed', summary })
+    // The default cleanup ran against an absent index db: an explicit zero, not a skip.
+    expect(report.gc).toEqual({ kind: 'completed', summary, projectionRowsRemoved: 0 })
   })
 
   it('skips GC before it starts when the drain budget is exhausted', async () => {

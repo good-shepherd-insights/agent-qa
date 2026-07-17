@@ -16,7 +16,11 @@ import {
   readIndexMaintenanceState,
   type IndexMaintenanceState,
 } from '../index-open.js'
-import { rebuildIndex, type RebuildReport } from '../index-rebuild.js'
+import {
+  rebuildIndex,
+  removeBundleProjectionRows,
+  type RebuildReport,
+} from '../index-rebuild.js'
 import { acquireEmbedder } from '../embedder-acquire.js'
 import { runKnowledgeGc, type GcSummary } from '../gc.js'
 import {
@@ -111,7 +115,12 @@ export type WriterPassReport =
 export type GcPassReport =
   | { kind: 'not-run' }
   | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
-  | { kind: 'completed'; summary: GcSummary }
+  | {
+      kind: 'completed'
+      summary: GcSummary
+      /** WR-01: projection rows removed by the same-drain scoped cleanup; absent on zero-trim. */
+      projectionRowsRemoved?: number
+    }
   | { kind: 'failed'; message: string }
 
 interface DrainReportBase {
@@ -159,6 +168,7 @@ export interface DrainOperations {
   acquireEmbedder: typeof acquireEmbedder
   rebuildIndex: typeof rebuildIndex
   runKnowledgeGc: typeof runKnowledgeGc
+  removeBundleProjectionRows: typeof removeBundleProjectionRows
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
   applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
   deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
@@ -227,6 +237,7 @@ const DEFAULT_OPERATIONS: DrainOperations = {
   acquireEmbedder,
   rebuildIndex,
   runKnowledgeGc,
+  removeBundleProjectionRows,
   hasIndexRow,
   applyIndexDeltaForBundle,
   deriveIndexRowFromBundle,
@@ -781,12 +792,26 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
            * exclusions; M3 supplies the real ordinal horizon through this seam.
            * Budget gates the start only and never interrupts whole-dir trims.
            */
-          result.gc = {
+          const summary = operations.runKnowledgeGc({
+            knowledgeRoot: options.knowledgeRoot,
+            horizon: { kind: 'none' },
+          })
+          const completed: Extract<GcPassReport, { kind: 'completed' }> = {
             kind: 'completed',
-            summary: operations.runKnowledgeGc({
-              knowledgeRoot: options.knowledgeRoot,
-              horizon: { kind: 'none' },
-            }),
+            summary,
+          }
+          result.gc = completed
+          if (summary.trimmedRecordIds.length > 0) {
+            // WR-01: the trim summary drives scoped projection cleanup in the same drain.
+            try {
+              completed.projectionRowsRemoved = operations.removeBundleProjectionRows(
+                options.knowledgeRoot,
+                summary.trimmedRecordIds,
+              )
+            } catch (error) {
+              // Canonical truth was already trimmed; the failure names the projection debt.
+              recordFailure(result, 'gc', error)
+            }
           }
         } catch (error) {
           recordFailure(result, 'gc', error)
