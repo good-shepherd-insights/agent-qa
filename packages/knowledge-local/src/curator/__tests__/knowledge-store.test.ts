@@ -4,6 +4,9 @@ import { join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
+  canonicalJson,
+  eventDedupKey,
+  sha256hex,
   type BundleDiscriminant,
   type BundleDraft,
   type BundleOutcomeEvent,
@@ -19,6 +22,7 @@ import {
   type PublishBundleInput,
 } from '../../bundle-publish.js'
 import { openIndexReaderConnection } from '../../index-open.js'
+import { derivePromotedEvidenceToken } from '../commit.js'
 import {
   createLocalKnowledgeStore,
   type CreateLocalKnowledgeStoreConfig,
@@ -243,5 +247,112 @@ describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
     const loaded = loadedTrust(published.dir)
     expect(loaded.trust.status).toBe('active')
     expect(loaded.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
+  })
+
+  function recordsRowStatus(bundleId: string): string | undefined {
+    const reader = openIndexReaderConnection(knowledgeRoot)
+    try {
+      const row = reader.db
+        .prepare('SELECT status FROM records WHERE bundle_id = ?')
+        .get(bundleId) as { status: string } | undefined
+      return row?.status
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  function crashWindowRetraction(): BundleOutcomeEvent {
+    // Simulates the reachable production window: a crash between a rollback's
+    // confirmation retraction and its Plan-23 promotion cascade leaves canonical
+    // active-with-zero-support until replay (CR-01).
+    return BundleOutcomeEventSchema.parse({
+      type: 'retracted',
+      evidenceToken: 'crash-window-retraction',
+      curationJobId: 'rollback-crash-window',
+      buildOrdinal: 44,
+      retractsEvidenceToken: 'confirmed-fact',
+      retractsCurationJobId: 'confirmed-fact-job',
+      rollbackReceiptId: 'rollback:crash-window',
+    })
+  }
+
+  it('keeps the supported active noop contract and heals the projection row (control)', async () => {
+    const published = seedCandidate()
+    const store = createLocalKnowledgeStore(storeConfig())
+
+    await store.promote(published.id)
+    await store.promote(published.id)
+
+    const loaded = loadedTrust(published.dir)
+    expect(loaded.trust.status).toBe('active')
+    expect(loaded.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
+    expect(loaded.bundle.events.filter(({ type }) => type === 'retracted')).toHaveLength(0)
+    expect(recordsRowStatus(published.id)).toBe('active')
+  })
+
+  it('re-validates stale active authority: heals promoted events and refuses instead of attesting', async () => {
+    const published = seedCandidate()
+    const store = createLocalKnowledgeStore(storeConfig())
+    await store.promote(published.id)
+
+    expect(
+      appendOutcomeEvent(bundleConfig(), published.id, crashWindowRetraction()),
+    ).toEqual({ kind: 'appended' })
+    const stale = loadedTrust(published.dir)
+    expect(stale.trust.status).toBe('active')
+    const promotedEvent = stale.bundle.events.find(({ type }) => type === 'promoted')
+    if (promotedEvent === undefined) throw new Error('expected a surviving promoted event')
+
+    await expect(store.promote(published.id)).rejects.toMatchObject({
+      name: 'KnowledgePromotionError',
+      reason: 'no-confirmed-evidence',
+    })
+
+    const healed = loadedTrust(published.dir)
+    expect(healed.trust.status).toBe('candidate')
+    const healRetractions = healed.bundle.events.filter(
+      (event) =>
+        event.type === 'retracted'
+        && event.rollbackReceiptId === `promote-heal:${published.id}`,
+    )
+    expect(healRetractions).toEqual([{
+      type: 'retracted',
+      evidenceToken: sha256hex(canonicalJson({
+        healedPromotedEventKey: eventDedupKey(promotedEvent),
+        candidateId: published.id,
+      })),
+      curationJobId: `promote-heal:${published.id}`,
+      buildOrdinal: 43,
+      retractsEvidenceToken: derivePromotedEvidenceToken(published.id),
+      retractsCurationJobId: `promote:${published.id}`,
+      rollbackReceiptId: `promote-heal:${published.id}`,
+    }])
+    expect(recordsRowStatus(published.id)).toBe('candidate')
+  })
+
+  it('replays the heal refusal as a dedup no-op without duplicate retractions', async () => {
+    const published = seedCandidate()
+    const store = createLocalKnowledgeStore(storeConfig())
+    await store.promote(published.id)
+    expect(
+      appendOutcomeEvent(bundleConfig(), published.id, crashWindowRetraction()),
+    ).toEqual({ kind: 'appended' })
+
+    await expect(store.promote(published.id)).rejects.toMatchObject({
+      name: 'KnowledgePromotionError',
+      reason: 'no-confirmed-evidence',
+    })
+    const afterHeal = loadedTrust(published.dir)
+    expect(afterHeal.bundle.events.filter(({ type }) => type === 'retracted')).toHaveLength(2)
+
+    await expect(store.promote(published.id)).rejects.toMatchObject({
+      name: 'KnowledgePromotionError',
+      reason: 'no-confirmed-evidence',
+    })
+
+    const replayed = loadedTrust(published.dir)
+    expect(replayed.trust.status).toBe('candidate')
+    expect(replayed.bundle.events.filter(({ type }) => type === 'retracted')).toHaveLength(2)
+    expect(replayed.bundle.events.filter(({ type }) => type === 'promoted')).toHaveLength(1)
   })
 })
