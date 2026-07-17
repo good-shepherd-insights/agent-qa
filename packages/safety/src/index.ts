@@ -32,6 +32,11 @@ export {
 } from './policy/execution-context'
 export { NO_STANDING_APPROVALS, DENY_CONFIRM } from './ports/policy-ports'
 export { seedMaskingContext } from './masking/seed'
+export {
+  APP_OBSERVED_DATA_CLOSE,
+  APP_OBSERVED_DATA_OPEN,
+  wrapAppObservedData,
+} from './serving/data-delimiters'
 export type {
   BlockedDetection,
   CommittedEgressOptions,
