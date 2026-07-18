@@ -91,8 +91,10 @@ export {
 export type { OpenServingKnowledgeReaderConfig } from './serving/reader.js'
 export {
   AUTHORING_BRIEF_DEFAULT_BUDGET,
+  AUTHORING_DENSE_K,
   createAuthoringReader,
 } from './serving/authoring-reader.js'
+export type { AuthoringReaderDependencies } from './serving/authoring-reader.js'
 export {
   assembleAuthoringBrief,
   AUTHORING_EXCERPT_CHAR_BUDGET,

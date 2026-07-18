@@ -266,7 +266,7 @@ function inScope(
   return hit.scope.tier === 'global' || hit.product === scope.product
 }
 
-function hasDenseCandidates(db: DatabaseSync, scope: RetrievalLegScope): boolean {
+export function hasDenseCandidates(db: DatabaseSync, scope: RetrievalLegScope): boolean {
   const predicate = preFilterPredicate(scope)
   return db.prepare(`
     SELECT 1 AS present

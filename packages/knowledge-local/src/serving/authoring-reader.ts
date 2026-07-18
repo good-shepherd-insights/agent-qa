@@ -1,23 +1,27 @@
 /**
  * knowledge-local implementation of the agent-side AuthoringReadPort (D-13): the 4th channel's
  * composition boundary. Shares the serving reader's hydration internals and the one derived
- * index SQLite; keeps servingReader/KnowledgeHintReader untouched. The port is async by
- * contract; the implementation is synchronous inside and resolves immediately.
+ * index SQLite; keeps servingReader/KnowledgeHintReader untouched.
  */
 import { existsSync } from 'node:fs'
 
 import type { AuthoringReadPort } from '@vostride/agent-qa-agent'
 import {
   normalizeAnchor,
+  slugBranch,
   type Anchor,
   type AuthoringBrief,
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
 
+import type { EmbedderPort } from '../embedder-port.js'
 import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
+import { hasDenseCandidates } from '../retrieve.js'
+import { denseLeg, type RetrievalLegScope } from '../retrieval/legs.js'
 import {
   assembleAuthoringBrief,
   type AuthoringExemplarRow,
+  type AuthoringTestRef,
 } from './get-authoring-brief.js'
 import {
   hydrateRows,
@@ -30,6 +34,16 @@ import {
  * (377 D-07 lineage: budgets are numbers passed down, never config reads inside assemblies).
  */
 export const AUTHORING_BRIEF_DEFAULT_BUDGET = 2_000
+
+/** PROVISIONAL dense candidate cap pending authoring-channel retrieval telemetry. */
+export const AUTHORING_DENSE_K = 32
+
+export interface AuthoringReaderDependencies {
+  /** Consumer-owned test inventory; wired into the identity-only universe in Task 2. */
+  discoverKnownTests?: () => readonly AuthoringTestRef[]
+  /** Test/integration seam; production omission uses denseLeg's automatic acquisition ladder. */
+  embedder?: EmbedderPort
+}
 
 interface OutcomeRow {
   file_path: string
@@ -139,15 +153,71 @@ function deriveTargetAnchors(intent: string): Anchor[] {
   })
 }
 
+function authoringRetrievalScope(
+  config: OpenServingKnowledgeReaderConfig,
+  scope: ScopeKey,
+): RetrievalLegScope {
+  const containingScopes = [scope, ...(config.scopeDefaults?.parentScopes ?? [])]
+  const productKey = config.product
+    ?? containingScopes.find((candidate) => candidate.tier === 'product')?.key
+    ?? scope.key
+  return {
+    product: slugBranch(productKey),
+    testKey: containingScopes.find((candidate) => candidate.tier === 'test')?.key
+      ?? `__missing_test_scope__:${productKey}`,
+    suiteKey: containingScopes.find((candidate) => candidate.tier === 'suite')?.key
+      ?? `__missing_suite_scope__:${productKey}`,
+    productKey,
+    globalKey: 'global',
+  }
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+async function readDenseScores(
+  config: OpenServingKnowledgeReaderConfig,
+  deps: AuthoringReaderDependencies,
+  intent: string,
+  scope: ScopeKey,
+): Promise<ReadonlyMap<string, number> | undefined> {
+  if (!existsSync(indexDbPath(config.knowledgeRoot))) return undefined
+
+  const connection = openIndexReaderConnection(config.knowledgeRoot)
+  try {
+    const legScope = authoringRetrievalScope(config, scope)
+    if (!hasDenseCandidates(connection.db, legScope)) return undefined
+
+    const candidates = await denseLeg(
+      connection,
+      [intent],
+      legScope,
+      AUTHORING_DENSE_K,
+      deps.embedder === undefined ? {} : { embedder: deps.embedder },
+    )
+    if (candidates.length === 0) return undefined
+    return new Map(candidates.map((candidate) => [
+      String(candidate.bundleId),
+      clamp01(candidate.rawScores.cosine ?? 0),
+    ]))
+  } finally {
+    connection.db.close()
+  }
+}
+
 /** Open the screenless authoring channel over the same store config as the serving reader. */
 export function createAuthoringReader(
   config: OpenServingKnowledgeReaderConfig,
+  deps: AuthoringReaderDependencies = {},
 ): AuthoringReadPort {
   return {
-    getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
+    async getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
       const entries = hydrateRows(config, readIndexRows(config, scope), false)
       const projectionRows = readProjectionRows(config.knowledgeRoot)
-      return Promise.resolve(assembleAuthoringBrief({
+      const denseScoreByRecordId = await readDenseScores(config, deps, intent, scope)
+      return assembleAuthoringBrief({
         entries,
         projectionRows,
         // M2 discovery universe: projection-known identities. M4's consumer owns the
@@ -157,7 +227,8 @@ export function createAuthoringReader(
         scope,
         targetAnchors: deriveTargetAnchors(intent),
         budget: AUTHORING_BRIEF_DEFAULT_BUDGET,
-      }))
+        ...(denseScoreByRecordId === undefined ? {} : { denseScoreByRecordId }),
+      })
     },
   }
 }
