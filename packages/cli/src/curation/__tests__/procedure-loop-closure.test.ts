@@ -172,11 +172,17 @@ function servedBrief(): ServedBrief {
   }
 }
 
-function subAction(action: Action, elements: ElementInfo[], url: string): SubActionEvidence {
+function subAction(
+  action: Action,
+  elements: ElementInfo[],
+  url: string,
+  afterUrl?: string,
+): SubActionEvidence {
   return {
     plan: 'planned by the loop-closure fixture',
     plannedAction: action,
     stateBefore: screenState(elements, url),
+    ...(afterUrl === undefined ? {} : { stateAfter: screenState(elements, afterUrl) }),
     result: { success: true },
   }
 }
@@ -187,13 +193,14 @@ function step(
   action: Action,
   elements: ElementInfo[],
   cacheStatus: StepEvidence['cacheStatus'] = 'miss',
+  afterUrl?: string,
 ): StepEvidence {
   return {
     stepIndex,
     stepText,
     cacheStatus,
     servedBrief: servedBrief(),
-    subActions: [subAction(action, elements, '/login')],
+    subActions: [subAction(action, elements, '/login', afterUrl)],
     verifierVerdict: { pass: true, reasoning: 'verified by the loop-closure fixture' },
   }
 }
@@ -254,6 +261,7 @@ function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
             },
             [element('e-password', 'textbox', 'Account password', { type: 'password' })],
             'bypass',
+            '/dashboard',
           ),
         ],
       },
@@ -336,6 +344,11 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
   }
 
   it('cold to committed: one drained tail run yields exactly one round-tripping procedure bundle', { timeout: 60_000 }, async () => {
+    const finalSubAction = handoffFor('run-loop-shape', 42).tests[0]!.steps[2]!
+      .subActions[0]!
+    expect(finalSubAction.stateBefore.url).toBe('/login')
+    expect(finalSubAction.stateAfter?.url).toBe('/dashboard')
+
     const warnings = await runTail('run-loop-1', 42)
     expect(warnings).toEqual([])
 

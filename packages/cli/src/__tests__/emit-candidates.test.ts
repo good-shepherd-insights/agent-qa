@@ -484,12 +484,13 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     stepText: string
     ref: string
     name: string
+    afterUrl?: string
     fillText?: string
     cacheStatus?: StepEvidence['cacheStatus']
     pass?: boolean
   }): StepEvidence {
     const el = element(input.ref, input.name)
-    const evidence = subAction([el], input.ref)
+    const evidence = subAction([el], input.ref, input.afterUrl)
     if (input.fillText !== undefined) {
       evidence.plannedAction = {
         type: 'fill',
@@ -645,6 +646,31 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       targetRef: 'password',
     })
     expect(filled?.pageRoute).toBe('https://shop.example/cart')
+  })
+
+  it('records navigating guard routes from the pre-action page while retaining destination anchors', () => {
+    const steps = signInSteps()
+    steps[2] = flowStep({
+      stepIndex: 2,
+      stepText: 'Submit the credentials',
+      ref: 'submit',
+      name: 'Submit',
+      afterUrl: 'https://shop.example/checkout',
+    })
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'auth::sign-in' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+
+    const seed = parseProcedureTrajectorySeed(target!.bodySeed)
+    expect(seed?.steps[2]?.pageRoute).toBe('https://shop.example/cart')
+    expect(target?.distilledObservations[2]?.surface?.naturalKey).toBe(
+      'https://shop.example/cart',
+    )
+    expect(target?.anchors).toContainEqual({
+      t: 'page',
+      route: 'https://shop.example/checkout',
+    })
   })
 })
 
