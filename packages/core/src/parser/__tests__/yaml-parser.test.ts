@@ -1,7 +1,8 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { describe, it, expect } from 'vitest'
-import { parseTestFile } from '../yaml-parser.js'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { afterEach, describe, it, expect } from 'vitest'
+import { parseAllTestBindings, parseAllTests, parseTestFile } from '../yaml-parser.js'
 import { formatParseError } from '../errors.js'
 
 const fixturesDir = resolve(__dirname, 'fixtures')
@@ -9,6 +10,22 @@ const fixturesDir = resolve(__dirname, 'fixtures')
 function readFixture(name: string): string {
   return readFileSync(resolve(fixturesDir, name), 'utf-8')
 }
+
+const temporaryRoots: string[] = []
+
+function writeTemporaryTestFile(name: string, content: string): string {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-yaml-parser-'))
+  temporaryRoots.push(root)
+  const filePath = join(root, name)
+  writeFileSync(filePath, content)
+  return filePath
+}
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 describe('parseTestFile', () => {
   describe('valid single test', () => {
@@ -176,6 +193,63 @@ describe('parseTestFile', () => {
       expect(result.tests).toHaveLength(1)
       const meta = result.tests[0].meta
       expect(meta?.retries).toBe(5)
+    })
+  })
+})
+
+describe('parseAllTestBindings', () => {
+  it('preserves source path and exact file bytes for equal-named tests', async () => {
+    const firstContent = 'name: checkout succeeds\ntarget: storefront\nsteps:\n  - Open checkout\n'
+    const secondContent = 'name: checkout succeeds\ntarget: storefront\nsteps:\n  - Confirm checkout\n'
+    const firstPath = writeTemporaryTestFile('first.yaml', firstContent)
+    const secondPath = writeTemporaryTestFile('second.yaml', secondContent)
+
+    const result = await parseAllTestBindings([firstPath, secondPath])
+
+    expect(result.errors).toEqual([])
+    expect(result.bindings.map(({ filePath }) => filePath)).toEqual([firstPath, secondPath])
+    expect(result.bindings.map(({ test }) => test.name)).toEqual([
+      'checkout succeeds',
+      'checkout succeeds',
+    ])
+    expect(result.bindings.map(({ fileContent }) => fileContent)).toEqual([
+      firstContent,
+      secondContent,
+    ])
+  })
+
+  it('keeps valid bindings when a later file has parse errors', async () => {
+    const validContent = 'name: login works\ntarget: storefront\nsteps:\n  - Log in\n'
+    const validPath = writeTemporaryTestFile('valid.yaml', validContent)
+    const invalidPath = writeTemporaryTestFile(
+      'invalid.yaml',
+      'name: malformed\ntarget: storefront\nsteps: [unterminated\n',
+    )
+
+    const result = await parseAllTestBindings([validPath, invalidPath])
+
+    expect(result.bindings).toHaveLength(1)
+    expect(result.bindings[0]).toMatchObject({ filePath: validPath, fileContent: validContent })
+    expect(result.errors.length).toBeGreaterThan(0)
+    expect(result.errors.every(({ file }) => file === invalidPath)).toBe(true)
+  })
+
+  it('keeps parseAllTests byte-compatible with the flattened binding result', async () => {
+    const firstPath = writeTemporaryTestFile(
+      'first.yaml',
+      'name: first test\ntarget: storefront\nsteps:\n  - First step\n',
+    )
+    const secondPath = writeTemporaryTestFile(
+      'second.yaml',
+      'name: second test\ntarget: storefront\nsteps:\n  - Second step\n',
+    )
+
+    const bindingsResult = await parseAllTestBindings([firstPath, secondPath])
+    const flattenedResult = await parseAllTests([firstPath, secondPath])
+
+    expect(flattenedResult).toEqual({
+      tests: bindingsResult.bindings.map(({ test }) => test),
+      errors: bindingsResult.errors,
     })
   })
 })
