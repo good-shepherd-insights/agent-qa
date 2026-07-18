@@ -1,3 +1,8 @@
+import { randomUUID } from 'node:crypto'
+import { rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import {
   asRecordId,
   BundleOutcomeEventSchema,
@@ -8,15 +13,23 @@ import {
   type BundleOutcomeEvent,
   type BundleProvenance,
   type CurationAuthorship,
+  type RecordId,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { makeProcedureBodyPayloadFixture } from '../../__tests__/fixtures/bundle-fixture.js'
+import {
+  makeProcedureBodyPayloadFixture,
+  makeProcedureBundleDraftFixture,
+  makeScreenStateFixture,
+} from '../../__tests__/fixtures/bundle-fixture.js'
+import { publishBundle } from '../../bundle-publish.js'
+import { rebuildIndex } from '../../index-rebuild.js'
 import {
   matchProcedure,
   type MatchProcedureInput,
   type ProcedureMatchCandidate,
 } from '../get-procedure.js'
+import { openKnowledgeReader } from '../reader.js'
 
 const SIGN_IN_ANCHORS: Anchor[] = [
   { t: 'flow', name: 'Sign in flow' },
@@ -331,5 +344,93 @@ describe('matchProcedure determinism', () => {
     ]))
 
     expect(match?.id).toBe('proc-tie-a')
+  })
+})
+
+describe('servingReader getProcedure end-to-end', () => {
+  const PRODUCT = 'fixture-storefront'
+  let root: string
+  let knowledgeRoot: string
+  let auditBaseDir: string
+
+  beforeEach(() => {
+    root = join(tmpdir(), `get-procedure-reader-${randomUUID()}`)
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    auditBaseDir = join(root, '.agent-qa')
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function seedProcedure(): RecordId {
+    const outcome = publishBundle({
+      knowledgeRoot,
+      productKey: PRODUCT,
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'get-procedure-test',
+    }, {
+      draft: makeProcedureBundleDraftFixture(),
+      discriminant: {
+        kind: 'procedure',
+        flowName: 'Sign in flow',
+        stepSignature: 'email>password>submit',
+      },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 10,
+      screenStates: [],
+      initialEvents: confirmedEvents(2, 'served'),
+      relations: [],
+      provenance: runLinkedProvenance({ authorship: FULL_AUTHORSHIP }),
+      artifacts: [],
+      evidenceMarkdown: 'Evidence for the sign-in procedure.\n',
+    })
+    if (outcome.kind !== 'published') {
+      throw new Error(`expected published procedure bundle, got ${outcome.kind}`)
+    }
+    return outcome.id
+  }
+
+  it('serves a temp-store committed procedure bundle with the pinned shape', async () => {
+    const id = seedProcedure()
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    const match = reader.getProcedure(
+      'sign in',
+      makeScreenStateFixture(),
+      ['email', 'password'],
+    )
+
+    expect(match).toMatchObject({
+      id,
+      flowAnchor: normalizeAnchor({ t: 'flow', name: 'Sign in flow' }),
+      authoringModelTier: 'full',
+      replayRecommendation: 'replay',
+      parameterSchema: [
+        { name: 'email', type: 'string', required: true },
+        { name: 'password', type: 'secret', required: true },
+      ],
+    })
+    expect(match?.confidence).toBeGreaterThanOrEqual(0.5)
+  })
+
+  it('returns the domain-neutral miss against a store without procedures', () => {
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(
+      reader.getProcedure('sign in', makeScreenStateFixture(), ['email', 'password']),
+    ).toBeUndefined()
+  })
+
+  it('treats absent bindingNames as an empty set: required-param procedures downrank to hint', async () => {
+    seedProcedure()
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    const match = reader.getProcedure('sign in', makeScreenStateFixture())
+
+    expect(match?.replayRecommendation).toBe('hint')
   })
 })
