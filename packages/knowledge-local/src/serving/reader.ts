@@ -75,7 +75,7 @@ type OriginStampedEntry = IndexEntry & {
   originClass: LoadedBundle['frontmatter']['originClass']
 }
 
-/** Typed failure used by the tool wrapper to map missing ids to a structured result. */
+/** @deprecated The safe serving reader reports misses as `undefined` and never throws this. */
 export class KnowledgeRecordNotFoundError extends Error {
   readonly recordId: RecordId
 
@@ -365,9 +365,9 @@ function readRecord(
   config: OpenServingKnowledgeReaderConfig,
   id: RecordId,
   options?: ReadOptions,
-): RecordBody {
+): RecordBody | undefined {
   const found = findReadableBundle(config, id, options)
-  if (found === undefined) throw new KnowledgeRecordNotFoundError(id)
+  if (found === undefined) return undefined
 
   const { bundle } = found
   const measurements = readMeasurements(found.dir)

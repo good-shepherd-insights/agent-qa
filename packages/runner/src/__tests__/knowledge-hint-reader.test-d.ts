@@ -1,4 +1,5 @@
 import { expectTypeOf } from 'vitest'
+import type { RecordBody } from '@vostride/agent-qa-schema'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
 
 declare const reader: KnowledgeHintReader
@@ -24,3 +25,4 @@ reader.promote
 expectTypeOf<keyof KnowledgeHintReader>().toEqualTypeOf<
   'getRunBrief' | 'search' | 'read' | 'getCautions' | 'getProcedure' | 'emitCanaryOutcome'
 >()
+expectTypeOf(reader.read).returns.toEqualTypeOf<RecordBody | undefined>()

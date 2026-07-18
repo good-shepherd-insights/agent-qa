@@ -142,7 +142,7 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
   const reader = openKnowledgeReader({ knowledgeRoot: opts.knowledgeRoot })
   const outcomes = projectCanaryOutcomes({
     handoff: opts.handoff,
-    resolveCandidateAnchors: (id) => reader.read(id).anchors,
+    resolveCandidateAnchors: (id) => reader.read(id)?.anchors,
   })
   const report: EmitCanaryOutcomeReport = { emitted: 0, refused: 0, details: [] }
 

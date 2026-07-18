@@ -170,7 +170,7 @@ export function createMemoryTools(deps: {
           scope: activeScope,
           asOfBuild: deps.asOfBuild,
         }
-        const record = deps.reader.read(id, options) as RecordBody | undefined
+        const record = deps.reader.read(id, options)
         if (record === undefined) return { kind: 'not-found', id }
 
         const measured = normalizeMeasuredTokens(deps.estimateTokens(record.body), remaining)

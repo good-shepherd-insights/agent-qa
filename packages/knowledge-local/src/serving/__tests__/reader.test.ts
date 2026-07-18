@@ -32,10 +32,7 @@ import {
 } from '../../bundle-publish.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
-import {
-  KnowledgeRecordNotFoundError,
-  openKnowledgeReader,
-} from '../reader.js'
+import { openKnowledgeReader } from '../reader.js'
 
 const PRODUCT = 'reader-storefront'
 const SCOPE: ScopeKey = { tier: 'product', key: PRODUCT }
@@ -397,14 +394,11 @@ describe('openKnowledgeReader synchronous serving port', () => {
     await rebuildIndex({ knowledgeRoot })
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
-    expect(reader.read(source, { scope: testScope, asOfBuild: 12 }).relations)
+    expect(reader.read(source, { scope: testScope, asOfBuild: 12 })?.relations)
       .toContainEqual({ kind: 'relates-to', targetId: supersededTarget })
-    expect(() => reader.read(sibling, { scope: testScope, asOfBuild: 12 }))
-      .toThrow(KnowledgeRecordNotFoundError)
-    expect(() => reader.read(supersededTarget, { scope: testScope }))
-      .toThrow(KnowledgeRecordNotFoundError)
-    expect(() => reader.read(futureAtBuild, { scope: testScope, asOfBuild: 9 }))
-      .toThrow(KnowledgeRecordNotFoundError)
+    expect(reader.read(sibling, { scope: testScope, asOfBuild: 12 })).toBeUndefined()
+    expect(reader.read(supersededTarget, { scope: testScope })).toBeUndefined()
+    expect(reader.read(futureAtBuild, { scope: testScope, asOfBuild: 9 })).toBeUndefined()
   })
 
   it('bounds read bodies on whole lines and DATA-wraps app-observed content', () => {
@@ -412,6 +406,9 @@ describe('openKnowledgeReader synchronous serving port', () => {
 
     const whole = reader.read(seeded.observedFact)
     const bounded = reader.read(seeded.observedFact, { budget: 35 })
+    if (whole === undefined || bounded === undefined) {
+      throw new Error('expected seeded observed record to remain readable')
+    }
 
     expect(whole.body).toContain('Third observed checkout line.')
     expect(whole.body.startsWith(APP_OBSERVED_DATA_OPEN)).toBe(true)
@@ -500,17 +497,10 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(reader.search('', { scope: SCOPE })).toEqual([])
   })
 
-  it('throws the typed reader not-found error for a missing record id', () => {
+  it('returns the domain-neutral miss value for a missing record id', () => {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
     const missingId = asRecordId('reader-record-does-not-exist')
 
-    // The non-optional RecordBody contract uses a typed throw; the tool wrapper maps it.
-    expect(() => reader.read(missingId)).toThrow(
-      expect.objectContaining({
-        name: 'KnowledgeRecordNotFoundError',
-        recordId: missingId,
-      }),
-    )
-    expect(() => reader.read(missingId)).toThrow(KnowledgeRecordNotFoundError)
+    expect(reader.read(missingId)).toBeUndefined()
   })
 })

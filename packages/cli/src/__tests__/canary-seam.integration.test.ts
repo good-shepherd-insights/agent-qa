@@ -286,7 +286,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const handoff = completedHandoff(published.id, servedCandidate)
     const projectionInput = {
       handoff,
-      resolveCandidateAnchors: (id: RecordId) => reader.read(id).anchors,
+      resolveCandidateAnchors: (id: RecordId) => reader.read(id)?.anchors,
     }
     const firstProjection = projectCanaryOutcomes(projectionInput)
     const secondProjection = projectCanaryOutcomes(projectionInput)

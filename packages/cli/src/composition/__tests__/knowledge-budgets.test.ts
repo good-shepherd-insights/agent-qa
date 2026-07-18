@@ -1,8 +1,8 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { ModelCapabilities } from '@vostride/agent-qa-schema'
+import { asRecordId, type ModelCapabilities } from '@vostride/agent-qa-schema'
 import { LLMPlanner } from '@vostride/agent-qa-runner'
 import type { KnowledgeHintReader, NonActionToolMap } from '@vostride/agent-qa-runner'
 import {
@@ -177,5 +177,32 @@ describe('run knowledge composition', () => {
       'memory.read',
       'memory.search',
     ])
+  })
+
+  it('maps a production reader miss to the structured memory.read result', async () => {
+    const knowledgeRoot = mkdtempSync(join(tmpdir(), 'knowledge-read-miss-'))
+    try {
+      const scope = { tier: 'test', key: 'checkout' } as const
+      const missingId = asRecordId('record-that-no-longer-exists')
+      const composition = openRunKnowledgeComposition({
+        knowledgeRoot,
+        product: 'shop',
+        scope,
+        asOfBuild: 7,
+        capabilities: capabilities({ contextWindow: 32_768 }),
+        accounting: {
+          getCeilings: () => ({ contextWindow: 32_768, maxOutput: 4_096 }),
+          estimate: () => 32,
+        },
+        qaRulesText: 'rules',
+        workingContextText: 'checkout context',
+      })
+      composition.beginMemoryTurn?.(scope, [missingId])
+
+      const result = await composition.nonActionTools!['memory.read'].execute({ id: missingId })
+      expect(result).toEqual({ kind: 'not-found', id: missingId })
+    } finally {
+      rmSync(knowledgeRoot, { recursive: true, force: true })
+    }
   })
 })
