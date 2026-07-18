@@ -11,6 +11,7 @@ import {
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
+  serializeProcedureBody,
   type Anchor,
   type BundleDiscriminant,
   type BundleDraft,
@@ -19,12 +20,16 @@ import {
   type CanaryOutcome,
   type DistilledObservation,
   type OriginClass,
+  type ProcedureBindingAvailability,
   type RecordId,
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
+import {
+  makeProcedureBodyPayloadFixture,
+  makeScreenStateFixture,
+} from '../../__tests__/fixtures/bundle-fixture.js'
 import {
   publishBundle,
   type BundleStoreConfig,
@@ -55,6 +60,7 @@ interface SeedRecordOptions {
   anchors?: Anchor[]
   scope?: ScopeKey
   relations?: readonly BundleRelation[]
+  initialEvents?: readonly BundleOutcomeEvent[]
 }
 
 interface SeededStore {
@@ -176,9 +182,11 @@ describe('openKnowledgeReader synchronous serving port', () => {
           observedAtOrdinal: 10,
         }]
       : []
-    const initialEvents: BundleOutcomeEvent[] = status === 'candidate'
-      ? [event('confirmed', options.key, 10)]
-      : [event('promoted', options.key, 10)]
+    const initialEvents: BundleOutcomeEvent[] = options.initialEvents === undefined
+      ? status === 'candidate'
+        ? [event('confirmed', options.key, 10)]
+        : [event('promoted', options.key, 10)]
+      : [...options.initialEvents]
     if (status === 'deprecated') {
       initialEvents.push(event('deprecated', options.key, 11))
     }
@@ -445,6 +453,75 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
     expect(reader.getProcedure('complete checkout', makeScreenStateFixture())).toBeUndefined()
+  })
+
+  it('transports exactly the three source-tagged name arrays across the procedure port', async () => {
+    seedRecord({
+      key: 'procedure-port',
+      kind: 'procedure',
+      status: 'candidate',
+      anchors: [
+        { t: 'flow', name: 'Sign in flow' },
+        { t: 'page', route: '/login' },
+      ],
+      summary: 'Sign in with recorded credentials',
+      body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
+      initialEvents: [
+        event('confirmed', 'procedure-port-a', 10),
+        event('confirmed', 'procedure-port-b', 11),
+      ],
+    })
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    const availability = {
+      variables: ['email'],
+      memory: ['remembered-account'],
+      secrets: ['password'],
+    } satisfies ProcedureBindingAvailability
+
+    expect(Object.keys(availability)).toEqual(['variables', 'memory', 'secrets'])
+    expect(
+      reader.getProcedure(
+        'sign in',
+        makeScreenStateFixture(),
+        availability as unknown as readonly string[],
+      )?.replayRecommendation,
+    ).toBe('replay')
+    expect(
+      reader.getProcedure(
+        'sign in',
+        makeScreenStateFixture(),
+        {
+          variables: ['email', 'password'],
+          memory: [],
+          secrets: [],
+        } as unknown as readonly string[],
+      )?.replayRecommendation,
+    ).toBe('hint')
+  })
+
+  it('treats absent source-tagged availability as empty and fails conservatively to hint', async () => {
+    seedRecord({
+      key: 'procedure-port-empty',
+      kind: 'procedure',
+      status: 'candidate',
+      anchors: [
+        { t: 'flow', name: 'Sign in flow' },
+        { t: 'page', route: '/login' },
+      ],
+      summary: 'Sign in with recorded credentials',
+      body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
+      initialEvents: [
+        event('confirmed', 'procedure-port-empty-a', 10),
+        event('confirmed', 'procedure-port-empty-b', 11),
+      ],
+    })
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(
+      reader.getProcedure('sign in', makeScreenStateFixture())?.replayRecommendation,
+    ).toBe('hint')
   })
 
   it('crosses caution overflow with one accurate reserved terminal line', () => {

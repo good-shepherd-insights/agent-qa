@@ -290,6 +290,54 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
 
     expect(match?.replayRecommendation).toBe('hint')
   })
+
+  it('downranks a secret parameter advertised only by the variables source', () => {
+    const store = [candidate({ id: 'proc-secret-source' })]
+    const sourceCorrect = matchProcedure({
+      ...matchInput(store),
+      availability: {
+        variables: ['email'],
+        memory: [],
+        secrets: ['password'],
+      },
+    })
+    const variableOnly = matchProcedure({
+      ...matchInput(store),
+      availability: {
+        variables: ['email', 'password'],
+        memory: [],
+        secrets: [],
+      },
+    })
+
+    expect(sourceCorrect?.replayRecommendation).toBe('replay')
+    expect(variableOnly?.replayRecommendation).toBe('hint')
+    expect(variableOnly?.confidence).toBeCloseTo((sourceCorrect?.confidence ?? 0) * 0.5)
+  })
+
+  it('downranks a referenced optional parameter when every source is missing it', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    const store = [candidate({
+      id: 'proc-optional-referenced',
+      body: serializeProcedureBody({
+        ...payload,
+        parameters: [{ name: 'email', type: 'string', required: false }],
+        steps: [payload.steps[0]!],
+      }),
+    })]
+    const sourceCorrect = matchProcedure({
+      ...matchInput(store, { bindingNames: ['email'] }),
+      availability: { variables: ['email'], memory: [], secrets: [] },
+    })
+    const missing = matchProcedure({
+      ...matchInput(store, { bindingNames: [] }),
+      availability: { variables: [], memory: [], secrets: [] },
+    })
+
+    expect(sourceCorrect?.replayRecommendation).toBe('replay')
+    expect(missing?.replayRecommendation).toBe('hint')
+    expect(missing?.confidence).toBeCloseTo((sourceCorrect?.confidence ?? 0) * 0.5)
+  })
 })
 
 describe('matchProcedure empty edges', () => {
