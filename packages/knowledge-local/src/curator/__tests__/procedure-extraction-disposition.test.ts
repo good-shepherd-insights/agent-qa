@@ -45,6 +45,11 @@ const OBSERVATION_ELEMENT_KEYS = [
   'textbox:password',
   'button:sign in',
 ] as const
+const REPEATED_INSTRUCTIONS = [
+  'Click Next',
+  'Enter shipping address',
+  'Click Next',
+] as const
 
 let root: string
 let knowledgeRoot: string
@@ -72,6 +77,32 @@ function makeObservations(): DistilledObservation[] {
     element: { naturalKey: OBSERVATION_ELEMENT_KEYS[index]! },
     observedAtOrdinal: 81 + index,
   }))
+}
+
+function repeatedInstructionPayload() {
+  const payload = makeProcedureBodyPayloadFixture()
+  return {
+    ...payload,
+    steps: payload.steps.map((step, index) => ({
+      ...step,
+      instruction: REPEATED_INSTRUCTIONS[index]!,
+    })),
+  }
+}
+
+function instructionWindow(
+  instructions: readonly string[],
+  startOrdinal: number,
+  route = '/login',
+): DistilledObservation[] {
+  return instructions.map((naturalKey, index) => {
+    const base = makeObservations()[index]!
+    return {
+      ...base,
+      step: { naturalKey, ordinal: startOrdinal + index },
+      surface: { kind: 'page' as const, naturalKey: route },
+    }
+  })
 }
 
 function makeEvidence(
@@ -203,6 +234,50 @@ describe('procedure extraction disposition — structural candidacy (D-02)', () 
       makeEvidence({ distilledObservations: observations }),
     )
     expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-span-non-contiguous' })
+  })
+
+  it('accepts a contiguous verified trajectory whose first and third instructions repeat', () => {
+    const payload = repeatedInstructionPayload()
+    const delta = addDelta({ body: serializeProcedureBody(payload) })
+    const outcome = dispose(
+      delta,
+      makeEvidence({
+        distilledObservations: instructionWindow(REPEATED_INSTRUCTIONS, 0),
+      }),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'apply', delta })
+  })
+
+  it('rejects repeated instructions when no contiguous ordinal window matches every step', () => {
+    const payload = repeatedInstructionPayload()
+    const outcome = dispose(
+      addDelta({ body: serializeProcedureBody(payload) }),
+      makeEvidence({
+        distilledObservations: instructionWindow(
+          ['Click Next', 'Enter billing address', 'Click Next'],
+          0,
+        ),
+      }),
+    )
+
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-step-coverage' })
+  })
+
+  it('selects the lowest matching ordinal window independent of observation order', () => {
+    const payload = repeatedInstructionPayload()
+    const delta = addDelta({ body: serializeProcedureBody(payload) })
+    const outcome = dispose(
+      delta,
+      makeEvidence({
+        distilledObservations: [
+          ...instructionWindow(REPEATED_INSTRUCTIONS, 3, '/settings'),
+          ...instructionWindow(REPEATED_INSTRUCTIONS, 0),
+        ],
+      }),
+    )
+
+    expect(outcome).toMatchObject({ kind: 'apply', delta })
   })
 
   it('rejects a candidate with no flow anchor', () => {
