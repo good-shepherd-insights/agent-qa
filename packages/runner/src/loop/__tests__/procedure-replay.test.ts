@@ -347,7 +347,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(0)
     expect(executed[0]).toMatchObject({ type: 'doubleClick', clickDelay: 4 })
-    expect(typeof (executed[0] as Record<string, unknown>).clickDelay).toBe('number')
+    expect(typeof (executed[0] as Extract<Action, { type: 'doubleClick' }>).clickDelay)
+      .toBe('number')
   })
 
   it('keeps a navigating final replay guard on the pre-action page', async () => {
@@ -672,7 +673,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(valid.status).toBe('passed')
     expect(validPlanner.calls).toHaveLength(0)
     expect(validAdapter.executed[0]).toMatchObject({ type: 'doubleClick', clickDelay: 5 })
-    expect(typeof (validAdapter.executed[0] as Record<string, unknown>).clickDelay).toBe('number')
+    expect(typeof (validAdapter.executed[0] as Extract<Action, { type: 'doubleClick' }>).clickDelay)
+      .toBe('number')
 
     const invalidSpy = makeReader({ match, payload })
     const invalidAdapter = capturingAdapter([makeScreenState()])
@@ -723,7 +725,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
     expect(validPlanner.calls).toHaveLength(0)
     expect(validAdapter.executed[0]).toMatchObject({ type: 'fill', submit: true })
-    expect(typeof (validAdapter.executed[0] as Record<string, unknown>).submit).toBe('boolean')
+    expect(typeof (validAdapter.executed[0] as Extract<Action, { type: 'fill' }>).submit)
+      .toBe('boolean')
 
     const invalidSpy = makeReader({ match, payload })
     const invalidAdapter = capturingAdapter([makeScreenState()])

@@ -49,7 +49,9 @@ import type {
   GroundingAttempt,
   GroundingEvidence,
   ProcedureBodyPayload,
+  ProcedureBindingAvailability,
   ProcedureMatch,
+  ProcedureParamType,
   ProcedureStepSpec,
   RecordId,
   Ref,
@@ -69,6 +71,7 @@ import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../resul
 import { stampCaptureMode } from '../screen-builder.js'
 import { normalizePointerActionForStep } from '../tools/pointer-action-normalization.js'
 import { projectRiskAction } from '../tools/project-risk-action.js'
+import { defaultRegistry } from '../tools/registry.js'
 import { classifyStep } from '../cache/classify.js'
 import { buildCacheableStepInput } from '../cache/key.js'
 import { buildCachedPlanValue, toGroundedLocator } from '../cache/value.js'
@@ -294,29 +297,47 @@ export async function executeStep(
   let procedureHintExposed = false
 
   // Loop-side procedure parameter binding (D-08/T-381-21): values bind by NAME from the
-  // sources that never crossed the reader port — a `secret`-typed parameter binds as its
-  // `{{secret:name}}` template (resolved only at the execute boundary, so evidence stays
-  // redacted), everything else binds test variables first, then working-memory entries,
-  // then a secret template as the last resort.
-  const bindProcedureParam = (name: string, type: string): string | undefined => {
+  // same source-tagged availability contract the matcher admitted (WR-03). Secret parameters
+  // hard-wall to the secret store; strings preserve variables -> memory -> secret-template
+  // precedence; numbers and booleans accept only type-valid variable/memory values. A miss here
+  // is genuine availability/type drift and is reported as parameter-unbound below.
+  const bindProcedureParam = (
+    name: string,
+    type: ProcedureParamType,
+  ): string | number | boolean | undefined => {
     const asSecretTemplate = ports.secretStore?.has(name) ? `{{secret:${name}}}` : undefined
     if (type === 'secret') return asSecretTemplate
-    const testVariable = context.variables?.[name]
-    if (testVariable !== undefined) return testVariable
+
+    const testVariable: unknown = context.variables?.[name]
     const memoryEntry = ports.workingMemory?.entries().find((entry) => entry.key === name)
-    if (memoryEntry !== undefined) return memoryEntry.value
-    return asSecretTemplate
+    const raw: unknown = testVariable ?? memoryEntry?.value
+
+    if (type === 'string') {
+      if (raw !== undefined) return String(raw)
+      return asSecretTemplate
+    }
+    if (type === 'number') {
+      if (raw === undefined) return undefined
+      const number = Number(raw)
+      return Number.isFinite(number) ? number : undefined
+    }
+    if (raw === true || raw === false) return raw
+    if (raw === 'true') return true
+    if (raw === 'false') return false
+    return undefined
   }
 
-  // D-08 binding-NAME assembly (RESEARCH Open Q2): test-variable keys (member config threads
-  // them onto StepContext.variables), working-memory entry keys, and the secret store's
-  // template names. Names only — no value of any binding ever crosses the reader port.
-  const assembleProcedureBindingNames = (): string[] => {
-    const names = new Set<string>()
-    for (const key of Object.keys(context.variables ?? {})) names.add(key)
-    for (const entry of ports.workingMemory?.entries() ?? []) names.add(entry.key)
-    ports.secretStore?.forEachSecret?.((name) => names.add(name))
-    return [...names]
+  // D-08 binding-NAME assembly (RESEARCH Open Q2): preserve the three source identities so
+  // procedureParameterFillability and this binder apply one contract. These arrays carry names
+  // only — no test-variable, working-memory, or secret value ever crosses the reader port.
+  const assembleProcedureBindingAvailability = (): ProcedureBindingAvailability => {
+    const variables = Object.keys(context.variables ?? {})
+    const memory = [...new Set(
+      (ports.workingMemory?.entries() ?? []).map((entry) => entry.key),
+    )]
+    const secrets = new Set<string>()
+    ports.secretStore?.forEachSecret?.((name) => secrets.add(name))
+    return { variables, memory, secrets: [...secrets] }
   }
 
   const recordProcedureReplaySource = (): void => {
@@ -718,14 +739,14 @@ export async function executeStep(
     // planning turn AND before the per-decision cache consult (the researcher-recommended
     // procedure-first precedence). Optional-chained getRunBrief idiom: an unbound reader
     // costs nothing (binding names are not even assembled) and never throws. Intent is the
-    // NL step text; binding NAMES are assembled loop-side — values never cross the port.
+    // NL step text; source-tagged binding NAMES are assembled loop-side — values never cross.
     if (!procedureConsulted) {
       procedureConsulted = true
       if (ports.knowledgeReader) {
         const match = ports.knowledgeReader.getProcedure(
           stepInstruction,
           screenState,
-          assembleProcedureBindingNames(),
+          assembleProcedureBindingAvailability(),
         )
         if (match !== undefined) {
           if (match.replayRecommendation === 'replay') {
@@ -1759,7 +1780,7 @@ function attemptProcedureReplayAction(input: {
   step: ProcedureStepSpec
   isFinal: boolean
   screenState: ScreenState
-  bind: (name: string) => string | undefined
+  bind: (name: string) => string | number | boolean | undefined
 }): ProcedureReplayAttempt {
   const spec = input.step.action
   const shapeKeys = [...Object.keys(spec.targets), ...Object.keys(spec.values)]
@@ -1814,7 +1835,7 @@ function attemptProcedureReplayAction(input: {
   }
 
   for (const [field, slot] of Object.entries(spec.values)) {
-    if (typeof slot !== 'object') {
+    if (typeof slot === 'string' || typeof slot === 'number' || typeof slot === 'boolean') {
       action[field] = slot
       continue
     }
@@ -1822,16 +1843,49 @@ function attemptProcedureReplayAction(input: {
     if (bound === undefined) {
       return {
         ok: false,
-        reason: 'non-replayable-action',
+        reason: 'parameter-unbound',
         detail: `parameter "${slot.param}" has no loop-side binding source`,
       }
     }
     action[field] = bound
   }
 
+  // Stored bodies are untrusted persisted input. Reconstruct the canonical tool action exactly
+  // as toolCallToActionPlan does: remove the type discriminator, safeParse through the registered
+  // strict schema, and use parsed data (including canonical defaults) for the grounding gate.
+  // Procedure bodies persist the action verb (`fill`), while the model registry is keyed by
+  // surface-qualified tool id (`web_fill`). Accept an exact id for forward compatibility, then
+  // resolve the one definition exposed for the live platform by its canonical action type.
+  const definition = defaultRegistry.get(spec.type)
+    ?? defaultRegistry.getForPlatform(input.screenState.platform)
+      .find((candidate) => candidate.type === spec.type)
+  if (definition === undefined) {
+    return {
+      ok: false,
+      reason: 'non-replayable-action',
+      detail: `stored action type "${spec.type}" has no canonical registry definition`,
+    }
+  }
+  const { type: _type, ...actionFields } = action
+  const parsed = definition.schema.safeParse(actionFields)
+  if (!parsed.success) {
+    const issueSummary = parsed.error.issues
+      .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+      .join('; ')
+    return {
+      ok: false,
+      reason: 'non-replayable-action',
+      detail: `stored action failed canonical action-schema validation: ${issueSummary}`,
+    }
+  }
+  const validatedAction: Record<string, unknown> = {
+    type: definition.type,
+    ...(parsed.data as Record<string, unknown>),
+  }
+
   const gate = groundActionPlan({
     toolName: spec.type,
-    action,
+    action: validatedAction,
     screenState: input.screenState,
   })
   if (!gate.ok) {
