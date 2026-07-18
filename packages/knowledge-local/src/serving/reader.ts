@@ -60,14 +60,14 @@ export interface OpenServingKnowledgeReaderConfig {
   budgets?: { recordCap?: number }
 }
 
-interface IndexRow {
+export interface IndexRow {
   bundle_id: string
   product: string
   scope_tier: string
   scope_key: string
 }
 
-interface HydratedEntry {
+export interface HydratedEntry {
   dir: string
   bundle: LoadedBundle
   entry: IndexEntry
@@ -101,7 +101,8 @@ function productSlug(config: OpenServingKnowledgeReaderConfig): string | undefin
   return config.product === undefined ? undefined : slugBranch(config.product)
 }
 
-function readIndexRows(
+/** Shared serving internal: scope-laddered index rows (also feeds the authoring reader). */
+export function readIndexRows(
   config: OpenServingKnowledgeReaderConfig,
   scope?: ScopeKey,
 ): IndexRow[] {
@@ -146,7 +147,8 @@ function bundleDirs(config: OpenServingKnowledgeReaderConfig): Map<string, {
   )
 }
 
-function hydrateRows(
+/** Shared serving internal: integrity-checked bundle hydration (also feeds the authoring reader). */
+export function hydrateRows(
   config: OpenServingKnowledgeReaderConfig,
   rows: readonly IndexRow[],
   audit: boolean,

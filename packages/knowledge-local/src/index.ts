@@ -89,6 +89,22 @@ export {
   openKnowledgeReader,
 } from './serving/reader.js'
 export type { OpenServingKnowledgeReaderConfig } from './serving/reader.js'
+export {
+  AUTHORING_BRIEF_DEFAULT_BUDGET,
+  createAuthoringReader,
+} from './serving/authoring-reader.js'
+export {
+  assembleAuthoringBrief,
+  AUTHORING_EXCERPT_CHAR_BUDGET,
+  AUTHORING_EXEMPLAR_CAP,
+  AUTHORING_PROCEDURE_CAP,
+} from './serving/get-authoring-brief.js'
+export type {
+  AssembleAuthoringBriefInput,
+  AuthoringEntryCandidate,
+  AuthoringExemplarRow,
+  AuthoringTestRef,
+} from './serving/get-authoring-brief.js'
 export type {
   DenseHit,
   DenseSearchOptions,
