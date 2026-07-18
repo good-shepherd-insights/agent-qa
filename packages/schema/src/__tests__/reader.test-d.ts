@@ -3,6 +3,7 @@ import type { BriefLine, CautionLine } from '../brief/served-brief'
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
+import type { CuratorTier, ProcedureParamType } from '../knowledge/curator-tier'
 import type {
   BriefBlock,
   BuildRange,
@@ -89,12 +90,14 @@ expectTypeOf<ProcedureMatch>().toEqualTypeOf<{
   id: RecordId
   flowAnchor: Anchor
   confidence: number
-  authoringModelTier: string
-  parameterSchema: { name: string; type: string; required: boolean }[]
+  authoringModelTier: CuratorTier
+  parameterSchema: { name: string; type: ProcedureParamType; required: boolean }[]
   replayRecommendation: 'replay' | 'hint'
 }>()
 
 expectTypeOf<ProcedureMatch['replayRecommendation']>().toEqualTypeOf<'replay' | 'hint'>()
+// D-06 narrowing proof: an arbitrary string no longer inhabits the tier field.
+expectTypeOf<ProcedureMatch['authoringModelTier']>().toEqualTypeOf<'full' | 'degraded' | 'floor'>()
 expectTypeOf<IndexEntry['anchors']>().toEqualTypeOf<Anchor[]>()
 
 expectTypeOf<BuildRange>().toEqualTypeOf<{

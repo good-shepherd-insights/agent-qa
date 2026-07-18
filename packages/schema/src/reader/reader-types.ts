@@ -2,6 +2,7 @@ import type { BriefLine, CautionLine } from '../brief/served-brief'
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
+import type { CuratorTier, ProcedureParamType } from '../knowledge/curator-tier'
 import type { ServingRecordMetadata } from './serving-admission'
 
 export interface IndexEntry {
@@ -60,7 +61,8 @@ export interface ProcedureMatch {
   id: RecordId
   flowAnchor: Anchor
   confidence: number
-  authoringModelTier: string
-  parameterSchema: { name: string; type: string; required: boolean }[]
+  /** D-06 closed capability tier — never a widened string. */
+  authoringModelTier: CuratorTier
+  parameterSchema: { name: string; type: ProcedureParamType; required: boolean }[]
   replayRecommendation: 'replay' | 'hint'
 }

@@ -383,6 +383,28 @@ export {
 } from './knowledge/index'
 export type { RecordFrontmatter } from './knowledge/index'
 
+// 381 procedure & guarded-replay contracts (D-03/D-04/D-06, Pitfall 6)
+export { curatorTier } from './knowledge/curator-tier'
+export type { CuratorTier, ProcedureParamType } from './knowledge/curator-tier'
+export {
+  parseProcedureBody,
+  procedureStepKeys,
+  serializeProcedureBody,
+} from './knowledge/procedure-steps'
+export type {
+  ProcedureBodyPayload,
+  ProcedureGuardDescriptor,
+  ProcedureGuardTarget,
+  ProcedureParameterSpec,
+  ProcedureStepSpec,
+  ProcedureValueSlot,
+} from './knowledge/procedure-steps'
+export {
+  COORDINATE_ACTION_KEYS,
+  NON_REPLAYABLE_ACTION_TYPES,
+  isReplayableActionShape,
+} from './action/replayability'
+
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
 export type {
