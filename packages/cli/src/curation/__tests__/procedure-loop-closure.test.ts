@@ -341,9 +341,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       // the receipt-driven D-03 posture also force-parameterizes the clearMode slot because
       // it targets the masked password region.
       {
-        variables: ['accountEmail', 'step2_clearMode', 'step2_text'],
+        variables: [],
         memory: [],
-        secrets: [],
+        secrets: ['accountEmail', 'step2_clearMode', 'step2_text'],
       },
     )
   }
