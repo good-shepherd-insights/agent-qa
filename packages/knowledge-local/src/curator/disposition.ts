@@ -848,27 +848,82 @@ interface CoveredProcedureStep {
 }
 
 /**
- * §7.1 candidacy mapping: each committed step's authored instruction is the emit fold's
- * step natural key, so a covered step resolves to exactly one verified-PASS distilled
- * observation. A missing or ambiguous mapping is itself missing PASS evidence — fail closed.
+ * §7.1 candidacy mapping: the emit fold's step natural key is instruction text, which may
+ * legitimately repeat within a flow. Resolve coverage by a contiguous ordinal window with
+ * per-position instruction equality instead of grouping by text, which falsely rejected valid
+ * repeated instructions (G6/WR-05). Candidate starts are sorted so the lowest matching window
+ * wins deterministically; no complete window means missing PASS evidence and fails closed.
  */
 function coveredProcedureSteps(
   payload: ProcedureBodyPayload,
   observations: readonly DistilledObservation[],
 ): CoveredProcedureStep[] | undefined {
-  const byNaturalKey = new Map<string, DistilledObservation[]>()
+  const byOrdinal = new Map<number, DistilledObservation>()
   for (const observation of observations) {
-    const group = byNaturalKey.get(observation.step.naturalKey) ?? []
-    group.push(observation)
-    byNaturalKey.set(observation.step.naturalKey, group)
+    if (byOrdinal.has(observation.step.ordinal)) return undefined
+    byOrdinal.set(observation.step.ordinal, observation)
   }
-  const covered: CoveredProcedureStep[] = []
-  for (const step of payload.steps) {
-    const group = byNaturalKey.get(step.instruction)
-    if (group === undefined || group.length !== 1) return undefined
-    covered.push({ step, observation: group[0]! })
+
+  const candidateStarts = [...byOrdinal.keys()].sort((left, right) => left - right)
+  for (const startOrdinal of candidateStarts) {
+    const covered: CoveredProcedureStep[] = []
+    for (const [index, step] of payload.steps.entries()) {
+      const observation = byOrdinal.get(startOrdinal + index)
+      if (observation === undefined || observation.step.naturalKey !== step.instruction) {
+        break
+      }
+      covered.push({ step, observation })
+    }
+    if (covered.length === payload.steps.length) return covered
   }
-  return covered
+  return undefined
+}
+
+/**
+ * Preserve the established non-contiguous rejection when the full instruction sequence exists
+ * in ordinal order but only with gaps. Coverage itself is still granted exclusively by the
+ * contiguous-window matcher above.
+ */
+function hasOrderedNonContiguousProcedureSpan(
+  payload: ProcedureBodyPayload,
+  observations: readonly DistilledObservation[],
+): boolean {
+  const [firstStep] = payload.steps
+  if (firstStep === undefined) return false
+
+  const ordered = [...observations].sort(
+    (left, right) => left.step.ordinal - right.step.ordinal,
+  )
+  for (let startIndex = 0; startIndex < ordered.length; startIndex += 1) {
+    const start = ordered[startIndex]!
+    if (start.step.naturalKey !== firstStep.instruction) continue
+
+    let observationIndex = startIndex + 1
+    let previousOrdinal = start.step.ordinal
+    let matched = true
+    let hasGap = false
+    for (const step of payload.steps.slice(1)) {
+      let observation: DistilledObservation | undefined
+      while (observationIndex < ordered.length) {
+        const candidate = ordered[observationIndex++]!
+        if (
+          candidate.step.ordinal > previousOrdinal &&
+          candidate.step.naturalKey === step.instruction
+        ) {
+          observation = candidate
+          break
+        }
+      }
+      if (observation === undefined) {
+        matched = false
+        break
+      }
+      if (observation.step.ordinal !== previousOrdinal + 1) hasGap = true
+      previousOrdinal = observation.step.ordinal
+    }
+    if (matched && hasGap) return true
+  }
+  return false
 }
 
 /**
@@ -888,7 +943,11 @@ function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefine
   if (payload === undefined) return 'procedure-body-unparseable'
 
   const covered = coveredProcedureSteps(payload, evidence.distilledObservations)
-  if (covered === undefined) return 'procedure-step-coverage'
+  if (covered === undefined) {
+    return hasOrderedNonContiguousProcedureSpan(payload, evidence.distilledObservations)
+      ? 'procedure-span-non-contiguous'
+      : 'procedure-step-coverage'
+  }
   for (let index = 1; index < covered.length; index += 1) {
     const previous = covered[index - 1]!.observation.step.ordinal
     if (covered[index]!.observation.step.ordinal !== previous + 1) {
