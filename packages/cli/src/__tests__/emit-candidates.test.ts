@@ -1111,11 +1111,12 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
 
     const report = emitCurationCandidates(input)
 
+    // The failing fact AND the procedure target covering the missing-artifact step both refuse.
     expect(report).toMatchObject({
       enqueued: 1,
       coalesced: 0,
       capExceeded: 0,
-      refused: 1,
+      refused: 2,
     })
     expect(report.details.map((detail) => detail.outcome)).toContainEqual({
       kind: 'refused',

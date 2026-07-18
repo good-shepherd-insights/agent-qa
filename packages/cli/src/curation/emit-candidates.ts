@@ -1,5 +1,7 @@
 import { isAbsolute, join } from 'node:path'
 
+import { z } from 'zod'
+
 import {
   enqueueCurationCandidateProjection,
   type CurationCandidateProjection,
@@ -11,6 +13,7 @@ import {
   canonicalJson,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
+  elementOrdinal,
   type Anchor,
   type ArtifactRef,
   type CautionRootCauseClass,
@@ -21,6 +24,7 @@ import {
   type PerTestOutcome,
   type Platform,
   type StepEvidence,
+  type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 import { scan } from '@vostride/agent-qa-safety'
 
@@ -29,6 +33,7 @@ import {
   classifySubActionRoute,
   elementAnchor,
   elementNaturalKey,
+  exercisedAnchors,
   resolvedElementEvidence,
   uniqueAnchors,
   type ResolvedElementEvidence,
@@ -485,22 +490,284 @@ function projectCaution(
   )
 }
 
+export const PROCEDURE_TRAJECTORY_SEED_VERSION = 1
+
+const trajectoryGuardTargetSchema = z
+  .object({
+    ref: z.string().min(1),
+    role: z.string(),
+    nameNormalized: z.string(),
+    ordinal: z.number().int().nonnegative(),
+  })
+  .strict()
+
+const trajectoryValueSlotSchema = z
+  .object({
+    observed: z.string(),
+    source: z.enum(['literal', 'test-variable', 'masked-secret']),
+    targetRef: z.string().min(1).optional(),
+  })
+  .strict()
+
+const trajectoryStepSchema = z
+  .object({
+    ordinal: z.number().int().nonnegative(),
+    instruction: z.string(),
+    action: z
+      .object({
+        type: z.string().min(1),
+        targets: z.record(z.string(), trajectoryGuardTargetSchema),
+        values: z.record(z.string(), trajectoryValueSlotSchema),
+      })
+      .strict()
+      .optional(),
+    pageRoute: z.string().optional(),
+  })
+  .strict()
+
+/**
+ * The code-built trajectory a procedure candidate carries in its existing `bodySeed` string —
+ * no new queue machinery (D-01/D-02). The extraction author decodes it to build the committed
+ * step sequence deterministically; the LLM only ever proposes segmentation + parameter names.
+ */
+export const procedureTrajectorySeedSchema = z
+  .object({
+    version: z.literal(PROCEDURE_TRAJECTORY_SEED_VERSION),
+    flowName: z.string().min(1),
+    steps: z.array(trajectoryStepSchema).min(2),
+  })
+  .strict()
+
+export type ProcedureTrajectorySeed = z.infer<typeof procedureTrajectorySeedSchema>
+export type ProcedureTrajectoryStep = ProcedureTrajectorySeed['steps'][number]
+
+/** Fail-closed decode of a procedure candidate's code-built bodySeed trajectory. */
+export function parseProcedureTrajectorySeed(
+  bodySeed: string,
+): ProcedureTrajectorySeed | undefined {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(bodySeed)
+  } catch {
+    return undefined
+  }
+  const result = procedureTrajectorySeedSchema.safeParse(parsed)
+  return result.success ? result.data : undefined
+}
+
+/**
+ * Handoff evidence is masked-before-record: secrets surface as `<SECRET_n>`/`<EMAIL_n>`
+ * placeholders (or an unexpanded `{{secret:...}}` template) and test variables as `{{env:...}}`
+ * templates. This deterministic labeling is what D-03's forced parameterization keys on.
+ */
+const MASKED_VALUE_PATTERN = /<(?:SECRET|EMAIL)_\d+>|\{\{\s*secret:/
+const TEST_VARIABLE_PATTERN = /\{\{\s*env:/
+
+function trajectoryValueSource(
+  observed: string,
+): 'literal' | 'test-variable' | 'masked-secret' {
+  if (MASKED_VALUE_PATTERN.test(observed)) return 'masked-secret'
+  if (TEST_VARIABLE_PATTERN.test(observed)) return 'test-variable'
+  return 'literal'
+}
+
+const ACTION_REF_KEYS: readonly string[] = ['ref', 'fromRef', 'toRef']
+
+function completingSubAction(step: StepEvidence): SubActionEvidence | undefined {
+  for (let index = step.subActions.length - 1; index >= 0; index -= 1) {
+    const candidate = step.subActions[index]!
+    if (actionRefs(candidate).length > 0) return candidate
+  }
+  return step.subActions.at(-1)
+}
+
+function trajectoryTargets(
+  subAction: SubActionEvidence,
+): Record<string, z.infer<typeof trajectoryGuardTargetSchema>> {
+  const targets: Record<string, z.infer<typeof trajectoryGuardTargetSchema>> = {}
+  const action = subAction.plannedAction as unknown as Record<string, unknown>
+  for (const key of ACTION_REF_KEYS) {
+    const ref = action[key]
+    if (typeof ref !== 'string') continue
+    const element = subAction.stateBefore.elements.find(
+      (candidate) => candidate.ref === ref,
+    )
+    if (element === undefined) continue
+    targets[key] = {
+      ref,
+      role: element.role,
+      nameNormalized: element.nameNormalized,
+      ordinal: elementOrdinal(element, subAction.stateBefore.elements),
+    }
+  }
+  return targets
+}
+
+function trajectoryValues(
+  subAction: SubActionEvidence,
+): Record<string, z.infer<typeof trajectoryValueSlotSchema>> {
+  const values: Record<string, z.infer<typeof trajectoryValueSlotSchema>> = {}
+  const action = subAction.plannedAction as unknown as Record<string, unknown>
+  const primaryRef = typeof action['ref'] === 'string' ? action['ref'] : undefined
+  for (const [key, value] of Object.entries(action)) {
+    if (key === 'type' || ACTION_REF_KEYS.includes(key)) continue
+    if (typeof value !== 'string') continue
+    values[key] = {
+      observed: value,
+      source: trajectoryValueSource(value),
+      ...(primaryRef === undefined ? {} : { targetRef: primaryRef }),
+    }
+  }
+  return values
+}
+
+function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
+  const completing = completingSubAction(step)
+  const route = completing === undefined
+    ? undefined
+    : classifySubActionRoute(completing).route ?? completing.stateBefore.url
+  return {
+    ordinal: step.stepIndex,
+    instruction: step.stepText,
+    ...(completing === undefined
+      ? {}
+      : {
+          action: {
+            type: completing.plannedAction.type,
+            targets: trajectoryTargets(completing),
+            values: trajectoryValues(completing),
+          },
+        }),
+    ...(route === undefined ? {} : { pageRoute: route }),
+  }
+}
+
+function projectProcedureTarget(
+  handoff: CompletedRunHandoff,
+  test: PerTestOutcome,
+  policy: GuardrailPolicy,
+): CurationCandidateProjection | undefined {
+  if (test.outcome !== 'passed') return undefined
+  if (test.steps.length < 2) return undefined
+  if (!test.steps.every((step) => step.verifierVerdict.pass)) return undefined
+
+  const flowName = test.testId
+  const pageAnchors = test.steps.flatMap((step) =>
+    exercisedAnchors(step).filter((anchor) => anchor.t === 'page'),
+  )
+  const platform = test.steps[0]?.subActions[0]?.stateBefore.platform
+  const anchors = uniqueAnchors([
+    { t: 'flow', name: flowName },
+    ...pageAnchors,
+    ...(platform === undefined ? [] : [{ t: 'platform' as const, platform }]),
+  ])
+
+  const observations: DistilledObservation[] = test.steps.map((step, position) => {
+    const completing = completingSubAction(step)
+    const stepPlatform = completing?.stateBefore.platform
+    const route = completing === undefined
+      ? undefined
+      : classifySubActionRoute(completing).route ?? completing.stateBefore.url
+    const resolved = resolvedElementEvidence(step).at(-1)
+    const previous = test.steps[position - 1]
+    return {
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
+      step: { naturalKey: step.stepText, ordinal: step.stepIndex },
+      ...(stepPlatform === undefined
+        ? {}
+        : { platform: observationPlatform(stepPlatform) }),
+      test: { id: test.testId },
+      flow: {
+        name: flowName,
+        ...(previous === undefined ? {} : { precedes: previous.stepText }),
+      },
+      ...(route === undefined || stepPlatform === undefined
+        ? {}
+        : {
+            surface: {
+              kind: stepPlatform === 'web' ? ('page' as const) : ('screen' as const),
+              naturalKey: route,
+            },
+          }),
+      ...(resolved === undefined || stepPlatform === undefined
+        ? {}
+        : { element: { naturalKey: elementNaturalKey(resolved) } }),
+      observedAtOrdinal: handoff.buildOrdinal,
+    }
+  })
+
+  const seed: ProcedureTrajectorySeed = {
+    version: PROCEDURE_TRAJECTORY_SEED_VERSION,
+    flowName,
+    steps: test.steps.map(trajectoryStep),
+  }
+  const seenArtifacts = new Set<string>()
+  const artifactDescriptors = test.steps
+    .flatMap(stepArtifactDescriptors)
+    .filter((descriptor) => {
+      if (seenArtifacts.has(descriptor.ref.id)) return false
+      seenArtifacts.add(descriptor.ref.id)
+      return true
+    })
+
+  return commonFields(
+    handoff,
+    {
+      kind: 'procedure',
+      anchors,
+      summarySeed: `Procedure ${flowName}: ${test.steps
+        .map((step) => step.stepText)
+        .join(' -> ')}`,
+      bodySeed: canonicalJson(seed),
+      observations,
+      attributingObservationId: observationId(
+        handoff,
+        test.testIndex,
+        test.steps[0]!.stepIndex,
+      ),
+      secretFlagged: test.steps.some((step) => step.cacheStatus === 'bypass'),
+      steps: test.steps,
+      artifactDescriptors,
+    },
+    policy,
+  )
+}
+
+/**
+ * D-01: EVERY verified-PASS multi-step trajectory becomes exactly one procedure-extraction
+ * target on EVERY drain — no repetition threshold, no seen-before check, no user marking.
+ * Content-addressing IS the dedup policy: a re-extracted duplicate address disposes as
+ * Confirm downstream. Single-step, zero-step, failing, and skipped trajectories never target.
+ */
+export function projectProcedureTargets(
+  handoff: CompletedRunHandoff,
+  policy: GuardrailPolicy,
+): CurationCandidateProjection[] {
+  return handoff.tests.flatMap((test) => {
+    const target = projectProcedureTarget(handoff, test, policy)
+    return target === undefined ? [] : [target]
+  })
+}
+
 /** Pure post-verdict projection. Host artifact bytes are resolved only by the emit wrapper. */
 export function projectCurationCandidates(
   handoff: CompletedRunHandoff,
   policy: GuardrailPolicy,
 ): CurationCandidateProjection[] {
-  return handoff.tests.flatMap((test) => {
-    const factsAndMeasurements = test.steps.flatMap((step) => {
-      const fact = projectFact(handoff, test, step, policy)
-      return [
-        ...(fact === undefined ? [] : [fact]),
-        ...projectMeasurements(handoff, test, step, policy),
-      ]
-    })
-    const caution = projectCaution(handoff, test, policy)
-    return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
-  })
+  return [
+    ...handoff.tests.flatMap((test) => {
+      const factsAndMeasurements = test.steps.flatMap((step) => {
+        const fact = projectFact(handoff, test, step, policy)
+        return [
+          ...(fact === undefined ? [] : [fact]),
+          ...projectMeasurements(handoff, test, step, policy),
+        ]
+      })
+      const caution = projectCaution(handoff, test, policy)
+      return [...factsAndMeasurements, ...(caution === undefined ? [] : [caution])]
+    }),
+    ...projectProcedureTargets(handoff, policy),
+  ]
 }
 
 export interface EmitCurationCandidatesOptions {
