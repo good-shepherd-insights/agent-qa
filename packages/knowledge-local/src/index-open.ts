@@ -420,6 +420,47 @@ function bootstrapVecSchema(db: DatabaseSync, activeProfile: EmbeddingProfile): 
   `)
 }
 
+/**
+ * Run-outcome projection tables (381-05, D-14/D-15).
+ *
+ * Derived per-test outcome counters and exercised-anchor sets live in this same gitignored
+ * index SQLite — one derived-state home, one writer role, no new DB file. Rows carry test
+ * identity (file_path + test_name), counters, and normalized anchors ONLY; no test file
+ * content ever enters the store. `run_outcome_applied_runs` is the per-runId idempotency
+ * marker that makes refolding a crash-rerun tail safe (receipt-gated at the caller,
+ * DB-gated here). All three tables are disposable: `rebuildRunOutcomes` reproduces them
+ * from `.agent-qa/runs/<runId>/handoff.json` scans alone (L12). Deliberately absent from
+ * REQUIRED_INDEX_TABLES — like the per-profile vec tables, a lost projection heals on the
+ * next writer open + rebuild rather than failing health probes.
+ */
+export function ensureRunOutcomeTables(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS run_test_outcomes (
+      file_path TEXT NOT NULL,
+      test_name TEXT NOT NULL,
+      passes INTEGER NOT NULL DEFAULT 0,
+      failures INTEGER NOT NULL DEFAULT 0,
+      heals INTEGER NOT NULL DEFAULT 0,
+      flake_count INTEGER NOT NULL DEFAULT 0,
+      quarantined INTEGER NOT NULL DEFAULT 0,
+      last_outcomes_json TEXT NOT NULL DEFAULT '[]',
+      last_build_ordinal INTEGER,
+      PRIMARY KEY (file_path, test_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS run_test_anchors (
+      file_path TEXT NOT NULL,
+      test_name TEXT NOT NULL,
+      anchor_normalized_json TEXT NOT NULL,
+      UNIQUE (file_path, test_name, anchor_normalized_json)
+    );
+
+    CREATE TABLE IF NOT EXISTS run_outcome_applied_runs (
+      run_id TEXT PRIMARY KEY
+    );
+  `)
+}
+
 function bootstrapSchema(
   db: DatabaseSync,
   vec: VecCapability,
@@ -491,6 +532,8 @@ function bootstrapSchema(
       v TEXT NOT NULL
     );
   `)
+
+  ensureRunOutcomeTables(db)
 
   if (vec === 'vec0') {
     bootstrapVecSchema(db, activeProfile)

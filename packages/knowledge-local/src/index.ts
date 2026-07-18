@@ -102,6 +102,26 @@ export { retrieve } from './retrieve.js'
 export type { RetrieveOptions, RetrieveResult } from './retrieve.js'
 export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
+export {
+  applyRunOutcomes,
+  foldRunOutcomes,
+  LAST_OUTCOMES_LIMIT,
+  projectRunOutcomes,
+  QUARANTINE_FLAKE_THRESHOLD,
+  rebuildRunOutcomes,
+  RUN_OUTCOMES_PROJECTION_VERSION,
+} from './projection/run-outcomes.js'
+export type {
+  ApplyRunOutcomesResult,
+  ExtractStepAnchors,
+  FoldRunOutcomesOptions,
+  FoldRunOutcomesReport,
+  ProjectRunOutcomesOptions,
+  RebuildRunOutcomesOptions,
+  RebuildRunOutcomesReport,
+  RunOutcomesProjection,
+  RunOutcomeTestDelta,
+} from './projection/run-outcomes.js'
 export { GC_SUPERSEDED_RETAIN_K, runKnowledgeGc } from './gc.js'
 export type {
   GateHorizon,
