@@ -403,6 +403,11 @@ export type {
   ProcedureValueSlot,
 } from './knowledge/procedure-steps'
 export {
+  EMPTY_PROCEDURE_BINDING_AVAILABILITY,
+  procedureParameterFillability,
+} from './knowledge/procedure-fillability'
+export type { ProcedureBindingAvailability } from './knowledge/procedure-fillability'
+export {
   COORDINATE_ACTION_KEYS,
   NON_REPLAYABLE_ACTION_TYPES,
   isReplayableActionShape,
