@@ -39,7 +39,7 @@ export const AUTHORING_BRIEF_DEFAULT_BUDGET = 2_000
 export const AUTHORING_DENSE_K = 32
 
 export interface AuthoringReaderDependencies {
-  /** Consumer-owned test inventory; wired into the identity-only universe in Task 2. */
+  /** Consumer-owned test inventory crossing this boundary as identity refs only. */
   discoverKnownTests?: () => readonly AuthoringTestRef[]
   /** Test/integration seam; production omission uses denseLeg's automatic acquisition ladder. */
   embedder?: EmbedderPort
@@ -177,6 +177,25 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
 
+function knownTestUniverse(
+  projectionRows: readonly AuthoringExemplarRow[],
+  discovered: readonly AuthoringTestRef[],
+): AuthoringTestRef[] {
+  const byIdentity = new Map<string, AuthoringTestRef>()
+  for (const { filePath, testName } of discovered) {
+    byIdentity.set(`${filePath}::${testName}`, { filePath, testName })
+  }
+  // Projection-known identities are the floor, never the ceiling. Re-setting them last makes
+  // the trusted projection identity win without allowing consumer-owned content across D-16.
+  for (const { filePath, testName } of projectionRows) {
+    byIdentity.set(`${filePath}::${testName}`, { filePath, testName })
+  }
+  return [...byIdentity.values()].sort((left, right) => (
+    (left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0)
+      || (left.testName < right.testName ? -1 : left.testName > right.testName ? 1 : 0)
+  ))
+}
+
 async function readDenseScores(
   config: OpenServingKnowledgeReaderConfig,
   deps: AuthoringReaderDependencies,
@@ -217,12 +236,16 @@ export function createAuthoringReader(
       const entries = hydrateRows(config, readIndexRows(config, scope), false)
       const projectionRows = readProjectionRows(config.knowledgeRoot)
       const denseScoreByRecordId = await readDenseScores(config, deps, intent, scope)
+      const knownTests = knownTestUniverse(
+        projectionRows,
+        deps.discoverKnownTests?.() ?? [],
+      )
       return assembleAuthoringBrief({
         entries,
         projectionRows,
-        // M2 discovery universe: projection-known identities. M4's consumer owns the
-        // filesystem and widens this to its authored shelf through the assembly seam.
-        knownTests: projectionRows.map(({ filePath, testName }) => ({ filePath, testName })),
+        // D-16: the consumer owns the filesystem and supplies identity refs only. Projection
+        // identities remain a deterministic floor, while never-run tests widen the universe.
+        knownTests,
         intent,
         scope,
         targetAnchors: deriveTargetAnchors(intent),
