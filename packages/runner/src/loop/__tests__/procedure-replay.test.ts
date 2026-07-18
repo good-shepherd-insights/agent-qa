@@ -283,6 +283,24 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
   })
 
+  it('preserves literal boolean value slots instead of treating them as parameter refs', async () => {
+    const payload = loginPayload()
+    payload.steps[0].action.values.submit = true
+    const spy = makeReader({ match: makeMatch(), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(0)
+    expect(executed[0]).toMatchObject({ type: 'fill', submit: true })
+  })
+
   it('keeps a navigating final replay guard on the pre-action page', async () => {
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const login = makeScreenState()

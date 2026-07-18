@@ -1814,7 +1814,7 @@ function attemptProcedureReplayAction(input: {
   }
 
   for (const [field, slot] of Object.entries(spec.values)) {
-    if (typeof slot === 'string') {
+    if (typeof slot !== 'object') {
       action[field] = slot
       continue
     }

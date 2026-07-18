@@ -274,6 +274,14 @@ describe('procedure extraction disposition — structural candidacy (D-02)', () 
 })
 
 describe('procedure extraction disposition — binding integrity & secrets (D-03)', () => {
+  it('ignores boolean scalar slots when checking parameter-reference integrity', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.steps[0]!.action.values.submit = true
+    const delta = addDelta({ body: serializeProcedureBody(payload) })
+
+    expect(dispose(delta)).toMatchObject({ kind: 'apply', delta })
+  })
+
   it('rejects a declared parameter referenced by zero steps', () => {
     const payload = makeProcedureBodyPayloadFixture()
     payload.parameters = [
