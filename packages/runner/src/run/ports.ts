@@ -275,6 +275,11 @@ export interface RunConfig {
   executionContext: ExecutionContext
   configDigests: ConfigDigests
   buildOrdinal: number
+  /**
+   * D-14 §6 gate-run exclusion copied into the durable completed-run handoff. Only literal
+   * true excludes; absence denotes an ordinary counted run and remains absent in JSON.
+   */
+  excludedFromOutcomes?: true
   members: readonly RunMemberDescriptor[]
   executor: MemberTestExecutor
   masking?: MaskingContext

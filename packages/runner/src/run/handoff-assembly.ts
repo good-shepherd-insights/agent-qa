@@ -144,6 +144,7 @@ export function assembleHandoff(
     runId: config.runId,
     scope: config.scope,
     buildOrdinal: config.buildOrdinal,
+    ...(config.excludedFromOutcomes === true ? { excludedFromOutcomes: true } : {}),
     executionContext: config.executionContext,
     aggregateVerdict,
     configDigests: config.configDigests,

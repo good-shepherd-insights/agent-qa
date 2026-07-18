@@ -56,15 +56,11 @@ const RUN_HANDOFF_FILE = 'handoff.json'
 /** Anchor extraction seam: the CLI tail passes its exercisedAnchors(step) walk. */
 export type ExtractStepAnchors = (step: StepEvidence) => Anchor[]
 
+/**
+ * Projection inputs contain no exclusion override. The durable handoff marker is the sole
+ * authority for current-run folds, sibling backfill, and full rebuild alike (D-14 §6).
+ */
 export interface ProjectRunOutcomesOptions {
-  /**
-   * Gate-run exclusion flag (Pitfall 7): internal validation runs — M4's
-   * verify-before-present gate and eval cassette replays are the named future setters —
-   * must contribute zero counter changes so replays cannot inflate exemplar trust.
-   * PROVISIONAL plumbing: the tail's invoker passes it; a handoff-level
-   * `excludedFromOutcomes: true` marker is honored regardless of the caller's flag.
-   */
-  excluded: boolean
   extractAnchors: ExtractStepAnchors
 }
 
@@ -102,7 +98,6 @@ export interface FoldRunOutcomesOptions {
   /** Absolute agent-qa-knowledge root hosting the derived index SQLite. */
   knowledgeRoot: string
   handoff: CompletedRunHandoff
-  excluded: boolean
   extractAnchors: ExtractStepAnchors
 }
 
@@ -111,12 +106,6 @@ export type FoldRunOutcomesReport = ApplyRunOutcomesResult
 interface OutcomeEntry {
   buildOrdinal: number
   passed: boolean
-}
-
-function handoffMarksExcluded(handoff: unknown): boolean {
-  return typeof handoff === 'object'
-    && handoff !== null
-    && (handoff as { excludedFromOutcomes?: unknown }).excludedFromOutcomes === true
 }
 
 function countedOutcome(outcome: PerTestOutcome['outcome']): boolean | undefined {
@@ -163,7 +152,7 @@ export function projectRunOutcomes(
   handoff: CompletedRunHandoff,
   opts: ProjectRunOutcomesOptions,
 ): RunOutcomesProjection {
-  const excluded = opts.excluded || handoffMarksExcluded(handoff)
+  const excluded = handoff.excludedFromOutcomes === true
   const tests = excluded
     ? []
     : (handoff.tests ?? []).flatMap((test) => {
@@ -348,7 +337,6 @@ export function rebuildRunOutcomes(
       continue
     }
     applyRunOutcomes(db, projectRunOutcomes(handoff, {
-      excluded: false,
       extractAnchors: opts.extractAnchors,
     }))
     report.folded += 1
@@ -363,7 +351,6 @@ export function rebuildRunOutcomes(
  */
 export function foldRunOutcomes(opts: FoldRunOutcomesOptions): FoldRunOutcomesReport {
   const projection = projectRunOutcomes(opts.handoff, {
-    excluded: opts.excluded,
     extractAnchors: opts.extractAnchors,
   })
   const handle = openIndexWriter(opts.knowledgeRoot)

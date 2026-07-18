@@ -94,13 +94,6 @@ export interface RunCurationTailOptions {
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
   policy: GuardrailPolicy
-  /**
-   * Gate-run exclusion flag for the run-outcome projection (Pitfall 7). PROVISIONAL
-   * plumbing: false (absent) for ordinary runs; M4's verify-before-present gate and eval
-   * cassette replays are the named future setters. Applies to the current run only —
-   * sibling backfill runs are excluded solely via their handoff-level marker.
-   */
-  excludeFromRunOutcomes?: boolean
   signal?: AbortSignal
   log: CurationTailLogger
   /** Focused test seam. Production callers omit it. */
@@ -290,15 +283,14 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             emit: reader.emitCanaryOutcome.bind(reader),
           })
           // D-14: the run-outcome fold shares this crash boundary and the SAME extended
-          // receipt as candidate/canary emit — never a second marker file. A fold failure
-          // is isolated (counted below) and never blocks the drain; the withheld receipt
-          // refolds it on the next run, safe because the fold is idempotent per runId.
+          // receipt as candidate/canary emit — never a second marker file. The durable
+          // handoff marker is the sole exclusion authority for current and sibling runs.
+          // A fold failure is isolated (counted below) and never blocks the drain; the
+          // withheld receipt refolds it on the next run, safe because the fold is idempotent.
           try {
             operations.foldRunOutcomes({
               knowledgeRoot,
               handoff,
-              excluded: runDir === currentRunDir
-                && opts.excludeFromRunOutcomes === true,
               extractAnchors: exercisedAnchors,
             })
           } catch {

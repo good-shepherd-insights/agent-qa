@@ -10,6 +10,14 @@ export interface CompletedRunHandoff {
   runId: RunId
   scope: ScopeKey
   buildOrdinal: number
+  /**
+   * D-14 §6 gate-run exclusion. Internal validation runs (including M4's
+   * verify-before-present gate and eval cassette replays) contribute zero run-outcome
+   * counter changes. The runner stamps this literal marker before persisting the handoff,
+   * making the decision durable and identical for incremental folds and full rebuilds.
+   * Absent means an ordinary counted run.
+   */
+  excludedFromOutcomes?: true
   executionContext: ExecutionContext
   aggregateVerdict: RunStatus
   configDigests: {
