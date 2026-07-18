@@ -105,6 +105,36 @@ describe('handoff assembly instrumentation parity', () => {
 
     expect(handoff.schemaVersion).toBe(3)
   })
+
+  it('persists the durable outcome-exclusion marker only when the run config opts in', () => {
+    const ordinaryConfig = {
+      runId: 'run-ordinary' as RunId,
+      scope,
+      executionContext: 'local-headless',
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      buildOrdinal: 7,
+      members: [],
+      executor: async () => resultWithoutEvidence(),
+    } satisfies RunConfig
+    const excludedConfig = {
+      ...ordinaryConfig,
+      runId: 'run-gate' as RunId,
+      excludedFromOutcomes: true,
+    } satisfies RunConfig
+
+    const ordinary = assembleHandoff(ordinaryConfig, [], 'passed', {
+      startedAt: 1,
+      endedAt: 2,
+    })
+    const excluded = assembleHandoff(excludedConfig, [], 'passed', {
+      startedAt: 1,
+      endedAt: 2,
+    })
+
+    expect(ordinary).not.toHaveProperty('excludedFromOutcomes')
+    expect(excluded.excludedFromOutcomes).toBe(true)
+    expect(JSON.parse(JSON.stringify(excluded))).toHaveProperty('excludedFromOutcomes', true)
+  })
 })
 
 describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {

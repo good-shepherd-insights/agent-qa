@@ -61,7 +61,7 @@ function handoffFixture(input: {
   runId: string
   buildOrdinal: number
   tests: TestFixture[]
-  excludedFromOutcomes?: boolean
+  excludedFromOutcomes?: true
 }): CompletedRunHandoff {
   return {
     schemaVersion: 3,
@@ -88,8 +88,8 @@ interface TableDump {
   appliedRuns: unknown[]
 }
 
-function dumpTables(db: DatabaseSync): string {
-  const dump: TableDump = {
+function dumpTables(db: DatabaseSync): TableDump {
+  return {
     outcomes: db.prepare(
       'SELECT * FROM run_test_outcomes ORDER BY file_path, test_name',
     ).all(),
@@ -100,7 +100,6 @@ function dumpTables(db: DatabaseSync): string {
       'SELECT run_id FROM run_outcome_applied_runs ORDER BY run_id',
     ).all(),
   }
-  return JSON.stringify(dump)
 }
 
 const checkoutAnchor: Anchor = { t: 'el', role: 'button', name: 'checkout', ordinal: 0 }
@@ -154,7 +153,6 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
   it('folds pass/failure/heal/flake counters, last-N ordinals, and normalized anchor rows', () => {
     const db = openDb()
     const projection = projectRunOutcomes(threeOutcomeHandoff(), {
-      excluded: false,
       extractAnchors,
     })
 
@@ -246,7 +244,6 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
   it('is idempotent per runId: refolding an already-applied run changes nothing', () => {
     const db = openDb()
     const projection = projectRunOutcomes(threeOutcomeHandoff(), {
-      excluded: false,
       extractAnchors,
     })
 
@@ -254,23 +251,11 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     const before = dumpTables(db)
 
     expect(applyRunOutcomes(db, projection)).toEqual({ kind: 'already-applied', tests: 0 })
-    expect(dumpTables(db)).toBe(before)
+    expect(dumpTables(db)).toEqual(before)
   })
 
-  it('contributes zero counter changes when the gate-run exclusion flag is set (Pitfall 7)', () => {
+  it('contributes zero rows or anchors when the durable handoff marker is set (Pitfall 7)', () => {
     const db = openDb()
-    const projection = projectRunOutcomes(threeOutcomeHandoff(), {
-      excluded: true,
-      extractAnchors,
-    })
-    expect(projection.tests).toEqual([])
-
-    applyRunOutcomes(db, projection)
-    expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get()).toMatchObject({ n: 0 })
-    expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_anchors').get()).toMatchObject({ n: 0 })
-  })
-
-  it('honors a handoff-level exclusion marker even when the caller passes excluded=false', () => {
     const excluded = handoffFixture({
       runId: 'run-gate',
       buildOrdinal: 9,
@@ -279,14 +264,22 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
         filePath: 'suite/gate.test.ts',
         testId: 'internal gate replay',
         outcome: 'passed',
+        steps: [{ stepIndex: 0, anchors: [payAnchor] }],
       }],
     })
-    const projection = projectRunOutcomes(excluded, { excluded: false, extractAnchors })
+    const projection = projectRunOutcomes(excluded, { extractAnchors })
     expect(projection.excluded).toBe(true)
     expect(projection.tests).toEqual([])
+
+    expect(applyRunOutcomes(db, projection)).toEqual({ kind: 'applied', tests: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get()).toMatchObject({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_anchors').get()).toMatchObject({ n: 0 })
+    expect(db.prepare('SELECT run_id FROM run_outcome_applied_runs').all()).toEqual([
+      { run_id: 'run-gate' },
+    ])
   })
 
-  it('rebuild over the runs tree reproduces the incremental fold byte-identically (L12)', () => {
+  it('rebuild reproduces an incremental fold with one of three handoffs excluded (L12)', () => {
     const handoffs = [
       handoffFixture({
         runId: '001-first',
@@ -303,13 +296,13 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       handoffFixture({
         runId: '002-second',
         buildOrdinal: 2,
+        excludedFromOutcomes: true,
         tests: [
           {
-            filePath: 'suite/checkout.test.ts',
-            testId: 'checkout happy path',
-            outcome: 'failed',
-            rootCauseClass: 'app_bug',
-            steps: [{ stepIndex: 0, anchors: [checkoutAnchor, cartPageAnchor] }],
+            filePath: 'suite/internal-gate.test.ts',
+            testId: 'internal gate replay',
+            outcome: 'passed',
+            steps: [{ stepIndex: 0, anchors: [payAnchor] }],
           },
         ],
       }),
@@ -338,7 +331,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     for (const handoff of handoffs) {
       applyRunOutcomes(
         incremental,
-        projectRunOutcomes(handoff, { excluded: false, extractAnchors }),
+        projectRunOutcomes(handoff, { extractAnchors }),
       )
     }
 
@@ -355,11 +348,23 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       runId: 'stale-run',
       buildOrdinal: 99,
       tests: [{ filePath: 'stale/file.test.ts', testId: 'stale', outcome: 'passed' }],
-    }), { excluded: false, extractAnchors }))
+    }), { extractAnchors }))
 
     const report = rebuildRunOutcomes(rebuilt, runsRoot, { extractAnchors })
     expect(report).toEqual({ folded: 3, skipped: 0 })
-    expect(dumpTables(rebuilt)).toBe(dumpTables(incremental))
+    const incrementalDump = dumpTables(incremental)
+    expect(dumpTables(rebuilt)).toEqual(incrementalDump)
+    expect(incrementalDump.outcomes).not.toContainEqual(
+      expect.objectContaining({ file_path: 'suite/internal-gate.test.ts' }),
+    )
+    expect(incrementalDump.anchors).not.toContainEqual(
+      expect.objectContaining({ file_path: 'suite/internal-gate.test.ts' }),
+    )
+    expect(incrementalDump.appliedRuns).toEqual([
+      { run_id: '001-first' },
+      { run_id: '002-second' },
+      { run_id: '003-third' },
+    ])
   })
 
   it('rebuild over an empty or missing runs dir yields empty tables without error (ABRF-02 empty edge)', () => {
@@ -422,7 +427,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
           outcome: 'passed',
           rootCauseClass: 'flake',
         }],
-      }), { excluded: false, extractAnchors }))
+      }), { extractAnchors }))
     }
     const row = db.prepare(
       'SELECT flake_count, quarantined FROM run_test_outcomes',

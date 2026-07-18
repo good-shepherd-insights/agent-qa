@@ -99,7 +99,6 @@ describe('buildDirectRunMembers', () => {
     }
 
     const projection = projectRunOutcomes(handoff, {
-      excluded: false,
       extractAnchors: () => [],
     })
 

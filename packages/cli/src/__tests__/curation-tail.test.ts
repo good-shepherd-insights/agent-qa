@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { RUN_OUTCOMES_PROJECTION_VERSION } from '@vostride/agent-qa-knowledge-local'
+import {
+  RUN_OUTCOMES_PROJECTION_VERSION,
+  type FoldRunOutcomesOptions,
+} from '@vostride/agent-qa-knowledge-local'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
@@ -241,8 +244,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         expect(options).toMatchObject({
           knowledgeRoot,
           handoff: completed,
-          excluded: false,
         })
+        expect(options).not.toHaveProperty('excluded')
         expect(options.extractAnchors).toBeTypeOf('function')
         return { kind: 'applied', tests: 1 }
       },
@@ -320,6 +323,43 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
       }),
     )
+  })
+
+  it('passes a marker-set sibling handoff unchanged without a caller exclusion flag', async () => {
+    const siblingRunId = 'run-gate-replay' as CompletedRunHandoff['runId']
+    const currentRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+    const siblingRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(siblingRunId))
+    const currentHandoff = handoff()
+    const excludedSibling = {
+      ...handoff(),
+      runId: siblingRunId,
+      excludedFromOutcomes: true,
+    } satisfies CompletedRunHandoff
+    const handoffs = new Map([
+      [join(currentRunDir, HANDOFF_FILE), currentHandoff],
+      [join(siblingRunDir, HANDOFF_FILE), excludedSibling],
+    ])
+    const foldRunOutcomes = vi.fn((_options: FoldRunOutcomesOptions) => ({
+      kind: 'applied' as const,
+      tests: 0 as const,
+    }))
+    const operations = successfulOperations({
+      loadCompletedRunHandoff(file) {
+        const loaded = handoffs.get(file)
+        if (loaded === undefined) throw new Error(`missing handoff ${file}`)
+        return loaded
+      },
+      listCompletedRunDirs: () => [siblingRunDir, currentRunDir],
+      foldRunOutcomes,
+    })
+
+    await runCurationTail(baseOptions(operations))
+
+    const siblingCall = foldRunOutcomes.mock.calls
+      .map(([options]) => options)
+      .find(({ handoff: completed }) => completed.runId === siblingRunId)
+    expect(siblingCall?.handoff).toBe(excludedSibling)
+    expect(siblingCall).not.toHaveProperty('excluded')
   })
 
   it.each(['emit', 'canary-emit', 'drain'] as const)(
