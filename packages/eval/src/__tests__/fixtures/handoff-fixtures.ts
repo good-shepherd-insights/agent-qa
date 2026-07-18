@@ -268,6 +268,7 @@ function makePassingTest(): PerTestOutcome {
 
   return {
     testId: 'checkout::happy-path',
+    filePath: 'tests/checkout/happy-path.test.ts',
     testIndex: 0,
     outcome: 'passed',
     steps: [
@@ -372,6 +373,7 @@ function makeFailingTest(): PerTestOutcome {
 
   return {
     testId: 'checkout::failure-path',
+    filePath: 'tests/checkout/failure-path.test.ts',
     testIndex: 1,
     outcome: 'failed',
     steps: [
