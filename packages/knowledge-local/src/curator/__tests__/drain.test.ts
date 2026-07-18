@@ -134,7 +134,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     return outcome.candidateId
   }
 
-  function addDelta(job: ClaimedCurationJob): Delta {
+  function addDelta(job: ClaimedCurationJob, summarySuffix = ''): Delta {
     return {
       kind: 'Add',
       origin: 'agent',
@@ -146,8 +146,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
         ...(job.payload.subtype === undefined ? {} : { subtype: job.payload.subtype }),
         anchors: job.payload.anchors,
         scope: job.payload.scope,
-        summary: job.payload.summarySeed,
-        body: job.payload.bodySeed,
+        summary: `${job.payload.summarySeed}${summarySuffix}`,
+        body: `${job.payload.bodySeed}${summarySuffix}`,
         distilledEvidenceRef: {
           id: `curation-candidate-${job.candidateId}`,
           sha: job.candidateId,
@@ -438,6 +438,180 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(author).toHaveBeenCalledTimes(1)
     expect(search).toHaveBeenCalledTimes(1)
     expect(commits).toBe(2)
+  })
+
+  it('requeues the authored checkpoint when an earlier delta throws after a sibling succeeds', async () => {
+    const candidateId = enqueue('multi-throw')
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return {
+        kind: 'authored',
+        deltas: [addDelta(claimed, ' missing'), addDelta(claimed, ' landed')],
+        authorship: authorship(claimed),
+      }
+    })
+    const committedSummaries: string[] = []
+    const deferred: Array<true | undefined> = []
+    let missingDeltaFailed = false
+    const commit = vi.fn<DrainOperations['commitCurationDelta']>((deps, job, slice) => {
+      if (slice.delta.kind !== 'Add') throw new Error('expected Add delta')
+      const summary = slice.delta.bundle.summary
+      committedSummaries.push(summary)
+      deferred.push(deps.deferCompletion)
+      if (summary.endsWith(' missing') && !missingDeltaFailed) {
+        missingDeltaFailed = true
+        throw new Error('simulated sibling commit failure')
+      }
+      if (deps.deferCompletion !== true) {
+        writeJobState({
+          knowledgeRoot,
+          candidateId: job.candidateId,
+          lifecycle: 'done',
+        })
+      }
+      return {
+        kind: 'applied',
+        bundleId: asRecordId(`bundle-${job.candidateId}`),
+        bundleDir: join(knowledgeRoot, 'memory', 'storefront', 'bundles', job.candidateId),
+        deltaKind: 'Add',
+      }
+    })
+    const options = {
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive' as const,
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: commit,
+      },
+    }
+
+    const first = await drainQueue(options)
+    expect(first).toMatchObject({
+      jobsProcessed: 1,
+      committed: 1,
+      failures: 1,
+      requeued: 1,
+    })
+    const retryable = readJobState(knowledgeRoot, candidateId)
+    expect(retryable.kind).toBe('parsed')
+    if (retryable.kind !== 'parsed') throw new Error('expected retryable authored state')
+    expect(retryable.state).toMatchObject({
+      lifecycle: 'queued',
+      authored: {
+        schemaVersion: 1,
+        deltas: [expect.any(Object), expect.any(Object)],
+      },
+    })
+    expect(listQueuedCandidates(knowledgeRoot)).toContain(candidateId)
+
+    const second = await drainQueue(options)
+    expect(second).toMatchObject({
+      jobsProcessed: 1,
+      committed: 2,
+      failures: 0,
+      requeued: 0,
+    })
+    expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
+    expect(author).toHaveBeenCalledTimes(1)
+    expect(committedSummaries).toEqual([
+      'multi-throw selector missing',
+      'multi-throw selector landed',
+      'multi-throw selector missing',
+      'multi-throw selector landed',
+    ])
+    expect(deferred).toEqual([true, true, true, undefined])
+  })
+
+  it('requeues the authored checkpoint when an earlier delta returns failed after a sibling succeeds', async () => {
+    const candidateId = enqueue('multi-failed')
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return {
+        kind: 'authored',
+        deltas: [addDelta(claimed, ' missing'), addDelta(claimed, ' landed')],
+        authorship: authorship(claimed),
+      }
+    })
+    const committedSummaries: string[] = []
+    const deferred: Array<true | undefined> = []
+    let missingDeltaFailed = false
+    const commit = vi.fn<DrainOperations['commitCurationDelta']>((deps, job, slice) => {
+      if (slice.delta.kind !== 'Add') throw new Error('expected Add delta')
+      const summary = slice.delta.bundle.summary
+      committedSummaries.push(summary)
+      deferred.push(deps.deferCompletion)
+      if (summary.endsWith(' missing') && !missingDeltaFailed) {
+        missingDeltaFailed = true
+        return { kind: 'failed', reason: 'append-failed' }
+      }
+      if (deps.deferCompletion !== true) {
+        writeJobState({
+          knowledgeRoot,
+          candidateId: job.candidateId,
+          lifecycle: 'done',
+        })
+      }
+      return {
+        kind: 'applied',
+        bundleId: asRecordId(`bundle-${job.candidateId}`),
+        bundleDir: join(knowledgeRoot, 'memory', 'storefront', 'bundles', job.candidateId),
+        deltaKind: 'Add',
+      }
+    })
+    const options = {
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive' as const,
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: commit,
+      },
+    }
+
+    const first = await drainQueue(options)
+    expect(first).toMatchObject({
+      jobsProcessed: 1,
+      committed: 1,
+      failures: 1,
+      requeued: 1,
+    })
+    const retryable = readJobState(knowledgeRoot, candidateId)
+    expect(retryable.kind).toBe('parsed')
+    if (retryable.kind !== 'parsed') throw new Error('expected retryable authored state')
+    expect(retryable.state).toMatchObject({
+      lifecycle: 'queued',
+      authored: {
+        schemaVersion: 1,
+        deltas: [expect.any(Object), expect.any(Object)],
+      },
+    })
+    expect(listQueuedCandidates(knowledgeRoot)).toContain(candidateId)
+
+    const second = await drainQueue(options)
+    expect(second).toMatchObject({
+      jobsProcessed: 1,
+      committed: 2,
+      failures: 0,
+      requeued: 0,
+    })
+    expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
+    expect(author).toHaveBeenCalledTimes(1)
+    expect(committedSummaries).toEqual([
+      'multi-failed selector missing',
+      'multi-failed selector landed',
+      'multi-failed selector missing',
+      'multi-failed selector landed',
+    ])
+    expect(deferred).toEqual([true, true, true, undefined])
   })
 
   it('finishes an in-flight job, then aborts at the next boundary and releases the lease', async () => {
