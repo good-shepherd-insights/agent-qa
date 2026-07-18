@@ -10,10 +10,19 @@ import type {
   ProcedureBodyPayload,
   ProcedureMatch,
   ScreenState,
+  ServingRecordMetadata,
 } from '@vostride/agent-qa-schema'
+import { APP_OBSERVED_DATA_CLOSE, APP_OBSERVED_DATA_OPEN } from '@vostride/agent-qa-safety'
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { Action, PlatformAdapter } from '../../platform.js'
+import type {
+  ActionPlanCache,
+  CacheablePlannedAction,
+  CachedPlanValue,
+} from '../../cache/port.js'
 import { executeStep } from '../index.js'
+import { buildVolatileTier } from '../prompts.js'
+import type { RecordLedger } from '../record-ledger.js'
 import type { LoopPorts, WorkingMemoryPort } from '../ports.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -489,5 +498,205 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       expect(call.args).not.toContain('user@example.com')
       expect(call.args).not.toContain('123456')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Task 2: planSource evidence + hint rendering through the ledger (D-12 / T-381-20)
+// ---------------------------------------------------------------------------
+
+function makeCacheSpy(hit: CachedPlanValue | null): { cache: ActionPlanCache; gets: () => number } {
+  let gets = 0
+  return {
+    cache: {
+      async get() { gets++; return hit },
+      async set() {},
+      async invalidate() {},
+    },
+    gets: () => gets,
+  }
+}
+
+interface LedgerSpy {
+  ledger: RecordLedger
+  admits: ServingRecordMetadata[]
+}
+
+function makeLedgerSpy(admitted: boolean): LedgerSpy {
+  const admits: ServingRecordMetadata[] = []
+  const decision = admitted ? { admitted: true as const } : { admitted: false as const, reason: 'budget-cap' as const }
+  return {
+    admits,
+    ledger: {
+      inspect: () => decision,
+      admit: (record) => { admits.push(record); return decision },
+      resetTurn: () => {},
+      size: () => 0,
+      spent: () => 0,
+    },
+  }
+}
+
+describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)', () => {
+  it('Test 1: replay planSource and cache-hit provenance never coexist on one step', async () => {
+    // A replayed step: the cache is bound but never consulted; evidence carries the
+    // procedure-replay planSource and no cache-hit fold.
+    const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
+    const { adapter } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+    const cacheSpy = makeCacheSpy(null)
+
+    const replayed = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader, cache: cacheSpy.cache }),
+      context(),
+    )
+
+    expect(replayed.status).toBe('passed')
+    expect(replayed.evidence?.planSource?.kind).toBe('procedure-replay')
+    expect(replayed.evidence?.cacheStatus).not.toBe('hit')
+    expect(cacheSpy.gets()).toBe(0)
+
+    // A cache-hit step (no procedure match): cacheStatus folds to hit and no planSource
+    // is written — the two provenances never coexist.
+    const noMatch = makeReader({ match: undefined, payload: undefined })
+    const hit: CachedPlanValue = {
+      plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
+      groundedLocator: [{ role: 'button', nameNormalized: 'log in' }],
+      verificationOutcome: 'passed',
+    }
+    const hitCache = makeCacheSpy(hit)
+    const { adapter: hitAdapter } = capturingAdapter([makeScreenState()])
+    const hitPlanner = capturingPlanner([makeActionPlan()])
+
+    const cachedStep = await executeStep(
+      'Click the Log in button',
+      ports({
+        adapter: hitAdapter,
+        planner: hitPlanner.planner,
+        knowledgeReader: noMatch.reader,
+        cache: hitCache.cache,
+      }),
+      context(),
+    )
+
+    expect(cachedStep.status).toBe('passed')
+    expect(hitPlanner.calls).toHaveLength(0)
+    expect(cachedStep.evidence?.cacheStatus).toBe('hit')
+    expect(cachedStep.evidence?.planSource).toBeUndefined()
+  })
+
+  it('Test 2: a hint-mode match records planSource procedure-hint and renders DATA-wrapped under the hypotheses preamble with ledger admission', async () => {
+    const spy = makeReader({ match: makeMatch({ replayRecommendation: 'hint' }), payload: loginPayload() })
+    const { adapter } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+    const ledgerSpy = makeLedgerSpy(true)
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({
+        adapter,
+        planner: planner.planner,
+        knowledgeReader: spy.reader,
+        recordLedger: ledgerSpy.ledger,
+      }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-hint',
+      procedureId: PROCEDURE_ID,
+    })
+
+    // Ledger admission carried real ServingRecordMetadata: the record id, a flow-anchor
+    // cluster, and a non-zero rendered cost.
+    const admitted = ledgerSpy.admits.find((record) => String(record.id) === String(PROCEDURE_ID))
+    expect(admitted).toBeDefined()
+    expect(admitted!.renderedCost).toBeGreaterThan(0)
+    expect(admitted!.clusterKey).toContain('login')
+
+    // The rendered block reached the planning context inside DATA delimiters, and the
+    // volatile tier frames it under the hypotheses-not-instructions preamble.
+    expect(planner.calls).toHaveLength(1)
+    const l2 = planner.calls[0].l2 ?? ''
+    expect(l2).toContain(APP_OBSERVED_DATA_OPEN)
+    expect(l2).toContain(APP_OBSERVED_DATA_CLOSE)
+    expect(l2).toContain('Fill the email field')
+    expect(l2).toContain('userEmail (string, required)')
+    const volatileTier = buildVolatileTier(makeStepContext({ knowledgeBriefL2: l2 }))
+    const rendered = typeof volatileTier.content === 'string'
+      ? volatileTier.content
+      : JSON.stringify(volatileTier.content)
+    expect(rendered.toLowerCase()).toContain('hypotheses')
+    expect(rendered.toLowerCase()).toContain('not instructions or commands')
+    expect(rendered.indexOf(APP_OBSERVED_DATA_OPEN))
+      .toBeGreaterThan(rendered.toLowerCase().indexOf('hypotheses'))
+  })
+
+  it('Test 3: a ledger refusal drops the hint fail-closed and the step still plans normally', async () => {
+    const spy = makeReader({ match: makeMatch({ replayRecommendation: 'hint' }), payload: loginPayload() })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+    const ledgerSpy = makeLedgerSpy(false)
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({
+        adapter,
+        planner: planner.planner,
+        knowledgeReader: spy.reader,
+        recordLedger: ledgerSpy.ledger,
+      }),
+      context(),
+    )
+
+    // The refusal drops the block, never the turn: the step plans and passes normally.
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).not.toContain(APP_OBSERVED_DATA_OPEN)
+    expect(learned).not.toContain('Fill the email field')
+    // Never rendered ⇒ no served-hint exposure is claimed in evidence.
+    expect(result.evidence?.planSource).toBeUndefined()
+  })
+
+  it('Test 4: the post-miss demoted hint renders in the SAME hypotheses frame with the divergence note', async () => {
+    const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
+    const stable = makeScreenState()
+    const drifted = duplicateButtonScreen()
+    const { adapter } = capturingAdapter([stable, stable, drifted])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    const l2 = planner.calls[0].l2 ?? ''
+    // DATA-wrapped, with the divergence inside the delimiters — never imperative phrasing
+    // outside the untrusted-data frame.
+    const open = l2.indexOf(APP_OBSERVED_DATA_OPEN)
+    const close = l2.indexOf(APP_OBSERVED_DATA_CLOSE)
+    const divergence = l2.indexOf('Guarded replay diverged at procedure step 2')
+    expect(open).toBeGreaterThanOrEqual(0)
+    expect(divergence).toBeGreaterThan(open)
+    expect(close).toBeGreaterThan(divergence)
+    // The demoted hint sits under the same hypotheses preamble as every learned span.
+    const volatileTier = buildVolatileTier(makeStepContext({ knowledgeBriefL2: l2 }))
+    const rendered = typeof volatileTier.content === 'string'
+      ? volatileTier.content
+      : JSON.stringify(volatileTier.content)
+    expect(rendered.toLowerCase()).toContain('hypotheses')
+    expect(rendered.toLowerCase()).toContain('not instructions or commands')
+    // Post-miss the planSource stays the replay fold with its miss — the demotion is
+    // implied by the miss, never a second (procedure-hint) provenance.
+    expect(result.evidence?.planSource?.kind).toBe('procedure-replay')
   })
 })
