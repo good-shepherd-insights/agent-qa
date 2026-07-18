@@ -2,7 +2,8 @@
 // "LLM proposes, code disposes" (D-02/D-03) — every reject is a deterministic
 // structural verdict against verified queue evidence, never LLM text.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,16 +16,25 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  ARTIFACT_STEP_CAP_BYTES,
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+  CURATION_QUEUE_SCHEMA_VERSION,
+  candidateContentAddress,
+  commitCurationDelta,
   disposeDelta,
+  loadBundle,
   parseAuthoredCheckpoint,
   sliceAuthoredCheckpoint,
   type AuthoredDeltaCheckpoint,
+  type CommitCurationDependencies,
+  type CommitCurationJob,
 } from '../../index.js'
 import type { ProcedureDispositionEvidence } from '../disposition.js'
+import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import {
   makeProcedureBodyPayloadFixture,
   makeProcedureBundleDraftFixture,
+  makeProcedureScreenStateSequenceFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
@@ -260,5 +270,198 @@ describe('procedure extraction disposition — structural candidacy (D-02)', () 
     const delta = addDelta()
     const outcome = dispose(delta)
     expect(outcome).toMatchObject({ kind: 'apply', delta })
+  })
+})
+
+describe('procedure extraction disposition — binding integrity & secrets (D-03)', () => {
+  it('rejects a declared parameter referenced by zero steps', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = [
+      ...payload.parameters,
+      { name: 'otp', type: 'string', required: false },
+    ]
+    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-param-unreferenced' })
+  })
+
+  it('rejects a {param} reference with no declared parameter', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = payload.parameters.filter(({ name }) => name !== 'email')
+    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-param-undeclared' })
+  })
+
+  it('rejects a masked-region step whose value slot survives as a string literal', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = payload.parameters.filter(({ name }) => name !== 'password')
+    payload.steps[1] = {
+      ...payload.steps[1]!,
+      action: { ...payload.steps[1]!.action, values: { text: 'hunter2' } },
+    }
+    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-masked-secret-literal' })
+  })
+
+  it('rejects a masked placeholder value surviving as a literal on any step', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = payload.parameters.filter(({ name }) => name !== 'email')
+    payload.steps[0] = {
+      ...payload.steps[0]!,
+      action: { ...payload.steps[0]!.action, values: { text: '<SECRET_1>' } },
+    }
+    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-masked-secret-literal' })
+  })
+
+  it('rejects a test-variable-sourced value surviving as a literal', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.parameters = payload.parameters.filter(({ name }) => name !== 'email')
+    payload.steps[0] = {
+      ...payload.steps[0]!,
+      action: { ...payload.steps[0]!.action, values: { text: '{{env:USER_EMAIL}}' } },
+    }
+    const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-test-variable-literal' })
+  })
+
+  it('makes non-closed param types unreachable through the decode wall', () => {
+    const body = serializeProcedureBody(makeProcedureBodyPayloadFixture()).replace(
+      '"type":"string"',
+      '"type":"date"',
+    )
+    const outcome = dispose(addDelta({ body }))
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-body-unparseable' })
+  })
+})
+
+describe('procedure extraction commit path — artifact cap & egress backstop (A3/T-381-07)', () => {
+  const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
+
+  interface HarnessArtifact {
+    bytes: Buffer
+    stepIndex: number
+    role: 'dom-snapshot' | 'opaque-evidence'
+    originalName: string
+  }
+
+  function commitProcedureWithArtifacts(artifacts: HarnessArtifact[]) {
+    const knowledgeDir = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeDir, { recursive: true })
+    writeFileSync(join(knowledgeDir, '.epoch'), '1\n', 'utf8')
+    const draft = makeProcedureBundleDraftFixture()
+    const screenStates = makeProcedureScreenStateSequenceFixture()
+    const rows = artifacts.map((artifact) => ({
+      ...artifact,
+      sha: createHash('sha256').update(artifact.bytes).digest('hex'),
+    }))
+    const fields = candidateAddressFixture({
+      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+      sourceRunId: 'run-procedure-disposition',
+      scope: draft.scope,
+      buildOrdinal: 81,
+      executionContext: 'local-interactive',
+      secretFlagged: false,
+      injectionFlagged: false,
+      kind: 'procedure',
+      anchors: draft.anchors,
+      summarySeed: draft.summary,
+      bodySeed: draft.body,
+      distilledObservations: makeObservations(),
+      evidenceToken: 'procedure-disposition-evidence',
+      attributingObservationId: 'run-procedure-disposition:test-sign-in:step-0',
+      artifactInventory: rows.map(({ bytes, sha, stepIndex, role, originalName }) => ({
+        relativePath: `artifacts/${sha}`,
+        sha256: sha,
+        bytes: bytes.byteLength,
+        stepIndex,
+        role,
+        originalName,
+      })),
+      captureReceipt: {
+        regions: [
+          {
+            stepIndex: 1,
+            elementRef: screenStates[1]!.elements[0]!.ref,
+            role: 'textbox',
+            normalizedName: 'password',
+            reason: 'credential-name',
+          },
+        ],
+        interactions: [0, 1, 2].map((stepIndex) => ({
+          stepIndex,
+          elementRef: screenStates[stepIndex]!.elements[0]!.ref,
+        })),
+        omissions: [],
+        redactions: [],
+      },
+      emittedAt: '2026-07-15T10:00:00.000Z',
+    })
+    const candidateId = candidateContentAddress(fields)
+    const candidateDir = join(root, 'claimed', candidateId)
+    const artifactsDir = join(candidateDir, 'artifacts')
+    mkdirSync(artifactsDir, { recursive: true })
+    for (const artifact of rows) {
+      writeFileSync(join(artifactsDir, artifact.sha), artifact.bytes)
+    }
+    const job: CommitCurationJob = {
+      kind: 'claimed',
+      candidateId,
+      leaseId: 'procedure-disposition-lease',
+      payload: { candidateId, ...fields },
+      candidateDir,
+      payloadPath: join(candidateDir, 'payload.json'),
+      artifactsDir,
+      screenStates,
+    }
+    const delta = addDelta()
+    const dependencies: CommitCurationDependencies = {
+      knowledgeRoot: knowledgeDir,
+      auditBaseDir: join(root, '.agent-qa'),
+      epoch: 1,
+      profile: { mode: 'drain-to-active' },
+      drainState: { supersedesSeenByAnchorKey: new Map() },
+      policy,
+    }
+    return commitCurationDelta(dependencies, job, checkpointFor(delta))
+  }
+
+  it('refuses a per-step artifact above the ratified 2MB cap via the commit-path wall', () => {
+    const oversized = Buffer.alloc(ARTIFACT_STEP_CAP_BYTES + 1, 'a')
+    const oversizedSha = createHash('sha256').update(oversized).digest('hex')
+    const outcome = commitProcedureWithArtifacts([
+      { bytes: oversized, stepIndex: 0, role: 'opaque-evidence', originalName: 'huge-step-0.txt' },
+      {
+        bytes: Buffer.from('{"role":"textbox","name":"Password"}\n'),
+        stepIndex: 1,
+        role: 'dom-snapshot',
+        originalName: 'procedure-step-1.dom.json',
+      },
+    ])
+    expect(outcome.kind).toBe('applied')
+    if (outcome.kind !== 'applied') throw new Error('expected applied procedure')
+    const loaded = loadBundle(outcome.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected loaded procedure')
+    expect(
+      loaded.bundle.artifactsIndex.artifacts.some(({ sha }) => sha === oversizedSha),
+    ).toBe(false)
+    expect(loaded.bundle.artifactsIndex.skipped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sha: oversizedSha, reason: 'step-cap' }),
+      ]),
+    )
+    expect(loaded.bundle.manifest.evidenceIncomplete).toBe(true)
+  })
+
+  it('fails the commit when a seeded secret string rides an extraction artifact', () => {
+    const outcome = commitProcedureWithArtifacts([
+      {
+        bytes: Buffer.from(`opaque evidence carrying ${AWS_KEY}\n`),
+        stepIndex: 0,
+        role: 'opaque-evidence',
+        originalName: 'leaky-step-0.txt',
+      },
+    ])
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-artifact-egress' })
   })
 })
