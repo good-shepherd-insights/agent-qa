@@ -61,7 +61,7 @@ import {
 } from '../commit.js'
 import type { AuthoredCheckpoint, DispositionProfile } from '../author-contract.js'
 import {
-  KnowledgeStoreNotImplementedError,
+  KnowledgePromotionError,
   createLocalKnowledgeStore,
 } from '../knowledge-store.js'
 import { makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
@@ -1778,7 +1778,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(operation.mock.calls[0]?.[0].profile).toEqual({ mode: 'propose-only' })
   })
 
-  it('leaves canary attribution as the typed Phase 380-owned stub', async () => {
+  it('refuses canary attribution for a missing candidate through the typed promotion error', async () => {
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
       auditBaseDir,
@@ -1800,9 +1800,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
         exercisedAnchor: checkoutAnchors[0]!,
       }),
     ).rejects.toMatchObject({
-      name: 'KnowledgeStoreNotImplementedError',
-      operation: 'recordCanaryOutcome',
-      ownerPhase: 380,
-    } satisfies Partial<KnowledgeStoreNotImplementedError>)
+      name: 'KnowledgePromotionError',
+      candidateId: asRecordId('candidate-record'),
+      reason: 'not-found',
+    } satisfies Partial<KnowledgePromotionError>)
   })
 })
