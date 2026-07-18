@@ -1,4 +1,5 @@
 export type {
+  AuthoringReadPort,
   KnowledgePort,
   ToolsPort,
   PersistencePort,
