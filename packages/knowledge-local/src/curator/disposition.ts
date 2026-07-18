@@ -20,6 +20,11 @@ import {
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { ARTIFACT_STEP_CAP_BYTES } from '../artifact-copy.js'
+import { checkpointCommittedParts } from '../bundle-egress.js'
 import {
   deriveBundleTrust,
   loadBundle,
@@ -920,7 +925,114 @@ function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefine
     }
   }
 
+  const secretReject = procedureSecretLiteralReject(covered, evidence.captureReceipt)
+  if (secretReject !== undefined) return secretReject
+
+  const bindingReject = procedureBindingIntegrityReject(payload)
+  if (bindingReject !== undefined) return bindingReject
+
+  if (procedureArtifactEgressBlocked(evidence)) return 'procedure-artifact-egress'
+
   return undefined
+}
+
+/**
+ * Handoff evidence is masked-before-record (T-353-08): secrets surface as `<SECRET_n>`/
+ * `<EMAIL_n>` placeholders (or an unexpanded `{{secret:...}}` template) and test variables
+ * as `{{env:...}}` templates. The emit fold labels value sources on this same contract; any
+ * such observed value surviving as a committed literal is a D-03 structural reject — the
+ * secret param type only protects values that stay `{ param }` referenced (T-381-02/07).
+ */
+const MASKED_SECRET_VALUE_PATTERN = /<(?:SECRET|EMAIL)_\d+>|\{\{\s*secret:/
+const TEST_VARIABLE_VALUE_PATTERN = /\{\{\s*env:/
+
+/**
+ * D-03 rule 2. Two independent signals, both fail closed: (1) the literal's own content
+ * matches the masking contract; (2) the finalized capture receipt marks a masked credential
+ * region on the covered step's ordinal — the receipt's element refs are not carried into
+ * the codec body, so ANY literal slot on a masked step is refused (step-granular, not
+ * lane-granular, deliberately).
+ */
+function procedureSecretLiteralReject(
+  covered: readonly CoveredProcedureStep[],
+  captureReceipt: CurationCaptureReceipt,
+): string | undefined {
+  const maskedStepOrdinals = new Set(
+    captureReceipt.regions.map((region) => region.stepIndex),
+  )
+  for (const { step, observation } of covered) {
+    for (const slot of Object.values(step.action.values)) {
+      if (typeof slot !== 'string') continue
+      if (MASKED_SECRET_VALUE_PATTERN.test(slot)) return 'procedure-masked-secret-literal'
+      if (TEST_VARIABLE_VALUE_PATTERN.test(slot)) return 'procedure-test-variable-literal'
+      if (maskedStepOrdinals.has(observation.step.ordinal)) {
+        return 'procedure-masked-secret-literal'
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * D-03 rule 1: every `{ param }` ref must resolve to a declared parameter, and every
+ * declared parameter must be referenced by at least one step value slot. (Param types
+ * outside the closed string/number/boolean/secret union are unreachable here by
+ * construction — `parseProcedureBody` already refused them at the decode wall.)
+ */
+function procedureBindingIntegrityReject(
+  payload: ProcedureBodyPayload,
+): string | undefined {
+  const declared = new Set(payload.parameters.map(({ name }) => name))
+  const referenced = new Set<string>()
+  for (const step of payload.steps) {
+    for (const slot of Object.values(step.action.values)) {
+      if (typeof slot === 'string') continue
+      if (!declared.has(slot.param)) return 'procedure-param-undeclared'
+      referenced.add(slot.param)
+    }
+  }
+  if (payload.parameters.some(({ name }) => !referenced.has(name))) {
+    return 'procedure-param-unreferenced'
+  }
+  return undefined
+}
+
+/**
+ * RESEARCH A3 / Pitfall 10 / T-381-07. The ratified ≤2MB/step artifact cap is enforced by
+ * the ONE existing commit-path wall — `copyArtifacts` (`ARTIFACT_STEP_CAP_BYTES`, skip
+ * reason 'step-cap') inside `commitCurationDelta`'s required pre-copy pass — so disposition
+ * adds no duplicate clamp. What the commit path does NOT cover is artifact BYTES under the
+ * committed-text egress checkpoint: `publishBundle` checkpoints only rendered text parts,
+ * while artifact blobs land in the gitignore-covered artifacts/ tree. The extraction wall
+ * therefore runs the same fail-closed assert over every claimed artifact's bytes before a
+ * procedure delta may commit. Two deliberate skips, both parity with the copy wall: a
+ * pruned source (the copy skips it identically) and bytes above `ARTIFACT_STEP_CAP_BYTES`
+ * (the copy refuses it as 'step-cap', so it can never ride the bundle — scanning it would
+ * only expose the detector pass to multi-megabyte pathological inputs).
+ */
+function procedureArtifactEgressBlocked(
+  evidence: ProcedureDispositionEvidence,
+): boolean {
+  const parts: { label: string; text: string }[] = []
+  for (const artifact of evidence.artifactInventory) {
+    let bytes: Buffer
+    try {
+      bytes = readFileSync(join(evidence.candidateDir, artifact.relativePath))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
+    }
+    if (bytes.byteLength > ARTIFACT_STEP_CAP_BYTES) continue
+    parts.push({
+      label: `procedure-artifact:${artifact.sha256}`,
+      text: bytes.toString('utf8'),
+    })
+  }
+  if (parts.length === 0) return false
+  return checkpointCommittedParts(parts, {
+    policy: evidence.policy,
+    auditBaseDir: evidence.auditBaseDir,
+  }).kind === 'egress-blocked'
 }
 
 /**
