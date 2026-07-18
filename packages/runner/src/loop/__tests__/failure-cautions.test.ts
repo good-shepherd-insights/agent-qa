@@ -115,7 +115,7 @@ const pageAndFlow: Anchor[] = [
   { t: 'flow', name: 'checkout flow' },
 ]
 const elementPageAndFlow: Anchor[] = [
-  { t: 'el', role: 'button', name: 'log in' },
+  { t: 'el', role: 'button', name: 'log in', ordinal: 0 },
   ...pageAndFlow,
 ]
 
@@ -216,9 +216,54 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
 
     expect(knowledgeReader.getCautions).toHaveBeenCalledWith(
       [
-        { t: 'el', role: 'button', name: 'log in' },
+        { t: 'el', role: 'button', name: 'log in', ordinal: 0 },
         { t: 'page', route: 'https://example.test/login' },
         { t: 'flow', name: 'checkout flow' },
+      ],
+      DEFAULT_BUDGETS.caution,
+    )
+  })
+
+  it('derives the live same-role and same-name ordinal for a repeated failed element', async () => {
+    const initial = makeScreenState()
+    const original = initial.elements[1]!
+    const repeated = {
+      ...original,
+      ref: 'e3' as typeof original.ref,
+      bounds: { x: 20, y: 260, width: 350, height: 44 },
+      center: { x: 195, y: 282 },
+    }
+    const repeatedScreen: ScreenState = {
+      ...initial,
+      elements: [...initial.elements, repeated],
+      refMap: {
+        ...initial.refMap,
+        [repeated.ref]: { bounds: repeated.bounds, center: repeated.center },
+      },
+    }
+    const knowledgeReader = reader()
+
+    await executeStep(
+      'Click the second Log in button',
+      ports({
+        reader: knowledgeReader,
+        planner: scriptedPlanner([
+          makeActionPlan({ action: { type: 'click', ref: repeated.ref } }),
+          makeActionPlan({ action: { type: 'click', ref: 'e1' } }),
+        ]),
+        executeResults: [
+          { success: false, error: 'The second click was rejected' },
+          { success: true },
+        ],
+        observeResults: Array.from({ length: 5 }, () => repeatedScreen),
+      }),
+      flowContext(),
+    )
+
+    expect(knowledgeReader.getCautions).toHaveBeenCalledWith(
+      [
+        { t: 'el', role: 'button', name: 'log in', ordinal: 1 },
+        ...pageAndFlow,
       ],
       DEFAULT_BUDGETS.caution,
     )

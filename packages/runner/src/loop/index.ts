@@ -26,7 +26,12 @@
 // was planned against; stateAfter is attached only at the three D-15 boundaries by
 // reuse of an observation the loop already takes — never an extra capture.
 
-import { computeCacheKey, normalizeAnchor, toRecordedActionResult } from '@vostride/agent-qa-schema'
+import {
+  computeCacheKey,
+  elementOrdinal,
+  normalizeAnchor,
+  toRecordedActionResult,
+} from '@vostride/agent-qa-schema'
 import type {
   Action as SchemaAction,
   ActionAnnotation,
@@ -1539,6 +1544,7 @@ function deriveFailureCautionAnchors(
       t: 'el',
       role: failedElement.role,
       name: failedElement.nameNormalized,
+      ordinal: elementOrdinal(failedElement, screenState.elements),
     }))
   }
   if (screenState.url && screenState.url.trim().length > 0) {

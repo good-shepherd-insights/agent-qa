@@ -1,4 +1,5 @@
 import {
+  elementOrdinal,
   type Anchor,
   type ElementInfo,
   type StepEvidence,
@@ -15,21 +16,6 @@ export interface ResolvedElementEvidence {
 export interface ClassifiedRoute {
   navigated: boolean
   route?: string
-}
-
-function ordinalForElement(element: ElementInfo, elements: readonly ElementInfo[]): number {
-  let ordinal = 0
-  for (const candidate of elements) {
-    if (
-      candidate.role !== element.role
-      || candidate.nameNormalized !== element.nameNormalized
-    ) {
-      continue
-    }
-    if (candidate.ref === element.ref) return ordinal
-    ordinal += 1
-  }
-  return ordinal
 }
 
 function quoteAttribute(value: string): string {
@@ -87,7 +73,7 @@ export function resolvedElementEvidence(step: StepEvidence): ResolvedElementEvid
     for (const ref of resolvedActionRefs(subAction)) {
       const element = subAction.stateBefore.elements.find((candidate) => candidate.ref === ref)
       if (element === undefined) continue
-      const ordinal = ordinalForElement(element, subAction.stateBefore.elements)
+      const ordinal = elementOrdinal(element, subAction.stateBefore.elements)
       const identity = [
         subAction.stateBefore.platform,
         element.role,

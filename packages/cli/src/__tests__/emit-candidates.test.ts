@@ -14,7 +14,9 @@ import { isAbsolute, join } from 'node:path'
 import {
   candidateContentAddress,
   curationCandidatePayloadSchema,
+  openKnowledgeReader,
   publishBundle,
+  rebuildIndex,
   queuedCandidateDir,
   type CurationCandidatePayload,
   type EnqueueCurationCandidateProjectionOptions,
@@ -25,6 +27,8 @@ import {
   asRef,
   asRunId,
   canonicalJson,
+  elementOrdinal,
+  normalizeAnchor,
   type CompletedRunHandoff,
   type ElementInfo,
   type PerTestOutcome,
@@ -690,6 +694,115 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
         rootCauseClass: 'environment',
       },
     })
+  })
+
+  it('retrieves a curation-emitted ordinal caution ahead of a page fallback', async () => {
+    const fixture = emitFixture()
+    const pageCause = rootCause('timeout', 0)
+    pageCause.evidence.citedAnchors = [{ t: 'page', route: '/checkout' }]
+    const elementCause = rootCause('environment', 1)
+    elementCause.evidence.citedAnchors = [{
+      t: 'el',
+      role: 'button',
+      name: 'Retry',
+      ordinal: 1,
+    }]
+    const emitted = emitCurationCandidates({
+      ...fixture,
+      handoff: handoff([
+        testOutcome({
+          testId: 'checkout::page-fallback',
+          testIndex: 0,
+          outcome: 'timeout',
+          rootCause: pageCause,
+        }, []),
+        testOutcome({
+          testId: 'checkout::second-retry',
+          testIndex: 1,
+          outcome: 'failed',
+          rootCause: elementCause,
+        }, []),
+      ], { aggregateVerdict: 'failed' }),
+    })
+    expect(emitted).toMatchObject({ enqueued: 2, refused: 0, capExceeded: 0 })
+
+    const servingRoot = join(fixture.root, 'ordinal-caution-knowledge')
+    let elementBundleId: string | undefined
+    for (const detail of emitted.details) {
+      if (detail.candidateId === undefined) throw new Error('expected emitted caution id')
+      const payload = queuedPayload(fixture.knowledgeRoot, detail.candidateId)
+      const published = publishBundle(
+        {
+          knowledgeRoot: servingRoot,
+          productKey: 'storefront',
+          auditBaseDir: join(fixture.root, '.agent-qa-ordinal-caution'),
+          commitArtifacts: 'none',
+        },
+        {
+          draft: {
+            kind: 'caution',
+            anchors: payload.anchors,
+            scope: payload.scope,
+            summary: payload.summarySeed,
+            body: payload.bodySeed,
+            distilledEvidenceRef: {
+              id: `curation-candidate-${detail.candidateId}`,
+              sha: detail.candidateId,
+            },
+            originStage: 'run-curation',
+          },
+          discriminant: { kind: 'caution', errorKey: canonicalJson(payload.anchors) },
+          originClass: 'agent-verified',
+          createdAtOrdinal: payload.buildOrdinal,
+          screenStates: [],
+          initialEvents: [{
+            type: 'promoted',
+            evidenceToken: asEvidenceToken(`promoted-${detail.candidateId}`),
+            curationJobId: detail.candidateId,
+            buildOrdinal: payload.buildOrdinal,
+            observationId: payload.attributingObservationId,
+          }],
+          relations: [],
+          provenance: {
+            mode: 'run-linked',
+            runId: payload.sourceRunId,
+            testId: payload.attributingObservationId,
+            stepIndex: payload.distilledObservations[0]?.step.ordinal ?? 0,
+            curationJobId: detail.candidateId,
+            sourceBuildOrdinal: payload.buildOrdinal,
+          },
+          artifacts: [],
+          distilledObservations: payload.distilledObservations,
+        },
+      )
+      if (published.kind !== 'published') throw new Error('expected caution publication')
+      if (payload.anchors.some((anchor) => anchor.t === 'el')) {
+        elementBundleId = published.id
+      }
+    }
+    const rebuild = await rebuildIndex({ knowledgeRoot: servingRoot })
+
+    const repeated = [element('retry-first', 'Retry'), element('retry-second', 'Retry')]
+    const failed = repeated[1]!
+    const anchors = [
+      normalizeAnchor({
+        t: 'el' as const,
+        role: failed.role,
+        name: failed.nameNormalized,
+        ordinal: elementOrdinal(failed, repeated),
+      }),
+      normalizeAnchor({ t: 'page' as const, route: '/checkout' }),
+    ]
+    const reader = openKnowledgeReader({
+      knowledgeRoot: servingRoot,
+      product: 'storefront',
+      budgets: { recordCap: 1 },
+    })
+    const block = reader.getCautions(anchors, 100)
+
+    expect(elementOrdinal(failed, repeated)).toBe(1)
+    expect(rebuild).toMatchObject({ projected: 2, scanIssues: [] })
+    expect(block.cautions[0]?.id).toBe(elementBundleId)
   })
 
   it('coalesces every candidate on re-emit without writing new bytes', () => {
