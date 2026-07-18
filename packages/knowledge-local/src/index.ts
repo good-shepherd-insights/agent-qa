@@ -292,6 +292,7 @@ export type {
   DispositionCandidateContext,
   DispositionDrainState,
   DispositionOutcome,
+  ProcedureDispositionEvidence,
   RelationIntent,
 } from './curator/disposition.js'
 export {

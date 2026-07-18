@@ -14,6 +14,7 @@ import {
   asEvidenceToken,
   asRecordId,
   canonicalJson,
+  serializeProcedureBody,
   sha256hex,
   type Anchor,
   type BundleDraft,
@@ -65,7 +66,10 @@ import type {
   DispositionProfile,
 } from '../author-contract.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
-import { makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
+import {
+  makeProcedureBodyPayloadFixture,
+  makeScreenStateFixture,
+} from '../../__tests__/fixtures/bundle-fixture.js'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
 const checkoutAnchors: Anchor[] = [
@@ -921,12 +925,17 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       promotionHoldReason: 'no-element-observation',
     })
 
+    // 381-03: the extraction wall requires a codec-shaped body plus verified-PASS
+    // covered-step evidence before any procedure delta reaches the promotion gate.
     const procedureDraft = draft({
       kind: 'procedure',
       subtype: undefined,
-      anchors: [{ t: 'flow', name: 'checkout' }],
+      anchors: [
+        { t: 'flow', name: 'checkout' },
+        { t: 'page', route: '/login' },
+      ],
       summary: 'Checkout procedure',
-      body: 'Complete checkout across multiple states.',
+      body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
     })
     const procedureJob = job(artifactFreeCaptureReceipt(), {
       kind: 'procedure',
@@ -934,6 +943,19 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       anchors: procedureDraft.anchors,
       summarySeed: procedureDraft.summary,
       bodySeed: procedureDraft.body,
+      distilledObservations: ['enter-email', 'enter-password', 'submit'].map(
+        (naturalKey, index) => ({
+          schemaVersion: 1,
+          step: { naturalKey, ordinal: index },
+          platform: 'web',
+          flow: { name: 'checkout' },
+          surface: { kind: 'page', naturalKey: '/login' },
+          element: {
+            naturalKey: ['textbox:email', 'textbox:password', 'button:sign in'][index]!,
+          },
+          observedAtOrdinal: 42,
+        }),
+      ),
       attributingObservationId: 'promotion-procedure',
     })
     expect(commitCurationDelta(

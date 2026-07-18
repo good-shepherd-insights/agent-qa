@@ -873,6 +873,20 @@ export function commitCurationDelta(
       ...(measurementSeedValue(job) === undefined
         ? {}
         : { measurementValue: measurementSeedValue(job) }),
+      // 381-03: procedure deltas are validated against durable queue evidence, so the
+      // extraction wall receives the payload's code-derived facts (never LLM text).
+      ...(job.payload.kind === 'procedure'
+        ? {
+            procedureEvidence: {
+              distilledObservations: job.payload.distilledObservations,
+              captureReceipt: job.payload.captureReceipt,
+              artifactInventory: job.payload.artifactInventory,
+              candidateDir: job.candidateDir,
+              policy: deps.policy,
+              auditBaseDir: deps.auditBaseDir,
+            },
+          }
+        : {}),
     },
     drainState: deps.drainState,
   })

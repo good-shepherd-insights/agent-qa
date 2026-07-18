@@ -1,15 +1,21 @@
 import {
   canonicalJson,
   decideMeasurementDrift,
+  isReplayableActionShape,
+  parseProcedureBody,
   sha256hex,
   foldMeasurements,
   normalizeAnchor,
   supersessionKey as schemaSupersessionKey,
   type Anchor,
+  type BundleDraft,
   type BundleStatus,
   type CanaryOutcome,
   type Delta,
+  type DistilledObservation,
+  type GuardrailPolicy,
   type MeasurementObservation,
+  type ProcedureBodyPayload,
   type RecordId,
   type ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -21,6 +27,10 @@ import {
   type LoadedBundle,
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
+import type {
+  CurationCandidateArtifact,
+  CurationCaptureReceipt,
+} from '../queue/queue-payload.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   SCOPE_BURST_THRESHOLD,
@@ -58,6 +68,21 @@ export function canaryOutcomeObservationId(
   }))}`
 }
 
+/**
+ * 381-03 (PROC-01 D-02/D-03): the verified queue evidence the procedure-extraction wall
+ * validates against. Everything here is code-derived queue truth — distilled observations,
+ * the finalized §A8 capture receipt, and the claimed artifact inventory — never LLM text.
+ */
+export interface ProcedureDispositionEvidence {
+  distilledObservations: readonly DistilledObservation[]
+  captureReceipt: CurationCaptureReceipt
+  artifactInventory: readonly CurationCandidateArtifact[]
+  /** Claimed candidate directory the inventory's relative paths resolve against. */
+  candidateDir: string
+  policy: GuardrailPolicy
+  auditBaseDir: string
+}
+
 export interface DispositionCandidateContext {
   anchors: readonly Anchor[]
   scope: ScopeKey
@@ -66,6 +91,8 @@ export interface DispositionCandidateContext {
   curationJobId?: string
   /** Original measurement seed value; prose authored by a model is never parsed for authority. */
   measurementValue?: string
+  /** Present only for procedure-extraction jobs; procedure deltas fail closed without it. */
+  procedureEvidence?: ProcedureDispositionEvidence
 }
 
 export interface RelationIntent {
@@ -802,11 +829,109 @@ function downgraded(
   }
 }
 
+function procedureDraft(delta: Delta): BundleDraft | undefined {
+  if (delta.kind === 'Add' && delta.bundle.kind === 'procedure') return delta.bundle
+  if (delta.kind === 'Supersede' && delta.newBundle.kind === 'procedure') {
+    return delta.newBundle
+  }
+  return undefined
+}
+
+interface CoveredProcedureStep {
+  step: ProcedureBodyPayload['steps'][number]
+  observation: DistilledObservation
+}
+
+/**
+ * §7.1 candidacy mapping: each committed step's authored instruction is the emit fold's
+ * step natural key, so a covered step resolves to exactly one verified-PASS distilled
+ * observation. A missing or ambiguous mapping is itself missing PASS evidence — fail closed.
+ */
+function coveredProcedureSteps(
+  payload: ProcedureBodyPayload,
+  observations: readonly DistilledObservation[],
+): CoveredProcedureStep[] | undefined {
+  const byNaturalKey = new Map<string, DistilledObservation[]>()
+  for (const observation of observations) {
+    const group = byNaturalKey.get(observation.step.naturalKey) ?? []
+    group.push(observation)
+    byNaturalKey.set(observation.step.naturalKey, group)
+  }
+  const covered: CoveredProcedureStep[] = []
+  for (const step of payload.steps) {
+    const group = byNaturalKey.get(step.instruction)
+    if (group === undefined || group.length !== 1) return undefined
+    covered.push({ step, observation: group[0]! })
+  }
+  return covered
+}
+
+/**
+ * 381-03 (PROC-01): the deterministic procedure-extraction wall — D-02 candidacy (contiguous
+ * verified-PASS span with resolved elements + coherent anchors) and Pitfall 6 replayability
+ * (the ONE shared schema exclusion list, never a fork). Any failed check disposes the delta
+ * as a structured Noop with a machine-readable reason; nothing here reads LLM prose for
+ * authority — the body decode is fail-closed and evidence comes from the durable queue payload.
+ */
+function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefined {
+  const draft = procedureDraft(input.delta)
+  if (draft === undefined) return undefined
+  const evidence = input.candidate?.procedureEvidence
+  if (evidence === undefined) return 'procedure-evidence-missing'
+
+  const payload = parseProcedureBody(draft.body)
+  if (payload === undefined) return 'procedure-body-unparseable'
+
+  const covered = coveredProcedureSteps(payload, evidence.distilledObservations)
+  if (covered === undefined) return 'procedure-step-coverage'
+  for (let index = 1; index < covered.length; index += 1) {
+    const previous = covered[index - 1]!.observation.step.ordinal
+    if (covered[index]!.observation.step.ordinal !== previous + 1) {
+      return 'procedure-span-non-contiguous'
+    }
+  }
+  if (covered.some(({ observation }) => observation.element === undefined)) {
+    return 'procedure-step-unresolved-element'
+  }
+
+  if (draft.anchors.filter((anchor) => anchor.t === 'flow').length !== 1) {
+    return 'procedure-flow-anchor'
+  }
+  const coveredSurfaces = new Set(
+    covered.flatMap(({ observation }) =>
+      observation.surface === undefined ? [] : [observation.surface.naturalKey],
+    ),
+  )
+  const pageRoutes = [
+    ...draft.anchors.flatMap((anchor) => (anchor.t === 'page' ? [anchor.route] : [])),
+    ...payload.steps.map((step) => step.guard.pageAnchor.route),
+  ]
+  if (pageRoutes.some((route) => !coveredSurfaces.has(route))) {
+    return 'procedure-page-anchor-disjoint'
+  }
+
+  for (const { step } of covered) {
+    const shapeKeys = [
+      ...Object.keys(step.action.targets),
+      ...Object.keys(step.action.values),
+    ]
+    if (!isReplayableActionShape(step.action.type, shapeKeys)) {
+      return 'procedure-non-replayable-action'
+    }
+  }
+
+  return undefined
+}
+
 /**
  * Run memory.md §7.3.1's six checks in order. The function is deliberately synchronous: every
  * decision is made from the persisted checkpoint and canonical bundle tree, never an index row.
  */
 export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
+  const procedureReject = disposeProcedureExtraction(input)
+  if (procedureReject !== undefined) {
+    return { kind: 'noop', reason: procedureReject }
+  }
   const lookup = truthLookup(input.knowledgeRoot)
   const measurement = disposeMeasurementDrift(input, lookup)
   const dispositionInput = measurement.input

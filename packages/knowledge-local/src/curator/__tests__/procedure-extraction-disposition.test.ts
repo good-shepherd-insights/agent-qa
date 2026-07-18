@@ -129,7 +129,7 @@ function checkpointFor(delta: Delta): AuthoredDeltaCheckpoint {
 
 function dispose(
   delta: Extract<Delta, { kind: 'Add' }>,
-  evidence: ProcedureDispositionEvidence | undefined = makeEvidence(),
+  evidence: ProcedureDispositionEvidence | null = makeEvidence(),
 ) {
   return disposeDelta({
     delta,
@@ -141,7 +141,7 @@ function dispose(
       scope: delta.bundle.scope,
       buildOrdinal: 81,
       curationJobId: 'procedure-disposition-job',
-      ...(evidence === undefined ? {} : { procedureEvidence: evidence }),
+      ...(evidence === null ? {} : { procedureEvidence: evidence }),
     },
     drainState: { supersedesSeenByAnchorKey: new Map() },
   })
@@ -252,7 +252,7 @@ describe('procedure extraction disposition — structural candidacy (D-02)', () 
   })
 
   it('fails closed when a procedure delta arrives without extraction evidence', () => {
-    const outcome = dispose(addDelta(), undefined)
+    const outcome = dispose(addDelta(), null)
     expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-evidence-missing' })
   })
 

@@ -1,11 +1,12 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { asRef } from '@vostride/agent-qa-schema'
+import { asRef, serializeProcedureBody } from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
   BundleDiscriminant,
   BundleDraft,
+  ProcedureBodyPayload,
   ScreenState,
 } from '@vostride/agent-qa-schema'
 
@@ -151,6 +152,63 @@ export function makeBundleDraftFixture(
   }
 }
 
+/**
+ * The 381-03 canonical codec-shaped procedure body: three parameterized steps aligned with
+ * `makeProcedureScreenStateSequenceFixture` and the `enter-email`/`enter-password`/`submit`
+ * distilled-observation natural keys used by procedure commit/disposition suites.
+ */
+export function makeProcedureBodyPayloadFixture(
+  overrides: Partial<ProcedureBodyPayload> = {},
+): ProcedureBodyPayload {
+  return {
+    schemaVersion: 1,
+    parameters: [
+      { name: 'email', type: 'string', required: true },
+      { name: 'password', type: 'secret', required: true },
+    ],
+    steps: [
+      {
+        instruction: 'enter-email',
+        action: {
+          type: 'typeText',
+          targets: { ref: { role: 'textbox', nameNormalized: 'email', ordinal: 0 } },
+          values: { text: { param: 'email' } },
+        },
+        guard: {
+          target: { role: 'textbox', nameNormalized: 'email', ordinal: 0 },
+          pageAnchor: { t: 'page', route: '/login' },
+        },
+      },
+      {
+        instruction: 'enter-password',
+        action: {
+          type: 'typeText',
+          targets: { ref: { role: 'textbox', nameNormalized: 'password', ordinal: 0 } },
+          values: { text: { param: 'password' } },
+        },
+        guard: {
+          target: { role: 'textbox', nameNormalized: 'password', ordinal: 0 },
+          pageAnchor: { t: 'page', route: '/login' },
+        },
+      },
+      {
+        instruction: 'submit',
+        action: {
+          type: 'click',
+          targets: { ref: { role: 'button', nameNormalized: 'sign in', ordinal: 0 } },
+          values: {},
+        },
+        guard: {
+          target: { role: 'button', nameNormalized: 'sign in', ordinal: 0 },
+          pageAnchor: { t: 'page', route: '/login' },
+        },
+      },
+    ],
+    successAssertion: 'The account page is visible.',
+    ...overrides,
+  }
+}
+
 export function makeProcedureBundleDraftFixture(
   overrides: Partial<BundleDraft> = {},
 ): BundleDraft {
@@ -161,7 +219,7 @@ export function makeProcedureBundleDraftFixture(
       { t: 'page', route: '/login' },
     ],
     summary: 'Sign in with recorded credentials',
-    body: 'Enter email, enter password, and submit the sign-in form in order.',
+    body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
     ...overrides,
   })
 }

@@ -88,6 +88,10 @@ describe('D-02 procedure-kind commit mint contract', () => {
           ...(stepIndex === 0 ? {} : { precedes: ['enter-email', 'enter-password'][stepIndex - 1]! }),
         },
         surface: { kind: 'page', naturalKey: '/login' },
+        // 381-03 §7.1 candidacy: every covered step carries resolved-element evidence.
+        element: {
+          naturalKey: ['textbox:email', 'textbox:password', 'button:sign in'][stepIndex]!,
+        },
         observedAtOrdinal: 81 + stepIndex,
       })),
       evidenceToken: 'procedure-evidence',
