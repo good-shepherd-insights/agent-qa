@@ -1791,6 +1791,8 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
         candidateId: asRecordId('candidate-record'),
         runOutcome: 'positive',
         runId: 'run-canary',
+        testId: 'checkout::happy-path',
+        testIndex: 0,
         buildOrdinal: 7,
         stepIndex: 2,
         briefDigest: 'brief-digest',

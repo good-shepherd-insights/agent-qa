@@ -210,6 +210,8 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
       candidateId: CANDIDATE,
       runOutcome: 'positive',
       runId: 'run-canary-1',
+      testId: 'checkout::happy-path',
+      testIndex: 0,
       buildOrdinal: 42,
       stepIndex: 0,
       briefDigest: 'brief-digest-0',
@@ -313,6 +315,40 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     expect(first).toHaveLength(2)
     expect(first.map((outcome) => outcome.stepIndex)).toEqual([0, 1])
   })
+
+  it('keeps same-index steps from different tests independently attributable', () => {
+    const input = handoff([step({ stepIndex: 0 })])
+    input.aggregateVerdict = 'failed'
+    input.tests.push({
+      testId: 'checkout::declined-card',
+      testIndex: 1,
+      outcome: 'failed',
+      steps: [step({ stepIndex: 0, pass: false })],
+    })
+    const outcomes = project(input, new Map([[CANDIDATE, [{
+      t: 'el',
+      role: 'button',
+      name: 'checkout',
+      ordinal: 0,
+    }]]]))
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        testId: 'checkout::happy-path',
+        testIndex: 0,
+        stepIndex: 0,
+        runOutcome: 'positive',
+      }),
+      expect.objectContaining({
+        testId: 'checkout::declined-card',
+        testIndex: 1,
+        stepIndex: 0,
+        runOutcome: 'negative',
+      }),
+    ])
+    expect(outcomes[0]?.attribution).toContain('test 0 (checkout::happy-path) step 0')
+    expect(outcomes[1]?.attribution).toContain('test 1 (checkout::declined-card) step 0')
+  })
 })
 
 describe('emitCanaryOutcomes', () => {
@@ -349,11 +385,15 @@ describe('emitCanaryOutcomes', () => {
       details: [
         {
           candidateId: CANDIDATE,
+          testId: 'checkout::happy-path',
+          testIndex: 0,
           stepIndex: 0,
           outcome: { kind: 'refused', reason: 'emit-error' },
         },
         {
           candidateId: CANDIDATE,
+          testId: 'checkout::happy-path',
+          testIndex: 0,
           stepIndex: 1,
           outcome: { kind: 'emitted' },
         },

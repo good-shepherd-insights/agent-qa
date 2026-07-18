@@ -20,6 +20,8 @@ function validPayload(): CanaryOutcomePayload {
     jobKind: 'canary-outcome',
     candidateId: 'fact-checkout-button-0123456789abcdef',
     runId: 'run-canary-transport',
+    testId: 'checkout::happy-path',
+    testIndex: 1,
     buildOrdinal: 42,
     stepIndex: 3,
     outcome: 'positive',
@@ -30,12 +32,12 @@ function validPayload(): CanaryOutcomePayload {
 }
 
 describe('Pin 3 canary outcome payload', () => {
-  it('accepts only schema version 1 and the canary-outcome job kind', () => {
+  it('accepts only schema version 2 and the canary-outcome job kind', () => {
     const payload = validPayload()
 
     expect(canaryOutcomePayloadSchema.parse(payload)).toEqual(payload)
     expect(
-      canaryOutcomePayloadSchema.safeParse({ ...payload, schemaVersion: 2 }).success,
+      canaryOutcomePayloadSchema.safeParse({ ...payload, schemaVersion: 1 }).success,
     ).toBe(false)
     expect(
       canaryOutcomePayloadSchema.safeParse({ ...payload, jobKind: 'curation' }).success,
@@ -67,6 +69,8 @@ describe('Pin 3 canary outcome payload', () => {
       outcome: payload.outcome,
       stepIndex: payload.stepIndex,
       buildOrdinal: payload.buildOrdinal,
+      testIndex: payload.testIndex,
+      testId: payload.testId,
       runId: payload.runId,
       candidateId: payload.candidateId,
       jobKind: payload.jobKind,

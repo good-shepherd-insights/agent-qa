@@ -34,6 +34,10 @@ export interface CanaryOutcome {
   runOutcome: 'positive' | 'negative'
   /** Pin 3: run identity participates in the replay-safe evidence token. */
   runId: string
+  /** D-21: containing test identity disambiguates step-local indices within one run. */
+  testId: string
+  /** D-21: stable test ordinal participates in replay identity and reporting. */
+  testIndex: number
   /** D-21: deterministic build ordinal only; wall-clock time is never attribution authority. */
   buildOrdinal: number
   /** D-21: per-step granularity prevents run-level noise from moving trust. */

@@ -4,7 +4,7 @@ import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 
 import { curationCandidateProjectionSchema } from './queue-payload.js'
 
-export const CANARY_QUEUE_SCHEMA_VERSION = 1
+export const CANARY_QUEUE_SCHEMA_VERSION = 2
 
 // Reuse the curation queue's exact Anchor validator without widening its public payload.
 const anchorSchema = curationCandidateProjectionSchema.shape.anchors.element
@@ -14,6 +14,8 @@ const canaryOutcomePayloadShape = {
   jobKind: z.literal('canary-outcome'),
   candidateId: z.string().min(1),
   runId: z.string().min(1),
+  testId: z.string().min(1),
+  testIndex: z.number().int().nonnegative(),
   buildOrdinal: z.number().int().nonnegative(),
   stepIndex: z.number().int().nonnegative(),
   outcome: z.enum(['positive', 'negative']),

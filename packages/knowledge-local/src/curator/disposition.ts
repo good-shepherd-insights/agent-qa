@@ -44,11 +44,16 @@ export const BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN = 1
  * the complete replay identity required by §7.5.1.
  */
 export function canaryOutcomeObservationId(
-  outcome: Pick<CanaryOutcome, 'candidateId' | 'runId' | 'stepIndex'>,
+  outcome: Pick<
+    CanaryOutcome,
+    'candidateId' | 'runId' | 'testId' | 'testIndex' | 'stepIndex'
+  >,
 ): string {
   return `canary-outcome:${sha256hex(canonicalJson({
     candidateId: outcome.candidateId,
     runId: outcome.runId,
+    testId: outcome.testId,
+    testIndex: outcome.testIndex,
     stepIndex: outcome.stepIndex,
   }))}`
 }

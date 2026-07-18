@@ -122,6 +122,8 @@ expectTypeOf<CanaryOutcome>().toEqualTypeOf<{
   candidateId: RecordId
   runOutcome: 'positive' | 'negative'
   runId: string
+  testId: string
+  testIndex: number
   buildOrdinal: number
   stepIndex: number
   briefDigest: string
@@ -133,6 +135,8 @@ expectTypeOf<keyof CanaryOutcome>().toEqualTypeOf<
   | 'candidateId'
   | 'runOutcome'
   | 'runId'
+  | 'testId'
+  | 'testIndex'
   | 'buildOrdinal'
   | 'stepIndex'
   | 'briefDigest'

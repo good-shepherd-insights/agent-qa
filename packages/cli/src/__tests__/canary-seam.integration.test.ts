@@ -223,6 +223,8 @@ function expectedCanaryEvidenceToken(
   const attributingObservationId = `canary-outcome:${sha256hex(canonicalJson({
     candidateId: outcome.candidateId,
     runId: outcome.runId,
+    testId: outcome.testId,
+    testIndex: outcome.testIndex,
     stepIndex: outcome.stepIndex,
   }))}`
   return deriveEvidenceToken({

@@ -426,6 +426,8 @@ describe('openKnowledgeReader synchronous serving port', () => {
       candidateId: seeded.candidateFact,
       runOutcome: 'positive',
       runId: 'reader-canary-run',
+      testId: 'checkout::happy-path',
+      testIndex: 1,
       buildOrdinal: 12,
       stepIndex: 3,
       briefDigest: 'reader-canary-brief',

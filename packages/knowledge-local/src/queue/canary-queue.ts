@@ -38,6 +38,8 @@ export function enqueueCanaryOutcome(
     jobKind: 'canary-outcome',
     candidateId: outcome.candidateId,
     runId: outcome.runId,
+    testId: outcome.testId,
+    testIndex: outcome.testIndex,
     buildOrdinal: outcome.buildOrdinal,
     stepIndex: outcome.stepIndex,
     outcome: outcome.runOutcome,

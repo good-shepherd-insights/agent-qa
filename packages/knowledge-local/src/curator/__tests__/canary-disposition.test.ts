@@ -151,6 +151,8 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       candidateId,
       runOutcome,
       runId: 'run-canary-disposition',
+      testId: 'checkout::happy-path',
+      testIndex: 0,
       buildOrdinal: 43,
       stepIndex: 2,
       briefDigest: 'brief-digest-canary-disposition',
@@ -242,6 +244,62 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     expect(first.trust.status).toBe('candidate')
     expect(replayed.trust).toEqual(first.trust)
     expect(replayed.bundle.events).toEqual(first.bundle.events)
+  })
+
+  it('persists mixed same-step outcomes from separate tests under distinct identities', async () => {
+    const published = seedCandidate()
+    const positive = outcome(published.id)
+    const negative: CanaryOutcome = {
+      ...outcome(published.id, 'negative'),
+      testId: 'checkout::declined-card',
+      testIndex: 1,
+    }
+    const positiveObservationId = canaryOutcomeObservationId(positive)
+    const negativeObservationId = canaryOutcomeObservationId(negative)
+
+    expect(negative.stepIndex).toBe(positive.stepIndex)
+    expect(negativeObservationId).not.toBe(positiveObservationId)
+
+    const positiveEntry = enqueueCanaryOutcome(knowledgeRoot, positive)
+    const negativeEntry = enqueueCanaryOutcome(knowledgeRoot, negative)
+    expect(negativeEntry.entryId).not.toBe(positiveEntry.entryId)
+    expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(2)
+
+    const author = vi.fn<CuratorAuthor>(async () => {
+      throw new Error('canary jobs must not invoke the Curator author')
+    })
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+    })
+    const result = loaded(published.dir)
+    const positiveToken = deriveEvidenceToken({
+      attributingObservationId: positiveObservationId,
+      anchor: positive.exercisedAnchor,
+      buildOrdinal: positive.buildOrdinal,
+    })
+    const negativeToken = deriveEvidenceToken({
+      attributingObservationId: negativeObservationId,
+      anchor: negative.exercisedAnchor,
+      buildOrdinal: negative.buildOrdinal,
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 2,
+      committed: 2,
+      failures: 0,
+    })
+    expect(author).not.toHaveBeenCalled()
+    expect(result.bundle.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'confirmed', evidenceToken: positiveToken }),
+      expect.objectContaining({ type: 'contradicted', evidenceToken: negativeToken }),
+    ]))
+    expect(result.trust.counters).toMatchObject({ confirmed: 1, contradicted: 1 })
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
   })
 
   it('drains mixed canary and curation jobs without spending author or query work on canaries', async () => {

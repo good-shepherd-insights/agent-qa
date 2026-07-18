@@ -272,6 +272,8 @@ function readClaimedCanaryOutcome(
       candidateId: asRecordId(parsed.data.candidateId),
       runOutcome: parsed.data.outcome,
       runId: parsed.data.runId,
+      testId: parsed.data.testId,
+      testIndex: parsed.data.testIndex,
       buildOrdinal: parsed.data.buildOrdinal,
       stepIndex: parsed.data.stepIndex,
       briefDigest: parsed.data.briefDigest,

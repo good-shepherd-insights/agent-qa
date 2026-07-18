@@ -14,6 +14,8 @@ function outcome(): CanaryOutcome {
     candidateId: asRecordId('fact-checkout-button-0123456789abcdef'),
     runOutcome: 'positive',
     runId: 'run-canary-transport',
+    testId: 'checkout::happy-path',
+    testIndex: 1,
     buildOrdinal: 42,
     stepIndex: 3,
     briefDigest: 'brief-digest-42',
@@ -48,6 +50,8 @@ describe('enqueueCanaryOutcome', () => {
     const payload = canaryOutcomePayloadSchema.parse(raw)
     expect(payload).toMatchObject({
       candidateId: outcome().candidateId,
+      testId: outcome().testId,
+      testIndex: outcome().testIndex,
       outcome: outcome().runOutcome,
       jobKind: 'canary-outcome',
     })

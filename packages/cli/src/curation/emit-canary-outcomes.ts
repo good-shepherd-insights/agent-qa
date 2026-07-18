@@ -27,6 +27,8 @@ export type EmitCanaryOutcomeResult =
 
 export interface EmitCanaryOutcomeDetail {
   candidateId: RecordId
+  testId: string
+  testIndex: number
   stepIndex: number
   outcome: EmitCanaryOutcomeResult
 }
@@ -119,13 +121,16 @@ export function projectCanaryOutcomes(
           candidateId,
           runOutcome,
           runId: String(input.handoff.runId),
+          testId: test.testId,
+          testIndex: test.testIndex,
           buildOrdinal: input.handoff.buildOrdinal,
           stepIndex: step.stepIndex,
           briefDigest: step.servedBrief.briefDigest,
           attribution: [
             `Candidate ${candidateId}`,
             `matched ${canonicalJson(exercisedAnchor)}`,
-            `on step ${step.stepIndex} with ${runOutcome} verdict`,
+            `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
+            `with ${runOutcome} verdict`,
           ].join(' '),
           exercisedAnchor,
         } satisfies CanaryOutcome]
@@ -159,6 +164,8 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
     }
     report.details.push({
       candidateId: projected.candidateId,
+      testId: projected.testId,
+      testIndex: projected.testIndex,
       stepIndex: projected.stepIndex,
       outcome,
     })
