@@ -648,6 +648,58 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     expect(filled?.pageRoute).toBe('https://shop.example/cart')
   })
 
+  it('preserves boolean and numeric action semantics as typed literal trajectory slots', () => {
+    const steps = signInSteps()
+    steps[1]!.subActions[0]!.plannedAction = {
+      type: 'fill',
+      ref: asRef('email'),
+      text: 'user@example.com',
+      clearMode: 'replace',
+      submit: true,
+    }
+    steps[2]!.subActions[0]!.plannedAction = {
+      type: 'scroll',
+      mode: 'untilVisible',
+      text: 'Order summary',
+      ref: asRef('submit'),
+      direction: 'down',
+      maxSwipes: 4,
+      retryOpposite: false,
+    }
+    const rawScroll = steps[2]!.subActions[0]!.plannedAction as unknown as Record<
+      string,
+      unknown
+    >
+    rawScroll['metadata'] = { source: 'fixture' }
+    rawScroll['tags'] = ['fixture']
+    rawScroll['nullable'] = null
+
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'checkout::typed-scalars' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    const seed = parseProcedureTrajectorySeed(target!.bodySeed)
+
+    expect(seed?.steps[1]?.action?.values['submit']).toEqual({
+      observed: true,
+      source: 'literal',
+      targetRef: 'email',
+    })
+    expect(seed?.steps[2]?.action?.values['maxSwipes']).toEqual({
+      observed: 4,
+      source: 'literal',
+      targetRef: 'submit',
+    })
+    expect(seed?.steps[2]?.action?.values['retryOpposite']).toEqual({
+      observed: false,
+      source: 'literal',
+      targetRef: 'submit',
+    })
+    expect(seed?.steps[2]?.action?.values).not.toHaveProperty('metadata')
+    expect(seed?.steps[2]?.action?.values).not.toHaveProperty('tags')
+    expect(seed?.steps[2]?.action?.values).not.toHaveProperty('nullable')
+  })
+
   it('records navigating guard routes from the pre-action page while retaining destination anchors', () => {
     const steps = signInSteps()
     steps[2] = flowStep({

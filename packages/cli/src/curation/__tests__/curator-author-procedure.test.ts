@@ -327,6 +327,154 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(wholeFlow!.body).not.toContain('user@example.com')
   })
 
+  it('commits a boolean literal slot without stringifying it', async () => {
+    const seed = trajectorySeed() as unknown as {
+      steps: Array<{
+        action?: { values: Record<string, unknown> }
+      }>
+    }
+    seed.steps[1]!.action!.values['submit'] = {
+      observed: true,
+      source: 'literal',
+      targetRef: 'email',
+    }
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::typed-submit',
+          stepSpan: [0, 2],
+          parameters: [],
+          successAssertion: 'The account is signed in',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(
+      procedureJob({ bodySeed: canonicalJson(seed) }),
+      [],
+    )
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const [bundle] = addBundles(outcome.deltas)
+    const payload = parseProcedureBody(bundle!.body)
+
+    expect(payload?.steps[1]?.action.values['submit']).toBe(true)
+  })
+
+  it('rejects duplicate parameter names per candidate while building valid siblings', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::ambiguous-names',
+          stepSpan: [0, 2],
+          parameters: [
+            {
+              name: 'email',
+              type: 'string',
+              required: true,
+              appliesTo: [{ stepOrdinal: 1, field: 'text' }],
+            },
+            {
+              name: 'email',
+              type: 'boolean',
+              required: false,
+              appliesTo: [{ stepOrdinal: 1, field: 'clearMode' }],
+            },
+          ],
+          successAssertion: 'Ambiguous candidate must be rejected',
+        },
+        {
+          flowName: 'auth::valid-sibling',
+          stepSpan: [0, 2],
+          parameters: [],
+          successAssertion: 'The account is signed in',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(procedureJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const bundles = addBundles(outcome.deltas)
+
+    expect(bundles).toHaveLength(1)
+    expect(bundles[0]?.anchors[0]).toEqual({ t: 'flow', name: 'auth::valid-sibling' })
+  })
+
+  it('rejects duplicate parameter slot ownership per candidate while building valid siblings', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::ambiguous-ownership',
+          stepSpan: [0, 2],
+          parameters: [
+            {
+              name: 'email',
+              type: 'string',
+              required: true,
+              appliesTo: [{ stepOrdinal: 1, field: 'text' }],
+            },
+            {
+              name: 'otherEmail',
+              type: 'string',
+              required: true,
+              appliesTo: [{ stepOrdinal: 1, field: 'text' }],
+            },
+          ],
+          successAssertion: 'Ambiguous candidate must be rejected',
+        },
+        {
+          flowName: 'auth::valid-sibling',
+          stepSpan: [0, 2],
+          parameters: [],
+          successAssertion: 'The account is signed in',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(procedureJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const bundles = addBundles(outcome.deltas)
+
+    expect(bundles).toHaveLength(1)
+    expect(bundles[0]?.anchors[0]).toEqual({ t: 'flow', name: 'auth::valid-sibling' })
+  })
+
+  it('mints forced parameter names against every proposed name with the smallest suffix', async () => {
+    const collisionProposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::forced-name-collision',
+          stepSpan: [0, 2],
+          parameters: [
+            {
+              name: 'step2_text',
+              type: 'string',
+              required: true,
+              appliesTo: [{ stepOrdinal: 1, field: 'text' }],
+            },
+          ],
+          successAssertion: 'The account is signed in',
+        },
+      ],
+    })
+
+    const outcome = await author([collisionProposal])(procedureJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const [bundle] = addBundles(outcome.deltas)
+    const payload = parseProcedureBody(bundle!.body)
+    if (payload === undefined) throw new Error('expected parseable procedure body')
+
+    expect(payload.steps[1]?.action.values['text']).toEqual({ param: 'step2_text' })
+    expect(payload.steps[2]?.action.values['text']).toEqual({ param: 'step2_text_2' })
+    expect(payload.parameters.map(({ name }) => name)).toEqual([
+      'step2_text',
+      'step2_text_2',
+      'step2_clearMode',
+    ])
+    expect(new Set(payload.parameters.map(({ name }) => name)).size).toBe(
+      payload.parameters.length,
+    )
+  })
+
   it('widened multi-delta checkpoint round-trips and single-delta fact authoring still works', async () => {
     const factOutcome = await author([
       JSON.stringify({
