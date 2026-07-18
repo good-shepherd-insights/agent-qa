@@ -17,6 +17,7 @@ import {
   type RecordBody,
   type RecordId,
   type ScopeKey,
+  type ScreenState,
   type SearchOptions,
 } from '@vostride/agent-qa-schema'
 
@@ -41,6 +42,7 @@ import {
 import { enqueueCanaryOutcome } from '../queue/canary-queue.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import { selectCautions } from './get-cautions.js'
+import { matchProcedure } from './get-procedure.js'
 import { assembleRunBrief } from './get-run-brief.js'
 import { readPolicyLadder } from './policy-ladder.js'
 
@@ -207,6 +209,24 @@ function currentServingEntries(entries: readonly HydratedEntry[]): IndexEntry[] 
 
 function normalizedAnchorKey(anchor: Anchor): string {
   return canonicalJson(normalizeAnchor(anchor))
+}
+
+/**
+ * Derive the current page anchors from a live ScreenState for procedure matching. Both authored
+ * page-anchor shapes are covered: the full-URL form (the failure-caution derivation idiom) and
+ * the route-path form (committed procedure guard descriptors carry routes like '/login'). Every
+ * derived anchor goes through the one normalizeAnchor authority.
+ */
+function screenStatePageAnchors(screenState: ScreenState): Anchor[] {
+  if (screenState.url === undefined || screenState.url.trim() === '') return []
+  const anchors: Anchor[] = [normalizeAnchor({ t: 'page', route: screenState.url })]
+  try {
+    const parsed = new URL(screenState.url)
+    anchors.push(normalizeAnchor({ t: 'page', route: `${parsed.pathname}${parsed.search}` }))
+  } catch {
+    // Non-URL routes stay as the single raw-form anchor.
+  }
+  return anchors
 }
 
 function anchorMatches(entry: IndexEntry, anchors: readonly Anchor[]): boolean {
@@ -447,9 +467,13 @@ function servingReader(
       }
     },
 
-    /** Phase 381 owns procedure matching and replaces this typed stub. */
-    getProcedure() {
-      return undefined
+    getProcedure(intent, screenState, bindingNames) {
+      return matchProcedure({
+        entries: hydrateRows(config, readIndexRows(config), false),
+        intent,
+        anchors: screenStatePageAnchors(screenState),
+        bindingNames: bindingNames ?? [],
+      })
     },
 
     emitCanaryOutcome(payload: CanaryOutcome) {

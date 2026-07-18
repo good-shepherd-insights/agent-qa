@@ -441,7 +441,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(1)
   })
 
-  it('keeps procedure retrieval as the typed Phase-381 stub', () => {
+  it('reports the domain-neutral procedure miss against a procedure-free store', () => {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
     expect(reader.getProcedure('complete checkout', makeScreenStateFixture())).toBeUndefined()
