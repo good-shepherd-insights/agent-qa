@@ -7,8 +7,10 @@ import {
   drainQueue,
   enumerateBundleDirs,
   loadBundle,
+  commitCurationDelta,
   createAuthoringReader,
   openKnowledgeReader,
+  type CommitCurationOutcome,
   type CuratorAuthor,
   type LoadedBundle,
 } from '@vostride/agent-qa-knowledge-local'
@@ -269,6 +271,27 @@ function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
   }
 }
 
+function handoffWithSteps(input: {
+  runId: string
+  buildOrdinal: number
+  flow: string
+  filePath: string
+  steps: StepEvidence[]
+}): CompletedRunHandoff {
+  return {
+    ...handoffFor(input.runId, input.buildOrdinal),
+    tests: [
+      {
+        testId: input.flow,
+        filePath: input.filePath,
+        testIndex: 0,
+        outcome: 'passed',
+        steps: input.steps,
+      },
+    ],
+  }
+}
+
 describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)', () => {
   let root: string
   let agentQaRoot: string
@@ -328,6 +351,70 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       if (outcome.kind !== 'loaded') return []
       return outcome.bundle.frontmatter.kind === 'procedure' ? [outcome.bundle] : []
     })
+  }
+
+  async function runIsolatedProcedureFixture(input: {
+    name: string
+    handoff: CompletedRunHandoff
+    proposal: string
+  }): Promise<{
+    warnings: string[]
+    bundles: LoadedBundle[]
+    commitOutcomes: CommitCurationOutcome[]
+  }> {
+    const fixtureRoot = join(root, input.name)
+    const fixtureAgentQaRoot = join(fixtureRoot, '.agent-qa')
+    const fixtureKnowledgeRoot = join(fixtureRoot, 'agent-qa-knowledge')
+    const runId = String(input.handoff.runId)
+    const runDir = join(fixtureAgentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+    mkdirSync(fixtureKnowledgeRoot, { recursive: true })
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(input.handoff)}\n`, 'utf8')
+
+    const extractionAuthor = buildCuratorAuthor({
+      profile: scriptedProfile(),
+      auth: noAuth,
+      createModelImpl: () => alwaysModel(input.proposal),
+    })
+    const isolatedAuthor: CuratorAuthor = async (job, neighbors) =>
+      job.kind === 'procedure'
+        ? extractionAuthor(job, neighbors)
+        : { kind: 'fallback-required' as const, reason: 'no-model' as const }
+    const commitOutcomes: CommitCurationOutcome[] = []
+    const captureDrain: typeof drainQueue = (options) =>
+      drainQueue({
+        ...options,
+        operations: {
+          ...options.operations,
+          commitCurationDelta(deps, job, checkpoint) {
+            const outcome = commitCurationDelta(deps, job, checkpoint)
+            commitOutcomes.push(outcome)
+            return outcome
+          },
+        },
+      })
+    const warnings: string[] = []
+    await runCurationTail({
+      runId,
+      agentQaRoot: fixtureAgentQaRoot,
+      knowledgeConfig: { dir: 'agent-qa-knowledge' },
+      configDir: fixtureRoot,
+      auditSink: new JsonlAuditSink(fixtureAgentQaRoot),
+      modelDeps: { profile: scriptedProfile(), auth: noAuth },
+      policy,
+      log: { warn: (message) => warnings.push(message) },
+      operations: {
+        buildCuratorAuthor: () => isolatedAuthor,
+        drainQueue: captureDrain,
+      },
+    })
+    const bundles = enumerateBundleDirs(fixtureKnowledgeRoot).flatMap(({ dir }) => {
+      const outcome = loadBundle(dir)
+      return outcome.kind === 'loaded' && outcome.bundle.frontmatter.kind === 'procedure'
+        ? [outcome.bundle]
+        : []
+    })
+    return { warnings, bundles, commitOutcomes }
   }
 
   function getProcedure(): ProcedureMatch | undefined {
@@ -486,5 +573,81 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(exemplar!.unverifiedOutcomes).toBe(false)
     expect(exemplar!.recentOutcomes?.length).toBeGreaterThan(0)
     expect(exemplar!.recentOutcomes?.every(({ passed }) => passed)).toBe(true)
+  })
+
+  it('commits a repeated first/third instruction through ordinal-window disposition', { timeout: 60_000 }, async () => {
+    const repeatedFlow = 'checkout::repeated-next'
+    const instructions = ['Click Next', 'Enter shipping address', 'Click Next']
+    const fixture = await runIsolatedProcedureFixture({
+      name: 'repeated-instruction',
+      handoff: handoffWithSteps({
+        runId: 'run-loop-repeated-instruction',
+        buildOrdinal: 44,
+        flow: repeatedFlow,
+        filePath: 'tests/checkout/repeated-next.test.ts',
+        steps: [
+          step(
+            0,
+            instructions[0]!,
+            { type: 'click', ref: asRef('e-next-start') },
+            [element('e-next-start', 'button', 'Next')],
+          ),
+          step(
+            1,
+            instructions[1]!,
+            {
+              type: 'fill',
+              ref: asRef('e-shipping-address'),
+              text: '42 Test Lane',
+              clearMode: 'replace',
+              submit: false,
+            },
+            [element('e-shipping-address', 'textbox', 'Shipping address')],
+          ),
+          step(
+            2,
+            instructions[2]!,
+            { type: 'click', ref: asRef('e-next-finish') },
+            [element('e-next-finish', 'button', 'Next')],
+          ),
+        ],
+      }),
+      proposal: JSON.stringify({
+        candidates: [
+          {
+            flowName: repeatedFlow,
+            stepSpan: [0, 2],
+            parameters: [],
+            successAssertion: 'The shipping flow advances',
+          },
+        ],
+      }),
+    })
+
+    // Integration proof for Plans 381-15 + 381-17: repeated text is resolved by ordinal window,
+    // never disposed as the former globally-ambiguous procedure-step-coverage Noop.
+    expect(fixture.warnings).toEqual([])
+    expect(fixture.commitOutcomes).not.toContainEqual({
+      kind: 'noop',
+      reason: 'procedure-step-coverage',
+    })
+    expect(fixture.bundles).toHaveLength(1)
+    const payload = parseProcedureBody(fixture.bundles[0]!.body)
+    expect(payload?.steps.map(({ instruction }) => instruction)).toEqual(instructions)
+  })
+
+  it('round-trips a completing fill submit boolean through the committed record', { timeout: 60_000 }, async () => {
+    const fixture = await runIsolatedProcedureFixture({
+      name: 'scalar-round-trip',
+      handoff: handoffFor('run-loop-scalar-round-trip', 45),
+      proposal: wholeFlowProposal,
+    })
+
+    // Integration proof for Plans 381-14 + 381-17: the scalar keeps its JSON type through
+    // emit -> author -> disposition -> commit -> record.md -> parseProcedureBody.
+    expect(fixture.warnings).toEqual([])
+    expect(fixture.bundles).toHaveLength(1)
+    const payload = parseProcedureBody(fixture.bundles[0]!.body)
+    expect(payload?.steps[2]?.action.values['submit']).toBe(true)
   })
 })
