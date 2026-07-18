@@ -64,6 +64,38 @@ const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artif
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const RUNTIME_VIDEOS_DIR = DEFAULT_AGENT_QA_VIDEOS_DIR || '.agent-qa/artifacts/videos'
 
+export interface InvocationProductMember {
+  label: string
+  product: string
+}
+
+/**
+ * CompletedRunHandoff owns one product scope and one product-local build ordinal. Until that
+ * contract is partitioned, accepting more than one product would misattribute every later member.
+ */
+export function requireSingleInvocationProduct(
+  members: readonly InvocationProductMember[],
+): string | undefined {
+  const labelsByProduct = new Map<string, string[]>()
+  for (const member of members) {
+    const product = member.product.trim()
+    if (product.length === 0) continue
+    const labels = labelsByProduct.get(product) ?? []
+    labels.push(member.label)
+    labelsByProduct.set(product, labels)
+  }
+
+  const products = [...labelsByProduct.keys()].sort()
+  if (products.length <= 1) return products[0]
+
+  const detail = products
+    .map((product) => `${product} (${labelsByProduct.get(product)!.join(', ')})`)
+    .join('; ')
+  throw new Error(
+    `Mixed-product run is not supported: ${detail}. Run each product in a separate agent-qa run invocation.`,
+  )
+}
+
 const curationTailLog = {
   warn(message: string): void {
     console.warn(pc.yellow(`Warning: ${message}`))
@@ -1011,6 +1043,46 @@ async function executeSuites(
   const configFilePath = globalOpts.config ?? 'agent-qa.config.yaml'
   const configDir = path.dirname(path.resolve(configFilePath))
 
+  type PreloadedSuiteTest = {
+    fileContent: string
+    parseResult: ReturnType<typeof parseTestFile>
+  }
+  const parsedSuiteDefinitions = new Map<string, SuiteDefinition>()
+  const preloadedSuiteTests = new Map<string, PreloadedSuiteTest>()
+  const suiteProductMembers: InvocationProductMember[] = []
+
+  // Product identity is a read-only preflight. It completes before signal registration,
+  // dashboard creation, adapter setup, ordinal allocation, or startRun can mutate state.
+  for (const suiteFile of suiteFiles) {
+    const suite = await parseSuiteFile(suiteFile)
+    parsedSuiteDefinitions.set(suiteFile, suite)
+    if (suite.target !== undefined) {
+      suiteProductMembers.push({
+        label: `suite ${suite.name}`,
+        product: resolveTarget(config, suite.target).product,
+      })
+    }
+
+    for (const member of suite.tests) {
+      if (!isPathInsideDir(member.test, configDir)) continue
+      const absolutePath = path.resolve(configDir, member.test)
+      const fileContent = await readFile(absolutePath, 'utf-8')
+      const parseResult = parseTestFile(fileContent, absolutePath)
+      preloadedSuiteTests.set(absolutePath, { fileContent, parseResult })
+
+      if (suite.target === undefined) {
+        const test = parseResult.errors.length === 0 ? parseResult.tests[0] : undefined
+        if (test?.target !== undefined) {
+          suiteProductMembers.push({
+            label: `suite ${suite.name} member ${test.name}`,
+            product: resolveTarget(config, test.target).product,
+          })
+        }
+      }
+    }
+  }
+  const preflightRunProduct = requireSingleInvocationProduct(suiteProductMembers)
+
   const activeSuiteDbs = new Set<any>()
   let shutdownRequested = false
   // SESSION-04 (D-01/D-03): the CLI owns the ONE run-level SIGINT. When a RunSession is live the
@@ -1204,8 +1276,9 @@ async function executeSuites(
       }
 
       const absolutePath = path.resolve(configDir, relativePath)
-      const fileContent = await readFile(absolutePath, 'utf-8')
-      const parseResult = parseTestFile(fileContent, absolutePath)
+      const preloaded = preloadedSuiteTests.get(absolutePath)
+      const fileContent = preloaded?.fileContent ?? await readFile(absolutePath, 'utf-8')
+      const parseResult = preloaded?.parseResult ?? parseTestFile(fileContent, absolutePath)
       if (parseResult.errors.length > 0) {
         console.error(pc.red(`Parse errors in ${relativePath}:`))
         formatParseErrors(parseResult.errors)
@@ -1875,7 +1948,8 @@ async function executeSuites(
   // Resolution errors still process.exit(2) inside prepareSuite (the config-error contract, D-14).
   const preparedSuites: PreparedSuite[] = []
   for (const suiteFile of suiteFiles) {
-    const suite = await parseSuiteFile(suiteFile)
+    const suite = parsedSuiteDefinitions.get(suiteFile)
+    if (suite === undefined) throw new Error(`Suite preflight was not retained for ${suiteFile}`)
     preparedSuites.push(await prepareSuite(suiteFile, suite))
   }
 
@@ -2125,7 +2199,9 @@ async function executeSuites(
   perMemberDigests = runDigests.perMember
 
   const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
-  const runProduct = preparedSuites.find((p) => p.product)?.product ?? 'unknown'
+  const runProduct = preflightRunProduct
+    ?? preparedSuites.find((p) => p.product)?.product
+    ?? 'unknown'
   const executionContext = resolveRunExecutionContext()
   const buildTag = resolveBuildTagSetting({
     flag: opts.buildTag,
@@ -2553,7 +2629,20 @@ export function createRunCommand(): Command {
           process.exit(0)
         }
 
-        // Hoist dashboard DB init before parsing so parse errors can write to DB
+        const { parseAllTests, formatParseError } = await import('@vostride/agent-qa-core')
+        const parseResult = await parseAllTests(files)
+        const directRunProduct = parseResult.errors.length === 0
+          ? requireSingleInvocationProduct(parseResult.tests.flatMap((test) => {
+              if (test.target === undefined) return []
+              return [{
+                label: `test ${test.name}`,
+                product: resolveTarget(config, test.target).product,
+              }]
+            }))
+          : undefined
+
+        // Product preflight above is intentionally before dashboard creation. Parse errors still
+        // initialize the dashboard here so their established diagnostic artifacts remain intact.
         let logStorage: any
         const dashboardCfg2 = config.services?.dashboard as Record<string, unknown> | undefined
         const reporterSelectionResult = resolveReporterSelection(opts, Boolean(dashboardCfg2))
@@ -2578,9 +2667,6 @@ export function createRunCommand(): Command {
             console.warn(pc.yellow(`Warning: Could not load dashboard reporter: ${err instanceof Error ? err.message : String(err)}`))
           }
         }
-
-        const { parseAllTests, formatParseError } = await import('@vostride/agent-qa-core')
-        const parseResult = await parseAllTests(files)
 
         if (parseResult.errors.length > 0) {
           console.error(pc.red(`Found ${parseResult.errors.length} parse error(s):\n`))
@@ -3501,7 +3587,7 @@ export function createRunCommand(): Command {
         let singleBaselineProbe: BaselineProbeResult | undefined
         try {
           const singleResolvedTarget = resolveTarget(config, filtered[0].target!)
-          singleRunProduct = singleResolvedTarget.product ?? 'unknown'
+          singleRunProduct = directRunProduct ?? singleResolvedTarget.product ?? 'unknown'
           // D-04: run-start baseline probe — web targets only; result threads in-memory via
           // RunConfig (mobile: device-session-create failure is the equivalent signal, no probe).
           if (singleResolvedTarget.platform === 'web' && singleResolvedTarget.url) {

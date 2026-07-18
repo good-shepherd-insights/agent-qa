@@ -986,6 +986,95 @@ describe('run command — glob expansion', () => {
   })
 })
 
+describe('run command — product-scoped handoff preflight', () => {
+  it('rejects a mixed-product direct invocation before run-owned side effects', async () => {
+    mockGlob.mockResolvedValue(['tests/alpha.yaml', 'tests/beta.yaml'])
+    mockParseAllTests.mockResolvedValue({
+      tests: [
+        makeTest({ name: 'Alpha checkout', target: 'alpha-target' }),
+        makeTest2({ name: 'Beta checkout', target: 'beta-target' }),
+      ],
+      errors: [],
+    })
+    mockResolveTarget.mockImplementation((_config, target: string) => ({
+      name: target,
+      product: target === 'alpha-target' ? 'alpha-product' : 'beta-product',
+      platform: 'web',
+      url: `https://${target}.example.test`,
+    }))
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    const message = errorSpy.mock.calls.flat().join('\n')
+    expect(message).toContain('Mixed-product run is not supported')
+    expect(message).toContain('alpha-product')
+    expect(message).toContain('beta-product')
+    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
+    expect(mockFsStorageStateStore).not.toHaveBeenCalled()
+    expect(mockWebAdapterSetup).not.toHaveBeenCalled()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+  })
+
+  it('rejects mixed-product suites before dashboard, ordinal, adapter, or session setup', async () => {
+    const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
+    mockGlob.mockResolvedValue([suiteA, suiteB])
+    mockParseSuiteFile.mockImplementation(async (file: string) => ({
+      ...suiteDefinition(file === suiteA ? 'Suite Alpha' : 'Suite Beta', file === suiteA
+        ? 'a.yaml'
+        : 'b.yaml'),
+      target: file === suiteA ? 'alpha-target' : 'beta-target',
+    }))
+    mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
+    mockResolveTarget.mockImplementation((_config, target: string) => ({
+      name: target,
+      product: target === 'alpha-target' ? 'alpha-product' : 'beta-product',
+      platform: 'web',
+      url: `https://${target}.example.test`,
+    }))
+
+    await runCommandWithGlobalArgs(['--config', configPath], '--suite')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    const message = errorSpy.mock.calls.flat().join('\n')
+    expect(message).toContain('Mixed-product run is not supported')
+    expect(message).toContain('alpha-product')
+    expect(message).toContain('beta-product')
+    expect(mockDashboardDatabase).not.toHaveBeenCalled()
+    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
+    expect(mockFsStorageStateStore).not.toHaveBeenCalled()
+    expect(mockWebAdapterSetup).not.toHaveBeenCalled()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+  })
+
+  it('keeps multiple targets for one product in one direct run', async () => {
+    mockGlob.mockResolvedValue(['tests/storefront.yaml', 'tests/admin.yaml'])
+    mockParseAllTests.mockResolvedValue({
+      tests: [
+        makeTest({ name: 'Storefront checkout', target: 'storefront-target' }),
+        makeTest2({ name: 'Admin checkout', target: 'admin-target' }),
+      ],
+      errors: [],
+    })
+    mockResolveTarget.mockImplementation((_config, target: string) => ({
+      name: target,
+      product: 'checkout-product',
+      platform: 'web',
+      url: `https://${target}.example.test`,
+    }))
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(mockNextBuildOrdinal).toHaveBeenCalledWith(expect.objectContaining({
+      product: 'checkout-product',
+    }))
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
+  })
+})
+
 
 describe('run command — reduced flag surface and target resolution', () => {
   it('rejects removed --app as an unknown option', async () => {
