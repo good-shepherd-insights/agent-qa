@@ -2,12 +2,14 @@ import {
   asRecordId,
   asRef,
   asRunId,
+  normalizeAnchor,
   type Anchor,
   type CompletedRunHandoff,
   type ElementInfo,
   type PerTestOutcome,
   type ScreenState,
   type StepEvidence,
+  type StepPlanSource,
   type SubActionEvidence,
   type Verdict,
 } from '@vostride/agent-qa-schema'
@@ -51,6 +53,29 @@ import {
 
 const CANDIDATE = asRecordId('candidate-checkout')
 const OTHER_CANDIDATE = asRecordId('candidate-other')
+const PROCEDURE = asRecordId('procedure-sign-in')
+const PROCEDURE_ANCHORS: Anchor[] = [
+  { t: 'flow', name: 'Sign in flow' },
+  { t: 'page', route: '/login' },
+]
+
+type GuardMissReason = NonNullable<
+  Extract<StepPlanSource, { kind: 'procedure-replay' }>['guard']['miss']
+>['reason']
+
+function replaySource(miss?: GuardMissReason): StepPlanSource {
+  return {
+    kind: 'procedure-replay',
+    procedureId: PROCEDURE,
+    guard: {
+      checksPassed: miss === undefined ? 3 : 1,
+      total: 3,
+      ...(miss === undefined
+        ? {}
+        : { miss: { procedureStepIndex: 1, reason: miss } }),
+    },
+  }
+}
 
 function element(ref = 'checkout'): ElementInfo {
   return {
@@ -114,9 +139,11 @@ function step(input: {
   pass?: boolean
   candidateIds?: readonly string[]
   subActions?: SubActionEvidence[]
+  planSource?: StepPlanSource
 } = {}): StepEvidence {
   const stepIndex = input.stepIndex ?? 0
   return {
+    ...(input.planSource === undefined ? {} : { planSource: input.planSource }),
     stepIndex,
     stepText: `Step ${stepIndex}`,
     cacheStatus: 'miss',
@@ -464,4 +491,184 @@ describe('emitCanaryOutcomes', () => {
       })
     },
   )
+})
+
+describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () => {
+  const procedureAnchors = new Map([[PROCEDURE, PROCEDURE_ANCHORS]])
+
+  it('projects a positive procedure outcome for a verified-PASS replayed step', () => {
+    const outcomes = project(
+      handoff([step({ candidateIds: [], planSource: replaySource() })]),
+      procedureAnchors,
+    )
+
+    expect(outcomes).toEqual([{
+      candidateId: PROCEDURE,
+      runOutcome: 'positive',
+      runId: 'run-canary-1',
+      testId: 'checkout::happy-path',
+      testIndex: 0,
+      buildOrdinal: 42,
+      stepIndex: 0,
+      briefDigest: 'brief-digest-0',
+      attribution: expect.stringContaining('procedure-sign-in'),
+      exercisedAnchor: normalizeAnchor({ t: 'flow', name: 'Sign in flow' }),
+    }])
+  })
+
+  it('gates failed replayed steps behind the shared root-cause classifier', () => {
+    for (const excluded of ['environment', 'timeout', 'flake'] as const) {
+      expect(project(
+        handoff(
+          [step({ candidateIds: [], pass: false, planSource: replaySource() })],
+          rootCause(excluded),
+        ),
+        procedureAnchors,
+      )).toEqual([])
+    }
+
+    const outcomes = project(
+      handoff(
+        [step({ candidateIds: [], pass: false, planSource: replaySource() })],
+        rootCause('app_bug'),
+      ),
+      procedureAnchors,
+    )
+    expect(outcomes).toEqual([
+      expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+    ])
+  })
+
+  it('attributes staleness guard misses as negatives even when the step passed via planning', () => {
+    const reasons = [
+      'descriptor-ambiguous',
+      'descriptor-missing',
+      'page-anchor-mismatch',
+    ] as const
+    for (const reason of reasons) {
+      const outcomes = project(
+        handoff([step({
+          candidateIds: [],
+          planSource: replaySource(reason),
+          subActions: [subAction()],
+        })]),
+        procedureAnchors,
+      )
+      expect(outcomes).toEqual([
+        expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+      ])
+    }
+  })
+
+  it('never attributes policy-wall guard misses', () => {
+    for (const reason of ['gate-refused', 'non-replayable-action'] as const) {
+      expect(project(
+        handoff([step({ candidateIds: [], planSource: replaySource(reason) })]),
+        procedureAnchors,
+      )).toEqual([])
+    }
+  })
+
+  it('keeps the classifier gate over staleness misses on non-attributable failures', () => {
+    for (const excluded of ['environment', 'timeout', 'flake'] as const) {
+      expect(project(
+        handoff(
+          [step({
+            candidateIds: [],
+            pass: false,
+            planSource: replaySource('descriptor-missing'),
+          })],
+          rootCause(excluded),
+        ),
+        procedureAnchors,
+      )).toEqual([])
+    }
+  })
+
+  it('projects channel1 and planSource outcomes independently from one step (Pin 1)', () => {
+    const outcomes = project(
+      handoff([step({ planSource: replaySource() })]),
+      new Map<string, Anchor[]>([
+        [CANDIDATE, [{ t: 'el', role: 'button', name: 'checkout', ordinal: 0 }]],
+        [PROCEDURE, PROCEDURE_ANCHORS],
+      ]),
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        candidateId: CANDIDATE,
+        runOutcome: 'positive',
+        exercisedAnchor: { t: 'el', role: 'button', name: 'checkout', ordinal: 0 },
+      }),
+      expect.objectContaining({
+        candidateId: PROCEDURE,
+        runOutcome: 'positive',
+        exercisedAnchor: normalizeAnchor({ t: 'flow', name: 'Sign in flow' }),
+      }),
+    ])
+  })
+
+  it('records nothing for procedure-hint exposure', () => {
+    expect(project(
+      handoff([step({
+        candidateIds: [],
+        planSource: { kind: 'procedure-hint', procedureId: PROCEDURE },
+      })]),
+      procedureAnchors,
+    )).toEqual([])
+  })
+})
+
+describe('emitCanaryOutcomes procedure counters', () => {
+  beforeEach(() => {
+    lookupSpy.anchorsById.clear()
+    lookupSpy.invalidById.clear()
+    lookupSpy.openCalls.length = 0
+  })
+
+  it('splits procedure-source counters beside the shared totals', () => {
+    lookupSpy.anchorsById.set(CANDIDATE, [{
+      t: 'el',
+      role: 'button',
+      name: 'checkout',
+      ordinal: 0,
+    }])
+    lookupSpy.anchorsById.set(PROCEDURE, PROCEDURE_ANCHORS)
+
+    const report = emitCanaryOutcomes({
+      handoff: handoff([step({ planSource: replaySource() })]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir: '/tmp/runs/run-canary-1',
+      emit: vi.fn(),
+    })
+
+    expect(report.emitted).toBe(2)
+    expect(report.procedure).toEqual({ emitted: 1, refused: 0, unresolved: 0 })
+    expect(report.details).toEqual(expect.arrayContaining([
+      expect.objectContaining({ candidateId: PROCEDURE, outcome: { kind: 'emitted' } }),
+    ]))
+  })
+
+  it('reports an unresolved procedure without certifying a zero/zero success', () => {
+    const report = emitCanaryOutcomes({
+      handoff: handoff([step({ candidateIds: [], planSource: replaySource() })]),
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir: '/tmp/runs/run-canary-1',
+      emit: vi.fn(),
+    })
+
+    expect(report).toEqual({
+      emitted: 0,
+      refused: 0,
+      unresolved: 1,
+      procedure: { emitted: 0, refused: 0, unresolved: 1 },
+      details: [{
+        candidateId: PROCEDURE,
+        testId: 'checkout::happy-path',
+        testIndex: 0,
+        stepIndex: 0,
+        outcome: { kind: 'unresolved', reason: 'not-found' },
+      }],
+    })
+  })
 })
