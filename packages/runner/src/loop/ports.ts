@@ -11,6 +11,7 @@ import type {
   DeclaredModelProfile,
   MaskingContext,
   ScreenState,
+  ScopeKey,
   WorkingMemoryEntry,
   StepEvidence,
   StepFinalizedPayload,
@@ -229,7 +230,7 @@ export interface LoopPorts {
    * reseeding the shared distinct-record ledger from the frozen brief, so both ledgers begin the
    * live planning turn from the same boundary.
    */
-  beginMemoryTurn?: () => void
+  beginMemoryTurn?: (scope?: ScopeKey) => void
   /** D-05 v48 safety seam (context/tool_call/tool_result); unpopulated until Phase 362. */
   safetyHooks?: SafetyHookRunner
   plannerConfig?: PlannerConfig

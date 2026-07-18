@@ -89,9 +89,10 @@ export function createMemoryTools(deps: {
   recordLedger: RecordLedger
   estimateTokens: (text: string) => number
   onReadTrace?: (trace: ReadTrace) => void
-}): { tools: NonActionToolMap; beginTurn(): void } {
+}): { tools: NonActionToolMap; beginTurn(scope?: ScopeKey): void } {
   const readBodyBudget = normalizeBudget(deps.readBodyBudget)
   let spentReadBodyTokens = 0
+  let activeScope = deps.scope
 
   const tools: NonActionToolMap = {
     'memory.search': {
@@ -103,7 +104,7 @@ export function createMemoryTools(deps: {
       execute(rawArgs): MemorySearchResult {
         const args = memorySearchInputSchema.parse(rawArgs)
         const options: SearchOptions = {
-          scope: deps.scope,
+          scope: activeScope,
           asOfBuild: deps.asOfBuild,
           ...(args.kind !== undefined ? { kind: args.kind } : {}),
           ...(args.anchors !== undefined ? { anchors: args.anchors } : {}),
@@ -174,9 +175,10 @@ export function createMemoryTools(deps: {
 
   return {
     tools,
-    beginTurn() {
+    beginTurn(scope?: ScopeKey) {
       // D-11/D-17 turn order: the loop reseeds recordLedger from the frozen brief first,
       // then calls beginTurn() to reset this independent cumulative read-body ledger.
+      if (scope !== undefined) activeScope = scope
       spentReadBodyTokens = 0
     },
   }

@@ -39,6 +39,7 @@ import {
   type OpenKnowledgeReaderOptions,
 } from '../index-reader.js'
 import { enqueueCanaryOutcome } from '../queue/canary-queue.js'
+import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import { selectCautions } from './get-cautions.js'
 import { assembleRunBrief } from './get-run-brief.js'
 import { readPolicyLadder } from './policy-ladder.js'
@@ -49,7 +50,11 @@ const CHARS_PER_TOKEN_ESTIMATE = 4
 export interface OpenServingKnowledgeReaderConfig {
   knowledgeRoot: string
   product?: string
-  scopeDefaults?: { asOfBuild?: number }
+  scopeDefaults?: {
+    asOfBuild?: number
+    /** Known containing scopes for member requests (for example, the owning suite). */
+    parentScopes?: readonly ScopeKey[]
+  }
   budgets?: { recordCap?: number }
 }
 
@@ -103,23 +108,20 @@ function readIndexRows(
   const reader = openIndexReaderConnection(config.knowledgeRoot)
   try {
     const boundProduct = productSlug(config)
-    const clauses: string[] = []
-    const binds: string[] = []
-    if (boundProduct !== undefined) {
-      clauses.push("(r.product = ? OR r.scope_tier = 'global')")
-      binds.push(boundProduct)
-    }
-    if (scope !== undefined) {
-      clauses.push("((r.scope_tier = ? AND r.scope_key = ?) OR r.scope_tier = 'global')")
-      binds.push(scope.tier, scope.key)
-    }
-    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join('\nAND ')}`
+    const predicate = scopeLadderPredicate({
+      ...(boundProduct === undefined ? {} : { productRow: boundProduct }),
+      ...(config.product === undefined ? {} : { productScope: config.product }),
+      ...(scope === undefined ? {} : { requestedScope: scope }),
+      ...(config.scopeDefaults?.parentScopes === undefined
+        ? {}
+        : { parentScopes: config.scopeDefaults.parentScopes }),
+    })
     return reader.db.prepare(`
       SELECT r.bundle_id, r.product, r.scope_tier, r.scope_key
       FROM records r
-      ${where}
+      WHERE ${predicate.sql}
       ORDER BY r.product, r.bundle_id
-    `).all(...binds).map((row) => ({
+    `).all(...predicate.binds).map((row) => ({
       bundle_id: String(row.bundle_id),
       product: String(row.product),
       scope_tier: String(row.scope_tier),

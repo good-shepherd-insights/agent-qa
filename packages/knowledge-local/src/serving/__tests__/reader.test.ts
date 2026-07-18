@@ -278,6 +278,68 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(first.tiers.L2).toContain('Checkout active-fact summary')
   })
 
+  it('serves the complete product -> suite -> test ladder and excludes sibling scopes', async () => {
+    const suiteScope: ScopeKey = { tier: 'suite', key: 'suite:smoke' }
+    const testScope: ScopeKey = { tier: 'test', key: 'test:checkout' }
+    const records = {
+      global: seedRecord({
+        key: 'ladder-global',
+        scope: { tier: 'global', key: 'global' },
+        summary: 'Scope ladder global marker',
+        anchors: [{ t: 'page', route: '/ladder/global' }],
+      }),
+      product: seedRecord({
+        key: 'ladder-product',
+        summary: 'Scope ladder product marker',
+        anchors: [{ t: 'page', route: '/ladder/product' }],
+      }),
+      suite: seedRecord({
+        key: 'ladder-suite',
+        scope: suiteScope,
+        summary: 'Scope ladder suite marker',
+        anchors: [{ t: 'page', route: '/ladder/suite' }],
+      }),
+      test: seedRecord({
+        key: 'ladder-test',
+        scope: testScope,
+        summary: 'Scope ladder test marker',
+        anchors: [{ t: 'page', route: '/ladder/test' }],
+      }),
+      siblingSuite: seedRecord({
+        key: 'ladder-sibling-suite',
+        scope: { tier: 'suite', key: 'suite:regression' },
+        summary: 'Scope ladder sibling suite marker',
+        anchors: [{ t: 'page', route: '/ladder/sibling-suite' }],
+      }),
+      siblingTest: seedRecord({
+        key: 'ladder-sibling-test',
+        scope: { tier: 'test', key: 'test:refund' },
+        summary: 'Scope ladder sibling test marker',
+        anchors: [{ t: 'page', route: '/ladder/sibling-test' }],
+      }),
+    }
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({
+      knowledgeRoot,
+      product: PRODUCT,
+      scopeDefaults: { parentScopes: [suiteScope] },
+      budgets: { recordCap: 50 },
+    })
+    const expected = [records.global, records.product, records.suite, records.test]
+    const excluded = [records.siblingSuite, records.siblingTest]
+
+    const searchedIds = reader.search('scope ladder', { scope: testScope })
+      .map(({ id }) => id)
+    const briefIds = reader.getRunBrief(testScope, 2_000).lines.map(({ id }) => id)
+
+    expect(searchedIds).toEqual(expect.arrayContaining(expected))
+    expect(briefIds).toEqual(expect.arrayContaining(expected))
+    for (const id of excluded) {
+      expect(searchedIds).not.toContain(id)
+      expect(briefIds).not.toContain(id)
+    }
+  })
+
   it('enforces default walls while retaining explicit candidate and audit reads', () => {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 

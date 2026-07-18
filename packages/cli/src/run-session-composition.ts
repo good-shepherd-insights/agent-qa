@@ -130,7 +130,7 @@ export interface RunKnowledgeComposition {
   budgets: KnowledgeBudgets
   recordLedger: RecordLedger
   nonActionTools?: NonActionToolMap
-  beginMemoryTurn?: () => void
+  beginMemoryTurn?: (scope?: ScopeKey) => void
 }
 
 /**
@@ -163,6 +163,8 @@ export interface OpenRunKnowledgeCompositionInput {
   knowledgeRoot: string
   product?: string
   scope: ScopeKey
+  /** Known containing scopes for a member (the suite scope on prepared-suite runs). */
+  parentScopes?: readonly ScopeKey[]
   asOfBuild: number
   capabilities: ModelCapabilities
   accounting: KnowledgeAccounting
@@ -200,7 +202,10 @@ export function openRunKnowledgeComposition(
   const reader = createFrozenKnowledgeReader(openKnowledgeReader({
     knowledgeRoot: input.knowledgeRoot,
     ...(input.product === undefined ? {} : { product: input.product }),
-    scopeDefaults: { asOfBuild: input.asOfBuild },
+    scopeDefaults: {
+      asOfBuild: input.asOfBuild,
+      ...(input.parentScopes === undefined ? {} : { parentScopes: input.parentScopes }),
+    },
     budgets: { recordCap: budgets.recordCap },
   }))
   const recordLedger = createRecordLedger({ cap: budgets.recordCap, seedIds: [] })
@@ -933,7 +938,7 @@ export interface BuildMemberRunConfigInput {
   knowledgeBudgets?: KnowledgeBudgets
   knowledgeAsOfBuild?: number
   recordLedger?: RecordLedger
-  beginMemoryTurn?: () => void
+  beginMemoryTurn?: (scope?: ScopeKey) => void
   configDigests?: ConfigDigests
   // models
   plannerModel: LanguageModel

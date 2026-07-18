@@ -2143,6 +2143,10 @@ async function executeSuites(
       knowledgeRoot,
       product: prepared.product ?? runProduct,
       scope: { tier: 'product', key: prepared.product ?? runProduct },
+      parentScopes: [{
+        tier: 'suite',
+        key: prepared.suite['suite-id'] ?? prepared.suite.name,
+      }],
       asOfBuild: buildOrdinal,
       capabilities: prepared.knowledgeSeed.capabilities,
       accounting: prepared.knowledgeSeed.accounting,

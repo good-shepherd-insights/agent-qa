@@ -128,6 +128,20 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     })
   })
 
+  it('rebinds searches to the active suite member at each turn boundary', async () => {
+    const search = vi.fn(() => [entry('record-one')])
+    const { tools, beginTurn } = factory(stubReader({ search }))
+    const memberScope: ScopeKey = { tier: 'test', key: 'guest-checkout' }
+
+    beginTurn(memberScope)
+    await tools['memory.search'].execute({ query: 'guest checkout' })
+
+    expect(search).toHaveBeenCalledWith('guest checkout', {
+      scope: memberScope,
+      asOfBuild: 42,
+    })
+  })
+
   it('accounts read bodies with the injected estimator and refuses calls after exhaustion', async () => {
     const first = body('record-first', 'sixty-token-body', 'digest-first')
     const second = body('record-second', 'forty-token-body', 'digest-second')

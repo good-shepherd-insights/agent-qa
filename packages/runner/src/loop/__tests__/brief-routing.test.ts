@@ -171,11 +171,16 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         knowledgeReader: reader,
         knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
         recordLedger,
-        beginMemoryTurn: () => { order.push('read-body') },
+        beginMemoryTurn: (activeScope) => {
+          order.push(`read-body:${activeScope?.tier}:${activeScope?.key}`)
+        },
       },
       context(),
     )
 
-    expect(order).toEqual(['records:caution-overlay,fact-order-number', 'read-body'])
+    expect(order).toEqual([
+      'records:caution-overlay,fact-order-number',
+      'read-body:test:checkout',
+    ])
   })
 })

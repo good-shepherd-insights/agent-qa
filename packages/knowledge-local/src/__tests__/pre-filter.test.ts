@@ -6,7 +6,10 @@ import type { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { openIndexWriter } from '../index-open.js'
-import { preFilterPredicate } from '../retrieval/pre-filter.js'
+import {
+  preFilterPredicate,
+  scopeLadderPredicate,
+} from '../retrieval/pre-filter.js'
 import { scaffoldKnowledgeRoot } from './fixtures/bundle-fixture.js'
 
 const FILTER_OPTIONS = {
@@ -124,6 +127,20 @@ describe('preFilterPredicate', () => {
       scopeKey: FILTER_OPTIONS.productKey,
       status: 'active',
     })
+    insertRecord(db, {
+      bundleId: 'sibling-suite-row',
+      product: FILTER_OPTIONS.product,
+      scopeTier: 'suite',
+      scopeKey: 'suite:regression',
+      status: 'active',
+    })
+    insertRecord(db, {
+      bundleId: 'sibling-test-row',
+      product: FILTER_OPTIONS.product,
+      scopeTier: 'test',
+      scopeKey: 'test:refund',
+      status: 'active',
+    })
   })
 
   afterEach(async () => {
@@ -166,5 +183,35 @@ describe('preFilterPredicate', () => {
     for (const value of Object.values(FILTER_OPTIONS)) {
       expect(predicate.sql).not.toContain(value)
     }
+  })
+
+  it('builds a paired product -> suite -> test ladder without admitting siblings', () => {
+    const predicate = scopeLadderPredicate({
+      productRow: FILTER_OPTIONS.product,
+      productScope: FILTER_OPTIONS.productKey,
+      parentScopes: [{ tier: 'suite', key: FILTER_OPTIONS.suiteKey }],
+      requestedScope: { tier: 'test', key: FILTER_OPTIONS.testKey },
+    })
+    const ids = db
+      .prepare(`
+        SELECT r.bundle_id
+        FROM records r
+        WHERE ${predicate.sql}
+        ORDER BY r.bundle_id
+      `)
+      .all(...predicate.binds)
+      .map((row) => String(row.bundle_id))
+
+    expect(ids).toEqual([
+      'deprecated-row',
+      'global-row',
+      'product-row',
+      'suite-row',
+      'superseded-row',
+      'test-row',
+    ])
+    expect(ids).not.toContain('sibling-suite-row')
+    expect(ids).not.toContain('sibling-test-row')
+    expect(predicate.sql.match(/\?/gu) ?? []).toHaveLength(predicate.binds.length)
   })
 })
