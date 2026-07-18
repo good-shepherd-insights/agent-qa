@@ -5,15 +5,18 @@ import type {
   ModelIdentity,
   RunId,
   ScopeKey,
+  StepEvidence,
   Verdict,
 } from '@vostride/agent-qa-schema'
+import { asRecordId, guardCompletedRunHandoff } from '@vostride/agent-qa-schema'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import type { TestResult } from '../../result.js'
-import { assembleHandoff, assemblePerTestOutcome } from '../handoff-assembly.js'
+import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from '../handoff-assembly.js'
+import { makeEmptyServedBrief } from '../../loop/evidence.js'
 import { startRun } from '../shell.js'
 
 const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
-const member: RunMemberDescriptor = { testId: 'checkout' }
+const member: RunMemberDescriptor = { testId: 'checkout', filePath: 'checkout.spec.yaml' }
 const modelProfile: DeclaredModelProfile = {
   provider: 'openai-compatible',
   modelId: 'planner-model',
@@ -175,5 +178,95 @@ describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
       'startedAt',
       'tests',
     ])
+  })
+})
+
+describe('stable test identity — filePath plumb (ABRF-02, Pitfall 2)', () => {
+  it('populates filePath from the descriptor on assembled outcomes', () => {
+    const outcome = assemblePerTestOutcome(member, resultWithoutEvidence(), 'passed', {
+      testIndex: 0,
+      scope,
+      buildOrdinal: 7,
+      mask: (text) => text,
+    })
+
+    expect(outcome.filePath).toBe('checkout.spec.yaml')
+  })
+
+  it('populates filePath from the descriptor on skipped outcomes', () => {
+    const skipped = skippedPerTestOutcome(member, 3)
+
+    expect(skipped.filePath).toBe('checkout.spec.yaml')
+    expect(skipped.outcome).toBe('skipped')
+  })
+})
+
+describe('StepEvidence.planSource marker (D-12)', () => {
+  const procedureId = asRecordId('procedure-flow-login-0123456789abcdef')
+
+  function evidenceWith(planSource: NonNullable<StepEvidence['planSource']>): StepEvidence {
+    return {
+      stepIndex: 0,
+      stepText: 'log in',
+      cacheStatus: 'miss',
+      servedBrief: makeEmptyServedBrief(scope, 7),
+      subActions: [],
+      verifierVerdict: { pass: true, reasoning: 'ok' },
+      planSource,
+    }
+  }
+
+  it('both variants typecheck and survive a handoff JSON round-trip through the one guard', () => {
+    const replayStep = evidenceWith({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: { checksPassed: 3, total: 3 },
+    })
+    const hintStep = evidenceWith({ kind: 'procedure-hint', procedureId })
+    const config = {
+      runId: 'run-1' as RunId,
+      scope,
+      executionContext: 'local-headless',
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      buildOrdinal: 7,
+      members: [member],
+      executor: async () => resultWithoutEvidence(),
+    } satisfies RunConfig
+    const perTest = {
+      testId: 'checkout',
+      testIndex: 0,
+      filePath: 'checkout.spec.yaml',
+      outcome: 'passed' as const,
+      steps: [replayStep, hintStep],
+    }
+
+    const handoff = assembleHandoff(config, [perTest], 'passed', { startedAt: 1, endedAt: 2 })
+    const reloaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
+
+    expect(reloaded.tests[0].steps[0].planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: { checksPassed: 3, total: 3 },
+    })
+    expect(reloaded.tests[0].steps[1].planSource).toEqual({ kind: 'procedure-hint', procedureId })
+    // the D-12 separation: planSource never pollutes the cached-provenance surface
+    expect(reloaded.tests[0].steps[0].cacheStatus).toBe('miss')
+  })
+
+  it('records a guard miss on the replay variant', () => {
+    const step = evidenceWith({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: {
+        checksPassed: 1,
+        total: 3,
+        miss: { procedureStepIndex: 1, reason: 'descriptor-ambiguous' },
+      },
+    })
+
+    expect(step.planSource?.kind).toBe('procedure-replay')
+    expect(
+      step.planSource?.kind === 'procedure-replay' ? step.planSource.guard.miss?.reason : undefined,
+    ).toBe('descriptor-ambiguous')
   })
 })
