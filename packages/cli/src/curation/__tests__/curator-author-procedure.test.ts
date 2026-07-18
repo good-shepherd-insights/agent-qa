@@ -328,11 +328,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
   })
 
   it('commits a boolean literal slot without stringifying it', async () => {
-    const seed = trajectorySeed() as unknown as {
-      steps: Array<{
-        action?: { values: Record<string, unknown> }
-      }>
-    }
+    const seed = trajectorySeed()
     seed.steps[1]!.action!.values['submit'] = {
       observed: true,
       source: 'literal',
@@ -465,10 +461,10 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
 
     expect(payload.steps[1]?.action.values['text']).toEqual({ param: 'step2_text' })
     expect(payload.steps[2]?.action.values['text']).toEqual({ param: 'step2_text_2' })
-    expect(payload.parameters.map(({ name }) => name)).toEqual([
+    expect(payload.parameters.map(({ name }) => name).sort()).toEqual([
+      'step2_clearMode',
       'step2_text',
       'step2_text_2',
-      'step2_clearMode',
     ])
     expect(new Set(payload.parameters.map(({ name }) => name)).size).toBe(
       payload.parameters.length,

@@ -503,7 +503,10 @@ const trajectoryGuardTargetSchema = z
 
 const trajectoryValueSlotSchema = z
   .object({
-    observed: z.string(),
+    // WR-04: boolean and numeric action fields are replay semantics, not decoration. Dropping
+    // fill.submit, scroll.maxSwipes/retryOpposite, durations, or scale here would author a
+    // procedure whose behavior differs from the verified trajectory.
+    observed: z.union([z.string(), z.number(), z.boolean()]),
     source: z.enum(['literal', 'test-variable', 'masked-secret']),
     targetRef: z.string().min(1).optional(),
   })
@@ -611,10 +614,16 @@ function trajectoryValues(
   const primaryRef = typeof action['ref'] === 'string' ? action['ref'] : undefined
   for (const [key, value] of Object.entries(action)) {
     if (key === 'type' || ACTION_REF_KEYS.includes(key)) continue
-    if (typeof value !== 'string') continue
+    if (
+      typeof value !== 'string'
+      && typeof value !== 'number'
+      && typeof value !== 'boolean'
+    ) continue
     values[key] = {
       observed: value,
-      source: trajectoryValueSource(value),
+      // Masking placeholders and variable templates are string phenomena. Numbers and booleans
+      // therefore remain literal-source while preserving their original JSON scalar type.
+      source: typeof value === 'string' ? trajectoryValueSource(value) : 'literal',
       ...(primaryRef === undefined ? {} : { targetRef: primaryRef }),
     }
   }

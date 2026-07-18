@@ -727,6 +727,37 @@ interface BuiltCandidate {
 }
 
 /**
+ * WR-02 early proposal wall. The committed procedure codec remains the fail-closed authority for
+ * unique parameter declarations; rejecting ambiguity here keeps one malformed candidate from
+ * reaching body construction while valid sibling candidates can still build deterministically.
+ */
+function hasAmbiguousParameterProposal(candidate: ExtractionCandidate): boolean {
+  const names = new Set<string>()
+  const ownedSlots = new Set<string>()
+  for (const parameter of candidate.parameters) {
+    if (names.has(parameter.name)) return true
+    names.add(parameter.name)
+    for (const target of parameter.appliesTo) {
+      const slotKey = `${target.stepOrdinal}\u0000${target.field}`
+      if (ownedSlots.has(slotKey)) return true
+      ownedSlots.add(slotKey)
+    }
+  }
+  return false
+}
+
+function reserveForcedParameterName(base: string, usedNames: Set<string>): string {
+  let name = base
+  let suffix = 2
+  while (usedNames.has(name)) {
+    name = `${base}_${suffix}`
+    suffix += 1
+  }
+  usedNames.add(name)
+  return name
+}
+
+/**
  * Deterministic body builder. Guard descriptors and step content derive from the trajectory
  * seed and capture receipt; the proposal contributes only span, parameter names, and the
  * success assertion. Returns undefined on any evidence gap (unknown ordinal, non-contiguous
@@ -737,6 +768,7 @@ function buildCandidatePayload(
   seed: ProcedureTrajectorySeed,
   candidate: ExtractionCandidate,
 ): BuiltCandidate | undefined {
+  if (hasAmbiguousParameterProposal(candidate)) return undefined
   const [start, end] = candidate.stepSpan
   if (end < start) return undefined
   const byOrdinal = new Map(seed.steps.map((step) => [step.ordinal, step]))
@@ -752,12 +784,17 @@ function buildCandidatePayload(
   const appliesIndex = new Map<string, string>()
   for (const parameter of candidate.parameters) {
     for (const target of parameter.appliesTo) {
-      appliesIndex.set(`${target.stepOrdinal}\u0000${target.field}`, parameter.name)
+      const slotKey = `${target.stepOrdinal}\u0000${target.field}`
+      // Defense in depth: never restore the former last-writer-wins behavior if the advisory
+      // preflight above is refactored independently.
+      if (appliesIndex.has(slotKey)) return undefined
+      appliesIndex.set(slotKey, parameter.name)
     }
   }
 
   const referencedParams = new Set<string>()
   const secretEscalated = new Set<string>()
+  const usedParameterNames = new Set(candidate.parameters.map(({ name }) => name))
   const forcedParams: ProcedureParameterSpec[] = []
   const steps: ProcedureStepSpec[] = []
   for (const step of covered) {
@@ -782,7 +819,8 @@ function buildCandidatePayload(
     const values: Record<string, ProcedureValueSlot> = {}
     for (const [field, slot] of Object.entries(step.action.values)) {
       const secretByReceipt =
-        slot.targetRef !== undefined
+        typeof slot.observed === 'string'
+        && slot.targetRef !== undefined
         && regionKeys.has(`${step.ordinal}\u0000${slot.targetRef}`)
       const secretSlot = slot.source === 'masked-secret' || secretByReceipt
       const proposed = appliesIndex.get(`${step.ordinal}\u0000${field}`)
@@ -795,14 +833,15 @@ function buildCandidatePayload(
       // D-03 forced parameterization: every masked-secret/test-variable-sourced value the
       // proposal missed still becomes a {param} ref, never a committed literal.
       if (secretSlot || slot.source === 'test-variable') {
-        const name = `step${step.ordinal}_${field}`
-        if (!forcedParams.some((parameter) => parameter.name === name)) {
-          forcedParams.push({
-            name,
-            type: secretSlot ? 'secret' : 'string',
-            required: true,
-          })
-        }
+        const name = reserveForcedParameterName(
+          `step${step.ordinal}_${field}`,
+          usedParameterNames,
+        )
+        forcedParams.push({
+          name,
+          type: secretSlot ? 'secret' : 'string',
+          required: true,
+        })
         values[field] = { param: name }
         continue
       }
