@@ -60,10 +60,7 @@ import {
   type CommitCurationJob,
 } from '../commit.js'
 import type { AuthoredCheckpoint, DispositionProfile } from '../author-contract.js'
-import {
-  KnowledgePromotionError,
-  createLocalKnowledgeStore,
-} from '../knowledge-store.js'
+import { createLocalKnowledgeStore } from '../knowledge-store.js'
 import { makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 
 const AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'
@@ -1778,7 +1775,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(operation.mock.calls[0]?.[0].profile).toEqual({ mode: 'propose-only' })
   })
 
-  it('refuses canary attribution for a missing candidate through the typed promotion error', async () => {
+  it('discharges the Phase 380 canary stub with the typed missing-target refusal', async () => {
     const store = createLocalKnowledgeStore({
       knowledgeRoot,
       auditBaseDir,
@@ -1801,8 +1798,8 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       }),
     ).rejects.toMatchObject({
       name: 'KnowledgePromotionError',
-      candidateId: asRecordId('candidate-record'),
       reason: 'not-found',
-    } satisfies Partial<KnowledgePromotionError>)
+      candidateId: asRecordId('candidate-record'),
+    })
   })
 })
