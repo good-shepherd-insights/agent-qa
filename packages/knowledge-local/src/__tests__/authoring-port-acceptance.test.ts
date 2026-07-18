@@ -205,6 +205,67 @@ describe('createAuthoringReader through the public barrels (375-08 idiom)', () =
     expect(canonicalJson(again)).toBe(canonicalJson(brief))
   })
 
+  it('serves discovered never-run tests beside projection-backed exemplars without duplicates', async () => {
+    await seedStore()
+    seedProjection()
+    const duplicate = {
+      filePath: 'auth/sign-in.spec.ts',
+      testName: 'signs in with recorded credentials',
+    }
+    const neverRun = {
+      filePath: 'auth/password-reset.spec.ts',
+      testName: 'signs in after password reset',
+    }
+    const reader = createAuthoringReader(
+      { knowledgeRoot, product: PRODUCT },
+      { discoverKnownTests: () => [duplicate, neverRun, neverRun] },
+    )
+
+    const brief = await reader.getAuthoringBrief(INTENT, SCOPE)
+
+    expect(brief.exemplars.filter(({ filePath, testName }) => (
+      filePath === duplicate.filePath && testName === duplicate.testName
+    ))).toEqual([expect.objectContaining({
+      unverifiedOutcomes: false,
+      passRate: 1,
+    })])
+    expect(brief.exemplars.filter(({ filePath, testName }) => (
+      filePath === neverRun.filePath && testName === neverRun.testName
+    ))).toEqual([expect.objectContaining({
+      unverifiedOutcomes: true,
+      excerpt: expect.stringContaining('unverified-outcomes'),
+    })])
+  })
+
+  it('serves an identity-only discovery universe when the outcome projection is empty', async () => {
+    const knownTests = [
+      {
+        filePath: 'auth/never-run-sign-in.spec.ts',
+        testName: 'sign in with a newly issued credential',
+      },
+      {
+        filePath: 'auth/pruned-login.spec.ts',
+        testName: 'sign in after a password reset',
+      },
+    ]
+    const reader = createAuthoringReader(
+      {
+        knowledgeRoot: join(root, 'missing-knowledge-root'),
+        product: PRODUCT,
+      },
+      { discoverKnownTests: () => knownTests },
+    )
+
+    const brief = await reader.getAuthoringBrief(INTENT, SCOPE)
+
+    expect(brief.exemplars).toHaveLength(2)
+    expect(brief.exemplars.map(({ filePath, testName }) => ({ filePath, testName })))
+      .toEqual(expect.arrayContaining(knownTests))
+    expect(brief.exemplars.every(({ unverifiedOutcomes }) => unverifiedOutcomes)).toBe(true)
+    expect(brief.exemplars.every(({ excerpt }) => excerpt.includes('unverified-outcomes')))
+      .toBe(true)
+  })
+
   it('answers a cold store with empty buckets, typed-empty coverage, and no error', async () => {
     const reader = createAuthoringReader({
       knowledgeRoot: join(root, 'missing-knowledge-root'),
