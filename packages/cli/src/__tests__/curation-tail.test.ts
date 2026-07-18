@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { RUN_OUTCOMES_PROJECTION_VERSION } from '@vostride/agent-qa-knowledge-local'
 import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
@@ -20,6 +22,8 @@ import type {
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  CURATION_TAIL_RECEIPT_FILE,
+  curationTailHandoffDigest,
   runCurationTail,
   runVerdictFirstCurationTail,
   type CurationTailReceipt,
@@ -129,6 +133,7 @@ function successfulOperations(
     ],
     readCurationTailReceipt: () => undefined,
     writeCurationTailReceipt: vi.fn(),
+    foldRunOutcomes: vi.fn(() => ({ kind: 'applied' as const, tests: 0 })),
     ...overrides,
   }
 }
@@ -229,6 +234,16 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           }],
         }
       },
+      foldRunOutcomes(options) {
+        order.push('projection')
+        expect(options).toMatchObject({
+          knowledgeRoot,
+          handoff: completed,
+          excluded: false,
+        })
+        expect(options.extractAnchors).toBeTypeOf('function')
+        return { kind: 'applied', tests: 1 }
+      },
       buildCuratorAuthor(deps) {
         order.push('author')
         expect(deps).toBe(modelDeps)
@@ -289,6 +304,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       'reader',
       'canary-emit',
       'queue',
+      'projection',
       'author',
       'drain',
       'write-receipt',
@@ -296,9 +312,10 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     expect(writeCurationTailReceipt).toHaveBeenCalledWith(
       join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
       expect.objectContaining({
-        schemaVersion: 1,
+        schemaVersion: 2,
         runId,
         handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+        projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
       }),
     )
   })
@@ -535,6 +552,136 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       expect(drainQueue).not.toHaveBeenCalled()
     },
   )
+})
+
+describe('run-outcome projection under the extended tail receipt (381-05, D-14)', () => {
+  it('isolates a run-outcome fold failure: counted, logged, and never blocking the drain', async () => {
+    const warn = vi.fn()
+    const writeCurationTailReceipt = vi.fn()
+    const drainQueue = vi.fn(successfulOperations().drainQueue)
+    const operations = successfulOperations({
+      foldRunOutcomes() {
+        throw new Error('projection fold failed')
+      },
+      drainQueue,
+      writeCurationTailReceipt,
+    })
+
+    await expect(
+      runCurationTail(baseOptions(operations, { log: { warn } })),
+    ).resolves.toBeUndefined()
+
+    expect(drainQueue).toHaveBeenCalledOnce()
+    expect(writeCurationTailReceipt).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('projection-failed=1'))
+  })
+
+  it('skips the projection fold too for an already-receipted handoffDigest — the one extended receipt', async () => {
+    const completed = handoff()
+    const receipt: CurationTailReceipt = {
+      schemaVersion: 2,
+      runId,
+      handoffDigest: curationTailHandoffDigest(completed),
+      projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+    }
+    const foldRunOutcomes = vi.fn()
+    const emitCurationCandidates = vi.fn()
+    const drainQueue = vi.fn()
+    const operations = successfulOperations({
+      loadCompletedRunHandoff: () => completed,
+      readCurationTailReceipt: () => receipt,
+      foldRunOutcomes,
+      emitCurationCandidates,
+      drainQueue,
+    })
+
+    await runCurationTail(baseOptions(operations))
+
+    expect(foldRunOutcomes).not.toHaveBeenCalled()
+    expect(emitCurationCandidates).not.toHaveBeenCalled()
+    expect(drainQueue).not.toHaveBeenCalled()
+  })
+
+  it('refolds a run whose stored receipt predates the projection component', async () => {
+    const completed = handoff()
+    const staleReceipt = {
+      schemaVersion: 1,
+      runId,
+      handoffDigest: curationTailHandoffDigest(completed),
+    } as unknown as CurationTailReceipt
+    const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 0 }))
+    const operations = successfulOperations({
+      loadCompletedRunHandoff: () => completed,
+      readCurationTailReceipt: () => staleReceipt,
+      foldRunOutcomes,
+    })
+
+    await runCurationTail(baseOptions(operations))
+
+    expect(foldRunOutcomes).toHaveBeenCalledOnce()
+  })
+
+  it('reruns all three folds after a simulated mid-tail failure — safe because the fold is idempotent per runId', async () => {
+    let crashDrain = true
+    const receipts = new Map<string, CurationTailReceipt>()
+    const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 1 }))
+    const emitCurationCandidates = vi.fn(successfulOperations().emitCurationCandidates)
+    const emitCanaryOutcomes = vi.fn(successfulOperations().emitCanaryOutcomes)
+    const workingDrain = successfulOperations().drainQueue
+    const operations = successfulOperations({
+      foldRunOutcomes,
+      emitCurationCandidates,
+      emitCanaryOutcomes,
+      readCurationTailReceipt: (seenRunDir) => receipts.get(seenRunDir),
+      writeCurationTailReceipt(seenRunDir, receipt) {
+        receipts.set(seenRunDir, receipt)
+      },
+      async drainQueue(options) {
+        if (crashDrain) throw new Error('simulated mid-tail crash')
+        return workingDrain(options)
+      },
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn: vi.fn() } }))
+    expect(receipts.size).toBe(0)
+
+    crashDrain = false
+    await runCurationTail(baseOptions(operations, { log: { warn: vi.fn() } }))
+
+    expect(emitCurationCandidates).toHaveBeenCalledTimes(2)
+    expect(emitCanaryOutcomes).toHaveBeenCalledTimes(2)
+    expect(foldRunOutcomes).toHaveBeenCalledTimes(2)
+    expect(receipts.size).toBe(1)
+  })
+
+  it('leaves exactly one tail receipt file in the run dir — never a second projection marker', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'curation-tail-receipt-'))
+    try {
+      const realAgentQaRoot = join(root, '.agent-qa')
+      const runDir = join(realAgentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+      mkdirSync(runDir, { recursive: true })
+      const operations = successfulOperations({
+        listCompletedRunDirs: () => [runDir],
+      })
+      // Use the real durable receipt read/write legs against the temp run dir.
+      delete operations.readCurationTailReceipt
+      delete operations.writeCurationTailReceipt
+
+      await runCurationTail(baseOptions(operations, { agentQaRoot: realAgentQaRoot }))
+
+      expect(readdirSync(runDir)).toEqual([CURATION_TAIL_RECEIPT_FILE])
+      const receipt = JSON.parse(
+        readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
+      ) as Record<string, unknown>
+      expect(receipt).toMatchObject({
+        schemaVersion: 2,
+        runId,
+        projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('verdict-first CLI tail wiring (CUR-03)', () => {

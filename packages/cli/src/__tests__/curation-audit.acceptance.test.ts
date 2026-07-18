@@ -227,7 +227,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       CURATION_TAIL_RECEIPT_FILE,
     ), 'utf8')) as Record<string, unknown>
     expect(receipt).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: 'run-curation-audit',
       handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
     })
