@@ -60,6 +60,15 @@ export interface SecretResolver {
   get(name: string): string | undefined
   require(name: string): string
   has(name: string): boolean
+  /**
+   * OPTIONAL name enumeration (PROC-02 · 381 D-08). The loop assembles the procedure
+   * consult's binding-NAME set from the ports already in scope; secret template names are
+   * part of that set so secret-parameterized procedures stay replay-eligible. Names only —
+   * the callback receives the value because the concrete `SecretStore.forEachSecret`
+   * already carries it, but the loop only ever collects the name; no value crosses the
+   * reader port in any form. Absent implementations simply contribute no names.
+   */
+  forEachSecret?(callback: (name: string, value: string) => void): void
 }
 
 /** Structural secret-redactor port — the concrete `SecretRedactor` satisfies it. */

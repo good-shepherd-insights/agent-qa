@@ -37,6 +37,7 @@ import type {
   ServedBrief,
   StagnationEvidence,
   StepEvidence,
+  StepPlanSource,
   SubActionEvidence,
   TerminationEvidence,
   ToolExchangeEvidence,
@@ -264,6 +265,7 @@ export class EvidenceRecorder {
   private aiJudgment?: AiJudgmentEvidence
   private assertOutcome?: AssertValueEvidence
   private verdictSource?: VerdictSource
+  private planSource?: StepPlanSource
   /** D-06 run-declared planner context, copied onto every finalized step when bound. */
   private readonly modelProfile?: DeclaredModelProfile
   /** D-07 verifier identity copied beside every finalized verdict when bound. */
@@ -469,6 +471,18 @@ export class EvidenceRecorder {
   }
 
   /**
+   * Record the typed step plan source (PROC-02 · 381 D-12). `procedure-replay` carries the
+   * guard fold (checksPassed/total + the first miss when the fold broke off); `procedure-hint`
+   * marks a served-without-replay exposure. Recorded BESIDE `cacheStatus` — structurally
+   * distinct from the cached flag so eval/cassette consumers reading cached semantics are
+   * never polluted (Pitfall 4). Last write wins: the loop updates the fold as guard checks
+   * accumulate, and the final state is what finalize emits.
+   */
+  recordPlanSource(source: StepPlanSource): void {
+    this.planSource = source
+  }
+
+  /**
    * Attach the D-15 stateAfter at the spec-locked boundaries (assert sub-actions, the
    * verifier boundary, the self-heal boundary) by reuse of an observation the loop
    * already takes — no extra capture.
@@ -515,6 +529,7 @@ export class EvidenceRecorder {
     if (this.aiJudgment) evidence.aiJudgment = this.aiJudgment
     if (this.assertOutcome) evidence.assertOutcome = this.assertOutcome
     if (this.verdictSource) evidence.verdictSource = this.verdictSource
+    if (this.planSource) evidence.planSource = this.planSource
     if (this.modelProfile !== undefined) evidence.modelProfile = this.modelProfile
     if (this.verifierIdentity !== undefined) evidence.verifierIdentity = this.verifierIdentity
     if (this.toolSchemaDigest !== undefined) evidence.toolSchemaDigest = this.toolSchemaDigest

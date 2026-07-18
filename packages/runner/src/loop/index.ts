@@ -29,7 +29,10 @@
 import {
   computeCacheKey,
   elementOrdinal,
+  isReplayableActionShape,
   normalizeAnchor,
+  parseProcedureBody,
+  servingRecordMetadata,
   toRecordedActionResult,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -45,16 +48,22 @@ import type {
   ElementInfo,
   GroundingAttempt,
   GroundingEvidence,
+  ProcedureBodyPayload,
+  ProcedureMatch,
+  ProcedureStepSpec,
+  RecordId,
   Ref,
   RiskTier,
   ScreenState,
   StagnationEvidence,
+  StepPlanSource,
   TargetDescriptor,
   VerdictSource,
   VerifierVerdict,
   Viewport,
   WorkingMemoryEntry,
 } from '@vostride/agent-qa-schema'
+import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import type { Action, ActionResult } from '../platform.js'
 import type { StepResult, StepTrace, SubActionTrace, TokenUsage } from '../result.js'
 import { stampCaptureMode } from '../screen-builder.js'
@@ -76,6 +85,7 @@ import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
+import { estimateTokens } from './prompts.js'
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -261,6 +271,68 @@ export async function executeStep(
   // one-shot latch threads the bypass stamp into finalize so cacheStatus emits 'bypass' —
   // orthogonal to the classifyStep NonCacheableStepInput signal above.
   let cacheBypass = false
+
+  // PROC-02 (381 D-09..D-12) per-step procedure state. `procedureConsulted` makes the
+  // getProcedure consult a strict once-per-step event (D-09); `procedureReplay` holds the
+  // decoded body plus the guard-fold bookkeeping while replay drives actions — `aborted`
+  // is the D-11 one-shot miss latch (no replay re-entry within the step; max replayed
+  // actions = the sequence length by `nextIndex` construction). `procedureHintStaged`
+  // carries the rendered hint block (matched-hint mode, unparseable-body demotion, or the
+  // post-miss demotion with its divergence note) for ledger-metered exposure on every
+  // subsequent live planning turn; `procedureHintExposed` keeps the planSource
+  // procedure-hint write once-per-step.
+  let procedureConsulted = false
+  let procedureReplay: {
+    match: ProcedureMatch
+    payload: ProcedureBodyPayload
+    nextIndex: number
+    checksPassed: number
+    aborted: boolean
+    miss?: { procedureStepIndex: number; reason: ProcedureGuardMissReason }
+  } | undefined
+  let procedureHintStaged: { procedureId: RecordId; anchors: Anchor[]; block: string } | undefined
+  let procedureHintExposed = false
+
+  // Loop-side procedure parameter binding (D-08/T-381-21): values bind by NAME from the
+  // sources that never crossed the reader port — a `secret`-typed parameter binds as its
+  // `{{secret:name}}` template (resolved only at the execute boundary, so evidence stays
+  // redacted), everything else binds test variables first, then working-memory entries,
+  // then a secret template as the last resort.
+  const bindProcedureParam = (name: string, type: string): string | undefined => {
+    const asSecretTemplate = ports.secretStore?.has(name) ? `{{secret:${name}}}` : undefined
+    if (type === 'secret') return asSecretTemplate
+    const testVariable = context.variables?.[name]
+    if (testVariable !== undefined) return testVariable
+    const memoryEntry = ports.workingMemory?.entries().find((entry) => entry.key === name)
+    if (memoryEntry !== undefined) return memoryEntry.value
+    return asSecretTemplate
+  }
+
+  // D-08 binding-NAME assembly (RESEARCH Open Q2): test-variable keys (member config threads
+  // them onto StepContext.variables), working-memory entry keys, and the secret store's
+  // template names. Names only — no value of any binding ever crosses the reader port.
+  const assembleProcedureBindingNames = (): string[] => {
+    const names = new Set<string>()
+    for (const key of Object.keys(context.variables ?? {})) names.add(key)
+    for (const entry of ports.workingMemory?.entries() ?? []) names.add(entry.key)
+    ports.secretStore?.forEachSecret?.((name) => names.add(name))
+    return [...names]
+  }
+
+  const recordProcedureReplaySource = (): void => {
+    if (!procedureReplay) return
+    recorder.recordPlanSource({
+      kind: 'procedure-replay',
+      procedureId: procedureReplay.match.id,
+      guard: {
+        checksPassed: procedureReplay.checksPassed,
+        total: procedureReplay.payload.steps.length,
+        ...(procedureReplay.aborted && procedureReplay.miss !== undefined
+          ? { miss: procedureReplay.miss }
+          : {}),
+      },
+    })
+  }
 
   // D-15c self-heal boundary carry: the previous failed sub-action's index +
   // Decision. On the next iteration's observation (which reveals the failure), that
@@ -639,16 +711,121 @@ export async function executeStep(
       ? stampCaptureMode(screenState, { mode: 'full', imageWidth: captureDims.imageWidth, imageHeight: captureDims.imageHeight })
       : stampCaptureMode(screenState, { mode: 'textOnly' })
 
-    // 2. PLAN — the replay → re-ground → replan hit ladder (D-13), then the planning turn.
+    // 2. PLAN — procedure-first at step start (PROC-02/D-09), then the replay → re-ground →
+    // replan hit ladder (D-13), then the planning turn.
+    //
+    // 2a. STEP-START PROCEDURE CONSULT (D-09): exactly once per step, before the first
+    // planning turn AND before the per-decision cache consult (the researcher-recommended
+    // procedure-first precedence). Optional-chained getRunBrief idiom: an unbound reader
+    // costs nothing (binding names are not even assembled) and never throws. Intent is the
+    // NL step text; binding NAMES are assembled loop-side — values never cross the port.
+    if (!procedureConsulted) {
+      procedureConsulted = true
+      if (ports.knowledgeReader) {
+        const match = ports.knowledgeReader.getProcedure(
+          stepInstruction,
+          screenState,
+          assembleProcedureBindingNames(),
+        )
+        if (match !== undefined) {
+          if (match.replayRecommendation === 'replay') {
+            // Fetch + decode the committed body. parseProcedureBody is fail-closed
+            // (T-381-01): an unreadable or unparseable body demotes the match to hint —
+            // never a throw, never a blind replay.
+            const body = ports.knowledgeReader.read(match.id)
+            const payload = body === undefined ? undefined : parseProcedureBody(body.body)
+            if (payload !== undefined && payload.steps.length > 0) {
+              procedureReplay = { match, payload, nextIndex: 0, checksPassed: 0, aborted: false }
+            } else {
+              procedureHintStaged = {
+                procedureId: match.id,
+                anchors: [match.flowAnchor],
+                block: renderProcedureHintBlock(match, payload, undefined, maskValue),
+              }
+            }
+          } else {
+            // Hint recommendation: no replay. The body read is best-effort enrichment for
+            // the outline — a missing/unparseable body is NOT a failure (Test 5b).
+            const body = ports.knowledgeReader.read(match.id)
+            const payload = body === undefined ? undefined : parseProcedureBody(body.body)
+            procedureHintStaged = {
+              procedureId: match.id,
+              anchors: [match.flowAnchor],
+              block: renderProcedureHintBlock(match, payload, undefined, maskValue),
+            }
+          }
+        }
+      }
+    }
+
     let planResult: PlanResult
     let cached = false
+    let procedureReplayed = false
     // The per-decision-point cache key: masked stepText + value-free env digest + the
     // settled screenIdentityHash as the 8th component (D-05/D-09). Branch never enters key
     // material. Undefined for non-cacheable (bypassed) steps or when no cache is bound.
     let cacheKey: CacheKey | undefined
     const cacheActive = !nonCacheable && !!ports.cache
 
-    if (cacheActive) {
+    // 2b. GUARDED PROCEDURE REPLAY (D-10/D-11): while a replay recommendation is live and
+    // the sequence is not exhausted, each decision comes from the next committed action —
+    // under the FULL guard (unique fresh-screen re-ground + page-anchor equality +
+    // grounding gate, the one guard idiom shared with cache replay, T-356-04a). A guard
+    // miss aborts replay for the WHOLE step: the miss is folded into planSource, the
+    // procedure demotes to hint context with the divergence noted, and ordinary planning
+    // takes over — no replay re-entry within this step (one-shot, D-11). Replayed actions
+    // keep `cached: false`, skip the cache consult below, and are never written back into
+    // the action cache.
+    if (procedureReplay && !procedureReplay.aborted
+      && procedureReplay.nextIndex < procedureReplay.payload.steps.length) {
+      const replayState = procedureReplay
+      const procedureStep = replayState.payload.steps[replayState.nextIndex]
+      // Landmarks are a SOFT diagnostic only (D-10): a missing landmark logs, never misses.
+      for (const landmark of procedureStep.guard.landmarks ?? []) {
+        if (!screenState.tree.includes(landmark)) {
+          ports.logger?.createScopedLogger('procedure')?.debug(
+            'Stored landmark not observed on the fresh screen (soft diagnostic only)',
+            { landmark, procedureStepIndex: replayState.nextIndex },
+          )
+        }
+      }
+      const paramTypes = new Map(replayState.payload.parameters.map((p) => [p.name, p.type]))
+      const attempt = attemptProcedureReplayAction({
+        step: procedureStep,
+        isFinal: replayState.nextIndex === replayState.payload.steps.length - 1,
+        screenState,
+        bind: (name) => bindProcedureParam(name, paramTypes.get(name) ?? 'string'),
+      })
+      if (attempt.ok) {
+        replayState.checksPassed++
+        replayState.nextIndex++
+        planResult = { plan: attempt.plan }
+        procedureReplayed = true
+        recordProcedureReplaySource()
+      } else {
+        replayState.aborted = true
+        replayState.miss = {
+          procedureStepIndex: replayState.nextIndex,
+          reason: attempt.reason,
+        }
+        recordProcedureReplaySource()
+        // D-11 demotion: the procedure re-enters as hint context with the divergence noted
+        // (which action, which guard, what differed) for every remaining planning turn.
+        procedureHintStaged = {
+          procedureId: replayState.match.id,
+          anchors: [replayState.match.flowAnchor],
+          block: renderProcedureHintBlock(
+            replayState.match,
+            replayState.payload,
+            `Guarded replay diverged at procedure step ${replayState.nextIndex + 1} `
+              + `("${procedureStep.instruction}"): ${attempt.detail}`,
+            maskValue,
+          ),
+        }
+      }
+    }
+
+    if (!procedureReplayed && cacheActive) {
       cacheKey = computeCacheKey(buildCacheableStepInput({
         masking: ports.masking,
         platform: screenState.platform,
@@ -682,7 +859,7 @@ export async function executeStep(
       }
     }
 
-    if (!cached) {
+    if (!procedureReplayed && !cached) {
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
       // Knowledge-brief sourcing seam (D-12): source the full three-tier brief through the
@@ -763,6 +940,34 @@ export async function executeStep(
             : frame
         }
       }
+      // PROC-02 hint exposure (D-11 / T-381-20): a matched-hint or post-miss-demoted
+      // procedure renders as one compact DATA-wrapped block appended into the L2 slot —
+      // the volatile hypotheses-not-instructions frame's procedures tier (the Channel-3
+      // caution append idiom above; BRIF-01 lineage: hypotheses, never instructions or
+      // commands, on every prompt surface). Admission rides the shared record ledger with
+      // real ServingRecordMetadata (id + flow-anchor cluster + renderedCost); a refusal
+      // drops the block fail-closed for this turn — never the turn itself, never an
+      // unmetered fallback. Empty-slot omission is preserved: no staged hint ⇒ no section.
+      if (procedureHintStaged) {
+        const hint = procedureHintStaged
+        const admitted = recordLedger.admit(servingRecordMetadata({
+          id: hint.procedureId,
+          anchors: hint.anchors,
+          renderedCost: estimateTokens(hint.block),
+        })).admitted
+        if (admitted) {
+          context.knowledgeBriefL2 = context.knowledgeBriefL2?.trim()
+            ? `${context.knowledgeBriefL2}\n\n${hint.block}`
+            : hint.block
+          // RESEARCH Open Q3 (D-12): a hint actually rendered into a planning turn records
+          // planSource procedure-hint — unless a replay attempt already owns the planSource
+          // slot (post-miss demotion keeps the procedure-replay fold with its miss).
+          if (!procedureHintExposed && procedureReplay === undefined) {
+            recorder.recordPlanSource({ kind: 'procedure-hint', procedureId: hint.procedureId })
+          }
+          procedureHintExposed = true
+        }
+      }
       // WM-01 serve (D-11): the whole run-scoped set is served verbatim to every planning turn
       // via the optional workingMemory port (the knowledgeReader idiom). Unbound ⇒ left as-is,
       // the loop runs memory-less. The served set is what finalize snapshots masked.
@@ -802,7 +1007,9 @@ export async function executeStep(
       totalCompletionTokens += planResult!.tokenUsage.completionTokens
     }
 
-    const liveDecisionEvidence: LiveDecisionEvidence | undefined = cached
+    // A procedure-replayed decision has no live planning turn (the cache-replay parity):
+    // no exchanges, no call record, no decision screenshot.
+    const liveDecisionEvidence: LiveDecisionEvidence | undefined = (cached || procedureReplayed)
       ? undefined
       : {
           exchanges: maskToolExchanges(planResult!.exchanges ?? [], maskValue),
@@ -879,6 +1086,14 @@ export async function executeStep(
     // role+nameNormalized+ordinal locators). setVariable actions are never cached (env
     // provenance). No-op for bypassed steps, cache hits, or when no cache is bound.
     const cacheCompletingPlan = async (): Promise<void> => {
+      // Pitfall 4 cache-vs-procedure precedence: a procedure-replayed completing plan is
+      // NEVER persisted into the action cache. The procedure store owns replaying whole
+      // flows; double-storing a replayed action under a decision cache key would let the
+      // cached flag claim what planSource already attributes — evidence separation (D-12)
+      // requires exactly one provenance per decision. (Structurally `cacheKey` is already
+      // undefined here because replayed decisions skip the cache consult; this guard makes
+      // the precedence decision explicit.)
+      if (procedureReplayed) return
       if (!cacheActive || cached || !cacheKey || !ports.cache) return
       if (normalizedAction.type === 'setVariable') return
       // D-08 write guard (Phase 360): an AI-assertion plan is never persisted. Narrowing the
@@ -1470,18 +1685,12 @@ function deriveEnvSetNames(stepText: string): string[] {
   return stepText.match(ENV_NAME_TOKEN) ?? []
 }
 
-// Raw-coordinate keys whose presence makes a cached action non-replayable (Pitfall 5b):
-// a coordinate binding cannot be re-grounded against a fresh observation, so the value is
-// invalidated → replanned rather than replayed at a possibly-shifted position.
-const COORDINATE_KEYS = ['x', 'y', 'coordinates', 'coords', 'startX', 'startY', 'endX', 'endY']
-// Action types that are inherently coordinate-driven — never replayable even once their
-// raw coordinates have been sanitized out of the stored value.
-const COORDINATE_ACTION_TYPES = new Set<string>(['tapCoordinate'])
-
-function carriesRawCoordinates(action: Record<string, unknown>): boolean {
-  if (typeof action.type === 'string' && COORDINATE_ACTION_TYPES.has(action.type)) return true
-  return COORDINATE_KEYS.some((key) => action[key] !== undefined)
-}
+// Replayability is judged by the ONE schema-shared list (`isReplayableActionShape` —
+// NON_REPLAYABLE_ACTION_TYPES + COORDINATE_ACTION_KEYS). The former loop-local
+// COORDINATE_KEYS/COORDINATE_ACTION_TYPES copies were retired for the shared import
+// (381 Pitfall 6: cache write guard, extraction disposition, and procedure replay must
+// never fork the list). Behavior-compatible on the cache path: the extra non-replayable
+// types (setVariable/assertAI/extractAI) are never persisted by cacheCompletingPlan.
 
 // The ordered ref-field lanes replay must re-resolve for an action (Pitfall 5a): a drag
 // maps its two per-field locators onto fromRef/toRef; every other element action maps its
@@ -1502,8 +1711,9 @@ function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[
   if (!action) return null
   const replayAction: Record<string, unknown> = { ...action }
 
-  // Coordinate-bearing actions are non-replayable ⇒ invalidate ⇒ replan (Pitfall 5b).
-  if (carriesRawCoordinates(replayAction)) return null
+  // Non-replayable action shapes (coordinate-bearing / excluded types, the schema-shared
+  // list) ⇒ invalidate ⇒ replan (Pitfall 5b).
+  if (!isReplayableActionShape(String(replayAction.type ?? ''), Object.keys(replayAction))) return null
 
   const lanes = replayLanes(replayAction, value.groundedLocator.length)
   // A ref lane with no stored locator is an unreplayable value ⇒ invalidate ⇒ replan.
@@ -1521,6 +1731,170 @@ function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[
     confidence: 1,
     stepComplete: value.verificationOutcome === 'passed',
   }
+}
+
+// ---- PROC-02 guarded procedure replay helpers (381 D-09..D-12) -----------------
+
+/** The closed guard-miss reason vocabulary — the schema StepPlanSource miss union. */
+type ProcedureGuardMissReason = NonNullable<
+  Extract<StepPlanSource, { kind: 'procedure-replay' }>['guard']['miss']
+>['reason']
+
+type ProcedureReplayAttempt =
+  | { ok: true; plan: ActionPlan }
+  | { ok: false; reason: ProcedureGuardMissReason; detail: string }
+
+/**
+ * The D-10 full guard for ONE committed procedure action, in order: (0) defense-in-depth
+ * replayability shape check against the schema-shared list (Pitfall 6); (1) unique
+ * fresh-screen re-ground of EVERY stored target descriptor through the deterministic
+ * matcher ladder — ambiguous and no-match are distinct miss reasons, never a pick
+ * (T-357-03a); (2) live-vs-stored page anchor equality through `normalizeAnchor` (D-10);
+ * (3) loop-side value binding by NAME (values never crossed the reader port, T-381-21);
+ * (4) the grounding gate exactly as the cached branch runs it, yielding the §A8 attempt
+ * trail on the returned plan (`groundingAttempts`). A stored descriptor never drives a
+ * blind action: every leg must pass before the action may execute.
+ */
+function attemptProcedureReplayAction(input: {
+  step: ProcedureStepSpec
+  isFinal: boolean
+  screenState: ScreenState
+  bind: (name: string) => string | undefined
+}): ProcedureReplayAttempt {
+  const spec = input.step.action
+  const shapeKeys = [...Object.keys(spec.targets), ...Object.keys(spec.values)]
+  if (!isReplayableActionShape(spec.type, shapeKeys)) {
+    return {
+      ok: false,
+      reason: 'non-replayable-action',
+      detail: `stored action type "${spec.type}" (or a raw-coordinate key) is not replayable`,
+    }
+  }
+
+  const action: Record<string, unknown> = { type: spec.type }
+  for (const [lane, target] of Object.entries(spec.targets)) {
+    const match = matchDescriptor({
+      descriptor: {
+        role: target.role,
+        nameNormalized: target.nameNormalized,
+        ordinal: target.ordinal,
+      },
+      elements: input.screenState.elements,
+    })
+    if (match.kind === 'ambiguous') {
+      return {
+        ok: false,
+        reason: 'descriptor-ambiguous',
+        detail: `the stored "${lane}" descriptor (${target.role} "${target.nameNormalized}") `
+          + `resolved ambiguously on the fresh screen (${match.candidates.length} candidates)`,
+      }
+    }
+    if (match.kind !== 'resolved') {
+      return {
+        ok: false,
+        reason: 'descriptor-missing',
+        detail: `the stored "${lane}" descriptor (${target.role} "${target.nameNormalized}") `
+          + 'did not resolve on the fresh screen',
+      }
+    }
+    action[lane] = match.ref
+  }
+
+  const stored = normalizeAnchor(input.step.guard.pageAnchor) as Extract<Anchor, { t: 'page' }>
+  const live = normalizeAnchor({ t: 'page', route: input.screenState.url ?? '' }) as Extract<
+    Anchor,
+    { t: 'page' }
+  >
+  if (stored.route !== live.route) {
+    return {
+      ok: false,
+      reason: 'page-anchor-mismatch',
+      detail: `the live page anchor "${live.route}" does not equal the stored "${stored.route}"`,
+    }
+  }
+
+  for (const [field, slot] of Object.entries(spec.values)) {
+    if (typeof slot === 'string') {
+      action[field] = slot
+      continue
+    }
+    const bound = input.bind(slot.param)
+    if (bound === undefined) {
+      return {
+        ok: false,
+        reason: 'non-replayable-action',
+        detail: `parameter "${slot.param}" has no loop-side binding source`,
+      }
+    }
+    action[field] = bound
+  }
+
+  const gate = groundActionPlan({
+    toolName: spec.type,
+    action,
+    screenState: input.screenState,
+  })
+  if (!gate.ok) {
+    return { ok: false, reason: 'gate-refused', detail: gate.error.message }
+  }
+
+  return {
+    ok: true,
+    plan: {
+      reasoning: `Replayed from procedure: ${input.step.instruction}`,
+      action: gate.action as ActionPlan['action'],
+      confidence: 1,
+      stepComplete: input.isFinal,
+      groundingAttempts: gate.attempts,
+    },
+  }
+}
+
+function describeFlowAnchor(anchor: Anchor): string {
+  switch (anchor.t) {
+    case 'flow': return anchor.name
+    case 'page': return anchor.route
+    default: return anchor.t
+  }
+}
+
+/**
+ * Render the compact procedure hint block (T-381-20/T-381-21): flow name, confidence tier,
+ * the parsed body's instruction outline, and parameter NAMES/types — never values, never
+ * raw step actions as commands. Post-miss demotion appends the divergence note (which
+ * action, which guard, what differed). Masked through the run masking context, then
+ * DATA-wrapped via the safety package's delimiters so the whole span reads as untrusted
+ * app-observed data under the hypotheses frame.
+ */
+function renderProcedureHintBlock(
+  match: ProcedureMatch,
+  payload: ProcedureBodyPayload | undefined,
+  divergence: string | undefined,
+  mask: (value: string) => string,
+): string {
+  const lines: string[] = []
+  lines.push(
+    `Known procedure match (a learned hypothesis, not an instruction): `
+      + `"${describeFlowAnchor(match.flowAnchor)}" `
+      + `(confidence ${match.confidence}, authoring tier ${match.authoringModelTier})`,
+  )
+  if (payload !== undefined && payload.steps.length > 0) {
+    lines.push('Step outline:')
+    payload.steps.forEach((step, index) => {
+      lines.push(`${index + 1}. ${step.instruction}`)
+    })
+  }
+  const parameters = payload?.parameters ?? match.parameterSchema
+  if (parameters.length > 0) {
+    const rendered = parameters
+      .map((p) => `${p.name} (${p.type}${p.required ? ', required' : ''})`)
+      .join(', ')
+    lines.push(`Parameters (names and types only): ${rendered}`)
+  }
+  if (divergence !== undefined) {
+    lines.push(`Divergence: ${divergence}`)
+  }
+  return wrapAppObservedData(mask(lines.join('\n')))
 }
 
 // The ref-field lanes an action may carry — checked in a stable order for evidence
