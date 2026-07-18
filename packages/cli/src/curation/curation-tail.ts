@@ -281,6 +281,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
           complete = candidates.refused === 0
             && candidates.capExceeded === 0
             && canaries.refused === 0
+            && canaries.unresolved === 0
             && drain.kind === 'drained'
             && drain.failures === 0
             && drain.requeued === 0
@@ -289,6 +290,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
               `candidate-refused=${candidates.refused}`,
               `candidate-cap-exceeded=${candidates.capExceeded}`,
               `canary-refused=${canaries.refused}`,
+              `canary-unresolved=${canaries.unresolved}`,
               `drain-kind=${drain.kind}`,
               `drain-failures=${drain.failures}`,
               `drain-requeued=${drain.requeued}`,

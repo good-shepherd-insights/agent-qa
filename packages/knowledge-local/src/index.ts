@@ -49,10 +49,12 @@ export type {
 export {
   enumerateBundleDirs,
   isServable,
+  readCanonicalBundleAnchors,
   scanBundleById,
   scanBundles,
 } from './bundle-scan.js'
 export type {
+  CanonicalBundleAnchorLookup,
   EnumeratedBundleDir,
   KnowledgeHit,
   ScanBundleByIdOptions,

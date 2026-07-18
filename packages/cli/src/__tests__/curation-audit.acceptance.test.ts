@@ -174,7 +174,12 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
             details: [],
           }
         },
-        emitCanaryOutcomes: () => ({ emitted: 0, refused: 0, details: [] }),
+        emitCanaryOutcomes: () => ({
+          emitted: 0,
+          refused: 0,
+          unresolved: 0,
+          details: [],
+        }),
         buildCuratorAuthor: (deps) => buildCuratorAuthor({
           ...deps,
           createModelImpl: (seenProfile, auth) => createModel(seenProfile, auth, {

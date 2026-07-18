@@ -2,7 +2,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { BundleOutcomeEventSchema, canonicalJson, normalizeAnchor } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  BundleOutcomeEventSchema,
+  canonicalJson,
+  normalizeAnchor,
+} from '@vostride/agent-qa-schema'
 import type { Anchor, BundleRelation } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -135,7 +140,12 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
   })
 
   it('excludes superseded and closed bundles from both scan faces', async () => {
-    const { isServable, scanBundleById, scanBundles } = await scanApi()
+    const {
+      isServable,
+      readCanonicalBundleAnchors,
+      scanBundleById,
+      scanBundles,
+    } = await scanApi()
     const storeConfig = config('withdrawn-store')
     const published = publish('withdrawn-store')
     const superseded = BundleOutcomeEventSchema.parse({
@@ -180,6 +190,15 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
     ).toBe(false)
     expect(scanBundles({ knowledgeRoot })).toEqual([])
     expect(scanBundleById({ knowledgeRoot, bundleId: published.id })).toBeUndefined()
+    expect(readCanonicalBundleAnchors({
+      knowledgeRoot,
+      bundleId: published.id,
+    })).toMatchObject({
+      kind: 'resolved',
+      bundleId: published.id,
+      product: 'withdrawn-store',
+      anchors: makeBundleDraftFixture().anchors.map(normalizeAnchor),
+    })
   })
 
   it('skips incomplete bundles and excludes derived partitions and dot entries', async () => {
@@ -212,7 +231,7 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
   })
 
   it('refuses a parseable digest tamper across every degraded scan face', async () => {
-    const { scanBundleById, scanBundles } = await scanApi()
+    const { readCanonicalBundleAnchors, scanBundleById, scanBundles } = await scanApi()
     const tampered = publish('integrity-product', {
       draft: makeBundleDraftFixture({
         anchors: [{ t: 'selector', literal: '#integrity-alpha' }],
@@ -245,6 +264,14 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
     expect(scanBundleById({ knowledgeRoot, bundleId: healthy.id })).toMatchObject({
       bundleId: healthy.id,
     })
+    expect(readCanonicalBundleAnchors({
+      knowledgeRoot,
+      bundleId: tampered.id,
+    })).toMatchObject({ kind: 'unresolved', reason: 'invalid' })
+    expect(readCanonicalBundleAnchors({
+      knowledgeRoot,
+      bundleId: healthy.id,
+    })).toMatchObject({ kind: 'resolved', bundleId: healthy.id })
 
     const reader = openKnowledgeReader(knowledgeRoot)
     try {
@@ -257,7 +284,7 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
   })
 
   it('sorts bundle directories and resolves ids across products', async () => {
-    const { enumerateBundleDirs, scanBundleById } = await scanApi()
+    const { enumerateBundleDirs, readCanonicalBundleAnchors, scanBundleById } = await scanApi()
     const published = publish('z-product')
     const manual = [
       ['beta', 'bundle-b'],
@@ -280,5 +307,9 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
       status: 'candidate',
     })
     expect(scanBundleById({ knowledgeRoot, bundleId: 'missing-bundle' })).toBeUndefined()
+    expect(readCanonicalBundleAnchors({
+      knowledgeRoot,
+      bundleId: asRecordId('missing-bundle'),
+    })).toEqual({ kind: 'unresolved', reason: 'not-found' })
   })
 })

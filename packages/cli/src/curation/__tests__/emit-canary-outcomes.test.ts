@@ -13,8 +13,9 @@ import {
 } from '@vostride/agent-qa-schema'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const readerSpy = vi.hoisted(() => ({
+const lookupSpy = vi.hoisted(() => ({
   anchorsById: new Map<string, Anchor[]>(),
+  invalidById: new Map<string, string>(),
   openCalls: [] as string[],
 }))
 
@@ -24,22 +25,21 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
   >()
   return {
     ...actual,
-    openKnowledgeReader: vi.fn((config: { knowledgeRoot: string }) => {
-      readerSpy.openCalls.push(config.knowledgeRoot)
-      return {
-        read(id: string) {
-          const anchors = readerSpy.anchorsById.get(id)
-          if (anchors === undefined) throw new Error(`missing record: ${id}`)
-          return {
-            id: asRecordId(id),
-            title: id,
-            body: '',
-            anchors,
-            evidenceDigest: `digest:${id}`,
-            relations: [],
-          }
-        },
+    readCanonicalBundleAnchors: vi.fn((input: { knowledgeRoot: string; bundleId: string }) => {
+      lookupSpy.openCalls.push(input.knowledgeRoot)
+      const invalid = lookupSpy.invalidById.get(input.bundleId)
+      if (invalid !== undefined) {
+        return { kind: 'unresolved' as const, reason: 'invalid' as const, detail: invalid }
       }
+      const anchors = lookupSpy.anchorsById.get(input.bundleId)
+      return anchors === undefined
+        ? { kind: 'unresolved' as const, reason: 'not-found' as const }
+        : {
+            kind: 'resolved' as const,
+            bundleId: asRecordId(input.bundleId),
+            product: 'storefront',
+            anchors,
+          }
     }),
   }
 })
@@ -193,7 +193,12 @@ function project(
 ) {
   return projectCanaryOutcomes({
     handoff: input,
-    resolveCandidateAnchors: (id) => anchorsById.get(id),
+    resolveCandidateAnchors: (id) => {
+      const anchors = anchorsById.get(id)
+      return anchors === undefined
+        ? { kind: 'unresolved', reason: 'not-found' }
+        : { kind: 'resolved', anchors }
+    },
   })
 }
 
@@ -353,12 +358,13 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
 
 describe('emitCanaryOutcomes', () => {
   beforeEach(() => {
-    readerSpy.anchorsById.clear()
-    readerSpy.openCalls.length = 0
+    lookupSpy.anchorsById.clear()
+    lookupSpy.invalidById.clear()
+    lookupSpy.openCalls.length = 0
   })
 
   it('resolves stored anchors and isolates a failed emit from the remaining projections', () => {
-    readerSpy.anchorsById.set(CANDIDATE, [{
+    lookupSpy.anchorsById.set(CANDIDATE, [{
       t: 'el',
       role: 'button',
       name: 'checkout',
@@ -377,11 +383,14 @@ describe('emitCanaryOutcomes', () => {
       },
     })
 
-    expect(readerSpy.openCalls).toEqual(['/tmp/agent-qa-knowledge'])
+    expect(lookupSpy.openCalls).toEqual([
+      '/tmp/agent-qa-knowledge',
+    ])
     expect(emitted).toEqual([1])
     expect(report).toEqual({
       emitted: 1,
       refused: 1,
+      unresolved: 0,
       details: [
         {
           candidateId: CANDIDATE,
@@ -418,17 +427,39 @@ describe('emitCanaryOutcomes', () => {
       knowledgeRoot: '/tmp/agent-qa-knowledge',
       runDir: 'relative-run',
     })).toThrow(new TypeError('runDir must be absolute'))
-    expect(readerSpy.openCalls).toEqual([])
+    expect(lookupSpy.openCalls).toEqual([])
   })
 
-  it('does not move trust when a served record cannot be resolved from the store', () => {
-    const report = emitCanaryOutcomes({
-      handoff: handoff([step({ candidateIds: [OTHER_CANDIDATE] })]),
-      knowledgeRoot: '/tmp/agent-qa-knowledge',
-      runDir: '/tmp/runs/run-canary-1',
-      emit: vi.fn(),
-    })
+  it.each([
+    ['missing', 'not-found', undefined],
+    ['corrupt', 'invalid', 'record.md: content hash mismatch'],
+  ] as const)(
+    'reports a %s served record as unresolved instead of certifying a zero/zero success',
+    (_condition, reason, detail) => {
+      if (detail !== undefined) lookupSpy.invalidById.set(OTHER_CANDIDATE, detail)
+      const report = emitCanaryOutcomes({
+        handoff: handoff([step({ candidateIds: [OTHER_CANDIDATE] })]),
+        knowledgeRoot: '/tmp/agent-qa-knowledge',
+        runDir: '/tmp/runs/run-canary-1',
+        emit: vi.fn(),
+      })
 
-    expect(report).toEqual({ emitted: 0, refused: 0, details: [] })
-  })
+      expect(report).toEqual({
+        emitted: 0,
+        refused: 0,
+        unresolved: 1,
+        details: [{
+          candidateId: OTHER_CANDIDATE,
+          testId: 'checkout::happy-path',
+          testIndex: 0,
+          stepIndex: 0,
+          outcome: {
+            kind: 'unresolved',
+            reason,
+            ...(detail === undefined ? {} : { detail }),
+          },
+        }],
+      })
+    },
+  )
 })

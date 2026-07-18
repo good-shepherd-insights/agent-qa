@@ -6,10 +6,12 @@ import { join } from 'node:path'
 import {
   deriveBundleTrust,
   drainQueue,
+  appendOutcomeEvent,
   listQueuedCandidates,
   loadBundle,
   openKnowledgeReader,
   publishBundle,
+  readCanonicalBundleAnchors,
   rebuildIndex,
   type BundleStoreConfig,
   type CuratorAuthor,
@@ -288,7 +290,10 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const handoff = completedHandoff(published.id, servedCandidate)
     const projectionInput = {
       handoff,
-      resolveCandidateAnchors: (id: RecordId) => reader.read(id)?.anchors,
+      resolveCandidateAnchors: (id: RecordId) => readCanonicalBundleAnchors({
+        knowledgeRoot,
+        bundleId: id,
+      }),
     }
     const firstProjection = projectCanaryOutcomes(projectionInput)
     const secondProjection = projectCanaryOutcomes(projectionInput)
@@ -383,5 +388,70 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
       events: loadedAfterReplay.bundle.events,
       trust: deriveBundleTrust(loadedAfterReplay.bundle),
     })).toBe(evidenceAfterFirstDrain)
+  }, 30_000)
+
+  it('retries a failed queue drop from canonical bytes after the served candidate is superseded', async () => {
+    const root = mkdtempSync(join(tmpdir(), `agent-qa-canary-restart-${randomUUID()}-`))
+    roots.push(root)
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const auditBaseDir = join(root, '.agent-qa')
+    const runDir = join(auditBaseDir, 'runs', 'run-canary-seam-live-shape')
+    mkdirSync(join(knowledgeRoot, 'policies'), { recursive: true })
+    mkdirSync(runDir, { recursive: true })
+
+    const storeConfig: BundleStoreConfig = {
+      knowledgeRoot,
+      productKey: PRODUCT,
+      auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: 'canary-restart-seed',
+      policy,
+    }
+    const published = publishBundle(storeConfig, candidateInput())
+    if (published.kind !== 'published') {
+      throw new Error(`expected candidate publication, got ${published.kind}`)
+    }
+    await rebuildIndex({ knowledgeRoot })
+
+    const reader = openKnowledgeReader({
+      knowledgeRoot,
+      product: PRODUCT,
+      scopeDefaults: { asOfBuild: BUILD_ORDINAL },
+    })
+    const served = reader
+      .getRunBrief({ tier: 'product', key: PRODUCT }, 1_000)
+      .lines.find(({ id }) => id === published.id)
+    if (served === undefined) throw new Error('candidate was not served')
+    const handoff = completedHandoff(published.id, served)
+
+    const first = emitCanaryOutcomes({
+      handoff,
+      knowledgeRoot,
+      runDir,
+      emit() {
+        throw new Error('simulated first queue drop failure')
+      },
+    })
+    expect(first).toMatchObject({ emitted: 0, refused: 1, unresolved: 0 })
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+
+    expect(appendOutcomeEvent(storeConfig, published.id, BundleOutcomeEventSchema.parse({
+      type: 'superseded',
+      evidenceToken: asEvidenceToken('canary-restart-superseded'),
+      curationJobId: 'canary-restart-superseded',
+      buildOrdinal: BUILD_ORDINAL,
+      byRecordId: asRecordId('fact-canary-replacement-0123456789abcdef'),
+    }))).toEqual({ kind: 'appended' })
+    await rebuildIndex({ knowledgeRoot })
+    expect(reader.read(published.id)).toBeUndefined()
+
+    const replay = emitCanaryOutcomes({
+      handoff,
+      knowledgeRoot,
+      runDir,
+      emit: reader.emitCanaryOutcome.bind(reader),
+    })
+    expect(replay).toMatchObject({ emitted: 1, refused: 0, unresolved: 0 })
+    expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(1)
   }, 30_000)
 })

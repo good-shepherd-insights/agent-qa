@@ -101,7 +101,12 @@ function successfulOperations(
       details: [],
     })),
     openKnowledgeReader: () => ({ emitCanaryOutcome: vi.fn() }) as unknown as KnowledgeHintReader,
-    emitCanaryOutcomes: vi.fn(() => ({ emitted: 0, refused: 0, details: [] })),
+    emitCanaryOutcomes: vi.fn(() => ({
+      emitted: 0,
+      refused: 0,
+      unresolved: 0,
+      details: [],
+    })),
     buildCuratorAuthor: () => vi.fn(async () => ({
       kind: 'fallback-required' as const,
       reason: 'no-model' as const,
@@ -214,6 +219,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         return {
           emitted: 1,
           refused: 0,
+          unresolved: 0,
           details: [{
             candidateId: canaryOutcome.candidateId,
             testId: canaryOutcome.testId,
@@ -314,7 +320,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         },
         emitCanaryOutcomes() {
           if (failureStage === 'canary-emit') throw new Error('canary emit failed')
-          return { emitted: 0, refused: 0, details: [] }
+          return { emitted: 0, refused: 0, unresolved: 0, details: [] }
         },
         async drainQueue() {
           if (failureStage === 'drain') throw new Error('drain failed')
@@ -347,6 +353,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     'candidate-refused',
     'candidate-cap-exceeded',
     'canary-refused',
+    'canary-unresolved',
     'drain-failure',
     'drain-requeued',
     'drain-aborted',
@@ -368,6 +375,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         return {
           emitted: 0,
           refused: condition === 'canary-refused' ? 1 : 0,
+          unresolved: condition === 'canary-unresolved' ? 1 : 0,
           details: [],
         }
       },
@@ -403,6 +411,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       'candidate-refused': 'candidate-refused=1',
       'candidate-cap-exceeded': 'candidate-cap-exceeded=1',
       'canary-refused': 'canary-refused=1',
+      'canary-unresolved': 'canary-unresolved=1',
       'drain-failure': 'drain-failures=1',
       'drain-requeued': 'drain-requeued=1',
       'drain-aborted': 'drain-kind=aborted',
@@ -451,14 +460,15 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             return {
               emitted: 1,
               refused: 1,
+              unresolved: 0,
               details: [],
             }
           }
           durableOutcomes.add('old-retried-outcome')
-          return { emitted: 2, refused: 0, details: [] }
+          return { emitted: 2, refused: 0, unresolved: 0, details: [] }
         }
         durableOutcomes.add('new-outcome')
-        return { emitted: 1, refused: 0, details: [] }
+        return { emitted: 1, refused: 0, unresolved: 0, details: [] }
       },
       drainQueue,
     })

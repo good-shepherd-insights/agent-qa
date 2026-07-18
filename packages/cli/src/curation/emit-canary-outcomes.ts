@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path'
 
-import { openKnowledgeReader } from '@vostride/agent-qa-knowledge-local'
+import { readCanonicalBundleAnchors } from '@vostride/agent-qa-knowledge-local'
 import {
   canonicalJson,
   normalizeAnchor,
@@ -18,12 +18,21 @@ const NON_ATTRIBUTABLE_FAILURES = new Set(['environment', 'timeout', 'flake'])
 
 export interface ProjectCanaryOutcomesInput {
   handoff: CompletedRunHandoff
-  resolveCandidateAnchors: (id: RecordId) => Anchor[] | undefined
+  resolveCandidateAnchors: (id: RecordId) => CandidateAnchorResolution
 }
+
+export type CandidateAnchorResolution =
+  | { kind: 'resolved'; anchors: Anchor[] }
+  | { kind: 'unresolved'; reason: 'not-found' | 'invalid' | 'lookup-error'; detail?: string }
 
 export type EmitCanaryOutcomeResult =
   | { kind: 'emitted' }
   | { kind: 'refused'; reason: 'emit-error' }
+  | {
+      kind: 'unresolved'
+      reason: Extract<CandidateAnchorResolution, { kind: 'unresolved' }>['reason']
+      detail?: string
+    }
 
 export interface EmitCanaryOutcomeDetail {
   candidateId: RecordId
@@ -36,6 +45,7 @@ export interface EmitCanaryOutcomeDetail {
 export interface EmitCanaryOutcomeReport {
   emitted: number
   refused: number
+  unresolved: number
   details: EmitCanaryOutcomeDetail[]
 }
 
@@ -89,53 +99,93 @@ function firstMatchingAnchor(
   return undefined
 }
 
-/** Pure Pin-1 projection: identical handoff + store snapshot yields identical outcome bytes. */
+type ProjectedCanaryAttribution =
+  | { kind: 'outcome'; outcome: CanaryOutcome }
+  | {
+      kind: 'unresolved'
+      candidateId: RecordId
+      testId: string
+      testIndex: number
+      stepIndex: number
+      reason: Extract<CandidateAnchorResolution, { kind: 'unresolved' }>['reason']
+      detail?: string
+    }
+
+function projectCanaryAttributions(
+  input: ProjectCanaryOutcomesInput,
+): ProjectedCanaryAttribution[] {
+  const resolutionByCandidate = new Map<RecordId, CandidateAnchorResolution>()
+  const resolveAnchors = (id: RecordId): CandidateAnchorResolution => {
+    if (!resolutionByCandidate.has(id)) {
+      try {
+        resolutionByCandidate.set(id, input.resolveCandidateAnchors(id))
+      } catch (error) {
+        resolutionByCandidate.set(id, {
+          kind: 'unresolved',
+          reason: 'lookup-error',
+          detail: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return resolutionByCandidate.get(id)!
+  }
+
+  const projected: ProjectedCanaryAttribution[] = []
+  for (const test of input.handoff.tests) {
+    for (const step of test.steps) {
+      const runOutcome = attributedOutcome(test, step)
+      if (runOutcome === undefined) continue
+      const stepAnchors = exercisedAnchors(step)
+      if (stepAnchors.length === 0) continue
+
+      for (const candidateId of servedCanaryIds(step)) {
+        const resolution = resolveAnchors(candidateId)
+        if (resolution.kind === 'unresolved') {
+          projected.push({
+            kind: 'unresolved',
+            candidateId,
+            testId: test.testId,
+            testIndex: test.testIndex,
+            stepIndex: step.stepIndex,
+            reason: resolution.reason,
+            ...(resolution.detail === undefined ? {} : { detail: resolution.detail }),
+          })
+          continue
+        }
+        const exercisedAnchor = firstMatchingAnchor(resolution.anchors, stepAnchors)
+        if (exercisedAnchor === undefined) continue
+        projected.push({
+          kind: 'outcome',
+          outcome: {
+            candidateId,
+            runOutcome,
+            runId: String(input.handoff.runId),
+            testId: test.testId,
+            testIndex: test.testIndex,
+            buildOrdinal: input.handoff.buildOrdinal,
+            stepIndex: step.stepIndex,
+            briefDigest: step.servedBrief.briefDigest,
+            attribution: [
+              `Candidate ${candidateId}`,
+              `matched ${canonicalJson(exercisedAnchor)}`,
+              `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
+              `with ${runOutcome} verdict`,
+            ].join(' '),
+            exercisedAnchor,
+          } satisfies CanaryOutcome,
+        })
+      }
+    }
+  }
+  return projected
+}
+
+/** Pure Pin-1 projection: identical handoff + canonical snapshot yields identical outcome bytes. */
 export function projectCanaryOutcomes(
   input: ProjectCanaryOutcomesInput,
 ): CanaryOutcome[] {
-  const anchorsByCandidate = new Map<RecordId, Anchor[] | undefined>()
-  const resolveAnchors = (id: RecordId): Anchor[] | undefined => {
-    if (!anchorsByCandidate.has(id)) {
-      try {
-        anchorsByCandidate.set(id, input.resolveCandidateAnchors(id))
-      } catch {
-        anchorsByCandidate.set(id, undefined)
-      }
-    }
-    return anchorsByCandidate.get(id)
-  }
-
-  return input.handoff.tests.flatMap((test) =>
-    test.steps.flatMap((step) => {
-      const runOutcome = attributedOutcome(test, step)
-      if (runOutcome === undefined) return []
-      const stepAnchors = exercisedAnchors(step)
-      if (stepAnchors.length === 0) return []
-
-      return servedCanaryIds(step).flatMap((candidateId) => {
-        const candidateAnchors = resolveAnchors(candidateId)
-        if (candidateAnchors === undefined) return []
-        const exercisedAnchor = firstMatchingAnchor(candidateAnchors, stepAnchors)
-        if (exercisedAnchor === undefined) return []
-        return [{
-          candidateId,
-          runOutcome,
-          runId: String(input.handoff.runId),
-          testId: test.testId,
-          testIndex: test.testIndex,
-          buildOrdinal: input.handoff.buildOrdinal,
-          stepIndex: step.stepIndex,
-          briefDigest: step.servedBrief.briefDigest,
-          attribution: [
-            `Candidate ${candidateId}`,
-            `matched ${canonicalJson(exercisedAnchor)}`,
-            `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
-            `with ${runOutcome} verdict`,
-          ].join(' '),
-          exercisedAnchor,
-        } satisfies CanaryOutcome]
-      })
-    }),
+  return projectCanaryAttributions(input).flatMap((projected) =>
+    projected.kind === 'outcome' ? [projected.outcome] : [],
   )
 }
 
@@ -144,17 +194,40 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
   if (!isAbsolute(opts.knowledgeRoot)) throw new TypeError('knowledgeRoot must be absolute')
   if (!isAbsolute(opts.runDir)) throw new TypeError('runDir must be absolute')
 
-  const reader = openKnowledgeReader({ knowledgeRoot: opts.knowledgeRoot })
-  const outcomes = projectCanaryOutcomes({
+  const projected = projectCanaryAttributions({
     handoff: opts.handoff,
-    resolveCandidateAnchors: (id) => reader.read(id)?.anchors,
+    resolveCandidateAnchors: (id) => readCanonicalBundleAnchors({
+      knowledgeRoot: opts.knowledgeRoot,
+      bundleId: id,
+    }),
   })
-  const report: EmitCanaryOutcomeReport = { emitted: 0, refused: 0, details: [] }
+  const report: EmitCanaryOutcomeReport = {
+    emitted: 0,
+    refused: 0,
+    unresolved: 0,
+    details: [],
+  }
 
-  for (const projected of outcomes) {
+  for (const attribution of projected) {
+    if (attribution.kind === 'unresolved') {
+      report.unresolved += 1
+      report.details.push({
+        candidateId: attribution.candidateId,
+        testId: attribution.testId,
+        testIndex: attribution.testIndex,
+        stepIndex: attribution.stepIndex,
+        outcome: {
+          kind: 'unresolved',
+          reason: attribution.reason,
+          ...(attribution.detail === undefined ? {} : { detail: attribution.detail }),
+        },
+      })
+      continue
+    }
+
     let outcome: EmitCanaryOutcomeResult
     try {
-      opts.emit(projected)
+      opts.emit(attribution.outcome)
       outcome = { kind: 'emitted' }
       report.emitted += 1
     } catch (error) {
@@ -163,10 +236,10 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
       report.refused += 1
     }
     report.details.push({
-      candidateId: projected.candidateId,
-      testId: projected.testId,
-      testIndex: projected.testIndex,
-      stepIndex: projected.stepIndex,
+      candidateId: attribution.outcome.candidateId,
+      testId: attribution.outcome.testId,
+      testIndex: attribution.outcome.testIndex,
+      stepIndex: attribution.outcome.stepIndex,
       outcome,
     })
   }

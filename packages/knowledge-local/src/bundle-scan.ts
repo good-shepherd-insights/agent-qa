@@ -16,6 +16,7 @@ import type {
   Anchor,
   BundleStatus,
   DerivedTrustState,
+  RecordId,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
@@ -45,6 +46,16 @@ export interface ScanBundleByIdOptions {
   knowledgeRoot: string
   bundleId: string
 }
+
+export type CanonicalBundleAnchorLookup =
+  | {
+      kind: 'resolved'
+      bundleId: RecordId
+      product: string
+      anchors: Anchor[]
+    }
+  | { kind: 'unresolved'; reason: 'not-found' }
+  | { kind: 'unresolved'; reason: 'invalid'; detail: string }
 
 export interface EnumeratedBundleDir {
   product: string
@@ -201,4 +212,50 @@ export function scanBundleById(opts: ScanBundleByIdOptions): KnowledgeHit | unde
     if (hit !== undefined) return hit
   }
   return undefined
+}
+
+/**
+ * Trusted, read-only lookup for post-verdict attribution. Unlike scanBundleById this deliberately
+ * ignores serving lifecycle state: a handoff may outlive a candidate's promotion, supersession, or
+ * deprecation. Canonical bytes still have to parse and pass the complete integrity oracle.
+ */
+export function readCanonicalBundleAnchors(input: {
+  knowledgeRoot: string
+  bundleId: RecordId
+}): CanonicalBundleAnchorLookup {
+  const found = enumerateBundleDirs(input.knowledgeRoot)
+    .find(({ dir }) => basename(dir) === input.bundleId)
+  if (found === undefined) return { kind: 'unresolved', reason: 'not-found' }
+
+  const loaded = loadBundle(found.dir)
+  if (loaded.kind !== 'loaded') {
+    return {
+      kind: 'unresolved',
+      reason: 'invalid',
+      detail: `canonical bundle could not be loaded (${loaded.kind})`,
+    }
+  }
+  if (loaded.bundle.manifest.id !== input.bundleId) {
+    return {
+      kind: 'unresolved',
+      reason: 'invalid',
+      detail: 'canonical bundle id does not match its directory identity',
+    }
+  }
+
+  const integrity = verifyBundleIntegrity(found.dir)
+  if (!integrity.ok) {
+    return {
+      kind: 'unresolved',
+      reason: 'invalid',
+      detail: integrity.violations.join('; '),
+    }
+  }
+
+  return {
+    kind: 'resolved',
+    bundleId: input.bundleId,
+    product: found.product,
+    anchors: loaded.bundle.frontmatter.anchors.map(({ normalized }) => normalized),
+  }
 }
