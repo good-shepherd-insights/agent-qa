@@ -11,6 +11,22 @@ export interface ParseResult {
   errors: ParseError[]
 }
 
+/**
+ * One parsed test paired with the exact source that produced it. ABRF-02 stable identity is
+ * `filePath + test.name`; the legacy flattened parse result cannot retain that association and
+ * caused multi-file direct runs to stamp every member with the first discovered file (CR-02).
+ */
+export interface ParsedTestBinding {
+  test: TestDefinition
+  filePath: string
+  fileContent: string
+}
+
+export interface ParseAllTestBindingsResult {
+  bindings: ParsedTestBinding[]
+  errors: ParseError[]
+}
+
 export function parseTestFile(
   content: string,
   filePath: string,
@@ -92,18 +108,27 @@ function checkBareVariables(test: TestDefinition, filePath: string): ParseError[
   return errors
 }
 
-export async function parseAllTests(
+export async function parseAllTestBindings(
   filePaths: string[],
-): Promise<ParseResult> {
-  const allTests: TestDefinition[] = []
+): Promise<ParseAllTestBindingsResult> {
+  const bindings: ParsedTestBinding[] = []
   const allErrors: ParseError[] = []
 
   for (const filePath of filePaths) {
     const content = await readFile(filePath, 'utf-8')
     const result = parseTestFile(content, filePath)
-    allTests.push(...result.tests)
+    bindings.push(
+      ...result.tests.map((test) => ({ test, filePath, fileContent: content })),
+    )
     allErrors.push(...result.errors)
   }
 
-  return { tests: allTests, errors: allErrors }
+  return { bindings, errors: allErrors }
+}
+
+export async function parseAllTests(
+  filePaths: string[],
+): Promise<ParseResult> {
+  const { bindings, errors } = await parseAllTestBindings(filePaths)
+  return { tests: bindings.map(({ test }) => test), errors }
 }

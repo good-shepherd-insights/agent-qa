@@ -1,6 +1,8 @@
 export * from './types/index.js'
 export * from './schema/index.js'
 export * from './parser/index.js'
+export { parseAllTestBindings } from './parser/yaml-parser.js'
+export type { ParsedTestBinding, ParseAllTestBindingsResult } from './parser/yaml-parser.js'
 export * from './agent/index.js'
 export * from './mobile/index.js'
 export * from './auth-state/index.js'

@@ -199,8 +199,8 @@ describe('parseTestFile', () => {
 
 describe('parseAllTestBindings', () => {
   it('preserves source path and exact file bytes for equal-named tests', async () => {
-    const firstContent = 'name: checkout succeeds\ntarget: storefront\nsteps:\n  - Open checkout\n'
-    const secondContent = 'name: checkout succeeds\ntarget: storefront\nsteps:\n  - Confirm checkout\n'
+    const firstContent = 'test-id: t_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle\nname: checkout succeeds\ntarget: storefront\nsteps:\n  - Open checkout\n'
+    const secondContent = 'test-id: t_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle\nname: checkout succeeds\ntarget: storefront\nsteps:\n  - Confirm checkout\n'
     const firstPath = writeTemporaryTestFile('first.yaml', firstContent)
     const secondPath = writeTemporaryTestFile('second.yaml', secondContent)
 
@@ -219,7 +219,7 @@ describe('parseAllTestBindings', () => {
   })
 
   it('keeps valid bindings when a later file has parse errors', async () => {
-    const validContent = 'name: login works\ntarget: storefront\nsteps:\n  - Log in\n'
+    const validContent = 'test-id: t_brick-cinder-dawn-echo-forest-grove-harvest-isle-jade-kite\nname: login works\ntarget: storefront\nsteps:\n  - Log in\n'
     const validPath = writeTemporaryTestFile('valid.yaml', validContent)
     const invalidPath = writeTemporaryTestFile(
       'invalid.yaml',
@@ -237,11 +237,11 @@ describe('parseAllTestBindings', () => {
   it('keeps parseAllTests byte-compatible with the flattened binding result', async () => {
     const firstPath = writeTemporaryTestFile(
       'first.yaml',
-      'name: first test\ntarget: storefront\nsteps:\n  - First step\n',
+      'test-id: t_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle\nname: first test\ntarget: storefront\nsteps:\n  - First step\n',
     )
     const secondPath = writeTemporaryTestFile(
       'second.yaml',
-      'name: second test\ntarget: storefront\nsteps:\n  - Second step\n',
+      'test-id: t_brick-cinder-dawn-echo-forest-grove-harvest-isle-jade-kite\nname: second test\ntarget: storefront\nsteps:\n  - Second step\n',
     )
 
     const bindingsResult = await parseAllTestBindings([firstPath, secondPath])
