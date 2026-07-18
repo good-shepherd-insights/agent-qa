@@ -25,6 +25,7 @@ import { buildVolatileTier } from '../prompts.js'
 import type { RecordLedger } from '../record-ledger.js'
 import type { LoopPorts, WorkingMemoryPort } from '../ports.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
+import { SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeActionPlan, makeAdapter, makeStepContext, makeVerifier } from './loop-harness.js'
 
@@ -127,8 +128,8 @@ function makeReader(input: {
       record('getCautions', [anchors, budget])
       return { cautions: [], budgetUsed: 0, admissions: [] }
     },
-    getProcedure(intent, screenState, bindingNames) {
-      record('getProcedure', [intent, screenState, bindingNames])
+    getProcedure(intent, screenState, availability) {
+      record('getProcedure', [intent, screenState, availability])
       return input.match
     },
     emitCanaryOutcome(payload) {
@@ -249,6 +250,33 @@ function context(overrides: Partial<StepContext> = {}): StepContext {
   })
 }
 
+function singleActionPayload(input: {
+  parameters?: ProcedureBodyPayload['parameters']
+  type: string
+  target?: { role: string; nameNormalized: string }
+  values: ProcedureBodyPayload['steps'][number]['action']['values']
+  instruction?: string
+}): ProcedureBodyPayload {
+  const target = input.target ?? { role: 'button', nameNormalized: 'log in' }
+  return {
+    schemaVersion: 1,
+    parameters: input.parameters ?? [],
+    steps: [{
+      instruction: input.instruction ?? `Replay ${input.type}`,
+      action: {
+        type: input.type,
+        targets: { ref: target },
+        values: input.values,
+      },
+      guard: {
+        target,
+        pageAnchor: { t: 'page', route: 'https://example.test/login' },
+      },
+    }],
+    successAssertion: 'The stored action completed',
+  }
+}
+
 function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'planner'>): LoopPorts {
   return { ...overrides }
 }
@@ -299,6 +327,27 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(0)
     expect(executed[0]).toMatchObject({ type: 'fill', submit: true })
+  })
+
+  it('preserves literal numeric value slots as numbers through replay', async () => {
+    const payload = singleActionPayload({
+      type: 'doubleClick',
+      values: { clickDelay: 4 },
+    })
+    const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+
+    const result = await executeStep(
+      'Double-click Log in with the stored delay',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(0)
+    expect(executed[0]).toMatchObject({ type: 'doubleClick', clickDelay: 4 })
+    expect(typeof (executed[0] as Record<string, unknown>).clickDelay).toBe('number')
   })
 
   it('keeps a navigating final replay guard on the pre-action page', async () => {
@@ -542,13 +591,239 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
     // Binding NAMES crossed the reader port; bound VALUES never did — in any argument of
     // any reader call.
-    const getProcedureArgs = spy.calls.find((call) => call.method === 'getProcedure')!.args
-    expect(getProcedureArgs).toContain('userEmail')
-    expect(getProcedureArgs).toContain('otpCode')
+    const getProcedureArgs = JSON.parse(
+      spy.calls.find((call) => call.method === 'getProcedure')!.args,
+    ) as [unknown, unknown, unknown]
+    expect(getProcedureArgs[2]).toEqual({
+      variables: ['userEmail'],
+      memory: ['otpCode'],
+      secrets: [],
+    })
     for (const call of spy.calls) {
       expect(call.args).not.toContain('user@example.com')
       expect(call.args).not.toContain('123456')
     }
+  })
+
+  it('reports a missing loop-side value as parameter-unbound, then plans with the demoted hint', async () => {
+    const payload = singleActionPayload({
+      parameters: [{ name: 'missingEmail', type: 'string', required: true }],
+      type: 'fill',
+      target: { role: 'textbox', nameNormalized: 'email' },
+      values: { text: { param: 'missingEmail' } },
+      instruction: 'Fill the missing email',
+    })
+    const spy = makeReader({
+      match: makeMatch({
+        parameterSchema: [{ name: 'missingEmail', type: 'string', required: true }],
+      }),
+      payload,
+    })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Continue after the unavailable email',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    expect(`${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`)
+      .toContain('has no loop-side binding source')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        miss: { procedureStepIndex: 0, reason: 'parameter-unbound' },
+      },
+    })
+  })
+
+  it('coerces a finite number parameter and rejects a non-number as parameter-unbound', async () => {
+    const payload = singleActionPayload({
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      type: 'doubleClick',
+      values: { clickDelay: { param: 'delay' } },
+    })
+    const match = makeMatch({
+      parameterSchema: [{ name: 'delay', type: 'number', required: true }],
+    })
+
+    const validSpy = makeReader({ match, payload })
+    const validAdapter = capturingAdapter([makeScreenState()])
+    const validPlanner = capturingPlanner([makeActionPlan()])
+    const valid = await executeStep(
+      'Double-click with a numeric delay',
+      ports({
+        adapter: validAdapter.adapter,
+        planner: validPlanner.planner,
+        knowledgeReader: validSpy.reader,
+      }),
+      context({ variables: { delay: '5' } }),
+    )
+
+    expect(valid.status).toBe('passed')
+    expect(validPlanner.calls).toHaveLength(0)
+    expect(validAdapter.executed[0]).toMatchObject({ type: 'doubleClick', clickDelay: 5 })
+    expect(typeof (validAdapter.executed[0] as Record<string, unknown>).clickDelay).toBe('number')
+
+    const invalidSpy = makeReader({ match, payload })
+    const invalidAdapter = capturingAdapter([makeScreenState()])
+    const invalidPlanner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+    const invalid = await executeStep(
+      'Fall back when the delay is not numeric',
+      ports({
+        adapter: invalidAdapter.adapter,
+        planner: invalidPlanner.planner,
+        knowledgeReader: invalidSpy.reader,
+      }),
+      context({ variables: { delay: 'not-a-number' } }),
+    )
+
+    expect(invalid.status).toBe('passed')
+    expect(invalidPlanner.calls).toHaveLength(1)
+    expect(invalidAdapter.executed.map((action) => action.type)).toEqual(['click'])
+    expect(invalid.evidence?.planSource).toMatchObject({
+      guard: { miss: { reason: 'parameter-unbound' } },
+    })
+  })
+
+  it('maps strict boolean strings to booleans and rejects non-strict spellings', async () => {
+    const payload = singleActionPayload({
+      parameters: [{ name: 'submitNow', type: 'boolean', required: true }],
+      type: 'fill',
+      target: { role: 'textbox', nameNormalized: 'email' },
+      values: { text: 'user@example.com', submit: { param: 'submitNow' } },
+    })
+    const match = makeMatch({
+      parameterSchema: [{ name: 'submitNow', type: 'boolean', required: true }],
+    })
+
+    const validSpy = makeReader({ match, payload })
+    const validAdapter = capturingAdapter([makeScreenState()])
+    const validPlanner = capturingPlanner([makeActionPlan()])
+    await executeStep(
+      'Fill and submit using a strict boolean',
+      ports({
+        adapter: validAdapter.adapter,
+        planner: validPlanner.planner,
+        knowledgeReader: validSpy.reader,
+      }),
+      context({ variables: { submitNow: 'true' } }),
+    )
+
+    expect(validPlanner.calls).toHaveLength(0)
+    expect(validAdapter.executed[0]).toMatchObject({ type: 'fill', submit: true })
+    expect(typeof (validAdapter.executed[0] as Record<string, unknown>).submit).toBe('boolean')
+
+    const invalidSpy = makeReader({ match, payload })
+    const invalidAdapter = capturingAdapter([makeScreenState()])
+    const invalidPlanner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+    const invalid = await executeStep(
+      'Reject a non-strict boolean spelling',
+      ports({
+        adapter: invalidAdapter.adapter,
+        planner: invalidPlanner.planner,
+        knowledgeReader: invalidSpy.reader,
+      }),
+      context({ variables: { submitNow: 'TRUE' } }),
+    )
+
+    expect(invalidPlanner.calls).toHaveLength(1)
+    expect(invalidAdapter.executed.map((action) => action.type)).toEqual(['click'])
+    expect(invalid.evidence?.planSource).toMatchObject({
+      guard: { miss: { reason: 'parameter-unbound' } },
+    })
+  })
+
+  it('binds a secret parameter only from the secret store, never from variables', async () => {
+    const payload = singleActionPayload({
+      parameters: [{ name: 'loginSecret', type: 'secret', required: true }],
+      type: 'fill',
+      target: { role: 'textbox', nameNormalized: 'email' },
+      values: { text: { param: 'loginSecret' } },
+    })
+    const match = makeMatch({
+      parameterSchema: [{ name: 'loginSecret', type: 'secret', required: true }],
+    })
+    const variableOnlySpy = makeReader({ match, payload })
+    const variableOnlyAdapter = capturingAdapter([makeScreenState()])
+    const variableOnlyPlanner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+    const variableOnly = await executeStep(
+      'Do not use a variable as a secret',
+      ports({
+        adapter: variableOnlyAdapter.adapter,
+        planner: variableOnlyPlanner.planner,
+        knowledgeReader: variableOnlySpy.reader,
+      }),
+      context({ variables: { loginSecret: 'variable-value' } }),
+    )
+
+    expect(variableOnlyPlanner.calls).toHaveLength(1)
+    expect(variableOnlyAdapter.executed.map((action) => action.type)).toEqual(['click'])
+    expect(variableOnly.evidence?.planSource).toMatchObject({
+      guard: { miss: { reason: 'parameter-unbound' } },
+    })
+
+    const storeSpy = makeReader({ match, payload })
+    const storeAdapter = capturingAdapter([makeScreenState()])
+    const storePlanner = capturingPlanner([makeActionPlan()])
+    const storeBacked = await executeStep(
+      'Use the provisioned secret',
+      ports({
+        adapter: storeAdapter.adapter,
+        planner: storePlanner.planner,
+        knowledgeReader: storeSpy.reader,
+        secretStore: new SecretStore({ loginSecret: 'store-value' }),
+      }),
+      context({ variables: { loginSecret: 'variable-value' } }),
+    )
+
+    expect(storeBacked.status).toBe('passed')
+    expect(storePlanner.calls).toHaveLength(0)
+    expect(storeAdapter.executed[0]).toMatchObject({ type: 'fill', text: 'store-value' })
+  })
+
+  it('rejects a schema-invalid rebuilt action before it reaches the adapter', async () => {
+    const payload = singleActionPayload({
+      type: 'fill',
+      target: { role: 'textbox', nameNormalized: 'email' },
+      values: { submit: true },
+      instruction: 'Invalid fill missing its required text',
+    })
+    const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Fall back from an invalid stored fill',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    expect(result.evidence?.planSource).toMatchObject({
+      guard: { miss: { reason: 'non-replayable-action' } },
+    })
+    expect(`${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`)
+      .toContain('failed canonical action-schema validation')
   })
 })
 
