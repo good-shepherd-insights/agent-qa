@@ -1,0 +1,47 @@
+// D-13/D-16/ABRF-01 authoring-brief assembly-output contracts. Mirrors the BriefBlock /
+// CautionBlock idiom: an assembled, budgeted block carrying its exact admission material.
+
+import type { BriefLine, CautionLine } from '../brief/served-brief'
+import type { Anchor } from '../identity/anchor'
+import type { ProcedureMatch } from './reader-types'
+import type { ServingRecordMetadata } from './serving-admission'
+
+/**
+ * One exemplar test reference (D-16): refs + outcome metadata + a short budget-aware excerpt
+ * (title + step outline) — NEVER full inline test text. The consumer reads the file on demand;
+ * tests are its repo's files.
+ */
+export interface ExemplarTest {
+  filePath: string
+  testName: string
+  matchedAnchors: Anchor[]
+  passRate?: number
+  recentOutcomes?: { buildOrdinal: number; passed: boolean }[]
+  /** True when outcome metadata could not be confirmed against completed-run handoffs. */
+  unverifiedOutcomes: boolean
+  excerpt: string
+}
+
+/**
+ * D-13 typed-empty placeholder until M4's propose-improvements job mints real coverage data.
+ * The field EXISTS with an empty value on every AuthoringBrief — never an absent optional the
+ * M4 consumer would have to feature-detect.
+ */
+export type CoverageMap = Record<string, never>
+
+/**
+ * The assembled authoring brief (ABRF-01). Locked tight-budget precedence when the budget
+ * cannot fit everything: caution > procedure > exemplar > fact — the 381-08 assembly and every
+ * future consumer read the ordering from THIS contract, not a call site.
+ */
+export interface AuthoringBrief {
+  exemplars: ExemplarTest[]
+  procedures: ProcedureMatch[]
+  facts: BriefLine[]
+  cautions: CautionLine[]
+  /** NON-optional (D-13): typed-empty until M4 populates it. */
+  coverage: CoverageMap
+  truncation: string
+  /** Exact admission material for every served record, the ServingRecordMetadata way. */
+  admissions: ServingRecordMetadata[]
+}

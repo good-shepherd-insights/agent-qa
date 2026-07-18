@@ -272,6 +272,8 @@ export { computeEvidenceToken } from './ids/index'
 
 // 338 reader DTOs (PORT-03)
 export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch } from './reader/index'
+// 381 authoring-brief contracts (D-13/D-16/ABRF-01)
+export type { AuthoringBrief, CoverageMap, ExemplarTest } from './reader/index'
 export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
 export {
   createServingAdmissionState,
