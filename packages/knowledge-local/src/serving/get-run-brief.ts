@@ -1,12 +1,13 @@
-import type {
-  BriefBlock,
-  BriefLine,
-  IndexEntry,
-  ScopeKey,
+import {
+  servingRecordMetadata,
+  type BriefBlock,
+  type BriefLine,
+  type IndexEntry,
+  type ScopeKey,
 } from '@vostride/agent-qa-schema'
 
 import { selectServingRecords } from './brief-selection.js'
-import { renderBriefLine } from './brief-render.js'
+import { estimateRenderedServingCost, renderBriefLine } from './brief-render.js'
 import type { readPolicyLadder } from './policy-ladder.js'
 
 type OriginStampedEntry = IndexEntry & {
@@ -36,15 +37,18 @@ function compareRecordId(left: IndexEntry, right: IndexEntry): number {
   return leftId < rightId ? -1 : leftId > rightId ? 1 : 0
 }
 
-function renderSovereignLine(entry: IndexEntry): BriefLine {
+function renderSovereignLine(entry: IndexEntry): { briefLine: BriefLine; cost: number } {
   return {
-    id: entry.id,
-    kind: entry.kind,
-    summary: entry.summary,
-    trust: entry.trust,
-    status: entry.status,
-    servedAsCanary: entry.servedAsCanary,
-    tier: 'L0',
+    cost: estimateRenderedServingCost(entry.summary),
+    briefLine: {
+      id: entry.id,
+      kind: entry.kind,
+      summary: entry.summary,
+      trust: entry.trust,
+      status: entry.status,
+      servedAsCanary: entry.servedAsCanary,
+      tier: 'L0',
+    },
   }
 }
 
@@ -105,7 +109,10 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
   const rendered = selected.map(renderBriefLine)
   const cautions = rendered.filter(({ briefLine }) => briefLine.tier === 'L1')
   const learned = rendered.filter(({ briefLine }) => briefLine.tier === 'L2')
-  const sovereignLines = userFacts.map(renderSovereignLine)
+  const sovereignLines = userFacts.map((record) => ({
+    record,
+    rendered: renderSovereignLine(record),
+  }))
 
   return {
     tiers: {
@@ -114,7 +121,7 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
       L2: learned.map(({ line }) => line).join('\n'),
     },
     lines: [
-      ...sovereignLines,
+      ...sovereignLines.map(({ rendered: { briefLine } }) => briefLine),
       ...rendered.map(({ briefLine }) => briefLine),
     ],
     truncation: truncationSignal(
@@ -122,5 +129,17 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
       eligible.length,
       policyWarnings(input.policy),
     ),
+    admissions: [
+      ...sovereignLines.map(({ record, rendered }) => servingRecordMetadata({
+        id: record.id,
+        anchors: record.anchors,
+        renderedCost: rendered.cost,
+      })),
+      ...selected.map((record, index) => servingRecordMetadata({
+        id: record.id,
+        anchors: record.anchors,
+        renderedCost: rendered[index]!.cost,
+      })),
+    ],
   }
 }

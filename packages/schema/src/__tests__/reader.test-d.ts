@@ -13,6 +13,7 @@ import type {
   ReadOptions,
   RecordBody,
   SearchOptions,
+  ServingRecordMetadata,
 } from '../reader/index'
 
 expectTypeOf<IndexEntry>().toEqualTypeOf<{
@@ -71,6 +72,7 @@ expectTypeOf<BriefBlock>().toEqualTypeOf<{
   tiers: { L0: string; L1: string; L2: string }
   lines: BriefLine[]
   truncation: string
+  admissions: ServingRecordMetadata[]
 }>()
 
 expectTypeOf<BriefBlock['lines']>().toEqualTypeOf<BriefLine[]>()
@@ -78,6 +80,7 @@ expectTypeOf<BriefBlock['lines']>().toEqualTypeOf<BriefLine[]>()
 expectTypeOf<CautionBlock>().toEqualTypeOf<{
   cautions: CautionLine[]
   budgetUsed: number
+  admissions: ServingRecordMetadata[]
 }>()
 
 expectTypeOf<CautionBlock['cautions']>().toEqualTypeOf<CautionLine[]>()

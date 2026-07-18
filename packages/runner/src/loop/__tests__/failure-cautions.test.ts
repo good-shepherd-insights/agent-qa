@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   asRecordId,
   computeBriefDigest,
+  servingRecordMetadata,
   type Anchor,
   type BriefBlock,
   type CautionBlock,
@@ -27,10 +28,12 @@ const EMPTY_BRIEF: BriefBlock = {
   tiers: { L0: '', L1: '', L2: '' },
   lines: [],
   truncation: '',
+  admissions: [],
 }
 
 const DEFAULT_BUDGETS = {
   brief: 64,
+  searchResults: 64,
   caution: 24,
   readBody: 64,
   recordCap: 8,
@@ -44,11 +47,27 @@ function caution(id: string, summary: string): CautionLine {
   }
 }
 
+function cautionBlock(cautions: CautionLine[], budgetUsed = cautions.length): CautionBlock {
+  return {
+    cautions,
+    budgetUsed,
+    admissions: cautions.flatMap((line) => (
+      line.id === asRecordId('caution:truncated')
+        ? []
+        : [servingRecordMetadata({
+            id: line.id,
+            anchors: line.anchors,
+            renderedCost: 1,
+          })]
+    )),
+  }
+}
+
 function reader(options: {
   block?: BriefBlock
   cautions?: CautionBlock
 } = {}): KnowledgeHintReader & { getCautions: ReturnType<typeof vi.fn> } {
-  const getCautions = vi.fn(() => options.cautions ?? { cautions: [], budgetUsed: 0 })
+  const getCautions = vi.fn(() => options.cautions ?? cautionBlock([], 0))
   return {
     getRunBrief: () => options.block ?? EMPTY_BRIEF,
     search: () => [],
@@ -272,7 +291,9 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
   it('injects cautions into only the immediately-following replan volatile context', async () => {
     const prompts: string[] = []
     const knowledgeReader = reader({
-      cautions: { cautions: [caution('caution-login', 'The login button may require one fresh observation.')], budgetUsed: 8 },
+      cautions: cautionBlock([
+        caution('caution-login', 'The login button may require one fresh observation.'),
+      ], 8),
     })
     const planner = scriptedPlanner([
       makeActionPlan({ action: { type: 'click', ref: 'e2' } }),
@@ -325,7 +346,7 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
       return prompts[1]!
     }
 
-    const empty = await captureReplan({ cautions: [], budgetUsed: 0 })
+    const empty = await captureReplan(cautionBlock([], 0))
     const baseline = await captureReplan(undefined)
     expect(empty).toBe(baseline)
     expect(empty).not.toMatch(/failure-adjacent caution/i)
@@ -345,19 +366,21 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
         tier: 'L1',
       }],
       truncation: '',
+      admissions: [servingRecordMetadata({
+        id: existingId,
+        anchors: [{ t: 'page', route: '/login' }],
+        renderedCost: 1,
+      })],
     }
-    const ledger = createRecordLedger({ cap: 2, seedIds: [] })
+    const ledger = createRecordLedger({ cap: 2, budget: 152, seedRecords: [] })
     const prompts: string[] = []
     const knowledgeReader = reader({
       block,
-      cautions: {
-        cautions: [
+      cautions: cautionBlock([
           { ...caution('caution-existing', 'Repeat the already-counted caution.'), id: existingId },
           caution('caution-new', 'Admit one new caution.'),
           caution('caution-overflow', 'This caution must be refused.'),
-        ],
-        budgetUsed: 24,
-      },
+      ], 24),
     })
 
     await executeStep(
@@ -386,23 +409,25 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
   })
 
   it('renders the reserved caution:truncated line without ledger admission', async () => {
-    const base = createRecordLedger({ cap: 1, seedIds: [] })
+    const base = createRecordLedger({ cap: 1, budget: 152, seedRecords: [] })
     const admitted: RecordId[] = []
     const ledger: RecordLedger = {
-      admit(id) {
-        admitted.push(id)
-        return base.admit(id)
+      inspect: (record) => base.inspect(record),
+      admit(record) {
+        admitted.push(record.id)
+        return base.admit(record)
       },
-      resetTurn: (ids) => base.resetTurn(ids),
+      resetTurn: (records) => base.resetTurn(records),
       size: () => base.size(),
+      spent: () => base.spent(),
     }
     const prompts: string[] = []
     const overflow = caution('caution:truncated', 'Reader truncated 4 of 7 matching cautions.')
     const knowledgeReader = reader({
-      cautions: {
-        cautions: [caution('caution-normal', 'A normal caution still fits.'), overflow],
-        budgetUsed: 24,
-      },
+      cautions: cautionBlock([
+        caution('caution-normal', 'A normal caution still fits.'),
+        overflow,
+      ], 24),
     })
 
     await executeStep(
@@ -432,7 +457,7 @@ describe('executeStep Channel 3 failure cautions (BRIF-02, D-13/D-14)', () => {
   it('records injected cautions in channel3 with a recomputed digest and leaves ordinary steps empty', async () => {
     const injected = caution('caution-evidence', 'Capture this failure-adjacent observation.')
     const knowledgeReader = reader({
-      cautions: { cautions: [injected], budgetUsed: 8 },
+      cautions: cautionBlock([injected], 8),
     })
     const replanned = await executeStep(
       'Click Log in',

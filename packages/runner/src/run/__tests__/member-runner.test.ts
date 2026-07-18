@@ -381,7 +381,13 @@ describe('runMemberTest — per-test responsibilities', () => {
 
   it('threads the live knowledge reader, budgets, ordinal, ledger, and turn reset into LoopPorts', async () => {
     const reader = { getRunBrief: vi.fn() } as never
-    const budgets = { brief: 512, caution: 96, readBody: 1_024, recordCap: 12 }
+    const budgets = {
+      brief: 512,
+      searchResults: 512,
+      caution: 96,
+      readBody: 1_024,
+      recordCap: 12,
+    }
     const ledger = {
       admit: vi.fn(),
       resetTurn: vi.fn(),

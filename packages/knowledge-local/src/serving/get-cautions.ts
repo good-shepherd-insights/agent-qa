@@ -1,16 +1,15 @@
 import {
   canonicalJson,
+  createServingAdmissionState,
   normalizeAnchor,
+  servingRecordMetadata,
+  tryAdmitServingRecord,
   type Anchor,
   type CautionBlock,
   type IndexEntry,
 } from '@vostride/agent-qa-schema'
 
-import {
-  compareServingTrustThenId,
-  createServingAdmissionState,
-  tryAdmitServingRecord,
-} from './brief-selection.js'
+import { compareServingTrustThenId } from './brief-selection.js'
 import { renderCautionLine } from './brief-render.js'
 
 export interface CautionSelectionOverflow {
@@ -112,23 +111,29 @@ export function selectCautions(input: SelectCautionsInput): CautionSelectionResu
   const recordCap = input.recordCap ?? ranked.length
   const admission = createServingAdmissionState()
   const cautions: CautionBlock['cautions'] = []
+  const admissions: CautionBlock['admissions'] = []
 
   for (const candidate of ranked) {
+    const metadata = servingRecordMetadata({
+      id: candidate.record.id,
+      anchors: candidate.record.anchors,
+      renderedCost: candidate.cost,
+    })
     if (!tryAdmitServingRecord({
-      record: candidate.record,
-      cost: candidate.cost,
-      channelBudget: input.budget,
+      record: metadata,
+      budget: input.budget,
       recordCap,
-    }, admission)) continue
+    }, admission).admitted) continue
 
     cautions.push({
       id: candidate.record.id,
       anchors: candidate.record.anchors,
       summary: candidate.summary,
     })
+    admissions.push(metadata)
   }
 
-  const block: CautionBlock = { cautions, budgetUsed: admission.usedBudget }
+  const block: CautionBlock = { cautions, budgetUsed: admission.usedBudget, admissions }
   return cautions.length < ranked.length
     ? { block, overflow: { served: cautions.length, eligible: ranked.length } }
     : { block }

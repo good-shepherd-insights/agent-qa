@@ -1,10 +1,14 @@
 import {
   applyColdStartSubCap,
+  createServingAdmissionState,
   isVettedCandidate,
   normalizeAnchor,
+  servingRecordMetadata,
+  tryAdmitServingRecord,
   type Anchor,
   type IndexEntry,
   type ScopeKey,
+  type ServingRecordMetadata,
   type VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 
@@ -24,7 +28,6 @@ import {
   resolveAsOfBuild,
   type ValidityCandidate,
 } from '../retrieval/validity.js'
-import { clusterKey } from './cluster-key.js'
 import { renderBriefLine } from './brief-render.js'
 
 export interface ServingTierFilter extends PreFilterOptions {}
@@ -258,61 +261,6 @@ function compareScored(
   )
 }
 
-export interface ServingAdmissionState {
-  readonly selectedIds: Set<string>
-  readonly sourceCosts: Map<string, number>
-  readonly clusterCosts: Map<string, number>
-  selectedCount: number
-  usedBudget: number
-}
-
-export function createServingAdmissionState(): ServingAdmissionState {
-  return {
-    selectedIds: new Set<string>(),
-    sourceCosts: new Map<string, number>(),
-    clusterCosts: new Map<string, number>(),
-    selectedCount: 0,
-    usedBudget: 0,
-  }
-}
-
-export interface ServingAdmissionInput {
-  readonly record: IndexEntry
-  readonly cost: number
-  readonly channelBudget: number
-  readonly recordCap: number
-}
-
-/**
- * Shared D-18 greedy admission wall. Channel-specific selectors own ranking, while this helper
- * keeps budget, distinct-record, source-bundle, and normalized-anchor-cluster accounting exact.
- */
-export function tryAdmitServingRecord(
-  input: ServingAdmissionInput,
-  state: ServingAdmissionState,
-): boolean {
-  const channelBudget = normalizeLimit(input.channelBudget)
-  const recordCap = normalizeLimit(input.recordCap)
-  const cost = normalizeLimit(input.cost)
-  if (recordCap === 0 || cost === 0 || state.selectedCount >= recordCap) return false
-
-  const sourceId = String(input.record.id)
-  if (state.selectedIds.has(sourceId) || state.usedBudget + cost > channelBudget) return false
-
-  const cluster = clusterKey(input.record.anchors)
-  const nextSourceCost = (state.sourceCosts.get(sourceId) ?? 0) + cost
-  const nextClusterCost = (state.clusterCosts.get(cluster) ?? 0) + cost
-  // D-18's ≤50% boundary is integer-only: equality is admitted; strictly above is skipped.
-  if (2 * nextSourceCost > channelBudget || 2 * nextClusterCost > channelBudget) return false
-
-  state.selectedIds.add(sourceId)
-  state.sourceCosts.set(sourceId, nextSourceCost)
-  state.clusterCosts.set(cluster, nextClusterCost)
-  state.selectedCount += 1
-  state.usedBudget += cost
-  return true
-}
-
 function scoreCandidates(
   candidates: readonly CostedServingCandidate[],
   scope: ScopeKey,
@@ -379,12 +327,16 @@ export function selectServingRecords(input: SelectServingRecordsInput): IndexEnt
   for (const { candidate } of stageCandidates(input, channelBudget)) {
     if (admission.selectedCount >= recordCap) break
     const record = reflectedRecord(candidate)
+    const metadata: ServingRecordMetadata = servingRecordMetadata({
+      id: record.id,
+      anchors: record.anchors,
+      renderedCost: candidate.tokenEstimate,
+    })
     if (!tryAdmitServingRecord({
-      record,
-      cost: candidate.tokenEstimate,
-      channelBudget,
+      record: metadata,
+      budget: channelBudget,
       recordCap,
-    }, admission)) continue
+    }, admission).admitted) continue
 
     selected.push(record)
   }

@@ -211,16 +211,22 @@ export function openRunKnowledgeComposition(
     },
     budgets: { recordCap: budgets.recordCap },
   }))
-  const recordLedger = createRecordLedger({ cap: budgets.recordCap, seedIds: [] })
+  const channel2Enabled = memoryToolGate(input.capabilities)
+  const recordLedger = createRecordLedger({
+    cap: budgets.recordCap,
+    budget: budgets.brief + budgets.caution + (channel2Enabled ? budgets.searchResults : 0),
+    seedRecords: [],
+  })
 
   // D-09/T-380-29: the planner's action slice remains whole under the always-send-all law. The
   // optional non-action slice is composed only for capable models, so non-registration itself is
   // the gate and no model-visible flag can elevate a weak profile into Channel 2.
-  const memory = memoryToolGate(input.capabilities)
+  const memory = channel2Enabled
     ? createMemoryTools({
         reader,
         scope: input.scope,
         asOfBuild: input.asOfBuild,
+        searchResultBudget: budgets.searchResults,
         readBodyBudget: budgets.readBody,
         recordLedger,
         estimateTokens: (text) => input.accounting.estimate([

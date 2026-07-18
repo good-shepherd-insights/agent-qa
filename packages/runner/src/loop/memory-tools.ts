@@ -1,6 +1,12 @@
 import { tool } from 'ai'
 import { z } from 'zod'
-import { asRecordId } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  createServingAdmissionState,
+  inspectServingRecord,
+  servingRecordMetadata,
+  tryAdmitServingRecord,
+} from '@vostride/agent-qa-schema'
 import type {
   IndexEntry,
   ReadOptions,
@@ -9,6 +15,7 @@ import type {
   RecordId,
   ScopeKey,
   SearchOptions,
+  ServingAdmissionRejectionReason,
 } from '@vostride/agent-qa-schema'
 import type { KnowledgeHintReader } from '../knowledge-hint-reader.js'
 import type { NonActionToolMap } from './planning-turn.js'
@@ -62,11 +69,20 @@ type MemorySearchResult =
       kind: 'search-results'
       entries: IndexEntry[]
       note?: {
-        kind: 'volume-cap-reached'
+        kind: 'search-admission-limited'
         droppedCount: number
+        omissions: Array<{
+          id: RecordId
+          authority: 'search-results' | 'combined-turn'
+          reason: ServingAdmissionRejectionReason
+        }>
         message: string
       }
     }
+
+type MemorySearchOmission = NonNullable<Extract<MemorySearchResult, {
+  kind: 'search-results'
+}>['note']>['omissions'][number]
 
 type MemoryReadResult =
   | { kind: 'record'; record: RecordBody }
@@ -87,6 +103,7 @@ export function createMemoryTools(deps: {
   reader: KnowledgeHintReader
   scope: ScopeKey
   asOfBuild: number
+  searchResultBudget: number
   readBodyBudget: number
   recordLedger: RecordLedger
   estimateTokens: (text: string) => number
@@ -96,11 +113,13 @@ export function createMemoryTools(deps: {
   beginTurn(scope?: ScopeKey, exposedIds?: readonly RecordId[]): void
   drainReadTraces(): ReadTrace[]
 } {
+  const searchResultBudget = normalizeBudget(deps.searchResultBudget)
   const readBodyBudget = normalizeBudget(deps.readBodyBudget)
   let spentReadBodyTokens = 0
   let activeScope = deps.scope
   let exposedIds = new Set<RecordId>()
   let readTraces: ReadTrace[] = []
+  let searchAdmission = createServingAdmissionState()
 
   const tools: NonActionToolMap = {
     'memory.search': {
@@ -124,25 +143,73 @@ export function createMemoryTools(deps: {
         if (found.length === 0) return { kind: 'empty-result', entries: [] }
 
         const entries: IndexEntry[] = []
-        let droppedCount = 0
+        const omissions: MemorySearchOmission[] = []
         for (const candidate of found) {
-          const admission = deps.recordLedger.admit(candidate.id)
-          if (admission.admitted) {
-            entries.push(candidate)
-            exposedIds.add(candidate.id)
+          const measured = deps.estimateTokens(JSON.stringify(candidate))
+          const metadata = servingRecordMetadata({
+            id: candidate.id,
+            anchors: candidate.anchors,
+            renderedCost: Number.isFinite(measured)
+              ? Math.max(0, Math.ceil(measured))
+              : searchResultBudget,
+          })
+          const searchInput = {
+            record: metadata,
+            budget: searchResultBudget,
+            recordCap: Number.MAX_SAFE_INTEGER,
+            chargeRepeated: true,
+          } as const
+          const searchDecision = inspectServingRecord(searchInput, searchAdmission)
+          if (!searchDecision.admitted) {
+            omissions.push({
+              id: candidate.id,
+              authority: 'search-results',
+              reason: searchDecision.reason,
+            })
+            continue
           }
-          else droppedCount += 1
+
+          const combinedDecision = deps.recordLedger.inspect(metadata)
+          if (!combinedDecision.admitted) {
+            omissions.push({
+              id: candidate.id,
+              authority: 'combined-turn',
+              reason: combinedDecision.reason,
+            })
+            continue
+          }
+
+          // Both previews passed synchronously; commit them together so a refusal from one
+          // authority never consumes headroom in the other.
+          const combinedCommit = deps.recordLedger.admit(metadata)
+          if (!combinedCommit.admitted) {
+            omissions.push({
+              id: candidate.id,
+              authority: 'combined-turn',
+              reason: combinedCommit.reason,
+            })
+            continue
+          }
+          if (!tryAdmitServingRecord(searchInput, searchAdmission).admitted) {
+            throw new Error('search serving admission changed during synchronous commit')
+          }
+          entries.push(candidate)
+          exposedIds.add(candidate.id)
         }
 
-        if (droppedCount === 0) return { kind: 'search-results', entries }
-        const noun = droppedCount === 1 ? 'result' : 'results'
+        if (omissions.length === 0) return { kind: 'search-results', entries }
+        const noun = omissions.length === 1 ? 'result' : 'results'
+        const details = omissions
+          .map(({ id, authority, reason }) => `${id} (${authority}:${reason})`)
+          .join(', ')
         return {
           kind: 'search-results',
           entries,
           note: {
-            kind: 'volume-cap-reached',
-            droppedCount,
-            message: `Volume cap reached; ${droppedCount} ${noun} omitted.`,
+            kind: 'search-admission-limited',
+            droppedCount: omissions.length,
+            omissions,
+            message: `Search admission omitted ${omissions.length} ${noun}: ${details}.`,
           },
         }
       },
@@ -193,11 +260,12 @@ export function createMemoryTools(deps: {
     tools,
     beginTurn(scope?: ScopeKey, authorizedIds: readonly RecordId[] = []) {
       // D-11/D-17 turn order: the loop reseeds recordLedger from the frozen brief first,
-      // then calls beginTurn() to reset this independent cumulative read-body ledger.
+      // then calls beginTurn() to reset the independent search-result and read-body ledgers.
       if (scope !== undefined) activeScope = scope
       exposedIds = new Set(authorizedIds)
       readTraces = []
       spentReadBodyTokens = 0
+      searchAdmission = createServingAdmissionState()
     },
     drainReadTraces() {
       const drained = readTraces

@@ -215,6 +215,7 @@ export interface LoopPorts {
    */
   knowledgeBudgets?: {
     brief: number
+    searchResults: number
     caution: number
     readBody: number
     recordCap: number

@@ -39,6 +39,20 @@ const block: BriefBlock = {
     },
   ],
   truncation: 'truncated 3 of 9',
+  admissions: [
+    {
+      id: asRecordId('caution-overlay'),
+      sourceId: 'caution-overlay',
+      clusterKey: 'cluster:overlay',
+      renderedCost: 8,
+    },
+    {
+      id: asRecordId('fact-order-number'),
+      sourceId: 'fact-order-number',
+      clusterKey: 'cluster:confirmation',
+      renderedCost: 8,
+    },
+  ],
 }
 
 function context(overrides: Partial<StepContext> = {}): StepContext {
@@ -122,7 +136,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
       },
       search() { return [] },
       read() { throw new Error('not used') },
-      getCautions() { return { cautions: [], budgetUsed: 0 } },
+      getCautions() { return { cautions: [], budgetUsed: 0, admissions: [] } },
       getProcedure() { return undefined },
       emitCanaryOutcome() {},
     }
@@ -132,7 +146,13 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         adapter: makeAdapter(),
         planner: makePlanner([makeActionPlan({ stepComplete: true })]),
         knowledgeReader: reader,
-        knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+        knowledgeBudgets: {
+          brief: 256,
+          searchResults: 256,
+          caution: 64,
+          readBody: 128,
+          recordCap: 8,
+        },
         knowledgeAsOfBuild: 42,
       },
       context(),
@@ -181,15 +201,16 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         evidenceDigest: 'body-digest-order-number',
         relations: [],
       }),
-      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
-    const recordLedger = createRecordLedger({ cap: 8, seedIds: [] })
+    const recordLedger = createRecordLedger({ cap: 8, budget: 576, seedRecords: [] })
     const memory = createMemoryTools({
       reader,
       scope,
       asOfBuild: 42,
+      searchResultBudget: 256,
       readBodyBudget: 128,
       recordLedger,
       estimateTokens: () => 12,
@@ -208,7 +229,13 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
       adapter: makeAdapter(),
       planner,
       knowledgeReader: reader,
-      knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+      knowledgeBudgets: {
+        brief: 256,
+        searchResults: 256,
+        caution: 64,
+        readBody: 128,
+        recordCap: 8,
+      },
       knowledgeAsOfBuild: 42,
       recordLedger,
       beginMemoryTurn: memory.beginTurn,
@@ -236,7 +263,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
       getRunBrief: () => block,
       search: () => [],
       read: () => undefined,
-      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
@@ -245,7 +272,13 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
       adapter: makeAdapter(),
       planner: { plan: async () => { throw new Error('planner stopped after read') } },
       knowledgeReader: reader,
-      knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+      knowledgeBudgets: {
+        brief: 256,
+        searchResults: 256,
+        caution: 64,
+        readBody: 128,
+        recordCap: 8,
+      },
       drainMemoryReadTraces: () => {
         if (drained) return []
         drained = true
@@ -262,15 +295,19 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
   it('resets the Channel-2 read ledger after reseeding the shared record ledger', async () => {
     const order: string[] = []
     const recordLedger: RecordLedger = {
+      inspect: () => ({ admitted: true }),
       admit: () => ({ admitted: true }),
-      resetTurn: (ids) => { order.push(`records:${ids.join(',')}`) },
+      resetTurn: (records) => {
+        order.push(`records:${records.map(({ id }) => id).join(',')}`)
+      },
       size: () => 0,
+      spent: () => 0,
     }
     const reader: KnowledgeHintReader = {
       getRunBrief: () => block,
       search: () => [],
       read: () => { throw new Error('not used') },
-      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
@@ -281,7 +318,13 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         adapter: makeAdapter(),
         planner: makePlanner([makeActionPlan({ stepComplete: true })]),
         knowledgeReader: reader,
-        knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+        knowledgeBudgets: {
+          brief: 256,
+          searchResults: 256,
+          caution: 64,
+          readBody: 128,
+          recordCap: 8,
+        },
         recordLedger,
         beginMemoryTurn: (activeScope, exposedIds) => {
           order.push(

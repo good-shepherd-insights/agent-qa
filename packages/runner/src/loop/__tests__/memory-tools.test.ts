@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
-import { asRecordId } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  servingClusterKey,
+  servingRecordMetadata,
+} from '@vostride/agent-qa-schema'
 import type {
   IndexEntry,
   ReadTrace,
   RecordBody,
   ScopeKey,
+  ServingRecordMetadata,
 } from '@vostride/agent-qa-schema'
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import { createRecordLedger } from '../record-ledger.js'
@@ -49,10 +54,11 @@ function stubReader(overrides: Partial<KnowledgeHintReader> = {}): KnowledgeHint
       tiers: { L0: '', L1: '', L2: '' },
       lines: [],
       truncation: '',
+      admissions: [],
     })),
     search: vi.fn(() => []),
     read: vi.fn(id => body(id, 'body')),
-    getCautions: vi.fn(() => ({ cautions: [], budgetUsed: 0 })),
+    getCautions: vi.fn(() => ({ cautions: [], budgetUsed: 0, admissions: [] })),
     getProcedure: vi.fn(() => undefined),
     emitCanaryOutcome: vi.fn(),
     ...overrides,
@@ -63,6 +69,7 @@ function factory(
   reader: KnowledgeHintReader,
   options: {
     readBodyBudget?: number
+    searchResultBudget?: number
     recordLedger?: ReturnType<typeof createRecordLedger>
     estimateTokens?: (text: string) => number
     onReadTrace?: (trace: ReadTrace) => void
@@ -72,9 +79,10 @@ function factory(
     reader,
     scope: SCOPE,
     asOfBuild: 42,
+    searchResultBudget: options.searchResultBudget ?? 10_000,
     readBodyBudget: options.readBodyBudget ?? 100,
     recordLedger:
-      options.recordLedger ?? createRecordLedger({ cap: 10, seedIds: [] }),
+      options.recordLedger ?? createRecordLedger({ cap: 10, budget: 20_000, seedRecords: [] }),
     estimateTokens: options.estimateTokens ?? (text => text.length),
     onReadTrace: options.onReadTrace,
   })
@@ -234,7 +242,7 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       ...body(id, 'body'),
       relations: [{ kind: 'related', targetId: relationTarget }],
     }))
-    const ledger = createRecordLedger({ cap: 1, seedIds: [] })
+    const ledger = createRecordLedger({ cap: 1, budget: 20_000, seedRecords: [] })
     const { tools, beginTurn } = factory(
       stubReader({ search: vi.fn(() => [exposed, dropped]), read }),
       { recordLedger: ledger },
@@ -266,7 +274,16 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       unverified: true,
     })
     const dropped = entry('record-dropped')
-    const ledger = createRecordLedger({ cap: 1, seedIds: [counted.id] })
+    const countedMetadata = servingRecordMetadata({
+      id: counted.id,
+      anchors: counted.anchors,
+      renderedCost: 1,
+    })
+    const ledger = createRecordLedger({
+      cap: 1,
+      budget: 20_000,
+      seedRecords: [countedMetadata],
+    })
     const { tools } = factory(
       stubReader({ search: vi.fn(() => [counted, dropped]) }),
       { recordLedger: ledger },
@@ -278,11 +295,143 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       kind: 'search-results',
       entries: [counted],
       note: {
-        kind: 'volume-cap-reached',
+        kind: 'search-admission-limited',
         droppedCount: 1,
-        message: 'Volume cap reached; 1 result omitted.',
+        omissions: [{
+          id: dropped.id,
+          authority: 'combined-turn',
+          reason: 'volume-cap',
+        }],
+        message: `Search admission omitted 1 result: ${dropped.id} (combined-turn:volume-cap).`,
       },
     })
+  })
+
+  it('admits a search result at exact-half cost and reports one strictly over half', async () => {
+    const exact = entry('record-exact-half', {
+      anchors: [{ t: 'page', route: '/exact' }],
+    })
+    const over = entry('record-over-half', {
+      anchors: [{ t: 'page', route: '/over' }],
+    })
+    const estimateTokens = vi.fn((text: string) => (
+      text.includes(String(exact.id)) ? 50 : 51
+    ))
+    const exactFactory = factory(
+      stubReader({ search: vi.fn(() => [exact]) }),
+      {
+        searchResultBudget: 100,
+        estimateTokens,
+        recordLedger: createRecordLedger({ cap: 8, budget: 1_000, seedRecords: [] }),
+      },
+    )
+    const overFactory = factory(
+      stubReader({ search: vi.fn(() => [over]) }),
+      {
+        searchResultBudget: 100,
+        estimateTokens,
+        recordLedger: createRecordLedger({ cap: 8, budget: 1_000, seedRecords: [] }),
+      },
+    )
+
+    expect(await exactFactory.tools['memory.search'].execute({ query: 'exact' })).toEqual({
+      kind: 'search-results',
+      entries: [exact],
+    })
+    expect(await overFactory.tools['memory.search'].execute({ query: 'over' })).toEqual({
+      kind: 'search-results',
+      entries: [],
+      note: {
+        kind: 'search-admission-limited',
+        droppedCount: 1,
+        omissions: [{
+          id: over.id,
+          authority: 'search-results',
+          reason: 'source-dominance',
+        }],
+        message: `Search admission omitted 1 result: ${over.id} (search-results:source-dominance).`,
+      },
+    })
+  })
+
+  it('resets the cumulative search-result authority at each planning-turn boundary', async () => {
+    const candidate = entry('record-search-reset')
+    const { tools, beginTurn } = factory(
+      stubReader({ search: vi.fn(() => [candidate]) }),
+      {
+        searchResultBudget: 100,
+        estimateTokens: () => 50,
+        recordLedger: createRecordLedger({ cap: 8, budget: 1_000, seedRecords: [] }),
+      },
+    )
+
+    expect(await tools['memory.search'].execute({ query: 'first' })).toMatchObject({
+      entries: [candidate],
+    })
+    expect(await tools['memory.search'].execute({ query: 'repeated' })).toMatchObject({
+      entries: [],
+      note: {
+        omissions: [{ authority: 'search-results', reason: 'source-dominance' }],
+      },
+    })
+
+    beginTurn(SCOPE)
+    expect(await tools['memory.search'].execute({ query: 'next turn' })).toMatchObject({
+      entries: [candidate],
+    })
+  })
+
+  it('enforces one combined cluster share across brief seeds, cautions, and search', async () => {
+    const sharedAnchor = { t: 'page' as const, route: '/shared-checkout-control' }
+    const clusterKey = servingClusterKey([sharedAnchor])
+    const metadata = (
+      id: string,
+      renderedCost: number,
+    ): ServingRecordMetadata => ({
+      id: asRecordId(id),
+      sourceId: id,
+      clusterKey,
+      renderedCost,
+    })
+    const ledger = createRecordLedger({
+      cap: 8,
+      budget: 120,
+      seedRecords: [metadata('brief-record', 20)],
+    })
+    // Channel 3 lands before the planner's Channel-2 calls in the live loop.
+    expect(ledger.admit(metadata('caution-record', 20))).toEqual({ admitted: true })
+
+    const exact = entry('search-at-combined-half')
+    const over = entry('search-over-combined-half')
+    const { tools } = factory(
+      stubReader({ search: vi.fn(() => [exact, over]) }),
+      {
+        searchResultBudget: 100,
+        estimateTokens: text => text.includes(String(exact.id)) ? 20 : 1,
+        recordLedger: ledger,
+      },
+    )
+    // Override the search entries' derived cluster through their shared anchors.
+    exact.anchors = [sharedAnchor]
+    over.anchors = [sharedAnchor]
+
+    const result = await tools['memory.search'].execute({ query: 'checkout' })
+
+    expect(result).toEqual({
+      kind: 'search-results',
+      entries: [exact],
+      note: {
+        kind: 'search-admission-limited',
+        droppedCount: 1,
+        omissions: [{
+          id: over.id,
+          authority: 'combined-turn',
+          reason: 'cluster-dominance',
+        }],
+        message: `Search admission omitted 1 result: ${over.id} (combined-turn:cluster-dominance).`,
+      },
+    })
+    expect(ledger.spent()).toBe(60)
   })
 
   it('returns structured empty and not-found results instead of throwing', async () => {

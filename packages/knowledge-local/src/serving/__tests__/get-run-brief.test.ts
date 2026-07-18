@@ -78,6 +78,8 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
       ['fact-learned', 'L2'],
     ])
     expect(block.lines[0]?.summary).toBe(userSummary)
+    expect(block.admissions.map(({ id }) => id)).toEqual(block.lines.map(({ id }) => id))
+    expect(block.admissions.every(({ renderedCost }) => renderedCost > 0)).toBe(true)
   })
 
   it('never budgets authored L0 out under starvation', () => {
@@ -142,11 +144,13 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
       tiers: { L0: '', L1: '', L2: '' },
       lines: [],
       truncation: '',
+      admissions: [],
     })
     expect(policyOnly).toEqual({
       tiers: { L0: 'Only authored policy.', L1: '', L2: '' },
       lines: [],
       truncation: '',
+      admissions: [],
     })
   })
 

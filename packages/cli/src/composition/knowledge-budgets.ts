@@ -29,6 +29,8 @@ export const MIN_MEMORY_TOOL_CONTEXT_WINDOW = 16_384
 
 export interface KnowledgeBudgets {
   brief: number
+  /** Wrapper-fixed Channel-2 search-result budget; never exposed in the tool schema. */
+  searchResults: number
   caution: number
   readBody: number
   recordCap: number
@@ -71,7 +73,10 @@ export function computeKnowledgeBudgets(input: ComputeKnowledgeBudgetsInput): Kn
   const caution = Math.max(MIN_CAUTION, floorFinite(usableContext * CAUTION_FRACTION))
   const readBody = Math.max(MIN_BRIEF, floorFinite(usableContext * READ_BODY_FRACTION))
 
-  return { brief, caution, readBody, recordCap: GLOBAL_RECORD_CAP }
+  // Search entries and Channel-1 learned lines are both summary-sized projections. Reuse the
+  // same bounded allocation rather than inventing a model-controlled or unbounded search knob.
+  const searchResults = brief
+  return { brief, searchResults, caution, readBody, recordCap: GLOBAL_RECORD_CAP }
 }
 
 /**

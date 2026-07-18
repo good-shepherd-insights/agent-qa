@@ -60,6 +60,11 @@ describe('Channel-3 caution selection (BRIF-02 / D-14)', () => {
       'c_page',
     ])
     expect(result.block.budgetUsed).toBe(2)
+    expect(result.block.admissions.map(({ id }) => id)).toEqual([
+      'c_element',
+      'c_page',
+    ])
+    expect(result.block.admissions.every(({ renderedCost }) => renderedCost > 0)).toBe(true)
     expect(result.overflow).toEqual({ served: 2, eligible: 3 })
   })
 

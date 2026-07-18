@@ -2,6 +2,7 @@ import type { BriefLine, CautionLine } from '../brief/served-brief'
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
+import type { ServingRecordMetadata } from './serving-admission'
 
 export interface IndexEntry {
   id: RecordId
@@ -44,11 +45,15 @@ export interface BriefBlock {
   tiers: { L0: string; L1: string; L2: string }
   lines: BriefLine[]
   truncation: string
+  /** Exact Channel-1 admission material retained for the shared turn authority. */
+  admissions: ServingRecordMetadata[]
 }
 
 export interface CautionBlock {
   cautions: CautionLine[]
   budgetUsed: number
+  /** Exact Channel-3 material; reserved truncation lines intentionally have no entry. */
+  admissions: ServingRecordMetadata[]
 }
 
 export interface ProcedureMatch {

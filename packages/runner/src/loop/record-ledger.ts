@@ -1,44 +1,64 @@
-import type { RecordId } from '@vostride/agent-qa-schema'
+import {
+  createServingAdmissionState,
+  inspectServingRecord,
+  tryAdmitServingRecord,
+  type ServingAdmissionDecision,
+  type ServingRecordMetadata,
+} from '@vostride/agent-qa-schema'
 
-export type RecordAdmission =
-  | { admitted: true }
-  | { admitted: false; reason: 'volume-cap' }
+export type RecordAdmission = ServingAdmissionDecision
 
 export interface RecordLedger {
-  admit(id: RecordId): RecordAdmission
-  resetTurn(seedIds: readonly RecordId[]): void
+  /** Preview without mutation so channel-local and combined-turn checks can commit atomically. */
+  inspect(record: ServingRecordMetadata): RecordAdmission
+  admit(record: ServingRecordMetadata): RecordAdmission
+  resetTurn(seedRecords: readonly ServingRecordMetadata[]): void
   size(): number
+  spent(): number
 }
 
-function normalizeCap(cap: number): number {
-  return Number.isFinite(cap) ? Math.max(0, Math.floor(cap)) : 0
+function normalizeLimit(value: number): number {
+  if (value === Number.POSITIVE_INFINITY) return Number.MAX_SAFE_INTEGER
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
 }
 
 /**
- * D-17 turn-time enforcement for the global distinct-record cap. The frozen Channel-1 brief
- * seeds the ledger because those records already ride every planning turn; Channel 2 search/read
- * and Channel 3 cautions share the remaining headroom. D-16 re-emphasis of an already-counted id
- * is free: repeated injections cost tokens, but never consume another distinct-record slot.
+ * One turn-time authority for the global distinct-record and combined dominance walls. Channel 1
+ * seeds exact rendered material; Channel 3 and Channel 2 then charge every exposure against the
+ * same source/cluster maps. Re-emphasizing an id remains free only for the DISTINCT slot — its
+ * repeated bytes still count toward budget and dominance.
  */
 export function createRecordLedger(input: {
   cap: number
-  seedIds: readonly RecordId[]
+  budget: number
+  seedRecords: readonly ServingRecordMetadata[]
 }): RecordLedger {
-  const cap = normalizeCap(input.cap)
-  let admittedIds = new Set<RecordId>(input.seedIds)
+  const cap = normalizeLimit(input.cap)
+  const budget = normalizeLimit(input.budget)
+  let admission = createServingAdmissionState(input.seedRecords)
+
+  const admissionInput = (record: ServingRecordMetadata) => ({
+    record,
+    budget,
+    recordCap: cap,
+    chargeRepeated: true,
+  }) as const
 
   return {
-    admit(id) {
-      if (admittedIds.has(id)) return { admitted: true }
-      if (admittedIds.size >= cap) return { admitted: false, reason: 'volume-cap' }
-      admittedIds.add(id)
-      return { admitted: true }
+    inspect(record) {
+      return inspectServingRecord(admissionInput(record), admission)
     },
-    resetTurn(seedIds) {
-      admittedIds = new Set(seedIds)
+    admit(record) {
+      return tryAdmitServingRecord(admissionInput(record), admission)
+    },
+    resetTurn(seedRecords) {
+      admission = createServingAdmissionState(seedRecords)
     },
     size() {
-      return admittedIds.size
+      return admission.selectedCount
+    },
+    spent() {
+      return admission.usedBudget
     },
   }
 }

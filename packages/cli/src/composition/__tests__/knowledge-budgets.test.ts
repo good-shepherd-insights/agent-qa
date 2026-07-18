@@ -53,6 +53,7 @@ describe('computeKnowledgeBudgets', () => {
     expect(budgetsForAvailable(availableForBelowFloor).brief).toBe(MIN_BRIEF)
     expect(MIN_BRIEF).toBeGreaterThan(0)
     expect(budgetsForAvailable(availableForOneAboveFloor).brief).toBe(MIN_BRIEF + 1)
+    expect(budgetsForAvailable(availableForOneAboveFloor).searchResults).toBe(MIN_BRIEF + 1)
   })
 
   it('floors the fractional product before clamping and caps oversized briefs', () => {
@@ -102,11 +103,12 @@ describe('run knowledge composition', () => {
           tiers: { L0: '', L1: '', L2: `${scope.tier}:${scope.key}:${calls}` },
           lines: [],
           truncation: '',
+          admissions: [],
         }
       },
       search: () => [],
       read: () => { throw new Error('not used') },
-      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }

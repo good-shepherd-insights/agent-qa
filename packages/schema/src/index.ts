@@ -272,6 +272,20 @@ export { computeEvidenceToken } from './ids/index'
 // 338 reader DTOs (PORT-03)
 export type { IndexEntry, RecordBody, BriefBlock, CautionBlock, ProcedureMatch } from './reader/index'
 export type { SearchOptions, ReadOptions, BuildRange, CanaryOutcome } from './reader/index'
+export {
+  createServingAdmissionState,
+  inspectServingRecord,
+  servingClusterKey,
+  servingRecordMetadata,
+  tryAdmitServingRecord,
+} from './reader/index'
+export type {
+  ServingAdmissionDecision,
+  ServingAdmissionInput,
+  ServingAdmissionRejectionReason,
+  ServingAdmissionState,
+  ServingRecordMetadata,
+} from './reader/index'
 
 // 374 D-03/BNDL-03: pure event vocabulary and derivations stay storage-neutral.
 export {
