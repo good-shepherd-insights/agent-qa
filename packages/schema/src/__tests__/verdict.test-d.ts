@@ -145,6 +145,7 @@ const bareStringEvidence: Verdict = {
 // D-01: PerTestOutcome carries the optional per-test rootCause classification…
 const classifiedOutcome: PerTestOutcome = {
   testId: 'test-one',
+  filePath: 'test-one.spec.yaml',
   testIndex: 0,
   outcome: 'failed',
   steps: [],
@@ -154,6 +155,7 @@ const classifiedOutcome: PerTestOutcome = {
 // …and still compiles without it (clean passes omit rootCause).
 const cleanOutcome: PerTestOutcome = {
   testId: 'test-two',
+  filePath: 'test-two.spec.yaml',
   testIndex: 1,
   outcome: 'passed',
   steps: [],

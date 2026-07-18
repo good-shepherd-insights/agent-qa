@@ -106,6 +106,7 @@ function makeStepEvidence(withSelfHeal: boolean): StepEvidence {
 function makePerTestOutcome(): PerTestOutcome {
   return {
     testId: 'checkout::happy-path',
+    filePath: 'checkout.spec.yaml',
     testIndex: 0,
     outcome: 'passed',
     steps: [makeStepEvidence(false)],

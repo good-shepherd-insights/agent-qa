@@ -94,7 +94,7 @@ function configWith(masking: MaskingContext, eventLog: EventLogPort): RunConfig 
     executionContext: 'local-headless',
     buildOrdinal: 7,
     configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
-    members: [{ testId: 'a' }],
+    members: [{ testId: 'a', filePath: 'a.test.ts' }],
     executor: secretExecutor,
     masking,
     ports: { handoffStore: makeHandoffStore(), eventLog },

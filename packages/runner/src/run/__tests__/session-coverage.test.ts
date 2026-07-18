@@ -149,7 +149,7 @@ function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
     executionContext: 'local-headless',
     buildOrdinal: 7,
     configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
-    members: [{ testId: 'a' }, { testId: 'b' }],
+    members: [{ testId: 'a', filePath: 'a.test.ts' }, { testId: 'b', filePath: 'b.test.ts' }],
     executor: scriptedExecutor({}),
     ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
     ...overrides,
@@ -240,7 +240,7 @@ describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap
     // A never-resolving executor keeps the run open so a heartbeat can fire mid-run.
     const calls: string[] = []
     const session = startRun(
-      baseConfig({ members: [{ testId: 'slow' }], executor: abortableExecutor(calls), ports: { handoffStore: makeFakeHandoffStore(), timer } }),
+      baseConfig({ members: [{ testId: 'slow', filePath: 'slow.test.ts' }], executor: abortableExecutor(calls), ports: { handoffStore: makeFakeHandoffStore(), timer } }),
     )
     session.subscribe(1, e => events.push(e))
     // The run stays open (member hangs); cancel to let done settle without a real timer.
@@ -444,7 +444,7 @@ describe('SESSION-04 — one RunSession over N members: the ratified aggregate r
   it('a healed member (none failed) ⇒ aggregate healed ⇒ exit 0 (healed is a ratified pass)', async () => {
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a' }],
+        members: [{ testId: 'a', filePath: 'a.test.ts' }],
         executor: scriptedExecutor({ a: passResult('a', [healedStep()]) }),
       }),
     )
@@ -458,7 +458,7 @@ describe('SESSION-04 — one RunSession over N members: the ratified aggregate r
       name: 'a', filePath: 'a.test.ts', status: 'failed',
       steps: [step({ status: 'failed', error: TEST_TIMEOUT_MESSAGE })], duration: 1,
     }
-    const session = startRun(baseConfig({ members: [{ testId: 'a' }], executor: scriptedExecutor({ a: timedOut }) }))
+    const session = startRun(baseConfig({ members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: timedOut }) }))
     const { verdict } = await session.done
     // deriveMemberOutcome → 'timeout'; the aggregate folds member timeout into 'failed'.
     expect(deriveMemberOutcome(timedOut)).toBe('timeout')
@@ -539,7 +539,7 @@ describe('SESSION-05 — exactly one CompletedRunHandoff per run, §A8 header fi
       steps: [step({ name: 's0' }), step({ name: 's1', status: 'failed', error: 'boom' })], duration: 1,
     }
     const session = startRun(
-      baseConfig({ members: [{ testId: 'a' }], executor: scriptedExecutor({ a: failWithTwoSteps }), ports: { handoffStore: store, eventLog: makeFakeEventLog() } }),
+      baseConfig({ members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: failWithTwoSteps }), ports: { handoffStore: store, eventLog: makeFakeEventLog() } }),
     )
     const { handoff } = await session.done
     expect(store.saveCalls).toBe(1)

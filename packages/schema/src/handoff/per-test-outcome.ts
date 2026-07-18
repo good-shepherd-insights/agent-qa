@@ -4,6 +4,14 @@ import type { Verdict } from '../verdict/verdict'
 
 export interface PerTestOutcome {
   testId: string
+  /**
+   * The member test file's path exactly as the CLI resolves it (ABRF-02). Stable test
+   * identity = filePath + testId — rebuildable from handoff.json alone. REQUIRED, not
+   * optional, under the v2 no-back-compat law: new handoffs always mint it; older
+   * handoff.json files that fail the current-schema load are skipped by the projection
+   * rebuild (RESEARCH A2, doc-commented at the rebuild site in plan 381-05).
+   */
+  filePath: string
   testIndex: number
   outcome: MemberTestOutcome
   steps: StepEvidence[]

@@ -204,6 +204,7 @@ function testOutcome(
     outcome: 'passed',
     steps,
     ...overrides,
+    filePath: overrides.filePath ?? 'checkout.spec.yaml',
   }
 }
 

@@ -147,15 +147,21 @@ export interface RunMemberDescriptor {
   name?: string
   failFastGroup?: string
   /**
+   * The member test file's path as the CLI resolves it. REQUIRED since 381-01 (ABRF-02):
+   * stable test identity = filePath + testId, copied verbatim onto `PerTestOutcome.filePath`
+   * by the handoff assembly — the required field makes the compiler enforce that every
+   * descriptor construction site supplies it.
+   */
+  filePath: string
+  /**
    * 363 D-01 parity fields (RESEARCH Q1). All OPTIONAL and additive — the shell rides them onto
    * the widened `testStarted` payload so reporters can render the full v1 console/JUnit/wire
    * surface from the bus alone. Suite grouping (`suiteId`/`suiteName`/`suiteIndex`/`suiteTotal`)
    * rides testStarted rather than a suite lifecycle event — the shell stays suite-agnostic and
-   * reporters derive suite boundaries by watching the grouping change. `filePath`/`totalSteps` are
-   * the per-member file + parsed step count. The CLI populates these at both startRun sites; absent
+   * reporters derive suite boundaries by watching the grouping change. `totalSteps` is the
+   * per-member parsed step count. The CLI populates these at both startRun sites; absent
    * ⇒ omitted from the payload (no undefined-hole survives JSON round-trip).
    */
-  filePath?: string
   suiteId?: string
   suiteName?: string
   suiteIndex?: number

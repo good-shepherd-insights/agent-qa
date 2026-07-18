@@ -159,6 +159,7 @@ export type {
   StagnationClass,
   StagnationEvidence,
   StepEvidence,
+  StepPlanSource,
   SubActionEvidence,
   ToolExchangeEvidence,
 } from './handoff/index'

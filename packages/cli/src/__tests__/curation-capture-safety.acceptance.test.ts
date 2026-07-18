@@ -113,6 +113,7 @@ function handoff(screenshotSha: string, domSha: string): CompletedRunHandoff {
     tests: [
       {
         testId: 'checkout::credential-entry',
+        filePath: 'checkout.spec.yaml',
         testIndex: 0,
         outcome: 'passed',
         steps: [

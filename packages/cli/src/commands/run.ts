@@ -3562,8 +3562,10 @@ export function createRunCommand(): Command {
             testIndex: globalIndex,
             name: test.name,
             // NO failFastGroup — the single-test path runs all members then aggregates.
-            // 363 D-01: filePath + totalSteps parity fields; no suite grouping on the single-test path.
-            ...(memberFilePath !== 'unknown' ? { filePath: memberFilePath } : {}),
+            // 363 D-01 filePath + totalSteps parity fields; no suite grouping on the single-test
+            // path. filePath is REQUIRED since 381-01 (ABRF-02 stable test identity) — the
+            // 'unknown' fallback is carried verbatim rather than omitted.
+            filePath: memberFilePath,
             totalSteps: test.steps.length,
           })
           digestMembers.push({ testFileContent: memberFileContent })

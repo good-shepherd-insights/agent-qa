@@ -153,6 +153,7 @@ function completedHandoff(
     endedAt: 1_750_000_001_000,
     tests: [{
       testId: 'checkout::canary-seam',
+      filePath: 'checkout.spec.yaml',
       testIndex: 0,
       outcome: 'passed',
       steps: [step],

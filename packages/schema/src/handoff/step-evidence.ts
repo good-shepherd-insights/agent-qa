@@ -1,5 +1,6 @@
 import type { Action } from '../action/index'
 import type { ServedBrief } from '../brief/served-brief'
+import type { RecordId } from '../ids/record-id'
 import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
 import type { RecordedActionResult } from '../result/index'
 import type { DeclaredModelProfile, ModelIdentity } from './model-call-profile'
@@ -18,6 +19,33 @@ export interface VerifierVerdict {
   pass: boolean
   reasoning: string
 }
+
+/**
+ * D-12 typed step plan source. `procedure-replay` = the step's actions came from a committed
+ * procedure's guarded replay, carrying the guard fold (and the first miss when the fold broke
+ * off). `procedure-hint` = a matched procedure was SERVED as a hint into planning without
+ * replay — recorded here so M3 gate audits can measure served-hint exposure (RESEARCH Open
+ * Q3: beside `planSource` on StepEvidence, never a ServedBrief widening).
+ */
+export type StepPlanSource =
+  | {
+      kind: 'procedure-replay'
+      procedureId: RecordId
+      guard: {
+        checksPassed: number
+        total: number
+        miss?: {
+          procedureStepIndex: number
+          reason:
+            | 'descriptor-ambiguous'
+            | 'descriptor-missing'
+            | 'page-anchor-mismatch'
+            | 'gate-refused'
+            | 'non-replayable-action'
+        }
+      }
+    }
+  | { kind: 'procedure-hint'; procedureId: RecordId }
 
 export interface Decision {
   plan: string
@@ -102,4 +130,12 @@ export interface StepEvidence {
    * comparator, the assertAI judge, or the verifier's own model call.
    */
   verdictSource?: VerdictSource
+  /**
+   * The typed step plan source (D-12). Additive optional BESIDE the existing `cacheStatus`
+   * provenance — structurally distinct from the cached flag so eval/cassette consumers reading
+   * cached semantics are never polluted (§A11 stays exactly the three memidex channels).
+   * Present only when a procedure drove or hinted this step's planning; absent means the
+   * historical single source (a planning turn, with the action cache as an exact-key shortcut).
+   */
+  planSource?: StepPlanSource
 }
