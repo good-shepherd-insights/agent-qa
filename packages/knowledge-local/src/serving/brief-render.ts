@@ -2,6 +2,7 @@ import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import type { BriefLine, IndexEntry } from '@vostride/agent-qa-schema'
 
 const MAX_LEARNED_SUMMARY_CODE_UNITS = 140
+export const CHARS_PER_TOKEN_ESTIMATE = 4
 
 type OriginStampedEntry = IndexEntry & {
   origin?: 'app-observed' | 'user'
@@ -48,9 +49,28 @@ function isAppObserved(entry: OriginStampedEntry): boolean {
   return entry.origin === 'app-observed' || entry.originClass === 'agent-observed'
 }
 
+/** Deterministic provisional cost of the exact text handed to the planner. */
+export function estimateRenderedServingCost(text: string): number {
+  return Math.max(1, Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE))
+}
+
+export interface RenderedCautionLine {
+  summary: string
+  cost: number
+}
+
+/** Render and cost Channel 3 through one projection so framing can never be undercharged. */
+export function renderCautionLine(entry: IndexEntry): RenderedCautionLine {
+  const rendered = renderCautionSummary(entry.summary)
+  const summary = isAppObserved(entry as OriginStampedEntry)
+    ? wrapAppObservedData(rendered)
+    : rendered
+  return { summary, cost: estimateRenderedServingCost(summary) }
+}
+
 export function renderBriefLine(
   entry: IndexEntry,
-): { line: string; briefLine: BriefLine } {
+): { line: string; briefLine: BriefLine; cost: number } {
   const stampedEntry = entry as OriginStampedEntry
   const summary = renderCautionSummary(entry.summary)
   const annotations = renderAnnotations(entry)
@@ -62,6 +82,7 @@ export function renderBriefLine(
 
   return {
     line,
+    cost: estimateRenderedServingCost(line),
     briefLine: {
       id: entry.id,
       kind: entry.kind,

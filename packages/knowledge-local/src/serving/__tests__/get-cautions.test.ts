@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { selectCautions } from '../get-cautions.js'
+import { renderCautionLine } from '../brief-render.js'
 
 type OriginStampedEntry = IndexEntry & {
   origin?: 'app-observed' | 'user'
@@ -153,6 +154,27 @@ describe('Channel-3 caution selection (BRIF-02 / D-14)', () => {
     const summary = result.block.cautions[0]?.summary ?? ''
     expect(summary).toContain(APP_OBSERVED_DATA_OPEN)
     expect(summary).toContain(APP_OBSERVED_DATA_CLOSE)
+  })
+
+  it('admits an app-observed caution at exact rendered cost and rejects one token short', () => {
+    const observed = caution('c_observed_exact', {
+      summary: 'x',
+      origin: 'app-observed',
+    })
+    const rendered = renderCautionLine(observed)
+    const exactBudget = rendered.cost * 2
+    const input = {
+      candidates: [observed],
+      anchors: [{ t: 'page' as const, route: '/checkout' }],
+      recordCap: 1,
+    }
+
+    const exact = selectCautions({ ...input, budget: exactBudget })
+    const oneTokenShort = selectCautions({ ...input, budget: exactBudget - 1 })
+
+    expect(exact.block.cautions[0]?.summary).toBe(rendered.summary)
+    expect(exact.block.budgetUsed).toBe(rendered.cost)
+    expect(oneTokenShort.block.cautions).toEqual([])
   })
 
   it('serves the single best caution when the floor budget fits one line', () => {

@@ -8,7 +8,11 @@ import {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { renderBriefLine } from '../brief-render.js'
+import {
+  estimateRenderedServingCost,
+  renderBriefLine,
+  renderCautionLine,
+} from '../brief-render.js'
 
 type OriginStampedEntry = IndexEntry & {
   origin?: 'app-observed' | 'user'
@@ -74,6 +78,17 @@ describe('brief line rendering (BRIF-01 / D-03)', () => {
     expect(observed).toContain(APP_OBSERVED_DATA_CLOSE)
     expect(sovereign).not.toContain(APP_OBSERVED_DATA_OPEN)
     expect(sovereign).not.toContain(APP_OBSERVED_DATA_CLOSE)
+  })
+
+  it('returns the cost of the exact rendered Channel-1 and Channel-3 text', () => {
+    const observed = entry({ summary: 'x', origin: 'app-observed' })
+    const brief = renderBriefLine(observed)
+    const caution = renderCautionLine(observed)
+
+    expect(brief.cost).toBe(estimateRenderedServingCost(brief.line))
+    expect(caution.cost).toBe(estimateRenderedServingCost(caution.summary))
+    expect(brief.cost).toBeGreaterThan(estimateRenderedServingCost(observed.summary))
+    expect(caution.cost).toBeGreaterThan(estimateRenderedServingCost(observed.summary))
   })
 
   it('is byte-deterministic and contains no wall-clock material', () => {

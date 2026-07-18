@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from 'vitest'
 
 import { selectServingRecords } from '../brief-selection.js'
+import { renderBriefLine } from '../brief-render.js'
 
 const scope = { tier: 'test', key: 'checkout add item' } as const
 
@@ -68,14 +69,14 @@ describe('Channel-1 serving selection', () => {
     expect(names(selectServingRecords({
       candidates: [candidate('r_only')],
       scope,
-      channelBudget: 8,
+      channelBudget: 10,
       recordCap: 8,
     }))).toEqual(['r_only'])
   })
 
   it('is input-order independent and breaks equal scores by record id', () => {
     const entries = [candidate('r_c'), candidate('r_a'), candidate('r_b')]
-    const input = { scope, channelBudget: 8, recordCap: 8 }
+    const input = { scope, channelBudget: 30, recordCap: 8 }
 
     expect(names(selectServingRecords({ ...input, candidates: entries }))).toEqual([
       'r_a',
@@ -112,7 +113,7 @@ describe('Channel-1 serving selection', () => {
     expect(names(selectServingRecords({
       candidates: entries,
       scope,
-      channelBudget: 10,
+      channelBudget: 18,
       recordCap: 10,
     }))).toEqual(['r_a_half', 'r_c_other'])
   })
@@ -126,7 +127,7 @@ describe('Channel-1 serving selection', () => {
     expect(names(selectServingRecords({
       candidates: entries,
       scope,
-      channelBudget: 8,
+      channelBudget: 10,
       recordCap: 8,
     }))).toEqual(['r_fact'])
   })
@@ -141,7 +142,7 @@ describe('Channel-1 serving selection', () => {
     expect(names(selectServingRecords({
       candidates: entries,
       scope,
-      channelBudget: 2,
+      channelBudget: 10,
       recordCap: 3,
     }))).toEqual(['r_caution', 'r_procedure'])
   })
@@ -152,7 +153,7 @@ describe('Channel-1 serving selection', () => {
     const selected = selectServingRecords({
       candidates: entries,
       scope,
-      channelBudget: 8,
+      channelBudget: 20,
       recordCap: 2,
     })
 
@@ -167,7 +168,7 @@ describe('Channel-1 serving selection', () => {
         candidate('r_fits'),
       ],
       scope,
-      channelBudget: 8,
+      channelBudget: 10,
       recordCap: 8,
     })
 
@@ -188,7 +189,7 @@ describe('Channel-1 serving selection', () => {
       recordCap: 8,
     }
 
-    const recordCapped = selectServingRecords({ ...input, channelBudget: 20 })
+    const recordCapped = selectServingRecords({ ...input, channelBudget: 80 })
     expect(names(recordCapped)).toEqual(['r_candidate_a', 'r_candidate_b'])
     expect(recordCapped).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -197,8 +198,43 @@ describe('Channel-1 serving selection', () => {
       }),
     ]))
 
-    expect(names(selectServingRecords({ ...input, channelBudget: 6 }))).toEqual([
+    expect(names(selectServingRecords({ ...input, channelBudget: 40 }))).toEqual([
       'r_candidate_a',
     ])
+  })
+
+  it('charges the exact rendered app-observed and annotated line at the dominance boundary', () => {
+    const record = candidate('r_rendered_exact', {
+      summary: 'x',
+      servedAsCanary: true,
+      unconfirmedSinceOrdinal: 17,
+      servedAs: 'prior-build-hypothesis',
+      conflict: {
+        peerRecordId: asRecordId('fact-peer'),
+        unknownRecordId: asRecordId('unknown-conflict'),
+      },
+      ...({ originClass: 'agent-observed' } as Partial<IndexEntry>),
+    })
+    const rendered = renderBriefLine(record)
+    const exactBudget = rendered.cost * 2
+
+    const exact = selectServingRecords({
+      candidates: [record],
+      scope,
+      channelBudget: exactBudget,
+      recordCap: 1,
+    })
+    const oneTokenShort = selectServingRecords({
+      candidates: [record],
+      scope,
+      channelBudget: exactBudget - 1,
+      recordCap: 1,
+    })
+
+    expect(exact).toHaveLength(1)
+    expect(renderBriefLine(exact[0]!).cost).toBe(rendered.cost)
+    expect(rendered.line).toContain('CONFLICT')
+    expect(rendered.line).toContain('CANARY')
+    expect(oneTokenShort).toEqual([])
   })
 })

@@ -1,4 +1,3 @@
-import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import {
   canonicalJson,
   normalizeAnchor,
@@ -10,15 +9,9 @@ import {
 import {
   compareServingTrustThenId,
   createServingAdmissionState,
-  estimateServingSummaryCost,
   tryAdmitServingRecord,
 } from './brief-selection.js'
-import { renderCautionSummary } from './brief-render.js'
-
-type OriginStampedEntry = IndexEntry & {
-  origin?: 'app-observed' | 'user'
-  originClass?: 'agent-observed' | 'agent-verified' | 'import' | 'user'
-}
+import { renderCautionLine } from './brief-render.js'
 
 export interface CautionSelectionOverflow {
   served: number
@@ -87,17 +80,6 @@ function isEligibleCaution(record: IndexEntry): boolean {
   return record.status === 'candidate' && record.unverified === true
 }
 
-function isAppObserved(record: OriginStampedEntry): boolean {
-  return record.origin === 'app-observed' || record.originClass === 'agent-observed'
-}
-
-function renderedSummary(record: IndexEntry): string {
-  const summary = renderCautionSummary(record.summary)
-  return isAppObserved(record as OriginStampedEntry)
-    ? wrapAppObservedData(summary)
-    : summary
-}
-
 function rankedCautions(input: SelectCautionsInput): RankedCaution[] {
   const priorities = queryPriorities(input.anchors)
 
@@ -106,12 +88,12 @@ function rankedCautions(input: SelectCautionsInput): RankedCaution[] {
       if (!isEligibleCaution(record)) return []
       const matchPriority = bestMatchPriority(record.anchors, priorities)
       if (matchPriority === undefined) return []
-      const summary = renderedSummary(record)
+      const rendered = renderCautionLine(record)
       return [{
         record,
         matchPriority,
-        summary,
-        cost: estimateServingSummaryCost(renderCautionSummary(record.summary)),
+        summary: rendered.summary,
+        cost: rendered.cost,
       }]
     })
     .sort((left, right) => (

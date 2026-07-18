@@ -25,12 +25,7 @@ import {
   type ValidityCandidate,
 } from '../retrieval/validity.js'
 import { clusterKey } from './cluster-key.js'
-
-/**
- * PROVISIONAL serving-cost estimate. This is deterministic UTF-16 character arithmetic, not
- * tokenizer accounting; the composition root supplies the real channel budget.
- */
-export const CHARS_PER_TOKEN_ESTIMATE = 4
+import { renderBriefLine } from './brief-render.js'
 
 export interface ServingTierFilter extends PreFilterOptions {}
 
@@ -48,17 +43,19 @@ export interface SelectServingRecordsInput {
 
 interface TemporalServingCandidate extends ValidityCandidate {
   readonly record: IndexEntry
-  readonly tokenEstimate: number
   readonly vettedCandidateInput?: VettedCandidateInput
 }
 
 interface RankedServingCandidate extends TemporalServingCandidate, RerankEntry {
   readonly record: IndexEntry
+}
+
+interface CostedServingCandidate extends RankedServingCandidate {
   readonly tokenEstimate: number
 }
 
 interface ScoredServingCandidate {
-  readonly candidate: RankedServingCandidate
+  readonly candidate: CostedServingCandidate
   readonly score: number
 }
 
@@ -70,14 +67,6 @@ const KIND_PRECEDENCE: Readonly<Record<string, number>> = {
 
 function normalizeLimit(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
-}
-
-export function estimateServingSummaryCost(summary: string): number {
-  return Math.max(1, Math.ceil(summary.length / CHARS_PER_TOKEN_ESTIMATE))
-}
-
-function recordCost(record: IndexEntry): number {
-  return estimateServingSummaryCost(record.summary)
 }
 
 export function compareServingRecordIds(left: IndexEntry, right: IndexEntry): number {
@@ -203,7 +192,6 @@ function temporalCandidate(
     status: record.status,
     product,
     record,
-    tokenEstimate: recordCost(record),
     ...(vetting === undefined ? {} : { vettedCandidateInput: vetting }),
   }
 }
@@ -326,7 +314,7 @@ export function tryAdmitServingRecord(
 }
 
 function scoreCandidates(
-  candidates: readonly RankedServingCandidate[],
+  candidates: readonly CostedServingCandidate[],
   scope: ScopeKey,
 ): ScoredServingCandidate[] {
   return candidates
@@ -357,7 +345,11 @@ function stageCandidates(
           ? { ...candidate, unverified: true as const }
           : candidate
       ))
-  const reranked = applyDiversityCaps(rerankPrecedence(treated))
+  const costed: CostedServingCandidate[] = treated.map((candidate) => ({
+    ...candidate,
+    tokenEstimate: renderBriefLine(reflectedRecord(candidate)).cost,
+  }))
+  const reranked = applyDiversityCaps(rerankPrecedence(costed))
   const scored = scoreCandidates(reranked, input.scope)
   const vetted = scored.filter(({ candidate }) => candidate.unverified === true)
   const admittedVetted = new Set(

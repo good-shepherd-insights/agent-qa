@@ -62,7 +62,7 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
       ],
       policy: policy(policyText),
       scope,
-      budget: 64,
+      budget: 256,
       recordCap: 8,
     })
 
@@ -113,8 +113,8 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
       recordCap: 4,
     }
 
-    const exact = assembleRunBrief({ ...input, budget: 4 })
-    const oneShort = assembleRunBrief({ ...input, budget: 3 })
+    const exact = assembleRunBrief({ ...input, budget: 20 })
+    const oneShort = assembleRunBrief({ ...input, budget: 19 })
 
     expect(exact.lines).toHaveLength(4)
     expect(exact.truncation).toBe('')
