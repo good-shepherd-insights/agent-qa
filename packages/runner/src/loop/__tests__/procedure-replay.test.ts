@@ -283,6 +283,39 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
   })
 
+  it('keeps a navigating final replay guard on the pre-action page', async () => {
+    const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
+    const login = makeScreenState()
+    const dashboard = makeScreenState({ url: 'https://example.test/dashboard' })
+    // Contract pin: replay guards stay pre-action while StepEvidence records the final
+    // post-action navigation. Neither side may silently drift to the other's URL semantics.
+    const { adapter, executed } = capturingAdapter([login, login, login, login, dashboard])
+    const planner = capturingPlanner([makeActionPlan()])
+    const verifier = makeVerifier()
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, verifier, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(0)
+    expect(executed.map((action) => action.type)).toEqual(['fill', 'click'])
+    expect(result.evidence?.planSource?.kind).toBe('procedure-replay')
+    if (result.evidence?.planSource?.kind !== 'procedure-replay') {
+      throw new Error('expected procedure-replay planSource')
+    }
+    expect(result.evidence.planSource.guard.miss).toBeUndefined()
+    expect(result.evidence.planSource.guard.checksPassed).toBe(
+      result.evidence.planSource.guard.total,
+    )
+    const completing = result.evidence.subActions.at(-1)!
+    expect(completing.stateBefore.url).toBe('https://example.test/login')
+    expect(completing.stateAfter?.url).toBe('https://example.test/dashboard')
+    expect(completing.stateAfter?.url).not.toBe(completing.stateBefore.url)
+  })
+
   it('Test 2: an ambiguous second descriptor aborts replay once and demotes to hint with the divergence noted', async () => {
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()

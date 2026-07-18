@@ -518,6 +518,35 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }])
   })
 
+  it('projects only a positive procedure outcome for a clean navigating replay', () => {
+    // Contract pin: navigation in the completed evidence is not a staleness signal when the
+    // pre-action replay guard passed cleanly.
+    const navigating = subAction({
+      ref: 'checkout',
+      beforeUrl: '/login',
+      afterUrl: '/dashboard',
+    })
+    expect(navigating.stateAfter?.url).not.toBe(navigating.stateBefore.url)
+
+    const outcomes = project(
+      handoff([step({
+        candidateIds: [],
+        planSource: replaySource(),
+        subActions: [navigating],
+      })]),
+      procedureAnchors,
+    )
+
+    expect(outcomes.filter(({ runOutcome }) => runOutcome === 'positive')).toHaveLength(1)
+    expect(outcomes.filter(({ runOutcome }) => runOutcome === 'negative')).toHaveLength(0)
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        candidateId: PROCEDURE,
+        runOutcome: 'positive',
+      }),
+    ])
+  })
+
   it('gates failed replayed steps behind the shared root-cause classifier', () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
