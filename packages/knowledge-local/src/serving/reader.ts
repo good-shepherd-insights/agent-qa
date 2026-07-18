@@ -6,6 +6,7 @@ import { wrapAppObservedData } from '@vostride/agent-qa-safety'
 import {
   asRecordId,
   canonicalJson,
+  EMPTY_PROCEDURE_BINDING_AVAILABILITY,
   isVettedCandidate,
   normalizeAnchor,
   slugBranch,
@@ -469,12 +470,12 @@ function servingReader(
       }
     },
 
-    getProcedure(intent, screenState, bindingNames) {
+    getProcedure(intent, screenState, availability) {
       return matchProcedure({
         entries: hydrateRows(config, readIndexRows(config), false),
         intent,
         anchors: screenStatePageAnchors(screenState),
-        bindingNames: bindingNames ?? [],
+        availability: availability ?? EMPTY_PROCEDURE_BINDING_AVAILABILITY,
       })
     },
 

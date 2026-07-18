@@ -16,6 +16,7 @@ import {
   asRecordId,
   canonicalJson,
   createServingAdmissionState,
+  EMPTY_PROCEDURE_BINDING_AVAILABILITY,
   normalizeAnchor,
   servingRecordMetadata,
   tryAdmitServingRecord,
@@ -196,7 +197,7 @@ function scoreEntries(
 /**
  * Top-N procedures through matchProcedure's own kind-aware admission and tier x confirmations x
  * fillability fold. Matches serve as hint-shaped entries — replay eligibility is irrelevant to
- * authoring — and the screenless call passes no binding names.
+ * authoring — and the screenless call passes empty source-tagged availability.
  */
 function topProcedures(
   input: AssembleAuthoringBriefInput,
@@ -208,7 +209,7 @@ function topProcedures(
       entries: remaining,
       intent: input.intent,
       anchors: input.targetAnchors,
-      bindingNames: [],
+      availability: EMPTY_PROCEDURE_BINDING_AVAILABILITY,
       ...(input.denseScoreByRecordId === undefined
         ? {}
         : { denseScoreByRecordId: input.denseScoreByRecordId }),

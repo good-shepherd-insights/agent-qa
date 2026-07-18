@@ -16,6 +16,7 @@ import {
   type BundleDiscriminant,
   type BundleDraft,
   type BundleOutcomeEvent,
+  type BundleProvenance,
   type BundleRelation,
   type CanaryOutcome,
   type DistilledObservation,
@@ -61,6 +62,7 @@ interface SeedRecordOptions {
   scope?: ScopeKey
   relations?: readonly BundleRelation[]
   initialEvents?: readonly BundleOutcomeEvent[]
+  provenance?: BundleProvenance
 }
 
 interface SeededStore {
@@ -205,7 +207,12 @@ describe('openKnowledgeReader synchronous serving port', () => {
       screenStates: [],
       initialEvents,
       relations: [...(options.relations ?? [])],
-      provenance: { mode: 'standalone', sourceDescription: 'reader fixture' },
+      provenance: options.provenance ?? {
+        schemaVersion: 1,
+        mode: 'standalone',
+        originClass: options.originClass ?? 'agent-verified',
+        sourceDescription: 'reader fixture',
+      },
       artifacts: [],
       evidenceMarkdown: `Evidence for ${options.key}.\n`,
       ...(observations.length === 0 ? {} : { distilledObservations: observations }),
@@ -470,6 +477,19 @@ describe('openKnowledgeReader synchronous serving port', () => {
         event('confirmed', 'procedure-port-a', 10),
         event('confirmed', 'procedure-port-b', 11),
       ],
+      provenance: {
+        schemaVersion: 1,
+        mode: 'run-linked',
+        originClass: 'agent-verified',
+        runId: 'reader-procedure-port',
+        testId: 'source-tagged-availability',
+        stepIndex: 0,
+        authorship: {
+          path: 'llm',
+          model: { id: 'claude-sonnet-4' },
+          executionContext: 'local-interactive',
+        },
+      },
     })
     await rebuildIndex({ knowledgeRoot })
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
@@ -480,13 +500,12 @@ describe('openKnowledgeReader synchronous serving port', () => {
     } satisfies ProcedureBindingAvailability
 
     expect(Object.keys(availability)).toEqual(['variables', 'memory', 'secrets'])
-    expect(
-      reader.getProcedure(
-        'sign in',
-        makeScreenStateFixture(),
-        availability as unknown as readonly string[],
-      )?.replayRecommendation,
-    ).toBe('replay')
+    const sourceCorrect = reader.getProcedure(
+      'sign in',
+      makeScreenStateFixture(),
+      availability,
+    )
+    expect(sourceCorrect).toMatchObject({ replayRecommendation: 'replay' })
     expect(
       reader.getProcedure(
         'sign in',
@@ -495,7 +514,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
           variables: ['email', 'password'],
           memory: [],
           secrets: [],
-        } as unknown as readonly string[],
+        },
       )?.replayRecommendation,
     ).toBe('hint')
   })

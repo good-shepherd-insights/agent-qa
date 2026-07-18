@@ -5,6 +5,7 @@ import type {
   CautionBlock,
   IndexEntry,
   ProcedureMatch,
+  ProcedureBindingAvailability,
   ReadOptions,
   RecordBody,
   RecordId,
@@ -19,15 +20,15 @@ export interface KnowledgeHintReader {
   read(id: RecordId, options?: ReadOptions): RecordBody | undefined
   getCautions(anchors: Anchor[], budget: number): CautionBlock
   /**
-   * D-08 port evolution: binding NAMES cross here so the fillability fold can rank matches; no
-   * value of any binding ever crosses the reader port in any form — value binding stays loop-side
-   * at replay time. Absent bindingNames is treated as an empty set, so required-parameter
-   * procedures downrank to hint (fail-conservative).
+   * D-08 port evolution: source-tagged binding NAMES cross here (variables, memory, secrets) so
+   * matcher fillability mirrors loop binding; no value ever crosses the reader port in any form.
+   * Value binding stays loop-side at replay time. Absent availability is treated as empty, so a
+   * referenced-parameter procedure downranks to hint (fail-conservative).
    */
   getProcedure(
     intent: string,
     screenState: ScreenState,
-    bindingNames?: readonly string[],
+    availability?: ProcedureBindingAvailability,
   ): ProcedureMatch | undefined
   emitCanaryOutcome(payload: CanaryOutcome): void
 }

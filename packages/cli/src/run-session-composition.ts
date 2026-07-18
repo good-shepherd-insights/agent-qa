@@ -157,8 +157,8 @@ export function createFrozenKnowledgeReader(reader: KnowledgeHintReader): Knowle
     search: (query, options) => reader.search(query, options),
     read: (id, options) => reader.read(id, options),
     getCautions: (anchors, budget) => reader.getCautions(anchors, budget),
-    getProcedure: (intent, screenState, bindingNames) =>
-      reader.getProcedure(intent, screenState, bindingNames),
+    getProcedure: (intent, screenState, availability) =>
+      reader.getProcedure(intent, screenState, availability),
     emitCanaryOutcome: (payload) => reader.emitCanaryOutcome(payload),
   }
 }

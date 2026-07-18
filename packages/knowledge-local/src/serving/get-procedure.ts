@@ -3,12 +3,14 @@ import {
   curatorTier,
   normalizeAnchor,
   parseProcedureBody,
+  procedureParameterFillability,
   survivingOutcomeEvents,
   type Anchor,
   type BundleOutcomeEvent,
   type BundleProvenance,
   type CuratorTier,
   type IndexEntry,
+  type ProcedureBindingAvailability,
   type ProcedureMatch,
 } from '@vostride/agent-qa-schema'
 
@@ -79,8 +81,8 @@ export interface MatchProcedureInput {
   intent: string
   /** ScreenState-derived anchors; normalized here via canonicalJson(normalizeAnchor(...)). */
   anchors: readonly Anchor[]
-  /** Binding NAMES only — no value of any binding ever reaches the matcher (D-08). */
-  bindingNames: readonly string[]
+  /** Source-tagged binding NAMES only — no value ever reaches the matcher (D-08). */
+  availability: ProcedureBindingAvailability
   /** Optional additive dense-leg scores keyed by record id, present only when an embedder is up. */
   denseScoreByRecordId?: ReadonlyMap<string, number>
 }
@@ -152,7 +154,6 @@ interface ScoredMatch {
  */
 export function matchProcedure(input: MatchProcedureInput): ProcedureMatch | undefined {
   const requestedKeys = new Set(input.anchors.map(normalizedAnchorKey))
-  const bindingNames = new Set(input.bindingNames)
 
   const scored = input.entries.flatMap((candidate): ScoredMatch[] => {
     if (!admitsProcedure(candidate)) return []
@@ -182,9 +183,9 @@ export function matchProcedure(input: MatchProcedureInput): ProcedureMatch | und
         : undefined,
     )
     const confirmations = confirmationCount(candidate.bundle.events)
-    const fillable = payload.parameters
-      .filter(({ required }) => required)
-      .every(({ name }) => bindingNames.has(name))
+    // The shared schema contract is also enforced by the loop binder. Matcher admission and
+    // loop-side source/type binding therefore cannot drift (WR-03).
+    const { fillable } = procedureParameterFillability(payload, input.availability)
 
     // Laplace-shaped confirmation factor: 0 confirmations => 0.5, saturating toward 1. Hint
     // matches keep a meaningful confidence while unconfirmed procedures stay below replay bars.

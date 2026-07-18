@@ -143,7 +143,11 @@ function matchInput(
     entries,
     intent: 'sign in',
     anchors: SIGN_IN_ANCHORS,
-    bindingNames: ['email', 'password'],
+    availability: {
+      variables: ['email'],
+      memory: [],
+      secrets: ['password'],
+    },
     ...overrides,
   }
 }
@@ -326,11 +330,11 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
       }),
     })]
     const sourceCorrect = matchProcedure({
-      ...matchInput(store, { bindingNames: ['email'] }),
+      ...matchInput(store),
       availability: { variables: ['email'], memory: [], secrets: [] },
     })
     const missing = matchProcedure({
-      ...matchInput(store, { bindingNames: [] }),
+      ...matchInput(store),
       availability: { variables: [], memory: [], secrets: [] },
     })
 
@@ -345,23 +349,26 @@ describe('matchProcedure empty edges', () => {
     expect(matchProcedure(matchInput([]))).toBeUndefined()
   })
 
-  it('downranks required-parameter procedures to hint when bindingNames is empty', () => {
+  it('downranks required-parameter procedures to hint when availability is empty', () => {
     const match = matchProcedure(matchInput([candidate({ id: 'proc-no-bindings' })], {
-      bindingNames: [],
+      availability: { variables: [], memory: [], secrets: [] },
     }))
 
     expect(match?.replayRecommendation).toBe('hint')
   })
 
-  it('still recommends replay for optional-only parameters with empty bindingNames', () => {
-    const match = matchProcedure(matchInput([
-      candidate({
-        id: 'proc-optional',
-        body: serializeProcedureBody(makeProcedureBodyPayloadFixture({
-          parameters: [{ name: 'email', type: 'string', required: false }],
-        })),
+  it('still recommends replay when an unavailable optional declaration is unreferenced', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    const match = matchProcedure(matchInput([candidate({
+      id: 'proc-optional-unreferenced',
+      body: serializeProcedureBody({
+        ...payload,
+        parameters: [
+          ...payload.parameters,
+          { name: 'otp', type: 'string', required: false },
+        ],
       }),
-    ], { bindingNames: [] }))
+    })]))
 
     expect(match?.replayRecommendation).toBe('replay')
   })
@@ -448,7 +455,7 @@ describe('servingReader getProcedure end-to-end', () => {
     const match = reader.getProcedure(
       'sign in',
       makeScreenStateFixture(),
-      ['email', 'password'],
+      { variables: ['email'], memory: [], secrets: ['password'] },
     )
 
     expect(match).toMatchObject({
@@ -468,11 +475,15 @@ describe('servingReader getProcedure end-to-end', () => {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
     expect(
-      reader.getProcedure('sign in', makeScreenStateFixture(), ['email', 'password']),
+      reader.getProcedure('sign in', makeScreenStateFixture(), {
+        variables: ['email'],
+        memory: [],
+        secrets: ['password'],
+      }),
     ).toBeUndefined()
   })
 
-  it('treats absent bindingNames as an empty set: required-param procedures downrank to hint', async () => {
+  it('treats absent availability as empty: required-param procedures downrank to hint', async () => {
     seedProcedure()
     await rebuildIndex({ knowledgeRoot })
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })

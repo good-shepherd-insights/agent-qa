@@ -136,7 +136,11 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
 
   function getProcedure() {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
-    return reader.getProcedure('sign in', makeScreenStateFixture(), ['email', 'password'])
+    return reader.getProcedure('sign in', makeScreenStateFixture(), {
+      variables: ['email'],
+      memory: [],
+      secrets: ['password'],
+    })
   }
 
   function loaded(bundleDir: string) {
