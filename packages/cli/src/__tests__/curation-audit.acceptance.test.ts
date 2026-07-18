@@ -178,6 +178,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
           emitted: 0,
           refused: 0,
           unresolved: 0,
+          procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }),
         buildCuratorAuthor: (deps) => buildCuratorAuthor({

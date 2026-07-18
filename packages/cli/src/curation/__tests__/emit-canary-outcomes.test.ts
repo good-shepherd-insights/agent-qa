@@ -420,6 +420,7 @@ describe('emitCanaryOutcomes', () => {
       emitted: 1,
       refused: 1,
       unresolved: 0,
+      procedure: { emitted: 0, refused: 0, unresolved: 0 },
       details: [
         {
           candidateId: CANDIDATE,
@@ -477,6 +478,7 @@ describe('emitCanaryOutcomes', () => {
         emitted: 0,
         refused: 0,
         unresolved: 1,
+        procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [{
           candidateId: OTHER_CANDIDATE,
           testId: 'checkout::happy-path',

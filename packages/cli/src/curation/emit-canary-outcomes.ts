@@ -16,6 +16,17 @@ import { exercisedAnchors } from './handoff-anchors.js'
 
 const NON_ATTRIBUTABLE_FAILURES = new Set(['environment', 'timeout', 'flake'])
 
+/**
+ * D-11: only guard misses that evidence procedure STALENESS attribute negatives. `gate-refused`
+ * and `non-replayable-action` are policy walls — they say the runner refused to replay, not that
+ * the procedure's descriptors or page anchors drifted — so they never damn the procedure.
+ */
+const STALENESS_MISS_REASONS = new Set([
+  'descriptor-ambiguous',
+  'descriptor-missing',
+  'page-anchor-mismatch',
+])
+
 export interface ProjectCanaryOutcomesInput {
   handoff: CompletedRunHandoff
   resolveCandidateAnchors: (id: RecordId) => CandidateAnchorResolution
@@ -46,6 +57,12 @@ export interface EmitCanaryOutcomeReport {
   emitted: number
   refused: number
   unresolved: number
+  /** D-12: per-source split of the planSource attribution stream; totals cover BOTH sources. */
+  procedure: {
+    emitted: number
+    refused: number
+    unresolved: number
+  }
   details: EmitCanaryOutcomeDetail[]
 }
 
@@ -62,15 +79,36 @@ function normalizedKey(anchor: Anchor): string {
   return canonicalJson(normalizeAnchor(anchor))
 }
 
+function nonAttributableFailure(test: PerTestOutcome): boolean {
+  return test.rootCause !== undefined && NON_ATTRIBUTABLE_FAILURES.has(test.rootCause.class)
+}
+
 function attributedOutcome(
   test: PerTestOutcome,
   step: StepEvidence,
 ): CanaryOutcome['runOutcome'] | undefined {
   if (step.verifierVerdict.pass) return 'positive'
-  if (test.rootCause !== undefined && NON_ATTRIBUTABLE_FAILURES.has(test.rootCause.class)) {
-    return undefined
-  }
+  if (nonAttributableFailure(test)) return undefined
   return 'negative'
+}
+
+/**
+ * D-12's second attribution source: the typed `planSource` marker. A clean full replay flows
+ * through the SAME classifier gate as Pin 1 (`attributedOutcome`); a staleness guard miss is
+ * the signal itself and attributes a negative regardless of the step's eventual verdict —
+ * gated only by the same root-cause classifier, because environment/timeout/flake failures
+ * never damn the procedure (D-11). `procedure-hint` exposure is recorded, never judged.
+ */
+function procedureReplayOutcome(
+  test: PerTestOutcome,
+  step: StepEvidence,
+): CanaryOutcome['runOutcome'] | undefined {
+  const source = step.planSource
+  if (source === undefined || source.kind !== 'procedure-replay') return undefined
+  const miss = source.guard.miss
+  if (miss === undefined) return attributedOutcome(test, step)
+  if (!STALENESS_MISS_REASONS.has(miss.reason)) return undefined
+  return nonAttributableFailure(test) ? undefined : 'negative'
 }
 
 function servedCanaryIds(step: StepEvidence): RecordId[] {
@@ -99,10 +137,13 @@ function firstMatchingAnchor(
   return undefined
 }
 
+type AttributionSource = 'served-brief' | 'procedure-replay'
+
 type ProjectedCanaryAttribution =
-  | { kind: 'outcome'; outcome: CanaryOutcome }
+  | { kind: 'outcome'; source: AttributionSource; outcome: CanaryOutcome }
   | {
       kind: 'unresolved'
+      source: AttributionSource
       candidateId: RecordId
       testId: string
       testIndex: number
@@ -133,51 +174,124 @@ function projectCanaryAttributions(
   const projected: ProjectedCanaryAttribution[] = []
   for (const test of input.handoff.tests) {
     for (const step of test.steps) {
-      const runOutcome = attributedOutcome(test, step)
-      if (runOutcome === undefined) continue
-      const stepAnchors = exercisedAnchors(step)
-      if (stepAnchors.length === 0) continue
-
-      for (const candidateId of servedCanaryIds(step)) {
-        const resolution = resolveAnchors(candidateId)
-        if (resolution.kind === 'unresolved') {
-          projected.push({
-            kind: 'unresolved',
-            candidateId,
-            testId: test.testId,
-            testIndex: test.testIndex,
-            stepIndex: step.stepIndex,
-            reason: resolution.reason,
-            ...(resolution.detail === undefined ? {} : { detail: resolution.detail }),
-          })
-          continue
-        }
-        const exercisedAnchor = firstMatchingAnchor(resolution.anchors, stepAnchors)
-        if (exercisedAnchor === undefined) continue
-        projected.push({
-          kind: 'outcome',
-          outcome: {
-            candidateId,
-            runOutcome,
-            runId: String(input.handoff.runId),
-            testId: test.testId,
-            testIndex: test.testIndex,
-            buildOrdinal: input.handoff.buildOrdinal,
-            stepIndex: step.stepIndex,
-            briefDigest: step.servedBrief.briefDigest,
-            attribution: [
-              `Candidate ${candidateId}`,
-              `matched ${canonicalJson(exercisedAnchor)}`,
-              `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
-              `with ${runOutcome} verdict`,
-            ].join(' '),
-            exercisedAnchor,
-          } satisfies CanaryOutcome,
-        })
-      }
+      projectBriefAttributions(input, test, step, resolveAnchors, projected)
+      projectProcedureAttribution(input, test, step, resolveAnchors, projected)
     }
   }
   return projected
+}
+
+function projectBriefAttributions(
+  input: ProjectCanaryOutcomesInput,
+  test: PerTestOutcome,
+  step: StepEvidence,
+  resolveAnchors: (id: RecordId) => CandidateAnchorResolution,
+  projected: ProjectedCanaryAttribution[],
+): void {
+  const runOutcome = attributedOutcome(test, step)
+  if (runOutcome === undefined) return
+  const stepAnchors = exercisedAnchors(step)
+  if (stepAnchors.length === 0) return
+
+  for (const candidateId of servedCanaryIds(step)) {
+    const resolution = resolveAnchors(candidateId)
+    if (resolution.kind === 'unresolved') {
+      projected.push({
+        kind: 'unresolved',
+        source: 'served-brief',
+        candidateId,
+        testId: test.testId,
+        testIndex: test.testIndex,
+        stepIndex: step.stepIndex,
+        reason: resolution.reason,
+        ...(resolution.detail === undefined ? {} : { detail: resolution.detail }),
+      })
+      continue
+    }
+    const exercisedAnchor = firstMatchingAnchor(resolution.anchors, stepAnchors)
+    if (exercisedAnchor === undefined) continue
+    projected.push({
+      kind: 'outcome',
+      source: 'served-brief',
+      outcome: {
+        candidateId,
+        runOutcome,
+        runId: String(input.handoff.runId),
+        testId: test.testId,
+        testIndex: test.testIndex,
+        buildOrdinal: input.handoff.buildOrdinal,
+        stepIndex: step.stepIndex,
+        briefDigest: step.servedBrief.briefDigest,
+        attribution: [
+          `Candidate ${candidateId}`,
+          `matched ${canonicalJson(exercisedAnchor)}`,
+          `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
+          `with ${runOutcome} verdict`,
+        ].join(' '),
+        exercisedAnchor,
+      } satisfies CanaryOutcome,
+    })
+  }
+}
+
+/**
+ * The planSource attribution source (D-12). Unlike Pin 1, replay is DIRECT exercise: the guard
+ * fold proves the procedure drove (or failed to drive) the step, so no anchor-contact match
+ * against the step's exercised anchors is required — a guard-miss step's exercised anchors come
+ * from the planning fallback and would wrongly drop the staleness negative. The outcome carries
+ * the procedure's first canonical anchor as its exercised anchor.
+ */
+function projectProcedureAttribution(
+  input: ProjectCanaryOutcomesInput,
+  test: PerTestOutcome,
+  step: StepEvidence,
+  resolveAnchors: (id: RecordId) => CandidateAnchorResolution,
+  projected: ProjectedCanaryAttribution[],
+): void {
+  const source = step.planSource
+  if (source === undefined || source.kind !== 'procedure-replay') return
+  const runOutcome = procedureReplayOutcome(test, step)
+  if (runOutcome === undefined) return
+
+  const resolution = resolveAnchors(source.procedureId)
+  if (resolution.kind === 'unresolved') {
+    projected.push({
+      kind: 'unresolved',
+      source: 'procedure-replay',
+      candidateId: source.procedureId,
+      testId: test.testId,
+      testIndex: test.testIndex,
+      stepIndex: step.stepIndex,
+      reason: resolution.reason,
+      ...(resolution.detail === undefined ? {} : { detail: resolution.detail }),
+    })
+    return
+  }
+  const anchor = resolution.anchors[0]
+  if (anchor === undefined) return
+  const miss = source.guard.miss
+  projected.push({
+    kind: 'outcome',
+    source: 'procedure-replay',
+    outcome: {
+      candidateId: source.procedureId,
+      runOutcome,
+      runId: String(input.handoff.runId),
+      testId: test.testId,
+      testIndex: test.testIndex,
+      buildOrdinal: input.handoff.buildOrdinal,
+      stepIndex: step.stepIndex,
+      briefDigest: step.servedBrief.briefDigest,
+      attribution: [
+        `Procedure ${source.procedureId} replayed`,
+        `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
+        miss === undefined
+          ? `with ${runOutcome} verdict`
+          : `with guard miss ${miss.reason} at procedure step ${miss.procedureStepIndex}`,
+      ].join(' '),
+      exercisedAnchor: normalizeAnchor(anchor),
+    } satisfies CanaryOutcome,
+  })
 }
 
 /** Pure Pin-1 projection: identical handoff + canonical snapshot yields identical outcome bytes. */
@@ -205,12 +319,15 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
     emitted: 0,
     refused: 0,
     unresolved: 0,
+    procedure: { emitted: 0, refused: 0, unresolved: 0 },
     details: [],
   }
 
   for (const attribution of projected) {
+    const fromProcedure = attribution.source === 'procedure-replay'
     if (attribution.kind === 'unresolved') {
       report.unresolved += 1
+      if (fromProcedure) report.procedure.unresolved += 1
       report.details.push({
         candidateId: attribution.candidateId,
         testId: attribution.testId,
@@ -230,10 +347,12 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
       opts.emit(attribution.outcome)
       outcome = { kind: 'emitted' }
       report.emitted += 1
+      if (fromProcedure) report.procedure.emitted += 1
     } catch (error) {
       if (error instanceof TypeError) throw error
       outcome = { kind: 'refused', reason: 'emit-error' }
       report.refused += 1
+      if (fromProcedure) report.procedure.refused += 1
     }
     report.details.push({
       candidateId: attribution.outcome.candidateId,

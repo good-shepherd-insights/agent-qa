@@ -109,6 +109,7 @@ function successfulOperations(
       emitted: 0,
       refused: 0,
       unresolved: 0,
+      procedure: { emitted: 0, refused: 0, unresolved: 0 },
       details: [],
     })),
     buildCuratorAuthor: () => vi.fn(async () => ({
@@ -225,6 +226,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 1,
           refused: 0,
           unresolved: 0,
+          procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [{
             candidateId: canaryOutcome.candidateId,
             testId: canaryOutcome.testId,
@@ -337,7 +339,13 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         },
         emitCanaryOutcomes() {
           if (failureStage === 'canary-emit') throw new Error('canary emit failed')
-          return { emitted: 0, refused: 0, unresolved: 0, details: [] }
+          return {
+            emitted: 0,
+            refused: 0,
+            unresolved: 0,
+            procedure: { emitted: 0, refused: 0, unresolved: 0 },
+            details: [],
+          }
         },
         async drainQueue() {
           if (failureStage === 'drain') throw new Error('drain failed')
@@ -393,6 +401,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 0,
           refused: condition === 'canary-refused' ? 1 : 0,
           unresolved: condition === 'canary-unresolved' ? 1 : 0,
+          procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }
       },
@@ -478,14 +487,27 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
               emitted: 1,
               refused: 1,
               unresolved: 0,
+              procedure: { emitted: 0, refused: 0, unresolved: 0 },
               details: [],
             }
           }
           durableOutcomes.add('old-retried-outcome')
-          return { emitted: 2, refused: 0, unresolved: 0, details: [] }
+          return {
+            emitted: 2,
+            refused: 0,
+            unresolved: 0,
+            procedure: { emitted: 0, refused: 0, unresolved: 0 },
+            details: [],
+          }
         }
         durableOutcomes.add('new-outcome')
-        return { emitted: 1, refused: 0, unresolved: 0, details: [] }
+        return {
+          emitted: 1,
+          refused: 0,
+          unresolved: 0,
+          procedure: { emitted: 0, refused: 0, unresolved: 0 },
+          details: [],
+        }
       },
       drainQueue,
     })
