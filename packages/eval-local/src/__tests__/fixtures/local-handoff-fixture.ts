@@ -167,6 +167,7 @@ export function makeLocalV2Handoff(
     tests: [
       {
         testId: LOCAL_FIXTURE_TEST_ID,
+        filePath: 'tests/local-fixture.test.ts',
         testIndex: 0,
         outcome: 'passed',
         steps: [step(0, 'miss', true, screenshotRef), step(1, 'hit', false, undefined)],

@@ -202,6 +202,7 @@ export function makeReplayHandoff(options: ReplayHandoffOptions = {}): Completed
     tests: [
       {
         testId: TEST_ID,
+        filePath: 'tests/replay-fixture.test.ts',
         testIndex: 0,
         outcome: 'passed',
         steps: [liveStep({ platform, vision, stepText, exchanges })],
