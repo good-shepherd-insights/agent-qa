@@ -134,6 +134,17 @@ vi.mock('@vostride/agent-qa-core', () => ({
   },
   isBetterSqlite3AbiMismatch: vi.fn(() => false),
   parseAllTests: mockParseAllTests,
+  parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
+    const result = await mockParseAllTests(filePaths)
+    return {
+      bindings: (result.tests ?? []).map((test: unknown) => ({
+        test,
+        filePath: filePaths[0] ?? '',
+        fileContent: '',
+      })),
+      errors: result.errors ?? [],
+    }
+  }),
   formatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
   parseHooksFile: mockParseHooksFile,
   runHooks: mockRunHooks,

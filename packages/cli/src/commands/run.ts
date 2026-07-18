@@ -11,7 +11,7 @@ import { resolveTarget, type ResolvedTarget } from '../targets.js'
 import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type ResolvedDevice } from '../devices.js'
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
-import type { TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
+import type { ParsedTestBinding, TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
 import type { DeclaredModelProfile, ModelCapabilities } from '@vostride/agent-qa-schema'
 import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
@@ -58,6 +58,7 @@ import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { BetterSqlite3AbiMismatchError, isBetterSqlite3AbiMismatch } from '@vostride/agent-qa-core'
 import { createShutdownController } from './shutdown-controller.js'
+import { buildDirectRunMembers } from './direct-run-members.js'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
 
 const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artifacts'
@@ -2629,10 +2630,10 @@ export function createRunCommand(): Command {
           process.exit(0)
         }
 
-        const { parseAllTests, formatParseError } = await import('@vostride/agent-qa-core')
-        const parseResult = await parseAllTests(files)
+        const { parseAllTestBindings, formatParseError } = await import('@vostride/agent-qa-core')
+        const parseResult = await parseAllTestBindings(files)
         const directRunProduct = parseResult.errors.length === 0
-          ? requireSingleInvocationProduct(parseResult.tests.flatMap((test) => {
+          ? requireSingleInvocationProduct(parseResult.bindings.flatMap(({ test }) => {
               if (test.target === undefined) return []
               return [{
                 label: `test ${test.name}`,
@@ -2763,9 +2764,9 @@ export function createRunCommand(): Command {
           process.exit(2)
         }
 
-        const filtered = parseResult.tests
+        const filtered = parseResult.bindings
 
-        // RUNX-06: `filtered` is `parseResult.tests` verbatim — no grep/filter narrows it here — so
+        // RUNX-06: `filtered` is `parseResult.bindings` verbatim — no grep/filter narrows it here — so
         // `filtered.length === 0` means discovery RESOLVED >=1 test file (the exit-2 guards above
         // already proved that) but parsing produced ZERO runnable tests. Starting a run from here
         // would assemble a zero-member RunSession and render a benign-looking "Tests: 0 of 0 passed"
@@ -2781,7 +2782,7 @@ export function createRunCommand(): Command {
 
         if (opts.dryRun) {
           console.log(pc.bold(`\nFound ${filtered.length} test(s):\n`))
-          for (const test of filtered) {
+          for (const { test } of filtered) {
             console.log(`  ${pc.green('●')} ${test.name}`)
             if (opts.configDebug) {
               console.log(pc.bold(`\n  Config for: ${test.name}`))
@@ -2863,15 +2864,16 @@ export function createRunCommand(): Command {
         // (RESEARCH A2 — the suite path is single-attempt, this path keeps its retry). The run-shell
         // ctx seams (events/abortSignal) and the member's cache digest pair are threaded in.
         const runOneDirectTest = async (
-          test: TestDefinition,
+          binding: ParsedTestBinding,
           ctx: MemberTestRunContext,
           perMemberDigest: ConfigDigests | undefined,
         ): Promise<TestResult> => {
+          const { test, filePath, fileContent: testFileContent } = binding
           let currentPlatform: 'web' | 'android' | 'ios' | null = null
           let currentAdapterKey: string | null = null
           let adapter: import('@vostride/agent-qa-runner').PlatformAdapter | null = null
           let analyticsRunId: string | undefined
-          let analyticsFilePath = 'unknown'
+          let analyticsFilePath = filePath
           let analyticsPlatform: 'web' | 'android' | 'ios' | undefined
           let analyticsTestId: string | undefined
           let analyticsAttributes: RunAttributes | undefined = resolveCliRunAttributes(
@@ -2894,25 +2896,11 @@ export function createRunCommand(): Command {
           }
           analyticsTestId = testDef['test-id']
 
-          const filePath = files.find(f =>
-            parseResult.tests.some(t => t.name === test.name),
-          ) ?? 'unknown'
-          analyticsFilePath = filePath
-
           const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
           analyticsRunId = runId
           analyticsStartedAt = Date.now()
           currentRunId = runId
           logger.setRunId(runId)
-
-          // Read raw test file content for cache key scoping
-          let testFileContent = ''
-          if (filePath !== 'unknown') {
-            try {
-              const { readFile: readTestFile } = await import('node:fs/promises')
-              testFileContent = await readTestFile(filePath, 'utf-8')
-            } catch { /* best-effort */ }
-          }
 
           // Per-test config merge (global config < test YAML use: < CLI flags)
           const testFlagOverrides: Record<string, unknown> = {}
@@ -3056,7 +3044,7 @@ export function createRunCommand(): Command {
               }
 
               // Wire recording config for this platform adapter
-              const anyTestNeedsRecording = filtered.some(t => (t.meta as any)?.record === true)
+              const anyTestNeedsRecording = filtered.some(({ test: candidate }) => (candidate.meta as any)?.record === true)
               if (recordingEnabled || anyTestNeedsRecording) {
                 const recCfg = config.services?.recording as Record<string, unknown> | undefined
                 platformConfig.recording = {
@@ -3539,38 +3527,14 @@ export function createRunCommand(): Command {
         process.on('SIGINT', shutdownController.handleSignal)
         process.on('SIGTERM', shutdownController.handleSignal)
 
-        // Pre-read each member's test file content for the ONE digest mint (D-20). Mirrors the
-        // closure's own per-file read; digests must be resolved before startRun (D-04).
-        const { readFile: readMemberFile } = await import('node:fs/promises')
-        const members: RunMemberDescriptor[] = []
-        const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> = []
-        const digestMembers: Array<{ testFileContent: string }> = []
+        // Parser-minted bindings are the ONE source for member identity and digest bytes (D-20).
+        // Digests must still be resolved before startRun (D-04).
+        const { members, digestMembers } = buildDirectRunMembers(filtered)
         let perMemberDigests: ConfigDigests[] = []
-
-        for (let i = 0; i < filtered.length; i++) {
-          const test = filtered[i]
-          const memberFilePath = files.find(f =>
-            parseResult.tests.some(t => t.name === test.name),
-          ) ?? 'unknown'
-          let memberFileContent = ''
-          if (memberFilePath !== 'unknown') {
-            try { memberFileContent = await readMemberFile(memberFilePath, 'utf-8') } catch { /* best-effort */ }
-          }
-          const globalIndex = i
-          members.push({
-            testId: (test as any)['test-id'] ?? test.name,
-            testIndex: globalIndex,
-            name: test.name,
-            // NO failFastGroup — the single-test path runs all members then aggregates.
-            // 363 D-01 filePath + totalSteps parity fields; no suite grouping on the single-test
-            // path. filePath is REQUIRED since 381-01 (ABRF-02 stable test identity) — the
-            // 'unknown' fallback is carried verbatim rather than omitted.
-            filePath: memberFilePath,
-            totalSteps: test.steps.length,
-          })
-          digestMembers.push({ testFileContent: memberFileContent })
-          memberBindings.push((ctx) => runOneDirectTest(test, ctx, perMemberDigests[globalIndex]))
-        }
+        const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> =
+          filtered.map((binding, testIndex) =>
+            (ctx) => runOneDirectTest(binding, ctx, perMemberDigests[testIndex]),
+          )
 
         // D-20: the ONE digest mint — per-member cache pairs (suiteFileContent absent ⇒ a
         // single-member run collapses the run-level pair to the member values).
@@ -3588,7 +3552,7 @@ export function createRunCommand(): Command {
         const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
         let singleBaselineProbe: BaselineProbeResult | undefined
         try {
-          const singleResolvedTarget = resolveTarget(config, filtered[0].target!)
+          const singleResolvedTarget = resolveTarget(config, filtered[0].test.target!)
           singleRunProduct = directRunProduct ?? singleResolvedTarget.product ?? 'unknown'
           // D-04: run-start baseline probe — web targets only; result threads in-memory via
           // RunConfig (mobile: device-session-create failure is the equivalent signal, no probe).

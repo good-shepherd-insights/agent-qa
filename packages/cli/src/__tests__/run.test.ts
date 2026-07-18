@@ -200,6 +200,17 @@ vi.mock('@vostride/agent-qa-core', () => {
 
   return {
   parseAllTests: mockParseAllTests,
+  parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
+    const result = await mockParseAllTests(filePaths)
+    return {
+      bindings: (result.tests ?? []).map((test: unknown) => ({
+        test,
+        filePath: filePaths[0] ?? '',
+        fileContent: '',
+      })),
+      errors: result.errors ?? [],
+    }
+  }),
   parseSuiteFile: mockParseSuiteFile,
   parseTestFile: mockParseTestFile,
   parseHooksFile: mockParseHooksFile,
