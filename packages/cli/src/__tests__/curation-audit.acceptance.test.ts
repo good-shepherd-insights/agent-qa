@@ -2,10 +2,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-} from '@ai-sdk/provider'
 import {
   enqueueCurationCandidateProjection,
   enumerateBundleDirs,
@@ -36,7 +32,11 @@ import {
 
 const noneAuth: ResolvedModelAuth = { kind: 'none' }
 
-function generated(text: string): Awaited<ReturnType<LanguageModelV3['doGenerate']>> {
+type CuratorModel = ReturnType<typeof createModel>
+type CallOptions = Parameters<CuratorModel['doGenerate']>[0]
+type GenerateResult = Awaited<ReturnType<CuratorModel['doGenerate']>>
+
+function generated(text: string): GenerateResult {
   return {
     content: [{ type: 'text', text }],
     finishReason: { unified: 'stop', raw: 'stop' },
@@ -48,7 +48,7 @@ function generated(text: string): Awaited<ReturnType<LanguageModelV3['doGenerate
   }
 }
 
-function scriptedModel(onCall: (options: LanguageModelV3CallOptions) => void): LanguageModelV3 {
+function scriptedModel(onCall: (options: CallOptions) => void): CuratorModel {
   return {
     specificationVersion: 'v3',
     provider: 'curation-audit-scripted',
@@ -137,7 +137,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
 
   function tailOptions(
     auditSink: JsonlAuditSink,
-    modelCalls: ReturnType<typeof vi.fn<(options: LanguageModelV3CallOptions) => void>>,
+    modelCalls: ReturnType<typeof vi.fn<(options: CallOptions) => void>>,
   ): RunCurationTailOptions {
     const resolvedProfile = profile()
     return {
@@ -188,7 +188,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
   }
 
   it('writes a guardrail row for the audited createModel call inside runCurationTail', async () => {
-    const modelCalls = vi.fn<(options: LanguageModelV3CallOptions) => void>()
+    const modelCalls = vi.fn<(options: CallOptions) => void>()
     const sink = new JsonlAuditSink(agentQaRoot)
 
     await runCurationTail(tailOptions(sink, modelCalls))
@@ -233,7 +233,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
   })
 
   it('records no curation egress when --detach skips the tail', async () => {
-    const modelCalls = vi.fn<(options: LanguageModelV3CallOptions) => void>()
+    const modelCalls = vi.fn<(options: CallOptions) => void>()
     const sink = new JsonlAuditSink(agentQaRoot)
     const runTail = vi.fn(() => runCurationTail(tailOptions(sink, modelCalls)))
 
