@@ -27,7 +27,7 @@ import type { LoadedBundle } from './bundle-read.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
 import { applyIndexDeltaForBundle } from './curator/commit.js'
-import type { AuthoredCheckpoint } from './curator/author-contract.js'
+import type { AuthoredDeltaCheckpoint } from './curator/author-contract.js'
 import { disposeDelta } from './curator/disposition.js'
 
 export type RollbackKind = 'job' | 'campaign'
@@ -379,7 +379,7 @@ function appendedOrThrow(
   }
 }
 
-function maintenanceCheckpoint(delta: Delta, targetRecordId: RecordId): AuthoredCheckpoint {
+function maintenanceCheckpoint(delta: Delta, targetRecordId: RecordId): AuthoredDeltaCheckpoint {
   const authorship = {
     path: 'deterministic-fallback' as const,
     executionContext: 'local-interactive' as const,

@@ -26,7 +26,7 @@ import {
   publishBundle,
   rebuildIndex,
   retrieve,
-  type AuthoredCheckpoint,
+  type AuthoredDeltaCheckpoint,
   type BuildCurationCandidateAddressFieldsInput,
   type CommitCurationDependencies,
   type CommitCurationJob,
@@ -219,7 +219,7 @@ function replacementJob(): CommitCurationJob {
 function renameCheckpoint(
   victimId: RecordId,
   job: CommitCurationJob,
-): AuthoredCheckpoint {
+): AuthoredDeltaCheckpoint {
   const precondition = {
     recordId: victimId,
     observedStatus: 'active',

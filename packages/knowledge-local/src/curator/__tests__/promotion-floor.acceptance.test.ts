@@ -322,7 +322,9 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
   })
 
   it('refuses procedure kind and injection-withheld content under zero-model fallback', async () => {
-    await drainWithoutModel({
+    // D-06 (381-02): the restricted fallback NEVER authors procedures. A procedure-extraction
+    // job under zero-model fallback disposes as a Noop — no bundle is written at all.
+    const { report: procedureReport } = await drainWithoutModel({
       ...selectorProjection('procedure'),
       kind: 'procedure',
       subtype: undefined,
@@ -338,10 +340,8 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
         },
       ],
     })
-    const procedure = onlyBundle().bundle
-    expect(procedure.frontmatter.kind).toBe('procedure')
-    expect(procedure.events.some(({ type }) => type === 'promoted')).toBe(false)
-    expect(deriveBundleTrust(procedure).status).toBe('candidate')
+    expect(procedureReport).toMatchObject({ jobsProcessed: 1, committed: 0, failures: 0 })
+    expect(loadedBundles()).toHaveLength(0)
 
     rmSync(knowledgeRoot, { recursive: true, force: true })
     const { report } = await drainWithoutModel(selectorProjection('withheld', {

@@ -80,7 +80,7 @@ function scriptedAuthor(point: SigkillPoint): CuratorAuthor {
         originStage: 'run-curation',
       },
     }
-    return { kind: 'authored', delta, authorship }
+    return { kind: 'authored', deltas: [delta], authorship }
   }
 }
 

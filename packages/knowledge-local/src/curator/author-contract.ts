@@ -19,7 +19,11 @@ import type { CurationCandidatePayload } from '../queue/queue-payload.js'
 
 export const AUTHORED_CHECKPOINT_SCHEMA_VERSION = 1
 
-/** The deterministic author-facing projection of one durable queue payload. */
+/**
+ * The deterministic author-facing projection of one durable queue payload. `captureReceipt`
+ * rides along so the procedure-extraction author can derive guard descriptors and D-03
+ * forced parameterization from finalized §A8 evidence, never from LLM text.
+ */
 export type CurationJobView = Pick<
   CurationCandidatePayload,
   | 'candidateId'
@@ -36,6 +40,7 @@ export type CurationJobView = Pick<
   | 'executionContext'
   | 'secretFlagged'
   | 'injectionFlagged'
+  | 'captureReceipt'
 >
 
 /** One retrieval hit as shown to the author through a small integer alias. */
@@ -55,8 +60,13 @@ type NonFactNeighborRecord = {
 export type NeighborRecord = NeighborRecordBase &
   ({ kind: 'fact'; subtype: FactSubtype } | NonFactNeighborRecord)
 
+/**
+ * One authored outcome may carry multiple deltas (D-02): a procedure-extraction job can yield
+ * whole-flow AND sub-flow candidates from one trajectory. Fact/caution authoring produces a
+ * one-element array. The array is never empty.
+ */
 export type AuthorOutcome =
-  | { kind: 'authored'; delta: Delta; authorship: CurationAuthorship }
+  | { kind: 'authored'; deltas: Delta[]; authorship: CurationAuthorship }
   | {
       kind: 'fallback-required'
       reason: 'malformed' | 'no-model' | 'token-budget' | 'model-error'
@@ -268,11 +278,13 @@ const deltaSchema = z.discriminatedUnion('kind', [
 /**
  * Strict recovery boundary for the opaque queue slot. Neighbor membership and CAS freshness are
  * deliberately disposition checks, so this schema validates structure without applying them.
+ * D-02: the checkpoint carries the authored outcome's FULL delta array — one durable authoring
+ * checkpoint per job, disposed delta-by-delta through the commit boundary.
  */
 export const authoredCheckpointSchema = z
   .object({
     schemaVersion: z.literal(AUTHORED_CHECKPOINT_SCHEMA_VERSION),
-    delta: deltaSchema,
+    deltas: z.array(deltaSchema).min(1),
     neighborIds: z.array(recordIdSchema),
     preconditions: z.array(compareAndSetSchema),
     authorship: curationAuthorshipSchema,
@@ -284,4 +296,43 @@ export type AuthoredCheckpoint = z.infer<typeof authoredCheckpointSchema>
 /** Parse crash-recovered authored bytes before replaying the deterministic tail. */
 export function parseAuthoredCheckpoint(value: unknown): AuthoredCheckpoint {
   return authoredCheckpointSchema.parse(value)
+}
+
+/**
+ * The per-delta commit unit sliced from a widened checkpoint. `commitCurationDelta` remains
+ * the ONE serialized mutation boundary and disposes exactly one delta per call; the drain
+ * slices the checkpoint and disposes each delta independently (D-02).
+ */
+export interface AuthoredDeltaCheckpoint {
+  schemaVersion: typeof AUTHORED_CHECKPOINT_SCHEMA_VERSION
+  delta: AuthoredCheckpoint['deltas'][number]
+  neighborIds: AuthoredCheckpoint['neighborIds']
+  preconditions: AuthoredCheckpoint['preconditions']
+  authorship: AuthoredCheckpoint['authorship']
+}
+
+/** Slice one widened checkpoint into its ordered per-delta commit units. */
+export function sliceAuthoredCheckpoint(
+  checkpoint: AuthoredCheckpoint,
+): AuthoredDeltaCheckpoint[] {
+  return checkpoint.deltas.map((delta) => ({
+    schemaVersion: checkpoint.schemaVersion,
+    delta,
+    neighborIds: checkpoint.neighborIds,
+    preconditions: checkpoint.preconditions,
+    authorship: checkpoint.authorship,
+  }))
+}
+
+/** Re-widen one commit unit into a parseable singleton checkpoint (job-state persistence). */
+export function widenAuthoredDeltaCheckpoint(
+  slice: AuthoredDeltaCheckpoint,
+): AuthoredCheckpoint {
+  return {
+    schemaVersion: slice.schemaVersion,
+    deltas: [slice.delta],
+    neighborIds: slice.neighborIds,
+    preconditions: slice.preconditions,
+    authorship: slice.authorship,
+  }
 }

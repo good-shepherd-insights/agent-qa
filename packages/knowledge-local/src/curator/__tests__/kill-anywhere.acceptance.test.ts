@@ -105,7 +105,8 @@ function mutableProjectionInput(
     executionContext: 'local-interactive',
     secretFlagged: false,
     injectionFlagged: false,
-    kind: 'procedure',
+    kind: 'fact',
+    subtype: 'behavioral',
     anchors: [{ t: 'flow', name: 'Checkout flow' }],
     summarySeed: 'Checkout flow needs richer authoring',
     bodySeed: 'Complete checkout using the observed sequence.',
@@ -158,7 +159,10 @@ function authoredAdd(job: Parameters<CuratorAuthor>[0]): {
 }
 
 function scriptedAuthor() {
-  return vi.fn<CuratorAuthor>(async (job) => ({ kind: 'authored', ...authoredAdd(job) }))
+  return vi.fn<CuratorAuthor>(async (job) => {
+    const { delta, authorship } = authoredAdd(job)
+    return { kind: 'authored', deltas: [delta], authorship }
+  })
 }
 
 function enqueue(

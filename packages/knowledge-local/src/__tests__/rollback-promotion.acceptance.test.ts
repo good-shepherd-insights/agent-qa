@@ -31,7 +31,7 @@ import {
 import { derivePromotedEvidenceToken } from '../curator/commit.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
 import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
-import type { AuthoredCheckpoint } from '../curator/author-contract.js'
+import type { AuthoredDeltaCheckpoint } from '../curator/author-contract.js'
 
 const PRODUCT = 'rollback-promotion-storefront'
 const SCOPE = { tier: 'product', key: PRODUCT } as const
@@ -162,7 +162,7 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     }
   }
 
-  function conversionCheckpoint(delta: Delta): AuthoredCheckpoint {
+  function conversionCheckpoint(delta: Delta): AuthoredDeltaCheckpoint {
     return {
       schemaVersion: 1,
       delta,

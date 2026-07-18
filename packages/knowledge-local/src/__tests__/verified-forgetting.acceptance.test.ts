@@ -82,7 +82,7 @@ import {
   resolveActiveProfile,
   retrieve,
   vecTableName,
-  type AuthoredCheckpoint,
+  type AuthoredDeltaCheckpoint,
   type BuildCurationCandidateAddressFieldsInput,
   type BundleStoreConfig,
   type CommitCurationDependencies,
@@ -289,7 +289,7 @@ function deprecationJob(identity: string): CommitCurationJob {
 function deprecationCheckpoint(
   triggerId: RecordId,
   job: CommitCurationJob,
-): AuthoredCheckpoint {
+): AuthoredDeltaCheckpoint {
   const authorship = {
     path: 'llm' as const,
     model: { id: 'verified-forgetting-maintenance' },

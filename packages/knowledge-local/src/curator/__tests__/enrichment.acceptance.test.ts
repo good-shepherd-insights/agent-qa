@@ -52,7 +52,8 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
       executionContext: 'local-interactive',
       secretFlagged: false,
       injectionFlagged: false,
-      kind: 'procedure',
+      kind: 'fact',
+      subtype: 'behavioral',
       anchors: [flowAnchor],
       summarySeed: 'Checkout flow needs richer authoring',
       bodySeed: 'Complete checkout using the observed sequence.',
@@ -134,6 +135,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
         authorship,
         bundle: {
           kind: job.kind,
+          ...(job.subtype === undefined ? {} : { subtype: job.subtype }),
           anchors: job.anchors,
           scope: job.scope,
           summary: enrichedSummary,
@@ -145,7 +147,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
           originStage: 'run-curation',
         },
       }
-      return { kind: 'authored', delta, authorship }
+      return { kind: 'authored', deltas: [delta], authorship }
     })
     let commitOutcome: CommitCurationOutcome | undefined
 

@@ -47,7 +47,7 @@ import type {
   CurationCandidatePayload,
 } from '../queue/queue-payload.js'
 import { resolveDispositionProfile } from './author-contract.js'
-import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
+import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   applyIndexDeltaForBundle,
   assemblePromotionGateInput,
@@ -229,7 +229,7 @@ function syntheticAuthorship(
 function bridgeDelta(
   config: CreateLocalKnowledgeStoreConfig,
   delta: Delta,
-): { job: CommitCurationJob; checkpoint: AuthoredCheckpoint } {
+): { job: CommitCurationJob; checkpoint: AuthoredDeltaCheckpoint } {
   const neighbors = delta.citedIds
     .map((id) => resolveTruth(config.knowledgeRoot, id))
     .filter((truth): truth is ResolvedTruth => truth !== undefined)

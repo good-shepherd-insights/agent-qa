@@ -33,7 +33,7 @@ import {
   publishBundle,
   rollbackCurationJob,
   runKnowledgeGc,
-  type AuthoredCheckpoint,
+  type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
   type LoadedBundle,
@@ -203,7 +203,7 @@ function claimedJob(generation: number, buildOrdinal: number, label: string): Co
   }
 }
 
-function checkpoint(delta: Delta): AuthoredCheckpoint {
+function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
   return {
     schemaVersion: 1,
     delta,

@@ -57,6 +57,7 @@ function job(overrides: Partial<FallbackJobFixture> = {}): FallbackJobFixture {
     injectionFlagged: false,
     attributingObservationId: 'run-1:test-0:step-0',
     executionContext: 'local-headless',
+    captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
     ...overrides,
   }
 }
@@ -212,11 +213,9 @@ describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
 
   it('persists needsEnrichment for a non-derivable kind through the authored checkpoint', () => {
     const input = job({
-      kind: 'procedure',
-      subtype: undefined,
-      anchors: [{ t: 'flow', name: 'Checkout flow' }],
-      summarySeed: 'Checkout flow',
-      bodySeed: 'Complete checkout using the verified step sequence.',
+      subtype: 'behavioral',
+      summarySeed: 'Checkout control behavior',
+      bodySeed: 'The Checkout button submits the order.',
     })
     const delta = onlyDelta(input)
     expect(delta.kind).toBe('Add')
@@ -227,18 +226,36 @@ describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
 
     const parsed = parseAuthoredCheckpoint({
       schemaVersion: 1,
-      delta,
+      deltas: [delta],
       neighborIds: [],
       preconditions: [],
       authorship: delta.authorship,
     })
+    const parsedDelta = parsed.deltas[0]!
     expect(
       (
-        parsed.delta.kind === 'Add'
-          ? (parsed.delta.bundle as typeof parsed.delta.bundle & { needsEnrichment?: true })
+        parsedDelta.kind === 'Add'
+          ? (parsedDelta.bundle as typeof parsedDelta.bundle & { needsEnrichment?: true })
           : {}
       ).needsEnrichment,
     ).toBe(true)
+  })
+
+  it('never authors a procedure: an extraction job falls back to a one-element Noop (D-06)', () => {
+    const deltas = constructFallbackDeltas(
+      job({
+        kind: 'procedure',
+        subtype: undefined,
+        anchors: [{ t: 'flow', name: 'Checkout flow' }],
+        summarySeed: 'Checkout flow',
+        bodySeed: 'Complete checkout using the verified step sequence.',
+      }),
+      [],
+    )
+
+    expect(deltas).toHaveLength(1)
+    expect(deltas[0]?.kind).toBe('Noop')
+    expect(deltas[0]?.authorship?.path).toBe('deterministic-fallback')
   })
 
   it('produces no delta kind outside the restricted set across a fixture sweep', () => {
@@ -269,7 +286,7 @@ describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
     }
 
     expect(Object.keys(counts).sort()).toEqual([...RESTRICTED_FALLBACK_DELTA_KINDS].sort())
-    expect(counts).toMatchObject({ Add: 2, Confirm: 2, Supersede: 1, Noop: 0 })
+    expect(counts).toMatchObject({ Add: 1, Confirm: 2, Supersede: 1, Noop: 1 })
     expect(produced.some((delta) => delta.kind === 'Deprecate')).toBe(false)
   })
 })

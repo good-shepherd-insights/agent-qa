@@ -29,7 +29,7 @@ import {
   enumerateBundleDirs,
   loadBundle,
   publishBundle,
-  type AuthoredCheckpoint,
+  type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
   type LoadedBundle,
@@ -195,7 +195,7 @@ function job(generation: number, buildOrdinal: number): CommitCurationJob {
   }
 }
 
-function checkpoint(delta: Delta): AuthoredCheckpoint {
+function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
   return {
     schemaVersion: 1,
     delta,

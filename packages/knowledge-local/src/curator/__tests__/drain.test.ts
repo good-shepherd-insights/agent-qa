@@ -231,7 +231,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       activeAuthors -= 1
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       const stamp = authorship(claimed)
-      return { kind: 'authored', delta: addDelta(claimed), authorship: stamp }
+      return { kind: 'authored', deltas: [addDelta(claimed)], authorship: stamp }
     })
     const operations: Partial<DrainOperations> = {
       ...noWriterPass(),
@@ -273,7 +273,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
         kind: 'authored',
-        delta: addDelta(claimed),
+        deltas: [addDelta(claimed)],
         authorship: authorship(claimed),
       }
     })
@@ -339,7 +339,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
         kind: 'authored',
-        delta: addDelta(claimed),
+        deltas: [addDelta(claimed)],
         authorship: authorship(claimed),
       }
     })
@@ -390,7 +390,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
         kind: 'authored',
-        delta: addDelta(claimed),
+        deltas: [addDelta(claimed)],
         authorship: authorship(claimed),
       }
     })
@@ -449,7 +449,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
         kind: 'authored',
-        delta: addDelta(claimed),
+        deltas: [addDelta(claimed)],
         authorship: authorship(claimed),
       }
     })
@@ -486,7 +486,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
         kind: 'authored',
-        delta: addDelta(claimed),
+        deltas: [addDelta(claimed)],
         authorship: authorship(claimed),
       }
     })
@@ -774,7 +774,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
       return {
         kind: 'authored',
-        delta: addDelta(claimed),
+        deltas: [addDelta(claimed)],
         authorship: authorship(claimed),
       }
     })

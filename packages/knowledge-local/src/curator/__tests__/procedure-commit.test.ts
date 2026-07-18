@@ -17,7 +17,7 @@ import {
   loadBundle,
   openIndexReaderConnection,
   verifyBundleIntegrity,
-  type AuthoredCheckpoint,
+  type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
 } from '../../index.js'
@@ -176,7 +176,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
       },
       bundle: draft,
     }
-    const checkpoint: AuthoredCheckpoint = {
+    const checkpoint: AuthoredDeltaCheckpoint = {
       schemaVersion: 1,
       delta,
       neighborIds: [],

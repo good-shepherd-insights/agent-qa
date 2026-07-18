@@ -56,7 +56,8 @@ import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.
 import { assertEpochCurrent } from '../lease/writer-lease.js'
 import type { ClaimedCurationJob } from '../queue/curation-queue.js'
 import { writeJobState } from '../queue/job-state.js'
-import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
+import { widenAuthoredDeltaCheckpoint } from './author-contract.js'
+import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import { disposeDelta } from './disposition.js'
 import type {
   DispositionDrainState,
@@ -82,6 +83,12 @@ export interface CommitCurationDependencies {
   profile: DispositionProfile
   drainState: DispositionDrainState
   policy: GuardrailPolicy
+  /**
+   * Multi-delta disposal (D-02): when set, terminal paths skip queue completion so the
+   * claimed candidate directory stays available for the checkpoint's remaining deltas.
+   * The drain leaves it unset on the final delta, which completes the job as before.
+   */
+  deferCompletion?: true
   hooks?: {
     /** Test/chaos seam immediately after the durable intent rename. */
     afterIntentWritten?: () => void
@@ -621,7 +628,7 @@ function unknownDraft(
 function commitUnknownMintIntent(
   deps: CommitCurationDependencies,
   job: CommitCurationJob,
-  checkpoint: AuthoredCheckpoint,
+  checkpoint: AuthoredDeltaCheckpoint,
   intent: UnknownMintIntent,
   committedBundleId: RecordId,
 ): CommitCurationOutcome | undefined {
@@ -724,6 +731,7 @@ function productForBundle(
 }
 
 function markDone(deps: CommitCurationDependencies, job: CommitCurationJob): void {
+  if (deps.deferCompletion === true) return
   writeJobState({
     knowledgeRoot: deps.knowledgeRoot,
     candidateId: job.candidateId,
@@ -813,7 +821,7 @@ function restrictedInjectionDelta(delta: Delta, job: CommitCurationJob): Delta {
 export function commitCurationDelta(
   deps: CommitCurationDependencies,
   job: CommitCurationJob,
-  checkpoint: AuthoredCheckpoint,
+  checkpoint: AuthoredDeltaCheckpoint,
 ): CommitCurationOutcome {
   const beforeWork = staleEpoch(deps)
   if (beforeWork !== undefined) return beforeWork
@@ -846,7 +854,7 @@ export function commitCurationDelta(
   const dispositionDelta = injectionRestricted
     ? restrictedInjectionDelta(checkpoint.delta, job)
     : checkpoint.delta
-  const dispositionCheckpoint: AuthoredCheckpoint = {
+  const dispositionCheckpoint: AuthoredDeltaCheckpoint = {
     ...checkpoint,
     delta: dispositionDelta,
     neighborIds: injectionRestricted ? [] : checkpoint.neighborIds,
@@ -887,7 +895,9 @@ export function commitCurationDelta(
     knowledgeRoot: deps.knowledgeRoot,
     candidateId: job.candidateId,
     lifecycle: 'bundling',
-    authored: dispositionCheckpoint,
+    // Persist the parseable widened singleton so crash recovery replays through the
+    // one authoredCheckpointSchema recovery boundary.
+    authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
   })
 
   try {
@@ -951,7 +961,7 @@ export function commitCurationDelta(
       knowledgeRoot: deps.knowledgeRoot,
       candidateId: job.candidateId,
       lifecycle: 'committing',
-      authored: dispositionCheckpoint,
+      authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
     })
     writeCommitIntent(deps.knowledgeRoot, {
       schemaVersion: 1,

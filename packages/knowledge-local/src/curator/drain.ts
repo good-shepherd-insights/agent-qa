@@ -62,6 +62,7 @@ import {
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   parseAuthoredCheckpoint,
   resolveDispositionProfile,
+  sliceAuthoredCheckpoint,
   type AuthoredCheckpoint,
   type CurationJobView,
   type CuratorAuthor,
@@ -342,6 +343,7 @@ function jobView(payload: CurationCandidatePayload): CurationJobView {
     executionContext: payload.executionContext,
     secretFlagged: payload.secretFlagged,
     injectionFlagged: payload.injectionFlagged,
+    captureReceipt: payload.captureReceipt,
   }
 }
 
@@ -460,15 +462,24 @@ async function searchBeforeCreate(
 }
 
 function checkpointFromAuthored(
-  delta: AuthoredCheckpoint['delta'],
+  deltas: AuthoredCheckpoint['deltas'],
   authorship: AuthoredCheckpoint['authorship'],
   neighbors: readonly NeighborRecord[],
 ): AuthoredCheckpoint {
+  const seen = new Set<string>()
+  const preconditions = deltas
+    .flatMap((delta) => delta.precondition ?? [])
+    .filter((cas) => {
+      const key = canonicalJson(cas)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   return parseAuthoredCheckpoint({
     schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
-    delta,
+    deltas,
     neighborIds: neighbors.map(({ recordId }) => recordId),
-    preconditions: [...(delta.precondition ?? [])],
+    preconditions,
     authorship,
   })
 }
@@ -482,7 +493,10 @@ async function authorCheckpoint(
   const neighbors = await searchBeforeCreate(operations, job.payload, options.knowledgeRoot)
   const outcome = await options.author(view, neighbors)
   if (outcome.kind === 'authored') {
-    return checkpointFromAuthored(outcome.delta, outcome.authorship, neighbors)
+    if (outcome.deltas.length === 0) {
+      throw new Error('authored outcome must carry at least one delta')
+    }
+    return checkpointFromAuthored(outcome.deltas, outcome.authorship, neighbors)
   }
 
   const fallback = constructFallbackDeltas(view, neighbors)
@@ -493,7 +507,7 @@ async function authorCheckpoint(
   if (authorship === undefined || authorship.path !== 'deterministic-fallback') {
     throw new Error('deterministic fallback omitted its authorship stamp')
   }
-  return checkpointFromAuthored(fallback[0], authorship, neighbors)
+  return checkpointFromAuthored(fallback, authorship, neighbors)
 }
 
 function persistCheckpoint(
@@ -787,58 +801,71 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         }
       }
 
-      let outcome: CommitCurationOutcome
+      // D-02: dispose each authored delta independently through the one commit boundary.
+      // Only the final delta completes the queue job so earlier disposals keep the claimed
+      // candidate directory (and its artifacts) available.
       const vectorless = embedCrashCount >= EMBED_CRASH_VECTORLESS_THRESHOLD
-      try {
-        const commit = vectorless
-          ? operations.commitCurationDeltaVectorless
-          : operations.commitCurationDelta
-        outcome = commit(
-          {
-            knowledgeRoot: options.knowledgeRoot,
-            auditBaseDir: options.auditBaseDir,
-            epoch: lease.epoch,
-            profile: resolveDispositionProfile(options.executionContext),
-            drainState,
-            policy: options.policy,
-          },
-          claimed,
-          checkpoint,
-        )
-      } catch (error) {
-        if (!vectorless && isEmbeddingCrash(error)) {
-          recordFailure(result, 'commit', error, claimed.candidateId)
-          try {
-            result.requeued += incrementEmbedCrashAndRequeue(
-              operations,
-              options.knowledgeRoot,
-              lease.leaseId,
-              claimed,
-              checkpoint,
-              embedCrashCount,
-            )
-          } catch (requeueError) {
-            recordFailure(result, 'requeue', requeueError, claimed.candidateId)
+      const slices = sliceAuthoredCheckpoint(checkpoint)
+      let stopDrain = false
+      for (const [sliceIndex, slice] of slices.entries()) {
+        const finalDelta = sliceIndex === slices.length - 1
+        let outcome: CommitCurationOutcome
+        try {
+          const commit = vectorless
+            ? operations.commitCurationDeltaVectorless
+            : operations.commitCurationDelta
+          outcome = commit(
+            {
+              knowledgeRoot: options.knowledgeRoot,
+              auditBaseDir: options.auditBaseDir,
+              epoch: lease.epoch,
+              profile: resolveDispositionProfile(options.executionContext),
+              drainState,
+              policy: options.policy,
+              ...(finalDelta ? {} : { deferCompletion: true }),
+            },
+            claimed,
+            slice,
+          )
+        } catch (error) {
+          if (!vectorless && isEmbeddingCrash(error)) {
+            recordFailure(result, 'commit', error, claimed.candidateId)
+            try {
+              result.requeued += incrementEmbedCrashAndRequeue(
+                operations,
+                options.knowledgeRoot,
+                lease.leaseId,
+                claimed,
+                checkpoint,
+                embedCrashCount,
+              )
+            } catch (requeueError) {
+              recordFailure(result, 'requeue', requeueError, claimed.candidateId)
+            }
+            // A requeued crash is deliberately a next-drain retry. At the durable threshold that
+            // retry uses the vectorless seam and lands the canonical bundle with dense work
+            // pending. Already-committed sibling deltas coalesce as Confirm on the retry.
+            stopDrain = true
+            break
           }
-          // A requeued crash is deliberately a next-drain retry. At the durable threshold that
-          // retry uses the vectorless seam and lands the canonical bundle with dense work pending.
+          recordFailure(result, 'commit', error, claimed.candidateId)
+          continue
+        }
+        if (
+          mapCommitOutcome(
+            result,
+            outcome,
+            claimed,
+            operations,
+            options,
+            lease.leaseId,
+          ) === 'stop'
+        ) {
+          stopDrain = true
           break
         }
-        recordFailure(result, 'commit', error, claimed.candidateId)
-        continue
       }
-      if (
-        mapCommitOutcome(
-          result,
-          outcome,
-          claimed,
-          operations,
-          options,
-          lease.leaseId,
-        ) === 'stop'
-      ) {
-        break
-      }
+      if (stopDrain) break
     }
 
     if (result.kind === 'aborted') {

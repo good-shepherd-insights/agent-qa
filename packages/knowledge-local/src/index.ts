@@ -260,9 +260,12 @@ export {
   authoredCheckpointSchema,
   parseAuthoredCheckpoint,
   resolveDispositionProfile,
+  sliceAuthoredCheckpoint,
+  widenAuthoredDeltaCheckpoint,
 } from './curator/author-contract.js'
 export type {
   AuthoredCheckpoint,
+  AuthoredDeltaCheckpoint,
   AuthorOutcome,
   CurationJobView,
   CuratorAuthor,

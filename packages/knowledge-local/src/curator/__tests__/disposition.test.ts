@@ -26,8 +26,9 @@ import {
   parseAuthoredCheckpoint,
   publishBundle,
   resolveDispositionProfile,
+  sliceAuthoredCheckpoint,
   writeMeasurementBaseline,
-  type AuthoredCheckpoint,
+  type AuthoredDeltaCheckpoint,
   type AuthorOutcome,
   type CurationJobView,
   type CuratorAuthor,
@@ -48,7 +49,7 @@ const precondition = {
 
 const authoredCheckpoint = {
   schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
-  delta: {
+  deltas: [{
     kind: 'Confirm',
     origin: 'agent',
     scope,
@@ -56,7 +57,7 @@ const authoredCheckpoint = {
     precondition: [precondition],
     targetId: citedRecordId,
     evidenceToken: asEvidenceToken('evidence-checkout-button'),
-  },
+  }],
   neighborIds: [citedRecordId],
   preconditions: [precondition],
   authorship: {
@@ -82,10 +83,10 @@ function checkpoint(
   delta: Delta,
   neighborIds: RecordId[],
   preconditions: CompareAndSet[],
-): AuthoredCheckpoint {
-  return parseAuthoredCheckpoint({
+): AuthoredDeltaCheckpoint {
+  const parsed = parseAuthoredCheckpoint({
     schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
-    delta,
+    deltas: [delta],
     neighborIds,
     preconditions,
     authorship: {
@@ -94,6 +95,7 @@ function checkpoint(
       executionContext: 'local-interactive',
     },
   })
+  return sliceAuthoredCheckpoint(parsed)[0]!
 }
 
 function publishActive(
@@ -293,7 +295,7 @@ describe('Curator author contract (CUR-01/SAFE-01)', () => {
     const parsedCheckpoint = parseAuthoredCheckpoint(authoredCheckpoint)
     const authored: AuthorOutcome = {
       kind: 'authored',
-      delta: parsedCheckpoint.delta,
+      deltas: parsedCheckpoint.deltas,
       authorship: parsedCheckpoint.authorship,
     }
     const fallbackReasons: Record<

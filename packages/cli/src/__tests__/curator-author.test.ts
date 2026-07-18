@@ -60,6 +60,7 @@ function job(overrides: Partial<CurationJobView> = {}): CurationJobView {
     executionContext: 'local-interactive',
     secretFlagged: false,
     injectionFlagged: false,
+    captureReceipt: { regions: [], interactions: [], omissions: [], redactions: [] },
     ...overrides,
   }
 }
@@ -151,7 +152,7 @@ describe('buildCuratorAuthor prompt and model boundary (CUR-01/CUR-05/SAFE-03)',
 
     await expect(author(job(), neighbors)).resolves.toMatchObject({
       kind: 'authored',
-      delta: { kind: 'Noop' },
+      deltas: [{ kind: 'Noop' }],
     })
 
     expect(capturedProfile).toBe(resolvedProfile)
@@ -312,7 +313,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
         model: { id: resolvedProfile.model },
         executionContext: input.executionContext,
       },
-      delta: {
+      deltas: [{
         kind: 'Add',
         origin: 'agent',
         scope: input.scope,
@@ -333,10 +334,10 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
           },
           originStage: 'run-curation',
         },
-      },
+      }],
     })
     if (outcome.kind === 'authored') {
-      expect(outcome.delta.authorship).toEqual(outcome.authorship)
+      expect(outcome.deltas[0]?.authorship).toEqual(outcome.authorship)
     }
   })
 
@@ -359,7 +360,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     expect(outcome).toMatchObject({
       kind: 'authored',
       authorship: { path: 'llm-repaired' },
-      delta: { kind: 'Noop', authorship: { path: 'llm-repaired' } },
+      deltas: [{ kind: 'Noop', authorship: { path: 'llm-repaired' } }],
     })
   })
 
@@ -374,7 +375,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     await expect(author(job(), [])).resolves.toMatchObject({
       kind: 'authored',
       authorship: { path: 'llm-repaired' },
-      delta: { kind: 'Noop' },
+      deltas: [{ kind: 'Noop' }],
     })
   })
 
@@ -399,7 +400,7 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
 
     expect(outcome).toMatchObject({
       kind: 'authored',
-      delta: {
+      deltas: [{
         kind: 'Confirm',
         targetId: neighbors[1]!.recordId,
         citedIds: [neighbors[0]!.recordId, neighbors[1]!.recordId],
@@ -408,10 +409,11 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
           anchor: input.anchors[0]!,
           buildOrdinal: input.buildOrdinal,
         }),
-      },
+      }],
     })
-    if (outcome.kind === 'authored' && outcome.delta.kind === 'Confirm') {
-      expect(outcome.delta.evidenceToken).not.toBe('model-forged-token-must-be-ignored')
+    const confirm = outcome.kind === 'authored' ? outcome.deltas[0] : undefined
+    if (confirm?.kind === 'Confirm') {
+      expect(confirm.evidenceToken).not.toBe('model-forged-token-must-be-ignored')
     }
   })
 

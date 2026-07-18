@@ -21,7 +21,7 @@ import {
   type LoadedBundle,
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import type { AuthoredCheckpoint, DispositionProfile } from './author-contract.js'
+import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   SCOPE_BURST_THRESHOLD,
   SCOPE_BURST_WINDOW_BUILDS,
@@ -113,7 +113,7 @@ export interface UnknownResolutionIntent {
 
 export interface DisposeDeltaInput {
   delta: Delta
-  checkpoint: AuthoredCheckpoint
+  checkpoint: AuthoredDeltaCheckpoint
   profile: DispositionProfile
   knowledgeRoot: string
   /**

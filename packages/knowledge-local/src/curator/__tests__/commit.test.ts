@@ -59,7 +59,11 @@ import {
   type CommitCurationDependencies,
   type CommitCurationJob,
 } from '../commit.js'
-import type { AuthoredCheckpoint, DispositionProfile } from '../author-contract.js'
+import type {
+  AuthoredCheckpoint,
+  AuthoredDeltaCheckpoint,
+  DispositionProfile,
+} from '../author-contract.js'
 import { createLocalKnowledgeStore } from '../knowledge-store.js'
 import { makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 
@@ -279,7 +283,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   ): {
     claimed: CommitCurationJob
     delta: Extract<Delta, { kind: 'Supersede' }>
-    authored: AuthoredCheckpoint
+    authored: AuthoredDeltaCheckpoint
   } {
     const claimed = measurementJob(value, buildOrdinal)
     const delta: Extract<Delta, { kind: 'Supersede' }> = {
@@ -328,7 +332,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   function checkpoint(
     delta: Delta,
     neighborIds = delta.citedIds,
-  ): AuthoredCheckpoint {
+  ): AuthoredDeltaCheckpoint {
     return {
       schemaVersion: 1,
       delta,
@@ -1466,7 +1470,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
             const state = readJobState(knowledgeRoot, restrictedJob.candidateId)
             if (state.kind !== 'parsed') throw new Error('expected committing job state')
             const authored = state.state.authored as AuthoredCheckpoint
-            authoredDelta = authored.delta
+            authoredDelta = authored.deltas[0]
             authoredNeighbors = authored.neighborIds
             authoredPreconditions = authored.preconditions
           },
@@ -1615,7 +1619,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
             afterIntentWritten: () => {
               const state = readJobState(knowledgeRoot, permittedJob.candidateId)
               if (state.kind !== 'parsed') throw new Error('expected committing job state')
-              authoredDelta = (state.state.authored as AuthoredCheckpoint).delta
+              authoredDelta = (state.state.authored as AuthoredCheckpoint).deltas[0]
             },
           },
         }),
@@ -1702,7 +1706,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
           afterIntentWritten: () => {
             const state = readJobState(knowledgeRoot, cleanSourceJob.candidateId)
             if (state.kind !== 'parsed') throw new Error('expected committing job state')
-            authoredDelta = (state.state.authored as AuthoredCheckpoint).delta
+            authoredDelta = (state.state.authored as AuthoredCheckpoint).deltas[0]
           },
         },
       }),
@@ -1731,7 +1735,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       (
         _dependencies: CommitCurationDependencies,
         _job: CommitCurationJob,
-        _checkpoint: AuthoredCheckpoint,
+        _checkpoint: AuthoredDeltaCheckpoint,
       ) => ({ kind: 'noop', reason: 'port-fixture' } as const),
     )
     const store = createLocalKnowledgeStore({
@@ -1757,7 +1761,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       (
         _dependencies: CommitCurationDependencies,
         _job: CommitCurationJob,
-        _checkpoint: AuthoredCheckpoint,
+        _checkpoint: AuthoredDeltaCheckpoint,
       ) => ({ kind: 'noop', reason: 'port-fixture' } as const),
     )
     const store = createLocalKnowledgeStore({
