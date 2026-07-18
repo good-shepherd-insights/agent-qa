@@ -542,6 +542,29 @@ function clearCheckpointAndRequeue(
   operations.requeueClaimed({ knowledgeRoot, leaseId })
 }
 
+function preserveAuthoredCheckpointAndRequeue(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+  leaseId: string,
+  job: ClaimedCurationJob,
+  checkpoint: AuthoredCheckpoint,
+  embedCrashCount: number,
+  failureLabel: string,
+): number {
+  operations.writeJobState({
+    knowledgeRoot,
+    candidateId: job.candidateId,
+    lifecycle: 'authored',
+    embedCrashCount,
+    authored: checkpoint,
+  })
+  const requeued = operations.requeueClaimed({ knowledgeRoot, leaseId })
+  if (!requeued.includes(job.candidateId)) {
+    throw new Error(`${failureLabel} candidate ${job.candidateId} was not requeued`)
+  }
+  return requeued.length
+}
+
 function incrementEmbedCrashAndRequeue(
   operations: DrainOperations,
   knowledgeRoot: string,
@@ -550,18 +573,15 @@ function incrementEmbedCrashAndRequeue(
   checkpoint: AuthoredCheckpoint,
   embedCrashCount: number,
 ): number {
-  operations.writeJobState({
+  return preserveAuthoredCheckpointAndRequeue(
+    operations,
     knowledgeRoot,
-    candidateId: job.candidateId,
-    lifecycle: 'authored',
-    embedCrashCount: embedCrashCount + 1,
-    authored: checkpoint,
-  })
-  const requeued = operations.requeueClaimed({ knowledgeRoot, leaseId })
-  if (!requeued.includes(job.candidateId)) {
-    throw new Error(`embed-crashed candidate ${job.candidateId} was not requeued`)
-  }
-  return requeued.length
+    leaseId,
+    job,
+    checkpoint,
+    embedCrashCount + 1,
+    'embed-crashed',
+  )
 }
 
 async function runWriterPass(
@@ -807,6 +827,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       const vectorless = embedCrashCount >= EMBED_CRASH_VECTORLESS_THRESHOLD
       const slices = sliceAuthoredCheckpoint(checkpoint)
       let stopDrain = false
+      /**
+       * Sibling-failure invariant: no later slice may complete a job after any slice fails.
+       * Preserve the whole authored checkpoint so successful siblings coalesce on retry while
+       * the missing slice can land without re-invoking the author.
+       */
+      let anySliceFailed = false
       for (const [sliceIndex, slice] of slices.entries()) {
         const finalDelta = sliceIndex === slices.length - 1
         let outcome: CommitCurationOutcome
@@ -822,7 +848,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               profile: resolveDispositionProfile(options.executionContext),
               drainState,
               policy: options.policy,
-              ...(finalDelta ? {} : { deferCompletion: true }),
+              ...(!finalDelta || anySliceFailed ? { deferCompletion: true } : {}),
             },
             claimed,
             slice,
@@ -848,9 +874,11 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             stopDrain = true
             break
           }
+          anySliceFailed = true
           recordFailure(result, 'commit', error, claimed.candidateId)
           continue
         }
+        if (outcome.kind === 'failed') anySliceFailed = true
         if (
           mapCommitOutcome(
             result,
@@ -864,6 +892,24 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           stopDrain = true
           break
         }
+      }
+      if (anySliceFailed && !stopDrain) {
+        try {
+          result.requeued += preserveAuthoredCheckpointAndRequeue(
+            operations,
+            options.knowledgeRoot,
+            lease.leaseId,
+            claimed,
+            checkpoint,
+            embedCrashCount,
+            'partially failed',
+          )
+        } catch (error) {
+          recordFailure(result, 'requeue', error, claimed.candidateId)
+        }
+        // Reclaiming the same lexicographically-first candidate in this drain can livelock;
+        // the durable checkpoint retry deliberately belongs to the next drain.
+        stopDrain = true
       }
       if (stopDrain) break
     }
