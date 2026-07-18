@@ -6,6 +6,7 @@ import type {
   ReadOptions,
   ReadTrace,
   RecordBody,
+  RecordId,
   ScopeKey,
   SearchOptions,
 } from '@vostride/agent-qa-schema'
@@ -70,6 +71,7 @@ type MemorySearchResult =
 type MemoryReadResult =
   | { kind: 'record'; record: RecordBody }
   | { kind: 'not-found'; id: ReturnType<typeof asRecordId> }
+  | { kind: 'not-authorized'; id: ReturnType<typeof asRecordId> }
   | { kind: 'read-budget-exhausted'; budget: number; spent: number }
 
 function normalizeBudget(value: number): number {
@@ -89,10 +91,14 @@ export function createMemoryTools(deps: {
   recordLedger: RecordLedger
   estimateTokens: (text: string) => number
   onReadTrace?: (trace: ReadTrace) => void
-}): { tools: NonActionToolMap; beginTurn(scope?: ScopeKey): void } {
+}): {
+  tools: NonActionToolMap
+  beginTurn(scope?: ScopeKey, exposedIds?: readonly RecordId[]): void
+} {
   const readBodyBudget = normalizeBudget(deps.readBodyBudget)
   let spentReadBodyTokens = 0
   let activeScope = deps.scope
+  let exposedIds = new Set<RecordId>()
 
   const tools: NonActionToolMap = {
     'memory.search': {
@@ -119,7 +125,10 @@ export function createMemoryTools(deps: {
         let droppedCount = 0
         for (const candidate of found) {
           const admission = deps.recordLedger.admit(candidate.id)
-          if (admission.admitted) entries.push(candidate)
+          if (admission.admitted) {
+            entries.push(candidate)
+            exposedIds.add(candidate.id)
+          }
           else droppedCount += 1
         }
 
@@ -154,9 +163,12 @@ export function createMemoryTools(deps: {
         }
 
         const id = asRecordId(args.id)
+        if (!exposedIds.has(id)) return { kind: 'not-authorized', id }
         const options: ReadOptions = {
           ...(args.detailLevel !== undefined ? { detailLevel: args.detailLevel } : {}),
           budget: remaining,
+          scope: activeScope,
+          asOfBuild: deps.asOfBuild,
         }
         const record = deps.reader.read(id, options) as RecordBody | undefined
         if (record === undefined) return { kind: 'not-found', id }
@@ -175,10 +187,11 @@ export function createMemoryTools(deps: {
 
   return {
     tools,
-    beginTurn(scope?: ScopeKey) {
+    beginTurn(scope?: ScopeKey, authorizedIds: readonly RecordId[] = []) {
       // D-11/D-17 turn order: the loop reseeds recordLedger from the frozen brief first,
       // then calls beginTurn() to reset this independent cumulative read-body ledger.
       if (scope !== undefined) activeScope = scope
+      exposedIds = new Set(authorizedIds)
       spentReadBodyTokens = 0
     },
   }

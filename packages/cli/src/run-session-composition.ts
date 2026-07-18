@@ -47,6 +47,7 @@ import { openKnowledgeReader } from '@vostride/agent-qa-knowledge-local'
 import type {
   MaskingContext,
   ModelCapabilities,
+  RecordId,
   RunEventEnvelope,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -130,7 +131,7 @@ export interface RunKnowledgeComposition {
   budgets: KnowledgeBudgets
   recordLedger: RecordLedger
   nonActionTools?: NonActionToolMap
-  beginMemoryTurn?: (scope?: ScopeKey) => void
+  beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
 }
 
 /**
@@ -938,7 +939,7 @@ export interface BuildMemberRunConfigInput {
   knowledgeBudgets?: KnowledgeBudgets
   knowledgeAsOfBuild?: number
   recordLedger?: RecordLedger
-  beginMemoryTurn?: (scope?: ScopeKey) => void
+  beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
   configDigests?: ConfigDigests
   // models
   plannerModel: LanguageModel

@@ -306,19 +306,31 @@ function searchEntries(
     ))
 }
 
-function findBundle(
+function findReadableBundle(
   config: OpenServingKnowledgeReaderConfig,
   id: RecordId,
+  options?: ReadOptions,
 ): { dir: string; bundle: LoadedBundle } | undefined {
-  const boundProduct = productSlug(config)
-  for (const candidate of enumerateBundleDirs(config.knowledgeRoot)) {
-    if (basename(candidate.dir) !== id) continue
-    if (boundProduct !== undefined && candidate.product !== boundProduct) continue
-    const loaded = loadBundle(candidate.dir)
-    if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(candidate.dir).ok) return undefined
-    return { dir: candidate.dir, bundle: loaded.bundle }
+  const row = readIndexRows(config, options?.scope)
+    .find(({ bundle_id }) => bundle_id === id)
+  if (row === undefined) return undefined
+
+  const hydrated = hydrateRows(config, [row], false)[0]
+  if (hydrated === undefined || currentServingEntries([hydrated]).length === 0) return undefined
+
+  const trust = deriveBundleTrust(hydrated.bundle)
+  const asOfBuild = options?.asOfBuild ?? config.scopeDefaults?.asOfBuild
+  if (
+    asOfBuild !== undefined
+    && !validAtBuild(
+      trust.validity.openedAtOrdinal,
+      trust.validity.closedAtOrdinal,
+      asOfBuild,
+    )
+  ) {
+    return undefined
   }
-  return undefined
+  return { dir: hydrated.dir, bundle: hydrated.bundle }
 }
 
 function estimatedBodyCost(body: string): number {
@@ -354,7 +366,7 @@ function readRecord(
   id: RecordId,
   options?: ReadOptions,
 ): RecordBody {
-  const found = findBundle(config, id)
+  const found = findReadableBundle(config, id, options)
   if (found === undefined) throw new KnowledgeRecordNotFoundError(id)
 
   const { bundle } = found

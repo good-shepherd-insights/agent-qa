@@ -153,7 +153,8 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       text === first.body ? 60 : text === second.body ? 40 : 0,
     )
     const onReadTrace = vi.fn()
-    const { tools } = factory(stubReader({ read }), { estimateTokens, onReadTrace })
+    const { tools, beginTurn } = factory(stubReader({ read }), { estimateTokens, onReadTrace })
+    beginTurn(SCOPE, [first.id, second.id])
 
     await tools['memory.read'].execute({ id: first.id, detailLevel: 'body' })
     await tools['memory.read'].execute({ id: second.id, detailLevel: 'summary' })
@@ -162,10 +163,14 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     expect(read).toHaveBeenNthCalledWith(1, first.id, {
       detailLevel: 'body',
       budget: 100,
+      scope: SCOPE,
+      asOfBuild: 42,
     })
     expect(read).toHaveBeenNthCalledWith(2, second.id, {
       detailLevel: 'summary',
       budget: 40,
+      scope: SCOPE,
+      asOfBuild: 42,
     })
     expect(read).toHaveBeenCalledTimes(2)
     expect(estimateTokens).toHaveBeenNthCalledWith(1, first.body)
@@ -194,18 +199,55 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     const { tools, beginTurn } = factory(stubReader({ read }), {
       estimateTokens: () => 100,
     })
+    beginTurn(SCOPE, [record.id])
 
     await tools['memory.read'].execute({ id: record.id })
     expect(await tools['memory.read'].execute({ id: record.id })).toMatchObject({
       kind: 'read-budget-exhausted',
     })
 
-    beginTurn()
+    beginTurn(SCOPE, [record.id])
     await tools['memory.read'].execute({ id: record.id })
 
     expect(read).toHaveBeenNthCalledWith(2, record.id, {
       budget: 100,
+      scope: SCOPE,
+      asOfBuild: 42,
     })
+  })
+
+  it('refuses ids not exposed by this turn, including cap drops and relation targets', async () => {
+    const exposed = entry('record-exposed')
+    const dropped = entry('record-dropped')
+    const relationTarget = asRecordId('record-related-hidden')
+    const read = vi.fn<KnowledgeHintReader['read']>((id) => ({
+      ...body(id, 'body'),
+      relations: [{ kind: 'related', targetId: relationTarget }],
+    }))
+    const ledger = createRecordLedger({ cap: 1, seedIds: [] })
+    const { tools, beginTurn } = factory(
+      stubReader({ search: vi.fn(() => [exposed, dropped]), read }),
+      { recordLedger: ledger },
+    )
+    beginTurn(SCOPE)
+
+    await tools['memory.search'].execute({ query: 'checkout' })
+    expect(await tools['memory.read'].execute({ id: dropped.id })).toEqual({
+      kind: 'not-authorized',
+      id: dropped.id,
+    })
+    expect(read).not.toHaveBeenCalled()
+
+    const exposedResult = await tools['memory.read'].execute({ id: exposed.id })
+    expect(exposedResult).toMatchObject({
+      kind: 'record',
+      record: { relations: [{ targetId: relationTarget }] },
+    })
+    expect(await tools['memory.read'].execute({ id: relationTarget })).toEqual({
+      kind: 'not-authorized',
+      id: relationTarget,
+    })
+    expect(read).toHaveBeenCalledTimes(1)
   })
 
   it('filters new ids at the record cap, preserves counted entries, and reports the drop', async () => {
@@ -236,7 +278,8 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
   it('returns structured empty and not-found results instead of throwing', async () => {
     const missingId = asRecordId('record-missing')
     const read = vi.fn(() => undefined) as unknown as KnowledgeHintReader['read']
-    const { tools } = factory(stubReader({ search: vi.fn(() => []), read }))
+    const { tools, beginTurn } = factory(stubReader({ search: vi.fn(() => []), read }))
+    beginTurn(SCOPE, [missingId])
 
     expect(tools['memory.search'].execute({ query: 'no match' })).toEqual({
       kind: 'empty-result',

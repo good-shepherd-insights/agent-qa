@@ -171,8 +171,10 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         knowledgeReader: reader,
         knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
         recordLedger,
-        beginMemoryTurn: (activeScope) => {
-          order.push(`read-body:${activeScope?.tier}:${activeScope?.key}`)
+        beginMemoryTurn: (activeScope, exposedIds) => {
+          order.push(
+            `read-body:${activeScope?.tier}:${activeScope?.key}:${exposedIds?.join(',')}`,
+          )
         },
       },
       context(),
@@ -180,7 +182,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
 
     expect(order).toEqual([
       'records:caution-overlay,fact-order-number',
-      'read-body:test:checkout',
+      'read-body:test:checkout:caution-overlay,fact-order-number',
     ])
   })
 })

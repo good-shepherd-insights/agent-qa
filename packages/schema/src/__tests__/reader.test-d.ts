@@ -114,6 +114,8 @@ expectTypeOf<SearchOptions['asOfRange']>().toEqualTypeOf<BuildRange | undefined>
 expectTypeOf<ReadOptions>().toEqualTypeOf<{
   detailLevel?: string
   budget?: number
+  scope?: ScopeKey
+  asOfBuild?: number
 }>()
 
 expectTypeOf<CanaryOutcome>().toEqualTypeOf<{

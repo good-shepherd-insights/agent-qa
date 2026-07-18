@@ -21,6 +21,10 @@ export interface ReadOptions {
   detailLevel?: string
   /** D-11: the tool wrapper passes its remaining read-body budget for reader-side truncation. */
   budget?: number
+  /** Wrapper-fixed scope; never accepted from the planner-facing memory.read schema. */
+  scope?: ScopeKey
+  /** Wrapper-fixed build boundary; never accepted from the planner-facing memory.read schema. */
+  asOfBuild?: number
 }
 
 export interface CanaryOutcome {

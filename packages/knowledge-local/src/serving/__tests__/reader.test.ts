@@ -15,6 +15,7 @@ import {
   type BundleDiscriminant,
   type BundleDraft,
   type BundleOutcomeEvent,
+  type BundleRelation,
   type CanaryOutcome,
   type DistilledObservation,
   type OriginClass,
@@ -56,6 +57,7 @@ interface SeedRecordOptions {
   body?: string
   anchors?: Anchor[]
   scope?: ScopeKey
+  relations?: readonly BundleRelation[]
 }
 
 interface SeededStore {
@@ -197,7 +199,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
       createdAtOrdinal: 10,
       screenStates: [],
       initialEvents,
-      relations: [],
+      relations: [...(options.relations ?? [])],
       provenance: { mode: 'standalone', sourceDescription: 'reader fixture' },
       artifacts: [],
       evidenceMarkdown: `Evidence for ${options.key}.\n`,
@@ -365,6 +367,44 @@ describe('openKnowledgeReader synchronous serving port', () => {
       status: 'superseded',
       audit: expect.objectContaining({ status: 'superseded' }),
     }))
+  })
+
+  it('defends direct reads with current status, scope, and as-of walls', async () => {
+    const testScope: ScopeKey = { tier: 'test', key: 'test:checkout' }
+    const supersededTarget = seedRecord({
+      key: 'read-superseded-target',
+      status: 'superseded',
+      scope: testScope,
+    })
+    const source = seedRecord({
+      key: 'read-source',
+      scope: testScope,
+      relations: [{
+        type: 'relates-to',
+        targetId: supersededTarget,
+        addedAtOrdinal: 12,
+        curationJobId: 'reader-hidden-relation',
+      }],
+    })
+    const sibling = seedRecord({
+      key: 'read-sibling',
+      scope: { tier: 'test', key: 'test:refund' },
+    })
+    const futureAtBuild = seedRecord({
+      key: 'read-future-at-build',
+      scope: testScope,
+    })
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(reader.read(source, { scope: testScope, asOfBuild: 12 }).relations)
+      .toContainEqual({ kind: 'relates-to', targetId: supersededTarget })
+    expect(() => reader.read(sibling, { scope: testScope, asOfBuild: 12 }))
+      .toThrow(KnowledgeRecordNotFoundError)
+    expect(() => reader.read(supersededTarget, { scope: testScope }))
+      .toThrow(KnowledgeRecordNotFoundError)
+    expect(() => reader.read(futureAtBuild, { scope: testScope, asOfBuild: 9 }))
+      .toThrow(KnowledgeRecordNotFoundError)
   })
 
   it('bounds read bodies on whole lines and DATA-wraps app-observed content', () => {
