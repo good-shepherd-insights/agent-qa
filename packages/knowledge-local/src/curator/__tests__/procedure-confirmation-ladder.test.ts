@@ -83,9 +83,7 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
       initialEvents: [],
       relations: [],
       provenance: {
-        schemaVersion: 1,
         mode: 'run-linked',
-        originClass: 'agent-verified',
         runId: 'run-ladder-seed',
         testId: 'test-ladder-seed',
         stepIndex: 0,
