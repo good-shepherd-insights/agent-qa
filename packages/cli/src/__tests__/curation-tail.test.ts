@@ -22,6 +22,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   runCurationTail,
   runVerdictFirstCurationTail,
+  type CurationTailReceipt,
   type RunCurationTailOptions,
 } from '../curation/curation-tail.js'
 
@@ -35,7 +36,7 @@ const policy = {} as GuardrailPolicy
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
 function handoff(executionContext: CompletedRunHandoff['executionContext'] = 'ci') {
-  return { executionContext } as CompletedRunHandoff
+  return { executionContext, runId } as CompletedRunHandoff
 }
 
 function attributableHandoff(): CompletedRunHandoff {
@@ -92,7 +93,13 @@ function successfulOperations(
     loadCompletedRunHandoff: () => handoff(),
     resolveKnowledgeRoot: () => knowledgeRoot,
     runSafetyScope: (_bundle, fn) => fn(),
-    emitCurationCandidates: vi.fn(),
+    emitCurationCandidates: vi.fn(() => ({
+      enqueued: 0,
+      coalesced: 0,
+      capExceeded: 0,
+      refused: 0,
+      details: [],
+    })),
     openKnowledgeReader: () => ({ emitCanaryOutcome: vi.fn() }) as unknown as KnowledgeHintReader,
     emitCanaryOutcomes: vi.fn(() => ({ emitted: 0, refused: 0, details: [] })),
     buildCuratorAuthor: () => vi.fn(async () => ({
@@ -112,6 +119,11 @@ function successfulOperations(
       writerPass: { kind: 'not-requested' as const },
       gc: { kind: 'not-run' as const },
     })),
+    listCompletedRunDirs: () => [
+      join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
+    ],
+    readCurationTailReceipt: () => undefined,
+    writeCurationTailReceipt: vi.fn(),
     ...overrides,
   }
 }
@@ -138,6 +150,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       kind: 'fallback-required' as const,
       reason: 'no-model' as const,
     }))
+    const writeCurationTailReceipt = vi.fn()
 
     const operations = successfulOperations({
       loadCompletedRunHandoff(file) {
@@ -203,6 +216,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           refused: 0,
           details: [{
             candidateId: canaryOutcome.candidateId,
+            testId: canaryOutcome.testId,
+            testIndex: canaryOutcome.testIndex,
             stepIndex: 0,
             outcome: { kind: 'emitted' },
           }],
@@ -238,6 +253,20 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           gc: { kind: 'not-run' },
         }
       },
+      listCompletedRunDirs(root) {
+        order.push('list-runs')
+        expect(root).toBe(agentQaRoot)
+        return [join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))]
+      },
+      readCurationTailReceipt(seenRunDir) {
+        order.push('read-receipt')
+        expect(seenRunDir).toBe(join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)))
+        return undefined
+      },
+      writeCurationTailReceipt(seenRunDir, receipt) {
+        order.push('write-receipt')
+        writeCurationTailReceipt(seenRunDir, receipt)
+      },
     })
 
     await expect(
@@ -247,6 +276,8 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     expect(order).toEqual([
       'handoff',
       'knowledge-root',
+      'list-runs',
+      'read-receipt',
       'scope',
       'emit',
       'reader',
@@ -254,7 +285,16 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       'queue',
       'author',
       'drain',
+      'write-receipt',
     ])
+    expect(writeCurationTailReceipt).toHaveBeenCalledWith(
+      join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
+      expect.objectContaining({
+        schemaVersion: 1,
+        runId,
+        handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+    )
   })
 
   it.each(['emit', 'canary-emit', 'drain'] as const)(
@@ -302,6 +342,158 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       expect(warn.mock.calls[0]?.[0]).toMatch(/next run/i)
     },
   )
+
+  it.each([
+    'candidate-refused',
+    'candidate-cap-exceeded',
+    'canary-refused',
+    'drain-failure',
+    'drain-requeued',
+    'drain-aborted',
+  ] as const)('withholds the durable receipt for a structured %s result', async (condition) => {
+    const warn = vi.fn()
+    const writeCurationTailReceipt = vi.fn()
+    const operations = successfulOperations({
+      writeCurationTailReceipt,
+      emitCurationCandidates() {
+        return {
+          enqueued: 0,
+          coalesced: 0,
+          capExceeded: condition === 'candidate-cap-exceeded' ? 1 : 0,
+          refused: condition === 'candidate-refused' ? 1 : 0,
+          details: [],
+        }
+      },
+      emitCanaryOutcomes() {
+        return {
+          emitted: 0,
+          refused: condition === 'canary-refused' ? 1 : 0,
+          details: [],
+        }
+      },
+      async drainQueue() {
+        const aborted = condition === 'drain-aborted'
+        return {
+          kind: aborted ? 'aborted' as const : 'drained' as const,
+          jobsProcessed: 0,
+          committed: 0,
+          downgraded: 0,
+          withheld: 0,
+          requeued: condition === 'drain-requeued' ? 1 : 0,
+          failures: condition === 'drain-failure' ? 1 : 0,
+          failureDetails: [],
+          reconcile: undefined,
+          writerPass: aborted
+            ? { kind: 'skipped' as const, reason: 'aborted' as const }
+            : { kind: 'not-requested' as const },
+          gc: aborted
+            ? { kind: 'skipped' as const, reason: 'aborted' as const }
+            : { kind: 'not-run' as const },
+        }
+      },
+    })
+
+    await expect(
+      runCurationTail(baseOptions(operations, { log: { warn } })),
+    ).resolves.toBeUndefined()
+
+    expect(writeCurationTailReceipt).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/resume on the next run/i))
+    const diagnostic = {
+      'candidate-refused': 'candidate-refused=1',
+      'candidate-cap-exceeded': 'candidate-cap-exceeded=1',
+      'canary-refused': 'canary-refused=1',
+      'drain-failure': 'drain-failures=1',
+      'drain-requeued': 'drain-requeued=1',
+      'drain-aborted': 'drain-kind=aborted',
+    }[condition]
+    expect(warn.mock.calls[0]?.[0]).toContain(diagnostic)
+  })
+
+  it('replays a prior failed canary drop once and receipts successful siblings idempotently', async () => {
+    const oldRunId = '001-old-run'
+    const newRunId = '002-new-run'
+    const oldDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(oldRunId))
+    const newDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(newRunId))
+    const oldHandoff = { executionContext: 'ci', runId: oldRunId } as CompletedRunHandoff
+    const newHandoff = { executionContext: 'ci', runId: newRunId } as CompletedRunHandoff
+    const handoffs = new Map([
+      [join(oldDir, HANDOFF_FILE), oldHandoff],
+      [join(newDir, HANDOFF_FILE), newHandoff],
+    ])
+    const receipts = new Map<string, CurationTailReceipt>()
+    const durableOutcomes = new Set<string>()
+    const canaryRuns: string[] = []
+    let successfulSiblingAttempts = 0
+    let completedRunDirs = [oldDir]
+    let oldAttempts = 0
+    const warn = vi.fn()
+    const drainQueue = vi.fn(successfulOperations().drainQueue)
+    const operations = successfulOperations({
+      loadCompletedRunHandoff(file) {
+        const loaded = handoffs.get(file)
+        if (loaded === undefined) throw new Error(`missing handoff ${file}`)
+        return loaded
+      },
+      listCompletedRunDirs: () => completedRunDirs,
+      readCurationTailReceipt: (seenRunDir) => receipts.get(seenRunDir),
+      writeCurationTailReceipt(seenRunDir, receipt) {
+        receipts.set(seenRunDir, receipt)
+      },
+      emitCanaryOutcomes({ handoff: completed }) {
+        const completedRunId = String(completed.runId)
+        canaryRuns.push(completedRunId)
+        if (completedRunId === oldRunId) {
+          oldAttempts += 1
+          successfulSiblingAttempts += 1
+          durableOutcomes.add('old-successful-sibling')
+          if (oldAttempts === 1) {
+            return {
+              emitted: 1,
+              refused: 1,
+              details: [],
+            }
+          }
+          durableOutcomes.add('old-retried-outcome')
+          return { emitted: 2, refused: 0, details: [] }
+        }
+        durableOutcomes.add('new-outcome')
+        return { emitted: 1, refused: 0, details: [] }
+      },
+      drainQueue,
+    })
+
+    await runCurationTail(baseOptions(operations, {
+      runId: oldRunId,
+      log: { warn },
+    }))
+    expect(receipts.has(oldDir)).toBe(false)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/resume on the next run/i))
+
+    completedRunDirs = [oldDir, newDir]
+    await runCurationTail(baseOptions(operations, {
+      runId: newRunId,
+      log: { warn },
+    }))
+
+    expect(receipts.has(oldDir)).toBe(true)
+    expect(receipts.has(newDir)).toBe(true)
+    expect(canaryRuns).toEqual([oldRunId, oldRunId, newRunId])
+    expect(successfulSiblingAttempts).toBe(2)
+    expect([...durableOutcomes].sort()).toEqual([
+      'new-outcome',
+      'old-retried-outcome',
+      'old-successful-sibling',
+    ])
+    expect(drainQueue).toHaveBeenCalledTimes(3)
+
+    await runCurationTail(baseOptions(operations, {
+      runId: newRunId,
+      log: { warn },
+    }))
+    expect(canaryRuns).toEqual([oldRunId, oldRunId, newRunId])
+    expect(drainQueue).toHaveBeenCalledTimes(3)
+  })
 
   it.each(['missing', 'malformed'] as const)(
     'treats a %s handoff as a logged skip without emitting or draining',

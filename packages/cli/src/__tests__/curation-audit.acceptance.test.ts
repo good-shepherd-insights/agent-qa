@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,6 +18,7 @@ import {
   type ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -27,6 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   buildCuratorAuthor,
+  CURATION_TAIL_RECEIPT_FILE,
   runCurationTail,
   runVerdictFirstCurationTail,
   type RunCurationTailOptions,
@@ -102,6 +104,10 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
     root = mkdtempSync(join(tmpdir(), 'cli-curation-audit-'))
     agentQaRoot = join(root, '.agent-qa')
     knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(
+      join(agentQaRoot, RUNS_SUBDIR, slugBranch('run-curation-audit')),
+      { recursive: true },
+    )
     finalizedCandidateId = undefined
     candidate = {
       sourceRunId: 'run-curation-audit',
@@ -146,6 +152,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       operations: {
         loadCompletedRunHandoff: () => ({
           executionContext: 'local-interactive',
+          runId: 'run-curation-audit',
         }) as CompletedRunHandoff,
         resolveKnowledgeRoot: () => knowledgeRoot,
         emitCurationCandidates: () => {
@@ -208,6 +215,21 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
         detector: 'bearer',
       }),
     )
+    const receipt = JSON.parse(readFileSync(join(
+      agentQaRoot,
+      RUNS_SUBDIR,
+      slugBranch('run-curation-audit'),
+      CURATION_TAIL_RECEIPT_FILE,
+    ), 'utf8')) as Record<string, unknown>
+    expect(receipt).toMatchObject({
+      schemaVersion: 1,
+      runId: 'run-curation-audit',
+      handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
+    })
+
+    await runCurationTail(tailOptions(sink, modelCalls))
+    expect(modelCalls).toHaveBeenCalledOnce()
+    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(1)
   })
 
   it('records no curation egress when --detach skips the tail', async () => {

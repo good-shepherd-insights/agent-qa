@@ -12,10 +12,14 @@ export {
 } from './curation/curator-author.js'
 export type { BuildCuratorAuthorDependencies } from './curation/curator-author.js'
 export {
+  CURATION_TAIL_RECEIPT_FILE,
+  CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
+  curationTailHandoffDigest,
   runCurationTail,
   runVerdictFirstCurationTail,
 } from './curation/curation-tail.js'
 export type {
+  CurationTailReceipt,
   CurationTailLogger,
   CurationTailModelDeps,
   CurationTailOperations,

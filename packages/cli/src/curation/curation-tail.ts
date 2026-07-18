@@ -1,3 +1,15 @@
+import { randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
@@ -19,6 +31,7 @@ import type {
   GuardrailPolicy,
   MaskingContext,
 } from '@vostride/agent-qa-schema'
+import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 
 import {
   buildCuratorAuthor,
@@ -26,6 +39,15 @@ import {
 } from './curator-author.js'
 import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
 import { emitCurationCandidates } from './emit-candidates.js'
+
+export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
+export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 1
+
+export interface CurationTailReceipt {
+  schemaVersion: typeof CURATION_TAIL_RECEIPT_SCHEMA_VERSION
+  runId: string
+  handoffDigest: string
+}
 
 export type CurationTailModelDeps = Pick<
   BuildCuratorAuthorDependencies,
@@ -45,6 +67,9 @@ export interface CurationTailOperations {
   emitCanaryOutcomes: typeof emitCanaryOutcomes
   buildCuratorAuthor: typeof buildCuratorAuthor
   drainQueue: typeof drainQueue
+  listCompletedRunDirs(agentQaRoot: string): string[]
+  readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined
+  writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void
 }
 
 export interface RunCurationTailOptions {
@@ -74,7 +99,90 @@ function defaultOperations(): CurationTailOperations {
     emitCanaryOutcomes,
     buildCuratorAuthor,
     drainQueue,
+    listCompletedRunDirs,
+    readCurationTailReceipt,
+    writeCurationTailReceipt,
   }
+}
+
+function listCompletedRunDirs(agentQaRoot: string): string[] {
+  const runsRoot = join(agentQaRoot, RUNS_SUBDIR)
+  if (!existsSync(runsRoot)) return []
+  return readdirSync(runsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(runsRoot, entry.name))
+    .filter((runDir) => existsSync(join(runDir, HANDOFF_FILE)))
+    .sort()
+}
+
+function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return Object.keys(record).sort().join(',') === 'handoffDigest,runId,schemaVersion'
+    && record.schemaVersion === CURATION_TAIL_RECEIPT_SCHEMA_VERSION
+    && typeof record.runId === 'string'
+    && record.runId.length > 0
+    && typeof record.handoffDigest === 'string'
+    && /^[0-9a-f]{64}$/u.test(record.handoffDigest)
+}
+
+function readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined {
+  try {
+    const parsed: unknown = JSON.parse(
+      readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
+    )
+    return isCurationTailReceipt(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function fsyncFile(file: string): void {
+  const fd = openSync(file, 'r')
+  try {
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void {
+  const file = join(runDir, CURATION_TAIL_RECEIPT_FILE)
+  const staged = join(runDir, `.${CURATION_TAIL_RECEIPT_FILE}.${randomUUID()}.tmp`)
+  try {
+    writeFileSync(staged, `${canonicalJson(receipt)}\n`, { encoding: 'utf8', mode: 0o600 })
+    fsyncFile(staged)
+    renameSync(staged, file)
+    fsyncFile(runDir)
+  } finally {
+    rmSync(staged, { force: true })
+  }
+}
+
+export function curationTailHandoffDigest(handoff: unknown): string {
+  return sha256hex(canonicalJson(handoff))
+}
+
+function receiptForHandoff(handoff: { runId: unknown }): CurationTailReceipt {
+  return {
+    schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
+    runId: String(handoff.runId),
+    handoffDigest: curationTailHandoffDigest(handoff),
+  }
+}
+
+function receiptMatches(
+  receipt: CurationTailReceipt | undefined,
+  expected: CurationTailReceipt,
+): boolean {
+  return receipt?.schemaVersion === expected.schemaVersion
+    && receipt.runId === expected.runId
+    && receipt.handoffDigest === expected.handoffDigest
+}
+
+function incompleteWarning(runId: string, details?: string): string {
+  const diagnostic = details === undefined ? '' : ` (${details})`
+  return `Post-verdict knowledge curation incomplete for ${runId}${diagnostic}; it will resume on the next run.`
 }
 
 /**
@@ -86,70 +194,119 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     ...defaultOperations(),
     ...opts.operations,
   }
-  const runDir = join(opts.agentQaRoot, RUNS_SUBDIR, slugBranch(opts.runId))
-  let handoffLoaded = false
-
+  const currentRunDir = join(opts.agentQaRoot, RUNS_SUBDIR, slugBranch(opts.runId))
+  let currentHandoff: ReturnType<typeof loadCompletedRunHandoff>
   try {
-    const handoff = operations.loadCompletedRunHandoff(join(runDir, HANDOFF_FILE))
-    handoffLoaded = true
+    currentHandoff = operations.loadCompletedRunHandoff(
+      join(currentRunDir, HANDOFF_FILE),
+    )
+  } catch {
+    opts.log.warn(
+      'Skipping post-verdict knowledge curation: the completed run handoff is missing or malformed.',
+    )
+    return
+  }
 
+  let knowledgeRoot: string
+  let runDirs: string[]
+  try {
     // Phase 374 deliberately left this composition seam unwired. The Curator tail is its first
     // runtime caller and resolves the validated repo-relative root exactly once at the boundary.
-    const knowledgeRoot = operations.resolveKnowledgeRoot(
+    knowledgeRoot = operations.resolveKnowledgeRoot(
       opts.knowledgeConfig,
       opts.configDir,
     )
-
-    await operations.runSafetyScope(
-      {
-        maskingContext: opts.maskingContext,
-        auditSink: opts.auditSink,
-        // SAFE-01: posture is run truth persisted in the handoff, never an ambient re-detection.
-        executionContext: handoff.executionContext,
-      },
-      async () => {
-        operations.emitCurationCandidates({
-          handoff,
-          runDir,
-          knowledgeRoot,
-          policy: opts.policy,
-        })
-        // D-20: 378 D-01's post-verdict projection is applied twice. The candidate and canary
-        // queue drops share this scope and crash boundary; diverging their semantics is a bug.
-        const reader = operations.openKnowledgeReader({ knowledgeRoot })
-        operations.emitCanaryOutcomes({
-          handoff,
-          knowledgeRoot,
-          runDir,
-          emit: reader.emitCanaryOutcome.bind(reader),
-        })
-        const author =
-          opts.modelDeps === undefined
-            ? async () => ({
-                kind: 'fallback-required' as const,
-                reason: 'no-model' as const,
-              })
-            : operations.buildCuratorAuthor(opts.modelDeps)
-        await operations.drainQueue({
-          knowledgeRoot,
-          auditBaseDir: opts.agentQaRoot,
-          author,
-          executionContext: handoff.executionContext,
-          policy: opts.policy,
-          ...(opts.signal === undefined ? {} : { signal: opts.signal }),
-        })
-      },
-    )
+    runDirs = [...new Set([
+      ...operations.listCompletedRunDirs(opts.agentQaRoot),
+      currentRunDir,
+    ])].sort()
   } catch {
-    if (!handoffLoaded) {
-      opts.log.warn(
-        'Skipping post-verdict knowledge curation: the completed run handoff is missing or malformed.',
-      )
-      return
+    opts.log.warn(incompleteWarning(String(currentHandoff.runId)))
+    return
+  }
+
+  for (const runDir of runDirs) {
+    let handoff: ReturnType<typeof loadCompletedRunHandoff>
+    try {
+      handoff = runDir === currentRunDir
+        ? currentHandoff
+        : operations.loadCompletedRunHandoff(join(runDir, HANDOFF_FILE))
+    } catch {
+      opts.log.warn(`Skipping post-verdict knowledge curation for ${runDir}: handoff is malformed.`)
+      continue
     }
-    opts.log.warn(
-      'Post-verdict knowledge curation incomplete; it will resume on the next run.',
-    )
+
+    const expectedReceipt = receiptForHandoff(handoff)
+    try {
+      if (receiptMatches(operations.readCurationTailReceipt(runDir), expectedReceipt)) continue
+      let complete = false
+      let incompleteDetails: string | undefined
+      await operations.runSafetyScope(
+        {
+          maskingContext: opts.maskingContext,
+          auditSink: opts.auditSink,
+          // SAFE-01: posture is persisted run truth, never an ambient re-detection.
+          executionContext: handoff.executionContext,
+        },
+        async () => {
+          const candidates = operations.emitCurationCandidates({
+            handoff,
+            runDir,
+            knowledgeRoot,
+            policy: opts.policy,
+          })
+          // D-20: candidate and canary drops share this scope and crash boundary.
+          const reader = operations.openKnowledgeReader({ knowledgeRoot })
+          const canaries = operations.emitCanaryOutcomes({
+            handoff,
+            knowledgeRoot,
+            runDir,
+            emit: reader.emitCanaryOutcome.bind(reader),
+          })
+          const author =
+            opts.modelDeps === undefined
+              ? async () => ({
+                  kind: 'fallback-required' as const,
+                  reason: 'no-model' as const,
+                })
+              : operations.buildCuratorAuthor(opts.modelDeps)
+          const drain = await operations.drainQueue({
+            knowledgeRoot,
+            auditBaseDir: opts.agentQaRoot,
+            author,
+            executionContext: handoff.executionContext,
+            policy: opts.policy,
+            ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+          })
+          complete = candidates.refused === 0
+            && candidates.capExceeded === 0
+            && canaries.refused === 0
+            && drain.kind === 'drained'
+            && drain.failures === 0
+            && drain.requeued === 0
+          if (!complete) {
+            incompleteDetails = [
+              `candidate-refused=${candidates.refused}`,
+              `candidate-cap-exceeded=${candidates.capExceeded}`,
+              `canary-refused=${canaries.refused}`,
+              `drain-kind=${drain.kind}`,
+              `drain-failures=${drain.failures}`,
+              `drain-requeued=${drain.requeued}`,
+            ].join(', ')
+          }
+        },
+      )
+
+      if (!complete) {
+        opts.log.warn(incompleteWarning(expectedReceipt.runId, incompleteDetails))
+        if (opts.signal?.aborted === true) return
+        continue
+      }
+      operations.writeCurationTailReceipt(runDir, expectedReceipt)
+    } catch {
+      opts.log.warn(incompleteWarning(expectedReceipt.runId))
+      if (opts.signal?.aborted === true) return
+    }
   }
 }
 
