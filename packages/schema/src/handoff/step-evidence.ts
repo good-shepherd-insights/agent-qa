@@ -41,6 +41,8 @@ export type StepPlanSource =
             | 'descriptor-missing'
             | 'page-anchor-mismatch'
             | 'gate-refused'
+            // A bind-time availability gap (D-08), distinct from an invalid action shape.
+            | 'parameter-unbound'
             | 'non-replayable-action'
         }
       }

@@ -31,11 +31,13 @@ export interface ProcedureGuardDescriptor {
 }
 
 /**
- * One action value slot: a literal string, or a `{ param }` ref into the payload's parameter
- * schema. Parameterized values are ALWAYS refs, never inlined literals (T-381-02 — the secret
- * param type only protects values that stay referenced).
+ * One action value slot: a JSON scalar literal, or a `{ param }` ref into the payload's parameter
+ * schema. Boolean and numeric fields such as fill submission, scroll retry/max-swipes,
+ * swipe/long-press duration, and pinch scale therefore survive authoring and replay byte-faithfully.
+ * Parameterized values are ALWAYS refs, never inlined literals (T-381-02 — the secret param type
+ * only protects values that stay referenced).
  */
-export type ProcedureValueSlot = string | { param: string }
+export type ProcedureValueSlot = string | number | boolean | { param: string }
 
 /** One declared procedure parameter (D-03 closed type union). */
 export interface ProcedureParameterSpec {
@@ -82,7 +84,12 @@ const guardDescriptorSchema = z
   })
   .strict()
 
-const valueSlotSchema = z.union([z.string(), z.object({ param: z.string() }).strict()])
+const valueSlotSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.object({ param: z.string() }).strict(),
+])
 
 const stepSpecSchema = z
   .object({
@@ -114,6 +121,24 @@ const bodyPayloadSchema: z.ZodType<ProcedureBodyPayload> = z
     successAssertion: z.string(),
   })
   .strict()
+  .superRefine((payload, context) => {
+    // WR-02: this committed codec is the fail-closed uniqueness AUTHORITY. Proposal-side
+    // checks are advisory; rejecting duplicate names here makes an ambiguous body unservable
+    // and unreplayable everywhere through parseProcedureBody's undefined-on-malformation law.
+    if (!Array.isArray(payload.parameters)) return
+    const names = new Set<string>()
+    payload.parameters.forEach((parameter, index) => {
+      if (typeof parameter?.name !== 'string') return
+      if (names.has(parameter.name)) {
+        context.addIssue({
+          code: 'custom',
+          message: `Duplicate procedure parameter name: ${parameter.name}`,
+          path: ['parameters', index, 'name'],
+        })
+      }
+      names.add(parameter.name)
+    })
+  })
 
 const FENCE_OPEN = '```json agent-qa-procedure'
 const FENCE_CLOSE = '```'
