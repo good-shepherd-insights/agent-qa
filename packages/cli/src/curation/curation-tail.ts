@@ -15,7 +15,9 @@ import { join } from 'node:path'
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
   drainQueue,
+  foldRunOutcomes,
   openKnowledgeReader,
+  RUN_OUTCOMES_PROJECTION_VERSION,
   type OpenServingKnowledgeReaderConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
@@ -39,14 +41,22 @@ import {
 } from './curator-author.js'
 import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
 import { emitCurationCandidates } from './emit-candidates.js'
+import { exercisedAnchors } from './handoff-anchors.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
-export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 1
+/**
+ * v2 (381-05): the receipt gained the run-outcome projection component. v1 receipts fail
+ * validation, so already-drained runs refold once — safe because every tail fold is
+ * idempotent per runId. Never a second marker file (PATTERNS mandate).
+ */
+export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 2
 
 export interface CurationTailReceipt {
   schemaVersion: typeof CURATION_TAIL_RECEIPT_SCHEMA_VERSION
   runId: string
   handoffDigest: string
+  /** Run-outcome projection component: a version bump refolds already-receipted runs. */
+  projectionVersion: number
 }
 
 export type CurationTailModelDeps = Pick<
@@ -65,6 +75,7 @@ export interface CurationTailOperations {
   emitCurationCandidates: typeof emitCurationCandidates
   openKnowledgeReader(config: OpenServingKnowledgeReaderConfig): KnowledgeHintReader
   emitCanaryOutcomes: typeof emitCanaryOutcomes
+  foldRunOutcomes: typeof foldRunOutcomes
   buildCuratorAuthor: typeof buildCuratorAuthor
   drainQueue: typeof drainQueue
   listCompletedRunDirs(agentQaRoot: string): string[]
@@ -83,6 +94,13 @@ export interface RunCurationTailOptions {
   /** The exact already-resolved planner profile and auth used by the run. */
   modelDeps?: CurationTailModelDeps
   policy: GuardrailPolicy
+  /**
+   * Gate-run exclusion flag for the run-outcome projection (Pitfall 7). PROVISIONAL
+   * plumbing: false (absent) for ordinary runs; M4's verify-before-present gate and eval
+   * cassette replays are the named future setters. Applies to the current run only —
+   * sibling backfill runs are excluded solely via their handoff-level marker.
+   */
+  excludeFromRunOutcomes?: boolean
   signal?: AbortSignal
   log: CurationTailLogger
   /** Focused test seam. Production callers omit it. */
@@ -97,6 +115,7 @@ function defaultOperations(): CurationTailOperations {
     emitCurationCandidates,
     openKnowledgeReader,
     emitCanaryOutcomes,
+    foldRunOutcomes,
     buildCuratorAuthor,
     drainQueue,
     listCompletedRunDirs,
@@ -118,12 +137,16 @@ function listCompletedRunDirs(agentQaRoot: string): string[] {
 function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
-  return Object.keys(record).sort().join(',') === 'handoffDigest,runId,schemaVersion'
+  return Object.keys(record).sort().join(',')
+    === 'handoffDigest,projectionVersion,runId,schemaVersion'
     && record.schemaVersion === CURATION_TAIL_RECEIPT_SCHEMA_VERSION
     && typeof record.runId === 'string'
     && record.runId.length > 0
     && typeof record.handoffDigest === 'string'
     && /^[0-9a-f]{64}$/u.test(record.handoffDigest)
+    && typeof record.projectionVersion === 'number'
+    && Number.isInteger(record.projectionVersion)
+    && record.projectionVersion > 0
 }
 
 function readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined {
@@ -168,6 +191,7 @@ function receiptForHandoff(handoff: { runId: unknown }): CurationTailReceipt {
     schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
     runId: String(handoff.runId),
     handoffDigest: curationTailHandoffDigest(handoff),
+    projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
   }
 }
 
@@ -178,6 +202,7 @@ function receiptMatches(
   return receipt?.schemaVersion === expected.schemaVersion
     && receipt.runId === expected.runId
     && receipt.handoffDigest === expected.handoffDigest
+    && receipt.projectionVersion === expected.projectionVersion
 }
 
 function incompleteWarning(runId: string, details?: string): string {
@@ -241,6 +266,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       if (receiptMatches(operations.readCurationTailReceipt(runDir), expectedReceipt)) continue
       let complete = false
       let incompleteDetails: string | undefined
+      let projectionFailed = false
       await operations.runSafetyScope(
         {
           maskingContext: opts.maskingContext,
@@ -263,6 +289,21 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             runDir,
             emit: reader.emitCanaryOutcome.bind(reader),
           })
+          // D-14: the run-outcome fold shares this crash boundary and the SAME extended
+          // receipt as candidate/canary emit — never a second marker file. A fold failure
+          // is isolated (counted below) and never blocks the drain; the withheld receipt
+          // refolds it on the next run, safe because the fold is idempotent per runId.
+          try {
+            operations.foldRunOutcomes({
+              knowledgeRoot,
+              handoff,
+              excluded: runDir === currentRunDir
+                && opts.excludeFromRunOutcomes === true,
+              extractAnchors: exercisedAnchors,
+            })
+          } catch {
+            projectionFailed = true
+          }
           const author =
             opts.modelDeps === undefined
               ? async () => ({
@@ -282,6 +323,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             && candidates.capExceeded === 0
             && canaries.refused === 0
             && canaries.unresolved === 0
+            && !projectionFailed
             && drain.kind === 'drained'
             && drain.failures === 0
             && drain.requeued === 0
@@ -291,6 +333,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
               `candidate-cap-exceeded=${candidates.capExceeded}`,
               `canary-refused=${canaries.refused}`,
               `canary-unresolved=${canaries.unresolved}`,
+              `projection-failed=${projectionFailed ? 1 : 0}`,
               `drain-kind=${drain.kind}`,
               `drain-failures=${drain.failures}`,
               `drain-requeued=${drain.requeued}`,

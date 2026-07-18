@@ -627,7 +627,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 1 }))
     const emitCurationCandidates = vi.fn(successfulOperations().emitCurationCandidates)
     const emitCanaryOutcomes = vi.fn(successfulOperations().emitCanaryOutcomes)
-    const workingDrain = successfulOperations().drainQueue
+    const workingDrain = successfulOperations().drainQueue!
     const operations = successfulOperations({
       foldRunOutcomes,
       emitCurationCandidates,
