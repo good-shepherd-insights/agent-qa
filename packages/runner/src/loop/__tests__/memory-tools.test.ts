@@ -8,12 +8,17 @@ import type {
   IndexEntry,
   ReadTrace,
   RecordBody,
+  RecordId,
   ScopeKey,
   ServingRecordMetadata,
 } from '@vostride/agent-qa-schema'
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import { createRecordLedger } from '../record-ledger.js'
-import { createMemoryTools } from '../memory-tools.js'
+import {
+  createMemoryTools,
+  MEMORY_SEARCH_OMISSION_SAMPLE_LIMIT,
+  memorySearchResponseTokenEnvelope,
+} from '../memory-tools.js'
 import { z } from 'zod'
 
 const SCOPE: ScopeKey = { tier: 'test', key: 'checkout' }
@@ -297,12 +302,18 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       note: {
         kind: 'search-admission-limited',
         droppedCount: 1,
-        omissions: [{
+        omissionCounts: [{
+          authority: 'combined-turn',
+          reason: 'volume-cap',
+          count: 1,
+        }],
+        sampledOmissions: [{
           id: dropped.id,
           authority: 'combined-turn',
           reason: 'volume-cap',
         }],
-        message: `Search admission omitted 1 result: ${dropped.id} (combined-turn:volume-cap).`,
+        unsampledCount: 0,
+        message: 'Search admission limited; inspect structured counts and samples.',
       },
     })
   })
@@ -344,12 +355,18 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       note: {
         kind: 'search-admission-limited',
         droppedCount: 1,
-        omissions: [{
+        omissionCounts: [{
+          authority: 'search-results',
+          reason: 'source-dominance',
+          count: 1,
+        }],
+        sampledOmissions: [{
           id: over.id,
           authority: 'search-results',
           reason: 'source-dominance',
         }],
-        message: `Search admission omitted 1 result: ${over.id} (search-results:source-dominance).`,
+        unsampledCount: 0,
+        message: 'Search admission limited; inspect structured counts and samples.',
       },
     })
   })
@@ -371,7 +388,7 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     expect(await tools['memory.search'].execute({ query: 'repeated' })).toMatchObject({
       entries: [],
       note: {
-        omissions: [{ authority: 'search-results', reason: 'source-dominance' }],
+        sampledOmissions: [{ authority: 'search-results', reason: 'source-dominance' }],
       },
     })
 
@@ -423,15 +440,117 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       note: {
         kind: 'search-admission-limited',
         droppedCount: 1,
-        omissions: [{
+        omissionCounts: [{
+          authority: 'combined-turn',
+          reason: 'cluster-dominance',
+          count: 1,
+        }],
+        sampledOmissions: [{
           id: over.id,
           authority: 'combined-turn',
           reason: 'cluster-dominance',
         }],
-        message: `Search admission omitted 1 result: ${over.id} (combined-turn:cluster-dominance).`,
+        unsampledCount: 0,
+        message: 'Search admission limited; inspect structured counts and samples.',
       },
     })
     expect(ledger.spent()).toBe(60)
+  })
+
+  it('bounds a 10,000-match refusal response with exact resettable diagnostics', async () => {
+    const totalMatches = 10_000
+    const combinedBudget = 48
+    const searchResultBudget = 12_000
+    const candidates = Array.from(
+      { length: totalMatches },
+      (_, index) => entry(`record-large-search-${String(index).padStart(5, '0')}`),
+    )
+    const ledger = createRecordLedger({
+      cap: 24,
+      budget: combinedBudget,
+      seedRecords: [],
+    })
+    // Candidate projections cost one synthetic token; COMPLETE response serialization is
+    // measured byte-for-byte so the assertion below exercises the wrapper envelope itself.
+    const estimateTokens = (text: string): number => (
+      text.startsWith('{"kind":"search-results"')
+        ? new TextEncoder().encode(text).byteLength
+        : 1
+    )
+    const { tools, beginTurn } = factory(
+      stubReader({ search: vi.fn(() => candidates) }),
+      { searchResultBudget, estimateTokens, recordLedger: ledger },
+    )
+    const verifyBoundedResult = (raw: unknown): void => {
+      const result = raw as {
+        kind: 'search-results'
+        entries: IndexEntry[]
+        note: {
+          droppedCount: number
+          omissionCounts: Array<{
+            authority: string
+            reason: string
+            count: number
+          }>
+          sampledOmissions: Array<{
+            id: RecordId
+            authority: string
+            reason: string
+          }>
+          unsampledCount: number
+          message: string
+        }
+      }
+
+      expect(result.kind).toBe('search-results')
+      expect(result.entries).toHaveLength(24)
+      expect(new Set(result.entries.map(({ id }) => id)).size).toBe(24)
+      expect(result.note.droppedCount).toBe(totalMatches - 24)
+      expect(result.note.omissionCounts).toEqual([{
+        authority: 'combined-turn',
+        reason: 'volume-cap',
+        count: totalMatches - 24,
+      }])
+      expect(result.note.sampledOmissions).toHaveLength(
+        MEMORY_SEARCH_OMISSION_SAMPLE_LIMIT,
+      )
+      expect(result.note.sampledOmissions).toEqual(
+        candidates.slice(24, 24 + MEMORY_SEARCH_OMISSION_SAMPLE_LIMIT).map(({ id }) => ({
+          id,
+          authority: 'combined-turn',
+          reason: 'volume-cap',
+        })),
+      )
+      expect(result.note.unsampledCount).toBe(
+        totalMatches - 24 - MEMORY_SEARCH_OMISSION_SAMPLE_LIMIT,
+      )
+      expect(result.note.message).not.toContain('combined-turn')
+      expect(result.note.message).not.toContain('volume-cap')
+      for (const { id } of result.note.sampledOmissions) {
+        expect(result.note.message).not.toContain(String(id))
+      }
+
+      const serialized = JSON.stringify(result)
+      expect(estimateTokens(serialized)).toBeLessThanOrEqual(
+        memorySearchResponseTokenEnvelope(searchResultBudget),
+      )
+      for (const { id } of result.note.sampledOmissions) {
+        expect(serialized.split(String(id))).toHaveLength(2)
+      }
+      // All admitted entries share one cluster and land exactly at the combined 50% wall.
+      expect(ledger.size()).toBe(24)
+      expect(ledger.spent()).toBe(combinedBudget / 2)
+    }
+
+    beginTurn(SCOPE)
+    const first = await tools['memory.search'].execute({ query: 'checkout' })
+    verifyBoundedResult(first)
+
+    ledger.resetTurn([])
+    beginTurn(SCOPE)
+    const second = await tools['memory.search'].execute({ query: 'checkout again' })
+    verifyBoundedResult(second)
+    expect(second).toEqual(first)
   })
 
   it('returns structured empty and not-found results instead of throwing', async () => {
