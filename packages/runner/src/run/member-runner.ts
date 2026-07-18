@@ -141,6 +141,7 @@ export interface MemberRunConfig {
   knowledgeAsOfBuild?: number
   recordLedger?: LoopPorts['recordLedger']
   beginMemoryTurn?: LoopPorts['beginMemoryTurn']
+  drainMemoryReadTraces?: LoopPorts['drainMemoryReadTraces']
   uniqueValueGenerator?: UniqueValueGenerator
   guardBlob?: (value: unknown) => string | undefined
   configDigests?: ConfigDigests
@@ -655,6 +656,7 @@ async function runMemberAttempt(
       knowledgeAsOfBuild: config.knowledgeAsOfBuild,
       recordLedger: config.recordLedger,
       beginMemoryTurn: config.beginMemoryTurn,
+      drainMemoryReadTraces: config.drainMemoryReadTraces,
       uniqueValueGenerator: config.uniqueValueGenerator,
       guardBlob: config.guardBlob,
       plannerConfig: config.plannerConfig,

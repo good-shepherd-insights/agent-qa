@@ -48,6 +48,7 @@ import type {
   MaskingContext,
   ModelCapabilities,
   RecordId,
+  ReadTrace,
   RunEventEnvelope,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -132,6 +133,7 @@ export interface RunKnowledgeComposition {
   recordLedger: RecordLedger
   nonActionTools?: NonActionToolMap
   beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
+  drainMemoryReadTraces?: () => ReadTrace[]
 }
 
 /**
@@ -233,6 +235,7 @@ export function openRunKnowledgeComposition(
     recordLedger,
     nonActionTools: memory?.tools,
     beginMemoryTurn: memory?.beginTurn,
+    drainMemoryReadTraces: memory?.drainReadTraces,
   }
 }
 
@@ -940,6 +943,7 @@ export interface BuildMemberRunConfigInput {
   knowledgeAsOfBuild?: number
   recordLedger?: RecordLedger
   beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
+  drainMemoryReadTraces?: () => ReadTrace[]
   configDigests?: ConfigDigests
   // models
   plannerModel: LanguageModel
@@ -1002,6 +1006,7 @@ export function buildMemberRunConfig(input: BuildMemberRunConfigInput): MemberRu
     knowledgeAsOfBuild: input.knowledgeAsOfBuild,
     recordLedger: input.recordLedger,
     beginMemoryTurn: input.beginMemoryTurn,
+    drainMemoryReadTraces: input.drainMemoryReadTraces,
     configDigests: input.configDigests,
 
     plannerModel: input.plannerModel,

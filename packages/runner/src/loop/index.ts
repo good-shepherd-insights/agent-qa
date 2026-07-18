@@ -756,6 +756,7 @@ export async function executeStep(
           ports.abortSignal,
         )
       } catch (planError: unknown) {
+        recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
         const abortDuringPlan = checkAbort()
         if (abortDuringPlan) return abortDuringPlan
         if (planError instanceof PlanningTurnError) {
@@ -773,6 +774,7 @@ export async function executeStep(
           : `LLM planning failed: ${errorMsg}`
         return failure(displayMsg)
       }
+      recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
     }
 
     if (planResult!.tokenUsage) {

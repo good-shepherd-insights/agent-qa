@@ -153,7 +153,10 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       text === first.body ? 60 : text === second.body ? 40 : 0,
     )
     const onReadTrace = vi.fn()
-    const { tools, beginTurn } = factory(stubReader({ read }), { estimateTokens, onReadTrace })
+    const { tools, beginTurn, drainReadTraces } = factory(
+      stubReader({ read }),
+      { estimateTokens, onReadTrace },
+    )
     beginTurn(SCOPE, [first.id, second.id])
 
     await tools['memory.read'].execute({ id: first.id, detailLevel: 'body' })
@@ -191,12 +194,17 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       detailLevel: 'summary',
       bodyDigest: 'digest-second',
     })
+    expect(drainReadTraces()).toEqual([
+      { id: first.id, detailLevel: 'body', bodyDigest: 'digest-first' },
+      { id: second.id, detailLevel: 'summary', bodyDigest: 'digest-second' },
+    ])
+    expect(drainReadTraces()).toEqual([])
   })
 
   it('restores the complete read-body budget at each planning-turn boundary', async () => {
     const record = body('record-reset', 'complete-turn-budget')
     const read = vi.fn<KnowledgeHintReader['read']>(() => record)
-    const { tools, beginTurn } = factory(stubReader({ read }), {
+    const { tools, beginTurn, drainReadTraces } = factory(stubReader({ read }), {
       estimateTokens: () => 100,
     })
     beginTurn(SCOPE, [record.id])
@@ -207,6 +215,7 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     })
 
     beginTurn(SCOPE, [record.id])
+    expect(drainReadTraces()).toEqual([])
     await tools['memory.read'].execute({ id: record.id })
 
     expect(read).toHaveBeenNthCalledWith(2, record.id, {
@@ -214,6 +223,7 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
       scope: SCOPE,
       asOfBuild: 42,
     })
+    expect(drainReadTraces()).toHaveLength(1)
   })
 
   it('refuses ids not exposed by this turn, including cap drops and relation targets', async () => {

@@ -31,6 +31,7 @@ import type {
   Point,
   RecordedActionResult,
   ReportedValueEvidence,
+  ReadTrace,
   ScopeKey,
   ScreenState,
   ServedBrief,
@@ -389,6 +390,17 @@ export class EvidenceRecorder {
     const served: ServedBrief = {
       ...this.servedBrief,
       channel3: [...this.servedBrief.channel3, ...cautions],
+      briefDigest: '',
+    }
+    this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }
+  }
+
+  /** Append successful Channel-2 direct reads and re-address the complete served brief. */
+  recordServedReadTraces(traces: readonly ReadTrace[]): void {
+    if (traces.length === 0) return
+    const served: ServedBrief = {
+      ...this.servedBrief,
+      channel2: [...this.servedBrief.channel2, ...traces],
       briefDigest: '',
     }
     this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }

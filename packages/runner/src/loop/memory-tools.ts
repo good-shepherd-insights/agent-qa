@@ -94,11 +94,13 @@ export function createMemoryTools(deps: {
 }): {
   tools: NonActionToolMap
   beginTurn(scope?: ScopeKey, exposedIds?: readonly RecordId[]): void
+  drainReadTraces(): ReadTrace[]
 } {
   const readBodyBudget = normalizeBudget(deps.readBodyBudget)
   let spentReadBodyTokens = 0
   let activeScope = deps.scope
   let exposedIds = new Set<RecordId>()
+  let readTraces: ReadTrace[] = []
 
   const tools: NonActionToolMap = {
     'memory.search': {
@@ -175,11 +177,13 @@ export function createMemoryTools(deps: {
 
         const measured = normalizeMeasuredTokens(deps.estimateTokens(record.body), remaining)
         spentReadBodyTokens += measured
-        deps.onReadTrace?.({
+        const trace: ReadTrace = {
           id: record.id,
           detailLevel: args.detailLevel ?? 'body',
           bodyDigest: record.evidenceDigest,
-        })
+        }
+        readTraces.push(trace)
+        deps.onReadTrace?.(trace)
         return { kind: 'record', record }
       },
     },
@@ -192,7 +196,13 @@ export function createMemoryTools(deps: {
       // then calls beginTurn() to reset this independent cumulative read-body ledger.
       if (scope !== undefined) activeScope = scope
       exposedIds = new Set(authorizedIds)
+      readTraces = []
       spentReadBodyTokens = 0
+    },
+    drainReadTraces() {
+      const drained = readTraces
+      readTraces = []
+      return drained
     },
   }
 }

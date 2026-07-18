@@ -177,6 +177,8 @@ describe('run knowledge composition', () => {
       'memory.read',
       'memory.search',
     ])
+    expect(capable.beginMemoryTurn).toBeTypeOf('function')
+    expect(capable.drainMemoryReadTraces).toBeTypeOf('function')
   })
 
   it('maps a production reader miss to the structured memory.read result', async () => {

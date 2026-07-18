@@ -388,6 +388,7 @@ describe('runMemberTest — per-test responsibilities', () => {
       size: vi.fn(),
     } as never
     const beginMemoryTurn = vi.fn()
+    const drainMemoryReadTraces = vi.fn(() => [])
     const captured: LoopPorts[] = []
     const capturing: (i: string, p: LoopPorts, c: StepContext) => Promise<StepResult> = async (_i, p) => {
       captured.push(p)
@@ -404,6 +405,7 @@ describe('runMemberTest — per-test responsibilities', () => {
         knowledgeAsOfBuild: 41,
         recordLedger: ledger,
         beginMemoryTurn,
+        drainMemoryReadTraces,
       }),
     )
 
@@ -412,6 +414,7 @@ describe('runMemberTest — per-test responsibilities', () => {
     expect(captured[0].knowledgeAsOfBuild).toBe(41)
     expect(captured[0].recordLedger).toBe(ledger)
     expect(captured[0].beginMemoryTurn).toBe(beginMemoryTurn)
+    expect(captured[0].drainMemoryReadTraces).toBe(drainMemoryReadTraces)
   })
 
   it('runs an inline appium directive through the injected appiumScript handler', async () => {

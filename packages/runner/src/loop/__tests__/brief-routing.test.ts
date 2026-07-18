@@ -5,8 +5,9 @@ import type { SystemModelMessage } from 'ai'
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import { executeStep } from '../index.js'
 import { EvidenceRecorder } from '../evidence.js'
+import { createMemoryTools } from '../memory-tools.js'
 import { buildContextTier, buildVolatileTier } from '../prompts.js'
-import type { RecordLedger } from '../record-ledger.js'
+import { createRecordLedger, type RecordLedger } from '../record-ledger.js'
 import type { StepContext } from '../types.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext } from './loop-harness.js'
 
@@ -143,6 +144,117 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
     expect(result.evidence?.servedBrief.asOfBuild).toBe(42)
     expect(result.evidence?.servedBrief.budget).toBe(256)
     expect(result.evidence?.servedBrief.truncation).toBe(block.truncation)
+    expect(result.evidence?.servedBrief.briefDigest)
+      .toBe(computeBriefDigest(result.evidence!.servedBrief))
+  })
+
+  it('appends Channel-2 read traces and re-addresses the served brief', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.recordServedBrief({ scope, asOfBuild: 42, budget: 256, block })
+    const before = recorder.finalize({ pass: true, reasoning: 'before' }, 0, 'checkout')
+      .servedBrief.briefDigest
+    const trace = {
+      id: asRecordId('fact-order-number'),
+      detailLevel: 'body',
+      bodyDigest: 'body-digest-order-number',
+    }
+
+    recorder.recordServedReadTraces([trace])
+    const served = recorder.finalize({ pass: true, reasoning: 'done' }, 0, 'checkout')
+      .servedBrief
+
+    expect(served.channel2).toEqual([trace])
+    expect(served.briefDigest).not.toBe(before)
+    expect(served.briefDigest).toBe(computeBriefDigest(served))
+  })
+
+  it('drains live memory.read traces into finalized step evidence', async () => {
+    const recordId = asRecordId('fact-order-number')
+    const reader: KnowledgeHintReader = {
+      getRunBrief: () => block,
+      search: () => [],
+      read: () => ({
+        id: recordId,
+        title: 'Order number',
+        body: 'The confirmation page exposes an order number.',
+        anchors: [{ t: 'page', route: '/confirmation' }],
+        evidenceDigest: 'body-digest-order-number',
+        relations: [],
+      }),
+      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getProcedure: () => undefined,
+      emitCanaryOutcome: () => {},
+    }
+    const recordLedger = createRecordLedger({ cap: 8, seedIds: [] })
+    const memory = createMemoryTools({
+      reader,
+      scope,
+      asOfBuild: 42,
+      readBodyBudget: 128,
+      recordLedger,
+      estimateTokens: () => 12,
+    })
+    const planner = {
+      async plan() {
+        expect(await memory.tools['memory.read'].execute({ id: recordId })).toMatchObject({
+          kind: 'record',
+          record: { id: recordId },
+        })
+        return { plan: makeActionPlan({ stepComplete: true }) }
+      },
+    }
+
+    const result = await executeStep('Place the order', {
+      adapter: makeAdapter(),
+      planner,
+      knowledgeReader: reader,
+      knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+      knowledgeAsOfBuild: 42,
+      recordLedger,
+      beginMemoryTurn: memory.beginTurn,
+      drainMemoryReadTraces: memory.drainReadTraces,
+    }, context())
+
+    expect(result.evidence?.servedBrief.channel2).toEqual([{
+      id: recordId,
+      detailLevel: 'body',
+      bodyDigest: 'body-digest-order-number',
+    }])
+    expect(result.evidence?.servedBrief.briefDigest)
+      .toBe(computeBriefDigest(result.evidence!.servedBrief))
+    expect(memory.drainReadTraces()).toEqual([])
+  })
+
+  it('preserves Channel-2 reads when the live planner fails after using them', async () => {
+    const trace = {
+      id: asRecordId('fact-order-number'),
+      detailLevel: 'body',
+      bodyDigest: 'body-digest-before-planner-failure',
+    }
+    let drained = false
+    const reader: KnowledgeHintReader = {
+      getRunBrief: () => block,
+      search: () => [],
+      read: () => undefined,
+      getCautions: () => ({ cautions: [], budgetUsed: 0 }),
+      getProcedure: () => undefined,
+      emitCanaryOutcome: () => {},
+    }
+
+    const result = await executeStep('Place the order', {
+      adapter: makeAdapter(),
+      planner: { plan: async () => { throw new Error('planner stopped after read') } },
+      knowledgeReader: reader,
+      knowledgeBudgets: { brief: 256, caution: 64, readBody: 128, recordCap: 8 },
+      drainMemoryReadTraces: () => {
+        if (drained) return []
+        drained = true
+        return [trace]
+      },
+    }, context())
+
+    expect(result.status).toBe('failed')
+    expect(result.evidence?.servedBrief.channel2).toEqual([trace])
     expect(result.evidence?.servedBrief.briefDigest)
       .toBe(computeBriefDigest(result.evidence!.servedBrief))
   })

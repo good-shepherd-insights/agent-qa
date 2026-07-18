@@ -11,6 +11,7 @@ import type {
   DeclaredModelProfile,
   MaskingContext,
   RecordId,
+  ReadTrace,
   ScreenState,
   ScopeKey,
   WorkingMemoryEntry,
@@ -232,6 +233,8 @@ export interface LoopPorts {
    * live planning turn from the same boundary.
    */
   beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
+  /** Consume the successful direct reads served during the current live planning turn. */
+  drainMemoryReadTraces?: () => ReadTrace[]
   /** D-05 v48 safety seam (context/tool_call/tool_result); unpopulated until Phase 362. */
   safetyHooks?: SafetyHookRunner
   plannerConfig?: PlannerConfig
