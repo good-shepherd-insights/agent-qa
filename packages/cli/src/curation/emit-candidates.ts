@@ -623,9 +623,12 @@ function trajectoryValues(
 
 function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
   const completing = completingSubAction(step)
+  // Replay evaluates the page guard before executing the action (D-10), so this route must
+  // describe the pre-action page. Recording a navigation destination made healthy steps miss
+  // their guards and fed false staleness negatives into the D-05/D-11 confirmation ladder.
   const route = completing === undefined
     ? undefined
-    : classifySubActionRoute(completing).route ?? completing.stateBefore.url
+    : completing.stateBefore.url
   return {
     ordinal: step.stepIndex,
     instruction: step.stepText,
@@ -667,7 +670,7 @@ function projectProcedureTarget(
     const stepPlatform = completing?.stateBefore.platform
     const route = completing === undefined
       ? undefined
-      : classifySubActionRoute(completing).route ?? completing.stateBefore.url
+      : completing.stateBefore.url
     const resolved = resolvedElementEvidence(step).at(-1)
     const previous = test.steps[position - 1]
     return {
