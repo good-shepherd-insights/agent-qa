@@ -516,6 +516,86 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
   })
 
+  it('aborts before dispatch when the declared guard target is missing even though the action target resolves', async () => {
+    const payload = loginPayload()
+    payload.steps = [{
+      ...payload.steps[0],
+      guard: {
+        ...payload.steps[0].guard,
+        target: { role: 'button', nameNormalized: 'reset password' },
+      },
+    }]
+    const spy = makeReader({ match: makeMatch(), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(spy.countOf('getProcedure')).toBe(1)
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    expect(planner.calls).toHaveLength(1)
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned.toLowerCase()).toContain('diverged')
+    expect(learned.toLowerCase()).toContain('declared guard target')
+    expect(learned.toLowerCase()).toContain('reset password')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        miss: { procedureStepIndex: 0, reason: 'descriptor-missing' },
+      },
+    })
+  })
+
+  it('aborts before dispatch when the declared guard target is ambiguous even though the action target resolves', async () => {
+    const payload = loginPayload()
+    payload.steps = [{
+      ...payload.steps[0],
+      guard: {
+        ...payload.steps[0].guard,
+        target: { role: 'button', nameNormalized: 'log in' },
+      },
+    }]
+    const spy = makeReader({ match: makeMatch(), payload })
+    const { adapter, executed } = capturingAdapter([duplicateButtonScreen()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(spy.countOf('getProcedure')).toBe(1)
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    expect(planner.calls).toHaveLength(1)
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned.toLowerCase()).toContain('diverged')
+    expect(learned.toLowerCase()).toContain('declared guard target')
+    expect(learned.toLowerCase()).toContain('log in')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        miss: { procedureStepIndex: 0, reason: 'descriptor-ambiguous' },
+      },
+    })
+  })
+
   it('Test 3: a live page anchor differing from the stored one is a miss even with a unique descriptor', async () => {
     const payload = loginPayload()
     payload.steps = [
