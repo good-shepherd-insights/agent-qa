@@ -63,9 +63,13 @@ function hasCompleteElementShape(value: unknown): boolean {
  * `attempts` an array of non-array objects (absence stays legal: the consumer's `?? []`
  * handles it; attempt interiors stay unvalidated because the consumer's `outcome`
  * strict-equality and `resolvedRef` undefined-check reads are crash-safe on any
- * non-null object). `stateBefore.url` must be a string when present because
- * classifySubActionRoute mints it into a `page` Anchor whose route normalizeAnchor
- * trims; `stateBefore.platform` stays unvalidated — its only read is an absence-safe
+ * non-null object). classifySubActionRoute reads BOTH `stateBefore.url` and
+ * `stateAfter?.url`, and when both are defined and differ it mints the AFTER leg as
+ * the navigated `page` Anchor route normalizeAnchor trims — so both urls must be
+ * strings when present. `stateAfter` absence stays legal (the consumer's optional
+ * chain handles it); when present it must be a non-array object, and its interiors
+ * beyond `url` stay unvalidated because no load-boundary consumer dereferences them.
+ * `stateBefore.platform` stays unvalidated — its only read is an absence-safe
  * identity join.
  */
 function hasCompleteSubActionShape(value: unknown): boolean {
@@ -85,10 +89,18 @@ function hasCompleteSubActionShape(value: unknown): boolean {
   const stateBefore = value.stateBefore
   if (!isNonArrayObject(stateBefore)) return false
   if ('url' in stateBefore && typeof stateBefore.url !== 'string') return false
-  return (
-    Array.isArray(stateBefore.elements) &&
-    stateBefore.elements.every(hasCompleteElementShape)
-  )
+  if (
+    !Array.isArray(stateBefore.elements) ||
+    !stateBefore.elements.every(hasCompleteElementShape)
+  ) {
+    return false
+  }
+  if ('stateAfter' in value) {
+    const stateAfter = value.stateAfter
+    if (!isNonArrayObject(stateAfter)) return false
+    if ('url' in stateAfter && typeof stateAfter.url !== 'string') return false
+  }
+  return true
 }
 
 /**
@@ -320,16 +332,20 @@ function hasCompleteTestShape(value: unknown): boolean {
  * is dereferenceable through `plannedAction`, `grounding.attempts` (flatMapped by
  * resolvedActionRefs for every subAction), and `stateBefore.elements[]` down to the
  * string values consumers apply string operations to: string `role`/`nameNormalized`,
- * all-string `attributes`/`labels` member values, and string-if-present `stateBefore.url`
- * (CR-01/WR-01 grounding-depth and value-level closure); every `servedBrief.channel1`
+ * all-string `attributes`/`labels` member values, and string-if-present urls on BOTH
+ * `stateBefore` and `stateAfter` — the two legs classifySubActionRoute reads
+ * (CR-01/WR-01 grounding-depth and value-level closure; round-9 CR-01 stateAfter-url
+ * closure); every `servedBrief.channel1`
  * member is a non-array object — and the `rootCause.evidence` members: `citedAnchors`
  * satisfy the six-kind Anchor union and `citedArtifacts` carry string id/sha (WR-02).
  * Only genuinely untraversed deep evidence — verified untraversed at the consumers'
  * dereference sites (handoff-anchors.ts, emit-candidates.ts, emit-canary-outcomes.ts,
  * normalize-anchor.ts) — stays unvalidated at this load boundary: workingMemory,
- * decision context, stagnation, cycle, planning failure, stateAfter interiors,
- * `grounding.descriptor` and attempt interiors (stage/outcome/resolvedRef value types),
- * and element name/state/bounds/hierarchy/value.
+ * decision context, stagnation, cycle, planning failure, stateAfter interiors beyond
+ * url, `grounding.descriptor` and attempt interiors (stage/outcome/resolvedRef value
+ * types), and element state/bounds/hierarchy; element name/value are read by
+ * captureEvidence (emit-candidates.ts) but only carried without string operations,
+ * so they stay unvalidated as read-but-crash-safe reads.
  */
 function hasCompleteHandoffShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
