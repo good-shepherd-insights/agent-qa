@@ -179,6 +179,29 @@ describe('createAuthoringReader dense retrieval', () => {
     }))
   })
 
+  it('degrades a throwing dense leg to the lexical floor and closes its reader', async () => {
+    const lexicalReader = createAuthoringReader({ knowledgeRoot, product: PRODUCT })
+    const lexicalBrief = await lexicalReader.getAuthoringBrief(DENSE_ONLY_INTENT, SCOPE)
+    const throwingEmbedder: EmbedderPort = {
+      async embedDocument(): Promise<Float32Array> {
+        return unitVector()
+      },
+      async embedQuery(): Promise<Float32Array> {
+        throw new Error('dense query failed')
+      },
+    }
+    const degradedReader = createAuthoringReader(
+      { knowledgeRoot, product: PRODUCT },
+      { embedder: throwingEmbedder },
+    )
+
+    const degradedBrief = await degradedReader.getAuthoringBrief(DENSE_ONLY_INTENT, SCOPE)
+
+    expect(canonicalJson(degradedBrief)).toBe(canonicalJson(lexicalBrief))
+    await expect(lexicalReader.getAuthoringBrief(DENSE_ONLY_INTENT, SCOPE))
+      .resolves.toEqual(lexicalBrief)
+  })
+
   it('joins id-different-from-name projection and discovery into one verified exemplar (WR-02)', async () => {
     const filePath = join(root, 'tests', 'guest-checkout.yaml')
     const testId = 'checkout-guest-1'
