@@ -754,6 +754,73 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
         delete element.labels
       }),
     ],
+    [
+      'subActions element grounding is a number',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = 42
+      }),
+    ],
+    [
+      'subActions element grounding is an array',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = []
+      }),
+    ],
+    [
+      'subActions element grounding attempts containing null (executed round-7 counterexample)',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = { attempts: [null] }
+      }),
+    ],
+    [
+      'subActions element grounding attempts is a string (executed round-7 counterexample)',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = { attempts: 'oops' }
+      }),
+    ],
+    [
+      'subActions element grounding attempts is a number',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = { attempts: 42 }
+      }),
+    ],
+    [
+      'subActions element grounding attempts containing an array member',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = { attempts: [[]] }
+      }),
+    ],
+    [
+      'stateBefore elements member with a numeric role',
+      mutatedElement((element) => {
+        element.role = 42
+      }),
+    ],
+    [
+      'stateBefore elements member with a numeric nameNormalized',
+      mutatedElement((element) => {
+        element.nameNormalized = 42
+      }),
+    ],
+    [
+      'stateBefore elements member attributes with a numeric selector (executed round-7 counterexample)',
+      mutatedElement((element) => {
+        element.attributes = { selector: 42 }
+      }),
+    ],
+    [
+      'stateBefore elements member labels with a numeric testId (executed round-7 counterexample)',
+      mutatedElement((element) => {
+        element.attributes = {}
+        element.labels = { testId: 42 }
+      }),
+    ],
+    [
+      'subActions element stateBefore with a numeric url',
+      mutatedSubAction((subAction) => {
+        ;(subAction.stateBefore as Record<string, unknown>).url = 42
+      }),
+    ],
     ['servedBrief channel1 carrying a numeric line', withChannel1([42])],
     ['servedBrief channel1 carrying an array line', withChannel1([[]])],
     [
@@ -814,6 +881,38 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       'rootCause evidence citedArtifacts member is an array',
       mutatedRootCause((_rootCause, evidence) => {
         evidence.citedArtifacts = [[]]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors el anchor with a string ordinal',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [
+          { t: 'el', role: 'button', name: 'checkout', ordinal: '1' },
+        ]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors flow anchor missing name',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'flow' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors selector anchor missing literal',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'selector' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors error anchor missing message',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'error' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedArtifacts member with a numeric id',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedArtifacts = [{ id: 7, sha: COMPLETE_ARTIFACT_SHA }]
       }),
     ],
   ]
@@ -908,6 +1007,32 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       'subActions element stateBefore with empty elements',
       mutatedSubAction((subAction) => {
         ;(subAction.stateBefore as Record<string, unknown>).elements = []
+      }),
+    ],
+    [
+      'complete subActions element without grounding (absence legal)',
+      mutatedSubAction((subAction) => {
+        delete subAction.grounding
+      }),
+    ],
+    [
+      'subActions element grounding with empty attempts (emptiness distinct from malformed)',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = {
+          descriptor: { role: 'button', name: 'Checkout' },
+          attempts: [],
+        }
+      }),
+    ],
+    [
+      'subActions element grounding with one complete resolved attempt',
+      mutatedSubAction((subAction) => {
+        subAction.grounding = {
+          descriptor: { role: 'button', name: 'Checkout' },
+          attempts: [
+            { stage: 'ref', outcome: 'resolved', resolvedRef: 'checkout' },
+          ],
+        }
       }),
     ],
     [
