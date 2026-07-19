@@ -116,6 +116,7 @@ function trajectorySeed(): ProcedureTrajectorySeed {
           values: {
             text: { observed: '<SECRET_0>', source: 'masked-secret', targetRef: 'password' },
             clearMode: { observed: 'replace', source: 'literal', targetRef: 'password' },
+            submit: { observed: true, source: 'literal', targetRef: 'password' },
           },
         },
         pageRoute: '/login',
@@ -262,6 +263,23 @@ function addBundles(deltas: Delta[]) {
 }
 
 describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
+  it('defines credential sensitivity only for action value fields', async () => {
+    const schema = await import('@vostride/agent-qa-schema') as typeof import('@vostride/agent-qa-schema') & {
+      isCredentialValueField?: (actionType: string, field: string) => boolean
+    }
+
+    expect(schema.isCredentialValueField).toBeTypeOf('function')
+    if (schema.isCredentialValueField === undefined) return
+
+    expect(schema.isCredentialValueField('fill', 'text')).toBe(true)
+    expect(schema.isCredentialValueField('fill', 'clearMode')).toBe(false)
+    expect(schema.isCredentialValueField('fill', 'submit')).toBe(false)
+    expect(schema.isCredentialValueField('paste', 'value')).toBe(true)
+    expect(schema.isCredentialValueField('select', 'value')).toBe(true)
+    expect(schema.isCredentialValueField('click', 'text')).toBe(false)
+    expect(schema.isCredentialValueField('hover', 'value')).toBe(false)
+  })
+
   it('yields whole-flow and sub-flow Add deltas whose bodies round-trip the codec', async () => {
     const outcome = await author([wholeFlowPlusSubFlow])(procedureJob(), [])
 
@@ -350,6 +368,16 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const emailSlot = payload.steps[1]!.action.values['text']
     expect(emailSlot).toEqual({ param: 'accountEmail' })
     expect(wholeFlow!.body).not.toContain('user@example.com')
+
+    expect(passwordStep.action.values['clearMode']).toBe('replace')
+    expect(passwordStep.action.values['submit']).toBe(true)
+    expect(payload.parameters).toEqual(
+      expect.arrayContaining([
+        { name: 'accountEmail', type: 'string', required: true },
+        { name: slot.param, type: 'secret', required: true },
+      ]),
+    )
+    expect(payload.parameters).toHaveLength(2)
   })
 
   it('commits a boolean literal slot without stringifying it', async () => {
@@ -548,7 +576,6 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(payload.steps[1]?.action.values['text']).toEqual({ param: 'step2_text' })
     expect(payload.steps[2]?.action.values['text']).toEqual({ param: 'step2_text_2' })
     expect(payload.parameters.map(({ name }) => name).sort()).toEqual([
-      'step2_clearMode',
       'step2_text',
       'step2_text_2',
     ])

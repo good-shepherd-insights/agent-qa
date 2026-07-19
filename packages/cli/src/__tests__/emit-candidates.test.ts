@@ -646,6 +646,14 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       source: 'masked-secret',
       targetRef: 'password',
     })
+    expect(filled?.action?.values['clearMode']).toEqual({
+      observed: 'replace',
+      source: 'literal',
+    })
+    expect(filled?.action?.values['submit']).toEqual({
+      observed: false,
+      source: 'literal',
+    })
     expect(filled?.pageRoute).toBe('https://shop.example/cart')
   })
 
