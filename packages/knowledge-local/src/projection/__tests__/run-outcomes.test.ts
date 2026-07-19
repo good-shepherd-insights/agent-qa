@@ -29,6 +29,7 @@ interface StepFixture {
 interface TestFixture {
   filePath: string
   testId: string
+  testName?: string
   outcome: PerTestOutcome['outcome']
   rootCauseClass?: string
   steps?: StepFixture[]
@@ -47,6 +48,7 @@ function stepEvidence(fixture: StepFixture): StepEvidence {
 function perTest(fixture: TestFixture): PerTestOutcome {
   return {
     testId: fixture.testId,
+    testName: fixture.testName ?? fixture.testId,
     filePath: fixture.filePath,
     testIndex: 0,
     outcome: fixture.outcome,
@@ -113,7 +115,8 @@ function threeOutcomeHandoff(): CompletedRunHandoff {
     tests: [
       {
         filePath: 'suite/checkout.test.ts',
-        testId: 'checkout happy path',
+        testId: 'checkout-happy-1',
+        testName: 'checkout happy path',
         outcome: 'passed',
         steps: [
           { stepIndex: 0, anchors: [checkoutAnchor, cartPageAnchor], selfHealed: true },
@@ -121,14 +124,16 @@ function threeOutcomeHandoff(): CompletedRunHandoff {
       },
       {
         filePath: 'suite/checkout.test.ts',
-        testId: 'checkout declined card',
+        testId: 'checkout-declined-1',
+        testName: 'checkout declined card',
         outcome: 'failed',
         rootCauseClass: 'app_bug',
         steps: [{ stepIndex: 0, anchors: [payAnchor] }],
       },
       {
         filePath: 'suite/login.test.ts',
-        testId: 'login after retry',
+        testId: 'login-retry-1',
+        testName: 'login after retry',
         outcome: 'passed',
         rootCauseClass: 'flake',
         steps: [{ stepIndex: 0 }],
@@ -382,7 +387,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_anchors').get()).toMatchObject({ n: 0 })
   })
 
-  it('skips old-shape handoffs lacking per-test filePath with a counted skip, never a throw (A2)', () => {
+  it('skips pre-fix handoffs lacking per-test testName with a counted skip, never a throw (A2)', () => {
     const runsRoot = tempDir('run-outcomes-skip-')
     const good = handoffFixture({
       runId: '001-good',
@@ -401,8 +406,14 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       runId: '002-old',
       buildOrdinal: 2,
       executionContext: 'ci',
-      // Pre-381 v3 handoff: per-test filePath absent — must be skipped structurally.
-      tests: [{ testId: 'legacy test', testIndex: 0, outcome: 'passed', steps: [] }],
+      // Pre-fix v3 handoff: filePath exists but testName is absent — skip structurally.
+      tests: [{
+        testId: 'legacy-test-1',
+        filePath: 'suite/legacy.test.ts',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [],
+      }],
     }
     mkdirSync(join(runsRoot, '002-old'), { recursive: true })
     writeFileSync(join(runsRoot, '002-old', 'handoff.json'), JSON.stringify(oldShape))

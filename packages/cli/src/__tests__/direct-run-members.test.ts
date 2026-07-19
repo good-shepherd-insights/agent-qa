@@ -104,8 +104,8 @@ describe('buildDirectRunMembers', () => {
     })
 
     expect(projection.tests).toEqual([
-      expect.objectContaining({ filePath: FILE_A, testName: CHECKOUT_ID }),
-      expect.objectContaining({ filePath: FILE_B, testName: CHECKOUT_ID }),
+      expect.objectContaining({ filePath: FILE_A, testName: 'checkout succeeds' }),
+      expect.objectContaining({ filePath: FILE_B, testName: 'checkout succeeds' }),
     ])
   })
 })

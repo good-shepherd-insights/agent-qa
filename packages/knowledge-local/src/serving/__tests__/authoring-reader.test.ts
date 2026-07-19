@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  asRunId,
   BundleOutcomeEventSchema,
   DEFAULT_EMBEDDING_PROFILE,
   canonicalJson,
+  type CompletedRunHandoff,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -17,6 +19,9 @@ vi.mock('../../embedder-acquire.js', async (importOriginal) => ({
 
 import {
   createAuthoringReader,
+  applyRunOutcomes,
+  openIndexWriter,
+  projectRunOutcomes,
   publishBundle,
   rebuildIndex,
   type BundleStoreConfig,
@@ -123,5 +128,55 @@ describe('createAuthoringReader dense retrieval', () => {
       truncation: '',
       admissions: [],
     }))
+  })
+
+  it('joins id-different-from-name projection and discovery into one verified exemplar (WR-02)', async () => {
+    const filePath = join(root, 'tests', 'guest-checkout.yaml')
+    const testId = 'checkout-guest-1'
+    const testName = 'Guest checkout with promo'
+    const handoff: CompletedRunHandoff = {
+      schemaVersion: 3,
+      runId: asRunId('run-authoring-identity-join'),
+      scope: SCOPE,
+      buildOrdinal: 12,
+      executionContext: 'ci',
+      aggregateVerdict: 'passed',
+      configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+      startedAt: 1_750_000_000_000,
+      endedAt: 1_750_000_001_000,
+      tests: [{
+        testId,
+        testName,
+        filePath,
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [],
+      }],
+    }
+    const writer = openIndexWriter(knowledgeRoot)
+    try {
+      applyRunOutcomes(writer.db, projectRunOutcomes(handoff, {
+        extractAnchors: () => [],
+      }))
+    } finally {
+      writer.close()
+    }
+    const reader = createAuthoringReader(
+      { knowledgeRoot, product: PRODUCT },
+      { discoverKnownTests: () => [{ filePath, testName }] },
+    )
+
+    const brief = await reader.getAuthoringBrief(testName, SCOPE)
+
+    expect(brief.exemplars).toHaveLength(1)
+    expect(brief.exemplars[0]).toMatchObject({
+      filePath,
+      testName,
+      unverifiedOutcomes: false,
+      passRate: 1,
+    })
+    expect(brief.exemplars).not.toContainEqual(
+      expect.objectContaining({ filePath, unverifiedOutcomes: true }),
+    )
   })
 })
