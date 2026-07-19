@@ -93,6 +93,47 @@ function profile(): ModelProfile {
   }
 }
 
+function completeAuditHandoff(): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: 'run-curation-audit' as CompletedRunHandoff['runId'],
+    scope: { tier: 'product', key: 'storefront' },
+    buildOrdinal: 42,
+    executionContext: 'local-interactive',
+    aggregateVerdict: 'passed',
+    configDigests: {
+      suiteConfigDigest: 'suite-digest',
+      testConfigDigest: 'test-digest',
+    },
+    startedAt: 100,
+    endedAt: 200,
+    tests: [{
+      testId: 'checkout-happy-1',
+      testName: 'checkout happy path',
+      filePath: 'suite/checkout.test.ts',
+      testIndex: 0,
+      outcome: 'passed',
+      steps: [{
+        stepIndex: 0,
+        stepText: 'Click checkout',
+        cacheStatus: 'miss',
+        servedBrief: {
+          scope: { tier: 'product', key: 'storefront' },
+          asOfBuild: 42,
+          budget: 128,
+          truncation: 'none',
+          channel1: [],
+          channel2: [],
+          channel3: [],
+          briefDigest: 'brief-digest',
+        },
+        subActions: [],
+        verifierVerdict: { pass: true, reasoning: 'Observed checkout' },
+      }],
+    }],
+  }
+}
+
 describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
   let root: string
   let agentQaRoot: string
@@ -150,10 +191,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       log: { warn: vi.fn() },
       operations: {
-        loadCompletedRunHandoff: () => ({
-          executionContext: 'local-interactive',
-          runId: 'run-curation-audit',
-        }) as CompletedRunHandoff,
+        loadCompletedRunHandoff: () => completeAuditHandoff(),
         resolveKnowledgeRoot: () => knowledgeRoot,
         emitCurationCandidates: () => {
           const outcome = enqueueCurationCandidateProjection({
