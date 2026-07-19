@@ -26,6 +26,7 @@ import {
 } from '../../bundle-publish.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { openIndexReaderConnection } from '../../index-open.js'
+import { KnowledgeUnsupportedDeltaError } from '../../index.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
 import { claimedRoot } from '../../queue/queue-layout.js'
 import {
@@ -136,7 +137,7 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
       thrown = error
     }
 
-    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown).toBeInstanceOf(KnowledgeUnsupportedDeltaError)
     expect(thrown).toMatchObject({
       name: 'KnowledgeUnsupportedDeltaError',
       deltaKind,

@@ -127,6 +127,21 @@ export class KnowledgeCommitError extends Error {
   }
 }
 
+/** Typed WR-02 refusal for procedure drafts that require evidence this port cannot carry. */
+export class KnowledgeUnsupportedDeltaError extends Error {
+  readonly deltaKind: Delta['kind']
+  readonly reason: 'procedure-evidence-unsupported'
+
+  constructor(deltaKind: Delta['kind']) {
+    super(
+      `local KnowledgePort cannot author ${deltaKind} procedure drafts: the public port carries no durable trajectory/capture evidence; use the evidence-bearing curation queue/drainer`,
+    )
+    this.name = 'KnowledgeUnsupportedDeltaError'
+    this.deltaKind = deltaKind
+    this.reason = 'procedure-evidence-unsupported'
+  }
+}
+
 interface ResolvedTruth {
   id: RecordId
   bundle: LoadedBundle
@@ -324,6 +339,15 @@ export function createLocalKnowledgeStore(
       supersedesSeenByAnchorKey: new Map(),
     }
     for (const delta of deltas) {
+      /**
+       * WR-02 / D-02: this bridge intentionally has no durable procedure observations or
+       * capture artifacts. Disposition would therefore return a guaranteed procedure Noop,
+       * which completed() would otherwise launder into a resolved void. Reject before
+       * bridgeDelta materializes a claimed queue envelope; evidence carriage remains M4 scope.
+       */
+      if (draft(delta)?.kind === 'procedure') {
+        throw new KnowledgeUnsupportedDeltaError(delta.kind)
+      }
       const { job, checkpoint } = bridgeDelta(config, delta)
       const outcome = operation(
         {

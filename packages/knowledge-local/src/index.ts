@@ -378,6 +378,7 @@ export {
   KnowledgeCommitError,
   KnowledgePromotionError,
   KnowledgeStoreNotImplementedError,
+  KnowledgeUnsupportedDeltaError,
 } from './curator/knowledge-store.js'
 export type {
   CreateLocalKnowledgeStoreConfig,
