@@ -6,6 +6,12 @@ export interface VersionGuardConfig<T> {
   current: number
   migrations: MigrationRegistry
   error?: new (found: number, supported: number) => Error
+  /**
+   * Fail-closed structural check applied after the migration walk. `schemaVersion`
+   * states which contract a document claims; this hook verifies that the migrated
+   * document structurally honors the current contract before consumers traverse it.
+   */
+  shape?: (migrated: unknown) => boolean
 }
 
 /** Typed rejection shared by every schema-versioned document guard (D-13). */
@@ -55,6 +61,10 @@ export function createVersionGuard<T>(config: VersionGuardConfig<T>): (value: un
         throw versionError(version)
       }
       migrated = migrate(migrated)
+    }
+
+    if (config.shape !== undefined && !config.shape(migrated)) {
+      throw new TypeError(`${config.name} failed structural validation`)
     }
 
     return migrated as T

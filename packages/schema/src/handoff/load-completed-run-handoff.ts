@@ -29,6 +29,24 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
 }
 
 /**
+ * Guarantees only that projection consumers can safely traverse the tests collection.
+ * Deeper per-field currency checks remain consumer-side so malformed persisted members
+ * become counted skips at the projection's fail-closed boundary (WR-03).
+ */
+function hasTraversableTestsShape(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+
+  const tests = (value as { tests?: unknown }).tests
+  return (
+    tests === undefined ||
+    (Array.isArray(tests) &&
+      tests.every(
+        (test) => test !== null && typeof test === 'object' && !Array.isArray(test),
+      ))
+  )
+}
+
+/**
  * The read side of the handoff version discipline (D-19): parse → version check →
  * reject-newer-than-known with a typed {@link HandoffVersionError} → migrate-older through
  * {@link HANDOFF_MIGRATIONS}. Pure — no fs (the runner-local fs leg lands in Plan 07 and
@@ -39,4 +57,5 @@ export const guardCompletedRunHandoff = createVersionGuard<CompletedRunHandoff>(
   current: CURRENT_HANDOFF_SCHEMA_VERSION,
   migrations: HANDOFF_MIGRATIONS,
   error: HandoffVersionError,
+  shape: hasTraversableTestsShape,
 })
