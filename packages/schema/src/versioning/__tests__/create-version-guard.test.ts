@@ -113,6 +113,9 @@ function completeReplayPlanSource(): Record<string, unknown> {
   }
 }
 
+const COMPLETE_ARTIFACT_SHA =
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+
 function completeRootCause(): Record<string, unknown> {
   return {
     class: 'environment',
@@ -121,11 +124,30 @@ function completeRootCause(): Record<string, unknown> {
     evidence: {
       citedSteps: [0],
       citedAnchors: [{ t: 'error', message: 'environment broke' }],
-      citedArtifacts: [{ artifactId: 'artifact-0' }],
+      citedArtifacts: [{ id: 'artifact-0', sha: COMPLETE_ARTIFACT_SHA }],
       rationale: 'environment failure observed',
     },
     memoryMisdirectionRuledOut: true,
     perTest: 1,
+  }
+}
+
+function completeSubActionEvidence(): Record<string, unknown> {
+  return {
+    plannedAction: { type: 'click', ref: 'checkout' },
+    stateBefore: {
+      url: 'https://shop.example/checkout',
+      platform: 'web',
+      elements: [{
+        ref: 'checkout',
+        role: 'button',
+        name: 'Checkout',
+        nameNormalized: 'checkout',
+        state: { enabled: true, focused: false, visible: true },
+        labels: { testId: 'checkout' },
+        attributes: { type: 'submit' },
+      }],
+    },
   }
 }
 
@@ -139,6 +161,38 @@ function withPlanSource(planSource: unknown): CompletedRunHandoff {
 function withRootCause(rootCause: unknown): CompletedRunHandoff {
   return mutateCompleteHandoff((handoff) => {
     handoff.tests[0]!.rootCause = rootCause as PerTestOutcome['rootCause']
+  })
+}
+
+function withSubActions(subActions: unknown): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    handoff.tests[0]!.steps[0]!.subActions =
+      subActions as StepEvidence['subActions']
+  })
+}
+
+function withChannel1(channel1: unknown): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    handoff.tests[0]!.steps[0]!.servedBrief.channel1 =
+      channel1 as unknown as StepEvidence['servedBrief']['channel1']
+  })
+}
+
+function mutatedSubAction(
+  mutate: (subAction: Record<string, unknown>) => void,
+): CompletedRunHandoff {
+  const subAction = completeSubActionEvidence()
+  mutate(subAction)
+  return withSubActions([subAction])
+}
+
+function mutatedElement(
+  mutate: (element: Record<string, unknown>) => void,
+): CompletedRunHandoff {
+  return mutatedSubAction((subAction) => {
+    const stateBefore = subAction.stateBefore as Record<string, unknown>
+    const elements = stateBefore.elements as Array<Record<string, unknown>>
+    mutate(elements[0]!)
   })
 }
 
@@ -629,6 +683,139 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
         rootCause.subtype = 'flaky_selector'
       }),
     ],
+    [
+      'step subActions carrying a bare element object (flipped former acceptance)',
+      withSubActions([{}]),
+    ],
+    [
+      'step subActions carrying a numeric element (flipped former acceptance)',
+      withSubActions([42]),
+    ],
+    [
+      'step subActions element with a null stateBefore (flipped former acceptance)',
+      withSubActions([{ stateBefore: null }]),
+    ],
+    [
+      'servedBrief channel1 carrying a null line (flipped former acceptance)',
+      withChannel1([null]),
+    ],
+    ['subActions element is an array', withSubActions([[]])],
+    [
+      'subActions element missing plannedAction beside a complete stateBefore',
+      mutatedSubAction((subAction) => {
+        delete subAction.plannedAction
+      }),
+    ],
+    [
+      'subActions element plannedAction is an array',
+      mutatedSubAction((subAction) => {
+        subAction.plannedAction = []
+      }),
+    ],
+    [
+      'subActions element missing stateBefore beside a complete plannedAction',
+      mutatedSubAction((subAction) => {
+        delete subAction.stateBefore
+      }),
+    ],
+    [
+      'subActions element stateBefore missing elements',
+      mutatedSubAction((subAction) => {
+        delete (subAction.stateBefore as Record<string, unknown>).elements
+      }),
+    ],
+    [
+      'subActions element stateBefore elements containing null',
+      mutatedSubAction((subAction) => {
+        ;(subAction.stateBefore as Record<string, unknown>).elements = [null]
+      }),
+    ],
+    [
+      'subActions element stateBefore elements containing a number',
+      mutatedSubAction((subAction) => {
+        ;(subAction.stateBefore as Record<string, unknown>).elements = [42]
+      }),
+    ],
+    [
+      'stateBefore elements member missing attributes',
+      mutatedElement((element) => {
+        delete element.attributes
+      }),
+    ],
+    [
+      'stateBefore elements member attributes is an array',
+      mutatedElement((element) => {
+        element.attributes = []
+      }),
+    ],
+    [
+      'stateBefore elements member missing labels',
+      mutatedElement((element) => {
+        delete element.labels
+      }),
+    ],
+    ['servedBrief channel1 carrying a numeric line', withChannel1([42])],
+    ['servedBrief channel1 carrying an array line', withChannel1([[]])],
+    [
+      'rootCause evidence citedAnchors member without a discriminant',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{}]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors page anchor missing route',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'page' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors page anchor with a numeric route',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'page', route: 7 }]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors member with an unknown kind',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'unknown-kind' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors member is an array',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [[]]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors el anchor missing name',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'el', role: 'button' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors platform anchor outside the literal union',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [{ t: 'platform', platform: 'desktop' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedArtifacts member with the legacy artifactId shape',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedArtifacts = [{ artifactId: 'artifact-0' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedArtifacts member missing sha',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedArtifacts = [{ id: 'artifact-0' }]
+      }),
+    ],
+    [
+      'rootCause evidence citedArtifacts member is an array',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedArtifacts = [[]]
+      }),
+    ],
   ]
 
   it.each(invalidHandoffs)('rejects a structurally unsafe current-version handoff: %s', (_label, handoff) => {
@@ -703,6 +890,52 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       mutatedRootCause((rootCause) => {
         rootCause.class = 'timeout'
         rootCause.attribution = { records: [], anchors: [] }
+      }),
+    ],
+    [
+      'fully populated subActions element',
+      withSubActions([completeSubActionEvidence()]),
+    ],
+    [
+      'subActions element stateBefore without url and platform',
+      mutatedSubAction((subAction) => {
+        const stateBefore = subAction.stateBefore as Record<string, unknown>
+        delete stateBefore.url
+        delete stateBefore.platform
+      }),
+    ],
+    [
+      'subActions element stateBefore with empty elements',
+      mutatedSubAction((subAction) => {
+        ;(subAction.stateBefore as Record<string, unknown>).elements = []
+      }),
+    ],
+    [
+      'servedBrief channel1 with a plain well-formed line',
+      withChannel1([{ id: 'candidate-checkout', servedAsCanary: true }]),
+    ],
+    [
+      'rootCause citedAnchors carrying every anchor kind',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [
+          { t: 'page', route: '/checkout' },
+          { t: 'flow', name: 'checkout' },
+          { t: 'el', role: 'button', name: 'checkout' },
+          { t: 'el', role: 'button', name: 'checkout', ordinal: 1 },
+          { t: 'platform', platform: 'web' },
+          { t: 'selector', literal: '#checkout' },
+          { t: 'error', message: 'boom' },
+        ]
+      }),
+    ],
+    [
+      'rootCause citedArtifacts ref with evidenceIncomplete present',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedArtifacts = [{
+          id: 'artifact-0',
+          sha: COMPLETE_ARTIFACT_SHA,
+          evidenceIncomplete: true,
+        }]
       }),
     ],
   ]
