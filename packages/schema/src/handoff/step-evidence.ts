@@ -53,6 +53,14 @@ export type StepPlanSource =
         executionFailure?: {
           procedureStepIndex: number
         }
+        /**
+         * The stored action executed after passing its replay guards, but the verifier rejected
+         * its result. This blocks positive procedure attribution even when live-planned recovery
+         * later makes the step verdict pass; attributable rejection is negative evidence.
+         */
+        verifierRejection?: {
+          procedureStepIndex: number
+        }
       }
     }
   | { kind: 'procedure-hint'; procedureId: RecordId }

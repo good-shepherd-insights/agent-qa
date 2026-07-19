@@ -294,6 +294,7 @@ export async function executeStep(
     aborted: boolean
     miss?: { procedureStepIndex: number; reason: ProcedureGuardMissReason }
     executionFailure?: { procedureStepIndex: number }
+    verifierRejection?: { procedureStepIndex: number }
   } | undefined
   let procedureHintStaged: { procedureId: RecordId; anchors: Anchor[]; block: string } | undefined
   let procedureHintExposed = false
@@ -355,6 +356,9 @@ export async function executeStep(
           : {}),
         ...(procedureReplay.executionFailure !== undefined
           ? { executionFailure: procedureReplay.executionFailure }
+          : {}),
+        ...(procedureReplay.verifierRejection !== undefined
+          ? { verifierRejection: procedureReplay.verifierRejection }
           : {}),
       },
     })
@@ -793,6 +797,7 @@ export async function executeStep(
       procedureStepIndex: number
       instruction: string
     } | undefined
+    let advancedProcedureStepIndex: number | undefined
     // The per-decision-point cache key: masked stepText + value-free env digest + the
     // settled screenIdentityHash as the 8th component (D-05/D-09). Branch never enters key
     // material. Undefined for non-cacheable (bypassed) steps or when no cache is bound.
@@ -1419,6 +1424,7 @@ export async function executeStep(
     // conservative re-ground heal) has succeeded. A verifier rejection does not undo a real
     // adapter success; it merely hands the exhausted/in-progress sequence to the next loop turn.
     if (execError === undefined && pendingProcedureReplay !== undefined && procedureReplay) {
+      advancedProcedureStepIndex = pendingProcedureReplay.procedureStepIndex
       procedureReplay.checksPassed++
       procedureReplay.nextIndex++
       recordProcedureReplaySource()
@@ -1633,6 +1639,28 @@ export async function executeStep(
           ...(liveDecisionEvidence ?? {}),
         })
         return failure(`Application error: ${verifyResult.verification.reasoning}`)
+      }
+
+      if (procedureReplayed && procedureReplay && !procedureReplay.aborted
+        && advancedProcedureStepIndex !== undefined) {
+        procedureReplay.aborted = true
+        procedureReplay.verifierRejection = {
+          procedureStepIndex: advancedProcedureStepIndex,
+        }
+        recordProcedureReplaySource()
+        const rejectedStep = procedureReplay.payload.steps[advancedProcedureStepIndex]
+        procedureHintStaged = {
+          procedureId: procedureReplay.match.id,
+          anchors: [procedureReplay.match.flowAnchor],
+          block: renderProcedureHintBlock(
+            procedureReplay.match,
+            procedureReplay.payload,
+            `Guarded replay verifier rejected procedure step `
+              + `${advancedProcedureStepIndex + 1} ("${rejectedStep.instruction}"): `
+              + verifierReasoning,
+            maskValue,
+          ),
+        }
       }
 
       // Verifier says not done — planner was wrong about stepComplete. Treat as a
