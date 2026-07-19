@@ -202,6 +202,29 @@ const malformedSiblingCases: Array<{
       ] as unknown as StepEvidence['servedBrief']['channel1']
     },
   },
+  {
+    key: 'grounding-attempt-element',
+    name: 'complete subActions element whose grounding attempts carry a null member',
+    mutate(handoff) {
+      handoff.tests[0]!.steps[0]!.subActions = [{
+        plannedAction: { type: 'click', ref: 'checkout' },
+        stateBefore: {
+          url: 'https://shop.example/checkout',
+          platform: 'web',
+          elements: [{
+            ref: 'checkout',
+            role: 'button',
+            name: 'Checkout',
+            nameNormalized: 'checkout',
+            state: { enabled: true, focused: false, visible: true },
+            labels: { testId: 'checkout' },
+            attributes: { type: 'submit' },
+          }],
+        },
+        grounding: { attempts: [null] },
+      }] as unknown as StepEvidence['subActions']
+    },
+  },
 ]
 
 function baseOptions(
