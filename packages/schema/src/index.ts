@@ -391,6 +391,7 @@ export { curatorTier } from './knowledge/curator-tier'
 export type { CuratorTier, ProcedureParamType } from './knowledge/curator-tier'
 export {
   parseProcedureBody,
+  procedureJsonValueSchema,
   procedureStepKeys,
   serializeProcedureBody,
 } from './knowledge/procedure-steps'
@@ -398,6 +399,7 @@ export type {
   ProcedureBodyPayload,
   ProcedureGuardDescriptor,
   ProcedureGuardTarget,
+  ProcedureJsonValue,
   ProcedureParameterSpec,
   ProcedureStepSpec,
   ProcedureValueSlot,

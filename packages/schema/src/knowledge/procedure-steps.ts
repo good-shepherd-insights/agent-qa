@@ -30,14 +30,38 @@ export interface ProcedureGuardDescriptor {
   landmarks?: string[]
 }
 
+export type ProcedureJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ProcedureJsonValue[]
+  | { [key: string]: ProcedureJsonValue }
+
+export const procedureJsonValueSchema: z.ZodType<ProcedureJsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(procedureJsonValueSchema),
+    z.record(z.string(), procedureJsonValueSchema),
+  ]),
+)
+
 /**
- * One action value slot: a JSON scalar literal, or a `{ param }` ref into the payload's parameter
- * schema. Boolean and numeric fields such as fill submission, scroll retry/max-swipes,
- * swipe/long-press duration, and pinch scale therefore survive authoring and replay byte-faithfully.
- * Parameterized values are ALWAYS refs, never inlined literals (T-381-02 — the secret param type
- * only protects values that stay referenced).
+ * One action value slot: a JSON scalar literal, a `{ param }` ref into the payload's parameter
+ * schema, or a tagged `{ json }` literal. Composite replay semantics such as fileUpload.files and
+ * doubleClick/rightClick.relativePosition must survive byte-faithfully. The tag keeps object
+ * literals unambiguous from `{ param }`; null, arrays, and objects ride the wrapper while scalars
+ * stay bare so every pre-existing committed body remains parseable.
  */
-export type ProcedureValueSlot = string | number | boolean | { param: string }
+export type ProcedureValueSlot =
+  | string
+  | number
+  | boolean
+  | { param: string }
+  | { json: ProcedureJsonValue }
 
 /** One declared procedure parameter (D-03 closed type union). */
 export interface ProcedureParameterSpec {
@@ -84,11 +108,12 @@ const guardDescriptorSchema = z
   })
   .strict()
 
-const valueSlotSchema = z.union([
+const valueSlotSchema: z.ZodType<ProcedureValueSlot> = z.union([
   z.string(),
   z.number(),
   z.boolean(),
   z.object({ param: z.string() }).strict(),
+  z.object({ json: procedureJsonValueSchema }).strict(),
 ])
 
 const stepSpecSchema = z
