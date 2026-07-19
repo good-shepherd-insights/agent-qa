@@ -379,10 +379,29 @@ describe('procedure extraction disposition — binding integrity & secrets (D-03
     payload.parameters = payload.parameters.filter(({ name }) => name !== 'password')
     payload.steps[1] = {
       ...payload.steps[1]!,
-      action: { ...payload.steps[1]!.action, values: { text: 'hunter2' } },
+      action: {
+        ...payload.steps[1]!.action,
+        type: 'fill',
+        values: { text: 'hunter2', clearMode: 'replace', submit: true },
+      },
     }
     const outcome = dispose(addDelta({ body: serializeProcedureBody(payload) }))
     expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-masked-secret-literal' })
+  })
+
+  it('allows literal fill behavior when receipt-marked credential text remains parameterized', () => {
+    const payload = makeProcedureBodyPayloadFixture()
+    payload.steps[1] = {
+      ...payload.steps[1]!,
+      action: {
+        ...payload.steps[1]!.action,
+        type: 'fill',
+        values: { text: { param: 'password' }, clearMode: 'replace', submit: true },
+      },
+    }
+    const delta = addDelta({ body: serializeProcedureBody(payload) })
+
+    expect(dispose(delta)).toMatchObject({ kind: 'apply', delta })
   })
 
   it('rejects a masked placeholder value surviving as a literal on any step', () => {
