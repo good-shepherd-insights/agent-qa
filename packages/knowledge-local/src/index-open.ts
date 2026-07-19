@@ -425,17 +425,33 @@ function bootstrapVecSchema(db: DatabaseSync, activeProfile: EmbeddingProfile): 
  *
  * Derived per-test outcome counters and exercised-anchor sets live in this same gitignored
  * index SQLite — one derived-state home, one writer role, no new DB file. Rows carry test
- * identity (file_path + test_name), counters, and normalized anchors ONLY; no test file
- * content ever enters the store. `run_outcome_applied_runs` is the per-runId idempotency
- * marker that makes refolding a crash-rerun tail safe (receipt-gated at the caller,
- * DB-gated here). All three tables are disposable: `rebuildRunOutcomes` reproduces them
- * from `.agent-qa/runs/<runId>/handoff.json` scans alone (L12). Deliberately absent from
- * REQUIRED_INDEX_TABLES — like the per-profile vec tables, a lost projection heals on the
- * next writer open + rebuild rather than failing health probes.
+ * identity (product + file_path + test_name) within the folded handoff's raw scope pair,
+ * counters, and normalized anchors ONLY; no test file content ever enters the store.
+ * `run_outcome_applied_runs` is the per-product/runId idempotency marker that makes
+ * refolding a crash-rerun tail safe (receipt-gated at the caller, DB-gated here). All
+ * three tables are disposable: `rebuildRunOutcomes` reproduces them from
+ * `.agent-qa/runs/<runId>/handoff.json` scans alone (L12). Deliberately absent from
+ * REQUIRED_INDEX_TABLES — like the per-profile vec tables, a lost projection heals on
+ * the next writer open + rebuild rather than failing health probes.
  */
 export function ensureRunOutcomeTables(db: DatabaseSync): void {
+  const outcomeColumns = db.prepare("PRAGMA table_info('run_test_outcomes')").all()
+    .map((row) => String(row.name))
+  if (outcomeColumns.length > 0 && !outcomeColumns.includes('product')) {
+    // L12 disposable-store migration: a shape change drops every projection table so
+    // no writer can retain or silently read globally keyed pre-partition rows.
+    db.exec(`
+      DROP TABLE IF EXISTS run_test_outcomes;
+      DROP TABLE IF EXISTS run_test_anchors;
+      DROP TABLE IF EXISTS run_outcome_applied_runs;
+    `)
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS run_test_outcomes (
+      product TEXT NOT NULL,
+      scope_tier TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
       file_path TEXT NOT NULL,
       test_name TEXT NOT NULL,
       passes INTEGER NOT NULL DEFAULT 0,
@@ -445,18 +461,23 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       quarantined INTEGER NOT NULL DEFAULT 0,
       last_outcomes_json TEXT NOT NULL DEFAULT '[]',
       last_build_ordinal INTEGER,
-      PRIMARY KEY (file_path, test_name)
+      PRIMARY KEY (product, file_path, test_name)
     );
 
     CREATE TABLE IF NOT EXISTS run_test_anchors (
+      product TEXT NOT NULL,
+      scope_tier TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
       file_path TEXT NOT NULL,
       test_name TEXT NOT NULL,
       anchor_normalized_json TEXT NOT NULL,
-      UNIQUE (file_path, test_name, anchor_normalized_json)
+      UNIQUE (product, file_path, test_name, anchor_normalized_json)
     );
 
     CREATE TABLE IF NOT EXISTS run_outcome_applied_runs (
-      run_id TEXT PRIMARY KEY
+      product TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      PRIMARY KEY (product, run_id)
     );
   `)
 }

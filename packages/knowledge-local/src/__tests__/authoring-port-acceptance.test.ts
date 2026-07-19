@@ -156,6 +156,8 @@ describe('createAuthoringReader through the public barrels (375-08 idiom)', () =
 
   function seedProjection(): void {
     const projection: RunOutcomesProjection = {
+      product: PRODUCT,
+      scope: SCOPE,
       runId: 'run-authoring-acceptance',
       buildOrdinal: 12,
       excluded: false,

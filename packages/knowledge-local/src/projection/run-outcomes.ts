@@ -17,11 +17,13 @@ import {
   canonicalJson,
   guardCompletedRunHandoff,
   normalizeAnchor,
+  slugBranch,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   CompletedRunHandoff,
   PerTestOutcome,
+  ScopeKey,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
 
@@ -30,8 +32,10 @@ import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
 /**
  * Stamped into the curation-tail receipt's projection component. Bump when the fold
  * semantics or table shapes change so already-receipted runs refold on the next tail.
+ * Version 2 partitions every row and applied-run marker, forcing existing receipts to
+ * refold through the product/scope-keyed shape.
  */
-export const RUN_OUTCOMES_PROJECTION_VERSION = 1
+export const RUN_OUTCOMES_PROJECTION_VERSION = 2
 
 /**
  * PROVISIONAL last-N window for per-test outcome history (~10 pending ABRF-02 ranking
@@ -75,6 +79,8 @@ export interface RunOutcomeTestDelta {
 }
 
 export interface RunOutcomesProjection {
+  product: string
+  scope: ScopeKey
   runId: string
   buildOrdinal: number
   excluded: boolean
@@ -106,6 +112,23 @@ export type FoldRunOutcomesReport = ApplyRunOutcomesResult
 interface OutcomeEntry {
   buildOrdinal: number
   passed: boolean
+}
+
+/**
+ * Derive the projection partition from the same scope-key law as committed records.
+ * Product bytes are path-safe to match serving's productSlug bind; the raw scope pair
+ * stays alongside them for the shared scope-ladder predicate.
+ */
+export function projectionPartition(scope: ScopeKey): {
+  product: string
+  scopeTier: ScopeKey['tier']
+  scopeKey: string
+} {
+  return {
+    product: slugBranch(scope.key),
+    scopeTier: scope.tier,
+    scopeKey: scope.key,
+  }
 }
 
 function countedOutcome(outcome: PerTestOutcome['outcome']): boolean | undefined {
@@ -152,6 +175,7 @@ export function projectRunOutcomes(
   handoff: CompletedRunHandoff,
   opts: ProjectRunOutcomesOptions,
 ): RunOutcomesProjection {
+  const partition = projectionPartition(handoff.scope)
   const excluded = handoff.excludedFromOutcomes === true
   const tests = excluded
     ? []
@@ -160,6 +184,8 @@ export function projectRunOutcomes(
         return delta === undefined ? [] : [delta]
       })
   return {
+    product: partition.product,
+    scope: { tier: partition.scopeTier, key: partition.scopeKey },
     runId: String(handoff.runId),
     buildOrdinal: handoff.buildOrdinal,
     excluded,
@@ -189,37 +215,43 @@ function mergeOutcomeEntries(
   return canonicalJson(entries.slice(-LAST_OUTCOMES_LIMIT))
 }
 
-function runAlreadyApplied(db: DatabaseSync, runId: string): boolean {
+function runAlreadyApplied(db: DatabaseSync, product: string, runId: string): boolean {
   return db
-    .prepare('SELECT 1 AS present FROM run_outcome_applied_runs WHERE run_id = ?')
-    .get(runId) !== undefined
+    .prepare(`
+      SELECT 1 AS present
+      FROM run_outcome_applied_runs
+      WHERE product = ? AND run_id = ?
+    `)
+    .get(product, runId) !== undefined
 }
 
 /**
- * Writer against the one index connection. Idempotent per runId: the applied-runs marker
- * commits in the same transaction as the counter rows, so a crash-rerun tail that refolds
- * an already-applied run (receipt withheld mid-tail) changes nothing.
+ * Writer against the one index connection. Idempotent per product/runId: the applied-runs
+ * marker commits in the same transaction as the counter rows, so a crash-rerun tail that
+ * refolds an already-applied partition (receipt withheld mid-tail) changes nothing.
  */
 export function applyRunOutcomes(
   db: DatabaseSync,
   projection: RunOutcomesProjection,
 ): ApplyRunOutcomesResult {
   ensureRunOutcomeTables(db)
-  if (runAlreadyApplied(db, projection.runId)) {
+  if (runAlreadyApplied(db, projection.product, projection.runId)) {
     return { kind: 'already-applied', tests: 0 }
   }
 
   const selectRow = db.prepare(`
     SELECT passes, failures, heals, flake_count, last_outcomes_json, last_build_ordinal
     FROM run_test_outcomes
-    WHERE file_path = ? AND test_name = ?
+    WHERE product = ? AND file_path = ? AND test_name = ?
   `)
   const upsertRow = db.prepare(`
     INSERT INTO run_test_outcomes (
-      file_path, test_name, passes, failures, heals, flake_count, quarantined,
-      last_outcomes_json, last_build_ordinal
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (file_path, test_name) DO UPDATE SET
+      product, scope_tier, scope_key, file_path, test_name, passes, failures, heals,
+      flake_count, quarantined, last_outcomes_json, last_build_ordinal
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (product, file_path, test_name) DO UPDATE SET
+      scope_tier = excluded.scope_tier,
+      scope_key = excluded.scope_key,
       passes = excluded.passes,
       failures = excluded.failures,
       heals = excluded.heals,
@@ -229,14 +261,15 @@ export function applyRunOutcomes(
       last_build_ordinal = excluded.last_build_ordinal
   `)
   const insertAnchor = db.prepare(`
-    INSERT OR IGNORE INTO run_test_anchors (file_path, test_name, anchor_normalized_json)
-    VALUES (?, ?, ?)
+    INSERT OR IGNORE INTO run_test_anchors (
+      product, scope_tier, scope_key, file_path, test_name, anchor_normalized_json
+    ) VALUES (?, ?, ?, ?, ?, ?)
   `)
 
   db.exec('BEGIN IMMEDIATE')
   try {
     for (const test of projection.tests) {
-      const existing = selectRow.get(test.filePath, test.testName) as
+      const existing = selectRow.get(projection.product, test.filePath, test.testName) as
         | {
             passes: number
             failures: number
@@ -255,6 +288,9 @@ export function applyRunOutcomes(
         projection.buildOrdinal,
       )
       upsertRow.run(
+        projection.product,
+        projection.scope.tier,
+        projection.scope.key,
         test.filePath,
         test.testName,
         passes,
@@ -269,11 +305,18 @@ export function applyRunOutcomes(
         lastBuildOrdinal,
       )
       for (const anchorKey of test.anchorKeys) {
-        insertAnchor.run(test.filePath, test.testName, anchorKey)
+        insertAnchor.run(
+          projection.product,
+          projection.scope.tier,
+          projection.scope.key,
+          test.filePath,
+          test.testName,
+          anchorKey,
+        )
       }
     }
-    db.prepare('INSERT INTO run_outcome_applied_runs (run_id) VALUES (?)')
-      .run(projection.runId)
+    db.prepare('INSERT INTO run_outcome_applied_runs (product, run_id) VALUES (?, ?)')
+      .run(projection.product, projection.runId)
     db.exec('COMMIT')
   } catch (error) {
     try {
