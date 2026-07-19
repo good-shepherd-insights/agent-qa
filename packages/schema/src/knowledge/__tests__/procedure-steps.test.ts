@@ -100,6 +100,40 @@ function scalarValuePayload(): ProcedureBodyPayload {
   }
 }
 
+function compositeValuePayload(): ProcedureBodyPayload {
+  return {
+    schemaVersion: 1,
+    parameters: [],
+    steps: [
+      {
+        instruction: 'Upload the fixture files',
+        action: {
+          type: 'fileUpload',
+          targets: { ref: { role: 'button', nameNormalized: 'upload files' } },
+          values: { files: { json: ['a.png', 'b.pdf'] } },
+        },
+        guard: {
+          target: { role: 'button', nameNormalized: 'upload files' },
+          pageAnchor: { t: 'page', route: '/attachments' },
+        },
+      },
+      {
+        instruction: 'Open the card at the recorded point',
+        action: {
+          type: 'doubleClick',
+          targets: { ref: { role: 'article', nameNormalized: 'invoice' } },
+          values: { relativePosition: { json: { x: 5, y: 7 } } },
+        },
+        guard: {
+          target: { role: 'article', nameNormalized: 'invoice' },
+          pageAnchor: { t: 'page', route: '/attachments' },
+        },
+      },
+    ],
+    successAssertion: 'The uploaded invoice is open',
+  } as unknown as ProcedureBodyPayload
+}
+
 describe('procedure body codec (D-04)', () => {
   it('round-trips a payload byte-identically through serialize -> parse', () => {
     const payload = threeStepPayload()
@@ -141,6 +175,45 @@ describe('procedure body codec (D-04)', () => {
     expect(parsed?.steps[0]?.action.values.text).toEqual({ param: 'user_email' })
   })
 
+  it('round-trips tagged JSON composite slots without changing their nested values', () => {
+    const payload = compositeValuePayload()
+
+    const parsed = parseProcedureBody(serializeProcedureBody(payload))
+
+    expect(parsed).toEqual(payload)
+    expect(parsed?.steps[0]?.action.values.files).toEqual({ json: ['a.png', 'b.pdf'] })
+    expect(parsed?.steps[1]?.action.values.relativePosition).toEqual({
+      json: { x: 5, y: 7 },
+    })
+  })
+
+  it('rejects bare composites while treating tagged param-shaped objects as JSON literals', () => {
+    const bareArray = compositeValuePayload() as unknown as {
+      steps: Array<{ action: { values: Record<string, unknown> } }>
+    }
+    bareArray.steps[0]!.action.values.files = ['a.png']
+    expect(
+      parseProcedureBody(serializeProcedureBody(bareArray as unknown as ProcedureBodyPayload)),
+    ).toBeUndefined()
+
+    const bareObject = compositeValuePayload() as unknown as {
+      steps: Array<{ action: { values: Record<string, unknown> } }>
+    }
+    bareObject.steps[1]!.action.values.relativePosition = { x: 5, y: 7 }
+    expect(
+      parseProcedureBody(serializeProcedureBody(bareObject as unknown as ProcedureBodyPayload)),
+    ).toBeUndefined()
+
+    const taggedLiteral = compositeValuePayload() as unknown as {
+      steps: Array<{ action: { values: Record<string, unknown> } }>
+    }
+    taggedLiteral.steps[1]!.action.values.relativePosition = { json: { param: 'x' } }
+    expect(
+      parseProcedureBody(serializeProcedureBody(taggedLiteral as unknown as ProcedureBodyPayload))
+        ?.steps[1]?.action.values.relativePosition,
+    ).toEqual({ json: { param: 'x' } })
+  })
+
   it('rejects duplicate parameter names at the committed parse wall', () => {
     const payload = threeStepPayload()
     payload.parameters = [
@@ -171,6 +244,19 @@ describe('procedure body codec (D-04)', () => {
     after.steps[2]!.action.values.scale = '2.5'
 
     expect(procedureStepKeys(after)).toEqual(procedureStepKeys(before))
+  })
+
+  it('keeps step identity byte-identical when only composite literal values change', () => {
+    const before = compositeValuePayload()
+    const after = compositeValuePayload() as unknown as {
+      steps: Array<{ action: { values: Record<string, unknown> } }>
+    }
+    after.steps[0]!.action.values.files = { json: ['different.csv'] }
+    after.steps[1]!.action.values.relativePosition = { json: { x: 99, y: 101 } }
+
+    expect(procedureStepKeys(after as unknown as ProcedureBodyPayload)).toEqual(
+      procedureStepKeys(before),
+    )
   })
 })
 
