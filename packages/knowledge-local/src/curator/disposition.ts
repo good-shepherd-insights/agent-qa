@@ -1,6 +1,7 @@
 import {
   canonicalJson,
   decideMeasurementDrift,
+  isCredentialValueField,
   isReplayableActionShape,
   parseProcedureBody,
   sha256hex,
@@ -1007,10 +1008,10 @@ const TEST_VARIABLE_VALUE_PATTERN = /\{\{\s*env:/
 
 /**
  * D-03 rule 2. Two independent signals, both fail closed: (1) the literal's own content
- * matches the masking contract; (2) the finalized capture receipt marks a masked credential
- * region on the covered step's ordinal — the receipt's element refs are not carried into
- * the codec body, so ANY literal slot on a masked step is refused (step-granular, not
- * lane-granular, deliberately).
+ * matches the masking contract in any field; (2) the finalized capture receipt marks a
+ * masked credential region on the covered step's ordinal and its credential value field
+ * survived as a literal. CR-03 keeps behavioral replay options literal: treating clearMode,
+ * submit, or durations as secrets would force invalid parameterization upstream.
  */
 function procedureSecretLiteralReject(
   covered: readonly CoveredProcedureStep[],
@@ -1020,11 +1021,14 @@ function procedureSecretLiteralReject(
     captureReceipt.regions.map((region) => region.stepIndex),
   )
   for (const { step, observation } of covered) {
-    for (const slot of Object.values(step.action.values)) {
+    for (const [field, slot] of Object.entries(step.action.values)) {
       if (typeof slot !== 'string') continue
       if (MASKED_SECRET_VALUE_PATTERN.test(slot)) return 'procedure-masked-secret-literal'
       if (TEST_VARIABLE_VALUE_PATTERN.test(slot)) return 'procedure-test-variable-literal'
-      if (maskedStepOrdinals.has(observation.step.ordinal)) {
+      if (
+        maskedStepOrdinals.has(observation.step.ordinal)
+        && isCredentialValueField(step.action.type, field)
+      ) {
         return 'procedure-masked-secret-literal'
       }
     }
