@@ -160,6 +160,25 @@ const malformedSiblingCases: Array<{
       handoff.tests[0]!.steps = [{} as StepEvidence]
     },
   },
+  {
+    key: 'plan-source',
+    name: 'step planSource procedure-replay missing its guard',
+    mutate(handoff) {
+      handoff.tests[0]!.steps[0]!.planSource = {
+        kind: 'procedure-replay',
+        procedureId: 'proc-checkout',
+      } as unknown as StepEvidence['planSource']
+    },
+  },
+  {
+    key: 'root-cause',
+    name: 'member rootCause environment missing its evidence',
+    mutate(handoff) {
+      handoff.tests[0]!.rootCause = {
+        class: 'environment',
+      } as unknown as CompletedRunHandoff['tests'][number]['rootCause']
+    },
+  },
 ]
 
 function baseOptions(
