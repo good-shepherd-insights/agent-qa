@@ -136,6 +136,29 @@ function trajectorySeed(): ProcedureTrajectorySeed {
   }
 }
 
+function compositeTrajectorySeed(): ProcedureTrajectorySeed {
+  const seed = trajectorySeed()
+  seed.steps[1]!.action = {
+    type: 'fileUpload',
+    targets: {
+      ref: {
+        ref: 'upload',
+        role: 'button',
+        nameNormalized: 'upload files',
+        ordinal: 0,
+      },
+    },
+    values: {
+      files: {
+        observed: ['a.png', 'b.pdf'],
+        source: 'literal',
+        targetRef: 'upload',
+      },
+    },
+  } as unknown as NonNullable<ProcedureTrajectorySeed['steps'][number]['action']>
+  return seed
+}
+
 function procedureJob(overrides: Partial<CurationJobView> = {}): CurationJobView {
   return {
     candidateId: 'a'.repeat(64),
@@ -354,6 +377,67 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const payload = parseProcedureBody(bundle!.body)
 
     expect(payload?.steps[1]?.action.values['submit']).toBe(true)
+  })
+
+  it('commits a composite literal slot through the tagged json representation', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::upload-files',
+          stepSpan: [0, 2],
+          parameters: [],
+          successAssertion: 'The files are accepted',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(
+      procedureJob({ bodySeed: canonicalJson(compositeTrajectorySeed()) }),
+      [],
+    )
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const [bundle] = addBundles(outcome.deltas)
+    const payload = parseProcedureBody(bundle!.body)
+
+    expect(payload?.steps[1]?.action.values['files']).toEqual({
+      json: ['a.png', 'b.pdf'],
+    })
+  })
+
+  it('rejects a proposal that parameterizes a composite slot while building valid siblings', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::parameterized-files',
+          stepSpan: [0, 2],
+          parameters: [
+            {
+              name: 'files',
+              type: 'string',
+              required: true,
+              appliesTo: [{ stepOrdinal: 1, field: 'files' }],
+            },
+          ],
+          successAssertion: 'This candidate must be rejected',
+        },
+        {
+          flowName: 'auth::literal-files',
+          stepSpan: [0, 2],
+          parameters: [],
+          successAssertion: 'The files are accepted',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(
+      procedureJob({ bodySeed: canonicalJson(compositeTrajectorySeed()) }),
+      [],
+    )
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const bundles = addBundles(outcome.deltas)
+
+    expect(bundles).toHaveLength(1)
+    expect(bundles[0]?.anchors[0]).toEqual({ t: 'flow', name: 'auth::literal-files' })
   })
 
   it('rejects duplicate parameter names per candidate while building valid siblings', async () => {

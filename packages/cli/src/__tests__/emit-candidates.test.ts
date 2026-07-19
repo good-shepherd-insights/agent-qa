@@ -700,6 +700,81 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     expect(seed?.steps[2]?.action?.values).not.toHaveProperty('nullable')
   })
 
+  it('captures file lists and relative positions as literal composite trajectory slots', () => {
+    const steps = signInSteps()
+    steps[1]!.subActions[0]!.plannedAction = {
+      type: 'fileUpload',
+      ref: asRef('email'),
+      files: ['a.png', 'b.pdf'],
+    }
+    steps[2]!.subActions[0]!.plannedAction = {
+      type: 'doubleClick',
+      ref: asRef('submit'),
+      relativePosition: { x: 5, y: 7 },
+    }
+
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'checkout::composite-values' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    const seed = parseProcedureTrajectorySeed(target!.bodySeed)
+
+    expect(seed?.steps[1]?.action?.values['files']).toEqual({
+      observed: ['a.png', 'b.pdf'],
+      source: 'literal',
+      targetRef: 'email',
+    })
+    expect(seed?.steps[2]?.action?.values['relativePosition']).toEqual({
+      observed: { x: 5, y: 7 },
+      source: 'literal',
+      targetRef: 'submit',
+    })
+  })
+
+  it.each([
+    ['a non-finite number', Number.NaN],
+    ['a nested undefined', { nested: undefined }],
+  ])('omits the whole action when one field contains %s', (_label, unsafeValue) => {
+    const steps = signInSteps()
+    const rawAction = steps[1]!.subActions[0]!.plannedAction as unknown as Record<
+      string,
+      unknown
+    >
+    rawAction['unsafe'] = unsafeValue
+
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'auth::unrepresentable' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    const seed = JSON.parse(target!.bodySeed) as {
+      steps: Array<{ action?: unknown }>
+    }
+
+    expect(seed.steps[1]?.action).toBeUndefined()
+  })
+
+  it.each([
+    ['a masked secret', ['<SECRET_1>.pdf']],
+    ['an environment template', ['{{env:UPLOAD_PATH}}']],
+  ])('omits the whole action when a composite contains %s', (_label, files) => {
+    const steps = signInSteps()
+    steps[1]!.subActions[0]!.plannedAction = {
+      type: 'fileUpload',
+      ref: asRef('email'),
+      files,
+    }
+
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'auth::masked-composite' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    const seed = JSON.parse(target!.bodySeed) as {
+      steps: Array<{ action?: unknown }>
+    }
+
+    expect(seed.steps[1]?.action).toBeUndefined()
+  })
+
   it('records navigating guard routes from the pre-action page while retaining destination anchors', () => {
     const steps = signInSteps()
     steps[2] = flowStep({
