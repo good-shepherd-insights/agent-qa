@@ -8,6 +8,9 @@ import {
   guardCompletedRunHandoff,
   HandoffVersionError,
 } from '../../handoff/load-completed-run-handoff'
+import type { CompletedRunHandoff } from '../../handoff/completed-run-handoff'
+import type { PerTestOutcome } from '../../handoff/per-test-outcome'
+import type { StepEvidence } from '../../handoff/step-evidence'
 
 interface TestDocument {
   schemaVersion: number
@@ -24,6 +27,73 @@ class CustomVersionError extends Error {
     this.foundVersion = found
     this.supportedVersion = supported
   }
+}
+
+function makeCompleteHandoff(): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: 'run-complete' as CompletedRunHandoff['runId'],
+    scope: { tier: 'product', key: 'shop-web' },
+    buildOrdinal: 42,
+    executionContext: 'ci',
+    aggregateVerdict: 'passed',
+    configDigests: {
+      suiteConfigDigest: 'suite-digest',
+      testConfigDigest: 'test-digest',
+    },
+    startedAt: 100,
+    endedAt: 200,
+    tests: [{
+      testId: 'checkout-happy-1',
+      testName: 'checkout happy path',
+      filePath: 'suite/checkout.test.ts',
+      testIndex: 0,
+      outcome: 'passed',
+      steps: [{
+        stepIndex: 0,
+        stepText: 'Click checkout',
+        cacheStatus: 'miss',
+        servedBrief: {
+          scope: { tier: 'product', key: 'shop-web' },
+          asOfBuild: 42,
+          budget: 128,
+          truncation: 'none',
+          channel1: [],
+          channel2: [],
+          channel3: [],
+          briefDigest: 'brief-digest',
+        },
+        subActions: [],
+        verifierVerdict: { pass: true, reasoning: 'Observed checkout' },
+      }],
+    }],
+  }
+}
+
+function mutateCompleteHandoff(
+  mutate: (handoff: CompletedRunHandoff) => void,
+): CompletedRunHandoff {
+  const handoff = structuredClone(makeCompleteHandoff())
+  mutate(handoff)
+  return handoff
+}
+
+function omitHandoffField(field: keyof CompletedRunHandoff): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    delete (handoff as Partial<CompletedRunHandoff>)[field]
+  })
+}
+
+function omitTestField(field: keyof PerTestOutcome): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    delete (handoff.tests[0] as Partial<PerTestOutcome>)[field]
+  })
+}
+
+function omitStepField(field: keyof StepEvidence): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    delete (handoff.tests[0]!.steps[0] as Partial<StepEvidence>)[field]
+  })
 }
 
 describe('createVersionGuard (D-13)', () => {
@@ -211,24 +281,157 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
     })
   })
 
-  it.each([
-    { schemaVersion: 3 },
-    { schemaVersion: 3, tests: {} },
-    { schemaVersion: 3, tests: [null] },
-    { schemaVersion: 3, tests: [{}] },
-    { schemaVersion: 3, tests: [{ steps: {} }] },
-    { schemaVersion: 3, tests: [{ steps: [null] }] },
-  ])('rejects a structurally unsafe current-version handoff %#', (handoff) => {
+  const invalidHandoffs: Array<[string, unknown]> = [
+    ['missing every root field after schemaVersion', { schemaVersion: 3 }],
+    ['missing required root fields around an empty tests array', { schemaVersion: 3, tests: [] }],
+    [
+      'missing required root and member fields around an empty steps array',
+      { schemaVersion: 3, tests: [{ steps: [] }] },
+    ],
+    ['non-array tests', { schemaVersion: 3, tests: {} }],
+    ['null test member', { schemaVersion: 3, tests: [null] }],
+    ['test member missing steps', { schemaVersion: 3, tests: [{}] }],
+    ['non-array steps', { schemaVersion: 3, tests: [{ steps: {} }] }],
+    ['null step member', { schemaVersion: 3, tests: [{ steps: [null] }] }],
+    ['missing runId', omitHandoffField('runId')],
+    ['missing scope', omitHandoffField('scope')],
+    [
+      'scope tier outside the union',
+      mutateCompleteHandoff((handoff) => {
+        handoff.scope.tier = 'workspace' as CompletedRunHandoff['scope']['tier']
+      }),
+    ],
+    [
+      'empty scope key',
+      mutateCompleteHandoff((handoff) => {
+        handoff.scope.key = ''
+      }),
+    ],
+    ['missing buildOrdinal', omitHandoffField('buildOrdinal')],
+    [
+      'excludedFromOutcomes other than literal true',
+      mutateCompleteHandoff((handoff) => {
+        handoff.excludedFromOutcomes = false as unknown as true
+      }),
+    ],
+    ['missing executionContext', omitHandoffField('executionContext')],
+    [
+      'executionContext outside the union',
+      mutateCompleteHandoff((handoff) => {
+        handoff.executionContext = 'laptop' as CompletedRunHandoff['executionContext']
+      }),
+    ],
+    ['missing aggregateVerdict', omitHandoffField('aggregateVerdict')],
+    [
+      'aggregateVerdict outside the union',
+      mutateCompleteHandoff((handoff) => {
+        handoff.aggregateVerdict = 'skipped' as CompletedRunHandoff['aggregateVerdict']
+      }),
+    ],
+    ['missing configDigests', omitHandoffField('configDigests')],
+    [
+      'non-string suiteConfigDigest',
+      mutateCompleteHandoff((handoff) => {
+        handoff.configDigests.suiteConfigDigest = 42 as unknown as string
+      }),
+    ],
+    [
+      'missing testConfigDigest',
+      mutateCompleteHandoff((handoff) => {
+        delete (handoff.configDigests as Partial<CompletedRunHandoff['configDigests']>)
+          .testConfigDigest
+      }),
+    ],
+    ['missing startedAt', omitHandoffField('startedAt')],
+    ['missing endedAt', omitHandoffField('endedAt')],
+    ['missing testId', omitTestField('testId')],
+    ['missing testName', omitTestField('testName')],
+    [
+      'empty testName',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.testName = ''
+      }),
+    ],
+    ['missing filePath', omitTestField('filePath')],
+    [
+      'empty filePath',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.filePath = ''
+      }),
+    ],
+    ['missing testIndex', omitTestField('testIndex')],
+    [
+      'outcome outside the union',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.outcome = 'exploded' as PerTestOutcome['outcome']
+      }),
+    ],
+    ['missing steps', omitTestField('steps')],
+    [
+      'null rootCause',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.rootCause = null as unknown as NonNullable<PerTestOutcome['rootCause']>
+      }),
+    ],
+    ['step missing stepIndex', omitStepField('stepIndex')],
+    ['step missing stepText', omitStepField('stepText')],
+    ['step missing cacheStatus', omitStepField('cacheStatus')],
+    [
+      'cacheStatus outside the union',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.steps[0]!.cacheStatus = 'stale' as StepEvidence['cacheStatus']
+      }),
+    ],
+    ['step missing servedBrief', omitStepField('servedBrief')],
+    [
+      'servedBrief missing channel1',
+      mutateCompleteHandoff((handoff) => {
+        delete (handoff.tests[0]!.steps[0]!.servedBrief as Partial<StepEvidence['servedBrief']>)
+          .channel1
+      }),
+    ],
+    ['step missing subActions', omitStepField('subActions')],
+    ['step missing verifierVerdict', omitStepField('verifierVerdict')],
+    [
+      'verifierVerdict pass is not boolean',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.steps[0]!.verifierVerdict.pass = 'yes' as unknown as boolean
+      }),
+    ],
+    [
+      'verifierVerdict reasoning is not a string',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.steps[0]!.verifierVerdict.reasoning = 42 as unknown as string
+      }),
+    ],
+    [
+      'planSource is null',
+      mutateCompleteHandoff((handoff) => {
+        handoff.tests[0]!.steps[0]!.planSource = null as unknown as NonNullable<StepEvidence['planSource']>
+      }),
+    ],
+  ]
+
+  it.each(invalidHandoffs)('rejects a structurally unsafe current-version handoff: %s', (_label, handoff) => {
     expect(() => guardCompletedRunHandoff(handoff)).toThrowError(TypeError)
     expect(() => guardCompletedRunHandoff(handoff)).toThrow(
       'CompletedRunHandoff failed structural validation',
     )
   })
 
+  const complete = makeCompleteHandoff()
+  const emptyTests = mutateCompleteHandoff((handoff) => {
+    handoff.tests = []
+  })
+  const emptySteps = mutateCompleteHandoff((handoff) => {
+    handoff.tests[0]!.steps = []
+  })
+
   it.each([
-    { schemaVersion: 3, tests: [] },
-    { schemaVersion: 3, tests: [{ steps: [] }] },
-  ])('accepts a structurally traversable current-version handoff %#', (handoff) => {
+    ['complete DTO', complete],
+    ['complete DTO with tests: []', emptyTests],
+    ['complete member with steps: []', emptySteps],
+  ] as const)('accepts a complete current-version handoff: %s', (_label, handoff) => {
     expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
   })
 })
