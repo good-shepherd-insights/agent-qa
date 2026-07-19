@@ -94,10 +94,12 @@ function attributedOutcome(
 
 /**
  * D-12's second attribution source: the typed `planSource` marker. A clean full replay flows
- * through the SAME classifier gate as Pin 1 (`attributedOutcome`); a staleness guard miss is
- * the signal itself and attributes a negative regardless of the step's eventual verdict —
- * gated only by the same root-cause classifier, because environment/timeout/flake failures
- * never damn the procedure (D-11). `procedure-hint` exposure is recorded, never judged.
+ * through the SAME classifier gate as Pin 1 (`attributedOutcome`). An adapter execution failure
+ * after a passed guard can never certify the procedure positive, even when live planning later
+ * recovers the step; a staleness guard miss likewise attributes a negative regardless of the
+ * eventual verdict. Both remain gated by the root-cause classifier, because
+ * environment/timeout/flake failures never damn the procedure (D-11). `procedure-hint`
+ * exposure is recorded, never judged.
  */
 function procedureReplayOutcome(
   test: PerTestOutcome,
@@ -105,6 +107,9 @@ function procedureReplayOutcome(
 ): CanaryOutcome['runOutcome'] | undefined {
   const source = step.planSource
   if (source === undefined || source.kind !== 'procedure-replay') return undefined
+  if (source.guard.executionFailure !== undefined) {
+    return nonAttributableFailure(test) ? undefined : 'negative'
+  }
   const miss = source.guard.miss
   if (miss === undefined) return attributedOutcome(test, step)
   if (!STALENESS_MISS_REASONS.has(miss.reason)) return undefined
@@ -270,6 +275,12 @@ function projectProcedureAttribution(
   const anchor = resolution.anchors[0]
   if (anchor === undefined) return
   const miss = source.guard.miss
+  const executionFailure = source.guard.executionFailure
+  const attributionDetail = executionFailure !== undefined
+    ? `with execution failure at procedure step ${executionFailure.procedureStepIndex}`
+    : miss !== undefined
+      ? `with guard miss ${miss.reason} at procedure step ${miss.procedureStepIndex}`
+      : `with ${runOutcome} verdict`
   projected.push({
     kind: 'outcome',
     source: 'procedure-replay',
@@ -285,9 +296,7 @@ function projectProcedureAttribution(
       attribution: [
         `Procedure ${source.procedureId} replayed`,
         `on test ${test.testIndex} (${test.testId}) step ${step.stepIndex}`,
-        miss === undefined
-          ? `with ${runOutcome} verdict`
-          : `with guard miss ${miss.reason} at procedure step ${miss.procedureStepIndex}`,
+        attributionDetail,
       ].join(' '),
       exercisedAnchor: normalizeAnchor(anchor),
     } satisfies CanaryOutcome,
