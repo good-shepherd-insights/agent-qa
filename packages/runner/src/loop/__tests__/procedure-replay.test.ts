@@ -659,10 +659,65 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     // re-entry after the sequence exhausted).
     expect(executed.map((action) => action.type)).toEqual(['click', 'click'])
     expect(planner.calls).toHaveLength(1)
+    const l2 = planner.calls[0].l2 ?? ''
+    const open = l2.indexOf(APP_OBSERVED_DATA_OPEN)
+    const close = l2.indexOf(APP_OBSERVED_DATA_CLOSE)
+    const divergence = l2.indexOf('Guarded replay verifier rejected procedure step 1')
+    expect(open).toBeGreaterThanOrEqual(0)
+    expect(divergence).toBeGreaterThan(open)
+    expect(l2).toContain('not done yet')
+    expect(close).toBeGreaterThan(divergence)
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
-      guard: { checksPassed: 1, total: 1 },
+      guard: {
+        checksPassed: 1,
+        total: 1,
+        verifierRejection: { procedureStepIndex: 0 },
+      },
+    })
+  })
+
+  it('a verifier rejection aborts a multi-action procedure without replay re-entry', async () => {
+    const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e1' }, stepComplete: true }),
+    ])
+    const verifier = makeVerifier([
+      { success: false, reasoning: 'stored login did not complete', isAppError: false },
+      { success: true, reasoning: 'live recovery completed', isAppError: false },
+    ])
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, verifier, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(spy.countOf('getProcedure')).toBe(1)
+    expect(planner.calls).toHaveLength(1)
+    expect(executed).toMatchObject([
+      { type: 'fill', ref: 'e1' },
+      { type: 'click', ref: 'e2' },
+      { type: 'click', ref: 'e1' },
+    ])
+    expect(executed.filter((action) => action.type === 'click' && action.ref === 'e2'))
+      .toHaveLength(1)
+    const l2 = planner.calls[0].l2 ?? ''
+    expect(l2).toContain(APP_OBSERVED_DATA_OPEN)
+    expect(l2).toContain('Guarded replay verifier rejected procedure step 2')
+    expect(l2).toContain('stored login did not complete')
+    expect(l2).toContain(APP_OBSERVED_DATA_CLOSE)
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 2,
+        total: 2,
+        verifierRejection: { procedureStepIndex: 1 },
+      },
     })
   })
 
