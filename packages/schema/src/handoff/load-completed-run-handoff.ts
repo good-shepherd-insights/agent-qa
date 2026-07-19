@@ -32,6 +32,141 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isNonNullObject(value: unknown): value is object {
+  return value !== null && typeof value === 'object'
+}
+
+const PLAN_SOURCE_MISS_REASONS = new Set<string>([
+  'descriptor-ambiguous',
+  'descriptor-missing',
+  'page-anchor-mismatch',
+  'gate-refused',
+  'parameter-unbound',
+  'non-replayable-action',
+])
+
+const VERDICT_CLASSES = new Set<string>([
+  'test_bug',
+  'app_bug',
+  'environment',
+  'flake',
+  'config_error',
+  'llm_error',
+  'unknown',
+  'timeout',
+])
+
+const TEST_BUG_SUBTYPES = new Set<string>([
+  'stale_selector',
+  'outdated_flow',
+  'bad_assertion',
+  'wrong_expected_value',
+])
+
+function hasProcedureStepIndexShape(value: unknown): boolean {
+  return isNonArrayObject(value) && typeof value.procedureStepIndex === 'number'
+}
+
+/**
+ * Validates a present `planSource` against the complete discriminated StepPlanSource
+ * union (D-12): canary projection dereferences the replay guard's fold fields, so an
+ * admitted procedure-replay source must carry them in full (CR-02).
+ */
+function hasCompletePlanSourceShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  if (typeof value.procedureId !== 'string' || value.procedureId.length === 0) {
+    return false
+  }
+  if (value.kind === 'procedure-hint') return true
+  if (value.kind !== 'procedure-replay') return false
+
+  const guard = value.guard
+  if (!isNonArrayObject(guard)) return false
+  if (typeof guard.checksPassed !== 'number' || typeof guard.total !== 'number') {
+    return false
+  }
+  if ('miss' in guard) {
+    const miss = guard.miss
+    if (!isNonArrayObject(miss)) return false
+    if (typeof miss.procedureStepIndex !== 'number') return false
+    if (
+      typeof miss.reason !== 'string' ||
+      !PLAN_SOURCE_MISS_REASONS.has(miss.reason)
+    ) {
+      return false
+    }
+  }
+  if ('executionFailure' in guard && !hasProcedureStepIndexShape(guard.executionFailure)) {
+    return false
+  }
+  if ('verifierRejection' in guard && !hasProcedureStepIndexShape(guard.verifierRejection)) {
+    return false
+  }
+  return true
+}
+
+/**
+ * Validates a present `rootCause` against the complete Verdict shape: candidate
+ * emission traverses `evidence.citedSteps`/`citedAnchors`/`citedArtifacts`/`rationale`,
+ * so an admitted verdict must carry them in consumer-traversable form (CR-02).
+ */
+function hasCompleteRootCauseShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  if (typeof value.class !== 'string' || !VERDICT_CLASSES.has(value.class)) {
+    return false
+  }
+  if (
+    value.producer !== 'deterministic-classifier' &&
+    value.producer !== 'analyze-run'
+  ) {
+    return false
+  }
+  if (typeof value.confidence !== 'number') return false
+
+  const evidence = value.evidence
+  if (!isNonArrayObject(evidence)) return false
+  if (
+    !Array.isArray(evidence.citedSteps) ||
+    !evidence.citedSteps.every((step) => typeof step === 'number')
+  ) {
+    return false
+  }
+  if (
+    !Array.isArray(evidence.citedAnchors) ||
+    !evidence.citedAnchors.every(isNonNullObject)
+  ) {
+    return false
+  }
+  if (
+    !Array.isArray(evidence.citedArtifacts) ||
+    !evidence.citedArtifacts.every(isNonNullObject)
+  ) {
+    return false
+  }
+  if (typeof evidence.rationale !== 'string') return false
+
+  if (typeof value.memoryMisdirectionRuledOut !== 'boolean') return false
+  if (typeof value.perTest !== 'number') return false
+
+  if ('attribution' in value) {
+    const attribution = value.attribution
+    if (!isNonArrayObject(attribution)) return false
+    if (!Array.isArray(attribution.records) || !Array.isArray(attribution.anchors)) {
+      return false
+    }
+  }
+  if ('subtype' in value) {
+    if (value.class !== 'test_bug') return false
+    if (
+      typeof value.subtype !== 'string' ||
+      !TEST_BUG_SUBTYPES.has(value.subtype)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
 function hasCompleteStepShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
 
@@ -50,7 +185,7 @@ function hasCompleteStepShape(value: unknown): boolean {
     isNonArrayObject(verifierVerdict) &&
     typeof verifierVerdict.pass === 'boolean' &&
     typeof verifierVerdict.reasoning === 'string' &&
-    (!('planSource' in value) || isNonArrayObject(value.planSource))
+    (!('planSource' in value) || hasCompletePlanSourceShape(value.planSource))
   )
 }
 
@@ -72,14 +207,16 @@ function hasCompleteTestShape(value: unknown): boolean {
       value.outcome === 'skipped') &&
     Array.isArray(value.steps) &&
     value.steps.every(hasCompleteStepShape) &&
-    (!('rootCause' in value) || isNonArrayObject(value.rootCause))
+    (!('rootCause' in value) || hasCompleteRootCauseShape(value.rootCause))
   )
 }
 
 /**
  * Guarantees every required root field plus the required fields on each per-test outcome
- * and traversed step before a handoff reaches direct consumers (WR-01). Deep optional
- * evidence remains unvalidated because consumers do not traverse it at this load boundary.
+ * and traversed step before a handoff reaches direct consumers (WR-01), including the
+ * complete discriminated shapes of the two traversed optional blocks — `planSource` and
+ * `rootCause` (CR-02). Only genuinely untraversed deep evidence (workingMemory, decision
+ * context, stagnation) stays unvalidated at this load boundary.
  */
 function hasCompleteHandoffShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
