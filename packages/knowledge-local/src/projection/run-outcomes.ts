@@ -287,24 +287,43 @@ export function applyRunOutcomes(
 }
 
 function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
-  let guarded: CompletedRunHandoff
   try {
-    guarded = guardCompletedRunHandoff(JSON.parse(readFileSync(file, 'utf8')))
+    const guarded = guardCompletedRunHandoff(JSON.parse(readFileSync(file, 'utf8')))
+
+    // WR-03 / L12 fail-closed boundary: EVERY structural access on this untrusted
+    // persisted document stays inside this try. A malformed file is a counted skip,
+    // never an exception that aborts the disposable derived-state rebuild.
+    const tests = (guarded as { tests?: unknown }).tests
+    if (tests !== undefined && !Array.isArray(tests)) return undefined
+
+    // RESEARCH A2 / v2 no-back-compat: pre-fix v3 handoffs lacking the REQUIRED
+    // per-test filePath or human testName still load. The guard-level shape hook and
+    // this consumer wall are independent: reject unsafe members and steps here before
+    // projection traversal can observe them.
+    const structurallyCurrent = (tests ?? []).every((test) => {
+      if (test === null || typeof test !== 'object' || Array.isArray(test)) return false
+
+      const member = test as {
+        filePath?: unknown
+        testName?: unknown
+        steps?: unknown
+      }
+      return (
+        typeof member.filePath === 'string'
+        && member.filePath.length > 0
+        && typeof member.testName === 'string'
+        && member.testName.length > 0
+        && (member.steps === undefined
+          || (Array.isArray(member.steps)
+            && member.steps.every(
+              (step) => step !== null && typeof step === 'object' && !Array.isArray(step),
+            )))
+      )
+    })
+    return structurallyCurrent ? guarded : undefined
   } catch {
     return undefined
   }
-  // RESEARCH A2 / v2 no-back-compat: the schema guard validates only schemaVersion, so
-  // pre-fix v3 handoffs lacking the REQUIRED per-test filePath or human testName still
-  // load. Stable test identity is filePath + testName; without both fields the row key
-  // cannot be minted, so such handoffs are skipped STRUCTURALLY here with a counted skip,
-  // never a throw.
-  const structurallyCurrent = (guarded.tests ?? []).every(
-    (test) => typeof test.filePath === 'string'
-      && test.filePath.length > 0
-      && typeof test.testName === 'string'
-      && test.testName.length > 0,
-  )
-  return structurallyCurrent ? guarded : undefined
 }
 
 /**
