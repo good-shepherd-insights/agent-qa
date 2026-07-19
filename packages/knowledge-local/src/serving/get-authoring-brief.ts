@@ -17,6 +17,7 @@ import {
   canonicalJson,
   createServingAdmissionState,
   EMPTY_PROCEDURE_BINDING_AVAILABILITY,
+  identityTupleKey,
   normalizeAnchor,
   servingRecordMetadata,
   tryAdmitServingRecord,
@@ -272,7 +273,7 @@ function verifiedExemplarCandidate(
   const total = row.passes + row.failures
 
   return [{
-    identity: `${row.filePath}::${row.testName}`,
+    identity: identityTupleKey([row.filePath, row.testName]),
     anchorKeys: new Set(matchedKeys),
     // D-15 fold: trust (neutral 1 for projection-verified rows) x recent-pass-rate x relevance.
     score: recentPassRate * relevance,
@@ -305,7 +306,7 @@ function neverRunExemplarCandidate(
   if (relevance === 0) return []
 
   return [{
-    identity: `${ref.filePath}::${ref.testName}`,
+    identity: identityTupleKey([ref.filePath, ref.testName]),
     anchorKeys: new Set<string>(),
     // Neutral trust, no observed pass-rate: discounted below verified rows, never dropped.
     score: AUTHORING_UNVERIFIED_OUTCOMES_DISCOUNT * relevance,
@@ -367,13 +368,13 @@ function selectExemplars(
   tokens: readonly string[],
 ): ExemplarTest[] {
   const projectionIdentities = new Set(
-    input.projectionRows.map((row) => `${row.filePath}::${row.testName}`),
+    input.projectionRows.map((row) => identityTupleKey([row.filePath, row.testName])),
   )
   const candidates = [
     ...input.projectionRows.flatMap((row) =>
       verifiedExemplarCandidate(row, targetKeys, tokens)),
     ...(input.knownTests ?? []).flatMap((ref) =>
-      projectionIdentities.has(`${ref.filePath}::${ref.testName}`)
+      projectionIdentities.has(identityTupleKey([ref.filePath, ref.testName]))
         ? []
         : neverRunExemplarCandidate(ref, tokens)),
   ].sort((left, right) => (
@@ -407,7 +408,7 @@ function selectExemplars(
 }
 
 function exemplarRecordId(exemplar: ExemplarTest): string {
-  return `exemplar:${exemplar.filePath}::${exemplar.testName}`
+  return `exemplar:${identityTupleKey([exemplar.filePath, exemplar.testName])}`
 }
 
 interface ServableItem {

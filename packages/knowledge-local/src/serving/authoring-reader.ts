@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs'
 
 import type { AuthoringReadPort } from '@vostride/agent-qa-agent'
 import {
+  identityTupleKey,
   normalizeAnchor,
   slugBranch,
   type Anchor,
@@ -127,7 +128,9 @@ function readProjectionRows(
       ORDER BY r.product, r.file_path, r.test_name, r.anchor_normalized_json
     `).all(...predicate.binds)
     for (const row of anchorRows) {
-      const key = `${String(row.product)}::${String(row.file_path)}::${String(row.test_name)}`
+      const key = identityTupleKey([
+        String(row.product), String(row.file_path), String(row.test_name),
+      ])
       const keys = anchorsByTest.get(key)
       if (keys === undefined) anchorsByTest.set(key, [String(row.anchor_normalized_json)])
       else keys.push(String(row.anchor_normalized_json))
@@ -149,9 +152,9 @@ function readProjectionRows(
       flakeCount: Number(row.flake_count),
       quarantined: Number(row.quarantined) !== 0,
       lastOutcomes: parseLastOutcomes(String(row.last_outcomes_json)),
-      anchorKeys: anchorsByTest.get(
-        `${String(row.product)}::${String(row.file_path)}::${String(row.test_name)}`,
-      ) ?? [],
+      anchorKeys: anchorsByTest.get(identityTupleKey([
+        String(row.product), String(row.file_path), String(row.test_name),
+      ])) ?? [],
     }))
   } finally {
     reader.db.close()
@@ -213,12 +216,12 @@ function knownTestUniverse(
 ): AuthoringTestRef[] {
   const byIdentity = new Map<string, AuthoringTestRef>()
   for (const { filePath, testName } of discovered) {
-    byIdentity.set(`${filePath}::${testName}`, { filePath, testName })
+    byIdentity.set(identityTupleKey([filePath, testName]), { filePath, testName })
   }
   // Projection-known identities are the floor, never the ceiling. Re-setting them last makes
   // the trusted projection identity win without allowing consumer-owned content across D-16.
   for (const { filePath, testName } of projectionRows) {
-    byIdentity.set(`${filePath}::${testName}`, { filePath, testName })
+    byIdentity.set(identityTupleKey([filePath, testName]), { filePath, testName })
   }
   return [...byIdentity.values()].sort((left, right) => (
     (left.filePath < right.filePath ? -1 : left.filePath > right.filePath ? 1 : 0)

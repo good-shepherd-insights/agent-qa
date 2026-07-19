@@ -466,6 +466,78 @@ describe('assembleAuthoringBrief refs not copies (D-16)', () => {
   })
 })
 
+describe('assembleAuthoringBrief adversarial delimiter collisions (ABRF-02, WR-01)', () => {
+  it('serves both the projected exemplar and the distinct never-run test under old-colliding names', () => {
+    const brief = assembleAuthoringBrief(baseInput({
+      projectionRows: [projectionRow({ filePath: 'a::b', testName: 'c' })],
+      knownTests: [
+        { filePath: 'a::b', testName: 'c' },
+        { filePath: 'a', testName: 'b::c' },
+      ],
+      intent: 'a b c',
+    }))
+
+    const identities = brief.exemplars.map(({ filePath, testName }) => ({ filePath, testName }))
+    expect(identities).toContainEqual({ filePath: 'a::b', testName: 'c' })
+    expect(identities).toContainEqual({ filePath: 'a', testName: 'b::c' })
+    expect(brief.exemplars).toHaveLength(2)
+
+    const projected = brief.exemplars.find(({ filePath }) => filePath === 'a::b')
+    expect(projected).toMatchObject({ testName: 'c', unverifiedOutcomes: false, passRate: 1 })
+    expect(projected?.recentOutcomes).toHaveLength(3)
+
+    const neverRun = brief.exemplars.find(({ filePath }) => filePath === 'a')
+    expect(neverRun).toMatchObject({ testName: 'b::c', unverifiedOutcomes: true })
+    expect(neverRun).not.toHaveProperty('passRate')
+  })
+
+  it('admits two exemplars whose old record ids collided as two distinct admissions', () => {
+    const brief = assembleAuthoringBrief(baseInput({
+      entries: [],
+      projectionRows: [
+        projectionRow({
+          filePath: 'a::b',
+          testName: 'c',
+          anchors: [{ t: 'page', route: '/login' }],
+        }),
+        projectionRow({
+          filePath: 'a',
+          testName: 'b::c',
+          anchors: [{ t: 'page', route: '/login' }],
+        }),
+      ],
+      knownTests: [],
+      intent: 'a b c',
+    }))
+
+    expect(brief.exemplars).toHaveLength(2)
+    const exemplarAdmissionIds = brief.admissions
+      .map(({ id }) => String(id))
+      .filter((id) => id.startsWith('exemplar:'))
+    expect(exemplarAdmissionIds).toHaveLength(2)
+    expect(new Set(exemplarAdmissionIds).size).toBe(2)
+  })
+
+  it('keeps an empty-testName never-run test beside a formerly-colliding projected row', () => {
+    const brief = assembleAuthoringBrief(baseInput({
+      projectionRows: [projectionRow({ filePath: 'a', testName: 'b::' })],
+      knownTests: [
+        { filePath: 'a', testName: 'b::' },
+        { filePath: 'a::b', testName: '' },
+      ],
+      intent: 'a b',
+    }))
+
+    const identities = brief.exemplars.map(({ filePath, testName }) => ({ filePath, testName }))
+    expect(identities).toContainEqual({ filePath: 'a', testName: 'b::' })
+    expect(identities).toContainEqual({ filePath: 'a::b', testName: '' })
+    expect(brief.exemplars).toHaveLength(2)
+
+    const emptyName = brief.exemplars.find(({ filePath }) => filePath === 'a::b')
+    expect(emptyName).toMatchObject({ testName: '', unverifiedOutcomes: true })
+  })
+})
+
 describe('assembleAuthoringBrief typed-empty coverage (D-13)', () => {
   it('carries a present, empty coverage map on every result', () => {
     const full = assembleAuthoringBrief(baseInput())

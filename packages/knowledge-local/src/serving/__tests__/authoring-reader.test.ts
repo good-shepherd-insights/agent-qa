@@ -332,6 +332,60 @@ describe('createAuthoringReader dense retrieval', () => {
     expect(brief.exemplars[0]).not.toHaveProperty('passRate')
   })
 
+  it('keeps anchors tuple-true for old-colliding file/test names (WR-01, ABRF-02)', async () => {
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-collide-one',
+      scope: SCOPE,
+      buildOrdinal: 30,
+      filePath: 'a::b',
+      testName: 'c',
+      outcome: 'passed',
+      anchor: { t: 'page', route: '/route-one' },
+    }))
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-collide-two',
+      scope: SCOPE,
+      buildOrdinal: 31,
+      filePath: 'a',
+      testName: 'b::c',
+      outcome: 'passed',
+      anchor: { t: 'page', route: '/route-two' },
+    }))
+    const reader = createAuthoringReader({ knowledgeRoot, product: PRODUCT })
+
+    const brief = await reader.getAuthoringBrief('a b c /route-one /route-two', SCOPE)
+
+    expect(brief.exemplars).toHaveLength(2)
+    const first = brief.exemplars.find(({ filePath }) => filePath === 'a::b')
+    const second = brief.exemplars.find(({ filePath }) => filePath === 'a')
+    expect(first).toMatchObject({ testName: 'c', unverifiedOutcomes: false })
+    expect(second).toMatchObject({ testName: 'b::c', unverifiedOutcomes: false })
+    expect(first?.matchedAnchors).toEqual([{ t: 'page', route: '/route-one' }])
+    expect(second?.matchedAnchors).toEqual([{ t: 'page', route: '/route-two' }])
+  })
+
+  it('keeps old-colliding discovered tests as two distinct never-run exemplars', async () => {
+    const reader = createAuthoringReader(
+      { knowledgeRoot, product: PRODUCT },
+      {
+        discoverKnownTests: () => [
+          { filePath: 'a::b', testName: 'c' },
+          { filePath: 'a', testName: 'b::c' },
+        ],
+      },
+    )
+
+    const brief = await reader.getAuthoringBrief('a b c', SCOPE)
+
+    expect(brief.exemplars.map(({ filePath, testName }) => ({ filePath, testName })))
+      .toEqual(expect.arrayContaining([
+        { filePath: 'a::b', testName: 'c' },
+        { filePath: 'a', testName: 'b::c' },
+      ]))
+    expect(brief.exemplars).toHaveLength(2)
+    expect(brief.exemplars.every(({ unverifiedOutcomes }) => unverifiedOutcomes)).toBe(true)
+  })
+
   it('treats a pre-partition projection shape as empty instead of querying it', async () => {
     const writer = openIndexWriter(knowledgeRoot)
     try {
