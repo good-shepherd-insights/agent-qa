@@ -30,11 +30,15 @@ function isParameterAvailable(
 ): boolean {
   if (parameter.type === 'secret') return sources.secrets.has(parameter.name)
 
-  // The order mirrors bindProcedureParam exactly: test variables, working memory, then the
-  // secret store as a last-resort template source for non-secret parameter types.
+  // WR-01's authoritative names-only source law mirrors bindProcedureParam: secret parameters
+  // use secrets only; strings use variables, memory, then secrets; numbers and booleans use
+  // variables or memory only. The secret store binds as a `{{secret:name}}` string template,
+  // which cannot satisfy a number/boolean slot. Admitting that source would recommend a replay
+  // the loop must abort as parameter-unbound. Any binder source-policy change must update this
+  // helper and its type x source matrix in the same commit.
   if (sources.variables.has(parameter.name)) return true
   if (sources.memory.has(parameter.name)) return true
-  return sources.secrets.has(parameter.name)
+  return parameter.type === 'string' && sources.secrets.has(parameter.name)
 }
 
 /**
