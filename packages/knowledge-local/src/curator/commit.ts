@@ -8,6 +8,8 @@ import {
   computeStepSequenceSignature,
   evaluatePromotionGate,
   guardDistilledObservation,
+  parseProcedureBody,
+  procedureStepKeys,
   renderEmbeddingInput,
   sha256hex,
   survivingOutcomeEvents,
@@ -271,7 +273,7 @@ function elementRef(anchors: readonly Anchor[]): { role: string; name: string } 
 function discriminant(
   draft: BundleDraft,
   delta: Delta,
-  stepKeys: readonly string[],
+  structuralProcedureStepKeys: readonly string[],
 ): BundleDiscriminant {
   switch (draft.kind) {
     case 'fact': {
@@ -299,7 +301,9 @@ function discriminant(
       return {
         kind: 'procedure',
         flowName: flow?.name ?? canonicalJson(draft.anchors[0]),
-        stepSignature: computeStepSequenceSignature(stepKeys),
+        // D-01: procedureStepKeys is the schema-owned identity authority. Observation
+        // naturalKeys are evidence prose and must never enter the content address.
+        stepSignature: computeStepSequenceSignature(structuralProcedureStepKeys),
       }
     }
     case 'caution': {
@@ -339,12 +343,6 @@ function draftForDelta(delta: Delta, job: CommitCurationJob): CheckpointDraft | 
   if (delta.kind === 'Supersede') return delta.newBundle
   if (delta.kind === 'MintUnknown') return syntheticDraft(job)
   return undefined
-}
-
-function stepKeys(job: CommitCurationJob): string[] {
-  return [...job.payload.distilledObservations]
-    .sort((left, right) => left.step.ordinal - right.step.ordinal)
-    .map((observation) => observation.step.naturalKey)
 }
 
 function evidenceMarkdown(job: CommitCurationJob): string {
@@ -899,6 +897,17 @@ export function commitCurationDelta(
   const delta = disposed.delta
   const relationRows = relations(disposed.relationIntents ?? [], delta, job)
   const draft = draftForDelta(delta, job)
+  const structuralProcedureStepKeys = (() => {
+    if (draft?.kind !== 'procedure') return []
+    const payload = parseProcedureBody(draft.body)
+    return payload === undefined ? undefined : procedureStepKeys(payload)
+  })()
+  if (structuralProcedureStepKeys === undefined) {
+    // Defense in depth over disposition's matching refusal: an authored procedure
+    // can never fall back to evidence prose for identity, including in sibling deltas.
+    markDone(deps, job)
+    return { kind: 'noop', reason: 'procedure-body-unparseable' }
+  }
   const productKey = delta.scope.key
   let bundleId: RecordId
   let bundleDir: string | undefined
@@ -929,7 +938,11 @@ export function commitCurationDelta(
           : delta
       const renderInput: RenderBundlePartsInput = {
         draft,
-        discriminant: discriminant(draft, identityDelta, stepKeys(job)),
+        discriminant: discriminant(
+          draft,
+          identityDelta,
+          structuralProcedureStepKeys,
+        ),
         originClass: originClass(delta),
         createdAtOrdinal: job.payload.buildOrdinal,
         screenStates: job.screenStates ?? [],
