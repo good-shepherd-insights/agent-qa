@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { Delta } from '@vostride/agent-qa-schema'
+import { serializeProcedureBody, type BundleDraft, type Delta } from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -14,6 +14,7 @@ import {
   CURATION_QUEUE_SCHEMA_VERSION,
   candidateContentAddress,
   commitCurationDelta,
+  enumerateBundleDirs,
   loadBundle,
   openIndexReaderConnection,
   verifyBundleIntegrity,
@@ -23,6 +24,7 @@ import {
 } from '../../index.js'
 import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import {
+  makeProcedureBodyPayloadFixture,
   makeProcedureBundleDraftFixture,
   makeProcedureScreenStateSequenceFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
@@ -44,8 +46,21 @@ describe('D-02 procedure-kind commit mint contract', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function commitProcedure() {
-    const draft = makeProcedureBundleDraftFixture()
+  interface CommitProcedureOptions {
+    draft?: BundleDraft
+    sourceRunId?: string
+    buildOrdinal?: number
+    evidenceToken?: string
+    attributingObservationId?: string
+  }
+
+  function commitProcedure(options: CommitProcedureOptions = {}) {
+    const draft = options.draft ?? makeProcedureBundleDraftFixture()
+    const sourceRunId = options.sourceRunId ?? 'run-procedure-commit'
+    const buildOrdinal = options.buildOrdinal ?? 81
+    const evidenceToken = options.evidenceToken ?? 'procedure-evidence'
+    const attributingObservationId =
+      options.attributingObservationId ?? 'run-procedure-commit:test-sign-in:step-0'
     const screenStates = makeProcedureScreenStateSequenceFixture()
     const artifacts = screenStates.map((_, stepIndex) => {
       const role = stepIndex === 1 ? 'dom-snapshot' as const : 'opaque-evidence' as const
@@ -67,9 +82,9 @@ describe('D-02 procedure-kind commit mint contract', () => {
     })
     const fields = candidateAddressFixture({
       schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
-      sourceRunId: 'run-procedure-commit',
+      sourceRunId,
       scope: draft.scope,
-      buildOrdinal: 81,
+      buildOrdinal,
       executionContext: 'local-interactive',
       secretFlagged: false,
       injectionFlagged: false,
@@ -92,10 +107,10 @@ describe('D-02 procedure-kind commit mint contract', () => {
         element: {
           naturalKey: ['textbox:email', 'textbox:password', 'button:sign in'][stepIndex]!,
         },
-        observedAtOrdinal: 81 + stepIndex,
+        observedAtOrdinal: buildOrdinal + stepIndex,
       })),
-      evidenceToken: 'procedure-evidence',
-      attributingObservationId: 'run-procedure-commit:test-sign-in:step-0',
+      evidenceToken,
+      attributingObservationId,
       artifactInventory: artifacts.map(({ bytes, sha, stepIndex, role, originalName }) => ({
         relativePath: `artifacts/${sha}`,
         sha256: sha,
@@ -235,5 +250,76 @@ describe('D-02 procedure-kind commit mint contract', () => {
       curationJobId: expect.any(String),
       sourceBuildOrdinal: 81,
     })
+  })
+
+  it('refuses an unparseable procedure body without minting a bundle', () => {
+    const outcome = commitProcedure({
+      draft: makeProcedureBundleDraftFixture({ body: 'not a committed procedure body' }),
+    })
+
+    expect(outcome).toEqual({ kind: 'noop', reason: 'procedure-body-unparseable' })
+    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(0)
+  })
+
+  it('keeps equal-prose procedures with different structural guards in distinct bundles', () => {
+    const originalPayload = makeProcedureBodyPayloadFixture()
+    const firstStep = originalPayload.steps[0]!
+    const structurallyDistinctPayload = makeProcedureBodyPayloadFixture({
+      steps: [
+        {
+          ...firstStep,
+          guard: {
+            ...firstStep.guard,
+            target: { ...firstStep.guard.target, nameNormalized: 'username' },
+          },
+        },
+        ...originalPayload.steps.slice(1),
+      ],
+    })
+    const first = commitProcedure({
+      draft: makeProcedureBundleDraftFixture({
+        body: serializeProcedureBody(originalPayload),
+      }),
+    })
+    const second = commitProcedure({
+      draft: makeProcedureBundleDraftFixture({
+        body: serializeProcedureBody(structurallyDistinctPayload),
+      }),
+      sourceRunId: 'run-procedure-commit-guard-variant',
+      buildOrdinal: 82,
+      evidenceToken: 'procedure-evidence-guard-variant',
+      attributingObservationId: 'run-procedure-commit-guard-variant:test-sign-in:step-0',
+    })
+
+    expect(first.kind).toBe('applied')
+    expect(second.kind).toBe('applied')
+    if (first.kind !== 'applied' || second.kind !== 'applied') {
+      throw new Error('expected structurally distinct procedures to apply')
+    }
+    expect(second.bundleId).not.toBe(first.bundleId)
+    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(2)
+  })
+
+  it('coalesces an identical structural re-extraction and appends Confirm evidence', () => {
+    const first = commitProcedure()
+    const second = commitProcedure({
+      sourceRunId: 'run-procedure-commit-reextraction',
+      buildOrdinal: 82,
+      evidenceToken: 'procedure-evidence-reextraction',
+      attributingObservationId: 'run-procedure-commit-reextraction:test-sign-in:step-0',
+    })
+
+    expect(first.kind).toBe('applied')
+    expect(second.kind).toBe('converted-confirm')
+    if (first.kind !== 'applied' || second.kind !== 'converted-confirm') {
+      throw new Error('expected identical procedure re-extraction to convert to Confirm')
+    }
+    expect(second.bundleId).toBe(first.bundleId)
+    expect(enumerateBundleDirs(knowledgeRoot)).toHaveLength(1)
+
+    const loaded = loadBundle(second.bundleDir)
+    expect(loaded.kind).toBe('loaded')
+    if (loaded.kind !== 'loaded') throw new Error('expected coalesced procedure bundle')
+    expect(loaded.bundle.events.filter((event) => event.type === 'confirmed')).toHaveLength(2)
   })
 })
