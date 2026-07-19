@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  BundleOutcomeEventSchema,
   deriveEvidenceToken,
   normalizeAnchor,
   type CanaryOutcome,
@@ -39,6 +40,7 @@ const FULL_AUTHORSHIP: CurationAuthorship = {
   executionContext: 'local-interactive',
 }
 const FLOW_ANCHOR = normalizeAnchor({ t: 'flow', name: 'Sign in flow' })
+const CREATION_JOB_ID = 'job-ladder-seed'
 
 /**
  * D-05 ladder proof: a full-tier procedure earns replay eligibility exclusively through the
@@ -79,14 +81,21 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
       originClass: 'agent-verified',
       createdAtOrdinal: 10,
       screenStates: [],
-      // The ladder starts from ZERO confirmations: replay must be earned, never seeded.
-      initialEvents: [],
+      // Real commit shape: the authoring observation remains in the audit trail but does not
+      // consume an organic replay-confirmation slot.
+      initialEvents: [BundleOutcomeEventSchema.parse({
+        type: 'confirmed',
+        evidenceToken: 'confirm-ladder-creation',
+        curationJobId: CREATION_JOB_ID,
+        buildOrdinal: 10,
+      })],
       relations: [],
       provenance: {
         mode: 'run-linked',
         runId: 'run-ladder-seed',
         testId: 'test-ladder-seed',
         stepIndex: 0,
+        curationJobId: CREATION_JOB_ID,
         authorship: FULL_AUTHORSHIP,
       },
       artifacts: [],
@@ -158,24 +167,42 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
     expect(before?.replayRecommendation).toBe('hint')
 
     const bar = PROCEDURE_REPLAY_CONFIRMATIONS.full
-    for (let stepIndex = 0; stepIndex < bar; stepIndex += 1) {
+    for (let stepIndex = 0; stepIndex < bar - 1; stepIndex += 1) {
       const enqueued = enqueueCanaryOutcome(knowledgeRoot, replayOutcome(seeded.id, stepIndex))
       expect(enqueued.kind).toBe('enqueued')
     }
-    expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(bar)
+    expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(bar - 1)
 
-    const report = await drain()
-    expect(report).toMatchObject({
+    const firstReport = await drain()
+    expect(firstReport).toMatchObject({
       kind: 'drained',
-      jobsProcessed: bar,
-      committed: bar,
+      jobsProcessed: bar - 1,
+      committed: bar - 1,
       failures: 0,
     })
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
 
-    const result = loaded(seeded.dir)
-    expect(result.trust.counters.confirmed).toBe(bar)
+    const afterFirst = loaded(seeded.dir)
+    expect(afterFirst.trust.counters.confirmed).toBe(bar)
     // M2 posture: procedures never go active; Confirm evidence alone crosses the bar (D-05).
+    expect(afterFirst.trust.status).toBe('candidate')
+    expect(getProcedure()?.replayRecommendation).toBe('hint')
+
+    const enqueued = enqueueCanaryOutcome(
+      knowledgeRoot,
+      replayOutcome(seeded.id, bar - 1),
+    )
+    expect(enqueued.kind).toBe('enqueued')
+    const secondReport = await drain()
+    expect(secondReport).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 1,
+      failures: 0,
+    })
+
+    const result = loaded(seeded.dir)
+    expect(result.trust.counters.confirmed).toBe(bar + 1)
     expect(result.trust.status).toBe('candidate')
 
     const after = getProcedure()

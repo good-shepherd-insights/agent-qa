@@ -69,6 +69,23 @@ function confirmedEvents(count: number, key: string): BundleOutcomeEvent[] {
     }))
 }
 
+function creationJobId(key: string): string {
+  return `job-${key}-creation`
+}
+
+function creationEvent(key: string): BundleOutcomeEvent {
+  return BundleOutcomeEventSchema.parse({
+    type: 'confirmed',
+    evidenceToken: `confirm-${key}-creation`,
+    curationJobId: creationJobId(key),
+    buildOrdinal: 9,
+  })
+}
+
+function procedureEvents(organicConfirmations: number, key: string): BundleOutcomeEvent[] {
+  return [creationEvent(key), ...confirmedEvents(organicConfirmations, key)]
+}
+
 function deprecatedEvent(key: string): BundleOutcomeEvent {
   return BundleOutcomeEventSchema.parse({
     type: 'deprecated',
@@ -81,6 +98,7 @@ function deprecatedEvent(key: string): BundleOutcomeEvent {
 
 function runLinkedProvenance(options: {
   authorship?: CurationAuthorship
+  curationJobId?: string
   withheld?: boolean
 } = {}): BundleProvenance {
   return {
@@ -90,6 +108,9 @@ function runLinkedProvenance(options: {
     runId: 'run-matcher',
     testId: 'test-matcher',
     stepIndex: 0,
+    ...(options.curationJobId === undefined
+      ? {}
+      : { curationJobId: options.curationJobId }),
     ...(options.authorship === undefined ? {} : { authorship: options.authorship }),
     ...(options.withheld === true ? { withheld: true } : {}),
   }
@@ -105,6 +126,7 @@ interface CandidateOptions {
   body?: string
   events?: BundleOutcomeEvent[]
   authorship?: CurationAuthorship
+  curationJobId?: string
   withheld?: boolean
 }
 
@@ -127,9 +149,10 @@ function candidate(options: CandidateOptions): ProcedureMatchCandidate {
     bundle: {
       summary,
       body: options.body ?? serializeProcedureBody(makeProcedureBodyPayloadFixture()),
-      events: options.events ?? confirmedEvents(2, options.id),
+      events: options.events ?? procedureEvents(2, options.id),
       provenance: runLinkedProvenance({
         authorship: options.authorship ?? FULL_AUTHORSHIP,
+        curationJobId: options.curationJobId ?? creationJobId(options.id),
         ...(options.withheld === true ? { withheld: true } : {}),
       }),
     },
@@ -233,21 +256,33 @@ describe('matchProcedure anchor matching', () => {
 })
 
 describe('matchProcedure tier x confirmations x fillability fold', () => {
-  it('recommends replay for full tier at the confirmation threshold with fillable params', () => {
+  it('keeps full tier with one organic confirmation below the replay bar as hint', () => {
     const match = matchProcedure(matchInput([
-      candidate({ id: 'proc-full', events: confirmedEvents(2, 'proc-full') }),
+      candidate({
+        id: 'proc-full-one-organic',
+        events: procedureEvents(1, 'proc-full-one-organic'),
+      }),
+    ]))
+
+    expect(match?.authoringModelTier).toBe('full')
+    expect(match?.replayRecommendation).toBe('hint')
+  })
+
+  it('recommends replay for full tier at two organic confirmations', () => {
+    const match = matchProcedure(matchInput([
+      candidate({ id: 'proc-full', events: procedureEvents(2, 'proc-full') }),
     ]))
 
     expect(match?.authoringModelTier).toBe('full')
     expect(match?.replayRecommendation).toBe('replay')
   })
 
-  it('keeps degraded tier at the full threshold but below the degraded bar as hint', () => {
+  it('keeps degraded tier at three organic confirmations below its replay bar as hint', () => {
     const match = matchProcedure(matchInput([
       candidate({
         id: 'proc-degraded',
         authorship: DEGRADED_AUTHORSHIP,
-        events: confirmedEvents(2, 'proc-degraded'),
+        events: procedureEvents(3, 'proc-degraded'),
       }),
     ]))
 
@@ -255,12 +290,23 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     expect(match?.replayRecommendation).toBe('hint')
   })
 
-  it('recommends replay for degraded tier once the higher degraded bar is met', () => {
+  it('recommends replay for degraded tier at four organic confirmations', () => {
     const match = matchProcedure(matchInput([
       candidate({
         id: 'proc-degraded-confirmed',
         authorship: DEGRADED_AUTHORSHIP,
-        events: confirmedEvents(4, 'proc-degraded-confirmed'),
+        events: procedureEvents(4, 'proc-degraded-confirmed'),
+      }),
+    ]))
+
+    expect(match?.replayRecommendation).toBe('replay')
+  })
+
+  it('counts every surviving confirmation when no event matches the current provenance job', () => {
+    const match = matchProcedure(matchInput([
+      candidate({
+        id: 'proc-superseded-lineage',
+        events: procedureEvents(1, 'proc-prior-lineage'),
       }),
     ]))
 
@@ -272,7 +318,7 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
       candidate({
         id: 'proc-floor',
         authorship: FLOOR_AUTHORSHIP,
-        events: confirmedEvents(6, 'proc-floor'),
+        events: procedureEvents(6, 'proc-floor'),
       }),
     ]))
 
@@ -489,9 +535,12 @@ describe('servingReader getProcedure end-to-end', () => {
       originClass: 'agent-verified',
       createdAtOrdinal: 10,
       screenStates: [],
-      initialEvents: confirmedEvents(2, 'served'),
+      initialEvents: procedureEvents(2, 'served'),
       relations: [],
-      provenance: runLinkedProvenance({ authorship: FULL_AUTHORSHIP }),
+      provenance: runLinkedProvenance({
+        authorship: FULL_AUTHORSHIP,
+        curationJobId: creationJobId('served'),
+      }),
       artifacts: [],
       evidenceMarkdown: 'Evidence for the sign-in procedure.\n',
     })
