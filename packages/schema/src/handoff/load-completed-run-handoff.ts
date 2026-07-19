@@ -32,8 +32,78 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function isNonNullObject(value: unknown): value is object {
-  return value !== null && typeof value === 'object'
+/**
+ * Validates an ElementInfo member of `stateBefore.elements` at the depth the load-boundary
+ * consumers dereference: captureEvidence reads `attributes.type` and locatorForElement reads
+ * `labels.testId` — both members are REQUIRED on ElementInfo, so this rejects no honest document.
+ */
+function hasCompleteElementShape(value: unknown): boolean {
+  return (
+    isNonArrayObject(value) &&
+    isNonArrayObject(value.attributes) &&
+    isNonArrayObject(value.labels)
+  )
+}
+
+/**
+ * Validates a `subActions` element against the consumer-dereferenced surface: actionRefs
+ * applies the `in` operator to `plannedAction`, and resolvedElementEvidence/captureEvidence
+ * walk `stateBefore.elements`. `stateBefore.url` and `stateBefore.platform` stay unvalidated —
+ * both consumer reads are absence-safe.
+ */
+function hasCompleteSubActionShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  if (!isNonArrayObject(value.plannedAction)) return false
+  const stateBefore = value.stateBefore
+  if (!isNonArrayObject(stateBefore)) return false
+  return (
+    Array.isArray(stateBefore.elements) &&
+    stateBefore.elements.every(hasCompleteElementShape)
+  )
+}
+
+/**
+ * Mirrors the six-kind Anchor union (discriminant `t` plus its payload) so every
+ * guard-admitted `citedAnchors` member survives normalizeAnchor in the curator drain (WR-02).
+ */
+function isAnchorShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  switch (value.t) {
+    case 'page':
+      return typeof value.route === 'string'
+    case 'flow':
+      return typeof value.name === 'string'
+    case 'el':
+      return (
+        typeof value.role === 'string' &&
+        typeof value.name === 'string' &&
+        (!('ordinal' in value) || typeof value.ordinal === 'number')
+      )
+    case 'platform':
+      return (
+        value.platform === 'web' ||
+        value.platform === 'android' ||
+        value.platform === 'ios'
+      )
+    case 'selector':
+      return typeof value.literal === 'string'
+    case 'error':
+      return typeof value.message === 'string'
+    default:
+      return false
+  }
+}
+
+/**
+ * Requires string `id`/`sha` so artifact descriptor mapping is total (`ref.id.startsWith`
+ * runs once the sha regex passes); hex-format enforcement stays the consumer's filter (WR-02).
+ */
+function isArtifactRefShape(value: unknown): boolean {
+  return (
+    isNonArrayObject(value) &&
+    typeof value.id === 'string' &&
+    typeof value.sha === 'string'
+  )
 }
 
 const PLAN_SOURCE_MISS_REASONS = new Set<string>([
@@ -133,13 +203,13 @@ function hasCompleteRootCauseShape(value: unknown): boolean {
   }
   if (
     !Array.isArray(evidence.citedAnchors) ||
-    !evidence.citedAnchors.every(isNonNullObject)
+    !evidence.citedAnchors.every(isAnchorShape)
   ) {
     return false
   }
   if (
     !Array.isArray(evidence.citedArtifacts) ||
-    !evidence.citedArtifacts.every(isNonNullObject)
+    !evidence.citedArtifacts.every(isArtifactRefShape)
   ) {
     return false
   }
@@ -181,7 +251,9 @@ function hasCompleteStepShape(value: unknown): boolean {
       value.cacheStatus === 'bypass') &&
     isNonArrayObject(servedBrief) &&
     Array.isArray(servedBrief.channel1) &&
+    servedBrief.channel1.every(isNonArrayObject) &&
     Array.isArray(value.subActions) &&
+    value.subActions.every(hasCompleteSubActionShape) &&
     isNonArrayObject(verifierVerdict) &&
     typeof verifierVerdict.pass === 'boolean' &&
     typeof verifierVerdict.reasoning === 'string' &&
@@ -213,10 +285,16 @@ function hasCompleteTestShape(value: unknown): boolean {
 
 /**
  * Guarantees every required root field plus the required fields on each per-test outcome
- * and traversed step before a handoff reaches direct consumers (WR-01), including the
- * complete discriminated shapes of the two traversed optional blocks — `planSource` and
- * `rootCause` (CR-02). Only genuinely untraversed deep evidence (workingMemory, decision
- * context, stagnation) stays unvalidated at this load boundary.
+ * and traversed step before a handoff reaches direct consumers, including the complete
+ * discriminated shapes of the two traversed optional blocks — `planSource` and `rootCause`
+ * (CR-02) — the element shapes of the consumer-traversed arrays — every `subActions` member
+ * is dereferenceable through `plannedAction` and `stateBefore.elements[]`
+ * attributes/labels, every `servedBrief.channel1` member is a non-array object (WR-01
+ * element-depth closure) — and the `rootCause.evidence` members: `citedAnchors` satisfy
+ * the six-kind Anchor union and `citedArtifacts` carry string id/sha (WR-02). Only
+ * genuinely untraversed deep evidence (workingMemory, decision context, stagnation,
+ * cycle, planning failure, stateAfter interiors, grounding, element
+ * state/bounds/hierarchy/value) stays unvalidated at this load boundary.
  */
 function hasCompleteHandoffShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
