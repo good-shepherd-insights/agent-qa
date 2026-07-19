@@ -351,6 +351,52 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       .toBe('number')
   })
 
+  it('unwraps a tagged file list before canonical file-upload validation and execution', async () => {
+    const payload = singleActionPayload({
+      type: 'fileUpload',
+      values: { files: { json: ['a.png'] } },
+    })
+    const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+
+    const result = await executeStep(
+      'Upload the stored file list',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(0)
+    expect(executed[0]).toMatchObject({ type: 'fileUpload' })
+    expect((executed[0] as Extract<Action, { type: 'fileUpload' }>).files).toEqual([
+      'a.png',
+    ])
+  })
+
+  it('unwraps a tagged relative position before canonical double-click execution', async () => {
+    const payload = singleActionPayload({
+      type: 'doubleClick',
+      values: { relativePosition: { json: { x: 5, y: 7 } } },
+    })
+    const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+
+    const result = await executeStep(
+      'Double-click at the stored relative position',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(0)
+    expect(executed[0]).toMatchObject({
+      type: 'doubleClick',
+      relativePosition: { x: 5, y: 7 },
+    })
+  })
+
   it('keeps a navigating final replay guard on the pre-action page', async () => {
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const login = makeScreenState()

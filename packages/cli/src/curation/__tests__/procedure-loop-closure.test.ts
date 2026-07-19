@@ -650,4 +650,61 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     const payload = parseProcedureBody(fixture.bundles[0]!.body)
     expect(payload?.steps[2]?.action.values['submit']).toBe(true)
   })
+
+  it('round-trips file lists and relative positions through the committed record', { timeout: 60_000 }, async () => {
+    const compositeFlow = 'checkout::composite-actions'
+    const fixture = await runIsolatedProcedureFixture({
+      name: 'composite-round-trip',
+      handoff: handoffWithSteps({
+        runId: 'run-loop-composite-round-trip',
+        buildOrdinal: 46,
+        flow: compositeFlow,
+        filePath: 'tests/checkout/composite-actions.test.ts',
+        steps: [
+          step(
+            0,
+            'Upload the checkout documents',
+            {
+              type: 'fileUpload',
+              ref: asRef('e-upload'),
+              files: ['a.png', 'b.pdf'],
+            },
+            [element('e-upload', 'button', 'Upload files')],
+          ),
+          step(
+            1,
+            'Open the document menu',
+            {
+              type: 'doubleClick',
+              ref: asRef('e-document-menu'),
+              relativePosition: { x: 5, y: 7 },
+            },
+            [element('e-document-menu', 'button', 'Document menu')],
+          ),
+        ],
+      }),
+      proposal: JSON.stringify({
+        candidates: [
+          {
+            flowName: compositeFlow,
+            stepSpan: [0, 1],
+            parameters: [],
+            successAssertion: 'The document menu opens',
+          },
+        ],
+      }),
+    })
+
+    // CR-01 integration proof: Tasks 1-2 pin the codec and write-side unit halves; this
+    // traverses the real emit -> author -> disposition -> commit -> record.md pipe.
+    expect(fixture.warnings).toEqual([])
+    expect(fixture.bundles).toHaveLength(1)
+    const payload = parseProcedureBody(fixture.bundles[0]!.body)
+    expect(payload?.steps[0]?.action.values['files']).toEqual({
+      json: ['a.png', 'b.pdf'],
+    })
+    expect(payload?.steps[1]?.action.values['relativePosition']).toEqual({
+      json: { x: 5, y: 7 },
+    })
+  })
 })
