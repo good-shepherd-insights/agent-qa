@@ -39,6 +39,7 @@ import {
   normalizeAnchor,
   parseProcedureBody,
   type Action,
+  type CanaryOutcome,
   type CompletedRunHandoff,
   type ElementInfo,
   type ProcedureMatch,
@@ -53,6 +54,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { runCurationTail } from '../curation-tail.js'
 import { buildCuratorAuthor } from '../curator-author.js'
+import { emitCanaryOutcomes } from '../emit-canary-outcomes.js'
 
 type CuratorModel = ReturnType<typeof createModel>
 type GenerateResult = Awaited<ReturnType<CuratorModel['doGenerate']>>
@@ -636,6 +638,136 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       procedureId,
       guard: { checksPassed: 3, total: 3 },
     })
+  })
+
+  it('a replay rejected by the verifier is never certified by live recovery', async () => {
+    const login = screenState([
+      element('e-signin', 'button', 'Sign in'),
+      element('e-email', 'textbox', 'Account email', { type: 'email' }),
+      element('e-password', 'textbox', 'Account password', { type: 'password' }),
+    ], '/login')
+    const executed: Action[] = []
+    const adapter: PlatformAdapter<'web'> = {
+      platform: 'web',
+      async setup() {},
+      async cleanup() {},
+      async observe() {
+        return login
+      },
+      async execute(action) {
+        executed.push(action)
+        return { success: true }
+      },
+    }
+    let planningCalls = 0
+    const planner: Planner = {
+      async plan() {
+        planningCalls += 1
+        return {
+          plan: {
+            reasoning: 'Recover live after the stored sign-in action was rejected',
+            action: { type: 'click', ref: asRef('e-signin') },
+            confidence: 0.95,
+            stepComplete: true,
+            stepFailed: false,
+          },
+        }
+      },
+    }
+    let verificationCalls = 0
+    const verifier = {
+      async verify() {
+        verificationCalls += 1
+        return verificationCalls === 1
+          ? {
+              verification: {
+                success: false,
+                reasoning: 'The stored sign-in action did not complete the flow',
+                isAppError: false,
+              },
+            }
+          : {
+              verification: {
+                success: true,
+                reasoning: 'Live recovery completed the flow',
+                isAppError: false,
+              },
+            }
+      },
+    }
+    const inertModel = {} as StepContext['plannerModel']
+    const context: StepContext = {
+      stepInstruction: 'sign in and buy at checkout',
+      testName: FLOW,
+      previousSteps: [],
+      plannerModel: inertModel,
+      verifierModel: inertModel,
+      variables: { accountEmail: 'buyer@example.test' },
+    }
+    const baseReader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    const committed = procedureBundles()[0]!
+    const knowledgeReader = {
+      ...baseReader,
+      read(id: RecordId, options?: Parameters<typeof baseReader.read>[1]) {
+        return baseReader.read(id, options) ?? (id === procedureId
+          ? {
+              id,
+              title: committed.summary,
+              body: committed.body,
+              anchors: committed.frontmatter.anchors.map(({ normalized }) => normalized),
+              evidenceDigest: committed.manifest.identityHash,
+              relations: [],
+            }
+          : undefined)
+      },
+    }
+
+    const result = await executeStep(
+      context.stepInstruction,
+      {
+        adapter,
+        planner,
+        verifier,
+        knowledgeReader,
+        secretStore: new SecretStore({ step2_text: 'correct horse battery staple' }),
+      },
+      context,
+    )
+
+    expect(result.status).toBe('passed')
+    expect(result.evidence).toBeDefined()
+    expect(planningCalls).toBe(1)
+    expect(executed.map(({ type }) => type)).toEqual(['click', 'fill', 'fill', 'click'])
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: {
+        checksPassed: 3,
+        total: 3,
+        verifierRejection: { procedureStepIndex: 2 },
+      },
+    })
+
+    const emitted: CanaryOutcome[] = []
+    const report = emitCanaryOutcomes({
+      handoff: handoffWithSteps({
+        runId: 'run-loop-verifier-rejection',
+        buildOrdinal: 43,
+        flow: FLOW,
+        filePath: FILE_PATH,
+        steps: [result.evidence!],
+      }),
+      knowledgeRoot,
+      runDir: join(root, 'verifier-rejection-run'),
+      emit: (outcome) => emitted.push(outcome),
+    })
+    const procedureOutcomes = emitted.filter(({ candidateId }) => candidateId === procedureId)
+
+    expect(procedureOutcomes.filter(({ runOutcome }) => runOutcome === 'positive')).toEqual([])
+    expect(procedureOutcomes).toEqual([
+      expect.objectContaining({ candidateId: procedureId, runOutcome: 'negative' }),
+    ])
+    expect(report.procedure).toEqual({ emitted: 1, refused: 0, unresolved: 0 })
   })
 
   it('structural dedup: re-draining the same flow disposes as Confirm — no second bundle (D-01)', { timeout: 60_000 }, async () => {

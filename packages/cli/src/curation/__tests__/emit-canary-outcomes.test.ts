@@ -89,6 +89,26 @@ function replayExecutionFailureSource(procedureStepIndex = 0): StepPlanSource {
   }
 }
 
+function replayVerifierRejectionSource(procedureStepIndex = 0): StepPlanSource {
+  return {
+    kind: 'procedure-replay',
+    procedureId: PROCEDURE,
+    guard: {
+      checksPassed: procedureStepIndex + 1,
+      total: 3,
+      verifierRejection: { procedureStepIndex },
+    },
+  }
+}
+
+function replayIncompleteSource(checksPassed = 1): StepPlanSource {
+  return {
+    kind: 'procedure-replay',
+    procedureId: PROCEDURE,
+    guard: { checksPassed, total: 3 },
+  }
+}
+
 function element(ref = 'checkout'): ElementInfo {
   return {
     ref: asRef(ref),
@@ -609,6 +629,66 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
         procedureAnchors,
       )).toEqual([])
     }
+  })
+
+  it('attributes a verifier-rejected replay negatively even after live recovery passes', () => {
+    const outcomes = project(
+      handoff([step({
+        candidateIds: [],
+        pass: true,
+        planSource: replayVerifierRejectionSource(),
+      })]),
+      procedureAnchors,
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+    ])
+  })
+
+  it('keeps verifier-rejected replays behind the non-attributable classifier gate', () => {
+    for (const excluded of ['environment', 'timeout', 'flake'] as const) {
+      expect(project(
+        handoff(
+          [step({
+            candidateIds: [],
+            pass: false,
+            planSource: replayVerifierRejectionSource(),
+          })],
+          rootCause(excluded),
+        ),
+        procedureAnchors,
+      )).toEqual([])
+    }
+  })
+
+  it('does not certify a clean incomplete replay from a later passing verdict', () => {
+    expect(project(
+      handoff([step({
+        candidateIds: [],
+        pass: true,
+        planSource: replayIncompleteSource(),
+      })]),
+      procedureAnchors,
+    )).toEqual([])
+  })
+
+  it('keeps clean incomplete replay failures on the existing classifier path', () => {
+    const outcomes = project(
+      handoff(
+        [step({
+          candidateIds: [],
+          pass: false,
+          planSource: replayIncompleteSource(),
+        })],
+        rootCause('app_bug'),
+      ),
+      procedureAnchors,
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+    ])
   })
 
   it('gates failed replayed steps behind the shared root-cause classifier', () => {
