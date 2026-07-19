@@ -212,8 +212,12 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
   })
 
   it.each([
+    { schemaVersion: 3 },
     { schemaVersion: 3, tests: {} },
     { schemaVersion: 3, tests: [null] },
+    { schemaVersion: 3, tests: [{}] },
+    { schemaVersion: 3, tests: [{ steps: {} }] },
+    { schemaVersion: 3, tests: [{ steps: [null] }] },
   ])('rejects a structurally unsafe current-version handoff %#', (handoff) => {
     expect(() => guardCompletedRunHandoff(handoff)).toThrowError(TypeError)
     expect(() => guardCompletedRunHandoff(handoff)).toThrow(
@@ -222,9 +226,8 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
   })
 
   it.each([
-    { schemaVersion: 3 },
     { schemaVersion: 3, tests: [] },
-    { schemaVersion: 3, tests: [{}] },
+    { schemaVersion: 3, tests: [{ steps: [] }] },
   ])('accepts a structurally traversable current-version handoff %#', (handoff) => {
     expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
   })
