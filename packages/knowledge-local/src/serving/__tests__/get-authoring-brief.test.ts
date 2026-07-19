@@ -312,6 +312,80 @@ describe('assembleAuthoringBrief exemplar ranking (D-15)', () => {
 })
 
 describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02)', () => {
+  it('hard-excludes the first observed flake before exemplar scoring', () => {
+    const row = projectionRow({
+      filePath: 'auth/one-flake.spec.ts',
+      testName: 'signs in with one observed flake',
+      flakeCount: 1,
+      quarantined: false,
+      lastOutcomes: Array.from({ length: 10 }, (_, index) => ({
+        buildOrdinal: index + 1,
+        passed: true,
+      })),
+    })
+
+    const brief = assembleAuthoringBrief(baseInput({
+      projectionRows: [row],
+      knownTests: [{ filePath: row.filePath, testName: row.testName }],
+    }))
+
+    expect(brief.exemplars).toEqual([])
+  })
+
+  it('hard-excludes a mixed recent window whose latest outcome failed', () => {
+    const row = projectionRow({
+      filePath: 'auth/current-failure.spec.ts',
+      testName: 'signs in until the current failure',
+      passes: 9,
+      failures: 1,
+      flakeCount: 0,
+      lastOutcomes: [
+        ...Array.from({ length: 9 }, (_, index) => ({
+          buildOrdinal: index + 1,
+          passed: true,
+        })),
+        { buildOrdinal: 10, passed: false },
+      ],
+    })
+
+    const brief = assembleAuthoringBrief(baseInput({
+      projectionRows: [row],
+      knownTests: [{ filePath: row.filePath, testName: row.testName }],
+    }))
+
+    expect(brief.exemplars).toEqual([])
+  })
+
+  it('keeps a zero-flake recovered row whose latest outcome passed', () => {
+    const row = projectionRow({
+      filePath: 'auth/recovered.spec.ts',
+      testName: 'signs in after recovering from a prior failure',
+      passes: 9,
+      failures: 1,
+      flakeCount: 0,
+      lastOutcomes: [
+        { buildOrdinal: 9, passed: false },
+        { buildOrdinal: 10, passed: true },
+      ],
+    })
+
+    const brief = assembleAuthoringBrief(baseInput({
+      projectionRows: [row],
+      knownTests: [{ filePath: row.filePath, testName: row.testName }],
+    }))
+
+    expect(brief.exemplars).toHaveLength(1)
+    expect(brief.exemplars[0]).toMatchObject({
+      filePath: row.filePath,
+      testName: row.testName,
+      passRate: 0.9,
+      recentOutcomes: row.lastOutcomes,
+      unverifiedOutcomes: false,
+    })
+    expect(brief.exemplars[0]?.excerpt).toContain(row.testName)
+    expect(brief.exemplars[0]?.excerpt).toContain('outcomes 9 pass / 1 fail')
+  })
+
   it('hard-excludes observed negative signal, keeps never-run tests flagged and discounted', () => {
     const rows = [
       projectionRow({
