@@ -126,7 +126,7 @@ export function startRun(config: RunConfig): RunSession {
     for (let i = 0; i < config.members.length; i += 1) {
       const member = config.members[i]
       const testIndex = member.testIndex ?? i
-      const name = member.name ?? member.testId
+      const name = member.name
 
       // Run aborted (cancel or budget) — skip the rest without invoking the executor (D-03).
       if (runController.signal.aborted) {

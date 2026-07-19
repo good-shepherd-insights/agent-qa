@@ -271,7 +271,8 @@ describe('StepEvidence.planSource marker (D-12)', () => {
       executor: async () => resultWithoutEvidence(),
     } satisfies RunConfig
     const perTest = {
-      testId: 'checkout',
+      testId: 'checkout-guest-1',
+      testName: 'Guest checkout with promo',
       testIndex: 0,
       filePath: 'checkout.spec.yaml',
       outcome: 'passed' as const,

@@ -229,6 +229,7 @@ function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
     tests: [
       {
         testId: FLOW,
+        testName: FLOW,
         filePath: FILE_PATH,
         testIndex: 0,
         outcome: 'passed',
@@ -283,6 +284,7 @@ function handoffWithSteps(input: {
     tests: [
       {
         testId: input.flow,
+        testName: input.flow,
         filePath: input.filePath,
         testIndex: 0,
         outcome: 'passed',

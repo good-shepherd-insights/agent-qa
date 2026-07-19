@@ -95,7 +95,10 @@ function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
     executionContext: 'local-headless',
     buildOrdinal: 7,
     configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
-    members: [{ testId: 'a', filePath: 'a.test.ts' }, { testId: 'b', filePath: 'b.test.ts' }],
+    members: [
+      { testId: 'a', name: 'test a', filePath: 'a.test.ts' },
+      { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
+    ],
     executor: pendingWedgedExecutor([]),
     ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
     ...overrides,

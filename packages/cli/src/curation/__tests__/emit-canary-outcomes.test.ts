@@ -195,6 +195,7 @@ function handoff(steps: StepEvidence[], cause?: Verdict): CompletedRunHandoff {
     : 'failed'
   const test: PerTestOutcome = {
     testId: 'checkout::happy-path',
+    testName: 'Checkout happy path',
     filePath: 'checkout.spec.yaml',
     testIndex: 0,
     outcome: aggregateVerdict,
@@ -354,6 +355,7 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
     input.aggregateVerdict = 'failed'
     input.tests.push({
       testId: 'checkout::declined-card',
+      testName: 'Checkout with a declined card',
       filePath: 'checkout.spec.yaml',
       testIndex: 1,
       outcome: 'failed',

@@ -224,6 +224,7 @@ function buildHandoff(input: {
     tests: [
       {
         testId: 'eval-cli::extract-fixture',
+        testName: 'Eval CLI extract fixture',
         filePath: 'eval-cli.spec.yaml',
         testIndex: 0,
         outcome: 'passed',

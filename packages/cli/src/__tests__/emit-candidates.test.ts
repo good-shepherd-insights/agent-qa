@@ -201,6 +201,7 @@ function testOutcome(
 ): PerTestOutcome {
   return {
     testId: 'checkout::happy-path',
+    testName: 'Checkout happy path',
     testIndex: 0,
     outcome: 'passed',
     steps,

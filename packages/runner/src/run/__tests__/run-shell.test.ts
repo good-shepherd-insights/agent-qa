@@ -138,7 +138,10 @@ function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
     executionContext: 'local-headless',
     buildOrdinal: 7,
     configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
-    members: [{ testId: 'a', filePath: 'a.test.ts' }, { testId: 'b', filePath: 'b.test.ts' }],
+    members: [
+      { testId: 'a', name: 'test a', filePath: 'a.test.ts' },
+      { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
+    ],
     executor: scriptedExecutor({}, []),
     ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
     ...overrides,
@@ -210,9 +213,9 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
   it('a shared failFastGroup skips remaining same-group members while other groups still run', async () => {
     const calls: string[] = []
     const members: RunMemberDescriptor[] = [
-      { testId: 'g1-a', filePath: 'g1-a.test.ts', failFastGroup: 'g1' },
-      { testId: 'g1-b', filePath: 'g1-b.test.ts', failFastGroup: 'g1' },
-      { testId: 'g2-a', filePath: 'g2-a.test.ts', failFastGroup: 'g2' },
+      { testId: 'g1-a', name: 'group 1 test a', filePath: 'g1-a.test.ts', failFastGroup: 'g1' },
+      { testId: 'g1-b', name: 'group 1 test b', filePath: 'g1-b.test.ts', failFastGroup: 'g1' },
+      { testId: 'g2-a', name: 'group 2 test a', filePath: 'g2-a.test.ts', failFastGroup: 'g2' },
     ]
     const session = startRun(
       baseConfig({
@@ -414,7 +417,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
       defaultStep({ name: 's1', evidence: { stepIndex: 0 } as unknown as StepEvidence }),
     ])
     const session = startRun(
-      baseConfig({ members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: twoSteps }, []) }),
+      baseConfig({ members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: twoSteps }, []) }),
     )
     drain(session)
     const { handoff } = await done(session)
@@ -424,7 +427,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
   it('a step WITHOUT evidence still yields a synthesized minimal StepEvidence (Open Q1: synthesize, do not drop)', async () => {
     const noEvidence = passResult('a', [defaultStep({ name: 's0' })])
     const session = startRun(
-      baseConfig({ members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: noEvidence }, []) }),
+      baseConfig({ members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: noEvidence }, []) }),
     )
     drain(session)
     const { handoff } = await done(session)
@@ -462,6 +465,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     const members: RunMemberDescriptor[] = [
       {
         testId: 'checkout-happy',
+        name: 'Checkout happy path',
         filePath: 'tests/checkout.yaml',
         suiteId: 'checkout-suite',
         suiteName: 'Checkout',
@@ -489,7 +493,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
   })
 
   it('a bare member (no optional parity fields) yields a testStarted with no undefined-holes (JSON round-trip)', async () => {
-    const session = startRun(baseConfig({ members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({}, []) }))
+    const session = startRun(baseConfig({ members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({}, []) }))
     const events = drain(session)
     await done(session)
 
@@ -511,7 +515,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
       failureSummary: `crashed on ${SECRET}`,
     }
     const session = startRun(
-      baseConfig({ masking, members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: result }, []) }),
+      baseConfig({ masking, members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: result }, []) }),
     )
     const events = drain(session)
     await done(session)
@@ -525,7 +529,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
   })
 
   it('a passing member with no failureSummary/retryCount leaves those testFinished fields absent', async () => {
-    const session = startRun(baseConfig({ members: [{ testId: 'a', filePath: 'a.test.ts' }], executor: scriptedExecutor({}, []) }))
+    const session = startRun(baseConfig({ members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({}, []) }))
     const events = drain(session)
     await done(session)
 
@@ -647,7 +651,10 @@ describe('CASS-02 — run-scoped evidence artifact store threading (Plan 13)', (
     }
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a', filePath: 'a.test.ts' }, { testId: 'b', filePath: 'b.test.ts' }],
+        members: [
+          { testId: 'a', name: 'test a', filePath: 'a.test.ts' },
+          { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
+        ],
         executor,
         ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog(), evidenceArtifacts: store },
       }),
@@ -668,7 +675,7 @@ describe('CASS-02 — run-scoped evidence artifact store threading (Plan 13)', (
     }
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a', filePath: 'a.test.ts' }],
+        members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }],
         executor,
         ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
       }),
@@ -685,7 +692,10 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     const store = makeFakeHandoffStore()
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a', filePath: 'a.test.ts' }, { testId: 'b', filePath: 'b.test.ts' }],
+        members: [
+          { testId: 'a', name: 'test a', filePath: 'a.test.ts' },
+          { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
+        ],
         executor: scriptedExecutor({ a: failResult('a', 'assertion mismatch'), b: passResult('b') }, []),
         ports: { handoffStore: store, eventLog: makeFakeEventLog() },
       }),
@@ -702,7 +712,7 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     const store = makeFakeHandoffStore()
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a', filePath: 'a.test.ts' }],
+        members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }],
         executor: scriptedExecutor({ a: failResult('a', 'assertion mismatch') }, []),
         baselineProbe: { status: 503, elapsedMs: 230 },
         ports: { handoffStore: store, eventLog: makeFakeEventLog() },
@@ -719,7 +729,10 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     const store = makeFakeHandoffStore()
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a', filePath: 'a.test.ts' }, { testId: 'b', filePath: 'b.test.ts' }],
+        members: [
+          { testId: 'a', name: 'test a', filePath: 'a.test.ts' },
+          { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
+        ],
         executor: scriptedExecutor({ a: passResult('a'), b: passResult('b') }, []),
         ports: { handoffStore: store, eventLog: makeFakeEventLog() },
       }),

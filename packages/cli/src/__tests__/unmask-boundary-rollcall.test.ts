@@ -255,7 +255,14 @@ function buildRollCallFixture(): RollCallFixture {
     subActions: [],
     verifierVerdict: { pass: false, reasoning: ctx.mask(`failed near ${SECRETS.summary}`) },
   }
-  const outcome: PerTestOutcome = { testId: 't1', filePath: 't1.spec.yaml', testIndex: 1, outcome: 'failed', steps: [maskedStep] }
+  const outcome: PerTestOutcome = {
+    testId: 't1',
+    testName: 'Test one',
+    filePath: 't1.spec.yaml',
+    testIndex: 1,
+    outcome: 'failed',
+    steps: [maskedStep],
+  }
   const handoff: CompletedRunHandoff = {
     schemaVersion: 1,
     runId: RUN_ID as unknown as RunId,

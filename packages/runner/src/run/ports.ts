@@ -136,19 +136,19 @@ export interface RunTimerPort {
  * failed/timed-out member skips the remaining SAME-group members; ungrouped members never
  * fail-fast, preserving the single-test path's run-all behavior.
  *
- * `testIndex`/`name` are OPTIONAL: the shell owns iteration and derives the authoritative
- * `testIndex` from array position (a caller-supplied value is a hint at most), and `name`
- * defaults to `testId` when absent. The Wave-0 `run-shell.test.ts` pins members as bare
- * `{ testId }` (± `failFastGroup`), so these must not be required.
+ * `testIndex` is optional: the shell owns iteration and derives the authoritative index
+ * from array position (a caller-supplied value is a hint at most). `name` is REQUIRED so
+ * the compiler enforces every descriptor construction site supplies the parsed test name;
+ * handoff assembly copies it verbatim onto `PerTestOutcome.testName`.
  */
 export interface RunMemberDescriptor {
   testId: string
   testIndex?: number
-  name?: string
+  name: string
   failFastGroup?: string
   /**
    * The member test file's path as the CLI resolves it. REQUIRED since 381-01 (ABRF-02):
-   * stable test identity = filePath + testId, copied verbatim onto `PerTestOutcome.filePath`
+   * stable test identity = filePath + testName, copied verbatim onto `PerTestOutcome.filePath`
    * by the handoff assembly — the required field makes the compiler enforce that every
    * descriptor construction site supplies it.
    */

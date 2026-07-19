@@ -91,6 +91,7 @@ describe('buildDirectRunMembers', () => {
       endedAt: 1_750_000_001_000,
       tests: checkoutMembers.map((member, testIndex) => ({
         testId: member.testId,
+        testName: member.name,
         filePath: member.filePath,
         testIndex,
         outcome: 'passed',

@@ -106,6 +106,7 @@ export function assemblePerTestOutcome(
   )
   return {
     testId: member.testId,
+    testName: member.name,
     filePath: member.filePath,
     testIndex: deps.testIndex,
     outcome,
@@ -121,6 +122,7 @@ export function assemblePerTestOutcome(
 export function skippedPerTestOutcome(member: RunMemberDescriptor, testIndex: number): PerTestOutcome {
   return {
     testId: member.testId,
+    testName: member.name,
     filePath: member.filePath,
     testIndex,
     outcome: 'skipped',

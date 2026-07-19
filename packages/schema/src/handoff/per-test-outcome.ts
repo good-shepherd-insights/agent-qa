@@ -5,8 +5,14 @@ import type { Verdict } from '../verdict/verdict'
 export interface PerTestOutcome {
   testId: string
   /**
+   * The parsed test's human display name exactly as core binds it (ABRF-02/D-14).
+   * Stable test identity = filePath + testName. `testId` remains the explicit
+   * machine id and never substitutes for this name.
+   */
+  testName: string
+  /**
    * The member test file's path exactly as the CLI resolves it (ABRF-02). Stable test
-   * identity = filePath + testId — rebuildable from handoff.json alone. REQUIRED, not
+   * identity = filePath + testName — rebuildable from handoff.json alone. REQUIRED, not
    * optional, under the v2 no-back-compat law: new handoffs always mint it; older
    * handoff.json files that fail the current-schema load are skipped by the projection
    * rebuild (RESEARCH A2, doc-commented at the rebuild site in plan 381-05).

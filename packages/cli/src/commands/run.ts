@@ -3587,7 +3587,7 @@ export function createRunCommand(): Command {
             }
             return {
               runId: member.testId,
-              name: member.name ?? member.testId,
+              name: member.name,
               filePath: 'unknown',
               status: 'failed',
               steps: [],

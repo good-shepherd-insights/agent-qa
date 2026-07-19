@@ -152,6 +152,7 @@ function handoff(runId: string): CompletedRunHandoff {
     tests: [
       {
         testId: `checkout::${runId}`,
+        testName: `Checkout ${runId}`,
         filePath: 'checkout.spec.yaml',
         testIndex: 0,
         outcome: 'passed',
