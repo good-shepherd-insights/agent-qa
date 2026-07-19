@@ -226,6 +226,11 @@ function knownTestUniverse(
   ))
 }
 
+/**
+ * Read optional dense scores without widening the authoring-reader contract. Embedder
+ * acquisition and query failures deliberately degrade to the deterministic lexical/anchor
+ * floor required by ABRF-01; they never abort the authoring channel.
+ */
 async function readDenseScores(
   config: OpenServingKnowledgeReaderConfig,
   deps: AuthoringReaderDependencies,
@@ -251,6 +256,10 @@ async function readDenseScores(
       String(candidate.bundleId),
       clamp01(candidate.rawScores.cosine ?? 0),
     ]))
+  } catch {
+    // The dense leg is optional by contract: acquisition or query failure deliberately
+    // degrades silently to the deterministic lexical/anchor floor instead of aborting ABRF-01.
+    return undefined
   } finally {
     connection.db.close()
   }
