@@ -96,10 +96,12 @@ function attributedOutcome(
  * D-12's second attribution source: the typed `planSource` marker. A clean full replay flows
  * through the SAME classifier gate as Pin 1 (`attributedOutcome`). An adapter execution failure
  * after a passed guard can never certify the procedure positive, even when live planning later
- * recovers the step; a staleness guard miss likewise attributes a negative regardless of the
- * eventual verdict. Both remain gated by the root-cause classifier, because
- * environment/timeout/flake failures never damn the procedure (D-11). `procedure-hint`
- * exposure is recorded, never judged.
+ * recovers the step; a verifier rejection is likewise attributable negative evidence. A clean
+ * fold can earn positive attribution only after every stored action completed and the verifier
+ * accepted the result — incomplete replay can never borrow a later live-planned PASS (CR-02).
+ * A staleness guard miss attributes a negative regardless of the eventual verdict. All negative
+ * lanes remain gated by the root-cause classifier, because environment/timeout/flake failures
+ * never damn the procedure (D-11). `procedure-hint` exposure is recorded, never judged.
  */
 function procedureReplayOutcome(
   test: PerTestOutcome,
@@ -110,8 +112,17 @@ function procedureReplayOutcome(
   if (source.guard.executionFailure !== undefined) {
     return nonAttributableFailure(test) ? undefined : 'negative'
   }
+  if (source.guard.verifierRejection !== undefined) {
+    return nonAttributableFailure(test) ? undefined : 'negative'
+  }
   const miss = source.guard.miss
-  if (miss === undefined) return attributedOutcome(test, step)
+  if (miss === undefined) {
+    const outcome = attributedOutcome(test, step)
+    if (outcome === 'positive' && source.guard.checksPassed !== source.guard.total) {
+      return undefined
+    }
+    return outcome
+  }
   if (!STALENESS_MISS_REASONS.has(miss.reason)) return undefined
   return nonAttributableFailure(test) ? undefined : 'negative'
 }
@@ -276,11 +287,14 @@ function projectProcedureAttribution(
   if (anchor === undefined) return
   const miss = source.guard.miss
   const executionFailure = source.guard.executionFailure
+  const verifierRejection = source.guard.verifierRejection
   const attributionDetail = executionFailure !== undefined
     ? `with execution failure at procedure step ${executionFailure.procedureStepIndex}`
-    : miss !== undefined
-      ? `with guard miss ${miss.reason} at procedure step ${miss.procedureStepIndex}`
-      : `with ${runOutcome} verdict`
+    : verifierRejection !== undefined
+      ? `with verifier rejection at procedure step ${verifierRejection.procedureStepIndex}`
+      : miss !== undefined
+        ? `with guard miss ${miss.reason} at procedure step ${miss.procedureStepIndex}`
+        : `with ${runOutcome} verdict`
   projected.push({
     kind: 'outcome',
     source: 'procedure-replay',
