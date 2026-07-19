@@ -43,6 +43,20 @@ interface TestFixture {
 function stepEvidence(fixture: StepFixture): StepEvidence {
   return {
     stepIndex: fixture.stepIndex,
+    stepText: `step ${fixture.stepIndex}`,
+    cacheStatus: 'miss',
+    servedBrief: {
+      scope: SHOP_SCOPE,
+      asOfBuild: 1,
+      budget: 1,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'fixture-brief-digest',
+    },
+    subActions: [],
+    verifierVerdict: { pass: true, reasoning: 'fixture verdict' },
     anchors: fixture.anchors ?? [],
     ...(fixture.selfHealed === true
       ? { selfHeal: { failedDecision: {}, recoveringDecision: {} } }
@@ -77,6 +91,20 @@ function handoffFixture(input: {
     buildOrdinal: input.buildOrdinal,
     scope: input.scope,
     executionContext: 'ci',
+    aggregateVerdict: input.tests.some(
+      (test) =>
+        test.outcome === 'failed' ||
+        test.outcome === 'timeout' ||
+        test.outcome === 'cancelled',
+    )
+      ? 'failed'
+      : 'passed',
+    configDigests: {
+      suiteConfigDigest: 'fixture-suite-config-digest',
+      testConfigDigest: 'fixture-test-config-digest',
+    },
+    startedAt: input.buildOrdinal * 1_000,
+    endedAt: input.buildOrdinal * 1_000 + 1,
     tests: input.tests.map(perTest),
     ...(input.excludedFromOutcomes === true ? { excludedFromOutcomes: true } : {}),
   } as unknown as CompletedRunHandoff

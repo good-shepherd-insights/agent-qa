@@ -28,24 +28,95 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
   2: (doc) => doc,
 }
 
+function isNonArrayObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasCompleteStepShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+
+  const servedBrief = value.servedBrief
+  const verifierVerdict = value.verifierVerdict
+
+  return (
+    typeof value.stepIndex === 'number' &&
+    typeof value.stepText === 'string' &&
+    (value.cacheStatus === 'hit' ||
+      value.cacheStatus === 'miss' ||
+      value.cacheStatus === 'bypass') &&
+    isNonArrayObject(servedBrief) &&
+    Array.isArray(servedBrief.channel1) &&
+    Array.isArray(value.subActions) &&
+    isNonArrayObject(verifierVerdict) &&
+    typeof verifierVerdict.pass === 'boolean' &&
+    typeof verifierVerdict.reasoning === 'string' &&
+    (!('planSource' in value) || isNonArrayObject(value.planSource))
+  )
+}
+
+function hasCompleteTestShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+
+  return (
+    typeof value.testId === 'string' &&
+    typeof value.testName === 'string' &&
+    value.testName.length > 0 &&
+    typeof value.filePath === 'string' &&
+    value.filePath.length > 0 &&
+    typeof value.testIndex === 'number' &&
+    (value.outcome === 'passed' ||
+      value.outcome === 'failed' ||
+      value.outcome === 'healed' ||
+      value.outcome === 'timeout' ||
+      value.outcome === 'cancelled' ||
+      value.outcome === 'skipped') &&
+    Array.isArray(value.steps) &&
+    value.steps.every(hasCompleteStepShape) &&
+    (!('rootCause' in value) || isNonArrayObject(value.rootCause))
+  )
+}
+
 /**
- * Guarantees the collections direct consumers traverse: `handoff.tests` is iterable and
- * every member exposes an iterable `test.steps` collection (WR-01). Deeper per-field
- * currency checks such as filePath/testName presence and member semantics deliberately
- * remain consumer-side at the projection's fail-closed boundary (WR-03).
+ * Guarantees every required root field plus the required fields on each per-test outcome
+ * and traversed step before a handoff reaches direct consumers (WR-01). Deep optional
+ * evidence remains unvalidated because consumers do not traverse it at this load boundary.
  */
-function hasTraversableTestsShape(value: unknown): boolean {
-  if (value === null || typeof value !== 'object') return false
+function hasCompleteHandoffShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
 
-  const tests = (value as { tests?: unknown }).tests
-  return Array.isArray(tests) && tests.every((test) => {
-    if (test === null || typeof test !== 'object' || Array.isArray(test)) return false
+  const scope = value.scope
+  const configDigests = value.configDigests
 
-    const steps = (test as { steps?: unknown }).steps
-    return Array.isArray(steps) && steps.every(
-      (step) => step !== null && typeof step === 'object' && !Array.isArray(step),
-    )
-  })
+  return (
+    typeof value.schemaVersion === 'number' &&
+    typeof value.runId === 'string' &&
+    value.runId.length > 0 &&
+    isNonArrayObject(scope) &&
+    (scope.tier === 'global' ||
+      scope.tier === 'product' ||
+      scope.tier === 'suite' ||
+      scope.tier === 'test') &&
+    typeof scope.key === 'string' &&
+    scope.key.length > 0 &&
+    typeof value.buildOrdinal === 'number' &&
+    (!('excludedFromOutcomes' in value) || value.excludedFromOutcomes === true) &&
+    (value.executionContext === 'local-interactive' ||
+      value.executionContext === 'local-headless' ||
+      value.executionContext === 'ci' ||
+      value.executionContext === 'cloud') &&
+    (value.aggregateVerdict === 'passed' ||
+      value.aggregateVerdict === 'failed' ||
+      value.aggregateVerdict === 'healed' ||
+      value.aggregateVerdict === 'timeout' ||
+      value.aggregateVerdict === 'cancelled') &&
+    isNonArrayObject(configDigests) &&
+    typeof configDigests.suiteConfigDigest === 'string' &&
+    typeof configDigests.testConfigDigest === 'string' &&
+    typeof value.startedAt === 'number' &&
+    typeof value.endedAt === 'number' &&
+    Array.isArray(value.tests) &&
+    value.tests.every(hasCompleteTestShape)
+  )
 }
 
 /**
@@ -59,5 +130,5 @@ export const guardCompletedRunHandoff = createVersionGuard<CompletedRunHandoff>(
   current: CURRENT_HANDOFF_SCHEMA_VERSION,
   migrations: HANDOFF_MIGRATIONS,
   error: HandoffVersionError,
-  shape: hasTraversableTestsShape,
+  shape: hasCompleteHandoffShape,
 })
