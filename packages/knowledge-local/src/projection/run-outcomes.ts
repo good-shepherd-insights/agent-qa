@@ -139,7 +139,7 @@ function testDelta(
 
   return {
     filePath: test.filePath,
-    testName: test.testId,
+    testName: test.testName,
     passed,
     heals: steps.filter((step) => step.selfHeal !== undefined).length,
     flake: test.rootCause?.class === 'flake',
@@ -294,11 +294,15 @@ function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
     return undefined
   }
   // RESEARCH A2 / v2 no-back-compat: the schema guard validates only schemaVersion, so
-  // pre-381 v3 handoffs lacking the REQUIRED per-test filePath still load. Stable test
-  // identity is filePath + testId; without it the row key cannot be minted, so such
-  // handoffs are skipped STRUCTURALLY here with a counted skip, never a throw.
+  // pre-fix v3 handoffs lacking the REQUIRED per-test filePath or human testName still
+  // load. Stable test identity is filePath + testName; without both fields the row key
+  // cannot be minted, so such handoffs are skipped STRUCTURALLY here with a counted skip,
+  // never a throw.
   const structurallyCurrent = (guarded.tests ?? []).every(
-    (test) => typeof test.filePath === 'string' && test.filePath.length > 0,
+    (test) => typeof test.filePath === 'string'
+      && test.filePath.length > 0
+      && typeof test.testName === 'string'
+      && test.testName.length > 0,
   )
   return structurallyCurrent ? guarded : undefined
 }
