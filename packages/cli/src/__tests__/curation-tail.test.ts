@@ -22,6 +22,7 @@ import {
   type CompletedRunHandoff,
   type GuardrailPolicy,
   type MaskingContext,
+  type StepEvidence,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -74,6 +75,92 @@ function attributableHandoff(): CompletedRunHandoff {
     }],
   } as CompletedRunHandoff
 }
+
+function completeHandoffForGuard(
+  completedRunId: string = runId,
+): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: completedRunId as CompletedRunHandoff['runId'],
+    scope: { tier: 'product', key: 'shop-web' },
+    buildOrdinal: 42,
+    executionContext: 'ci',
+    aggregateVerdict: 'passed',
+    configDigests: {
+      suiteConfigDigest: 'suite-digest',
+      testConfigDigest: 'test-digest',
+    },
+    startedAt: 100,
+    endedAt: 200,
+    tests: [{
+      testId: 'checkout-happy-1',
+      testName: 'checkout happy path',
+      filePath: 'suite/checkout.test.ts',
+      testIndex: 0,
+      outcome: 'passed',
+      steps: [{
+        stepIndex: 0,
+        stepText: 'Click checkout',
+        cacheStatus: 'miss',
+        servedBrief: {
+          scope: { tier: 'product', key: 'shop-web' },
+          asOfBuild: 42,
+          budget: 128,
+          truncation: 'none',
+          channel1: [],
+          channel2: [],
+          channel3: [],
+          briefDigest: 'brief-digest',
+        },
+        subActions: [],
+        verifierVerdict: { pass: true, reasoning: 'Observed checkout' },
+      }],
+    }],
+  }
+}
+
+const malformedSiblingCases: Array<{
+  key: string
+  name: string
+  mutate: (handoff: CompletedRunHandoff) => void
+}> = [
+  {
+    key: 'root',
+    name: 'missing executionContext',
+    mutate(handoff) {
+      delete (handoff as Partial<CompletedRunHandoff>).executionContext
+    },
+  },
+  {
+    key: 'test-identity',
+    name: 'member missing filePath',
+    mutate(handoff) {
+      delete (handoff.tests[0] as Partial<CompletedRunHandoff['tests'][number]>).filePath
+    },
+  },
+  {
+    key: 'verdict',
+    name: 'step missing verifierVerdict',
+    mutate(handoff) {
+      delete (handoff.tests[0]!.steps[0] as Partial<StepEvidence>).verifierVerdict
+    },
+  },
+  {
+    key: 'brief',
+    name: 'step servedBrief missing channel1',
+    mutate(handoff) {
+      delete (handoff.tests[0]!.steps[0]!.servedBrief as Partial<StepEvidence['servedBrief']>)
+        .channel1
+    },
+  },
+  {
+    key: 'step',
+    name: 'bare nested step object',
+    mutate(handoff) {
+      handoff.tests[0]!.steps = [{} as StepEvidence]
+    },
+  },
+]
 
 function baseOptions(
   operations: NonNullable<RunCurationTailOptions['operations']>,
@@ -593,11 +680,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       slugBranch(malformedRunId),
     )
     const validRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
-    const validSibling = {
-      ...handoff(),
-      schemaVersion: 3,
-      tests: [],
-    } satisfies CompletedRunHandoff
+    const validSibling = completeHandoffForGuard()
     const malformedDocument = {
       schemaVersion: 3,
       runId: malformedRunId,
@@ -654,6 +737,73 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     )
     expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/curation incomplete/i))
   })
+
+  it.each(malformedSiblingCases)(
+    'skips a malformed sibling once before emitters: $name',
+    async ({ key, mutate }) => {
+      const malformedRunId = `000-malformed-${key}`
+      const malformedRunDir = join(
+        agentQaRoot,
+        RUNS_SUBDIR,
+        slugBranch(malformedRunId),
+      )
+      const validRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+      const validSibling = completeHandoffForGuard()
+      const malformedDocument = completeHandoffForGuard(malformedRunId)
+      mutate(malformedDocument)
+      const warn = vi.fn()
+      const emitCurationCandidates = vi.fn(
+        successfulOperations().emitCurationCandidates,
+      )
+      const emitCanaryOutcomes = vi.fn(successfulOperations().emitCanaryOutcomes)
+      const foldRunOutcomes = vi.fn(successfulOperations().foldRunOutcomes)
+      const writeCurationTailReceipt = vi.fn()
+      const operations = successfulOperations({
+        loadCompletedRunHandoff(file) {
+          if (file === join(validRunDir, HANDOFF_FILE)) return validSibling
+          if (file === join(malformedRunDir, HANDOFF_FILE)) {
+            return guardCompletedRunHandoff(malformedDocument)
+          }
+          throw new Error(`missing handoff ${file}`)
+        },
+        listCompletedRunDirs: () => [malformedRunDir, validRunDir],
+        emitCurationCandidates,
+        emitCanaryOutcomes,
+        foldRunOutcomes,
+        writeCurationTailReceipt,
+      })
+
+      await runCurationTail(baseOptions(operations, { log: { warn } }))
+
+      expect(
+        emitCurationCandidates.mock.calls.filter(
+          ([options]) => options.runDir === malformedRunDir,
+        ),
+      ).toHaveLength(0)
+      expect(
+        emitCanaryOutcomes.mock.calls.filter(
+          ([options]) => options.runDir === malformedRunDir,
+        ),
+      ).toHaveLength(0)
+      expect(
+        foldRunOutcomes.mock.calls.filter(
+          ([options]) => String(options.handoff.runId) === malformedRunId,
+        ),
+      ).toHaveLength(0)
+      expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
+      expect(writeCurationTailReceipt).toHaveBeenCalledWith(
+        validRunDir,
+        expect.objectContaining({ runId }),
+      )
+      expect(warn).toHaveBeenCalledOnce()
+      expect(warn).toHaveBeenCalledWith(
+        `Skipping post-verdict knowledge curation for ${malformedRunDir}: handoff is malformed.`,
+      )
+      expect(warn).not.toHaveBeenCalledWith(
+        expect.stringContaining(`curation incomplete for ${malformedRunId}`),
+      )
+    },
+  )
 
   it.each(['missing', 'malformed'] as const)(
     'treats a %s handoff as a logged skip without emitting or draining',
