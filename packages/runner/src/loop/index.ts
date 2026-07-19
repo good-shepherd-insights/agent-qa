@@ -1812,13 +1812,16 @@ type ProcedureReplayAttempt =
 /**
  * The D-10 full guard for ONE committed procedure action, in order: (0) defense-in-depth
  * replayability shape check against the schema-shared list (Pitfall 6); (1) unique
- * fresh-screen re-ground of EVERY stored target descriptor through the deterministic
- * matcher ladder — ambiguous and no-match are distinct miss reasons, never a pick
- * (T-357-03a); (2) live-vs-stored page anchor equality through `normalizeAnchor` (D-10);
+ * fresh-screen re-ground of EVERY stored action target descriptor and the declared guard
+ * target through the deterministic matcher ladder — ambiguous and no-match are distinct
+ * miss reasons, never a pick (T-357-03a); (2) live-vs-stored page anchor equality through
+ * `normalizeAnchor` (D-10);
  * (3) loop-side value binding by NAME (values never crossed the reader port, T-381-21);
  * (4) the grounding gate exactly as the cached branch runs it, yielding the §A8 attempt
- * trail on the returned plan (`groundingAttempts`). A stored descriptor never drives a
- * blind action: every leg must pass before the action may execute.
+ * trail on the returned plan (`groundingAttempts`). Persisted bodies are untrusted runtime
+ * inputs: commit accepts structurally valid guard-only target variants, so authoring
+ * co-derivation is never a runtime invariant (D-10; PROC-02/SC2). A stored descriptor never
+ * drives a blind action: every leg must pass before the action may execute.
  */
 function attemptProcedureReplayAction(input: {
   step: ProcedureStepSpec
@@ -1863,6 +1866,32 @@ function attemptProcedureReplayAction(input: {
       }
     }
     action[lane] = match.ref
+  }
+
+  const guardTarget = input.step.guard.target
+  const guardMatch = matchDescriptor({
+    descriptor: {
+      role: guardTarget.role,
+      nameNormalized: guardTarget.nameNormalized,
+      ordinal: guardTarget.ordinal,
+    },
+    elements: input.screenState.elements,
+  })
+  if (guardMatch.kind === 'ambiguous') {
+    return {
+      ok: false,
+      reason: 'descriptor-ambiguous',
+      detail: `the declared guard target (${guardTarget.role} "${guardTarget.nameNormalized}") `
+        + `resolved ambiguously on the fresh screen (${guardMatch.candidates.length} candidates)`,
+    }
+  }
+  if (guardMatch.kind !== 'resolved') {
+    return {
+      ok: false,
+      reason: 'descriptor-missing',
+      detail: `the declared guard target (${guardTarget.role} "${guardTarget.nameNormalized}") `
+        + 'did not resolve on the fresh screen',
+    }
   }
 
   const stored = normalizeAnchor(input.step.guard.pageAnchor) as Extract<Anchor, { t: 'page' }>
