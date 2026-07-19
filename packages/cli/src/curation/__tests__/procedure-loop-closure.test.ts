@@ -373,6 +373,19 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     })
   }
 
+  // Receipt-idempotent committed-procedure prerequisite: the curation-tail receipt makes
+  // re-running the commit tail a no-op (the receiptMatches short-circuit in
+  // curation-tail.ts), so this helper is safe in BOTH execution orders — ordered runs skip
+  // on the receipt, standalone runs (vitest -t) establish the committed bundle from
+  // scratch. It guarantees only the COMMIT prerequisite, never canary state: the ordered
+  // flow's canary accumulation across tests stays intentional.
+  async function ensureCommittedProcedure(): Promise<void> {
+    const warnings = await runTail('run-loop-1', 42)
+    expect(warnings).toEqual([])
+    const bundle = procedureBundles()[0]
+    if (bundle !== undefined) procedureId = bundle.frontmatter.id as RecordId
+  }
+
   async function runIsolatedProcedureFixture(input: {
     name: string
     handoff: CompletedRunHandoff
@@ -576,7 +589,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(bundle.body).not.toContain('<SECRET_0>')
   })
 
-  it('hint before trust: getProcedure serves the committed procedure as a hint at zero canary confirmations', () => {
+  it('hint before trust: getProcedure serves the committed procedure as a hint at zero canary confirmations', { timeout: 60_000 }, async () => {
+    await ensureCommittedProcedure()
+
     const match = getProcedure()
     expect(match?.id).toBe(procedureId)
     const confirmations = confirmationEvents()
@@ -594,6 +609,10 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
 
   it('earned replay: first organic canary stays hint and the second crosses the full-tier bar', { timeout: 60_000 }, async () => {
     expect(FULL_TIER_REPLAY_CONFIRMATIONS).toBe(2)
+    await ensureCommittedProcedure()
+    // Self-describing standalone boundary: the bar is crossed by THIS test's two organic
+    // canaries and nothing else — identical in ordered and -t filtered execution.
+    expect(confirmationEvents().organic).toEqual([])
 
     emitPositiveProcedureCanary(0)
     await drainPositiveProcedureCanary()
@@ -619,7 +638,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     )).toBe(true)
   })
 
-  it('executes the committed credential procedure through every stored guard (CR-03)', async () => {
+  it('executes the committed credential procedure through every stored guard (CR-03)', { timeout: 60_000 }, async () => {
+    await ensureCommittedProcedure()
+
     const login = screenState([
       element('e-signin', 'button', 'Sign in'),
       element('e-email', 'textbox', 'Account email', { type: 'email' }),
@@ -703,7 +724,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     })
   })
 
-  it('a replay rejected by the verifier is never certified by live recovery', async () => {
+  it('a replay rejected by the verifier is never certified by live recovery', { timeout: 60_000 }, async () => {
+    await ensureCommittedProcedure()
+
     const login = screenState([
       element('e-signin', 'button', 'Sign in'),
       element('e-email', 'textbox', 'Account email', { type: 'email' }),
@@ -834,6 +857,8 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
   })
 
   it('structural dedup: re-draining the same flow disposes as Confirm — no second bundle (D-01)', { timeout: 60_000 }, async () => {
+    await ensureCommittedProcedure()
+
     const confirmedBefore = deriveBundleTrust(procedureBundles()[0]!).counters.confirmed
 
     const warnings = await runTail('run-loop-2', 43)
@@ -845,7 +870,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(deriveBundleTrust(bundles[0]!).counters.confirmed).toBe(confirmedBefore + 1)
   })
 
-  it('4th channel: the authoring brief serves the procedure and the source test as an exemplar', async () => {
+  it('4th channel: the authoring brief serves the procedure and the source test as an exemplar', { timeout: 60_000 }, async () => {
+    await ensureCommittedProcedure()
+
     const authoringReader = createAuthoringReader({ knowledgeRoot, product: PRODUCT })
     const brief = await authoringReader.getAuthoringBrief(
       `flow:${FLOW} /login sign in and buy`,
