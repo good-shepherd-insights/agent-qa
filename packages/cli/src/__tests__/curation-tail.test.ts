@@ -16,11 +16,12 @@ import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import type {
   AuditSink,
 } from '@vostride/agent-qa-safety'
-import type {
-  CanaryOutcome,
-  CompletedRunHandoff,
-  GuardrailPolicy,
-  MaskingContext,
+import {
+  guardCompletedRunHandoff,
+  type CanaryOutcome,
+  type CompletedRunHandoff,
+  type GuardrailPolicy,
+  type MaskingContext,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -582,6 +583,76 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     }))
     expect(canaryRuns).toEqual([oldRunId, oldRunId, newRunId])
     expect(drainQueue).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects a structurally invalid sibling handoff once at load and never reaches the emitters', async () => {
+    const malformedRunId = '000-malformed-sibling'
+    const malformedRunDir = join(
+      agentQaRoot,
+      RUNS_SUBDIR,
+      slugBranch(malformedRunId),
+    )
+    const validRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+    const validSibling = {
+      ...handoff(),
+      schemaVersion: 3,
+      tests: [],
+    } satisfies CompletedRunHandoff
+    const malformedDocument = {
+      schemaVersion: 3,
+      runId: malformedRunId,
+      executionContext: 'ci',
+      tests: [{}],
+    }
+    const warn = vi.fn()
+    const emitCurationCandidates = vi.fn(
+      successfulOperations().emitCurationCandidates,
+    )
+    const emitCanaryOutcomes = vi.fn(successfulOperations().emitCanaryOutcomes)
+    const foldRunOutcomes = vi.fn(successfulOperations().foldRunOutcomes)
+    const writeCurationTailReceipt = vi.fn()
+    const operations = successfulOperations({
+      loadCompletedRunHandoff(file) {
+        if (file === join(validRunDir, HANDOFF_FILE)) return validSibling
+        if (file === join(malformedRunDir, HANDOFF_FILE)) {
+          return guardCompletedRunHandoff(malformedDocument)
+        }
+        throw new Error(`missing handoff ${file}`)
+      },
+      listCompletedRunDirs: () => [malformedRunDir, validRunDir],
+      emitCurationCandidates,
+      emitCanaryOutcomes,
+      foldRunOutcomes,
+      writeCurationTailReceipt,
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn } }))
+
+    expect(
+      emitCurationCandidates.mock.calls.filter(
+        ([options]) => options.runDir === malformedRunDir,
+      ),
+    ).toHaveLength(0)
+    expect(
+      emitCanaryOutcomes.mock.calls.filter(
+        ([options]) => options.runDir === malformedRunDir,
+      ),
+    ).toHaveLength(0)
+    expect(
+      foldRunOutcomes.mock.calls.filter(
+        ([options]) => String(options.handoff.runId) === malformedRunId,
+      ),
+    ).toHaveLength(0)
+    expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
+    expect(writeCurationTailReceipt).toHaveBeenCalledWith(
+      validRunDir,
+      expect.objectContaining({ runId }),
+    )
+    expect(warn).toHaveBeenCalledOnce()
+    expect(warn).toHaveBeenCalledWith(
+      `Skipping post-verdict knowledge curation for ${malformedRunDir}: handoff is malformed.`,
+    )
+    expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/curation incomplete/i))
   })
 
   it.each(['missing', 'malformed'] as const)(
