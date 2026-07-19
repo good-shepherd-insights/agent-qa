@@ -33,29 +33,58 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Validates an ElementInfo member of `stateBefore.elements` at the depth the load-boundary
- * consumers dereference: captureEvidence reads `attributes.type` and locatorForElement reads
- * `labels.testId` — both members are REQUIRED on ElementInfo, so this rejects no honest document.
+ * Validates an ElementInfo member of `stateBefore.elements` at the VALUE level the
+ * load-boundary consumers operate on: locatorForElement applies `.trim()` to attribute
+ * values and `.replaceAll()` to attribute/label values, and elementAnchor mints `el`
+ * anchors from `role`/`nameNormalized` that normalizeAnchor string-normalizes
+ * (normalizeHumanText). Rejects no honest document: `role` and `nameNormalized` are
+ * required strings on ElementInfo, `attributes` is Record<string,string>, and every
+ * ElementLabels member is an optional string.
  */
 function hasCompleteElementShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  if (typeof value.role !== 'string') return false
+  if (typeof value.nameNormalized !== 'string') return false
+  const attributes = value.attributes
+  const labels = value.labels
   return (
-    isNonArrayObject(value) &&
-    isNonArrayObject(value.attributes) &&
-    isNonArrayObject(value.labels)
+    isNonArrayObject(attributes) &&
+    Object.values(attributes).every((member) => typeof member === 'string') &&
+    isNonArrayObject(labels) &&
+    Object.values(labels).every((member) => typeof member === 'string')
   )
 }
 
 /**
  * Validates a `subActions` element against the consumer-dereferenced surface: actionRefs
- * applies the `in` operator to `plannedAction`, and resolvedElementEvidence/captureEvidence
- * walk `stateBefore.elements`. `stateBefore.url` and `stateBefore.platform` stay unvalidated —
- * both consumer reads are absence-safe.
+ * applies the `in` operator to `plannedAction`, resolvedElementEvidence/captureEvidence
+ * walk `stateBefore.elements`, and resolvedActionRefs flatMaps `grounding.attempts` for
+ * EVERY subAction — so a present `grounding` must be a non-array object and present
+ * `attempts` an array of non-array objects (absence stays legal: the consumer's `?? []`
+ * handles it; attempt interiors stay unvalidated because the consumer's `outcome`
+ * strict-equality and `resolvedRef` undefined-check reads are crash-safe on any
+ * non-null object). `stateBefore.url` must be a string when present because
+ * classifySubActionRoute mints it into a `page` Anchor whose route normalizeAnchor
+ * trims; `stateBefore.platform` stays unvalidated — its only read is an absence-safe
+ * identity join.
  */
 function hasCompleteSubActionShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
   if (!isNonArrayObject(value.plannedAction)) return false
+  if ('grounding' in value) {
+    const grounding = value.grounding
+    if (!isNonArrayObject(grounding)) return false
+    if (
+      'attempts' in grounding &&
+      (!Array.isArray(grounding.attempts) ||
+        !grounding.attempts.every(isNonArrayObject))
+    ) {
+      return false
+    }
+  }
   const stateBefore = value.stateBefore
   if (!isNonArrayObject(stateBefore)) return false
+  if ('url' in stateBefore && typeof stateBefore.url !== 'string') return false
   return (
     Array.isArray(stateBefore.elements) &&
     stateBefore.elements.every(hasCompleteElementShape)
@@ -288,13 +317,19 @@ function hasCompleteTestShape(value: unknown): boolean {
  * and traversed step before a handoff reaches direct consumers, including the complete
  * discriminated shapes of the two traversed optional blocks — `planSource` and `rootCause`
  * (CR-02) — the element shapes of the consumer-traversed arrays — every `subActions` member
- * is dereferenceable through `plannedAction` and `stateBefore.elements[]`
- * attributes/labels, every `servedBrief.channel1` member is a non-array object (WR-01
- * element-depth closure) — and the `rootCause.evidence` members: `citedAnchors` satisfy
- * the six-kind Anchor union and `citedArtifacts` carry string id/sha (WR-02). Only
- * genuinely untraversed deep evidence (workingMemory, decision context, stagnation,
- * cycle, planning failure, stateAfter interiors, grounding, element
- * state/bounds/hierarchy/value) stays unvalidated at this load boundary.
+ * is dereferenceable through `plannedAction`, `grounding.attempts` (flatMapped by
+ * resolvedActionRefs for every subAction), and `stateBefore.elements[]` down to the
+ * string values consumers apply string operations to: string `role`/`nameNormalized`,
+ * all-string `attributes`/`labels` member values, and string-if-present `stateBefore.url`
+ * (CR-01/WR-01 grounding-depth and value-level closure); every `servedBrief.channel1`
+ * member is a non-array object — and the `rootCause.evidence` members: `citedAnchors`
+ * satisfy the six-kind Anchor union and `citedArtifacts` carry string id/sha (WR-02).
+ * Only genuinely untraversed deep evidence — verified untraversed at the consumers'
+ * dereference sites (handoff-anchors.ts, emit-candidates.ts, emit-canary-outcomes.ts,
+ * normalize-anchor.ts) — stays unvalidated at this load boundary: workingMemory,
+ * decision context, stagnation, cycle, planning failure, stateAfter interiors,
+ * `grounding.descriptor` and attempt interiors (stage/outcome/resolvedRef value types),
+ * and element name/state/bounds/hierarchy/value.
  */
 function hasCompleteHandoffShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
