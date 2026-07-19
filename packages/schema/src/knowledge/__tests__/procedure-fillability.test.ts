@@ -91,14 +91,14 @@ describe('procedureParameterFillability', () => {
       expected: { fillable: false, unfillable: ['undeclared'] },
     },
     {
-      caseName: 'uses the non-secret source rule for number and boolean parameters',
+      caseName: 'rejects a secret-only number while accepting a variable-backed boolean',
       parameters: [
         { name: 'count', type: 'number', required: true },
         { name: 'enabled', type: 'boolean', required: true },
       ],
       refs: ['count', 'enabled'],
       available: availability({ variables: ['enabled'], secrets: ['count'] }),
-      expected: { fillable: true, unfillable: [] },
+      expected: { fillable: false, unfillable: ['count'] },
     },
   ] satisfies Array<{
     caseName: string
@@ -110,6 +110,40 @@ describe('procedureParameterFillability', () => {
     expect(procedureParameterFillability(procedurePayload(parameters, refs), available)).toEqual(
       expected,
     )
+  })
+
+  it.each([
+    { type: 'secret', source: 'variables', expectedFillable: false },
+    { type: 'secret', source: 'memory', expectedFillable: false },
+    { type: 'secret', source: 'secrets', expectedFillable: true },
+    { type: 'string', source: 'variables', expectedFillable: true },
+    { type: 'string', source: 'memory', expectedFillable: true },
+    { type: 'string', source: 'secrets', expectedFillable: true },
+    { type: 'number', source: 'variables', expectedFillable: true },
+    { type: 'number', source: 'memory', expectedFillable: true },
+    { type: 'number', source: 'secrets', expectedFillable: false },
+    { type: 'boolean', source: 'variables', expectedFillable: true },
+    { type: 'boolean', source: 'memory', expectedFillable: true },
+    { type: 'boolean', source: 'secrets', expectedFillable: false },
+  ] satisfies Array<{
+    type: ProcedureParameterSpec['type']
+    source: keyof ProcedureBindingAvailability
+    expectedFillable: boolean
+  }>)('$type parameter from $source has fillable=$expectedFillable', ({
+    type,
+    source,
+    expectedFillable,
+  }) => {
+    const name = 'typed_value'
+    expect(
+      procedureParameterFillability(
+        procedurePayload([{ name, type, required: true }], [name]),
+        availability({ [source]: [name] }),
+      ),
+    ).toEqual({
+      fillable: expectedFillable,
+      unfillable: expectedFillable ? [] : [name],
+    })
   })
 
   it('deduplicates and sorts unfillable names deterministically', () => {
