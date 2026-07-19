@@ -96,6 +96,74 @@ function omitStepField(field: keyof StepEvidence): CompletedRunHandoff {
   })
 }
 
+const PLAN_SOURCE_MISS_REASONS = [
+  'descriptor-ambiguous',
+  'descriptor-missing',
+  'page-anchor-mismatch',
+  'gate-refused',
+  'parameter-unbound',
+  'non-replayable-action',
+] as const
+
+function completeReplayPlanSource(): Record<string, unknown> {
+  return {
+    kind: 'procedure-replay',
+    procedureId: 'proc-checkout',
+    guard: { checksPassed: 3, total: 3 },
+  }
+}
+
+function completeRootCause(): Record<string, unknown> {
+  return {
+    class: 'environment',
+    producer: 'deterministic-classifier',
+    confidence: 0.9,
+    evidence: {
+      citedSteps: [0],
+      citedAnchors: [{ t: 'error', message: 'environment broke' }],
+      citedArtifacts: [{ artifactId: 'artifact-0' }],
+      rationale: 'environment failure observed',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest: 1,
+  }
+}
+
+function withPlanSource(planSource: unknown): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    handoff.tests[0]!.steps[0]!.planSource =
+      planSource as StepEvidence['planSource']
+  })
+}
+
+function withRootCause(rootCause: unknown): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    handoff.tests[0]!.rootCause = rootCause as PerTestOutcome['rootCause']
+  })
+}
+
+function mutatedReplayPlanSource(
+  mutate: (
+    source: Record<string, unknown>,
+    guard: Record<string, unknown>,
+  ) => void,
+): CompletedRunHandoff {
+  const source = completeReplayPlanSource()
+  mutate(source, source.guard as Record<string, unknown>)
+  return withPlanSource(source)
+}
+
+function mutatedRootCause(
+  mutate: (
+    rootCause: Record<string, unknown>,
+    evidence: Record<string, unknown>,
+  ) => void,
+): CompletedRunHandoff {
+  const rootCause = completeRootCause()
+  mutate(rootCause, rootCause.evidence as Record<string, unknown>)
+  return withRootCause(rootCause)
+}
+
 describe('createVersionGuard (D-13)', () => {
   it.each([null, undefined, 'document', 1])(
     'rejects non-object input %j with a document-naming TypeError',
@@ -410,6 +478,157 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
         handoff.tests[0]!.steps[0]!.planSource = null as unknown as NonNullable<StepEvidence['planSource']>
       }),
     ],
+    [
+      'procedure-replay planSource with no guard member (flipped former acceptance)',
+      withPlanSource({ kind: 'procedure-replay', procedureId: 'proc-checkout' }),
+    ],
+    [
+      'rootCause carrying only a class (flipped former acceptance)',
+      withRootCause({ class: 'environment' }),
+    ],
+    [
+      'planSource missing kind',
+      mutatedReplayPlanSource((source) => {
+        delete source.kind
+      }),
+    ],
+    [
+      'planSource kind outside the union',
+      mutatedReplayPlanSource((source) => {
+        source.kind = 'procedure-served'
+      }),
+    ],
+    [
+      'procedure-replay planSource missing procedureId',
+      mutatedReplayPlanSource((source) => {
+        delete source.procedureId
+      }),
+    ],
+    [
+      'procedure-replay planSource with an empty procedureId',
+      mutatedReplayPlanSource((source) => {
+        source.procedureId = ''
+      }),
+    ],
+    [
+      'planSource guard is not an object',
+      mutatedReplayPlanSource((source) => {
+        source.guard = 'complete'
+      }),
+    ],
+    [
+      'planSource guard missing checksPassed',
+      mutatedReplayPlanSource((_source, guard) => {
+        delete guard.checksPassed
+      }),
+    ],
+    [
+      'planSource guard total is a string',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.total = '3'
+      }),
+    ],
+    [
+      'planSource guard miss missing procedureStepIndex',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.miss = { reason: 'gate-refused' }
+      }),
+    ],
+    [
+      'planSource guard miss reason outside the union',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.miss = { procedureStepIndex: 1, reason: 'selector-drift' }
+      }),
+    ],
+    [
+      'planSource guard executionFailure is a bare object',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.executionFailure = {}
+      }),
+    ],
+    [
+      'planSource guard verifierRejection with a string procedureStepIndex',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.verifierRejection = { procedureStepIndex: '2' }
+      }),
+    ],
+    [
+      'procedure-hint planSource missing procedureId',
+      withPlanSource({ kind: 'procedure-hint' }),
+    ],
+    [
+      'rootCause class outside the union',
+      mutatedRootCause((rootCause) => {
+        rootCause.class = 'network'
+      }),
+    ],
+    [
+      'rootCause producer outside the union',
+      mutatedRootCause((rootCause) => {
+        rootCause.producer = 'llm-judge'
+      }),
+    ],
+    [
+      'rootCause missing confidence',
+      mutatedRootCause((rootCause) => {
+        delete rootCause.confidence
+      }),
+    ],
+    [
+      'rootCause missing evidence',
+      mutatedRootCause((rootCause) => {
+        delete rootCause.evidence
+      }),
+    ],
+    [
+      'rootCause evidence citedSteps containing a non-number',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedSteps = [0, 'one']
+      }),
+    ],
+    [
+      'rootCause evidence citedAnchors containing null',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedAnchors = [null]
+      }),
+    ],
+    [
+      'rootCause evidence missing rationale',
+      mutatedRootCause((_rootCause, evidence) => {
+        delete evidence.rationale
+      }),
+    ],
+    [
+      'rootCause missing memoryMisdirectionRuledOut',
+      mutatedRootCause((rootCause) => {
+        delete rootCause.memoryMisdirectionRuledOut
+      }),
+    ],
+    [
+      'rootCause perTest is a string',
+      mutatedRootCause((rootCause) => {
+        rootCause.perTest = '1'
+      }),
+    ],
+    [
+      'rootCause attribution missing records',
+      mutatedRootCause((rootCause) => {
+        rootCause.attribution = { anchors: [] }
+      }),
+    ],
+    [
+      'rootCause subtype present on a non-test_bug class',
+      mutatedRootCause((rootCause) => {
+        rootCause.subtype = 'stale_selector'
+      }),
+    ],
+    [
+      'rootCause test_bug subtype outside the union',
+      mutatedRootCause((rootCause) => {
+        rootCause.class = 'test_bug'
+        rootCause.subtype = 'flaky_selector'
+      }),
+    ],
   ]
 
   it.each(invalidHandoffs)('rejects a structurally unsafe current-version handoff: %s', (_label, handoff) => {
@@ -434,4 +653,64 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
   ] as const)('accepts a complete current-version handoff: %s', (_label, handoff) => {
     expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
   })
+
+  const acceptedNestedBlocks: Array<[string, CompletedRunHandoff]> = [
+    ['complete DTO with neither optional block', makeCompleteHandoff()],
+    [
+      'procedure-hint planSource',
+      withPlanSource({ kind: 'procedure-hint', procedureId: 'proc-checkout' }),
+    ],
+    [
+      'procedure-replay planSource with a bare complete guard',
+      withPlanSource(completeReplayPlanSource()),
+    ],
+    ...PLAN_SOURCE_MISS_REASONS.map((reason): [string, CompletedRunHandoff] => [
+      `procedure-replay guard miss with reason ${reason}`,
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.checksPassed = 1
+        guard.miss = { procedureStepIndex: 1, reason }
+      }),
+    ]),
+    [
+      'procedure-replay guard with executionFailure',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.executionFailure = { procedureStepIndex: 1 }
+      }),
+    ],
+    [
+      'procedure-replay guard with verifierRejection',
+      mutatedReplayPlanSource((_source, guard) => {
+        guard.verifierRejection = { procedureStepIndex: 2 }
+      }),
+    ],
+    [
+      'environment rootCause with empty evidence arrays',
+      mutatedRootCause((_rootCause, evidence) => {
+        evidence.citedSteps = []
+        evidence.citedAnchors = []
+        evidence.citedArtifacts = []
+      }),
+    ],
+    [
+      'test_bug rootCause with a valid subtype',
+      mutatedRootCause((rootCause) => {
+        rootCause.class = 'test_bug'
+        rootCause.subtype = 'stale_selector'
+      }),
+    ],
+    [
+      'timeout rootCause with attribution present',
+      mutatedRootCause((rootCause) => {
+        rootCause.class = 'timeout'
+        rootCause.attribution = { records: [], anchors: [] }
+      }),
+    ],
+  ]
+
+  it.each(acceptedNestedBlocks)(
+    'accepts a complete nested optional block: %s',
+    (_label, handoff) => {
+      expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
+    },
+  )
 })
