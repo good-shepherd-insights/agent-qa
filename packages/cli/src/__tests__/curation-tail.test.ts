@@ -179,6 +179,29 @@ const malformedSiblingCases: Array<{
       } as unknown as CompletedRunHandoff['tests'][number]['rootCause']
     },
   },
+  {
+    key: 'sub-action-element',
+    name: 'step with a valid procedure-replay planSource and a bare subActions element',
+    mutate(handoff) {
+      handoff.tests[0]!.steps[0]!.planSource = {
+        kind: 'procedure-replay',
+        procedureId: 'proc-checkout',
+        guard: { checksPassed: 3, total: 3 },
+      } as unknown as StepEvidence['planSource']
+      handoff.tests[0]!.steps[0]!.subActions = [
+        {},
+      ] as unknown as StepEvidence['subActions']
+    },
+  },
+  {
+    key: 'brief-line',
+    name: 'step servedBrief channel1 carrying a null line',
+    mutate(handoff) {
+      handoff.tests[0]!.steps[0]!.servedBrief.channel1 = [
+        null,
+      ] as unknown as StepEvidence['servedBrief']['channel1']
+    },
+  },
 ]
 
 function baseOptions(
