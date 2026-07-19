@@ -19,6 +19,7 @@ import type {
 } from '@vostride/agent-qa-model'
 import {
   deriveEvidenceToken,
+  isCredentialValueField,
   isReplayableActionShape,
   serializeProcedureBody,
 } from '@vostride/agent-qa-schema'
@@ -831,6 +832,7 @@ function buildCandidatePayload(
         typeof observed === 'string'
         && slot.targetRef !== undefined
         && regionKeys.has(`${step.ordinal}\u0000${slot.targetRef}`)
+        && isCredentialValueField(step.action.type, field)
       const secretSlot = slot.source === 'masked-secret' || secretByReceipt
       const proposed = appliesIndex.get(`${step.ordinal}\u0000${field}`)
       if (proposed !== undefined) {

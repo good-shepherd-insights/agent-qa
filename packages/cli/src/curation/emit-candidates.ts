@@ -14,6 +14,7 @@ import {
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
   elementOrdinal,
+  isCredentialValueField,
   procedureJsonValueSchema,
   type Anchor,
   type ArtifactRef,
@@ -711,7 +712,10 @@ function trajectoryValues(
       source: !composite && typeof value === 'string'
         ? trajectoryValueSource(value)
         : 'literal',
-      ...(primaryRef === undefined ? {} : { targetRef: primaryRef }),
+      ...(primaryRef !== undefined
+        && isCredentialValueField(subAction.plannedAction.type, key)
+        ? { targetRef: primaryRef }
+        : {}),
     }
   }
   return values

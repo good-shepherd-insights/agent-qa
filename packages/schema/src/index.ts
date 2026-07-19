@@ -414,6 +414,10 @@ export {
   NON_REPLAYABLE_ACTION_TYPES,
   isReplayableActionShape,
 } from './action/replayability'
+export {
+  CREDENTIAL_VALUE_FIELDS,
+  isCredentialValueField,
+} from './action/credential-fields'
 
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
