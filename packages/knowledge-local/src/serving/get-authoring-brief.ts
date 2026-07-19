@@ -248,12 +248,13 @@ function verifiedExemplarCandidate(
   targetKeys: ReadonlySet<string>,
   tokens: readonly string[],
 ): ExemplarCandidate[] {
-  // D-15 hard excludes fire on OBSERVED negative signal only: the quarantine flake flag and a
-  // last-N window with zero passes. (Store-status candidate/deprecated exclusion is vacuous in
-  // M2 — tests are never memidex records; the clause activates if that ever changes.)
-  if (row.quarantined) return []
+  // D-15 hard excludes fire on the FIRST observed negative signal: any observed flake or a
+  // currently-failing recent window, before relevance scoring. Quarantine remains a durable
+  // projection flag this gate also honors. (Store-status candidate/deprecated exclusion is
+  // vacuous in M2 — tests are never memidex records; the clause activates if that ever changes.)
+  const latestOutcome = row.lastOutcomes.at(-1)
+  if (row.quarantined || row.flakeCount >= 1 || latestOutcome?.passed === false) return []
   const windowPasses = row.lastOutcomes.filter(({ passed }) => passed).length
-  if (row.lastOutcomes.length > 0 && windowPasses === 0) return []
 
   const rowKeys = new Set(row.anchorKeys)
   const relevance = Math.min(
