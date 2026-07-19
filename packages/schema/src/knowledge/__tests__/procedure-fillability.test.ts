@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest'
 import {
   EMPTY_PROCEDURE_BINDING_AVAILABILITY,
   procedureParameterFillability,
+  procedureSourceBinding,
   type ProcedureBindingAvailability,
   type ProcedureBodyPayload,
   type ProcedureParameterSpec,
+  type ProcedureSourceBinding,
 } from '../../index'
 
 function procedurePayload(
@@ -35,14 +37,28 @@ function procedurePayload(
   }
 }
 
+/**
+ * Builds capability entries through the real sanitizer: raw values in, name + capability
+ * bits out. Fixtures give raw values so every row exercises procedureSourceBinding exactly
+ * as the loop assembler does.
+ */
+function entries(values: Record<string, unknown>): ProcedureSourceBinding[] {
+  return Object.entries(values)
+    .map(([name, raw]) => procedureSourceBinding(name, raw))
+    .filter((entry): entry is ProcedureSourceBinding => entry !== undefined)
+}
+
 function availability(
-  overrides: Partial<ProcedureBindingAvailability> = {},
+  overrides: {
+    variables?: Record<string, unknown>
+    memory?: Record<string, unknown>
+    secrets?: string[]
+  } = {},
 ): ProcedureBindingAvailability {
   return {
-    variables: [],
-    memory: [],
-    secrets: [],
-    ...overrides,
+    variables: entries(overrides.variables ?? {}),
+    memory: entries(overrides.memory ?? {}),
+    secrets: overrides.secrets ?? [],
   }
 }
 
@@ -52,14 +68,14 @@ describe('procedureParameterFillability', () => {
       caseName: 'does not satisfy a secret parameter from variables',
       parameters: [{ name: 'api_key', type: 'secret', required: true }],
       refs: ['api_key'],
-      available: availability({ variables: ['api_key'] }),
+      available: availability({ variables: { api_key: 'raw-key' } }),
       expected: { fillable: false, unfillable: ['api_key'] },
     },
     {
       caseName: 'satisfies a string parameter from working memory',
       parameters: [{ name: 'account_name', type: 'string', required: true }],
       refs: ['account_name'],
-      available: availability({ memory: ['account_name'] }),
+      available: availability({ memory: { account_name: 'Acme Corp' } }),
       expected: { fillable: true, unfillable: [] },
     },
     {
@@ -87,7 +103,7 @@ describe('procedureParameterFillability', () => {
       caseName: 'fails closed when a value slot references an undeclared parameter',
       parameters: [],
       refs: ['undeclared'],
-      available: availability({ variables: ['undeclared'] }),
+      available: availability({ variables: { undeclared: 'present' } }),
       expected: { fillable: false, unfillable: ['undeclared'] },
     },
     {
@@ -97,8 +113,63 @@ describe('procedureParameterFillability', () => {
         { name: 'enabled', type: 'boolean', required: true },
       ],
       refs: ['count', 'enabled'],
-      available: availability({ variables: ['enabled'], secrets: ['count'] }),
+      available: availability({ variables: { enabled: 'true' }, secrets: ['count'] }),
       expected: { fillable: false, unfillable: ['count'] },
+    },
+    {
+      caseName: 'downranks a required number whose only variables entry is number-incapable',
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      refs: ['delay'],
+      available: availability({ variables: { delay: 'not-a-number' } }),
+      expected: { fillable: false, unfillable: ['delay'] },
+    },
+    {
+      caseName: 'rescues a number-incapable variable with a number-capable memory entry (per-source OR)',
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      refs: ['delay'],
+      available: availability({
+        variables: { delay: 'not-a-number' },
+        memory: { delay: '250' },
+      }),
+      expected: { fillable: true, unfillable: [] },
+    },
+    {
+      caseName: 'rejects a required boolean when every entry is boolean-incapable (exact lowercase canon)',
+      parameters: [{ name: 'autoRenew', type: 'boolean', required: true }],
+      refs: ['autoRenew'],
+      available: availability({
+        variables: { autoRenew: 'True' },
+        memory: { autoRenew: 1 },
+      }),
+      expected: { fillable: false, unfillable: ['autoRenew'] },
+    },
+    {
+      caseName: 'a string parameter is fillable from a capability-false entry (presence is string-bindability)',
+      parameters: [{ name: 'note', type: 'string', required: true }],
+      refs: ['note'],
+      available: availability({ variables: { note: 'not-a-number' } }),
+      expected: { fillable: true, unfillable: [] },
+    },
+    {
+      caseName: "an entry named 'Delay' does not fill a parameter named 'delay' (exact code-unit equality)",
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      refs: ['delay'],
+      available: availability({ variables: { Delay: '250' } }),
+      expected: { fillable: false, unfillable: ['delay'] },
+    },
+    {
+      caseName: "the empty string is number-capable and fills a number parameter (mechanical Number law: '' binds 0)",
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      refs: ['delay'],
+      available: availability({ variables: { delay: '' } }),
+      expected: { fillable: true, unfillable: [] },
+    },
+    {
+      caseName: 'a nullish raw value is absence — the name is simply not listed',
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      refs: ['delay'],
+      available: availability({ variables: { delay: null }, memory: { delay: undefined } }),
+      expected: { fillable: false, unfillable: ['delay'] },
     },
   ] satisfies Array<{
     caseName: string
@@ -135,10 +206,17 @@ describe('procedureParameterFillability', () => {
     expectedFillable,
   }) => {
     const name = 'typed_value'
+    // A raw value that is capability-true for the declared type keeps this matrix a pure
+    // source-law table (the typed-capability rows above own value-level discrimination).
+    const raw = type === 'number' ? '42' : type === 'boolean' ? 'true' : 'text'
+    const available =
+      source === 'secrets'
+        ? availability({ secrets: [name] })
+        : availability({ [source]: { [name]: raw } })
     expect(
       procedureParameterFillability(
         procedurePayload([{ name, type, required: true }], [name]),
-        availability({ [source]: [name] }),
+        available,
       ),
     ).toEqual({
       fillable: expectedFillable,
