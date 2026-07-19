@@ -38,6 +38,7 @@ import {
   asRunId,
   normalizeAnchor,
   parseProcedureBody,
+  survivingOutcomeEvents,
   type Action,
   type CanaryOutcome,
   type CompletedRunHandoff,
@@ -451,6 +452,73 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     )
   }
 
+  function confirmationEvents(): {
+    creationJobId: string
+    creation: Extract<LoadedBundle['events'][number], { type: 'confirmed' }>
+    organic: Extract<LoadedBundle['events'][number], { type: 'confirmed' }>[]
+  } {
+    const bundle = procedureBundles()[0]!
+    if (bundle.provenance.mode !== 'run-linked') {
+      throw new Error('expected run-linked procedure provenance')
+    }
+    const creationJobId = bundle.provenance.curationJobId
+    if (creationJobId === undefined) throw new Error('expected procedure creation job identity')
+    const confirmed = survivingOutcomeEvents(bundle.events).filter(
+      (event): event is Extract<LoadedBundle['events'][number], { type: 'confirmed' }> =>
+        event.type === 'confirmed' && event.evidenceToken.length > 0,
+    )
+    const creation = confirmed.find((event) => event.curationJobId === creationJobId)
+    if (creation === undefined) throw new Error('expected confirmed procedure creation event')
+    return {
+      creationJobId,
+      creation,
+      organic: confirmed.filter((event) => event.curationJobId !== creationJobId),
+    }
+  }
+
+  function emitPositiveProcedureCanary(stepIndex: number): void {
+    const evidence: StepEvidence = {
+      ...step(
+        stepIndex,
+        'Replay the accepted sign-in procedure',
+        { type: 'click', ref: asRef('e-signin') },
+        [element('e-signin', 'button', 'Sign in')],
+      ),
+      planSource: {
+        kind: 'procedure-replay',
+        procedureId,
+        guard: { checksPassed: 3, total: 3 },
+      },
+    }
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    const report = emitCanaryOutcomes({
+      handoff: handoffWithSteps({
+        runId: `run-canary-replay-${stepIndex}`,
+        buildOrdinal: 43 + stepIndex,
+        flow: FLOW,
+        filePath: FILE_PATH,
+        steps: [evidence],
+      }),
+      knowledgeRoot,
+      runDir: join(root, `canary-replay-${stepIndex}`),
+      emit: (outcome) => reader.emitCanaryOutcome(outcome),
+    })
+    expect(report.procedure).toEqual({ emitted: 1, refused: 0, unresolved: 0 })
+  }
+
+  async function drainPositiveProcedureCanary() {
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir: agentQaRoot,
+      author: async () => {
+        throw new Error('canary jobs must never reach the Curator author')
+      },
+      executionContext: 'local-interactive',
+      policy,
+    })
+    expect(report).toMatchObject({ kind: 'drained', committed: 1, failures: 0 })
+  }
+
   it('cold to committed: one drained tail run yields exactly one round-tripping procedure bundle', { timeout: 60_000 }, async () => {
     const finalSubAction = handoffFor('run-loop-shape', 42).tests[0]!.steps[2]!
       .subActions[0]!
@@ -508,8 +576,11 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
   it('hint before trust: getProcedure serves the committed procedure as a hint at zero canary confirmations', () => {
     const match = getProcedure()
     expect(match?.id).toBe(procedureId)
-    // The Add commit carries only its own attributing evidence — below the full-tier replay
-    // bar, so the fresh procedure serves as a hint until canary outcomes earn replay (D-05).
+    const confirmations = confirmationEvents()
+    expect(confirmations.creation.curationJobId).toBe(confirmations.creationJobId)
+    expect(confirmations.organic).toEqual([])
+    // The Add commit carries its authoring evidence for audit, but its effective replay count is
+    // zero, so the fresh procedure stays a hint until organic canary outcomes earn replay (D-05).
     expect(match?.replayRecommendation).toBe('hint')
     expect(match?.authoringModelTier).toBe('full')
     expect(match?.parameterSchema).toEqual([
@@ -518,42 +589,31 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     ])
   })
 
-  it('earned replay: the full-tier bar of drained positive canary outcomes flips hint to replay', { timeout: 60_000 }, async () => {
-    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
-    for (let stepIndex = 0; stepIndex < FULL_TIER_REPLAY_CONFIRMATIONS; stepIndex += 1) {
-      reader.emitCanaryOutcome({
-        candidateId: procedureId,
-        runOutcome: 'positive',
-        runId: 'run-canary-replays',
-        testId: FLOW,
-        testIndex: 0,
-        buildOrdinal: 42,
-        stepIndex,
-        briefDigest: `brief-digest-replay-${stepIndex}`,
-        attribution: `Procedure ${procedureId} replayed on passing step ${stepIndex}`,
-        exercisedAnchor: normalizeAnchor({ t: 'flow', name: FLOW }),
-      })
-    }
+  it('earned replay: first organic canary stays hint and the second crosses the full-tier bar', { timeout: 60_000 }, async () => {
+    expect(FULL_TIER_REPLAY_CONFIRMATIONS).toBe(2)
 
-    const report = await drainQueue({
-      knowledgeRoot,
-      auditBaseDir: agentQaRoot,
-      author: async () => {
-        throw new Error('canary jobs must never reach the Curator author')
-      },
-      executionContext: 'local-interactive',
-      policy,
-    })
-    expect(report).toMatchObject({
-      kind: 'drained',
-      committed: FULL_TIER_REPLAY_CONFIRMATIONS,
-      failures: 0,
-    })
+    emitPositiveProcedureCanary(0)
+    await drainPositiveProcedureCanary()
 
-    const match = getProcedure()
-    expect(match?.id).toBe(procedureId)
-    expect(match?.replayRecommendation).toBe('replay')
-    expect(match?.confidence).toBeGreaterThanOrEqual(0.5)
+    const afterFirst = getProcedure()
+    expect(afterFirst?.id).toBe(procedureId)
+    expect(afterFirst?.replayRecommendation).toBe('hint')
+    const oneOrganic = confirmationEvents()
+    expect(oneOrganic.organic).toHaveLength(1)
+    expect(oneOrganic.organic[0]!.curationJobId).not.toBe(oneOrganic.creationJobId)
+
+    emitPositiveProcedureCanary(1)
+    await drainPositiveProcedureCanary()
+
+    const afterSecond = getProcedure()
+    expect(afterSecond?.id).toBe(procedureId)
+    expect(afterSecond?.replayRecommendation).toBe('replay')
+    expect(afterSecond?.confidence).toBeGreaterThanOrEqual(0.5)
+    const twoOrganic = confirmationEvents()
+    expect(twoOrganic.organic).toHaveLength(FULL_TIER_REPLAY_CONFIRMATIONS)
+    expect(twoOrganic.organic.every(
+      (event) => event.curationJobId !== twoOrganic.creationJobId,
+    )).toBe(true)
   })
 
   it('executes the committed credential procedure through every stored guard (CR-03)', async () => {
