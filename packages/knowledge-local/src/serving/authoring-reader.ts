@@ -18,6 +18,7 @@ import type { EmbedderPort } from '../embedder-port.js'
 import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
 import { hasDenseCandidates } from '../retrieve.js'
 import { denseLeg, type RetrievalLegScope } from '../retrieval/legs.js'
+import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import {
   assembleAuthoringBrief,
   type AuthoringExemplarRow,
@@ -46,6 +47,7 @@ export interface AuthoringReaderDependencies {
 }
 
 interface OutcomeRow {
+  product: string
   file_path: string
   test_name: string
   passes: number
@@ -78,14 +80,18 @@ function parseLastOutcomes(json: string): { buildOrdinal: number; passed: boolea
 }
 
 /**
- * Read the 381-05 run-outcome projection through the one index reader connection. The
- * projection tables are deliberately outside REQUIRED_INDEX_TABLES, so their absence (an
- * older index, a cold store) is an empty projection — the ABRF-02 empty edge, never a throw.
+ * Read the run-outcome projection through the one index reader connection and the same
+ * scope ladder as ordinary knowledge records. The tables are deliberately outside
+ * REQUIRED_INDEX_TABLES, so an absent or pre-partition shape is an empty projection —
+ * the ABRF-02 empty edge, never a throw or an unfiltered cross-product read.
  */
-function readProjectionRows(knowledgeRoot: string): AuthoringExemplarRow[] {
-  if (!existsSync(indexDbPath(knowledgeRoot))) return []
+function readProjectionRows(
+  config: OpenServingKnowledgeReaderConfig,
+  scope: ScopeKey,
+): AuthoringExemplarRow[] {
+  if (!existsSync(indexDbPath(config.knowledgeRoot))) return []
 
-  const reader = openIndexReaderConnection(knowledgeRoot)
+  const reader = openIndexReaderConnection(config.knowledgeRoot)
   try {
     const present = reader.db.prepare(`
       SELECT count(*) AS tables
@@ -94,25 +100,47 @@ function readProjectionRows(knowledgeRoot: string): AuthoringExemplarRow[] {
     `).get() as { tables: number } | undefined
     if (Number(present?.tables ?? 0) < 2) return []
 
+    const partitionColumnsPresent = [
+      "PRAGMA table_info('run_test_outcomes')",
+      "PRAGMA table_info('run_test_anchors')",
+    ].every((pragma) => {
+      const columns = new Set(reader.db.prepare(pragma).all().map((row) => String(row.name)))
+      return ['product', 'scope_tier', 'scope_key'].every((column) => columns.has(column))
+    })
+    if (!partitionColumnsPresent) return []
+
+    const predicate = scopeLadderPredicate({
+      ...(config.product === undefined
+        ? {}
+        : { productRow: slugBranch(config.product), productScope: config.product }),
+      requestedScope: scope,
+      ...(config.scopeDefaults?.parentScopes === undefined
+        ? {}
+        : { parentScopes: config.scopeDefaults.parentScopes }),
+    })
+
     const anchorsByTest = new Map<string, string[]>()
     const anchorRows = reader.db.prepare(`
-      SELECT file_path, test_name, anchor_normalized_json
-      FROM run_test_anchors
-      ORDER BY file_path, test_name, anchor_normalized_json
-    `).all()
+      SELECT r.product, r.file_path, r.test_name, r.anchor_normalized_json
+      FROM run_test_anchors r
+      WHERE ${predicate.sql}
+      ORDER BY r.product, r.file_path, r.test_name, r.anchor_normalized_json
+    `).all(...predicate.binds)
     for (const row of anchorRows) {
-      const key = `${String(row.file_path)}::${String(row.test_name)}`
+      const key = `${String(row.product)}::${String(row.file_path)}::${String(row.test_name)}`
       const keys = anchorsByTest.get(key)
       if (keys === undefined) anchorsByTest.set(key, [String(row.anchor_normalized_json)])
       else keys.push(String(row.anchor_normalized_json))
     }
 
     return (reader.db.prepare(`
-      SELECT file_path, test_name, passes, failures, heals, flake_count, quarantined,
+      SELECT r.product, r.file_path, r.test_name, r.passes, r.failures, r.heals,
+        r.flake_count, r.quarantined,
         last_outcomes_json
-      FROM run_test_outcomes
-      ORDER BY file_path, test_name
-    `).all() as unknown as OutcomeRow[]).map((row) => ({
+      FROM run_test_outcomes r
+      WHERE ${predicate.sql}
+      ORDER BY r.product, r.file_path, r.test_name
+    `).all(...predicate.binds) as unknown as OutcomeRow[]).map((row) => ({
       filePath: String(row.file_path),
       testName: String(row.test_name),
       passes: Number(row.passes),
@@ -121,7 +149,9 @@ function readProjectionRows(knowledgeRoot: string): AuthoringExemplarRow[] {
       flakeCount: Number(row.flake_count),
       quarantined: Number(row.quarantined) !== 0,
       lastOutcomes: parseLastOutcomes(String(row.last_outcomes_json)),
-      anchorKeys: anchorsByTest.get(`${String(row.file_path)}::${String(row.test_name)}`) ?? [],
+      anchorKeys: anchorsByTest.get(
+        `${String(row.product)}::${String(row.file_path)}::${String(row.test_name)}`,
+      ) ?? [],
     }))
   } finally {
     reader.db.close()
@@ -234,7 +264,7 @@ export function createAuthoringReader(
   return {
     async getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
       const entries = hydrateRows(config, readIndexRows(config, scope), false)
-      const projectionRows = readProjectionRows(config.knowledgeRoot)
+      const projectionRows = readProjectionRows(config, scope)
       const denseScoreByRecordId = await readDenseScores(config, deps, intent, scope)
       const knownTests = knownTestUniverse(
         projectionRows,
