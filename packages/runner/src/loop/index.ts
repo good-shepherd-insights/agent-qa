@@ -278,8 +278,9 @@ export async function executeStep(
   // PROC-02 (381 D-09..D-12) per-step procedure state. `procedureConsulted` makes the
   // getProcedure consult a strict once-per-step event (D-09); `procedureReplay` holds the
   // decoded body plus the guard-fold bookkeeping while replay drives actions — `aborted`
-  // is the D-11 one-shot miss latch (no replay re-entry within the step; max replayed
-  // actions = the sequence length by `nextIndex` construction). `procedureHintStaged`
+  // is the D-11 one-shot guard/execution-failure latch (no replay re-entry within the step;
+  // max successfully replayed actions = the sequence length by `nextIndex` construction).
+  // `procedureHintStaged`
   // carries the rendered hint block (matched-hint mode, unparseable-body demotion, or the
   // post-miss demotion with its divergence note) for ledger-metered exposure on every
   // subsequent live planning turn; `procedureHintExposed` keeps the planSource
@@ -292,6 +293,7 @@ export async function executeStep(
     checksPassed: number
     aborted: boolean
     miss?: { procedureStepIndex: number; reason: ProcedureGuardMissReason }
+    executionFailure?: { procedureStepIndex: number }
   } | undefined
   let procedureHintStaged: { procedureId: RecordId; anchors: Anchor[]; block: string } | undefined
   let procedureHintExposed = false
@@ -350,6 +352,9 @@ export async function executeStep(
         total: procedureReplay.payload.steps.length,
         ...(procedureReplay.aborted && procedureReplay.miss !== undefined
           ? { miss: procedureReplay.miss }
+          : {}),
+        ...(procedureReplay.executionFailure !== undefined
+          ? { executionFailure: procedureReplay.executionFailure }
           : {}),
       },
     })
@@ -782,6 +787,12 @@ export async function executeStep(
     let planResult: PlanResult
     let cached = false
     let procedureReplayed = false
+    // A passed guard authorizes exactly one dispatch attempt; its cursor/fold commit is
+    // deferred until that action has actually executed successfully (381 CR-02).
+    let pendingProcedureReplay: {
+      procedureStepIndex: number
+      instruction: string
+    } | undefined
     // The per-decision-point cache key: masked stepText + value-free env digest + the
     // settled screenIdentityHash as the 8th component (D-05/D-09). Branch never enters key
     // material. Undefined for non-cacheable (bypassed) steps or when no cache is bound.
@@ -818,10 +829,14 @@ export async function executeStep(
         bind: (name) => bindProcedureParam(name, paramTypes.get(name) ?? 'string'),
       })
       if (attempt.ok) {
-        replayState.checksPassed++
-        replayState.nextIndex++
         planResult = { plan: attempt.plan }
         procedureReplayed = true
+        pendingProcedureReplay = {
+          procedureStepIndex: replayState.nextIndex,
+          instruction: procedureStep.instruction,
+        }
+        // Record that this step is procedure-driven immediately. The accumulator is
+        // last-write-wins; success or execution failure below replaces this pending fold.
         recordProcedureReplaySource()
       } else {
         replayState.aborted = true
@@ -1400,6 +1415,16 @@ export async function executeStep(
       return failure(redactSecretValue(policyDenial.reason, ports.secretRedactor))
     }
 
+    // CR-02: the replay cursor and successful-check fold advance only after dispatch (and any
+    // conservative re-ground heal) has succeeded. A verifier rejection does not undo a real
+    // adapter success; it merely hands the exhausted/in-progress sequence to the next loop turn.
+    if (execError === undefined && pendingProcedureReplay !== undefined && procedureReplay) {
+      procedureReplay.checksPassed++
+      procedureReplay.nextIndex++
+      recordProcedureReplaySource()
+      pendingProcedureReplay = undefined
+    }
+
     const viewport: Viewport = {
       width: (screenState.metadata.viewportWidth as number | undefined) ?? 0,
       height: (screenState.metadata.viewportHeight as number | undefined) ?? 0,
@@ -1438,6 +1463,25 @@ export async function executeStep(
     // 4. EXECUTION FAILURE → self-heal = replan-with-failure-context (D-12). No counter
     // (D-10). The failed sub-action's stateAfter lands on the next observation (D-15c).
     if (execError) {
+      if (pendingProcedureReplay !== undefined && procedureReplay) {
+        procedureReplay.aborted = true
+        procedureReplay.executionFailure = {
+          procedureStepIndex: pendingProcedureReplay.procedureStepIndex,
+        }
+        recordProcedureReplaySource()
+        procedureHintStaged = {
+          procedureId: procedureReplay.match.id,
+          anchors: [procedureReplay.match.flowAnchor],
+          block: renderProcedureHintBlock(
+            procedureReplay.match,
+            procedureReplay.payload,
+            `Guarded replay execution failed at procedure step `
+              + `${pendingProcedureReplay.procedureStepIndex + 1} `
+              + `("${pendingProcedureReplay.instruction}"): ${execError}`,
+            maskValue,
+          ),
+        }
+      }
       const failedIdx = recorder.recordSubAction({
         plan: reasoning,
         plannedAction: action as unknown as SchemaAction,

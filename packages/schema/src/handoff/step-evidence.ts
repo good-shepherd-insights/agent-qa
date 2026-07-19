@@ -45,6 +45,14 @@ export type StepPlanSource =
             | 'parameter-unbound'
             | 'non-replayable-action'
         }
+        /**
+         * The adapter failed after this stored action passed the full replay guard. This is
+         * execution evidence, not a staleness signal, and it blocks positive procedure
+         * attribution even if a later live-planned recovery makes the step verdict pass.
+         */
+        executionFailure?: {
+          procedureStepIndex: number
+        }
       }
     }
   | { kind: 'procedure-hint'; procedureId: RecordId }
