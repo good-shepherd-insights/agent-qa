@@ -17,6 +17,13 @@ import {
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {
+  executeStep,
+  SecretStore,
+  type Planner,
+  type PlatformAdapter,
+  type StepContext,
+} from '@vostride/agent-qa-runner'
+import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
   slugBranch,
@@ -132,11 +139,14 @@ function element(
   name: string,
   attributes: Record<string, string> = {},
 ): ElementInfo {
+  const bounds = { x: 48, y: 120, width: 280, height: 44 }
   return {
     ref: asRef(ref),
     role,
     name,
     nameNormalized: name.toLowerCase(),
+    bounds,
+    center: { x: 188, y: 142 },
     state: { enabled: true, focused: false, visible: true, clickable: true },
     labels: {},
     attributes,
@@ -148,7 +158,11 @@ function screenState(elements: ElementInfo[], url: string): ScreenState {
     platform: 'web',
     tree: 'fixture tree',
     elements,
-    refMap: {},
+    refMap: Object.fromEntries(elements.flatMap((candidate) =>
+      candidate.bounds === undefined || candidate.center === undefined
+        ? []
+        : [[candidate.ref, { bounds: candidate.bounds, center: candidate.center }]],
+    )),
     url,
     timestamp: 1_700_000_000_000,
     metadata: {
@@ -208,9 +222,9 @@ function step(
 }
 
 /**
- * A verified-PASS 3-step trajectory with masked-before-record values: the email arrives as a
- * masked placeholder and the password as a masked secret on a cache-bypass step, so D-03's
- * forced parameterization has real evidence to key on.
+ * A verified-PASS 3-step trajectory with source-tagged values: the email arrives as a test
+ * variable and the password as a masked secret on a cache-bypass step, so D-03's forced
+ * parameterization has real evidence to key on without inventing a second credential.
  */
 function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
   return {
@@ -246,7 +260,7 @@ function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
             {
               type: 'fill',
               ref: asRef('e-email'),
-              text: '<EMAIL_0>',
+              text: '{{env:ACCOUNT_EMAIL}}',
               clearMode: 'replace',
               submit: false,
             },
@@ -425,14 +439,12 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       'sign in and buy at checkout',
       screenState([], '/login'),
       // D-08: source-tagged binding NAMES only — no value of any binding ever reaches the
-      // matcher. Every
-      // required name of the served parameterSchema is bound, the way replay callers do:
-      // the receipt-driven D-03 posture also force-parameterizes the clearMode slot because
-      // it targets the masked password region.
+      // matcher. Every required name of the served parameterSchema is bound the way replay
+      // callers do; CR-03 keeps the password behavior options literal.
       {
-        variables: [],
+        variables: ['accountEmail'],
         memory: [],
-        secrets: ['accountEmail', 'step2_clearMode', 'step2_text'],
+        secrets: ['step2_text'],
       },
     )
   }
@@ -474,21 +486,20 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
         pageAnchor: { t: 'page', route: '/login' },
       },
     ])
-    // Parameterized values: the proposed email param (secret-escalated by the masked slot)
-    // plus the forced parameterization of the masked password step the proposal missed —
-    // including its clearMode companion slot, which targets the masked region (D-03).
+    // Parameterized values: the proposed email test variable plus exactly one forced secret
+    // parameter for the masked password value. CR-03 keeps behavior as literal semantics.
     expect(payload!.steps[1]!.action.values['text']).toEqual({ param: 'accountEmail' })
     expect(payload!.steps[2]!.action.values['text']).toEqual({ param: 'step2_text' })
-    expect(payload!.steps[2]!.action.values['clearMode']).toEqual({ param: 'step2_clearMode' })
-    expect(payload!.parameters).toHaveLength(3)
-    expect(payload!.parameters).toEqual(
-      expect.arrayContaining([
-        { name: 'accountEmail', type: 'secret', required: true },
-        { name: 'step2_clearMode', type: 'secret', required: true },
-        { name: 'step2_text', type: 'secret', required: true },
-      ]),
-    )
-    expect(bundle.body).not.toContain('<EMAIL_0>')
+    expect(payload!.steps[2]!.action.values['clearMode']).toBe('replace')
+    expect(payload!.steps[2]!.action.values['submit']).toBe(true)
+    expect(payload!.parameters).toEqual([
+      { name: 'accountEmail', type: 'string', required: true },
+      { name: 'step2_text', type: 'secret', required: true },
+    ])
+    expect(payload!.parameters.filter(({ type }) => type === 'secret')).toEqual([
+      { name: 'step2_text', type: 'secret', required: true },
+    ])
+    expect(bundle.body).not.toContain('{{env:ACCOUNT_EMAIL}}')
     expect(bundle.body).not.toContain('<SECRET_0>')
   })
 
@@ -499,13 +510,10 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     // bar, so the fresh procedure serves as a hint until canary outcomes earn replay (D-05).
     expect(match?.replayRecommendation).toBe('hint')
     expect(match?.authoringModelTier).toBe('full')
-    expect(match?.parameterSchema).toEqual(
-      expect.arrayContaining([
-        { name: 'accountEmail', type: 'secret', required: true },
-        { name: 'step2_clearMode', type: 'secret', required: true },
-        { name: 'step2_text', type: 'secret', required: true },
-      ]),
-    )
+    expect(match?.parameterSchema).toEqual([
+      { name: 'accountEmail', type: 'string', required: true },
+      { name: 'step2_text', type: 'secret', required: true },
+    ])
   })
 
   it('earned replay: the full-tier bar of drained positive canary outcomes flips hint to replay', { timeout: 60_000 }, async () => {
@@ -544,6 +552,90 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(match?.id).toBe(procedureId)
     expect(match?.replayRecommendation).toBe('replay')
     expect(match?.confidence).toBeGreaterThanOrEqual(0.5)
+  })
+
+  it('executes the committed credential procedure through every stored guard (CR-03)', async () => {
+    const login = screenState([
+      element('e-signin', 'button', 'Sign in'),
+      element('e-email', 'textbox', 'Account email', { type: 'email' }),
+      element('e-password', 'textbox', 'Account password', { type: 'password' }),
+    ], '/login')
+    const executed: Action[] = []
+    const adapter: PlatformAdapter<'web'> = {
+      platform: 'web',
+      async setup() {},
+      async cleanup() {},
+      async observe() {
+        return login
+      },
+      async execute(action) {
+        executed.push(action)
+        return { success: true }
+      },
+    }
+    let planningCalls = 0
+    const planner: Planner = {
+      async plan() {
+        planningCalls += 1
+        throw new Error('guarded replay must not call the planner')
+      },
+    }
+    const inertModel = {} as StepContext['plannerModel']
+    const context: StepContext = {
+      stepInstruction: 'sign in and buy at checkout',
+      testName: FLOW,
+      previousSteps: [],
+      plannerModel: inertModel,
+      verifierModel: inertModel,
+      variables: { accountEmail: 'buyer@example.test' },
+    }
+    const baseReader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    const committed = procedureBundles()[0]!
+    // Keep production matching/trust, while the runner-style reader harness returns the exact
+    // just-committed body bytes at the read seam used by guarded replay.
+    const knowledgeReader = {
+      ...baseReader,
+      read(id: RecordId, options?: Parameters<typeof baseReader.read>[1]) {
+        return baseReader.read(id, options) ?? (id === procedureId
+          ? {
+              id,
+              title: committed.summary,
+              body: committed.body,
+              anchors: committed.frontmatter.anchors.map(({ normalized }) => normalized),
+              evidenceDigest: committed.manifest.identityHash,
+              relations: [],
+            }
+          : undefined)
+      },
+    }
+
+    // Replay-recommended is a claim; adapter-observed execution is the CR-03 evidence.
+    const result = await executeStep(
+      context.stepInstruction,
+      {
+        adapter,
+        planner,
+        knowledgeReader,
+        secretStore: new SecretStore({ step2_text: 'correct horse battery staple' }),
+      },
+      context,
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planningCalls).toBe(0)
+    expect(executed.map(({ type }) => type)).toEqual(['click', 'fill', 'fill'])
+    expect(executed.at(-1)).toMatchObject({
+      type: 'fill',
+      text: 'correct horse battery staple',
+      clearMode: 'replace',
+      submit: true,
+    })
+    expect(result.evidence?.subActions).toHaveLength(3)
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: { checksPassed: 3, total: 3 },
+    })
   })
 
   it('structural dedup: re-draining the same flow disposes as Confirm — no second bundle (D-01)', { timeout: 60_000 }, async () => {
