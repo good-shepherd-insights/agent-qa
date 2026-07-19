@@ -311,6 +311,55 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
   })
 
+  it('aborts after a replayed adapter execution fails without advancing the guard fold', async () => {
+    const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
+    const executed: Action[] = []
+    const base = makeAdapter({
+      observeResults: [makeScreenState()],
+      executeResults: [
+        { success: false, error: 'simulated replay adapter failure' },
+        { success: true },
+      ],
+    })
+    const adapter: PlatformAdapter = {
+      ...base,
+      async execute(action) {
+        executed.push(action)
+        return base.execute(action)
+      },
+    }
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e1' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    expect(executed).toMatchObject([
+      { type: 'fill', ref: 'e1' },
+      { type: 'click', ref: 'e1' },
+    ])
+    expect(executed).not.toContainEqual(expect.objectContaining({ type: 'click', ref: 'e2' }))
+
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('Fill the email field')
+    expect(learned).toContain('simulated replay adapter failure')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 2,
+        executionFailure: { procedureStepIndex: 0 },
+      },
+    })
+  })
+
   it('preserves literal boolean value slots instead of treating them as parameter refs', async () => {
     const payload = loginPayload()
     payload.steps[0].action.values.submit = true
