@@ -6,6 +6,7 @@ import {
   BundleOutcomeEventSchema,
   deriveEvidenceToken,
   normalizeAnchor,
+  procedureSourceBinding,
   type CanaryOutcome,
   type CurationAuthorship,
   type RecordId,
@@ -146,7 +147,7 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
   function getProcedure() {
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
     return reader.getProcedure('sign in', makeScreenStateFixture(), {
-      variables: ['email'],
+      variables: [procedureSourceBinding('email', 'user@example.test')!],
       memory: [],
       secrets: ['password'],
     })

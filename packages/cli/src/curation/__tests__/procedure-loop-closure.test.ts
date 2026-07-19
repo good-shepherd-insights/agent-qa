@@ -38,6 +38,7 @@ import {
   asRunId,
   normalizeAnchor,
   parseProcedureBody,
+  procedureSourceBinding,
   survivingOutcomeEvents,
   type Action,
   type CanaryOutcome,
@@ -441,11 +442,13 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     return reader.getProcedure(
       'sign in and buy at checkout',
       screenState([], '/login'),
-      // D-08: source-tagged binding NAMES only — no value of any binding ever reaches the
-      // matcher. Every required name of the served parameterSchema is bound the way replay
-      // callers do; CR-03 keeps the password behavior options literal.
+      // D-08: source-tagged binding names + per-type capability bits only — no value of any
+      // binding ever reaches the matcher (the entry is computed loop-side by the shared
+      // sanitizer over the run's actual raw value). Every required name of the served
+      // parameterSchema is bound the way replay callers do; CR-03 keeps the password
+      // behavior options literal.
       {
-        variables: ['accountEmail'],
+        variables: [procedureSourceBinding('accountEmail', 'buyer@example.test')!],
         memory: [],
         secrets: ['step2_text'],
       },

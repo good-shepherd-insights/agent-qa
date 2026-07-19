@@ -820,20 +820,102 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(fills[0].text).toBe('user@example.com')
     expect(fills[1].text).toBe('123456')
 
-    // Binding NAMES crossed the reader port; bound VALUES never did — in any argument of
-    // any reader call.
+    // Binding names + capability bits crossed the reader port; bound VALUES never did — in
+    // any argument of any reader call.
     const getProcedureArgs = JSON.parse(
       spy.calls.find((call) => call.method === 'getProcedure')!.args,
     ) as [unknown, unknown, unknown]
     expect(getProcedureArgs[2]).toEqual({
-      variables: ['userEmail'],
-      memory: ['otpCode'],
+      variables: [{ name: 'userEmail', canBindNumber: false, canBindBoolean: false }],
+      memory: [{ name: 'otpCode', canBindNumber: true, canBindBoolean: false }],
       secrets: [],
     })
     for (const call of spy.calls) {
       expect(call.args).not.toContain('user@example.com')
       expect(call.args).not.toContain('123456')
     }
+  })
+
+  it('assembles capability bits from raw values through the shared law — values never cross', async () => {
+    const payload = singleActionPayload({
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      type: 'doubleClick',
+      values: { clickDelay: { param: 'delay' } },
+    })
+    const match = makeMatch({
+      parameterSchema: [{ name: 'delay', type: 'number', required: true }],
+    })
+
+    const recordedAvailability = async (delayRaw: string): Promise<{
+      availability: unknown
+      argsJson: string
+    }> => {
+      const spy = makeReader({ match, payload })
+      const { adapter } = capturingAdapter([makeScreenState()])
+      const planner = capturingPlanner([
+        makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+      ])
+      await executeStep(
+        'Assemble availability from the raw delay',
+        ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+        context({ variables: { delay: delayRaw } }),
+      )
+      const call = spy.calls.find((entry) => entry.method === 'getProcedure')!
+      const args = JSON.parse(call.args) as [unknown, unknown, unknown]
+      return { availability: args[2], argsJson: call.args }
+    }
+
+    // Seam agreement (PROC-01): the capability bit the matcher sees and the binder's verdict
+    // are the same shared coercion evaluated on the same raw value.
+    const incapable = await recordedAvailability('not-a-number')
+    expect(incapable.availability).toEqual({
+      variables: [{ name: 'delay', canBindNumber: false, canBindBoolean: false }],
+      memory: [],
+      secrets: [],
+    })
+    expect(incapable.argsJson).not.toContain('not-a-number')
+
+    const capable = await recordedAvailability('250')
+    expect(capable.availability).toEqual({
+      variables: [{ name: 'delay', canBindNumber: true, canBindBoolean: false }],
+      memory: [],
+      secrets: [],
+    })
+    expect(JSON.stringify(capable.availability)).not.toContain('250')
+  })
+
+  it('falls through a type-invalid variable to a type-valid memory value (try-in-order)', async () => {
+    const payload = singleActionPayload({
+      parameters: [{ name: 'delay', type: 'number', required: true }],
+      type: 'doubleClick',
+      values: { clickDelay: { param: 'delay' } },
+    })
+    const spy = makeReader({
+      match: makeMatch({
+        parameterSchema: [{ name: 'delay', type: 'number', required: true }],
+      }),
+      payload,
+    })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+
+    const result = await executeStep(
+      'Rescue the delay from working memory',
+      ports({
+        adapter,
+        planner: planner.planner,
+        knowledgeReader: spy.reader,
+        workingMemory: makeWorkingMemory([{ key: 'delay', value: '250' }]),
+      }),
+      context({ variables: { delay: 'not-a-number' } }),
+    )
+
+    // The binder takes the FIRST source whose value passes the shared coercion — a
+    // type-invalid variable value falls through to the type-valid memory value instead of
+    // hard-failing, exactly matching the matcher's per-source capability OR.
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(0)
+    expect(executed[0]).toMatchObject({ type: 'doubleClick', clickDelay: 250 })
   })
 
   it('reports a missing loop-side value as parameter-unbound, then plans with the demoted hint', async () => {

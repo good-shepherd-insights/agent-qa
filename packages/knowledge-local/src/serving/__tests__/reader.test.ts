@@ -11,6 +11,7 @@ import {
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
+  procedureSourceBinding,
   serializeProcedureBody,
   type Anchor,
   type BundleDiscriminant,
@@ -493,9 +494,10 @@ describe('openKnowledgeReader synchronous serving port', () => {
     })
     await rebuildIndex({ knowledgeRoot })
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    // Capability entries are built loop-side by the real sanitizer — names + bits only.
     const availability = {
-      variables: ['email'],
-      memory: ['remembered-account'],
+      variables: [procedureSourceBinding('email', 'user@example.test')!],
+      memory: [procedureSourceBinding('remembered-account', 'Acme Corp')!],
       secrets: ['password'],
     } satisfies ProcedureBindingAvailability
 
@@ -511,7 +513,10 @@ describe('openKnowledgeReader synchronous serving port', () => {
         'sign in',
         makeScreenStateFixture(),
         {
-          variables: ['email', 'password'],
+          variables: [
+            procedureSourceBinding('email', 'user@example.test')!,
+            procedureSourceBinding('password', 'hunter2')!,
+          ],
           memory: [],
           secrets: [],
         },

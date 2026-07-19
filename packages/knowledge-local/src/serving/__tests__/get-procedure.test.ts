@@ -9,11 +9,13 @@ import {
   canonicalJson,
   normalizeAnchor,
   procedureParameterFillability,
+  procedureSourceBinding,
   serializeProcedureBody,
   type Anchor,
   type BundleOutcomeEvent,
   type BundleProvenance,
   type CurationAuthorship,
+  type ProcedureSourceBinding,
   type RecordId,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -159,6 +161,16 @@ function candidate(options: CandidateOptions): ProcedureMatchCandidate {
   }
 }
 
+/**
+ * Builds capability entries through the real sanitizer (raw values in, name + capability
+ * bits out) so fixtures exercise procedureSourceBinding exactly as the loop assembler does.
+ */
+function sourceEntries(values: Record<string, unknown>): ProcedureSourceBinding[] {
+  return Object.entries(values)
+    .map(([name, raw]) => procedureSourceBinding(name, raw))
+    .filter((entry): entry is ProcedureSourceBinding => entry !== undefined)
+}
+
 function matchInput(
   entries: readonly ProcedureMatchCandidate[],
   overrides: Partial<Omit<MatchProcedureInput, 'entries'>> = {},
@@ -168,7 +180,7 @@ function matchInput(
     intent: 'sign in',
     anchors: SIGN_IN_ANCHORS,
     availability: {
-      variables: ['email'],
+      variables: sourceEntries({ email: 'user@example.test' }),
       memory: [],
       secrets: ['password'],
     },
@@ -347,7 +359,7 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     const sourceCorrect = matchProcedure({
       ...matchInput(store),
       availability: {
-        variables: ['email'],
+        variables: sourceEntries({ email: 'user@example.test' }),
         memory: [],
         secrets: ['password'],
       },
@@ -355,7 +367,7 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     const variableOnly = matchProcedure({
       ...matchInput(store),
       availability: {
-        variables: ['email', 'password'],
+        variables: sourceEntries({ email: 'user@example.test', password: 'hunter2' }),
         memory: [],
         secrets: [],
       },
@@ -378,7 +390,11 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     })]
     const sourceCorrect = matchProcedure({
       ...matchInput(store),
-      availability: { variables: ['email'], memory: [], secrets: [] },
+      availability: {
+        variables: sourceEntries({ email: 'user@example.test' }),
+        memory: [],
+        secrets: [],
+      },
     })
     const missing = matchProcedure({
       ...matchInput(store),
@@ -420,7 +436,7 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
       secrets: [name],
     }
     const variableAvailability = {
-      variables: [name],
+      variables: sourceEntries({ [name]: type === 'number' ? '42' : 'true' }),
       memory: [],
       secrets: [],
     }
@@ -441,6 +457,64 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     expect(secretOnly?.replayRecommendation).toBe('hint')
     expect(variableBacked?.replayRecommendation).toBe('replay')
     expect(secretOnly?.confidence).toBeCloseTo((variableBacked?.confidence ?? 0) * 0.5)
+  })
+
+  // The verifier's PROC-01 counterexamples: a replay-earning procedure (full tier at the
+  // replay bar) whose only source for a typed required parameter is value-incapable must be
+  // downranked to hint — recommending a replay the binder deterministically aborts as
+  // parameter-unbound is the falsified behavior these rows keep dead.
+  it.each([
+    {
+      caseName: 'number: a number-incapable source downranks earned replay to hint',
+      type: 'number' as const,
+      name: 'delay',
+      incapableRaw: 'not-a-number',
+      capableRaw: '250',
+    },
+    {
+      caseName: 'boolean: a non-canonical casing downranks earned replay to hint (exact lowercase canon)',
+      type: 'boolean' as const,
+      name: 'autoRenew',
+      incapableRaw: 'True',
+      capableRaw: 'false',
+    },
+  ])('$caseName', ({ type, name, incapableRaw, capableRaw }) => {
+    const base = makeProcedureBodyPayloadFixture()
+    const firstStep = base.steps[0]!
+    const payload = {
+      ...base,
+      parameters: [{ name, type, required: true }],
+      steps: [{
+        ...firstStep,
+        action: {
+          ...firstStep.action,
+          values: { value: { param: name } },
+        },
+      }],
+    }
+    const store = [candidate({
+      id: `proc-typed-${type}`,
+      body: serializeProcedureBody(payload),
+    })]
+
+    const incapable = matchProcedure(matchInput(store, {
+      availability: {
+        variables: sourceEntries({ [name]: incapableRaw }),
+        memory: [],
+        secrets: [],
+      },
+    }))
+    const capable = matchProcedure(matchInput(store, {
+      availability: {
+        variables: sourceEntries({ [name]: capableRaw }),
+        memory: [],
+        secrets: [],
+      },
+    }))
+
+    expect(incapable?.replayRecommendation).toBe('hint')
+    expect(capable?.replayRecommendation).toBe('replay')
+    expect(incapable?.confidence).toBeCloseTo((capable?.confidence ?? 0) * 0.5)
   })
 })
 
@@ -558,7 +632,11 @@ describe('servingReader getProcedure end-to-end', () => {
     const match = reader.getProcedure(
       'sign in',
       makeScreenStateFixture(),
-      { variables: ['email'], memory: [], secrets: ['password'] },
+      {
+        variables: sourceEntries({ email: 'user@example.test' }),
+        memory: [],
+        secrets: ['password'],
+      },
     )
 
     expect(match).toMatchObject({
@@ -579,7 +657,7 @@ describe('servingReader getProcedure end-to-end', () => {
 
     expect(
       reader.getProcedure('sign in', makeScreenStateFixture(), {
-        variables: ['email'],
+        variables: sourceEntries({ email: 'user@example.test' }),
         memory: [],
         secrets: ['password'],
       }),
