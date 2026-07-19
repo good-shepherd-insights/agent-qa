@@ -16,7 +16,11 @@ import { makeEmptyServedBrief } from '../../loop/evidence.js'
 import { startRun } from '../shell.js'
 
 const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
-const member: RunMemberDescriptor = { testId: 'checkout', filePath: 'checkout.spec.yaml' }
+const member: RunMemberDescriptor = {
+  testId: 'checkout-guest-1',
+  name: 'Guest checkout with promo',
+  filePath: 'checkout.spec.yaml',
+}
 const modelProfile: DeclaredModelProfile = {
   provider: 'openai-compatible',
   modelId: 'planner-model',
@@ -211,8 +215,8 @@ describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
   })
 })
 
-describe('stable test identity — filePath plumb (ABRF-02, Pitfall 2)', () => {
-  it('populates filePath from the descriptor on assembled outcomes', () => {
+describe('stable test identity — filePath + human testName (ABRF-02, WR-02)', () => {
+  it('populates filePath and human testName from the descriptor on assembled outcomes', () => {
     const outcome = assemblePerTestOutcome(member, resultWithoutEvidence(), 'passed', {
       testIndex: 0,
       scope,
@@ -221,12 +225,16 @@ describe('stable test identity — filePath plumb (ABRF-02, Pitfall 2)', () => {
     })
 
     expect(outcome.filePath).toBe('checkout.spec.yaml')
+    expect(outcome.testName).toBe('Guest checkout with promo')
+    expect(outcome.testName).not.toBe(outcome.testId)
   })
 
-  it('populates filePath from the descriptor on skipped outcomes', () => {
+  it('populates filePath and human testName from the descriptor on skipped outcomes', () => {
     const skipped = skippedPerTestOutcome(member, 3)
 
     expect(skipped.filePath).toBe('checkout.spec.yaml')
+    expect(skipped.testName).toBe('Guest checkout with promo')
+    expect(skipped.testName).not.toBe(skipped.testId)
     expect(skipped.outcome).toBe('skipped')
   })
 })
