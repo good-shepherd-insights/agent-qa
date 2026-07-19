@@ -74,7 +74,21 @@ function perTest(fixture: TestFixture): PerTestOutcome {
     steps: (fixture.steps ?? []).map(stepEvidence),
     ...(fixture.rootCauseClass === undefined
       ? {}
-      : { rootCause: { class: fixture.rootCauseClass } }),
+      : {
+          rootCause: {
+            class: fixture.rootCauseClass,
+            producer: 'deterministic-classifier',
+            confidence: 1,
+            evidence: {
+              citedSteps: [],
+              citedAnchors: [],
+              citedArtifacts: [],
+              rationale: `fixture ${fixture.rootCauseClass} root cause`,
+            },
+            memoryMisdirectionRuledOut: true,
+            perTest: 1,
+          },
+        }),
   } as unknown as PerTestOutcome
 }
 
