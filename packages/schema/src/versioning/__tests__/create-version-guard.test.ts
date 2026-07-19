@@ -821,6 +821,18 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
         ;(subAction.stateBefore as Record<string, unknown>).url = 42
       }),
     ],
+    [
+      'subActions element stateAfter with a numeric url (executed round-9 counterexample)',
+      mutatedSubAction((subAction) => {
+        subAction.stateAfter = { url: 42 }
+      }),
+    ],
+    [
+      'subActions element stateAfter is a number',
+      mutatedSubAction((subAction) => {
+        subAction.stateAfter = 42
+      }),
+    ],
     ['servedBrief channel1 carrying a numeric line', withChannel1([42])],
     ['servedBrief channel1 carrying an array line', withChannel1([[]])],
     [
@@ -1007,6 +1019,22 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       'subActions element stateBefore with empty elements',
       mutatedSubAction((subAction) => {
         ;(subAction.stateBefore as Record<string, unknown>).elements = []
+      }),
+    ],
+    [
+      'subActions element stateAfter with honest navigation url',
+      mutatedSubAction((subAction) => {
+        subAction.stateAfter = {
+          url: 'https://shop.example/confirmation',
+          platform: 'web',
+          elements: [],
+        }
+      }),
+    ],
+    [
+      'subActions element stateAfter without url',
+      mutatedSubAction((subAction) => {
+        subAction.stateAfter = { platform: 'web', elements: [] }
       }),
     ],
     [
