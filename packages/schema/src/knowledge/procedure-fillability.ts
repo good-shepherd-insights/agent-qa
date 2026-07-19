@@ -1,44 +1,68 @@
+import type { ProcedureSourceBinding } from './procedure-binding-coercion'
 import type { ProcedureBodyPayload, ProcedureParameterSpec } from './procedure-steps'
 
 /**
- * Source-tagged binding NAMES available to procedure matching and replay binding.
+ * Source-tagged binding capability available to procedure matching and replay binding.
  *
- * D-08 firewall: values never cross this contract in any form. Keeping the three name sets
+ * D-08 firewall: values never cross this contract in any form. Variables and memory carry
+ * capability entries — a NAME plus per-type capability bits computed loop-side by
+ * procedureSourceBinding over the same coercion the binder uses — and secrets carry names
+ * only (the secret store binds solely as a string template). Keeping the three source sets
  * distinct lets the shared matcher apply the same source rules as the loop binder without
  * exposing a secret, test-variable value, or working-memory value to the knowledge layer.
  */
 export interface ProcedureBindingAvailability {
-  variables: readonly string[]
-  memory: readonly string[]
+  variables: readonly ProcedureSourceBinding[]
+  memory: readonly ProcedureSourceBinding[]
   secrets: readonly string[]
 }
 
-/** Names-only availability for screenless and absent-caller paths. */
+/** Empty availability for screenless and absent-caller paths. */
 export const EMPTY_PROCEDURE_BINDING_AVAILABILITY = {
   variables: [],
   memory: [],
   secrets: [],
 } as const satisfies ProcedureBindingAvailability
 
+function bindingsByName(
+  entries: readonly ProcedureSourceBinding[],
+): ReadonlyMap<string, ProcedureSourceBinding> {
+  const byName = new Map<string, ProcedureSourceBinding>()
+  for (const entry of entries) {
+    if (!byName.has(entry.name)) byName.set(entry.name, entry)
+  }
+  return byName
+}
+
 function isParameterAvailable(
   parameter: ProcedureParameterSpec,
   sources: {
-    variables: ReadonlySet<string>
-    memory: ReadonlySet<string>
+    variables: ReadonlyMap<string, ProcedureSourceBinding>
+    memory: ReadonlyMap<string, ProcedureSourceBinding>
     secrets: ReadonlySet<string>
   },
 ): boolean {
   if (parameter.type === 'secret') return sources.secrets.has(parameter.name)
 
-  // WR-01's authoritative names-only source law mirrors bindProcedureParam: secret parameters
-  // use secrets only; strings use variables, memory, then secrets; numbers and booleans use
-  // variables or memory only. The secret store binds as a `{{secret:name}}` string template,
-  // which cannot satisfy a number/boolean slot. Admitting that source would recommend a replay
-  // the loop must abort as parameter-unbound. Any binder source-policy change must update this
-  // helper and its type x source matrix in the same commit.
-  if (sources.variables.has(parameter.name)) return true
-  if (sources.memory.has(parameter.name)) return true
-  return parameter.type === 'string' && sources.secrets.has(parameter.name)
+  // WR-01's authoritative source law, completed to value-typed capability: the matrix is
+  // source x declared type x VALUE capability. Secret parameters use secrets only; strings
+  // use variables, memory, then secrets (entry presence means a non-nullish value exists,
+  // which is exactly string-bindability); numbers and booleans use a variables or memory
+  // entry whose capability bit is true, per-source OR. The bits are computed loop-side by
+  // procedureSourceBinding over the SAME coercion the binder uses
+  // (coerceProcedureBindingValue), so admitting a source here is exactly binder success.
+  // Name matching is exact code-unit Map-key equality — no trim, case fold, or unicode
+  // normalization. Any binder coercion change must update coerceProcedureBindingValue
+  // (one function, both sides), never this helper alone.
+  const variable = sources.variables.get(parameter.name)
+  const memory = sources.memory.get(parameter.name)
+  if (parameter.type === 'string') {
+    return variable !== undefined || memory !== undefined || sources.secrets.has(parameter.name)
+  }
+  if (parameter.type === 'number') {
+    return variable?.canBindNumber === true || memory?.canBindNumber === true
+  }
+  return variable?.canBindBoolean === true || memory?.canBindBoolean === true
 }
 
 /**
@@ -65,8 +89,8 @@ export function procedureParameterFillability(
   }
 
   const sources = {
-    variables: new Set(availability.variables),
-    memory: new Set(availability.memory),
+    variables: bindingsByName(availability.variables),
+    memory: bindingsByName(availability.memory),
     secrets: new Set(availability.secrets),
   }
   const unfillable = [...referenced]

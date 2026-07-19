@@ -410,6 +410,11 @@ export {
 } from './knowledge/procedure-fillability'
 export type { ProcedureBindingAvailability } from './knowledge/procedure-fillability'
 export {
+  coerceProcedureBindingValue,
+  procedureSourceBinding,
+} from './knowledge/procedure-binding-coercion'
+export type { ProcedureSourceBinding } from './knowledge/procedure-binding-coercion'
+export {
   COORDINATE_ACTION_KEYS,
   NON_REPLAYABLE_ACTION_TYPES,
   isReplayableActionShape,
