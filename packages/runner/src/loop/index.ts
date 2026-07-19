@@ -27,11 +27,13 @@
 // reuse of an observation the loop already takes — never an extra capture.
 
 import {
+  coerceProcedureBindingValue,
   computeCacheKey,
   elementOrdinal,
   isReplayableActionShape,
   normalizeAnchor,
   parseProcedureBody,
+  procedureSourceBinding,
   servingRecordMetadata,
   toRecordedActionResult,
 } from '@vostride/agent-qa-schema'
@@ -302,8 +304,13 @@ export async function executeStep(
   // Loop-side procedure parameter binding (D-08/T-381-21): values bind by NAME from the
   // same source-tagged availability contract the matcher admitted (WR-03). Secret parameters
   // hard-wall to the secret store; strings preserve variables -> memory -> secret-template
-  // precedence; numbers and booleans accept only type-valid variable/memory values. A miss here
-  // is genuine availability/type drift and is reported as parameter-unbound below.
+  // precedence. Typed coercion delegates to the ONE schema-owned law
+  // (coerceProcedureBindingValue in schema procedure-binding-coercion.ts) — the same
+  // function that computes the capability bits crossing the reader port — with try-in-order
+  // source semantics: the first source (variables, then memory) whose value passes the
+  // shared coercion binds, so binder success is exactly the matcher's per-source capability
+  // OR (the completed 381-22 WR-01 law, now value-typed). A miss here is genuine
+  // availability/type drift and is reported as parameter-unbound below.
   const bindProcedureParam = (
     name: string,
     type: ProcedureParamType,
@@ -311,33 +318,32 @@ export async function executeStep(
     const asSecretTemplate = ports.secretStore?.has(name) ? `{{secret:${name}}}` : undefined
     if (type === 'secret') return asSecretTemplate
 
-    const testVariable: unknown = context.variables?.[name]
     const memoryEntry = ports.workingMemory?.entries().find((entry) => entry.key === name)
-    const raw: unknown = testVariable ?? memoryEntry?.value
-
-    if (type === 'string') {
-      if (raw !== undefined) return String(raw)
-      return asSecretTemplate
+    const sources: unknown[] = [context.variables?.[name], memoryEntry?.value]
+    for (const raw of sources) {
+      const bound = coerceProcedureBindingValue(type, raw)
+      if (bound !== undefined) return bound
     }
-    if (type === 'number') {
-      if (raw === undefined) return undefined
-      const number = Number(raw)
-      return Number.isFinite(number) ? number : undefined
-    }
-    if (raw === true || raw === false) return raw
-    if (raw === 'true') return true
-    if (raw === 'false') return false
-    return undefined
+    return type === 'string' ? asSecretTemplate : undefined
   }
 
-  // D-08 binding-NAME assembly (RESEARCH Open Q2): preserve the three source identities so
-  // procedureParameterFillability and this binder apply one contract. These arrays carry names
-  // only — no test-variable, working-memory, or secret value ever crosses the reader port.
+  // D-08 capability assembly (RESEARCH Open Q2): preserve the three source identities so
+  // procedureParameterFillability and this binder apply one contract. Variables and memory
+  // carry capability entries computed HERE, loop-side, by procedureSourceBinding over the
+  // raw values — the same shared coercion the binder uses, so matcher admission and loop
+  // binding cannot drift. Only names and per-type capability booleans cross the reader
+  // port; no test-variable, working-memory, or secret value ever does.
   const assembleProcedureBindingAvailability = (): ProcedureBindingAvailability => {
-    const variables = Object.keys(context.variables ?? {})
-    const memory = [...new Set(
-      (ports.workingMemory?.entries() ?? []).map((entry) => entry.key),
-    )]
+    const variables = Object.entries(context.variables ?? {})
+      .map(([name, raw]) => procedureSourceBinding(name, raw))
+      .filter((entry) => entry !== undefined)
+    const memoryByName = new Map<string, ReturnType<typeof procedureSourceBinding>>()
+    for (const entry of ports.workingMemory?.entries() ?? []) {
+      if (!memoryByName.has(entry.key)) {
+        memoryByName.set(entry.key, procedureSourceBinding(entry.key, entry.value))
+      }
+    }
+    const memory = [...memoryByName.values()].filter((entry) => entry !== undefined)
     const secrets = new Set<string>()
     ports.secretStore?.forEachSecret?.((name) => secrets.add(name))
     return { variables, memory, secrets: [...secrets] }
