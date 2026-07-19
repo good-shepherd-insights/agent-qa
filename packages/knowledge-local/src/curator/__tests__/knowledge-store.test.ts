@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  asEvidenceToken,
+  asRecordId,
   BundleOutcomeEventSchema,
   canonicalJson,
   eventDedupKey,
@@ -10,9 +12,10 @@ import {
   type BundleDiscriminant,
   type BundleDraft,
   type BundleOutcomeEvent,
+  type Delta,
   type DistilledObservation,
 } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { appendOutcomeEvent } from '../../bundle-append.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
@@ -21,7 +24,14 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../../bundle-publish.js'
+import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { openIndexReaderConnection } from '../../index-open.js'
+import { acquireWriterLease } from '../../lease/writer-lease.js'
+import { claimedRoot } from '../../queue/queue-layout.js'
+import {
+  makeBundleDraftFixture,
+  makeProcedureBundleDraftFixture,
+} from '../../__tests__/fixtures/bundle-fixture.js'
 import { derivePromotedEvidenceToken } from '../commit.js'
 import {
   createLocalKnowledgeStore,
@@ -42,6 +52,165 @@ const ELEMENT_OBSERVATION: DistilledObservation = {
   locator: { selector: '[data-testid="checkout"]' },
   observedAtOrdinal: 42,
 }
+
+describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
+  let root: string
+  let knowledgeRoot: string
+  let auditBaseDir: string
+  let epoch: number
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-store-procedure-boundary-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    auditBaseDir = join(root, '.agent-qa')
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
+    epoch = lease.epoch
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function storeConfig(
+    overrides: Partial<CreateLocalKnowledgeStoreConfig> = {},
+  ): CreateLocalKnowledgeStoreConfig {
+    return {
+      knowledgeRoot,
+      auditBaseDir,
+      executionContext: 'local-interactive',
+      epoch,
+      sourceBuildOrdinal: 43,
+      ...overrides,
+    }
+  }
+
+  function addDelta(bundle: BundleDraft): Extract<Delta, { kind: 'Add' }> {
+    return {
+      kind: 'Add',
+      origin: 'agent',
+      scope: bundle.scope,
+      citedIds: [],
+      authorship: {
+        path: 'llm',
+        model: { id: 'knowledge-store-procedure-boundary-fixture' },
+        executionContext: 'local-interactive',
+      },
+      bundle,
+    }
+  }
+
+  function procedureAdd(): Extract<Delta, { kind: 'Add' }> {
+    return addDelta(makeProcedureBundleDraftFixture())
+  }
+
+  function procedureSupersede(): Extract<Delta, { kind: 'Supersede' }> {
+    const newBundle = makeProcedureBundleDraftFixture({
+      summary: 'Superseding sign-in procedure',
+    })
+    const victimId = asRecordId('missing-procedure-victim')
+    return {
+      kind: 'Supersede',
+      origin: 'agent',
+      scope: newBundle.scope,
+      citedIds: [victimId],
+      authorship: {
+        path: 'llm',
+        model: { id: 'knowledge-store-procedure-boundary-fixture' },
+        executionContext: 'local-interactive',
+      },
+      victimId,
+      newBundle,
+      evidenceToken: asEvidenceToken('procedure-supersede-evidence'),
+    }
+  }
+
+  async function expectUnsupported(
+    submission: Promise<void>,
+    deltaKind: Delta['kind'],
+  ): Promise<void> {
+    let thrown: unknown
+    try {
+      await submission
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown).toMatchObject({
+      name: 'KnowledgeUnsupportedDeltaError',
+      deltaKind,
+      reason: 'procedure-evidence-unsupported',
+    })
+  }
+
+  function relativePaths(dir: string, prefix = ''): string[] {
+    if (!existsSync(dir)) return []
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const relativePath = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      return entry.isDirectory()
+        ? [relativePath, ...relativePaths(join(dir, entry.name), relativePath)]
+        : [relativePath]
+    })
+  }
+
+  it('rejects a procedure Add through commit with the typed unsupported-delta contract', async () => {
+    const store = createLocalKnowledgeStore(storeConfig())
+
+    await expectUnsupported(store.commit([procedureAdd()]), 'Add')
+  })
+
+  it('rejects a procedure Add through proposeDeltas with the same typed contract', async () => {
+    const store = createLocalKnowledgeStore(storeConfig())
+
+    await expectUnsupported(store.proposeDeltas([procedureAdd()]), 'Add')
+  })
+
+  it('rejects a procedure-authored Supersede with its own delta kind', async () => {
+    const store = createLocalKnowledgeStore(storeConfig())
+
+    await expectUnsupported(store.commit([procedureSupersede()]), 'Supersede')
+  })
+
+  it('rejects before materializing any claimed candidate, payload, or procedure bundle', async () => {
+    const operation = vi.fn(() => ({ kind: 'noop', reason: 'port-fixture' } as const))
+    const store = createLocalKnowledgeStore(storeConfig({
+      operations: { commitCurationDelta: operation },
+    }))
+
+    await store.commit([procedureAdd()]).catch(() => undefined)
+
+    const paths = relativePaths(knowledgeRoot)
+    expect(operation).not.toHaveBeenCalled()
+    expect(existsSync(claimedRoot(knowledgeRoot))).toBe(false)
+    expect(paths.filter((path) => path.includes('/claimed/') || path.endsWith('payload.json')))
+      .toEqual([])
+    expect(enumerateBundleDirs(knowledgeRoot)).toEqual([])
+  })
+
+  it('keeps a supported fact Add committing through the public store', async () => {
+    const fact = makeBundleDraftFixture({
+      kind: 'fact',
+      subtype: 'content',
+      summary: 'Supported public-store fact',
+      body: 'This fact remains supported through the public KnowledgePort bridge.',
+    })
+    const store = createLocalKnowledgeStore(storeConfig())
+
+    await expect(store.commit([addDelta(fact)])).resolves.toBeUndefined()
+
+    const [entry] = enumerateBundleDirs(knowledgeRoot)
+    expect(entry).toBeDefined()
+    const loaded = loadBundle(entry!.dir)
+    expect(loaded).toMatchObject({
+      kind: 'loaded',
+      bundle: {
+        frontmatter: { kind: 'fact', subtype: 'content' },
+        summary: 'Supported public-store fact',
+      },
+    })
+  })
+})
 
 describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
   let root: string
