@@ -9,6 +9,7 @@ import {
   type Anchor,
   type CompletedRunHandoff,
   type PerTestOutcome,
+  type ScopeKey,
   type StepEvidence,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -18,7 +19,11 @@ import {
   applyRunOutcomes,
   projectRunOutcomes,
   rebuildRunOutcomes,
+  RUN_OUTCOMES_PROJECTION_VERSION,
 } from '../run-outcomes.js'
+
+const SHOP_SCOPE: ScopeKey = { tier: 'product', key: 'shop-web' }
+const BLOG_SCOPE: ScopeKey = { tier: 'product', key: 'blog-web' }
 
 interface StepFixture {
   stepIndex: number
@@ -62,6 +67,7 @@ function perTest(fixture: TestFixture): PerTestOutcome {
 function handoffFixture(input: {
   runId: string
   buildOrdinal: number
+  scope: ScopeKey
   tests: TestFixture[]
   excludedFromOutcomes?: true
 }): CompletedRunHandoff {
@@ -69,6 +75,7 @@ function handoffFixture(input: {
     schemaVersion: 3,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
+    scope: input.scope,
     executionContext: 'ci',
     tests: input.tests.map(perTest),
     ...(input.excludedFromOutcomes === true ? { excludedFromOutcomes: true } : {}),
@@ -93,13 +100,13 @@ interface TableDump {
 function dumpTables(db: DatabaseSync): TableDump {
   return {
     outcomes: db.prepare(
-      'SELECT * FROM run_test_outcomes ORDER BY file_path, test_name',
+      'SELECT * FROM run_test_outcomes ORDER BY product, file_path, test_name',
     ).all(),
     anchors: db.prepare(
-      'SELECT * FROM run_test_anchors ORDER BY file_path, test_name, anchor_normalized_json',
+      'SELECT * FROM run_test_anchors ORDER BY product, file_path, test_name, anchor_normalized_json',
     ).all(),
     appliedRuns: db.prepare(
-      'SELECT run_id FROM run_outcome_applied_runs ORDER BY run_id',
+      'SELECT product, run_id FROM run_outcome_applied_runs ORDER BY product, run_id',
     ).all(),
   }
 }
@@ -112,6 +119,7 @@ function threeOutcomeHandoff(): CompletedRunHandoff {
   return handoffFixture({
     runId: 'run-a',
     buildOrdinal: 7,
+    scope: SHOP_SCOPE,
     tests: [
       {
         filePath: 'suite/checkout.test.ts',
@@ -155,6 +163,10 @@ afterEach(() => {
 })
 
 describe('run-outcome projection fold (ABRF-02, D-14)', () => {
+  it('stamps the partitioned projection shape at version 2', () => {
+    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(2)
+  })
+
   it('folds pass/failure/heal/flake counters, last-N ordinals, and normalized anchor rows', () => {
     const db = openDb()
     const projection = projectRunOutcomes(threeOutcomeHandoff(), {
@@ -237,13 +249,152 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       'last_build_ordinal',
       'last_outcomes_json',
       'passes',
+      'product',
       'quarantined',
+      'scope_key',
+      'scope_tier',
       'test_name',
     ])
     const anchorColumns = db.prepare('PRAGMA table_info(run_test_anchors)').all()
       .map((row) => String((row as Record<string, unknown>).name))
       .sort()
-    expect(anchorColumns).toEqual(['anchor_normalized_json', 'file_path', 'test_name'])
+    expect(anchorColumns).toEqual([
+      'anchor_normalized_json',
+      'file_path',
+      'product',
+      'scope_key',
+      'scope_tier',
+      'test_name',
+    ])
+  })
+
+  it('partitions equal test identities, anchors, and applied-run markers by product', () => {
+    const db = openDb()
+    const sharedTest = {
+      filePath: 'suite/shared.test.ts',
+      testId: 'shared-test',
+      testName: 'shared test',
+    }
+    const shop = projectRunOutcomes(handoffFixture({
+      runId: 'shared-run',
+      buildOrdinal: 11,
+      scope: SHOP_SCOPE,
+      tests: [{
+        ...sharedTest,
+        outcome: 'passed',
+        steps: [{ stepIndex: 0, anchors: [checkoutAnchor] }],
+      }],
+    }), { extractAnchors })
+    const blog = projectRunOutcomes(handoffFixture({
+      runId: 'shared-run',
+      buildOrdinal: 12,
+      scope: BLOG_SCOPE,
+      tests: [{
+        ...sharedTest,
+        outcome: 'failed',
+        steps: [{ stepIndex: 0, anchors: [payAnchor] }],
+      }],
+    }), { extractAnchors })
+
+    expect(shop).toMatchObject({
+      product: 'shop-web',
+      scope: SHOP_SCOPE,
+    })
+    expect(blog).toMatchObject({
+      product: 'blog-web',
+      scope: BLOG_SCOPE,
+    })
+    expect(applyRunOutcomes(db, shop)).toEqual({ kind: 'applied', tests: 1 })
+    expect(applyRunOutcomes(db, blog)).toEqual({ kind: 'applied', tests: 1 })
+    expect(applyRunOutcomes(db, shop)).toEqual({ kind: 'already-applied', tests: 0 })
+
+    expect(db.prepare(`
+      SELECT product, scope_tier, scope_key, passes, failures
+      FROM run_test_outcomes
+      ORDER BY product
+    `).all()).toEqual([
+      {
+        product: 'blog-web',
+        scope_tier: 'product',
+        scope_key: 'blog-web',
+        passes: 0,
+        failures: 1,
+      },
+      {
+        product: 'shop-web',
+        scope_tier: 'product',
+        scope_key: 'shop-web',
+        passes: 1,
+        failures: 0,
+      },
+    ])
+    expect(db.prepare(`
+      SELECT product, anchor_normalized_json
+      FROM run_test_anchors
+      ORDER BY product
+    `).all()).toEqual([
+      {
+        product: 'blog-web',
+        anchor_normalized_json: canonicalJson(normalizeAnchor(payAnchor)),
+      },
+      {
+        product: 'shop-web',
+        anchor_normalized_json: canonicalJson(normalizeAnchor(checkoutAnchor)),
+      },
+    ])
+    expect(db.prepare(`
+      SELECT product, run_id
+      FROM run_outcome_applied_runs
+      ORDER BY product
+    `).all()).toEqual([
+      { product: 'blog-web', run_id: 'shared-run' },
+      { product: 'shop-web', run_id: 'shared-run' },
+    ])
+  })
+
+  it('drops and recreates a pre-partition projection instead of reading old-shape rows', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec(`
+      CREATE TABLE run_test_outcomes (
+        file_path TEXT NOT NULL,
+        test_name TEXT NOT NULL,
+        passes INTEGER NOT NULL DEFAULT 0,
+        failures INTEGER NOT NULL DEFAULT 0,
+        heals INTEGER NOT NULL DEFAULT 0,
+        flake_count INTEGER NOT NULL DEFAULT 0,
+        quarantined INTEGER NOT NULL DEFAULT 0,
+        last_outcomes_json TEXT NOT NULL DEFAULT '[]',
+        last_build_ordinal INTEGER,
+        PRIMARY KEY (file_path, test_name)
+      );
+      CREATE TABLE run_test_anchors (
+        file_path TEXT NOT NULL,
+        test_name TEXT NOT NULL,
+        anchor_normalized_json TEXT NOT NULL,
+        UNIQUE (file_path, test_name, anchor_normalized_json)
+      );
+      CREATE TABLE run_outcome_applied_runs (run_id TEXT PRIMARY KEY);
+      INSERT INTO run_test_outcomes (file_path, test_name, passes)
+      VALUES ('legacy.test.ts', 'legacy test', 9);
+      INSERT INTO run_test_anchors (file_path, test_name, anchor_normalized_json)
+      VALUES ('legacy.test.ts', 'legacy test', '{}');
+      INSERT INTO run_outcome_applied_runs (run_id) VALUES ('legacy-run');
+    `)
+
+    ensureRunOutcomeTables(db)
+
+    expect(db.prepare('PRAGMA table_info(run_test_outcomes)').all()).toContainEqual(
+      expect.objectContaining({ name: 'product' }),
+    )
+    expect(db.prepare('PRAGMA table_info(run_test_anchors)').all()).toContainEqual(
+      expect.objectContaining({ name: 'product' }),
+    )
+    expect(db.prepare('PRAGMA table_info(run_outcome_applied_runs)').all()).toContainEqual(
+      expect.objectContaining({ name: 'product' }),
+    )
+    expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_anchors').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM run_outcome_applied_runs').get()).toEqual({ n: 0 })
   })
 
   it('is idempotent per runId: refolding an already-applied run changes nothing', () => {
@@ -264,6 +415,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     const excluded = handoffFixture({
       runId: 'run-gate',
       buildOrdinal: 9,
+      scope: SHOP_SCOPE,
       excludedFromOutcomes: true,
       tests: [{
         filePath: 'suite/gate.test.ts',
@@ -289,6 +441,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       handoffFixture({
         runId: '001-first',
         buildOrdinal: 1,
+        scope: SHOP_SCOPE,
         tests: [
           {
             filePath: 'suite/checkout.test.ts',
@@ -301,6 +454,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       handoffFixture({
         runId: '002-second',
         buildOrdinal: 2,
+        scope: SHOP_SCOPE,
         excludedFromOutcomes: true,
         tests: [
           {
@@ -314,6 +468,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       handoffFixture({
         runId: '003-third',
         buildOrdinal: 3,
+        scope: BLOG_SCOPE,
         tests: [
           {
             filePath: 'suite/checkout.test.ts',
@@ -352,6 +507,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     applyRunOutcomes(rebuilt, projectRunOutcomes(handoffFixture({
       runId: 'stale-run',
       buildOrdinal: 99,
+      scope: SHOP_SCOPE,
       tests: [{ filePath: 'stale/file.test.ts', testId: 'stale', outcome: 'passed' }],
     }), { extractAnchors }))
 
@@ -366,9 +522,9 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       expect.objectContaining({ file_path: 'suite/internal-gate.test.ts' }),
     )
     expect(incrementalDump.appliedRuns).toEqual([
-      { run_id: '001-first' },
-      { run_id: '002-second' },
-      { run_id: '003-third' },
+      { product: 'blog-web', run_id: '003-third' },
+      { product: 'shop-web', run_id: '001-first' },
+      { product: 'shop-web', run_id: '002-second' },
     ])
   })
 
@@ -392,6 +548,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     const good = handoffFixture({
       runId: '001-good',
       buildOrdinal: 4,
+      scope: SHOP_SCOPE,
       tests: [{
         filePath: 'suite/checkout.test.ts',
         testId: 'checkout happy path',
@@ -459,6 +616,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     const good = handoffFixture({
       runId: '001-good',
       buildOrdinal: 4,
+      scope: SHOP_SCOPE,
       tests: [{
         filePath: 'suite/checkout.test.ts',
         testId: 'checkout-happy-1',
@@ -498,6 +656,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       applyRunOutcomes(db, projectRunOutcomes(handoffFixture({
         runId: `run-flake-${ordinal}`,
         buildOrdinal: ordinal,
+        scope: SHOP_SCOPE,
         tests: [{
           filePath: 'suite/flaky.test.ts',
           testId: 'flaky test',
