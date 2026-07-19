@@ -77,6 +77,18 @@ function replaySource(miss?: GuardMissReason): StepPlanSource {
   }
 }
 
+function replayExecutionFailureSource(procedureStepIndex = 0): StepPlanSource {
+  return {
+    kind: 'procedure-replay',
+    procedureId: PROCEDURE,
+    guard: {
+      checksPassed: 0,
+      total: 3,
+      executionFailure: { procedureStepIndex },
+    },
+  }
+}
+
 function element(ref = 'checkout'): ElementInfo {
   return {
     ref: asRef(ref),
@@ -547,6 +559,56 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
         runOutcome: 'positive',
       }),
     ])
+  })
+
+  it('never projects a positive procedure outcome after replay execution failed', () => {
+    const outcomes = project(
+      handoff([step({
+        candidateIds: [],
+        pass: true,
+        planSource: replayExecutionFailureSource(),
+      })]),
+      procedureAnchors,
+    )
+
+    expect(outcomes.filter(({ runOutcome }) => runOutcome === 'positive')).toHaveLength(0)
+    expect(outcomes).toEqual([
+      expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+    ])
+  })
+
+  it('projects an execution-failed replay as negative for an attributable failed run', () => {
+    const outcomes = project(
+      handoff(
+        [step({
+          candidateIds: [],
+          pass: false,
+          planSource: replayExecutionFailureSource(),
+        })],
+        rootCause('app_bug'),
+      ),
+      procedureAnchors,
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+    ])
+  })
+
+  it('keeps execution-failed replays behind the non-attributable classifier gate', () => {
+    for (const excluded of ['environment', 'timeout', 'flake'] as const) {
+      expect(project(
+        handoff(
+          [step({
+            candidateIds: [],
+            pass: false,
+            planSource: replayExecutionFailureSource(),
+          })],
+          rootCause(excluded),
+        ),
+        procedureAnchors,
+      )).toEqual([])
+    }
   })
 
   it('gates failed replayed steps behind the shared root-cause classifier', () => {
