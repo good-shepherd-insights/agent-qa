@@ -132,10 +132,25 @@ function lexicalRelevance(bundle: ProcedureMatchCandidate['bundle'], intent: str
   return tokens.filter((token) => text.includes(token)).length / tokens.length
 }
 
-/** Surviving Confirm evidence count (the confirmedOutcomeEvidenceTokens idiom). */
-function confirmationCount(events: readonly BundleOutcomeEvent[]): number {
+/**
+ * Surviving Confirm evidence minus the creation/authoring observation. A run-linked bundle's
+ * creation event shares the bundle-creating candidate id with provenance.curationJobId; counting
+ * it would cross every D-05 bar one organic canary early (CR-03). Re-extraction and canary
+ * confirmations arrive from distinct curation jobs and continue to count.
+ */
+function confirmationCount(
+  events: readonly BundleOutcomeEvent[],
+  provenance: BundleProvenance,
+): number {
+  const creationJobId = provenance.mode === 'run-linked'
+    ? provenance.curationJobId
+    : undefined
   return survivingOutcomeEvents(events)
-    .flatMap((event) => (event.type === 'confirmed' ? [event.evidenceToken] : []))
+    .flatMap((event) => (
+      event.type === 'confirmed' && event.curationJobId !== creationJobId
+        ? [event.evidenceToken]
+        : []
+    ))
     .filter((token) => token.length > 0)
     .length
 }
@@ -182,7 +197,10 @@ export function matchProcedure(input: MatchProcedureInput): ProcedureMatch | und
         ? candidate.bundle.provenance.authorship
         : undefined,
     )
-    const confirmations = confirmationCount(candidate.bundle.events)
+    const confirmations = confirmationCount(
+      candidate.bundle.events,
+      candidate.bundle.provenance,
+    )
     // The shared schema contract is also enforced by the loop binder. Matcher admission and
     // loop-side source/type binding therefore cannot drift (WR-03).
     const { fillable } = procedureParameterFillability(payload, input.availability)
