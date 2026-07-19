@@ -426,6 +426,72 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     expect(rows).toEqual([{ test_name: 'checkout happy path' }])
   })
 
+  it.each([
+    ['non-array tests', { tests: {} }],
+    ['null test member', { tests: [null] }],
+    [
+      'non-string member identity',
+      {
+        tests: [{
+          testId: 'malformed-test',
+          testName: 'malformed test',
+          filePath: 42,
+          testIndex: 0,
+          outcome: 'passed',
+          steps: [],
+        }],
+      },
+    ],
+    [
+      'non-array member steps',
+      {
+        tests: [{
+          testId: 'malformed-test',
+          testName: 'malformed test',
+          filePath: 'suite/malformed.test.ts',
+          testIndex: 0,
+          outcome: 'passed',
+          steps: {},
+        }],
+      },
+    ],
+  ])('counts %s as a skip and continues folding a valid sibling', (_label, shape) => {
+    const good = handoffFixture({
+      runId: '001-good',
+      buildOrdinal: 4,
+      tests: [{
+        filePath: 'suite/checkout.test.ts',
+        testId: 'checkout-happy-1',
+        testName: 'checkout happy path',
+        outcome: 'passed',
+        steps: [{ stepIndex: 0, anchors: [checkoutAnchor] }],
+      }],
+    })
+    const malformed = {
+      schemaVersion: 3,
+      runId: '002-malformed',
+      buildOrdinal: 2,
+      executionContext: 'ci',
+      ...shape,
+    }
+    const runsRoot = tempDir('run-outcomes-malformed-')
+    for (const handoff of [good, malformed]) {
+      const dir = join(runsRoot, String(handoff.runId))
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'handoff.json'), JSON.stringify(handoff))
+    }
+
+    const incremental = openDb()
+    applyRunOutcomes(incremental, projectRunOutcomes(good, { extractAnchors }))
+
+    const rebuilt = openDb()
+    expect(rebuildRunOutcomes(rebuilt, runsRoot, { extractAnchors })).toEqual({
+      folded: 1,
+      skipped: 1,
+    })
+    expect(dumpTables(rebuilt)).toEqual(dumpTables(incremental))
+  })
+
   it('marks a test quarantined once its flake count crosses the provisional threshold', () => {
     const db = openDb()
     for (let ordinal = 1; ordinal <= 3; ordinal += 1) {
