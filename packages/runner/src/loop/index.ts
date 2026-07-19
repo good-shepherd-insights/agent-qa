@@ -1839,6 +1839,12 @@ function attemptProcedureReplayAction(input: {
       action[field] = slot
       continue
     }
+    if ('json' in slot) {
+      // Persisted bodies are untrusted input. Preserve the structured literal exactly without
+      // aliasing record-owned arrays/objects into the action that the adapter may mutate.
+      action[field] = structuredClone(slot.json)
+      continue
+    }
     const bound = input.bind(slot.param)
     if (bound === undefined) {
       return {

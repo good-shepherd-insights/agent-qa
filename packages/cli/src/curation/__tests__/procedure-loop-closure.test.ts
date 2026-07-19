@@ -698,6 +698,10 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     // CR-01 integration proof: Tasks 1-2 pin the codec and write-side unit halves; this
     // traverses the real emit -> author -> disposition -> commit -> record.md pipe.
     expect(fixture.warnings).toEqual([])
+    expect(fixture.commitOutcomes).not.toContainEqual({
+      kind: 'noop',
+      reason: 'procedure-param-undeclared',
+    })
     expect(fixture.bundles).toHaveLength(1)
     const payload = parseProcedureBody(fixture.bundles[0]!.body)
     expect(payload?.steps[0]?.action.values['files']).toEqual({

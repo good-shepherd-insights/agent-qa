@@ -1045,7 +1045,7 @@ function procedureBindingIntegrityReject(
   const referenced = new Set<string>()
   for (const step of payload.steps) {
     for (const slot of Object.values(step.action.values)) {
-      if (typeof slot !== 'object') continue
+      if (typeof slot !== 'object' || !('param' in slot)) continue
       if (!declared.has(slot.param)) return 'procedure-param-undeclared'
       referenced.add(slot.param)
     }
