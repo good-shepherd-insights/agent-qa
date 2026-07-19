@@ -695,9 +695,21 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
       source: 'literal',
       targetRef: 'submit',
     })
-    expect(seed?.steps[2]?.action?.values).not.toHaveProperty('metadata')
-    expect(seed?.steps[2]?.action?.values).not.toHaveProperty('tags')
-    expect(seed?.steps[2]?.action?.values).not.toHaveProperty('nullable')
+    expect(seed?.steps[2]?.action?.values['metadata']).toEqual({
+      observed: { source: 'fixture' },
+      source: 'literal',
+      targetRef: 'submit',
+    })
+    expect(seed?.steps[2]?.action?.values['tags']).toEqual({
+      observed: ['fixture'],
+      source: 'literal',
+      targetRef: 'submit',
+    })
+    expect(seed?.steps[2]?.action?.values['nullable']).toEqual({
+      observed: null,
+      source: 'literal',
+      targetRef: 'submit',
+    })
   })
 
   it('captures file lists and relative positions as literal composite trajectory slots', () => {

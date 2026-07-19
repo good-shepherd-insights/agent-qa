@@ -340,7 +340,9 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const passwordStep = payload.steps[2]!
     const slot = passwordStep.action.values['text']
     expect(typeof slot).toBe('object')
-    if (typeof slot !== 'object') throw new Error('expected param ref slot')
+    if (typeof slot !== 'object' || !('param' in slot)) {
+      throw new Error('expected param ref slot')
+    }
     const forced = payload.parameters.find((parameter) => parameter.name === slot.param)
     expect(forced).toMatchObject({ type: 'secret', required: true })
     expect(wholeFlow!.body).not.toContain('<SECRET_0>')

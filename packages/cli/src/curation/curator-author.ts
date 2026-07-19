@@ -28,6 +28,7 @@ import type {
   CurationAuthorship,
   Delta,
   ProcedureBodyPayload,
+  ProcedureJsonValue,
   ProcedureParameterSpec,
   ProcedureStepSpec,
   ProcedureValueSlot,
@@ -726,6 +727,12 @@ interface BuiltCandidate {
   pageRoutes: string[]
 }
 
+function isCompositeObserved(
+  value: ProcedureJsonValue,
+): value is null | ProcedureJsonValue[] | { [key: string]: ProcedureJsonValue } {
+  return value === null || typeof value === 'object'
+}
+
 /**
  * WR-02 early proposal wall. The committed procedure codec remains the fail-closed authority for
  * unique parameter declarations; rejecting ambiguity here keeps one malformed candidate from
@@ -818,13 +825,19 @@ function buildCandidatePayload(
     )
     const values: Record<string, ProcedureValueSlot> = {}
     for (const [field, slot] of Object.entries(step.action.values)) {
+      const observed = slot.observed
+      const composite = isCompositeObserved(observed)
       const secretByReceipt =
-        typeof slot.observed === 'string'
+        typeof observed === 'string'
         && slot.targetRef !== undefined
         && regionKeys.has(`${step.ordinal}\u0000${slot.targetRef}`)
       const secretSlot = slot.source === 'masked-secret' || secretByReceipt
       const proposed = appliesIndex.get(`${step.ordinal}\u0000${field}`)
       if (proposed !== undefined) {
+        // D-03's declared parameter types are deliberately scalar. Letting a proposal claim a
+        // composite would either corrupt its shape or create a parameter the replay binder cannot
+        // validate, so reject this candidate while leaving valid siblings buildable.
+        if (composite) return undefined
         referencedParams.add(proposed)
         if (secretSlot) secretEscalated.add(proposed)
         values[field] = { param: proposed }
@@ -845,7 +858,7 @@ function buildCandidatePayload(
         values[field] = { param: name }
         continue
       }
-      values[field] = slot.observed
+      values[field] = composite ? { json: observed } : observed
     }
     steps.push({
       instruction: step.instruction,

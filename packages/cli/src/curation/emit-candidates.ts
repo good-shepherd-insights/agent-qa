@@ -14,6 +14,7 @@ import {
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
   elementOrdinal,
+  procedureJsonValueSchema,
   type Anchor,
   type ArtifactRef,
   type CautionRootCauseClass,
@@ -23,6 +24,7 @@ import {
   type GuardrailPolicy,
   type PerTestOutcome,
   type Platform,
+  type ProcedureJsonValue,
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
@@ -501,12 +503,23 @@ const trajectoryGuardTargetSchema = z
   })
   .strict()
 
+const trajectoryCompositeValueSchema = z.union([
+  z.null(),
+  z.array(procedureJsonValueSchema),
+  z.record(z.string(), procedureJsonValueSchema),
+])
+
 const trajectoryValueSlotSchema = z
   .object({
     // WR-04: boolean and numeric action fields are replay semantics, not decoration. Dropping
     // fill.submit, scroll.maxSwipes/retryOpposite, durations, or scale here would author a
     // procedure whose behavior differs from the verified trajectory.
-    observed: z.union([z.string(), z.number(), z.boolean()]),
+    observed: z.union([
+      z.string(),
+      z.number(),
+      z.boolean(),
+      trajectoryCompositeValueSchema,
+    ]),
     source: z.enum(['literal', 'test-variable', 'masked-secret']),
     targetRef: z.string().min(1).optional(),
   })
@@ -576,6 +589,67 @@ function trajectoryValueSource(
 
 const ACTION_REF_KEYS: readonly string[] = ['ref', 'fromRef', 'toRef']
 
+function jsonRepresentable(
+  value: unknown,
+  ancestors: Set<object> = new Set(),
+): value is ProcedureJsonValue {
+  if (value === null) return true
+  if (typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value !== 'object') return false
+  if (ancestors.has(value)) return false
+
+  try {
+    if (Array.isArray(value)) {
+      const keys = Reflect.ownKeys(value)
+      if (keys.some((key) => typeof key === 'symbol')) return false
+      if (keys.length !== value.length + 1 || !keys.includes('length')) return false
+
+      ancestors.add(value)
+      for (let index = 0; index < value.length; index += 1) {
+        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+        if (
+          descriptor === undefined
+          || !descriptor.enumerable
+          || !('value' in descriptor)
+          || !jsonRepresentable(descriptor.value, ancestors)
+        ) {
+          return false
+        }
+      }
+      return true
+    }
+
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) return false
+
+    ancestors.add(value)
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key === 'symbol') return false
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (
+        descriptor === undefined
+        || !descriptor.enumerable
+        || !('value' in descriptor)
+        || !jsonRepresentable(descriptor.value, ancestors)
+      ) {
+        return false
+      }
+    }
+    return true
+  } catch {
+    return false
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
+function isCompositeJsonValue(
+  value: ProcedureJsonValue,
+): value is null | ProcedureJsonValue[] | { [key: string]: ProcedureJsonValue } {
+  return value === null || typeof value === 'object'
+}
+
 function completingSubAction(step: StepEvidence): SubActionEvidence | undefined {
   for (let index = step.subActions.length - 1; index >= 0; index -= 1) {
     const candidate = step.subActions[index]!
@@ -608,22 +682,35 @@ function trajectoryTargets(
 
 function trajectoryValues(
   subAction: SubActionEvidence,
-): Record<string, z.infer<typeof trajectoryValueSlotSchema>> {
+): Record<string, z.infer<typeof trajectoryValueSlotSchema>> | undefined {
   const values: Record<string, z.infer<typeof trajectoryValueSlotSchema>> = {}
   const action = subAction.plannedAction as unknown as Record<string, unknown>
   const primaryRef = typeof action['ref'] === 'string' ? action['ref'] : undefined
   for (const [key, value] of Object.entries(action)) {
     if (key === 'type' || ACTION_REF_KEYS.includes(key)) continue
-    if (
-      typeof value !== 'string'
-      && typeof value !== 'number'
-      && typeof value !== 'boolean'
-    ) continue
+    // CR-01/T-381-52: one lossy field invalidates the whole action. Silently dropping a value
+    // would author replay behavior different from the verified trajectory.
+    if (!jsonRepresentable(value)) return undefined
+    const composite = isCompositeJsonValue(value)
+    // T-381-50: D-03's parameter union is scalar-only, so masked/env material nested inside a
+    // composite cannot be made safe by forced parameterization. Reject it before authoring.
+    if (composite) {
+      const serialized = JSON.stringify(value)
+      if (
+        MASKED_VALUE_PATTERN.test(serialized)
+        || TEST_VARIABLE_PATTERN.test(serialized)
+      ) {
+        return undefined
+      }
+    }
     values[key] = {
       observed: value,
       // Masking placeholders and variable templates are string phenomena. Numbers and booleans
-      // therefore remain literal-source while preserving their original JSON scalar type.
-      source: typeof value === 'string' ? trajectoryValueSource(value) : 'literal',
+      // therefore remain literal-source while preserving their original JSON scalar type; JSON
+      // composites are admitted only after the fail-closed scan above and remain literal-source.
+      source: !composite && typeof value === 'string'
+        ? trajectoryValueSource(value)
+        : 'literal',
       ...(primaryRef === undefined ? {} : { targetRef: primaryRef }),
     }
   }
@@ -632,6 +719,7 @@ function trajectoryValues(
 
 function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
   const completing = completingSubAction(step)
+  const values = completing === undefined ? undefined : trajectoryValues(completing)
   // Replay evaluates the page guard before executing the action (D-10), so this route must
   // describe the pre-action page. Recording a navigation destination made healthy steps miss
   // their guards and fed false staleness negatives into the D-05/D-11 confirmation ladder.
@@ -641,13 +729,13 @@ function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
   return {
     ordinal: step.stepIndex,
     instruction: step.stepText,
-    ...(completing === undefined
+    ...(completing === undefined || values === undefined
       ? {}
       : {
           action: {
             type: completing.plannedAction.type,
             targets: trajectoryTargets(completing),
-            values: trajectoryValues(completing),
+            values,
           },
         }),
     ...(route === undefined ? {} : { pageRoute: route }),
