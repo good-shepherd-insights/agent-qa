@@ -225,6 +225,29 @@ const malformedSiblingCases: Array<{
       }] as unknown as StepEvidence['subActions']
     },
   },
+  {
+    key: 'stateAfter-url-element',
+    name: 'complete subActions element whose stateAfter carries a numeric url beside a differing stateBefore url',
+    mutate(handoff) {
+      handoff.tests[0]!.steps[0]!.subActions = [{
+        plannedAction: { type: 'click', ref: 'checkout' },
+        stateBefore: {
+          url: 'https://shop.example/checkout',
+          platform: 'web',
+          elements: [{
+            ref: 'checkout',
+            role: 'button',
+            name: 'Checkout',
+            nameNormalized: 'checkout',
+            state: { enabled: true, focused: false, visible: true },
+            labels: { testId: 'checkout' },
+            attributes: { type: 'submit' },
+          }],
+        },
+        stateAfter: { url: 42 },
+      }] as unknown as StepEvidence['subActions']
+    },
+  },
 ]
 
 function baseOptions(
