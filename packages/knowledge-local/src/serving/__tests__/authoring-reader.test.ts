@@ -8,7 +8,9 @@ import {
   BundleOutcomeEventSchema,
   DEFAULT_EMBEDDING_PROFILE,
   canonicalJson,
+  type Anchor,
   type CompletedRunHandoff,
+  type ScopeKey,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -31,6 +33,8 @@ import { makeBundleDraftFixture } from '../../__tests__/fixtures/bundle-fixture.
 
 const PRODUCT = 'dense-authoring-storefront'
 const SCOPE = { tier: 'product', key: PRODUCT } as const
+const BLOG_PRODUCT = 'dense-authoring-blog'
+const BLOG_SCOPE = { tier: 'product', key: BLOG_PRODUCT } as const
 const DENSE_ONLY_INTENT = 'semantic-only-orchid'
 
 function unitVector(): Float32Array {
@@ -46,6 +50,51 @@ const matchingEmbedder: EmbedderPort = {
   async embedQuery(): Promise<Float32Array> {
     return unitVector()
   },
+}
+
+function outcomeHandoff(input: {
+  runId: string
+  scope: ScopeKey
+  buildOrdinal: number
+  filePath: string
+  testName: string
+  outcome: 'passed' | 'failed'
+  anchor?: Anchor
+}): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: asRunId(input.runId),
+    scope: input.scope,
+    buildOrdinal: input.buildOrdinal,
+    executionContext: 'ci',
+    aggregateVerdict: input.outcome,
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1_750_000_000_000,
+    endedAt: 1_750_000_001_000,
+    tests: [{
+      testId: `${input.runId}-test`,
+      testName: input.testName,
+      filePath: input.filePath,
+      testIndex: 0,
+      outcome: input.outcome,
+      steps: input.anchor === undefined
+        ? []
+        : [{ stepIndex: 0, anchors: [input.anchor] }],
+    }],
+  } as unknown as CompletedRunHandoff
+}
+
+function foldOutcomeHandoff(knowledgeRoot: string, handoff: CompletedRunHandoff): void {
+  const writer = openIndexWriter(knowledgeRoot)
+  try {
+    applyRunOutcomes(writer.db, projectRunOutcomes(handoff, {
+      extractAnchors: (step) => (
+        step as unknown as { anchors?: Anchor[] }
+      ).anchors ?? [],
+    }))
+  } finally {
+    writer.close()
+  }
 }
 
 describe('createAuthoringReader dense retrieval', () => {
@@ -178,5 +227,143 @@ describe('createAuthoringReader dense retrieval', () => {
     expect(brief.exemplars).not.toContainEqual(
       expect.objectContaining({ filePath, unverifiedOutcomes: true }),
     )
+  })
+
+  it('keeps projection exemplars and counters inside the requested product scope', async () => {
+    const shared = {
+      filePath: 'tests/shared-checkout.yaml',
+      testName: 'shared checkout path',
+    }
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-shop-shared-1',
+      scope: SCOPE,
+      buildOrdinal: 20,
+      ...shared,
+      outcome: 'passed',
+      anchor: { t: 'page', route: '/checkout' },
+    }))
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-shop-shared-2',
+      scope: SCOPE,
+      buildOrdinal: 21,
+      ...shared,
+      outcome: 'passed',
+      anchor: { t: 'page', route: '/checkout' },
+    }))
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-blog-shared',
+      scope: BLOG_SCOPE,
+      buildOrdinal: 22,
+      ...shared,
+      outcome: 'passed',
+      anchor: { t: 'page', route: '/blog-checkout' },
+    }))
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-blog-only',
+      scope: BLOG_SCOPE,
+      buildOrdinal: 23,
+      filePath: 'tests/blog-only-checkout.yaml',
+      testName: 'blog only checkout path',
+      outcome: 'passed',
+      anchor: { t: 'page', route: '/checkout' },
+    }))
+
+    const reader = createAuthoringReader({ knowledgeRoot, product: PRODUCT })
+    const brief = await reader.getAuthoringBrief('checkout path /checkout', SCOPE)
+
+    expect(brief.exemplars.map(({ filePath, testName }) => ({ filePath, testName }))).toEqual([
+      shared,
+    ])
+    expect(brief.exemplars[0]).toMatchObject({
+      passRate: 1,
+      unverifiedOutcomes: false,
+    })
+    expect(brief.exemplars[0]?.excerpt).toContain('outcomes 2 pass / 0 fail')
+    expect(brief.exemplars[0]?.excerpt).not.toContain('blog-checkout')
+  })
+
+  it('does not let a foreign projection row suppress a local never-run test', async () => {
+    const localRef = {
+      filePath: 'tests/shared-never-run.yaml',
+      testName: 'shared never run checkout',
+    }
+    foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+      runId: 'run-blog-never-run-name',
+      scope: BLOG_SCOPE,
+      buildOrdinal: 24,
+      ...localRef,
+      outcome: 'passed',
+    }))
+    const reader = createAuthoringReader(
+      { knowledgeRoot, product: PRODUCT },
+      { discoverKnownTests: () => [localRef] },
+    )
+
+    const brief = await reader.getAuthoringBrief('shared never run checkout', SCOPE)
+
+    expect(brief.exemplars).toHaveLength(1)
+    expect(brief.exemplars[0]).toMatchObject({
+      ...localRef,
+      unverifiedOutcomes: true,
+    })
+    expect(brief.exemplars[0]).not.toHaveProperty('passRate')
+  })
+
+  it('treats a pre-partition projection shape as empty instead of querying it', async () => {
+    const writer = openIndexWriter(knowledgeRoot)
+    try {
+      writer.db.exec(`
+        DROP TABLE run_test_outcomes;
+        DROP TABLE run_test_anchors;
+        CREATE TABLE run_test_outcomes (
+          file_path TEXT NOT NULL,
+          test_name TEXT NOT NULL,
+          passes INTEGER NOT NULL DEFAULT 0,
+          failures INTEGER NOT NULL DEFAULT 0,
+          heals INTEGER NOT NULL DEFAULT 0,
+          flake_count INTEGER NOT NULL DEFAULT 0,
+          quarantined INTEGER NOT NULL DEFAULT 0,
+          last_outcomes_json TEXT NOT NULL DEFAULT '[]',
+          last_build_ordinal INTEGER,
+          PRIMARY KEY (file_path, test_name)
+        );
+        CREATE TABLE run_test_anchors (
+          file_path TEXT NOT NULL,
+          test_name TEXT NOT NULL,
+          anchor_normalized_json TEXT NOT NULL,
+          UNIQUE (file_path, test_name, anchor_normalized_json)
+        );
+        INSERT INTO run_test_outcomes (
+          file_path, test_name, passes, last_outcomes_json
+        ) VALUES (
+          'tests/legacy-checkout.yaml', 'legacy checkout', 1,
+          '[{"buildOrdinal":1,"passed":true}]'
+        );
+      `)
+    } finally {
+      writer.close()
+    }
+    const reader = createAuthoringReader({ knowledgeRoot, product: PRODUCT })
+
+    const brief = await reader.getAuthoringBrief('legacy checkout', SCOPE)
+
+    expect(brief.exemplars).toEqual([])
+  })
+
+  it('treats absent projection tables as an empty projection', async () => {
+    const writer = openIndexWriter(knowledgeRoot)
+    try {
+      writer.db.exec(`
+        DROP TABLE run_test_outcomes;
+        DROP TABLE run_test_anchors;
+      `)
+    } finally {
+      writer.close()
+    }
+    const reader = createAuthoringReader({ knowledgeRoot, product: PRODUCT })
+
+    const brief = await reader.getAuthoringBrief('missing projection', SCOPE)
+
+    expect(brief.exemplars).toEqual([])
   })
 })
