@@ -82,7 +82,13 @@ export type {
   GraphEdgeType,
   GraphNodeNaturalKey,
 } from './identity/index'
-export { normalizeAnchor, graphNodeId, anchorGraphNode, recordGraphNode } from './identity/index'
+export {
+  normalizeAnchor,
+  identityTupleKey,
+  graphNodeId,
+  anchorGraphNode,
+  recordGraphNode,
+} from './identity/index'
 export { supersessionKey } from './identity/supersession-key'
 export {
   screenIdentityHash,
