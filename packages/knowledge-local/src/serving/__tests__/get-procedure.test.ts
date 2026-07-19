@@ -8,6 +8,7 @@ import {
   BundleOutcomeEventSchema,
   canonicalJson,
   normalizeAnchor,
+  procedureParameterFillability,
   serializeProcedureBody,
   type Anchor,
   type BundleOutcomeEvent,
@@ -341,6 +342,59 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     expect(sourceCorrect?.replayRecommendation).toBe('replay')
     expect(missing?.replayRecommendation).toBe('hint')
     expect(missing?.confidence).toBeCloseTo((sourceCorrect?.confidence ?? 0) * 0.5)
+  })
+
+  it.each([
+    { type: 'number' as const, name: 'clickDelay' },
+    { type: 'boolean' as const, name: 'submitNow' },
+  ])('downranks a secret-only $type parameter and re-admits it from variables', ({
+    type,
+    name,
+  }) => {
+    const base = makeProcedureBodyPayloadFixture()
+    const firstStep = base.steps[0]!
+    const payload = {
+      ...base,
+      parameters: [{ name, type, required: true }],
+      steps: [{
+        ...firstStep,
+        action: {
+          ...firstStep.action,
+          values: { value: { param: name } },
+        },
+      }],
+    }
+    const store = [candidate({
+      id: `proc-secret-only-${type}`,
+      body: serializeProcedureBody(payload),
+    })]
+    const secretOnlyAvailability = {
+      variables: [],
+      memory: [],
+      secrets: [name],
+    }
+    const variableAvailability = {
+      variables: [name],
+      memory: [],
+      secrets: [],
+    }
+
+    // WR-01 mirrored truth-table pin: the shared helper reports the typed slot unfillable,
+    // and the matcher turns that exact verdict into a hint rather than a replay recommendation.
+    expect(procedureParameterFillability(payload, secretOnlyAvailability)).toEqual({
+      fillable: false,
+      unfillable: [name],
+    })
+    const secretOnly = matchProcedure(matchInput(store, {
+      availability: secretOnlyAvailability,
+    }))
+    const variableBacked = matchProcedure(matchInput(store, {
+      availability: variableAvailability,
+    }))
+
+    expect(secretOnly?.replayRecommendation).toBe('hint')
+    expect(variableBacked?.replayRecommendation).toBe('replay')
+    expect(secretOnly?.confidence).toBeCloseTo((variableBacked?.confidence ?? 0) * 0.5)
   })
 })
 

@@ -796,6 +796,75 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
   })
 
+  it.each([
+    {
+      type: 'number' as const,
+      name: 'delay',
+      secretValue: '5',
+      payload: singleActionPayload({
+        parameters: [{ name: 'delay', type: 'number', required: true }],
+        type: 'doubleClick',
+        values: { clickDelay: { param: 'delay' } },
+      }),
+    },
+    {
+      type: 'boolean' as const,
+      name: 'submitNow',
+      secretValue: 'true',
+      payload: singleActionPayload({
+        parameters: [{ name: 'submitNow', type: 'boolean', required: true }],
+        type: 'fill',
+        target: { role: 'textbox', nameNormalized: 'email' },
+        values: { text: 'user@example.com', submit: { param: 'submitNow' } },
+      }),
+    },
+  ])('fails safe when a stale replay recommendation offers a secret-only $type', async ({
+    type,
+    name,
+    secretValue,
+    payload,
+  }) => {
+    const spy = makeReader({
+      // Force the stale/over-admitted recommendation so this test exercises the independent
+      // loop-side half of WR-01 even though the corrected matcher now downranks it to a hint.
+      match: makeMatch({
+        parameterSchema: [{ name, type, required: true }],
+        replayRecommendation: 'replay',
+      }),
+      payload,
+    })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      `Fall back from a secret-only ${type} binding`,
+      ports({
+        adapter,
+        planner: planner.planner,
+        knowledgeReader: spy.reader,
+        secretStore: new SecretStore({ [name]: secretValue }),
+      }),
+      context({ variables: {} }),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    expect(`${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`)
+      .toContain('has no loop-side binding source')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        miss: { procedureStepIndex: 0, reason: 'parameter-unbound' },
+      },
+    })
+  })
+
   it('binds a secret parameter only from the secret store, never from variables', async () => {
     const payload = singleActionPayload({
       parameters: [{ name: 'loginSecret', type: 'secret', required: true }],
