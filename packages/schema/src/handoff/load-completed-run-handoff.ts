@@ -29,21 +29,23 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
 }
 
 /**
- * Guarantees only that projection consumers can safely traverse the tests collection.
- * Deeper per-field currency checks remain consumer-side so malformed persisted members
- * become counted skips at the projection's fail-closed boundary (WR-03).
+ * Guarantees the collections direct consumers traverse: `handoff.tests` is iterable and
+ * every member exposes an iterable `test.steps` collection (WR-01). Deeper per-field
+ * currency checks such as filePath/testName presence and member semantics deliberately
+ * remain consumer-side at the projection's fail-closed boundary (WR-03).
  */
 function hasTraversableTestsShape(value: unknown): boolean {
   if (value === null || typeof value !== 'object') return false
 
   const tests = (value as { tests?: unknown }).tests
-  return (
-    tests === undefined ||
-    (Array.isArray(tests) &&
-      tests.every(
-        (test) => test !== null && typeof test === 'object' && !Array.isArray(test),
-      ))
-  )
+  return Array.isArray(tests) && tests.every((test) => {
+    if (test === null || typeof test !== 'object' || Array.isArray(test)) return false
+
+    const steps = (test as { steps?: unknown }).steps
+    return Array.isArray(steps) && steps.every(
+      (step) => step !== null && typeof step === 'object' && !Array.isArray(step),
+    )
+  })
 }
 
 /**
