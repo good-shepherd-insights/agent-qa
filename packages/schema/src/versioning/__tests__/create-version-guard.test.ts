@@ -171,6 +171,13 @@ function withSubActions(subActions: unknown): CompletedRunHandoff {
   })
 }
 
+function withInterpolatedVariables(pairs: unknown): CompletedRunHandoff {
+  return mutateCompleteHandoff((handoff) => {
+    handoff.tests[0]!.steps[0]!.interpolatedVariables =
+      pairs as StepEvidence['interpolatedVariables']
+  })
+}
+
 function withChannel1(channel1: unknown): CompletedRunHandoff {
   return mutateCompleteHandoff((handoff) => {
     handoff.tests[0]!.steps[0]!.servedBrief.channel1 =
@@ -927,6 +934,33 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
         evidence.citedArtifacts = [{ id: 7, sha: COMPLETE_ARTIFACT_SHA }]
       }),
     ],
+    // 381-41 (G-381-3): interpolatedVariables is consumer-dereferenced by the
+    // procedure-extraction emit fold — it applies string equality to `value` and copies
+    // `name` verbatim, so both must be strings on every admitted member.
+    [
+      'step interpolatedVariables is a number',
+      withInterpolatedVariables(42),
+    ],
+    [
+      'step interpolatedVariables containing a string member',
+      withInterpolatedVariables(['PROBE_USER']),
+    ],
+    [
+      'step interpolatedVariables containing an array member',
+      withInterpolatedVariables([[]]),
+    ],
+    [
+      'step interpolatedVariables member with a numeric value',
+      withInterpolatedVariables([{ name: 'PROBE_USER', value: 42 }]),
+    ],
+    [
+      'step interpolatedVariables member missing name',
+      withInterpolatedVariables([{ value: 'qa.user@example.com' }]),
+    ],
+    [
+      'step interpolatedVariables member missing value',
+      withInterpolatedVariables([{ name: 'PROBE_USER' }]),
+    ],
   ]
 
   it.each(invalidHandoffs)('rejects a structurally unsafe current-version handoff: %s', (_label, handoff) => {
@@ -1080,6 +1114,27 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
           { t: 'error', message: 'boom' },
         ]
       }),
+    ],
+    [
+      'step interpolatedVariables absent (the additive-optional base)',
+      mutateCompleteHandoff((handoff) => {
+        delete handoff.tests[0]!.steps[0]!.interpolatedVariables
+      }),
+    ],
+    [
+      'step interpolatedVariables empty (emptiness distinct from malformed)',
+      withInterpolatedVariables([]),
+    ],
+    [
+      'step interpolatedVariables with a well-formed email-valued pair',
+      withInterpolatedVariables([{ name: 'PROBE_USER', value: 'qa.user@example.com' }]),
+    ],
+    [
+      'step interpolatedVariables with several well-formed pairs',
+      withInterpolatedVariables([
+        { name: 'PROBE_USER', value: 'qa.user@example.com' },
+        { name: 'PROBE_API_TOKEN', value: 'tok-live-9f3a2b' },
+      ]),
     ],
     [
       'rootCause citedArtifacts ref with evidenceIncomplete present',

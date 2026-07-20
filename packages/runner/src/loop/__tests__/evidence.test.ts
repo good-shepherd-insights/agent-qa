@@ -2,7 +2,7 @@
 // produced by construction as schema DTOs; the legacy trace is projected from it.
 import { describe, it, expect } from 'vitest'
 import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
-import type { Action, ArtifactRef, Decision, ScopeKey, SubActionEvidence, VerifierVerdict } from '@vostride/agent-qa-schema'
+import type { Action, ArtifactRef, Decision, MaskingContext, ScopeKey, SubActionEvidence, VerifierVerdict } from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { Action as PlatformAction, ActionResult as PlatformActionResult } from '../../platform.js'
 import {
@@ -12,6 +12,8 @@ import {
   makeEmptyServedBrief,
   projectLegacyTrace,
 } from '../evidence.js'
+import { executeStep } from '../index.js'
+import { makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
 
 // Schema Action (branded Ref) for the stored §A8 evidence; the runner-platform Action
 // (plain-string ref) for collapseAnnotation, which consumes the adapter's legacy shape.
@@ -267,5 +269,81 @@ describe('collapseAnnotation', () => {
       expect(annotation.path.end).toEqual({ x: 10, y: 40 })
     }
     expect(annotation.direction).toBe('up')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 381-41 (G-381-3 capture half · PROC-01 · D-03/D-08): variable-name provenance
+// ---------------------------------------------------------------------------
+
+describe('EvidenceRecorder.finalize — interpolatedVariables stamp', () => {
+  const pairs = [
+    { name: 'PROBE_USER', value: 'qa.user@example.com' },
+    { name: 'PROBE_ORDER', value: 'ORD-123' },
+  ]
+
+  it('stamps the supplied pairs verbatim onto the finalized StepEvidence', () => {
+    const recorder = new EvidenceRecorder()
+    const step = recorder.finalize(passVerdict, 0, 'log in as qa.user@example.com', {
+      interpolatedVariables: pairs,
+    })
+    expect(step.interpolatedVariables).toEqual(pairs)
+  })
+
+  it('leaves the field structurally ABSENT when the loop supplied nothing', () => {
+    const recorder = new EvidenceRecorder()
+    const step = recorder.finalize(passVerdict, 0, 'log in')
+    expect('interpolatedVariables' in step).toBe(false)
+  })
+
+  it('leaves the field structurally ABSENT for an empty list (base fixture unchanged)', () => {
+    const recorder = new EvidenceRecorder()
+    const step = recorder.finalize(passVerdict, 0, 'log in', { interpolatedVariables: [] })
+    expect('interpolatedVariables' in step).toBe(false)
+  })
+
+  it('copies the list — a later mutation of the input never aliases the evidence', () => {
+    const recorder = new EvidenceRecorder()
+    const input = [{ name: 'PROBE_USER', value: 'qa.user@example.com' }]
+    const step = recorder.finalize(passVerdict, 0, 'log in', { interpolatedVariables: input })
+    expect(step.interpolatedVariables).not.toBe(input)
+    expect(step.interpolatedVariables).toEqual(input)
+  })
+})
+
+// GREEN-ONLY REGRESSION GUARDS (no pre-fix path can make these red — the field did not
+// exist before this plan). They exist to stop a future "hardening" change from routing the
+// provenance value through maskValue at the loop's finalize call site. Masking here would
+// transform email-valued and credential-named bindings while plannedAction stayed raw,
+// breaking the emit fold's exact-string classification and REINTRODUCING G-381-3.
+describe('executeStep — provenance pairs are never masked (G-381-3 regression guard)', () => {
+  // A masking port that WOULD transform both shapes the real mask() transforms:
+  // emails (unconditional, registration-free) and credential-NAMED env values
+  // (sensitiveEnvSlice registers by name suffix).
+  const transformingMasking = {
+    mask: (text: string) => `MASKED(${text})`,
+    unmask: (text: string) => text,
+  } as unknown as MaskingContext
+
+  async function stampedPairs(
+    interpolatedVariables: { name: string; value: string }[],
+  ): Promise<unknown> {
+    const result = await executeStep(
+      'log in',
+      { adapter: makeAdapter(), planner: makePlanner(), verifier: makeVerifier(), masking: transformingMasking } as never,
+      makeStepContext({ interpolatedVariables }),
+    )
+    return (result.evidence as { interpolatedVariables?: unknown } | undefined)
+      ?.interpolatedVariables
+  }
+
+  it('an EMAIL-valued binding survives byte-identically through a transforming masking port', async () => {
+    const pair = { name: 'PROBE_USER', value: 'qa.user@example.com' }
+    expect(await stampedPairs([pair])).toEqual([pair])
+  })
+
+  it('a CREDENTIAL-NAMED binding survives byte-identically through a transforming masking port', async () => {
+    const pair = { name: 'PROBE_API_TOKEN', value: 'tok-live-9f3a2b' }
+    expect(await stampedPairs([pair])).toEqual([pair])
   })
 })

@@ -24,6 +24,7 @@ import type {
   CycleEvidence,
   Decision,
   DeclaredModelProfile,
+  InterpolatedVariable,
   LocalEffectEvidence,
   ModelIdentity,
   ModelCallRecord,
@@ -509,7 +510,17 @@ export class EvidenceRecorder {
     verdict: VerifierVerdict,
     stepIndex: number,
     stepText: string,
-    options?: { nonCacheable?: boolean },
+    options?: {
+      nonCacheable?: boolean
+      /**
+       * The step's `{{env:NAME}}` provenance pairs (PROC-01 · 381 D-03/D-08), stamped only
+       * when non-empty so the absent-by-default shape is preserved. The recorder is
+       * MASK-AGNOSTIC by contract: it records exactly what its caller passes and masks
+       * nothing itself. These pairs in particular must NOT be masked anywhere — see the
+       * masking prohibition on `StepEvidence.interpolatedVariables`.
+       */
+      interpolatedVariables?: readonly InterpolatedVariable[]
+    },
   ): StepEvidence {
     const evidence: StepEvidence = {
       stepIndex,
@@ -533,6 +544,9 @@ export class EvidenceRecorder {
     if (this.modelProfile !== undefined) evidence.modelProfile = this.modelProfile
     if (this.verifierIdentity !== undefined) evidence.verifierIdentity = this.verifierIdentity
     if (this.toolSchemaDigest !== undefined) evidence.toolSchemaDigest = this.toolSchemaDigest
+    if (options?.interpolatedVariables && options.interpolatedVariables.length > 0) {
+      evidence.interpolatedVariables = [...options.interpolatedVariables]
+    }
     return evidence
   }
 }

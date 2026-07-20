@@ -408,7 +408,16 @@ export async function executeStep(
         ports.workingMemory.entries().map((entry) => ({ ...entry, value: maskValue(entry.value) })),
       )
     }
-    const evidence = recorder.finalize(verdict, 0, stepInstruction, { nonCacheable: nonCacheable || cacheBypass })
+    // 381-41 (G-381-3): the step's {{env:NAME}} provenance pairs ride to the recorder
+    // VERBATIM — deliberately NOT through maskValue (bound at line ~209), unlike the
+    // workingMemory snapshot above. Masking would transform email-valued and
+    // credential-named bindings here while `plannedAction` and `stepInstruction` stayed
+    // raw, so the emit fold's exact-string match would miss and replay would stay
+    // permanently `hint`. Do not "harden" this by adding a mask; that IS the bug.
+    const evidence = recorder.finalize(verdict, 0, stepInstruction, {
+      nonCacheable: nonCacheable || cacheBypass,
+      ...(context.interpolatedVariables ? { interpolatedVariables: context.interpolatedVariables } : {}),
+    })
     // D-02 live emission (Plan 361-08): finish() is the single terminal funnel (success/
     // failure/cancelled + the direct finish() call sites all route here), so emitting once
     // here covers EVERY terminal path exactly once. Fire-and-forget SYNC, optional-chained —

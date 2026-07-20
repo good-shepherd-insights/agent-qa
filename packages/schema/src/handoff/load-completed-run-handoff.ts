@@ -278,6 +278,27 @@ function hasCompleteRootCauseShape(value: unknown): boolean {
   return true
 }
 
+/**
+ * Validates a present `interpolatedVariables` at the depth its one consumer dereferences
+ * (381 G-381-3): the procedure-extraction emit fold applies exact string equality against
+ * `value` to classify a trajectory value slot and copies `name` VERBATIM as the forced
+ * parameter name — so every admitted member must be a non-array object carrying string
+ * `name` AND string `value`, and nothing deeper exists to validate. Absence stays legal
+ * (the field is additive-optional; a step that interpolated nothing omits it), and an
+ * empty array is legal emptiness, distinct from malformed.
+ */
+function hasCompleteInterpolatedVariablesShape(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (member) =>
+        isNonArrayObject(member) &&
+        typeof member.name === 'string' &&
+        typeof member.value === 'string',
+    )
+  )
+}
+
 function hasCompleteStepShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
 
@@ -298,7 +319,9 @@ function hasCompleteStepShape(value: unknown): boolean {
     isNonArrayObject(verifierVerdict) &&
     typeof verifierVerdict.pass === 'boolean' &&
     typeof verifierVerdict.reasoning === 'string' &&
-    (!('planSource' in value) || hasCompletePlanSourceShape(value.planSource))
+    (!('planSource' in value) || hasCompletePlanSourceShape(value.planSource)) &&
+    (!('interpolatedVariables' in value) ||
+      hasCompleteInterpolatedVariablesShape(value.interpolatedVariables))
   )
 }
 
@@ -328,7 +351,9 @@ function hasCompleteTestShape(value: unknown): boolean {
  * Guarantees every required root field plus the required fields on each per-test outcome
  * and traversed step before a handoff reaches direct consumers, including the complete
  * discriminated shapes of the two traversed optional blocks — `planSource` and `rootCause`
- * (CR-02) — the element shapes of the consumer-traversed arrays — every `subActions` member
+ * (CR-02) — the string `name`/`value` of every present `interpolatedVariables` member, the
+ * pair the emit fold value-matches and name-copies (G-381-3 capture half; absence and
+ * emptiness both stay legal) — the element shapes of the consumer-traversed arrays — every `subActions` member
  * is dereferenceable through `plannedAction`, `grounding.attempts` (flatMapped by
  * resolvedActionRefs for every subAction), and `stateBefore.elements[]` down to the
  * string values consumers apply string operations to: string `role`/`nameNormalized`,
