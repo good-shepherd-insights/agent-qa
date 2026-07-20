@@ -43,7 +43,7 @@ import {
 import { enqueueCanaryOutcome } from '../queue/canary-queue.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import { selectCautions } from './get-cautions.js'
-import { matchProcedure } from './get-procedure.js'
+import { admitsProcedure, matchProcedure } from './get-procedure.js'
 import { assembleRunBrief } from './get-run-brief.js'
 import { readPolicyLadder } from './policy-ladder.js'
 
@@ -339,7 +339,22 @@ function findReadableBundle(
   if (row === undefined) return undefined
 
   const hydrated = hydrateRows(config, [row], false)[0]
-  if (hydrated === undefined || currentServingEntries([hydrated]).length === 0) return undefined
+  if (hydrated === undefined) return undefined
+  /**
+   * G-381-4: `currentServingEntries` is the BRIEF/CAUTION serving wall — it admits candidates
+   * only through the vetted-canary flag, which is fact/caution-only, so a committed procedure
+   * (agent-verified candidate, promotion-excluded in M2 by 379 D-16) was permanently unreadable
+   * even when `getProcedure` had just recommended replaying it. The read face therefore falls
+   * back to the matcher's OWN admission predicate: what getProcedure can recommend, read() can
+   * serve. This is read admission only — `currentServingEntries` is untouched, so nothing new
+   * reaches getRunBrief, getCautions, or search.
+   */
+  if (
+    currentServingEntries([hydrated]).length === 0
+    && !admitsProcedure({ entry: hydrated.entry, bundle: hydrated.bundle })
+  ) {
+    return undefined
+  }
 
   const trust = deriveBundleTrust(hydrated.bundle)
   const asOfBuild = options?.asOfBuild ?? config.scopeDefaults?.asOfBuild

@@ -28,6 +28,7 @@ import {
 import { publishBundle } from '../../bundle-publish.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import {
+  admitsProcedure,
   matchProcedure,
   type MatchProcedureInput,
   type ProcedureMatchCandidate,
@@ -193,6 +194,25 @@ describe('matchProcedure kind-aware admission', () => {
     const match = matchProcedure(matchInput([candidate({ id: 'proc-open' })]))
 
     expect(match?.id).toBe('proc-open')
+  })
+
+  /**
+   * G-381-4: the same predicate is the read face's admission wall (reader.ts
+   * findReadableBundle). Pinning it directly keeps the two faces from diverging again — every
+   * row below is exactly a row of the matcher's own admission table above.
+   */
+  it('exports one admission predicate whose walls the read face inherits verbatim', () => {
+    expect(admitsProcedure(candidate({ id: 'proc-admitted' }))).toBe(true)
+    expect(admitsProcedure(candidate({ id: 'proc-admitted-active', status: 'active' }))).toBe(true)
+    expect(admitsProcedure(candidate({ id: 'proc-wall-withheld', withheld: true }))).toBe(false)
+    expect(admitsProcedure(candidate({ id: 'proc-wall-closed', validity: '10:12' }))).toBe(false)
+    expect(admitsProcedure(candidate({
+      id: 'proc-wall-deprecated',
+      events: [...confirmedEvents(2, 'proc-wall-deprecated'), deprecatedEvent('proc-wall-deprecated')],
+    }))).toBe(false)
+    expect(admitsProcedure(candidate({ id: 'fact-wall', kind: 'fact' }))).toBe(false)
+    expect(admitsProcedure(candidate({ id: 'caution-wall', kind: 'caution' }))).toBe(false)
+    expect(admitsProcedure(candidate({ id: 'proc-wall-superseded', status: 'superseded' }))).toBe(false)
   })
 
   it('never matches a withheld candidate procedure', () => {

@@ -11,6 +11,7 @@ import {
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
+  parseProcedureBody,
   procedureSourceBinding,
   serializeProcedureBody,
   type Anchor,
@@ -30,8 +31,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   makeProcedureBodyPayloadFixture,
+  makeProcedureBundleDraftFixture,
   makeScreenStateFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
+import {
+  commitFixtureProcedure,
+  type CommitFixtureProcedureOptions,
+} from '../../__tests__/fixtures/procedure-commit-fixture.js'
 import {
   publishBundle,
   type BundleStoreConfig,
@@ -546,6 +552,133 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(
       reader.getProcedure('sign in', makeScreenStateFixture())?.replayRecommendation,
     ).toBe('hint')
+  })
+
+  /**
+   * G-381-4 read-face admission. The committed procedure is minted through the LIVE
+   * `commitCurationDelta` path (the same job assembly the D-02 commit suite asserts), not a
+   * hand-rolled index entry — the gap was precisely that a genuinely committed bundle was
+   * unreadable, so the fixture shape has to be the live one.
+   */
+  function commitLiveProcedure(
+    overrides: Partial<CommitFixtureProcedureOptions> = {},
+  ): { bundleId: RecordId; bundleDir: string } {
+    const outcome = commitFixtureProcedure({
+      root,
+      knowledgeRoot,
+      auditBaseDir,
+      draft: makeProcedureBundleDraftFixture({ scope: SCOPE }),
+      ...overrides,
+    })
+    if (outcome.kind !== 'applied') {
+      throw new Error(`expected an applied committed procedure, got ${outcome.kind}`)
+    }
+    return { bundleId: asRecordId(outcome.bundleId), bundleDir: outcome.bundleDir }
+  }
+
+  it('serves a committed agent-verified procedure body through the shared admission wall', async () => {
+    const committed = commitLiveProcedure()
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    // The UAT's direct probe, verbatim: a fact body on the SAME store reads fine.
+    expect(reader.read(seeded.activeFact)?.body).toContain('Checkout active-fact body.')
+
+    const body = reader.read(committed.bundleId)
+    expect(body).toBeDefined()
+    if (body === undefined) throw new Error('expected the committed procedure body to be readable')
+    expect(body.id).toBe(committed.bundleId)
+    expect(parseProcedureBody(body.body)?.steps.map(({ instruction }) => instruction))
+      .toEqual(['enter-email', 'enter-password', 'submit'])
+  })
+
+  it('agrees across both faces: what getProcedure can recommend, read() can serve', async () => {
+    const committed = commitLiveProcedure()
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    const match = reader.getProcedure('sign in with recorded credentials', makeScreenStateFixture())
+    expect(match?.id).toBe(committed.bundleId)
+    expect(reader.read(committed.bundleId)).toBeDefined()
+  })
+
+  it('keeps every other read-face wall shut for procedures and unvetted fact candidates', async () => {
+    const deprecated = seedRecord({
+      key: 'procedure-deprecated',
+      kind: 'procedure',
+      status: 'deprecated',
+      anchors: [
+        { t: 'flow', name: 'Sign in flow' },
+        { t: 'page', route: '/login' },
+      ],
+      body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
+      initialEvents: [event('confirmed', 'procedure-deprecated', 10)],
+    })
+    const withheld = seedRecord({
+      key: 'procedure-withheld',
+      kind: 'procedure',
+      status: 'candidate',
+      anchors: [
+        { t: 'flow', name: 'Sign in flow' },
+        { t: 'page', route: '/login' },
+      ],
+      body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
+      provenance: {
+        schemaVersion: 1,
+        mode: 'run-linked',
+        originClass: 'agent-verified',
+        runId: 'reader-procedure-withheld',
+        testId: 'withheld-wall',
+        stepIndex: 0,
+        withheld: true,
+      },
+    })
+    const validityClosed = seedRecord({
+      key: 'procedure-validity-closed',
+      kind: 'procedure',
+      status: 'candidate',
+      anchors: [
+        { t: 'flow', name: 'Sign in flow' },
+        { t: 'page', route: '/login' },
+      ],
+      body: serializeProcedureBody(makeProcedureBodyPayloadFixture()),
+      initialEvents: [
+        event('confirmed', 'procedure-validity-closed', 10),
+        event('window-close', 'procedure-validity-closed', 11),
+      ],
+    })
+    // An app-observed fact candidate never earns the vetted flag (V-checks: originClass must
+    // be agent-verified or user), so it must stay unreadable — the kind-aware clause admits
+    // procedures only, never a fact that currentServingEntries already refused.
+    const unvettedFact = seedRecord({
+      key: 'unvetted-fact-candidate',
+      status: 'candidate',
+      originClass: 'agent-observed',
+      anchors: [{ t: 'page', route: '/unvetted' }],
+    })
+    await rebuildIndex({ knowledgeRoot })
+    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(reader.read(deprecated)).toBeUndefined()
+    expect(reader.read(withheld)).toBeUndefined()
+    expect(reader.read(validityClosed)).toBeUndefined()
+    expect(reader.read(unvettedFact)).toBeUndefined()
+  })
+
+  it('leaks no procedure into brief or caution serving — bytes identical across the commit', async () => {
+    const before = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+    const briefBefore = JSON.stringify(before.getRunBrief(SCOPE, 2_000))
+    const cautionsBefore = JSON.stringify(before.getCautions([CHECKOUT_ANCHOR], 2_000))
+
+    const committed = commitLiveProcedure()
+    await rebuildIndex({ knowledgeRoot })
+    const after = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
+
+    expect(after.read(committed.bundleId)).toBeDefined()
+    expect(JSON.stringify(after.getRunBrief(SCOPE, 2_000))).toBe(briefBefore)
+    expect(JSON.stringify(after.getCautions([CHECKOUT_ANCHOR], 2_000))).toBe(cautionsBefore)
+    expect(after.search('sign in', { scope: SCOPE }).map(({ id }) => id))
+      .not.toContain(committed.bundleId)
   })
 
   it('crosses caution overflow with one accurate reserved terminal line', () => {

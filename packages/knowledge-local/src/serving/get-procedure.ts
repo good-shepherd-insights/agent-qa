@@ -98,12 +98,21 @@ function compareRecordId(left: IndexEntry, right: IndexEntry): number {
 }
 
 /**
- * The matcher's OWN kind-aware admission (Pitfall 1): procedures can never be `active` in M2 and
- * the brief's vetted-candidate path is fact/caution-only, so candidate-status procedures are
- * admitted here through explicit status walls — candidate + validity-open + not-withheld + no
- * surviving user-deprecate. TRUST lives in the fold (hint/replay), never in admission (T-381-11).
+ * The ONE kind-aware procedure admission predicate, shared by BOTH serving faces (G-381-4):
+ * the MATCH face (`matchProcedure` below) and the READ face (`findReadableBundle` in
+ * serving/reader.ts). Procedures can never be `active` in M2 (379 D-16 excludes procedure-kind
+ * from promotion) and the brief's vetted-candidate path is fact/caution-only, so candidate-status
+ * procedures are admitted here through explicit status walls — candidate + validity-open +
+ * not-withheld + no surviving user-deprecate.
+ *
+ * Sharing it is load-bearing, not tidiness: the two faces had diverged, so the matcher could
+ * recommend a replay whose body the reader then refused to serve, silently starving every earned
+ * replay into a hint. Keep this the sole admission authority for both faces so they cannot
+ * diverge again. This is READ admission, never promotion — nothing here makes a procedure
+ * `active`, brief-servable, or caution-servable. TRUST lives in the fold (hint/replay), never in
+ * admission (T-381-11).
  */
-function admitsProcedure({ entry, bundle }: ProcedureMatchCandidate): boolean {
+export function admitsProcedure({ entry, bundle }: ProcedureMatchCandidate): boolean {
   if (entry.kind !== 'procedure') return false
   if (entry.status === 'active') return true
   if (entry.status !== 'candidate') return false
