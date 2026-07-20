@@ -101,6 +101,11 @@ const curationTailLog = {
   warn(message: string): void {
     console.warn(pc.yellow(`Warning: ${message}`))
   },
+  // 381-50: the per-run candidate summary line — same stderr channel as warn so the
+  // ladder run log captures it, but never dressed as a warning.
+  info(message: string): void {
+    console.error(message)
+  },
 }
 
 // SESSION-04 force-exit backstop grace window. Primary guarantee is the shell settling `done`

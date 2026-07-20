@@ -40,7 +40,7 @@ import {
   type BuildCuratorAuthorDependencies,
 } from './curator-author.js'
 import { emitCanaryOutcomes } from './emit-canary-outcomes.js'
-import { emitCurationCandidates } from './emit-candidates.js'
+import { emitCurationCandidates, type EmitReport } from './emit-candidates.js'
 import { exercisedAnchors } from './handoff-anchors.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
@@ -66,6 +66,8 @@ export type CurationTailModelDeps = Pick<
 
 export interface CurationTailLogger {
   warn(message: string): void
+  /** 381-50: carries the per-run candidate summary line — diagnosis, never control flow. */
+  info?(message: string): void
 }
 
 export interface CurationTailOperations {
@@ -198,6 +200,33 @@ function receiptMatches(
     && receipt.projectionVersion === expected.projectionVersion
 }
 
+const CANDIDATE_LINE_KINDS = ['fact', 'measurement', 'caution', 'procedure'] as const
+const CANDIDATE_LINE_OUTCOMES = ['enqueued', 'coalesced', 'cap-exceeded', 'refused'] as const
+
+/**
+ * 381-50 (F-381-48-1): one additive, value-free line per swept run naming every kind's
+ * projected count and outcome split — kinds, counts, and candidate content-address ids
+ * only, never seed/observation/provenance content. The procedure kind always renders,
+ * even at zero projected, so "nothing projected" reads from the line alone. Ids are
+ * listed only for non-enqueued (queue-silent) outcomes to keep the line bounded.
+ */
+function candidateSummaryLine(runId: string, report: EmitReport): string {
+  const segments = CANDIDATE_LINE_KINDS.flatMap((kind) => {
+    const details = report.details.filter((detail) => detail.kind === kind)
+    if (details.length === 0) return kind === 'procedure' ? ['procedure 0 projected'] : []
+    const split = CANDIDATE_LINE_OUTCOMES.flatMap((outcomeKind) => {
+      const rows = details.filter((detail) => detail.outcome.kind === outcomeKind)
+      if (rows.length === 0) return []
+      const ids = outcomeKind === 'enqueued'
+        ? []
+        : rows.flatMap((row) => (row.candidateId === undefined ? [] : [row.candidateId]))
+      return [`${rows.length} ${outcomeKind}${ids.length === 0 ? '' : `: ${ids.join(', ')}`}`]
+    }).join(', ')
+    return [`${kind} ${details.length} projected (${split})`]
+  })
+  return `Knowledge curation candidates for ${runId}: ${segments.join('; ')}.`
+}
+
 function incompleteWarning(runId: string, details?: string): string {
   const diagnostic = details === undefined ? '' : ` (${details})`
   return `Post-verdict knowledge curation incomplete for ${runId}${diagnostic}; it will resume on the next run.`
@@ -274,6 +303,9 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             knowledgeRoot,
             policy: opts.policy,
           })
+          // 381-50: visibility never gates — the summary line is additive diagnosis
+          // beside (never inside) the noop warn and the complete predicate below.
+          opts.log.info?.(candidateSummaryLine(expectedReceipt.runId, candidates))
           // D-20: candidate and canary drops share this scope and crash boundary.
           const reader = operations.openKnowledgeReader({ knowledgeRoot })
           const canaries = operations.emitCanaryOutcomes({
