@@ -102,6 +102,11 @@ function attributedOutcome(
  * A staleness guard miss attributes a negative regardless of the eventual verdict. All negative
  * lanes remain gated by the root-cause classifier, because environment/timeout/flake failures
  * never damn the procedure (D-11). `procedure-hint` exposure is recorded, never judged.
+ *
+ * Positive replay confirmations adopt D-01's per-trajectory passing gate (extraction and
+ * confirmation feed the same trust ladder, D-05), so a run that fails cannot raise the
+ * confidence of the procedure that failed it; suppression is never inversion (D-11) — a
+ * verified-PASS replayed step inside a non-passed test projects nothing at all.
  */
 function procedureReplayOutcome(
   test: PerTestOutcome,
@@ -119,6 +124,9 @@ function procedureReplayOutcome(
   if (miss === undefined) {
     const outcome = attributedOutcome(test, step)
     if (outcome === 'positive' && source.guard.checksPassed !== source.guard.total) {
+      return undefined
+    }
+    if (outcome === 'positive' && test.outcome !== 'passed') {
       return undefined
     }
     return outcome
