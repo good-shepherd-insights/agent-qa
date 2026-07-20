@@ -1023,6 +1023,8 @@ export type EmitCandidateOutcome =
 
 export interface EmitCandidateDetail {
   candidateId?: string
+  /** The projecting candidate's kind: per-kind outcome attribution from the report alone (381-50). */
+  kind: CurationCandidateProjection['kind']
   outcome: EmitCandidateOutcome
 }
 
@@ -1087,6 +1089,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     incrementReport(report, outcome)
     report.details.push({
       ...('candidateId' in outcome ? { candidateId: outcome.candidateId } : {}),
+      kind: projected.kind,
       outcome,
     })
   }
