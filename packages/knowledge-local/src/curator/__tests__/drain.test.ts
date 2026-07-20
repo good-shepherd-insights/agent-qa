@@ -654,6 +654,52 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(existsSync(join(knowledgeRoot, '.lease'))).toBe(false)
   })
 
+  it('records a commit noop with its candidateId and reason (G-381-1 visibility)', async () => {
+    const candidateId = enqueue('noop-visible')
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return {
+        kind: 'authored',
+        deltas: [addDelta(claimed)],
+        authorship: authorship(claimed),
+      }
+    })
+    const commit: DrainOperations['commitCurationDelta'] = (
+      _deps,
+      job,
+    ): CommitCurationOutcome => {
+      writeJobState({ knowledgeRoot, candidateId: job.candidateId, lifecycle: 'done' })
+      return { kind: 'noop', reason: 'procedure-body-unparseable' }
+    }
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: commit,
+      },
+    })
+
+    // A noop stays non-fatal: it is neither a commit nor a failure, only now it is visible.
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 0,
+      failures: 0,
+      noops: 1,
+    })
+    expect(report.noopDetails).toEqual([
+      { candidateId, reason: 'procedure-body-unparseable' },
+    ])
+    expect(report.failureDetails).toEqual([])
+  })
+
   it('durably breaks repeated embedding crashes into a vectorless commit', async () => {
     const candidateId = enqueue('embed-crash')
     const author = vi.fn<CuratorAuthor>(async (job) => {

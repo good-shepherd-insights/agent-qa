@@ -1121,6 +1121,68 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(drainQueue).toHaveBeenCalledOnce()
   })
 
+  it('warns naming every drain noop while still completing the tail (G-381-1)', async () => {
+    const warn = vi.fn()
+    const writeCurationTailReceipt = vi.fn()
+    const base = successfulOperations()
+    const operations = successfulOperations({
+      writeCurationTailReceipt,
+      async drainQueue(options) {
+        const report = await base.drainQueue!(options)
+        return {
+          ...report,
+          noops: 2,
+          noopDetails: [
+            { candidateId: 'cand-a', reason: 'procedure-body-unparseable' },
+            { candidateId: 'cand-b', reason: 'evidence-token-consumed' },
+          ],
+        }
+      },
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn } }))
+
+    const noopWarning = warn.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => /noop/i.test(message))
+    expect(noopWarning).toBeDefined()
+    expect(noopWarning).toContain('cand-a')
+    expect(noopWarning).toContain('procedure-body-unparseable')
+    expect(noopWarning).toContain('cand-b')
+    expect(noopWarning).toContain('evidence-token-consumed')
+    // The complete predicate does NOT gate on noops: legitimate reasons (dedup) must never
+    // wedge a healthy tail into the incomplete retry loop.
+    expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/curation incomplete/i))
+    expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
+  })
+
+  it('adds a drain-noops entry to incompleteDetails when the tail is already incomplete', async () => {
+    const warn = vi.fn()
+    const base = successfulOperations()
+    const operations = successfulOperations({
+      async drainQueue(options) {
+        const report = await base.drainQueue!(options)
+        return {
+          ...report,
+          failures: 1,
+          failureDetails: [{ stage: 'commit' as const, message: 'boom' }],
+          noops: 1,
+          noopDetails: [
+            { candidateId: 'cand-a', reason: 'procedure-body-unparseable' },
+          ],
+        }
+      },
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn } }))
+
+    const incomplete = warn.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => /curation incomplete/i.test(message))
+    expect(incomplete).toBeDefined()
+    expect(incomplete).toContain('drain-noops=1')
+  })
+
   it('registers --detach and invokes the shared tail at both run verdict sites', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../commands/run.ts', import.meta.url)),
