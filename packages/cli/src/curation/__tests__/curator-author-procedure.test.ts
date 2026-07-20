@@ -423,10 +423,16 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(outcome.deltas).toHaveLength(2)
     const bundles = addBundles(outcome.deltas)
     expect(bundles.every((bundle) => bundle.kind === 'procedure')).toBe(true)
+    // Both anchor on seed.flowName (the queue candidate's primary anchor); the sub-flow is
+    // distinguished by its span, and its proposed name survives only in the summary.
     expect(bundles.map((bundle) => bundle.anchors[0])).toEqual([
       { t: 'flow', name: 'auth::sign-in-then-checkout' },
-      { t: 'flow', name: 'auth::sign-in' },
+      { t: 'flow', name: 'auth::sign-in-then-checkout' },
     ])
+    expect(bundles[0]?.summary).toBe('Procedure auth::sign-in-then-checkout (4 steps)')
+    expect(bundles[1]?.summary).toBe(
+      'Procedure auth::sign-in-then-checkout segment auth::sign-in (3 steps)',
+    )
     const payloads = bundles.map((bundle) => parseProcedureBody(bundle.body))
     expect(payloads[0]?.steps).toHaveLength(4)
     expect(payloads[1]?.steps).toHaveLength(3)
@@ -602,7 +608,11 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const bundles = addBundles(outcome.deltas)
 
     expect(bundles).toHaveLength(1)
-    expect(bundles[0]?.anchors[0]).toEqual({ t: 'flow', name: 'auth::literal-files' })
+    expect(bundles[0]?.summary).toContain('segment auth::literal-files')
+    expect(bundles[0]?.anchors[0]).toEqual({
+      t: 'flow',
+      name: 'auth::sign-in-then-checkout',
+    })
   })
 
   it('rejects duplicate parameter names per candidate while building valid siblings', async () => {
@@ -641,7 +651,11 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const bundles = addBundles(outcome.deltas)
 
     expect(bundles).toHaveLength(1)
-    expect(bundles[0]?.anchors[0]).toEqual({ t: 'flow', name: 'auth::valid-sibling' })
+    expect(bundles[0]?.summary).toContain('segment auth::valid-sibling')
+    expect(bundles[0]?.anchors[0]).toEqual({
+      t: 'flow',
+      name: 'auth::sign-in-then-checkout',
+    })
   })
 
   it('rejects duplicate parameter slot ownership per candidate while building valid siblings', async () => {
@@ -680,7 +694,11 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const bundles = addBundles(outcome.deltas)
 
     expect(bundles).toHaveLength(1)
-    expect(bundles[0]?.anchors[0]).toEqual({ t: 'flow', name: 'auth::valid-sibling' })
+    expect(bundles[0]?.summary).toContain('segment auth::valid-sibling')
+    expect(bundles[0]?.anchors[0]).toEqual({
+      t: 'flow',
+      name: 'auth::sign-in-then-checkout',
+    })
   })
 
   it('mints forced parameter names against every proposed name with the smallest suffix', async () => {

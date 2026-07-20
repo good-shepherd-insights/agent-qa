@@ -746,6 +746,19 @@ interface BuiltCandidate {
   pageRoutes: string[]
 }
 
+/**
+ * Typed build outcome. The former `undefined` return told the retry loop nothing, so the model
+ * was asked three times to fix a constraint it was never shown (G-381-1). Reasons are
+ * module-internal strings surfaced only through the extraction retry feedback.
+ */
+type CandidateBuild =
+  | { ok: true; built: BuiltCandidate }
+  | { ok: false; reason: string }
+
+function rejectCandidate(reason: string): CandidateBuild {
+  return { ok: false, reason }
+}
+
 function isCompositeObserved(
   value: ProcedureJsonValue,
 ): value is null | ProcedureJsonValue[] | { [key: string]: ProcedureJsonValue } {
@@ -786,25 +799,49 @@ function reserveForcedParameterName(base: string, usedNames: Set<string>): strin
 /**
  * Deterministic body builder. Guard descriptors and step content derive from the trajectory
  * seed and capture receipt; the proposal contributes only span, parameter names, and the
- * success assertion. Returns undefined on any evidence gap (unknown ordinal, non-contiguous
- * span, guardless or non-replayable step) — never a partially-guarded candidate.
+ * success assertion. Rejects with a typed reason on any evidence gap (unknown ordinal,
+ * non-contiguous span, guardless or non-replayable step) — never a partially-guarded candidate.
+ *
+ * Producer-side normalization (G-381-1): the span's BOUNDARY ordinals are clamped inward while
+ * they fail the shared replayability predicate, so the whole-flow proposal every real flow
+ * invites — [0, last] where last is a targetless assertAI verify step — builds deterministically
+ * instead of dying on the wall. The clamp runs BEFORE the walls and never relaxes one: an
+ * INTERIOR non-replayable step still rejects the candidate (contiguity, D-02).
  */
 function buildCandidatePayload(
   job: CurationJobView,
   seed: ProcedureTrajectorySeed,
   candidate: ExtractionCandidate,
-): BuiltCandidate | undefined {
-  if (hasAmbiguousParameterProposal(candidate)) return undefined
+): CandidateBuild {
+  if (hasAmbiguousParameterProposal(candidate)) {
+    return rejectCandidate(
+      'the proposal declares a duplicate parameter name or claims one value slot twice',
+    )
+  }
   const [start, end] = candidate.stepSpan
-  if (end < start) return undefined
+  if (end < start) {
+    return rejectCandidate(`stepSpan [${start}, ${end}] ends before it starts`)
+  }
   const byOrdinal = new Map(seed.steps.map((step) => [step.ordinal, step]))
-  const covered: ProcedureTrajectoryStep[] = []
+  const requested: ProcedureTrajectoryStep[] = []
   for (let ordinal = start; ordinal <= end; ordinal += 1) {
     const step = byOrdinal.get(ordinal)
-    if (step === undefined) return undefined
-    covered.push(step)
+    if (step === undefined) {
+      return rejectCandidate(`stepSpan [${start}, ${end}] names unknown step ordinal ${ordinal}`)
+    }
+    requested.push(step)
   }
-  if (covered.length < 2) return undefined
+
+  let lo = 0
+  let hi = requested.length - 1
+  while (lo <= hi && !isReplayableTrajectoryStep(requested[lo]!)) lo += 1
+  while (hi >= lo && !isReplayableTrajectoryStep(requested[hi]!)) hi -= 1
+  const covered = requested.slice(lo, hi + 1)
+  if (covered.length < 2) {
+    return rejectCandidate(
+      `stepSpan [${start}, ${end}] clamps to ${covered.length} replayable step(s) once its non-replayable boundary steps are trimmed; a procedure needs at least 2`,
+    )
+  }
 
   const regionKeys = secretRegionKeys(job)
   const appliesIndex = new Map<string, string>()
@@ -813,7 +850,11 @@ function buildCandidatePayload(
       const slotKey = `${target.stepOrdinal}\u0000${target.field}`
       // Defense in depth: never restore the former last-writer-wins behavior if the advisory
       // preflight above is refactored independently.
-      if (appliesIndex.has(slotKey)) return undefined
+      if (appliesIndex.has(slotKey)) {
+        return rejectCandidate(
+          `two parameters claim the same value slot (step ${target.stepOrdinal} field ${target.field})`,
+        )
+      }
       appliesIndex.set(slotKey, parameter.name)
     }
   }
@@ -824,9 +865,16 @@ function buildCandidatePayload(
   const forcedParams: ProcedureParameterSpec[] = []
   const steps: ProcedureStepSpec[] = []
   for (const step of covered) {
-    // Same predicate the presentation renders (G-381-1) — one authority, zero drift.
-    if (!isReplayableTrajectoryStep(step)) return undefined
-    if (step.action === undefined || step.pageRoute === undefined) return undefined
+    // Same predicate the presentation renders (G-381-1) — one authority, zero drift. Reaching
+    // here means the ordinal is INTERIOR to the clamped span, so contiguity forbids trimming it.
+    if (!isReplayableTrajectoryStep(step)) {
+      return rejectCandidate(
+        `step ordinal ${step.ordinal} is presented "replayable": false and sits inside stepSpan [${start}, ${end}]; a span must cover only replayable steps`,
+      )
+    }
+    if (step.action === undefined || step.pageRoute === undefined) {
+      return rejectCandidate(`step ordinal ${step.ordinal} has no replayable action evidence`)
+    }
     const laneKeys = Object.keys(step.action.targets)
 
     const guardSource =
@@ -856,7 +904,11 @@ function buildCandidatePayload(
         // D-03's declared parameter types are deliberately scalar. Letting a proposal claim a
         // composite would either corrupt its shape or create a parameter the replay binder cannot
         // validate, so reject this candidate while leaving valid siblings buildable.
-        if (composite) return undefined
+        if (composite) {
+          return rejectCandidate(
+            `parameter ${proposed} claims composite value slot (step ${step.ordinal} field ${field}); parameters are scalar only`,
+          )
+        }
         referencedParams.add(proposed)
         if (secretSlot) secretEscalated.add(proposed)
         values[field] = { param: proposed }
@@ -911,31 +963,45 @@ function buildCandidatePayload(
     ),
   ]
   return {
-    payload: {
-      schemaVersion: 1,
-      parameters,
-      steps,
-      successAssertion: candidate.successAssertion,
+    ok: true,
+    built: {
+      payload: {
+        schemaVersion: 1,
+        parameters,
+        steps,
+        successAssertion: candidate.successAssertion,
+      },
+      pageRoutes,
     },
-    pageRoutes,
   }
 }
 
+/**
+ * The flow anchor is code-built, never model text (T-381-98). `emit-candidates` pins the queue
+ * candidate's primary anchor to flow:<testId> and seed.flowName IS that testId, so sourcing the
+ * anchor here from the seed is what makes `checkAnchorConsistency` pass structurally — a
+ * model-invented flowName otherwise downgrades the Add to MintUnknown whose synthetic body then
+ * noops 'procedure-body-unparseable' at commit (G-381-1). The proposal's descriptive name
+ * survives only inside the human-readable summary.
+ */
 function procedureDelta(
   job: CurationJobView,
+  seed: ProcedureTrajectorySeed,
   candidate: ExtractionCandidate,
   built: BuiltCandidate,
   stamp: CurationAuthorship,
 ): Delta {
   const anchors: Anchor[] = [
-    { t: 'flow', name: candidate.flowName },
+    { t: 'flow', name: seed.flowName },
     ...built.pageRoutes.map((route) => ({ t: 'page' as const, route })),
   ]
+  const segment =
+    candidate.flowName === seed.flowName ? '' : ` segment ${candidate.flowName}`
   const bundle: BundleDraft = {
     kind: 'procedure',
     anchors,
     scope: { ...job.scope },
-    summary: `Procedure ${candidate.flowName} (${built.payload.steps.length} steps)`,
+    summary: `Procedure ${seed.flowName}${segment} (${built.payload.steps.length} steps)`,
     body: serializeProcedureBody(built.payload),
     distilledEvidenceRef: {
       id: `curation-candidate-${job.candidateId}`,
@@ -979,15 +1045,47 @@ function parseExtractionOutput(
 
   const stamp = authorship(job, profile, decoded.repaired ? 'llm-repaired' : 'llm')
   const deltas: Delta[] = []
-  for (const candidate of proposal.data.candidates) {
-    const built = buildCandidatePayload(job, seed, candidate)
-    if (built === undefined) continue
-    deltas.push(procedureDelta(job, candidate, built, stamp))
+  const rejections: string[] = []
+  for (const [index, candidate] of proposal.data.candidates.entries()) {
+    const build = buildCandidatePayload(job, seed, candidate)
+    if (!build.ok) {
+      rejections.push(`candidate ${index} (${candidate.flowName}): ${build.reason}`)
+      continue
+    }
+    deltas.push(procedureDelta(job, seed, candidate, build.built, stamp))
   }
   if (deltas.length === 0) {
-    return { ok: false, error: 'No buildable procedure candidates in proposal' }
+    return {
+      ok: false,
+      error: `No buildable procedure candidates in proposal — ${rejections.join('; ')}`,
+    }
   }
   return { ok: true, outcome: { kind: 'authored', deltas, authorship: stamp } }
+}
+
+/**
+ * Extraction-job retry feedback (G-381-1). The generic delta-authoring line below speaks of
+ * delta kinds and aliases, which an extraction proposal has neither of — three retries of it
+ * never told the live model to trim its span, and the job died at fallback-required:malformed.
+ * This restates the two contract rules alongside the per-candidate reject reasons.
+ */
+function withExtractionRetryFeedback(
+  messages: readonly ModelMessage[],
+  error: string,
+): ModelMessage[] {
+  return [
+    ...messages,
+    {
+      role: 'user',
+      content: [
+        `Previous proposal built no procedure: ${error}.`,
+        'Correct it against the two constraints the deterministic builder enforces:',
+        '1. Span replayability — a stepSpan may cover ONLY steps presented with "replayable": true; a trailing verify/assert step informs successAssertion instead of joining the span.',
+        '2. flowName echo — copy the presented trajectory flowName verbatim; distinguish a sub-flow by its stepSpan alone.',
+        'Return one corrected JSON object only, no markdown.',
+      ].join('\n'),
+    },
+  ]
 }
 
 function withRetryFeedback(messages: readonly ModelMessage[], error: string): ModelMessage[] {
@@ -1050,7 +1148,9 @@ export function buildCuratorAuthor(deps: BuildCuratorAuthorDependencies): Curato
     let malformedReason: string | undefined
     for (let attempt = 0; attempt <= CURATOR_RETRY_CAP; attempt += 1) {
       const messages =
-        malformedReason === undefined ? base : withRetryFeedback(base, malformedReason)
+        malformedReason === undefined
+          ? base
+          : withExtractionRetryFeedback(base, malformedReason)
       let estimatedTokens: number
       try {
         estimatedTokens = accounting.estimate(messages)

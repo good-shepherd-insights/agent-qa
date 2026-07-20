@@ -442,6 +442,9 @@ describe('buildCuratorAuthor parse, repair, retry, and alias boundary (CUR-01)',
     expect(promptText(calls[0]!)).not.toMatch(/unknown alias 99/i)
     for (const retry of calls.slice(1)) {
       expect(promptText(retry)).toMatch(/unknown alias 99/i)
+      // 381-40 gave PROCEDURE jobs their own constraint-naming feedback; the delta-authoring
+      // retry text is deliberately unchanged (G-381-1 touched only the extraction path).
+      expect(promptText(retry)).toMatch(/documented delta kinds and presented aliases/i)
     }
   })
 
