@@ -315,9 +315,14 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
           // evidence-token dedup would otherwise wedge a healthy tail into the retry loop.
           // The complete predicate below is deliberately unchanged.
           if (drain.noops > 0) {
+            // 381-47: the empty-delta cause renders inside the existing parenthetical;
+            // the count-anchored prefix stays byte-identical for the ladder extractor.
             opts.log.warn(
               `Knowledge curation drain produced ${drain.noops} commit noop(s) for ${expectedReceipt.runId}: ${drain.noopDetails
-                .map((noop) => `${noop.candidateId} (${noop.reason})`)
+                .map((noop) =>
+                  `${noop.candidateId} (${noop.reason}${
+                    noop.emptyDeltaCause === undefined ? '' : `: ${noop.emptyDeltaCause}`
+                  })`)
                 .join(', ')}.`,
             )
           }
