@@ -68,6 +68,70 @@ function scriptedModel(outputs: string[]): CuratorModel {
   }
 }
 
+interface CapturedPrompt {
+  system: string
+  user: string
+}
+
+/**
+ * Scripted model that also records what the author actually sent. Prompt-contract and
+ * trajectory-render assertions read these — the extraction prompt is module-internal.
+ */
+function capturingModel(outputs: string[]): {
+  model: CuratorModel
+  prompts: CapturedPrompt[]
+} {
+  const prompts: CapturedPrompt[] = []
+  let index = 0
+  const model = {
+    specificationVersion: 'v3',
+    provider: 'scripted',
+    modelId: 'scripted',
+    supportedUrls: {},
+    async doGenerate(options: { prompt: unknown }) {
+      prompts.push(readPrompt(options.prompt))
+      const output = outputs[index++]
+      if (output === undefined) throw new Error('scripted model exhausted')
+      return generateResult(output)
+    },
+    async doStream() {
+      return { stream: new ReadableStream() }
+    },
+  } as unknown as CuratorModel
+  return { model, prompts }
+}
+
+function readPrompt(prompt: unknown): CapturedPrompt {
+  const messages = prompt as {
+    role: string
+    content: string | { type: string; text?: string }[]
+  }[]
+  const flatten = (content: string | { type: string; text?: string }[]): string =>
+    typeof content === 'string'
+      ? content
+      : content.map((part) => part.text ?? '').join('\n')
+  return {
+    system: messages
+      .filter((message) => message.role === 'system')
+      .map((message) => flatten(message.content))
+      .join('\n'),
+    user: messages
+      .filter((message) => message.role === 'user')
+      .map((message) => flatten(message.content))
+      .join('\n'),
+  }
+}
+
+/** The presented trajectory JSON the author wrapped in DATA delimiters. */
+function renderedTrajectory(prompt: CapturedPrompt): {
+  flowName: string
+  steps: { ordinal: number; replayable?: boolean }[]
+} {
+  const start = prompt.user.indexOf('{')
+  const end = prompt.user.lastIndexOf('}')
+  return JSON.parse(prompt.user.slice(start, end + 1))
+}
+
 function trajectorySeed(): ProcedureTrajectorySeed {
   return {
     version: 1,
@@ -159,6 +223,65 @@ function compositeTrajectorySeed(): ProcedureTrajectorySeed {
   } as unknown as NonNullable<ProcedureTrajectorySeed['steps'][number]['action']>
   return seed
 }
+
+/**
+ * LIVE shape (the 18-run UAT's finding, G-381-1): every real flow's FINAL step is a verify step
+ * planned as assertAI — no element targets, non-replayable — so a whole-flow [0, last] proposal
+ * hits buildCandidatePayload's per-step wall. Task 1 renders it; Task 2 clamps it.
+ */
+function liveShapedSeed(): ProcedureTrajectorySeed {
+  const seed = trajectorySeed()
+  seed.steps.push({
+    ordinal: 4,
+    instruction: 'Verify the checkout page shows the order summary',
+    action: {
+      type: 'assertAI',
+      targets: {},
+      values: {},
+    },
+    pageRoute: '/checkout',
+  } as unknown as ProcedureTrajectorySeed['steps'][number])
+  return seed
+}
+
+/** Same LIVE shape but the non-replayable step sits INTERIOR — contiguity must still reject. */
+function interiorNonReplayableSeed(): ProcedureTrajectorySeed {
+  const seed = liveShapedSeed()
+  seed.steps[2] = {
+    ordinal: 2,
+    instruction: 'Read the one-time code from the banner',
+    action: {
+      type: 'extractAI',
+      targets: {},
+      values: {},
+    },
+    pageRoute: '/login',
+  } as unknown as ProcedureTrajectorySeed['steps'][number]
+  return seed
+}
+
+function liveShapedJob(overrides: Partial<CurationJobView> = {}): CurationJobView {
+  return procedureJob({ bodySeed: canonicalJson(liveShapedSeed()), ...overrides })
+}
+
+/** The naive proposal the live model actually emits: whole flow [0, last] + an invented name. */
+const naiveWholeFlowProposal = JSON.stringify({
+  candidates: [
+    {
+      flowName: 'submit-username-form',
+      stepSpan: [0, 4],
+      parameters: [
+        {
+          name: 'accountEmail',
+          type: 'string',
+          required: true,
+          appliesTo: [{ stepOrdinal: 1, field: 'text' }],
+        },
+      ],
+      successAssertion: 'The checkout page is shown',
+    },
+  ],
+})
 
 function procedureJob(overrides: Partial<CurationJobView> = {}): CurationJobView {
   return {
@@ -253,6 +376,18 @@ function author(outputs: string[]) {
     auth: noAuth,
     createModelImpl: () => scriptedModel(outputs),
   })
+}
+
+function capturingAuthor(outputs: string[]) {
+  const captured = capturingModel(outputs)
+  return {
+    prompts: captured.prompts,
+    author: buildCuratorAuthor({
+      profile: profile(),
+      auth: noAuth,
+      createModelImpl: () => captured.model,
+    }),
+  }
 }
 
 function addBundles(deltas: Delta[]) {
@@ -582,6 +717,51 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(new Set(payload.parameters.map(({ name }) => name)).size).toBe(
       payload.parameters.length,
     )
+  })
+
+  it('states the span-replayability and flowName-echo contract rules in the prompt (G-381-1)', async () => {
+    const { author: run, prompts } = capturingAuthor([wholeFlowPlusSubFlow])
+    await run(procedureJob(), [])
+
+    const system = prompts[0]!.system
+    // The span-replayability rule: only replayable-marked steps may be covered, and the
+    // trailing verify/assert step informs successAssertion rather than joining the span.
+    expect(system).toContain('replayable: true')
+    expect(system).toMatch(/successAssertion/)
+    expect(system).toMatch(/exclude|excluded/i)
+    // The flowName-echo rule: echo the presented flowName verbatim; sub-flows differ by span.
+    expect(system).toMatch(/echo/i)
+    expect(system).toContain('stepSpan')
+    expect(system).toMatch(/never by (a )?new|never invent|verbatim/i)
+  })
+
+  it('marks each presented trajectory step replayable by the builder predicate (G-381-1)', async () => {
+    const { author: run, prompts } = capturingAuthor([naiveWholeFlowProposal])
+    await run(liveShapedJob(), [])
+
+    const rendered = renderedTrajectory(prompts[0]!)
+    expect(rendered.flowName).toBe('auth::sign-in-then-checkout')
+    expect(rendered.steps.map((step) => step.replayable)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+    ])
+  })
+
+  it('marks an interior non-replayable step false alongside a non-replayable tail', async () => {
+    const { author: run, prompts } = capturingAuthor([naiveWholeFlowProposal])
+    await run(procedureJob({ bodySeed: canonicalJson(interiorNonReplayableSeed()) }), [])
+
+    const rendered = renderedTrajectory(prompts[0]!)
+    expect(rendered.steps.map((step) => step.replayable)).toEqual([
+      true,
+      true,
+      false,
+      true,
+      false,
+    ])
   })
 
   it('widened multi-delta checkpoint round-trips and single-delta fact authoring still works', async () => {
