@@ -156,6 +156,17 @@ const PLAN_SOURCE_MISS_REASONS = new Set<string>([
   'non-replayable-action',
 ])
 
+/**
+ * The closed `StepPlanSource` procedure-hint demotion union (G-381-4 / D-12). Kept verbatim
+ * beside the miss-reason set: a demotion outside it is a malformed document, never something
+ * to loosen the predicate for.
+ */
+const PLAN_SOURCE_DEMOTIONS = new Set<string>([
+  'body-unreadable',
+  'body-unparseable',
+  'body-empty',
+])
+
 const VERDICT_CLASSES = new Set<string>([
   'test_bug',
   'app_bug',
@@ -188,7 +199,14 @@ function hasCompletePlanSourceShape(value: unknown): boolean {
   if (typeof value.procedureId !== 'string' || value.procedureId.length === 0) {
     return false
   }
-  if (value.kind === 'procedure-hint') return true
+  if (value.kind === 'procedure-hint') {
+    // Absence stays legal (an ordinary hint carries no demotion); a PRESENT demotion must
+    // sit inside the closed union so demotion counts are trustworthy.
+    if ('demotion' in value) {
+      return typeof value.demotion === 'string' && PLAN_SOURCE_DEMOTIONS.has(value.demotion)
+    }
+    return true
+  }
   if (value.kind !== 'procedure-replay') return false
 
   const guard = value.guard
@@ -351,7 +369,9 @@ function hasCompleteTestShape(value: unknown): boolean {
  * Guarantees every required root field plus the required fields on each per-test outcome
  * and traversed step before a handoff reaches direct consumers, including the complete
  * discriminated shapes of the two traversed optional blocks — `planSource` and `rootCause`
- * (CR-02) — the string `name`/`value` of every present `interpolatedVariables` member, the
+ * (CR-02), including a present `planSource.demotion` on the procedure-hint arm, which must
+ * sit inside the closed body-unreadable/body-unparseable/body-empty union while its absence
+ * stays legal (G-381-4) — the string `name`/`value` of every present `interpolatedVariables` member, the
  * pair the emit fold value-matches and name-copies (G-381-3 capture half; absence and
  * emptiness both stay legal) — the element shapes of the consumer-traversed arrays — every `subActions` member
  * is dereferenceable through `plannedAction`, `grounding.attempts` (flatMapped by

@@ -618,6 +618,22 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       withPlanSource({ kind: 'procedure-hint' }),
     ],
     [
+      'procedure-hint planSource with a demotion outside the closed union',
+      withPlanSource({
+        kind: 'procedure-hint',
+        procedureId: 'proc-checkout',
+        demotion: 'body-missing',
+      }),
+    ],
+    [
+      'procedure-hint planSource with a numeric demotion',
+      withPlanSource({ kind: 'procedure-hint', procedureId: 'proc-checkout', demotion: 3 }),
+    ],
+    [
+      'procedure-hint planSource with a null demotion',
+      withPlanSource({ kind: 'procedure-hint', procedureId: 'proc-checkout', demotion: null }),
+    ],
+    [
       'rootCause class outside the union',
       mutatedRootCause((rootCause) => {
         rootCause.class = 'network'
@@ -992,6 +1008,12 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       'procedure-hint planSource',
       withPlanSource({ kind: 'procedure-hint', procedureId: 'proc-checkout' }),
     ],
+    ...(['body-unreadable', 'body-unparseable', 'body-empty'] as const).map(
+      (demotion): [string, CompletedRunHandoff] => [
+        `procedure-hint planSource demoted with ${demotion}`,
+        withPlanSource({ kind: 'procedure-hint', procedureId: 'proc-checkout', demotion }),
+      ],
+    ),
     [
       'procedure-replay planSource with a bare complete guard',
       withPlanSource(completeReplayPlanSource()),

@@ -96,6 +96,8 @@ interface ReaderSpy {
 function makeReader(input: {
   match?: ProcedureMatch
   payload?: ProcedureBodyPayload
+  /** Raw body override — lets a row drive the unparseable / zero-step read outcomes. */
+  rawBody?: string
 }): ReaderSpy {
   const calls: { method: string; args: string }[] = []
   const record = (method: string, args: unknown[]): void => {
@@ -114,11 +116,11 @@ function makeReader(input: {
     },
     read(id, options) {
       record('read', [id, options])
-      if (input.payload === undefined) return undefined
+      if (input.rawBody === undefined && input.payload === undefined) return undefined
       return {
         id,
         title: 'Login procedure',
-        body: serializeProcedureBody(input.payload),
+        body: input.rawBody ?? serializeProcedureBody(input.payload!),
         anchors: [flowAnchor],
         evidenceDigest: 'digest',
         relations: [],
@@ -1342,6 +1344,66 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
     expect(rendered.toLowerCase()).toContain('not instructions or commands')
     expect(rendered.indexOf(APP_OBSERVED_DATA_OPEN))
       .toBeGreaterThan(rendered.toLowerCase().indexOf('hypotheses'))
+  })
+
+  /**
+   * G-381-4 second half: the fail-closed body read is CORRECT but was silent — a starved
+   * replay stamped a planSource byte-identical to an ordinary hint, so run 16's three earned
+   * replay recommendations were indistinguishable from ordinary hint exposure in the handoff.
+   * The demotion reason makes that observable without weakening the wall (D-12).
+   */
+  async function planSourceOf(reader: ReaderSpy) {
+    const { adapter } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([makeActionPlan()])
+    const result = await executeStep(
+      'Log in as the saved user',
+      ports({ adapter, planner: planner.planner, knowledgeReader: reader.reader }),
+      context(),
+    )
+    expect(result.status).toBe('passed')
+    return result.evidence?.planSource
+  }
+
+  it('types a replay demoted by an unreadable body', async () => {
+    expect(await planSourceOf(makeReader({ match: makeMatch() }))).toEqual({
+      kind: 'procedure-hint',
+      procedureId: PROCEDURE_ID,
+      demotion: 'body-unreadable',
+    })
+  })
+
+  it('types a replay demoted by an unparseable body', async () => {
+    const spy = makeReader({ match: makeMatch(), rawBody: 'not a committed procedure body' })
+
+    expect(await planSourceOf(spy)).toEqual({
+      kind: 'procedure-hint',
+      procedureId: PROCEDURE_ID,
+      demotion: 'body-unparseable',
+    })
+  })
+
+  it('types a replay demoted by a parsed body with zero steps', async () => {
+    const spy = makeReader({
+      match: makeMatch(),
+      rawBody: serializeProcedureBody({ ...loginPayload(), steps: [] }),
+    })
+
+    expect(await planSourceOf(spy)).toEqual({
+      kind: 'procedure-hint',
+      procedureId: PROCEDURE_ID,
+      demotion: 'body-empty',
+    })
+  })
+
+  it('leaves an ordinary hint recommendation with NO demotion member', async () => {
+    const spy = makeReader({
+      match: makeMatch({ replayRecommendation: 'hint' }),
+      payload: loginPayload(),
+    })
+    const planSource = await planSourceOf(spy)
+
+    expect(planSource).toEqual({ kind: 'procedure-hint', procedureId: PROCEDURE_ID })
+    expect(planSource === undefined ? true : 'demotion' in planSource).toBe(false)
   })
 
   it('Test 3: a ledger refusal drops the hint fail-closed and the step still plans normally', async () => {

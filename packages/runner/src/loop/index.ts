@@ -298,7 +298,13 @@ export async function executeStep(
     executionFailure?: { procedureStepIndex: number }
     verifierRejection?: { procedureStepIndex: number }
   } | undefined
-  let procedureHintStaged: { procedureId: RecordId; anchors: Anchor[]; block: string } | undefined
+  let procedureHintStaged: {
+    procedureId: RecordId
+    anchors: Anchor[]
+    block: string
+    /** Set only on the fail-closed body-read demotion path (G-381-4 / D-12). */
+    demotion?: ProcedureHintDemotion
+  } | undefined
   let procedureHintExposed = false
 
   // Loop-side procedure parameter binding (D-08/T-381-21): values bind by NAME from the
@@ -782,10 +788,19 @@ export async function executeStep(
             if (payload !== undefined && payload.steps.length > 0) {
               procedureReplay = { match, payload, nextIndex: 0, checksPassed: 0, aborted: false }
             } else {
+              // G-381-4: the wall is unchanged — no partial body, no default body, no replay
+              // without a parsed payload. Only the EVIDENCE changes: the earned replay that
+              // the wall just refused records WHY, so a starved replay can never again be
+              // indistinguishable from an ordinary hint recommendation (D-12).
               procedureHintStaged = {
                 procedureId: match.id,
                 anchors: [match.flowAnchor],
                 block: renderProcedureHintBlock(match, payload, undefined, maskValue),
+                demotion: body === undefined
+                  ? 'body-unreadable'
+                  : payload === undefined
+                    ? 'body-unparseable'
+                    : 'body-empty',
               }
             }
           } else {
@@ -1019,7 +1034,11 @@ export async function executeStep(
           // planSource procedure-hint — unless a replay attempt already owns the planSource
           // slot (post-miss demotion keeps the procedure-replay fold with its miss).
           if (!procedureHintExposed && procedureReplay === undefined) {
-            recorder.recordPlanSource({ kind: 'procedure-hint', procedureId: hint.procedureId })
+            recorder.recordPlanSource({
+              kind: 'procedure-hint',
+              procedureId: hint.procedureId,
+              ...(hint.demotion === undefined ? {} : { demotion: hint.demotion }),
+            })
           }
           procedureHintExposed = true
         }
@@ -1847,6 +1866,11 @@ function replayFromCache(value: CachedPlanValue, elements: readonly ElementInfo[
 type ProcedureGuardMissReason = NonNullable<
   Extract<StepPlanSource, { kind: 'procedure-replay' }>['guard']['miss']
 >['reason']
+
+/** The closed fail-closed body-read demotion vocabulary — the schema procedure-hint arm. */
+type ProcedureHintDemotion = NonNullable<
+  Extract<StepPlanSource, { kind: 'procedure-hint' }>['demotion']
+>
 
 type ProcedureReplayAttempt =
   | { ok: true; plan: ActionPlan }

@@ -63,7 +63,24 @@ export type StepPlanSource =
         }
       }
     }
-  | { kind: 'procedure-hint'; procedureId: RecordId }
+  | {
+      kind: 'procedure-hint'
+      procedureId: RecordId
+      /**
+       * Present ONLY when this hint is a replay recommendation that the loop's fail-closed
+       * body read demoted (D-12 evidence discipline): the matcher earned a replay, but the
+       * committed body could not be read (`body-unreadable`), could not be decoded
+       * (`body-unparseable`), or decoded to zero steps (`body-empty`).
+       *
+       * An ordinary hint recommendation carries NO demotion member at all, so a starved
+       * replay is structurally distinguishable from ordinary served-hint exposure. Without
+       * it the two are byte-identical, which is exactly how G-381-4 hid three earned replay
+       * recommendations behind ordinary-looking hints across a whole live run. Eval and M3
+       * gate audits count demotions from this member; do not widen it into a free-form
+       * string.
+       */
+      demotion?: 'body-unreadable' | 'body-unparseable' | 'body-empty'
+    }
 
 export interface Decision {
   plan: string
