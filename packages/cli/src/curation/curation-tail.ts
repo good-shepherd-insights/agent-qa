@@ -311,6 +311,16 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             policy: opts.policy,
             ...(opts.signal === undefined ? {} : { signal: opts.signal }),
           })
+          // A commit noop is visible but never fatal (G-381-1): legitimate reasons such as
+          // evidence-token dedup would otherwise wedge a healthy tail into the retry loop.
+          // The complete predicate below is deliberately unchanged.
+          if (drain.noops > 0) {
+            opts.log.warn(
+              `Knowledge curation drain produced ${drain.noops} commit noop(s) for ${expectedReceipt.runId}: ${drain.noopDetails
+                .map((noop) => `${noop.candidateId} (${noop.reason})`)
+                .join(', ')}.`,
+            )
+          }
           complete = candidates.refused === 0
             && candidates.capExceeded === 0
             && canaries.refused === 0
@@ -329,6 +339,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
               `drain-kind=${drain.kind}`,
               `drain-failures=${drain.failures}`,
               `drain-requeued=${drain.requeued}`,
+              `drain-noops=${drain.noops}`,
             ].join(', ')
           }
         },

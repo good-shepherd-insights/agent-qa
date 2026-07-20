@@ -342,6 +342,7 @@ export {
 export type {
   DrainFailure,
   DrainFailureStage,
+  DrainNoop,
   DrainOptions,
   DrainReport,
   GcPassReport,

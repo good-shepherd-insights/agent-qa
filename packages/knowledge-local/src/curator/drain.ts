@@ -132,6 +132,16 @@ export type GcPassReport =
     }
   | { kind: 'failed'; message: string }
 
+/**
+ * A commit that decided there was nothing to apply. Legitimate reasons exist (evidence-token
+ * dedup), so a noop is never a failure — but dropping it on the floor made live procedure
+ * extraction die silently for 13 UAT runs (G-381-1). Visibility, never a gate.
+ */
+export interface DrainNoop {
+  candidateId: string
+  reason: string
+}
+
 interface DrainReportBase {
   jobsProcessed: number
   committed: number
@@ -140,6 +150,8 @@ interface DrainReportBase {
   requeued: number
   failures: number
   failureDetails: DrainFailure[]
+  noops: number
+  noopDetails: DrainNoop[]
   reconcile: ReconcileReport | undefined
   writerPass: WriterPassReport
   gc: GcPassReport
@@ -305,6 +317,8 @@ function emptyReport(): DrainReportBase {
     requeued: 0,
     failures: 0,
     failureDetails: [],
+    noops: 0,
+    noopDetails: [],
     reconcile: undefined,
     writerPass: { kind: 'not-requested' },
     gc: { kind: 'not-run' },
@@ -634,6 +648,12 @@ function mapCommitOutcome(
       report.withheld += 1
       return 'continue'
     case 'noop':
+      // Counted and named, never fatal — the complete predicate must not gate on this.
+      report.noops += 1
+      report.noopDetails.push({
+        candidateId: job.candidateId,
+        reason: outcome.reason,
+      })
       return 'continue'
     case 'failed':
       recordFailure(report, 'commit', outcome.reason, job.candidateId)
