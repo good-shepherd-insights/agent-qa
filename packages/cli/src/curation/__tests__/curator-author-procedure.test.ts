@@ -260,6 +260,60 @@ function interiorNonReplayableSeed(): ProcedureTrajectorySeed {
   return seed
 }
 
+/**
+ * The LIVE binding shape (G-381-3): ordinal 1's email slot is an INTERPOLATED `{{env:PROBE_USER}}`
+ * value — post-interpolation it is an ordinary literal, named only by 381-41's provenance — and
+ * ordinal 2's password slot carries the redacted `[secret:PROBE_TOKEN]` marker form. Both slots
+ * therefore reach the builder with a sourceName, which is what must survive into the committed
+ * parameter names for consult-time fillability (D-08) to match.
+ */
+function sourcedSeed(): ProcedureTrajectorySeed {
+  const seed = trajectorySeed()
+  seed.steps[1]!.action!.values['text'] = {
+    observed: 'qa.user@example.com',
+    source: 'test-variable',
+    sourceName: 'PROBE_USER',
+    targetRef: 'email',
+  } as never
+  seed.steps[2]!.action!.values['text'] = {
+    observed: '[secret:PROBE_TOKEN]',
+    source: 'masked-secret',
+    sourceName: 'PROBE_TOKEN',
+    targetRef: 'password',
+  } as never
+  return seed
+}
+
+function sourcedJob(bodySeed = canonicalJson(sourcedSeed())): CurationJobView {
+  return procedureJob({ bodySeed })
+}
+
+function sourcedProposal(emailName: string, passwordName: string): string {
+  return JSON.stringify({
+    candidates: [
+      {
+        flowName: 'auth::sign-in-then-checkout',
+        stepSpan: [0, 3],
+        parameters: [
+          {
+            name: emailName,
+            type: 'string',
+            required: true,
+            appliesTo: [{ stepOrdinal: 1, field: 'text' }],
+          },
+          {
+            name: passwordName,
+            type: 'secret',
+            required: true,
+            appliesTo: [{ stepOrdinal: 2, field: 'text' }],
+          },
+        ],
+        successAssertion: 'The checkout page is shown',
+      },
+    ],
+  })
+}
+
 function liveShapedJob(overrides: Partial<CurationJobView> = {}): CurationJobView {
   return procedureJob({ bodySeed: canonicalJson(liveShapedSeed()), ...overrides })
 }
@@ -895,6 +949,179 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(retry).toMatch(/ordinal 2/)
     expect(retry).toMatch(/replayable/i)
     expect(retry).toMatch(/flowName/)
+  })
+
+  it('shows sourceName on rendered value slots and demands it in the prompt (G-381-3)', async () => {
+    const { author: run, prompts } = capturingAuthor([sourcedProposal('PROBE_USER', 'PROBE_TOKEN')])
+
+    await run(sourcedJob(), [])
+
+    const rendered = JSON.parse(
+      prompts[0]!.user.slice(
+        prompts[0]!.user.indexOf('{'),
+        prompts[0]!.user.lastIndexOf('}') + 1,
+      ),
+    ) as { steps: { valueSlots?: Record<string, { sourceName?: string }> }[] }
+    expect(rendered.steps[1]?.valueSlots?.['text']?.sourceName).toBe('PROBE_USER')
+    expect(rendered.steps[2]?.valueSlots?.['text']?.sourceName).toBe('PROBE_TOKEN')
+    expect(prompts[0]!.system).toMatch(/sourceName/)
+  })
+
+  it('commits the binding names against a proposal that invented its own (G-381-3)', async () => {
+    const outcome = await author([sourcedProposal('username', 'probe_token')])(sourcedJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+
+    expect(payload?.steps[1]?.action.values['text']).toEqual({ param: 'PROBE_USER' })
+    expect(payload?.steps[2]?.action.values['text']).toEqual({ param: 'PROBE_TOKEN' })
+    expect(payload?.parameters).toEqual(
+      expect.arrayContaining([
+        { name: 'PROBE_USER', type: 'string', required: true },
+        { name: 'PROBE_TOKEN', type: 'secret', required: true },
+      ]),
+    )
+    expect(payload?.parameters).toHaveLength(2)
+  })
+
+  it('forces a MISSED sourced slot to its binding name, not a synthetic ordinal name', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::sign-in-then-checkout',
+          stepSpan: [0, 3],
+          parameters: [],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(sourcedJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+
+    expect(payload?.parameters.map((parameter) => parameter.name).sort()).toEqual([
+      'PROBE_TOKEN',
+      'PROBE_USER',
+    ])
+    expect(payload?.parameters.map((p) => p.name).join()).not.toMatch(/step\d+_/)
+  })
+
+  it('collapses two slots sharing one sourceName onto ONE parameter, secret type winning', async () => {
+    const seed = sourcedSeed()
+    // Ordinal 1 and ordinal 2 both bind PROBE_TOKEN; ordinal 2's is the masked slot.
+    seed.steps[1]!.action!.values['text'] = {
+      observed: 'tok-live-9f3a2b',
+      source: 'test-variable',
+      sourceName: 'PROBE_TOKEN',
+      targetRef: 'email',
+    } as never
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::sign-in-then-checkout',
+          stepSpan: [0, 3],
+          parameters: [],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(sourcedJob(canonicalJson(seed)), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
+
+    expect(payload?.parameters).toEqual([
+      { name: 'PROBE_TOKEN', type: 'secret', required: true },
+    ])
+    expect(payload?.steps[1]?.action.values['text']).toEqual({ param: 'PROBE_TOKEN' })
+    expect(payload?.steps[2]?.action.values['text']).toEqual({ param: 'PROBE_TOKEN' })
+  })
+
+  it('rejects a proposal whose one parameter spans two DIFFERENT sourceNames', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::sign-in-then-checkout',
+          stepSpan: [0, 3],
+          parameters: [
+            {
+              name: 'credential',
+              type: 'string',
+              required: true,
+              appliesTo: [
+                { stepOrdinal: 1, field: 'text' },
+                { stepOrdinal: 2, field: 'text' },
+              ],
+            },
+          ],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+
+    const outcome = await author(
+      Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => proposal),
+    )(sourcedJob(), [])
+
+    expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
+  })
+
+  it('rejects when a proposal name collides with an unrelated slot’s forced binding name', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::sign-in-then-checkout',
+          stepSpan: [0, 3],
+          parameters: [
+            {
+              // Claims the UNSOURCED clearMode slot under a name the sourced text slot owns.
+              name: 'PROBE_USER',
+              type: 'string',
+              required: true,
+              appliesTo: [{ stepOrdinal: 1, field: 'clearMode' }],
+            },
+          ],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+
+    const outcome = await author(
+      Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => proposal),
+    )(sourcedJob(), [])
+
+    expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
+  })
+
+  it('names the naming conflict in procedure retry feedback', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::sign-in-then-checkout',
+          stepSpan: [0, 3],
+          parameters: [
+            {
+              name: 'credential',
+              type: 'string',
+              required: true,
+              appliesTo: [
+                { stepOrdinal: 1, field: 'text' },
+                { stepOrdinal: 2, field: 'text' },
+              ],
+            },
+          ],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+    const { author: run, prompts } = capturingAuthor(
+      Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => proposal),
+    )
+
+    await run(sourcedJob(), [])
+
+    expect(prompts[1]!.user).toMatch(/PROBE_USER/)
+    expect(prompts[1]!.user).toMatch(/PROBE_TOKEN/)
   })
 
   it('widened multi-delta checkpoint round-trips and single-delta fact authoring still works', async () => {
