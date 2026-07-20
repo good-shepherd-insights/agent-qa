@@ -22,9 +22,9 @@ import type {
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import { executeStep } from '../index.js'
-import type { LoopPorts } from '../ports.js'
-import type { ActionPlan, Planner, StepContext } from '../types.js'
-import { makeActionPlan, makeStepContext } from './loop-harness.js'
+import type { LoopPorts, ProcedureFlowCarry } from '../ports.js'
+import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
+import { makeActionPlan, makeStepContext, makeVerifier } from './loop-harness.js'
 
 const FORM_ROUTE = 'http://127.0.0.1:8931/form.html'
 const RECEIVED_ROUTE = 'http://127.0.0.1:8931/received.html'
@@ -399,5 +399,236 @@ describe('procedure step boundary (F-381-51-1 · D-09)', () => {
     // form-less received page — which makes the scripted step 1 imperative unsatisfiable.
     expect(executed.filter((action) => action.type === 'click')).toHaveLength(0)
     expect(currentScreen().url).toBe(FORM_ROUTE)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GREEN rows: the option-(a) cross-step carry (F-381-51-1 · D-09/D-10/D-11/D-12).
+// Body steps map 1:1 onto test steps; the member-scoped carry cell is the ONLY channel
+// the cursor crosses a test-step boundary on, and take-then-rearm makes carry loss the
+// default on every early exit.
+// ---------------------------------------------------------------------------
+
+describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
+  it('the carry drives body step 1 at test step 1 — fill at step 0, click at step 1, live at step 2', async () => {
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
+    const { adapter, executed, currentScreen } = navigatingAdapter()
+    const { reader, consultCount } = makeFlowReader()
+    const planner = capturingPlanner([makeActionPlan()])
+    let verifies = 0
+    const verifier: Verifier = {
+      async verify() {
+        verifies++
+        return { verification: { success: true, reasoning: 'accepted', isAppError: false } }
+      },
+    }
+    const sharedPorts = (): LoopPorts => ports({
+      adapter,
+      planner: planner.planner,
+      verifier,
+      knowledgeReader: reader,
+      procedureFlow: flowCell,
+    })
+
+    // Test step 0: the fresh consult earns replay; the step consumes body step 0 (fill).
+    const step0 = await executeStep(STEP_0_TEXT, sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(step0.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: { checksPassed: 1, total: 1 },
+      flow: { cursor: 0, length: 2 },
+    })
+    expect(executed.map((action) => action.type)).toEqual(['fill'])
+    expect(currentScreen().url).toBe(FORM_ROUTE)
+    // The re-armed carry transports match + payload + cursor only — never a resolved ref.
+    expect(flowCell.carry?.nextIndex).toBe(1)
+    expect(flowCell.carry?.payload.steps).toHaveLength(2)
+    expect(verifies).toBe(1)
+
+    // Test step 1: the carry substitutes the consult (ZERO matcher call) and drives body
+    // step 1 (click) under fresh guards on ITS OWN pre-action screen; the click navigates.
+    const step1 = await executeStep('Click the Submit button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
+    expect(consultCount()).toBe(1)
+    expect(step1.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: { checksPassed: 1, total: 1 },
+      flow: { cursor: 1, length: 2 },
+    })
+    expect(executed.map((action) => action.type)).toEqual(['fill', 'click'])
+    expect(currentScreen().url).toBe(RECEIVED_ROUTE)
+    // Guards stay pre-action while the evidence records the honest post-action navigation.
+    const completing = step1.evidence!.subActions.at(-1)!
+    expect(completing.stateBefore.url).toBe(FORM_ROUTE)
+    expect(completing.stateAfter?.url).toBe(RECEIVED_ROUTE)
+    // Exhaustion: the last body step's test step leaves NO carry.
+    expect(flowCell.carry).toBeUndefined()
+    expect(verifies).toBe(2)
+
+    // Test step 2: no carry — the fresh consult mismatches the received page (healthy
+    // fail-closed behavior) and the step plans live with planSource null.
+    const step2 = await executeStep('Verify the page says "Received!"', sharedPorts(), context())
+    expect(step2.status).toBe('passed')
+    expect(consultCount()).toBe(2)
+    expect(step2.evidence?.planSource).toBeUndefined()
+    expect(planner.calls).toHaveLength(1)
+    expect(flowCell.carry).toBeUndefined()
+  })
+
+  it('a guard miss at a carried step aborts one-shot, demotes to hint with the divergence, and leaves no carry', async () => {
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
+    // Drift shape: the FILL navigates (the form disappears before the carried click's own
+    // test step), so the carried body step's guards meet a screen they cannot pass on.
+    const { adapter, executed } = navigatingAdapter({ navigateOn: 'fill' })
+    const { reader } = makeFlowReader()
+    const planner = capturingPlanner([makeActionPlan()])
+    const sharedPorts = (): LoopPorts => ports({
+      adapter,
+      planner: planner.planner,
+      knowledgeReader: reader,
+      procedureFlow: flowCell,
+    })
+
+    const step0 = await executeStep(STEP_0_TEXT, sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(flowCell.carry?.nextIndex).toBe(1)
+
+    const step1 = await executeStep('Click the Submit button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
+    // The carried body step re-ran the full guard ladder on the fresh (received) screen,
+    // missed, and dispatched NOTHING (D-10 — no blind action).
+    expect(executed.filter((action) => action.type === 'click')).toHaveLength(1)
+    expect(step1.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        miss: { procedureStepIndex: 1, reason: 'descriptor-missing' },
+      },
+      flow: { cursor: 1, length: 2 },
+    })
+    // One-shot (D-11): demoted to hint with the divergence noted, and the flow is over —
+    // the take at step start emptied the cell and the miss never re-arms it.
+    expect(planner.calls).toHaveLength(1)
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned.toLowerCase()).toContain('diverged')
+    expect(learned).toContain('Click the Submit button')
+    expect(flowCell.carry).toBeUndefined()
+  })
+
+  it('an execution failure at a carried step aborts the flow and leaves no carry', async () => {
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
+    const { adapter, executed } = navigatingAdapter({ failClicks: 1 })
+    const { reader } = makeFlowReader()
+    const planner = capturingPlanner([makeActionPlan()])
+    const sharedPorts = (): LoopPorts => ports({
+      adapter,
+      planner: planner.planner,
+      knowledgeReader: reader,
+      procedureFlow: flowCell,
+    })
+
+    const step0 = await executeStep(STEP_0_TEXT, sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(flowCell.carry?.nextIndex).toBe(1)
+
+    const step1 = await executeStep('Click the Submit button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
+    // The carried click passed its guards, the adapter failed it, and live planning
+    // recovered — the flow itself is over with no carry.
+    expect(executed.filter((action) => action.type === 'click')).toHaveLength(2)
+    expect(step1.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        executionFailure: { procedureStepIndex: 1 },
+      },
+      flow: { cursor: 1, length: 2 },
+    })
+    expect(planner.calls).toHaveLength(1)
+    expect(flowCell.carry).toBeUndefined()
+  })
+
+  it('a verifier rejection at a carried step aborts the flow and leaves no carry', async () => {
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
+    const { adapter } = navigatingAdapter()
+    const { reader } = makeFlowReader()
+    const planner = capturingPlanner([makeActionPlan()])
+    const verifier = makeVerifier([
+      { success: true, reasoning: 'fill accepted', isAppError: false },
+      { success: false, reasoning: 'the submission did not register', isAppError: false },
+      { success: true, reasoning: 'live recovery accepted', isAppError: false },
+    ])
+    const sharedPorts = (): LoopPorts => ports({
+      adapter,
+      planner: planner.planner,
+      verifier,
+      knowledgeReader: reader,
+      procedureFlow: flowCell,
+    })
+
+    const step0 = await executeStep(STEP_0_TEXT, sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(flowCell.carry?.nextIndex).toBe(1)
+
+    const step1 = await executeStep('Click the Submit button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
+    expect(step1.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 1,
+        total: 1,
+        verifierRejection: { procedureStepIndex: 1 },
+      },
+      flow: { cursor: 1, length: 2 },
+    })
+    // Rejection aborts the FLOW, not just replay re-entry within the step (D-11).
+    expect(planner.calls).toHaveLength(1)
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('Guarded replay verifier rejected procedure step 2')
+    expect(flowCell.carry).toBeUndefined()
+  })
+
+  it('a failed step never propagates a carry', async () => {
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
+    const { adapter } = navigatingAdapter()
+    const { reader } = makeFlowReader()
+    const planner = capturingPlanner([
+      makeActionPlan({ stepFailed: true, stepComplete: false }),
+    ])
+    const verifier = makeVerifier([
+      { success: false, reasoning: 'the fill did not accomplish the step', isAppError: false },
+    ])
+
+    const result = await executeStep(
+      STEP_0_TEXT,
+      ports({
+        adapter,
+        planner: planner.planner,
+        verifier,
+        knowledgeReader: reader,
+        procedureFlow: flowCell,
+      }),
+      context(),
+    )
+
+    expect(result.status).toBe('failed')
+    expect(result.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: PROCEDURE_ID,
+      guard: {
+        checksPassed: 1,
+        total: 1,
+        verifierRejection: { procedureStepIndex: 0 },
+      },
+      flow: { cursor: 0, length: 2 },
+    })
+    expect(flowCell.carry).toBeUndefined()
   })
 })

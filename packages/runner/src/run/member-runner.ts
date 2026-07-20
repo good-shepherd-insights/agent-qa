@@ -32,6 +32,7 @@ import type {
   EvidenceArtifactStorePort,
   LoopLogger,
   LoopPorts,
+  ProcedureFlowCarry,
   ScreenshotCompressor,
   SecretRedactorPort,
   SecretResolver,
@@ -374,6 +375,14 @@ async function runMemberAttempt(
     }
   }
 
+  // F-381-51-1 · D-09: the member-scoped procedure-flow carry cell. ONE shared mutable
+  // object threaded by reference into every per-step ports literal (the recordLedger
+  // precedent): a replay-recommended flow consumed at one test step re-arms the cell so the
+  // NEXT step resumes the committed body at the carried cursor — one body step per test
+  // step. Loop-side state only: never serialized, never in evidence or the handoff; its
+  // lifetime is this test member.
+  const procedureFlow: { carry?: ProcedureFlowCarry } = {}
+
   for (let stepIndex = 0; shouldRunSteps && stepIndex < member.steps.length; stepIndex++) {
     if (cancelled) break
     if (testDeadline && performance.now() >= testDeadline) {
@@ -661,6 +670,7 @@ async function runMemberAttempt(
       compressor: config.compressor,
       safetyHooks: config.safetyHooks,
       knowledgeReader: config.knowledgeReader,
+      procedureFlow,
       knowledgeBudgets: config.knowledgeBudgets,
       knowledgeAsOfBuild: config.knowledgeAsOfBuild,
       recordLedger: config.recordLedger,

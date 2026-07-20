@@ -231,6 +231,15 @@ function hasCompletePlanSourceShape(value: unknown): boolean {
   if ('verifierRejection' in guard && !hasProcedureStepIndexShape(guard.verifierRejection)) {
     return false
   }
+  if ('flow' in value) {
+    // F-381-51-1 · D-09: the additive flow cursor is admitted only well-formed — present ⇒
+    // {cursor, length} both finite numbers. Fail-closed on any other shape (the CR-02/381-36
+    // strictness is never loosened for a new member).
+    const flow = value.flow
+    if (!isNonArrayObject(flow)) return false
+    if (typeof flow.cursor !== 'number' || !Number.isFinite(flow.cursor)) return false
+    if (typeof flow.length !== 'number' || !Number.isFinite(flow.length)) return false
+  }
   return true
 }
 

@@ -277,11 +277,15 @@ export async function executeStep(
   // orthogonal to the classifyStep NonCacheableStepInput signal above.
   let cacheBypass = false
 
-  // PROC-02 (381 D-09..D-12) per-step procedure state. `procedureConsulted` makes the
-  // getProcedure consult a strict once-per-step event (D-09); `procedureReplay` holds the
-  // decoded body plus the guard-fold bookkeeping while replay drives actions — `aborted`
-  // is the D-11 one-shot guard/execution-failure latch (no replay re-entry within the step;
-  // max successfully replayed actions = the sequence length by `nextIndex` construction).
+  // PROC-02 (381 D-09..D-12, F-381-51-1) per-step procedure state. `procedureConsulted`
+  // makes the getProcedure consult a strict at-most-once-per-step event (D-09) — a carried
+  // flow resume (2a′ below) substitutes the consult entirely. `procedureReplay` holds the
+  // decoded body plus the guard-fold bookkeeping while replay drives THIS step's one body
+  // step (`nextIndex` is the cursor into the committed body; `stepCursor` records the body
+  // index this test step attempted; `attempted`/`checksPassed` are the PER-STEP fold —
+  // total/passed stored actions within this step). `aborted` is the D-11 one-shot
+  // guard/execution-failure latch (no replay re-entry within the step, and an aborted flow
+  // is never re-armed into the cross-step carry).
   // `procedureHintStaged`
   // carries the rendered hint block (matched-hint mode, unparseable-body demotion, or the
   // post-miss demotion with its divergence note) for ledger-metered exposure on every
@@ -293,6 +297,10 @@ export async function executeStep(
     payload: ProcedureBodyPayload
     nextIndex: number
     checksPassed: number
+    /** Stored actions attempted within THIS test step — the per-step fold's `total` (D-12). */
+    attempted: number
+    /** The body-step index this test step consumed — the planSource `flow.cursor`. */
+    stepCursor?: number
     aborted: boolean
     miss?: { procedureStepIndex: number; reason: ProcedureGuardMissReason }
     executionFailure?: { procedureStepIndex: number }
@@ -356,13 +364,18 @@ export async function executeStep(
   }
 
   const recordProcedureReplaySource = (): void => {
-    if (!procedureReplay) return
+    if (!procedureReplay || procedureReplay.stepCursor === undefined) return
     recorder.recordPlanSource({
       kind: 'procedure-replay',
       procedureId: procedureReplay.match.id,
       guard: {
+        // PER-STEP fold (F-381-51-1 · D-12): checksPassed/total range over the stored
+        // actions attempted within THIS test step (one body step per test step, D-09), so
+        // checksPassed === total keeps meaning "this step's replayed actions all passed
+        // guards, executed, and were accepted" for every consumer. Cross-flow position
+        // lives in `flow` below, never in the fold.
         checksPassed: procedureReplay.checksPassed,
-        total: procedureReplay.payload.steps.length,
+        total: procedureReplay.attempted,
         ...(procedureReplay.aborted && procedureReplay.miss !== undefined
           ? { miss: procedureReplay.miss }
           : {}),
@@ -373,7 +386,30 @@ export async function executeStep(
           ? { verifierRejection: procedureReplay.verifierRejection }
           : {}),
       },
+      flow: {
+        cursor: procedureReplay.stepCursor,
+        length: procedureReplay.payload.steps.length,
+      },
     })
+  }
+
+  // F-381-51-1 · D-09 re-arm half of take-then-rearm. Called ONLY at a successful step
+  // completion whose completing decision was a replayed body step, with body remaining and
+  // the flow non-aborted. Every other exit path — guard miss, execution failure, verifier
+  // rejection, policy denial, step failure, abort, exhaustion, any terminal builder —
+  // leaves the cell empty: the 2a′ take already cleared it and this is the ONLY write
+  // site, so carry loss is the default (the D-11 one-shot law extended across the step
+  // boundary: a miss at a carried step demotes to hint within that step and the flow is
+  // over for the run).
+  const rearmProcedureFlowCarry = (): void => {
+    if (!ports.procedureFlow) return
+    if (!procedureReplay || procedureReplay.aborted) return
+    if (procedureReplay.nextIndex >= procedureReplay.payload.steps.length) return
+    ports.procedureFlow.carry = {
+      match: procedureReplay.match,
+      payload: procedureReplay.payload,
+      nextIndex: procedureReplay.nextIndex,
+    }
   }
 
   // D-15c self-heal boundary carry: the previous failed sub-action's index +
@@ -765,7 +801,30 @@ export async function executeStep(
     // 2. PLAN — procedure-first at step start (PROC-02/D-09), then the replay → re-ground →
     // replan hit ladder (D-13), then the planning turn.
     //
-    // 2a. STEP-START PROCEDURE CONSULT (D-09): exactly once per step, before the first
+    // 2a′. CARRIED FLOW RESUME (F-381-51-1 · D-09): a completed replayed step with body
+    // remaining re-armed the member-scoped carry cell; this step TAKES it — read and
+    // immediately empty (take-then-rearm: the cell is emptied at step start and re-armed
+    // only after this step's verifier accepts a successful replayed step with body
+    // remaining, so every early exit leaves no carry, D-11). The carry substitutes the
+    // step-start consult for flow-covered steps — ZERO matcher call, keeping D-09's
+    // once-per-step consult as an upper bound. It transports only match + parsed payload +
+    // cursor, never a resolved ref: the carried body step still re-earns dispatch through
+    // the FULL fresh-screen guard ladder in §2b below (D-10 — never a blind action).
+    if (!procedureConsulted && ports.procedureFlow?.carry !== undefined) {
+      const carried = ports.procedureFlow.carry
+      ports.procedureFlow.carry = undefined
+      procedureConsulted = true
+      procedureReplay = {
+        match: carried.match,
+        payload: carried.payload,
+        nextIndex: carried.nextIndex,
+        checksPassed: 0,
+        attempted: 0,
+        aborted: false,
+      }
+    }
+
+    // 2a. STEP-START PROCEDURE CONSULT (D-09): at most once per step, before the first
     // planning turn AND before the per-decision cache consult (the researcher-recommended
     // procedure-first precedence). Optional-chained getRunBrief idiom: an unbound reader
     // costs nothing (binding names are not even assembled) and never throws. Intent is the
@@ -786,7 +845,14 @@ export async function executeStep(
             const body = ports.knowledgeReader.read(match.id)
             const payload = body === undefined ? undefined : parseProcedureBody(body.body)
             if (payload !== undefined && payload.steps.length > 0) {
-              procedureReplay = { match, payload, nextIndex: 0, checksPassed: 0, aborted: false }
+              procedureReplay = {
+                match,
+                payload,
+                nextIndex: 0,
+                checksPassed: 0,
+                attempted: 0,
+                aborted: false,
+              }
             } else {
               // G-381-4: the wall is unchanged — no partial body, no default body, no replay
               // without a parsed payload. Only the EVIDENCE changes: the earned replay that
@@ -834,19 +900,25 @@ export async function executeStep(
     let cacheKey: CacheKey | undefined
     const cacheActive = !nonCacheable && !!ports.cache
 
-    // 2b. GUARDED PROCEDURE REPLAY (D-10/D-11): while a replay recommendation is live and
-    // the sequence is not exhausted, each decision comes from the next committed action —
-    // under the FULL guard (unique fresh-screen re-ground + page-anchor equality +
-    // grounding gate, the one guard idiom shared with cache replay, T-356-04a). A guard
-    // miss aborts replay for the WHOLE step: the miss is folded into planSource, the
+    // 2b. GUARDED PROCEDURE REPLAY (D-09/D-10/D-11, F-381-51-1): each test step consumes
+    // exactly ONE committed body step — the one at the carried cursor — under the FULL
+    // guard (unique fresh-screen re-ground + page-anchor equality + grounding gate, the
+    // one guard idiom shared with cache replay, T-356-04a). Body steps map 1:1 onto test
+    // steps: the replayed decision completes its own test step and the remaining body
+    // rides the member-scoped carry to the NEXT step (`attempted === 0` makes the per-step
+    // consumption law structural, never just a consequence of the abort latches). A guard
+    // miss aborts replay for the WHOLE flow: the miss is folded into planSource, the
     // procedure demotes to hint context with the divergence noted, and ordinary planning
-    // takes over — no replay re-entry within this step (one-shot, D-11). Replayed actions
-    // keep `cached: false`, skip the cache consult below, and are never written back into
-    // the action cache.
+    // takes over — no replay re-entry within this step and no carry (one-shot, D-11).
+    // Replayed actions keep `cached: false`, skip the cache consult below, and are never
+    // written back into the action cache.
     if (procedureReplay && !procedureReplay.aborted
+      && procedureReplay.attempted === 0
       && procedureReplay.nextIndex < procedureReplay.payload.steps.length) {
       const replayState = procedureReplay
       const procedureStep = replayState.payload.steps[replayState.nextIndex]
+      replayState.stepCursor = replayState.nextIndex
+      replayState.attempted++
       // Landmarks are a SOFT diagnostic only (D-10): a missing landmark logs, never misses.
       for (const landmark of procedureStep.guard.landmarks ?? []) {
         if (!screenState.tree.includes(landmark)) {
@@ -859,7 +931,10 @@ export async function executeStep(
       const paramTypes = new Map(replayState.payload.parameters.map((p) => [p.name, p.type]))
       const attempt = attemptProcedureReplayAction({
         step: procedureStep,
-        isFinal: replayState.nextIndex === replayState.payload.steps.length - 1,
+        // F-381-51-1 · D-09: every replayed decision completes its own test step — the
+        // step's verifier runs per replayed body step (verifier boundaries stay intact)
+        // and the remaining body reaches the NEXT test step via the carry, never this one.
+        isFinal: true,
         screenState,
         bind: (name) => bindProcedureParam(name, paramTypes.get(name) ?? 'string'),
       })
@@ -1163,11 +1238,13 @@ export async function executeStep(
     const cacheCompletingPlan = async (): Promise<void> => {
       // Pitfall 4 cache-vs-procedure precedence: a procedure-replayed completing plan is
       // NEVER persisted into the action cache. The procedure store owns replaying whole
-      // flows; double-storing a replayed action under a decision cache key would let the
-      // cached flag claim what planSource already attributes — evidence separation (D-12)
-      // requires exactly one provenance per decision. (Structurally `cacheKey` is already
-      // undefined here because replayed decisions skip the cache consult; this guard makes
-      // the precedence decision explicit.)
+      // flows ACROSS test steps — one body step per test step, resumed through the
+      // member-scoped carry (F-381-51-1 · D-09) — and replayed completing plans stay out
+      // of the cache; double-storing a replayed action under a decision cache key would
+      // let the cached flag claim what planSource already attributes — evidence separation
+      // (D-12) requires exactly one provenance per decision. (Structurally `cacheKey` is
+      // already undefined here because replayed decisions skip the cache consult; this
+      // guard makes the precedence decision explicit.)
       if (procedureReplayed) return
       if (!cacheActive || cached || !cacheKey || !ports.cache) return
       if (normalizedAction.type === 'setVariable') return
@@ -1595,6 +1672,9 @@ export async function executeStep(
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
         pendingSelfHeal = undefined
         await cacheCompletingPlan()
+        // F-381-51-1 · D-09: a deterministic PASS verdict accepts the replayed step the
+        // same way a verifier acceptance does; a failing verdict leaves the cell empty.
+        if (pass && procedureReplayed) rearmProcedureFlowCarry()
         return pass
           ? finish('passed', { pass: true, reasoning: 'Step verified deterministically from the assertion outcome' })
           : finish('failed', { pass: false, reasoning: 'The assertion outcome did not hold' }, 'Assertion did not hold')
@@ -1659,6 +1739,9 @@ export async function executeStep(
         maybeRecordSelfHeal(recorder, pendingSelfHeal, reasoning, action, execResult, annotation)
         pendingSelfHeal = undefined
         await cacheCompletingPlan()
+        // F-381-51-1 · D-09: the verifier ACCEPTED a successful replayed step — re-arm the
+        // cross-step carry when body steps remain (the only write site; take-then-rearm).
+        if (procedureReplayed) rearmProcedureFlowCarry()
         return finish('passed', { pass: true, reasoning: verifierReasoning ?? 'Step completed' })
       }
 
@@ -1747,6 +1830,9 @@ export async function executeStep(
       pendingSelfHeal = undefined
       void idx
       await cacheCompletingPlan()
+      // F-381-51-1 · D-09: verifier-less harness state — the trusted completion accepts
+      // the replayed step, so the cross-step carry re-arms when body steps remain.
+      if (procedureReplayed) rearmProcedureFlowCarry()
       return success()
     }
 

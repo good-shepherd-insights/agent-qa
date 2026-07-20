@@ -23,7 +23,7 @@ import type {
 import { executeStep } from '../index.js'
 import { buildVolatileTier } from '../prompts.js'
 import type { RecordLedger } from '../record-ledger.js'
-import type { LoopPorts, WorkingMemoryPort } from '../ports.js'
+import type { LoopPorts, ProcedureFlowCarry, WorkingMemoryPort } from '../ports.js'
 import type { ActionPlan, Planner, StepContext } from '../types.js'
 import { SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -284,7 +284,11 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
 }
 
 describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
-  it('Test 1: a replay-recommendation match drives the step with no planning-turn LLM call', async () => {
+  it('Test 1: a replay-recommendation match drives the step\'s one body step with no planning-turn LLM call', async () => {
+    // F-381-51-1 · D-09 rewrite: the old law pinned the WHOLE 2-action body replaying
+    // inside one test step (fold 2/2). The new law: each test step consumes exactly the
+    // one body step at the cursor — the fill here; the click belongs to the NEXT test
+    // step via the carry (procedure-step-boundary.test.ts pins the cross-step half).
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const { adapter, executed } = capturingAdapter([makeScreenState()])
     const planner = capturingPlanner([makeActionPlan()])
@@ -298,10 +302,10 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(0)
     expect(spy.countOf('getProcedure')).toBe(1)
-    expect(executed.map((action) => action.type)).toEqual(['fill', 'click'])
+    expect(executed.map((action) => action.type)).toEqual(['fill'])
 
     const evidence = result.evidence!
-    expect(evidence.subActions).toHaveLength(2)
+    expect(evidence.subActions).toHaveLength(1)
     for (const sub of evidence.subActions) {
       expect(sub.grounding).toBeDefined()
       expect(sub.grounding!.attempts.length).toBeGreaterThan(0)
@@ -309,7 +313,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(evidence.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
-      guard: { checksPassed: 2, total: 2 },
+      guard: { checksPassed: 1, total: 1 },
+      flow: { cursor: 0, length: 2 },
     })
   })
 
@@ -355,10 +360,13 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
       guard: {
+        // Per-step fold (F-381-51-1 · D-12): total = the one stored action THIS test step
+        // attempted, not the whole body length the old law recorded here.
         checksPassed: 0,
-        total: 2,
+        total: 1,
         executionFailure: { procedureStepIndex: 0 },
       },
+      flow: { cursor: 0, length: 2 },
     })
   })
 
@@ -448,40 +456,57 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
   })
 
-  it('keeps a navigating final replay guard on the pre-action page', async () => {
+  it('keeps a navigating carried replay guard on its own pre-action page', async () => {
+    // F-381-51-1 · D-09 rewrite: the old law pinned the whole body in one step with the
+    // FINAL action's guard on the pre-action page. The new law strengthens the pin: EVERY
+    // replayed body step's guard is evaluated on its OWN test step's pre-action screen —
+    // the navigating click replays at test step 1 via the carry, its guard passes on the
+    // login page it observes, and StepEvidence records the honest post-action navigation.
+    // Neither side may silently drift to the other's URL semantics.
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const login = makeScreenState()
     const dashboard = makeScreenState({ url: 'https://example.test/dashboard' })
-    // Contract pin: replay guards stay pre-action while StepEvidence records the final
-    // post-action navigation. Neither side may silently drift to the other's URL semantics.
-    const { adapter, executed } = capturingAdapter([login, login, login, login, dashboard])
+    const { adapter, executed } = capturingAdapter([login, login, login, login, login, dashboard])
     const planner = capturingPlanner([makeActionPlan()])
     const verifier = makeVerifier()
+    const sharedPorts = () => ports({
+      adapter,
+      planner: planner.planner,
+      verifier,
+      knowledgeReader: spy.reader,
+      procedureFlow: flowCell,
+    })
 
-    const result = await executeStep(
-      'Log in as the saved user',
-      ports({ adapter, planner: planner.planner, verifier, knowledgeReader: spy.reader }),
-      context(),
-    )
+    const step0 = await executeStep('Fill the email field', sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(executed.map((action) => action.type)).toEqual(['fill'])
+    expect(flowCell.carry?.nextIndex).toBe(1)
 
-    expect(result.status).toBe('passed')
+    const step1 = await executeStep('Click the Log in button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
     expect(planner.calls).toHaveLength(0)
     expect(executed.map((action) => action.type)).toEqual(['fill', 'click'])
-    expect(result.evidence?.planSource?.kind).toBe('procedure-replay')
-    if (result.evidence?.planSource?.kind !== 'procedure-replay') {
+    expect(step1.evidence?.planSource?.kind).toBe('procedure-replay')
+    if (step1.evidence?.planSource?.kind !== 'procedure-replay') {
       throw new Error('expected procedure-replay planSource')
     }
-    expect(result.evidence.planSource.guard.miss).toBeUndefined()
-    expect(result.evidence.planSource.guard.checksPassed).toBe(
-      result.evidence.planSource.guard.total,
+    expect(step1.evidence.planSource.guard.miss).toBeUndefined()
+    expect(step1.evidence.planSource.guard.checksPassed).toBe(
+      step1.evidence.planSource.guard.total,
     )
-    const completing = result.evidence.subActions.at(-1)!
+    const completing = step1.evidence.subActions.at(-1)!
     expect(completing.stateBefore.url).toBe('https://example.test/login')
     expect(completing.stateAfter?.url).toBe('https://example.test/dashboard')
     expect(completing.stateAfter?.url).not.toBe(completing.stateBefore.url)
   })
 
-  it('Test 2: an ambiguous second descriptor aborts replay once and demotes to hint with the divergence noted', async () => {
+  it('Test 2: an ambiguous descriptor at the carried step aborts replay once and demotes to hint with the divergence noted', async () => {
+    // F-381-51-1 · D-09 rewrite: the old law hit the ambiguous second descriptor INSIDE
+    // one test step (fold 1-of-2 with the miss). The new law reaches body step 1 at its
+    // own test step via the carry — the miss aborts one-shot THERE (per-step fold 0-of-1),
+    // demotes to hint with the divergence, and the flow is over for the run (no carry).
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()
     const drifted = duplicateButtonScreen()
@@ -489,16 +514,21 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const planner = capturingPlanner([
       makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
     ])
+    const sharedPorts = () => ports({
+      adapter,
+      planner: planner.planner,
+      knowledgeReader: spy.reader,
+      procedureFlow: flowCell,
+    })
 
-    const result = await executeStep(
-      'Log in as the saved user',
-      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
-      context(),
-    )
+    const step0 = await executeStep('Fill the email field', sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(flowCell.carry?.nextIndex).toBe(1)
 
-    expect(result.status).toBe('passed')
+    const step1 = await executeStep('Click the Log in button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
     expect(spy.countOf('getProcedure')).toBe(1)
-    // Replay drove the first action; planning took over for the remainder — exactly once.
+    // Replay drove step 0's fill; the carried click missed and planning took over — once.
     expect(executed.map((action) => action.type)).toEqual(['fill', 'click'])
     expect(planner.calls).toHaveLength(1)
     // The demoted procedure hint reached the planning context with the divergence noted.
@@ -507,15 +537,17 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned.toLowerCase()).toContain('diverged')
     expect(learned.toLowerCase()).toContain('ambiguous')
 
-    expect(result.evidence?.planSource).toEqual({
+    expect(step1.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
       guard: {
-        checksPassed: 1,
-        total: 2,
+        checksPassed: 0,
+        total: 1,
         miss: { procedureStepIndex: 1, reason: 'descriptor-ambiguous' },
       },
+      flow: { cursor: 1, length: 2 },
     })
+    expect(flowCell.carry).toBeUndefined()
   })
 
   it('aborts before dispatch when the declared guard target is missing even though the action target resolves', async () => {
@@ -555,6 +587,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         total: 1,
         miss: { procedureStepIndex: 0, reason: 'descriptor-missing' },
       },
+      flow: { cursor: 0, length: 1 },
     })
   })
 
@@ -595,6 +628,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         total: 1,
         miss: { procedureStepIndex: 0, reason: 'descriptor-ambiguous' },
       },
+      flow: { cursor: 0, length: 1 },
     })
   })
 
@@ -633,10 +667,17 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         total: 1,
         miss: { procedureStepIndex: 0, reason: 'page-anchor-mismatch' },
       },
+      flow: { cursor: 0, length: 1 },
     })
   })
 
-  it('Test 4: replayed actions never exceed the sequence length and exhaustion hands over to planning', async () => {
+  it('Test 4: a test step never consumes past its one body step and body exhaustion leaves no carry', async () => {
+    // F-381-51-1 · D-09 rewrite: the old law pinned in-step exhaustion ("replayed actions
+    // never exceed the sequence length"). The new law: exhaustion happens ACROSS steps —
+    // the carry ends after the LAST body step's test step, so a single-step body's step
+    // both exhausts the flow and (on rejection) demotes with no replay re-entry and no
+    // carry for any later step.
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
     const payload = loginPayload()
     payload.steps = [payload.steps[1]]
     const spy = makeReader({ match: makeMatch(), payload })
@@ -651,14 +692,20 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
     const result = await executeStep(
       'Log in as the saved user',
-      ports({ adapter, planner: planner.planner, verifier, knowledgeReader: spy.reader }),
+      ports({
+        adapter,
+        planner: planner.planner,
+        verifier,
+        knowledgeReader: spy.reader,
+        procedureFlow: flowCell,
+      }),
       context(),
     )
 
     expect(result.status).toBe('passed')
     expect(spy.countOf('getProcedure')).toBe(1)
     // One replayed click, then the verifier rejection forced a live planning turn (no replay
-    // re-entry after the sequence exhausted).
+    // re-entry within the step, D-11).
     expect(executed.map((action) => action.type)).toEqual(['click', 'click'])
     expect(planner.calls).toHaveLength(1)
     const l2 = planner.calls[0].l2 ?? ''
@@ -677,10 +724,19 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         total: 1,
         verifierRejection: { procedureStepIndex: 0 },
       },
+      flow: { cursor: 0, length: 1 },
     })
+    // Exhausted AND rejected — either alone forbids a carry.
+    expect(flowCell.carry).toBeUndefined()
   })
 
-  it('a verifier rejection aborts a multi-action procedure without replay re-entry', async () => {
+  it('a verifier rejection aborts a multi-step flow with no carry — not just replay re-entry within the step', async () => {
+    // F-381-51-1 · D-09 rewrite: the old law replayed BOTH body steps in one test step and
+    // pinned the rejection of the second (fold 2/2, rejection at index 1, no in-step
+    // re-entry). The new law rejects the FIRST body step at its own test step (per-step
+    // fold 1/1, rejection at index 0) and strengthens the pin: the rejection kills the
+    // whole flow — the carry cell stays empty, so no later step can resume the body (D-11).
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const { adapter, executed } = capturingAdapter([makeScreenState()])
     const planner = capturingPlanner([
@@ -693,7 +749,13 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
     const result = await executeStep(
       'Log in as the saved user',
-      ports({ adapter, planner: planner.planner, verifier, knowledgeReader: spy.reader }),
+      ports({
+        adapter,
+        planner: planner.planner,
+        verifier,
+        knowledgeReader: spy.reader,
+        procedureFlow: flowCell,
+      }),
       context(),
     )
 
@@ -702,25 +764,27 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(planner.calls).toHaveLength(1)
     expect(executed).toMatchObject([
       { type: 'fill', ref: 'e1' },
-      { type: 'click', ref: 'e2' },
       { type: 'click', ref: 'e1' },
     ])
+    // The stored click (body step 1) never dispatched anywhere — its step was never earned.
     expect(executed.filter((action) => action.type === 'click' && action.ref === 'e2'))
-      .toHaveLength(1)
+      .toHaveLength(0)
     const l2 = planner.calls[0].l2 ?? ''
     expect(l2).toContain(APP_OBSERVED_DATA_OPEN)
-    expect(l2).toContain('Guarded replay verifier rejected procedure step 2')
+    expect(l2).toContain('Guarded replay verifier rejected procedure step 1')
     expect(l2).toContain('stored login did not complete')
     expect(l2).toContain(APP_OBSERVED_DATA_CLOSE)
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
       guard: {
-        checksPassed: 2,
-        total: 2,
-        verifierRejection: { procedureStepIndex: 1 },
+        checksPassed: 1,
+        total: 1,
+        verifierRejection: { procedureStepIndex: 0 },
       },
+      flow: { cursor: 0, length: 2 },
     })
+    expect(flowCell.carry).toBeUndefined()
   })
 
   it('Test 5a: an unbound reader leaves the loop behavior unchanged with no planSource', async () => {
@@ -803,24 +867,32 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
     const { adapter, executed } = capturingAdapter([twoFieldScreen()])
     const planner = capturingPlanner([makeActionPlan()])
+    // F-381-51-1 · D-09 rewrite: the old law bound both parameters inside one test step.
+    // The new law binds each at its OWN test step — the carried body step re-runs the
+    // loop-side binder against the same source-tagged availability contract, and the carry
+    // substitutes the second consult entirely (one matcher call for the whole flow).
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
+    const sharedPorts = () => ports({
+      adapter,
+      planner: planner.planner,
+      knowledgeReader: spy.reader,
+      workingMemory: makeWorkingMemory([{ key: 'otpCode', value: '123456' }]),
+      procedureFlow: flowCell,
+    })
 
-    const result = await executeStep(
-      'Log in with the saved email and one-time code',
-      ports({
-        adapter,
-        planner: planner.planner,
-        knowledgeReader: spy.reader,
-        workingMemory: makeWorkingMemory([{ key: 'otpCode', value: '123456' }]),
-      }),
-      context(),
-    )
+    const step0 = await executeStep('Fill the email field', sharedPorts(), context())
+    expect(step0.status).toBe('passed')
+    expect(flowCell.carry?.nextIndex).toBe(1)
 
-    expect(result.status).toBe('passed')
+    const step1 = await executeStep('Fill the one-time code', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
+    expect(spy.countOf('getProcedure')).toBe(1)
     expect(planner.calls).toHaveLength(0)
     const fills = executed as Extract<Action, { type: 'fill' }>[]
     expect(fills.map((action) => action.type)).toEqual(['fill', 'fill'])
     expect(fills[0].text).toBe('user@example.com')
     expect(fills[1].text).toBe('123456')
+    expect(flowCell.carry).toBeUndefined()
 
     // Binding names + capability bits crossed the reader port; bound VALUES never did — in
     // any argument of any reader call.
@@ -958,6 +1030,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         total: 1,
         miss: { procedureStepIndex: 0, reason: 'parameter-unbound' },
       },
+      flow: { cursor: 0, length: 1 },
     })
   })
 
@@ -1130,6 +1203,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         total: 1,
         miss: { procedureStepIndex: 0, reason: 'parameter-unbound' },
       },
+      flow: { cursor: 0, length: 1 },
     })
   })
 
@@ -1435,6 +1509,11 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
   })
 
   it('Test 4: the post-miss demoted hint renders in the SAME hypotheses frame with the divergence note', async () => {
+    // F-381-51-1 · D-09 rewrite: the old law surfaced the miss inside one test step. The
+    // new law reaches the miss at the CARRIED step's own test step — the demoted hint
+    // renders in THAT step's planning turn, in the same hypotheses frame, with the same
+    // body-step-indexed divergence wording.
+    const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()
     const drifted = duplicateButtonScreen()
@@ -1442,14 +1521,18 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
     const planner = capturingPlanner([
       makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
     ])
+    const sharedPorts = () => ports({
+      adapter,
+      planner: planner.planner,
+      knowledgeReader: spy.reader,
+      procedureFlow: flowCell,
+    })
 
-    const result = await executeStep(
-      'Log in as the saved user',
-      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
-      context(),
-    )
+    const step0 = await executeStep('Fill the email field', sharedPorts(), context())
+    expect(step0.status).toBe('passed')
 
-    expect(result.status).toBe('passed')
+    const step1 = await executeStep('Click the Log in button', sharedPorts(), context())
+    expect(step1.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     const l2 = planner.calls[0].l2 ?? ''
     // DATA-wrapped, with the divergence inside the delimiters — never imperative phrasing
@@ -1469,6 +1552,6 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
     expect(rendered.toLowerCase()).toContain('not instructions or commands')
     // Post-miss the planSource stays the replay fold with its miss — the demotion is
     // implied by the miss, never a second (procedure-hint) provenance.
-    expect(result.evidence?.planSource?.kind).toBe('procedure-replay')
+    expect(step1.evidence?.planSource?.kind).toBe('procedure-replay')
   })
 })

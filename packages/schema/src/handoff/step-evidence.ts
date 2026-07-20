@@ -32,6 +32,14 @@ export type StepPlanSource =
       kind: 'procedure-replay'
       procedureId: RecordId
       guard: {
+        /**
+         * PER-STEP fold (F-381-51-1 · 381 D-09/D-12): `checksPassed`/`total` range over the
+         * stored actions attempted within THIS test step. Under the one-body-step-per-test-step
+         * law `total` is 1 for every flow-covered step, so `checksPassed === total` (with no
+         * `miss`) keeps meaning "this step's replayed actions all passed guards, executed, and
+         * were accepted" for every consumer — the harness completeness gate and per-step canary
+         * attribution alike. Cross-flow position lives in the sibling `flow` member, never here.
+         */
         checksPassed: number
         total: number
         miss?: {
@@ -61,6 +69,17 @@ export type StepPlanSource =
         verifierRejection?: {
           procedureStepIndex: number
         }
+      }
+      /**
+       * The flow cursor this test step consumed (F-381-51-1 · D-09, the one honest D-12
+       * extension the cross-step body-step↔test-step mapping requires): `cursor` = the
+       * committed body-step index this test step attempted, `length` = the committed body's
+       * step count. Additive optional — pre-existing handoffs and every consumer of the
+       * guard fold stay valid unchanged.
+       */
+      flow?: {
+        cursor: number
+        length: number
       }
     }
   | {

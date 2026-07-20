@@ -10,6 +10,8 @@ import type {
   ArtifactRef,
   DeclaredModelProfile,
   MaskingContext,
+  ProcedureBodyPayload,
+  ProcedureMatch,
   RecordId,
   ReadTrace,
   ScreenState,
@@ -177,6 +179,21 @@ export interface EvidenceArtifactStorePort {
 }
 
 /**
+ * The member-scoped procedure-flow carry (F-381-51-1 · 381 D-09): the replay position a
+ * completed test step hands to the NEXT test step so a committed multi-step flow replays
+ * exactly one body step per test step. Transports ONLY the consult match, the parsed body
+ * payload, and the cursor — never a pre-resolved ref, never a screen: every carried body
+ * step re-earns dispatch through the full fresh-screen descriptor/guard/page-anchor/
+ * grounding-gate ladder at its own test step (D-10 — a stored action can never dispatch
+ * against a screen its guards did not pass on at that step).
+ */
+export interface ProcedureFlowCarry {
+  match: ProcedureMatch
+  payload: ProcedureBodyPayload
+  nextIndex: number
+}
+
+/**
  * The runner-owned port bundle the loop executes against — successor to v1's
  * AgentLoopConfig (core types.ts:66-104), minus the D-10 healing/attempt-limit
  * fields and minus the v1 cache-key inputs (those move behind the cache port).
@@ -217,6 +234,19 @@ export interface LoopPorts {
   compressor?: ScreenshotCompressor
   /** D-05 optional read-only knowledge reader — the loop degrades gracefully when absent. */
   knowledgeReader?: KnowledgeHintReader
+  /**
+   * F-381-51-1 · D-09 member-scoped carry cell (the recordLedger shared-mutable-object
+   * precedent): the caller owns ONE cell per test member and threads the SAME object into
+   * every per-step ports literal. The loop TAKES the carry at step start (reading and
+   * immediately emptying the cell) and re-arms it only after the step's verifier accepts a
+   * successful replayed step with body steps remaining — take-then-rearm, the D-11 one-shot
+   * law extended across the step boundary: every other exit (guard miss, execution failure,
+   * verifier rejection, policy denial, step failure, abort, exhaustion) leaves the cell
+   * empty. Loop-side state only: never serialized, never recorded into evidence or the
+   * handoff, never crosses a test boundary. Absent ⇒ no cursor crosses steps (D-05
+   * degrade-when-absent).
+   */
+  procedureFlow?: { carry?: ProcedureFlowCarry }
   /**
    * D-02/D-15/D-17 knowledge budgets are computed beside model token accounting at the
    * composition root and arrive here as plain numbers. The provider-neutral loop never derives

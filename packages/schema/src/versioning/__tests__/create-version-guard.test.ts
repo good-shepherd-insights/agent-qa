@@ -614,6 +614,24 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       }),
     ],
     [
+      'procedure-replay planSource flow is not an object',
+      mutatedReplayPlanSource((source) => {
+        source.flow = 'cursor 0 of 2'
+      }),
+    ],
+    [
+      'procedure-replay planSource flow missing length',
+      mutatedReplayPlanSource((source) => {
+        source.flow = { cursor: 0 }
+      }),
+    ],
+    [
+      'procedure-replay planSource flow cursor is a string',
+      mutatedReplayPlanSource((source) => {
+        source.flow = { cursor: '0', length: 2 }
+      }),
+    ],
+    [
       'procedure-hint planSource missing procedureId',
       withPlanSource({ kind: 'procedure-hint' }),
     ],
@@ -1035,6 +1053,12 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
       'procedure-replay guard with verifierRejection',
       mutatedReplayPlanSource((_source, guard) => {
         guard.verifierRejection = { procedureStepIndex: 2 }
+      }),
+    ],
+    [
+      'procedure-replay planSource with a well-formed flow cursor (F-381-51-1 · D-09)',
+      mutatedReplayPlanSource((source) => {
+        source.flow = { cursor: 1, length: 2 }
       }),
     ],
     [
