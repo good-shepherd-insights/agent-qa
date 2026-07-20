@@ -522,6 +522,12 @@ const trajectoryValueSlotSchema = z
       trajectoryCompositeValueSchema,
     ]),
     source: z.enum(['literal', 'test-variable', 'masked-secret']),
+    // G-381-3: the live binding name behind this slot, when the evidence names it —
+    // a test variable matched against Plan 381-41's interpolation provenance, or a secret
+    // recovered from its recorded masked form. `curator-author` forces the covering
+    // parameter to exactly this name so consult-time fillability (D-08, which matches on
+    // binding NAMES) succeeds. Absent when the source is an anonymous literal.
+    sourceName: z.string().min(1).optional(),
     targetRef: z.string().min(1).optional(),
   })
   .strict()
@@ -577,15 +583,69 @@ export function parseProcedureTrajectorySeed(
  * placeholders (or an unexpanded `{{secret:...}}` template) and test variables as `{{env:...}}`
  * templates. This deterministic labeling is what D-03's forced parameterization keys on.
  */
-const MASKED_VALUE_PATTERN = /<(?:SECRET|EMAIL)_\d+>|\{\{\s*secret:/
+const MASKED_VALUE_PATTERN = /<(?:SECRET|EMAIL)_\d+>|\{\{\s*secret:|\[secret:\w+\]/
 const TEST_VARIABLE_PATTERN = /\{\{\s*env:/
 
-function trajectoryValueSource(
+/**
+ * The two recorded secret forms, mirroring `runner/src/loop/secrets.ts:35-36`
+ * (SECRET_TEMPLATE_RE / REDACTED_SECRET_MARKER_RE — the authority). Mirrored rather than
+ * imported: the CLI curation fold must not depend on the runner's loop internals.
+ * Both carry the secret NAME only; no secret VALUE is ever read here (D-08 names-not-values).
+ */
+const SECRET_TEMPLATE_NAME_PATTERN = /\{\{\s*secret:(\w+)\s*\}\}/
+const SECRET_MARKER_NAME_PATTERN = /\[secret:(\w+)\]/
+
+function secretSourceName(observed: string): string | undefined {
+  const name =
+    SECRET_TEMPLATE_NAME_PATTERN.exec(observed)?.[1]
+    ?? SECRET_MARKER_NAME_PATTERN.exec(observed)?.[1]
+  // Case is preserved verbatim: the committed parameter name must equal the binding name
+  // the consult-time availability set carries, and that set is case-sensitive.
+  return name
+}
+
+/**
+ * Names the live binding behind an observed value by EXACT string equality against the
+ * step's interpolation provenance (Plan 381-41). Ties break to the lexicographically
+ * smallest name so the authored parameter name is deterministic across runs.
+ *
+ * Containment deliberately does NOT match. If `PROBE_USER=probe-user-7` and the observed
+ * value is `prefix-probe-user-7-suffix`, parameterizing that superstring under PROBE_USER
+ * would bind the wrong value at replay — replay substitutes the binding's value for the
+ * WHOLE slot, not for the embedded region. Such slots stay literal-source (D-03).
+ *
+ * The equality is shape-insensitive on purpose: email-valued and credential-named bindings
+ * are the canonical login shapes, not edge cases, and they only stay matchable while 381-41
+ * records provenance unmasked against a likewise-unmasked plannedAction.
+ */
+function testVariableSourceName(
   observed: string,
-): 'literal' | 'test-variable' | 'masked-secret' {
-  if (MASKED_VALUE_PATTERN.test(observed)) return 'masked-secret'
-  if (TEST_VARIABLE_PATTERN.test(observed)) return 'test-variable'
-  return 'literal'
+  interpolated: readonly { name: string; value: string }[] | undefined,
+): string | undefined {
+  if (interpolated === undefined) return undefined
+  let best: string | undefined
+  for (const pair of interpolated) {
+    if (pair.value !== observed) continue
+    if (best === undefined || pair.name < best) best = pair.name
+  }
+  return best
+}
+
+function trajectoryValueClassification(
+  observed: string,
+  interpolated: readonly { name: string; value: string }[] | undefined,
+): { source: 'literal' | 'test-variable' | 'masked-secret'; sourceName?: string } {
+  if (MASKED_VALUE_PATTERN.test(observed)) {
+    const sourceName = secretSourceName(observed)
+    return {
+      source: 'masked-secret',
+      ...(sourceName === undefined ? {} : { sourceName }),
+    }
+  }
+  if (TEST_VARIABLE_PATTERN.test(observed)) return { source: 'test-variable' }
+  const sourceName = testVariableSourceName(observed, interpolated)
+  if (sourceName !== undefined) return { source: 'test-variable', sourceName }
+  return { source: 'literal' }
 }
 
 const ACTION_REF_KEYS: readonly string[] = ['ref', 'fromRef', 'toRef']
@@ -683,6 +743,7 @@ function trajectoryTargets(
 
 function trajectoryValues(
   subAction: SubActionEvidence,
+  interpolated: readonly { name: string; value: string }[] | undefined,
 ): Record<string, z.infer<typeof trajectoryValueSlotSchema>> | undefined {
   const values: Record<string, z.infer<typeof trajectoryValueSlotSchema>> = {}
   const action = subAction.plannedAction as unknown as Record<string, unknown>
@@ -709,9 +770,9 @@ function trajectoryValues(
       // Masking placeholders and variable templates are string phenomena. Numbers and booleans
       // therefore remain literal-source while preserving their original JSON scalar type; JSON
       // composites are admitted only after the fail-closed scan above and remain literal-source.
-      source: !composite && typeof value === 'string'
-        ? trajectoryValueSource(value)
-        : 'literal',
+      ...(!composite && typeof value === 'string'
+        ? trajectoryValueClassification(value, interpolated)
+        : { source: 'literal' as const }),
       ...(primaryRef !== undefined
         && isCredentialValueField(subAction.plannedAction.type, key)
         ? { targetRef: primaryRef }
@@ -723,7 +784,10 @@ function trajectoryValues(
 
 function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
   const completing = completingSubAction(step)
-  const values = completing === undefined ? undefined : trajectoryValues(completing)
+  const values =
+    completing === undefined
+      ? undefined
+      : trajectoryValues(completing, step.interpolatedVariables)
   // Replay evaluates the page guard before executing the action (D-10), so this route must
   // describe the pre-action page. Recording a navigation destination made healthy steps miss
   // their guards and fed false staleness negatives into the D-05/D-11 confirmation ladder.
