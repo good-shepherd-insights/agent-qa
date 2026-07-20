@@ -19,6 +19,7 @@ import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {
   executeStep,
   SecretStore,
+  type LoopPorts,
   type Planner,
   type PlatformAdapter,
   type StepContext,
@@ -667,20 +668,25 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       },
     }
     const inertModel = {} as StepContext['plannerModel']
-    const context: StepContext = {
-      stepInstruction: 'sign in and buy at checkout',
+    const contextFor = (stepInstruction: string): StepContext => ({
+      stepInstruction,
       testName: FLOW,
       previousSteps: [],
       plannerModel: inertModel,
       verifierModel: inertModel,
       variables: { accountEmail: 'buyer@example.test' },
-    }
+    })
     const baseReader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
     const committed = procedureBundles()[0]!
+    let consults = 0
     // Keep production matching/trust, while the runner-style reader harness returns the exact
     // just-committed body bytes at the read seam used by guarded replay.
     const knowledgeReader = {
       ...baseReader,
+      getProcedure(...args: Parameters<typeof baseReader.getProcedure>) {
+        consults += 1
+        return baseReader.getProcedure(...args)
+      },
       read(id: RecordId, options?: Parameters<typeof baseReader.read>[1]) {
         return baseReader.read(id, options) ?? (id === procedureId
           ? {
@@ -694,20 +700,71 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
           : undefined)
       },
     }
+    const secretStore = new SecretStore({ step2_text: 'correct horse battery staple' })
+    // D-09 per-step law (F-381-51-1): body steps map 1:1 onto test steps, so CR-03's
+    // "through every stored guard" is proven ACROSS three test steps — the member-scoped
+    // carry cell threads the cursor, and every body step re-earns dispatch through the
+    // full guard ladder on its own step's fresh observation.
+    const flowCell: NonNullable<LoopPorts['procedureFlow']> = {}
+    const stepPorts = () => ({
+      adapter,
+      planner,
+      knowledgeReader,
+      secretStore,
+      procedureFlow: flowCell,
+    })
 
     // Replay-recommended is a claim; adapter-observed execution is the CR-03 evidence.
-    const result = await executeStep(
-      context.stepInstruction,
-      {
-        adapter,
-        planner,
-        knowledgeReader,
-        secretStore: new SecretStore({ step2_text: 'correct horse battery staple' }),
-      },
-      context,
+    // Test step 0: the fresh consult earns replay and consumes body step 0 — exactly ONE
+    // stored click, a per-step-complete guard fold, and the flow cursor at 0.
+    const step0 = await executeStep(
+      'sign in and buy at checkout',
+      stepPorts(),
+      contextFor('sign in and buy at checkout'),
     )
+    expect(step0.status).toBe('passed')
+    expect(consults).toBe(1)
+    expect(executed.map(({ type }) => type)).toEqual(['click'])
+    expect(step0.evidence?.subActions).toHaveLength(1)
+    expect(step0.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: { checksPassed: 1, total: 1 },
+      flow: { cursor: 0, length: 3 },
+    })
+    // The re-armed carry transports match + payload + cursor only — never a resolved ref.
+    expect(flowCell.carry?.nextIndex).toBe(1)
+    expect(flowCell.carry?.payload.steps).toHaveLength(3)
 
-    expect(result.status).toBe('passed')
+    // Test step 1: the carry substitutes the consult (still exactly one matcher call) and
+    // body step 1 re-grounds its email-field guard on this step's own fresh screen.
+    const step1 = await executeStep(
+      'Enter the account email',
+      stepPorts(),
+      contextFor('Enter the account email'),
+    )
+    expect(step1.status).toBe('passed')
+    expect(consults).toBe(1)
+    expect(executed.map(({ type }) => type)).toEqual(['click', 'fill'])
+    expect(executed.at(-1)).toMatchObject({ type: 'fill', text: 'buyer@example.test' })
+    expect(step1.evidence?.subActions).toHaveLength(1)
+    expect(step1.evidence?.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId,
+      guard: { checksPassed: 1, total: 1 },
+      flow: { cursor: 1, length: 3 },
+    })
+    expect(flowCell.carry?.nextIndex).toBe(2)
+
+    // Test step 2: the carried final body step submits the credential. CR-03 keeps the
+    // stored clearMode/submit behavior literal and the secret resolves only at the execute
+    // boundary; body exhaustion leaves no carry.
+    const step2 = await executeStep(
+      'Submit the account password',
+      stepPorts(),
+      contextFor('Submit the account password'),
+    )
+    expect(step2.status).toBe('passed')
     expect(planningCalls).toBe(0)
     expect(executed.map(({ type }) => type)).toEqual(['click', 'fill', 'fill'])
     expect(executed.at(-1)).toMatchObject({
@@ -716,12 +773,14 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       clearMode: 'replace',
       submit: true,
     })
-    expect(result.evidence?.subActions).toHaveLength(3)
-    expect(result.evidence?.planSource).toEqual({
+    expect(step2.evidence?.subActions).toHaveLength(1)
+    expect(step2.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId,
-      guard: { checksPassed: 3, total: 3 },
+      guard: { checksPassed: 1, total: 1 },
+      flow: { cursor: 2, length: 3 },
     })
+    expect(flowCell.carry).toBeUndefined()
   })
 
   it('a replay rejected by the verifier is never certified by live recovery', { timeout: 60_000 }, async () => {
@@ -807,7 +866,11 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
           : undefined)
       },
     }
+    const flowCell: NonNullable<LoopPorts['procedureFlow']> = {}
 
+    // Under the D-09 per-step law each replayed body step completes its own test step, so
+    // the FIRST verify call verifies body step 0 — the stored sign-in click — and the
+    // scripted first rejection lands at its proper per-step site, procedure step 0.
     const result = await executeStep(
       context.stepInstruction,
       {
@@ -816,22 +879,34 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
         verifier,
         knowledgeReader,
         secretStore: new SecretStore({ step2_text: 'correct horse battery staple' }),
+        procedureFlow: flowCell,
       },
       context,
     )
 
     expect(result.status).toBe('passed')
     expect(result.evidence).toBeDefined()
+    // The rejection aborts replay one-shot (D-11): ONE live recovery turn completes the
+    // step, and the stored fills (body steps 1-2) never dispatch anywhere — neither within
+    // this step (no replay re-entry) nor after it (the carry cell was never re-armed, so
+    // no later step can resume the body).
     expect(planningCalls).toBe(1)
-    expect(executed.map(({ type }) => type)).toEqual(['click', 'fill', 'fill', 'click'])
+    expect(verificationCalls).toBe(2)
+    expect(executed.map(({ type }) => type)).toEqual(['click', 'click'])
+    expect(executed.filter(({ type }) => type === 'fill')).toEqual([])
+    expect(result.evidence?.subActions).toHaveLength(2)
+    expect(flowCell.carry).toBeUndefined()
+    // Never certified: the per-step guard fold keeps the verifierRejection marker — the
+    // live recovery's accepted PASS cannot rewrite the planSource into a clean replay fold.
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId,
       guard: {
-        checksPassed: 3,
-        total: 3,
-        verifierRejection: { procedureStepIndex: 2 },
+        checksPassed: 1,
+        total: 1,
+        verifierRejection: { procedureStepIndex: 0 },
       },
+      flow: { cursor: 0, length: 3 },
     })
 
     const emitted: CanaryOutcome[] = []
@@ -853,6 +928,9 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(procedureOutcomes).toEqual([
       expect.objectContaining({ candidateId: procedureId, runOutcome: 'negative' }),
     ])
+    expect(procedureOutcomes[0]!.attribution).toContain(
+      'verifier rejection at procedure step 0',
+    )
     expect(report.procedure).toEqual({ emitted: 1, refused: 0, unresolved: 0 })
   })
 
