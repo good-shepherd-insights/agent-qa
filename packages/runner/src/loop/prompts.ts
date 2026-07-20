@@ -169,6 +169,22 @@ function completionRules(platform?: PromptPlatform): string {
 22. STAGNATION FOCUS — DO NOT WANDER: When a specific named control fails to make progress, you will be shown a stagnation block naming that exact control and how it stalled. Remediate THAT control as the classification directs — wait for a transient load, dismiss an obstruction, scroll it into view, or re-enter the input. Do NOT wander off to an alternate path or a different control to sidestep the named target, and never substitute a longpress for a required tap on it. Genuine loops across revisited screen states are caught separately and surfaced as a cycle-break block.`
 }
 
+// G-381-5 (Phase 381): the secret-fill contract. Live runs showed the planner
+// declaring secret-bearing steps infeasible ~40% of the time because this contract
+// was never taught — the prompt had no mention of secrets at all. Narrows Rule 12's
+// IMPOSSIBLE OBJECTIVE arm; appended as the next free number so the existing rule
+// sequence is not renumbered (renumbering breaks the prompts-* suites' pins).
+// The promised mechanism is the shipped one: redaction produces `[secret:NAME]`
+// (secrets.ts redactString) and resolveSecretTemplatesInValue substitutes the
+// template form at the dispatch seam (loop/index.ts). Round-trip pinned in
+// __tests__/secrets.test.ts so this rule can never overpromise.
+function secretPlaceholderRules(): string {
+  return `23. SECRET PLACEHOLDERS — the value EXISTS and is bound at dispatch: A step may reference a secret in one of two forms: the template form {{secret:NAME}}, or its redacted display form [secret:NAME] (what you see once model-bound text has been masked). Both mean the same thing: a concrete value for NAME EXISTS and is already bound in this run's secret store. It is hidden from you deliberately, for security — it is NOT missing, NOT unavailable, and NOT a gap you must fill in.
+   TO USE IT: emit the template form {{secret:NAME}} VERBATIM as the action value (e.g. as the value of a fill action). The harness substitutes the real value at dispatch — after you plan, before the action reaches the app. Passing the placeholder through IS the correct, complete action.
+   NEVER declare the step infeasible, skip it, guess, or invent a stand-in because the literal is not visible to you — a hidden secret is not an impossible objective. stepFailed with failureKind "infeasible" (Rule 12) stays reserved for genuinely impossible objectives.
+   NEVER attempt to read, print, echo, assert on, or otherwise reveal the concrete secret value. You never need to see it to use it.`
+}
+
 // ---------------------------------------------------------------------------
 // Rule composer — joins groups into the Rules: block
 // ---------------------------------------------------------------------------
@@ -184,6 +200,7 @@ function buildRules(platform?: PromptPlatform): string {
     qaMindsetRules(platform),
     recoveryRules(),
     completionRules(platform),
+    secretPlaceholderRules(),
   ]
   return 'Rules:\n' + groups.join('\n')
 }
