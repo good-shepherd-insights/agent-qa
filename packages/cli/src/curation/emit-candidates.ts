@@ -29,7 +29,7 @@ import {
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import { scan } from '@vostride/agent-qa-safety'
+import { detectEmails, scan } from '@vostride/agent-qa-safety'
 
 import {
   actionRefs,
@@ -631,16 +631,68 @@ function testVariableSourceName(
   return best
 }
 
+/**
+ * A whole-slot EMAIL placeholder: the ENTIRE observed string is one `<EMAIL_n>` token.
+ * EMAIL-category only — `<SECRET_n>` is deliberately excluded because secret names come
+ * solely from the recorded `{{secret:NAME}}`/`[secret:NAME]` forms; provenance must never
+ * name a secret slot (D-08 names-not-values, T-381-113).
+ */
+const EMAIL_PLACEHOLDER_FORM = /^<EMAIL_\d+>$/
+
+/**
+ * Placeholder-mode provenance matching (F-381-45-1). The guardrail's model-bound email pass
+ * can replace an interpolated test-variable value with its `<EMAIL_n>` placeholder BEFORE
+ * evidence capture, so the observed value can never equal the raw binding value and the
+ * exact-equality mode above cannot fire. Per-step provenance (381-41, recorded VERBATIM) is
+ * then the only surviving carrier of the binding name. Email-shapedness is delegated to the
+ * ONE authority that minted the placeholder — safety's detectEmails — a pair value counts
+ * iff its sole detection spans the whole value; no second email definition is hand-rolled.
+ *
+ * Fail-closed rules (T-381-112): candidates spanning two or more DISTINCT email values yield
+ * NO name (the mint ordinal is unrecoverable, so the binding cannot be known); candidates
+ * sharing ONE value tie-break to the lexicographically smallest name (mint dedupes by value,
+ * so any of those names binds the correct value at replay — 381-42's tie rule).
+ *
+ * Parameterization then REPLACES the placeholder literal with `{param: NAME}` — strictly
+ * stronger protection than redaction (D-03): the committed body carries neither the raw
+ * value nor the placeholder, and extraction success is proposal-independent.
+ */
+function emailPlaceholderSourceName(
+  interpolated: readonly { name: string; value: string }[] | undefined,
+): string | undefined {
+  if (interpolated === undefined) return undefined
+  let candidateValue: string | undefined
+  let best: string | undefined
+  for (const pair of interpolated) {
+    const detections = detectEmails(pair.value)
+    if (detections.length !== 1 || detections[0] !== pair.value) continue
+    if (candidateValue === undefined) {
+      candidateValue = pair.value
+      best = pair.name
+      continue
+    }
+    if (pair.value !== candidateValue) return undefined
+    if (pair.name < best!) best = pair.name
+  }
+  return best
+}
+
 function trajectoryValueClassification(
   observed: string,
   interpolated: readonly { name: string; value: string }[] | undefined,
 ): { source: 'literal' | 'test-variable' | 'masked-secret'; sourceName?: string } {
   if (MASKED_VALUE_PATTERN.test(observed)) {
     const sourceName = secretSourceName(observed)
-    return {
-      source: 'masked-secret',
-      ...(sourceName === undefined ? {} : { sourceName }),
+    if (sourceName !== undefined) return { source: 'masked-secret', sourceName }
+    // Placeholder mode fires ONLY here: the masked arm matched, no secret name was recorded,
+    // and the whole slot is one EMAIL placeholder with unambiguous email-valued provenance.
+    if (EMAIL_PLACEHOLDER_FORM.test(observed)) {
+      const bindingName = emailPlaceholderSourceName(interpolated)
+      if (bindingName !== undefined) {
+        return { source: 'test-variable', sourceName: bindingName }
+      }
     }
+    return { source: 'masked-secret' }
   }
   if (TEST_VARIABLE_PATTERN.test(observed)) return { source: 'test-variable' }
   const sourceName = testVariableSourceName(observed, interpolated)
