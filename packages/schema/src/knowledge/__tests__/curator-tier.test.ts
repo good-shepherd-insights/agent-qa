@@ -35,6 +35,13 @@ describe('curatorTier (D-06 capability tier)', () => {
     expect(curatorTier(authorship({ path: 'llm', model: { id: 'mistral-large' } }))).toBe('degraded')
   })
 
+  it('ignores the diagnostic fallbackReason member (381-47: never a tier input)', () => {
+    const bare = authorship({ path: 'deterministic-fallback' })
+    const stamped = { ...bare, fallbackReason: 'malformed' as const }
+    expect(curatorTier(stamped)).toBe(curatorTier(bare))
+    expect(curatorTier(stamped)).toBe('floor')
+  })
+
   it('matches case-insensitively at token boundaries only', () => {
     expect(curatorTier(authorship({ path: 'llm', model: { id: 'Claude-Opus-4' } }))).toBe('full')
     // 'o1' must not match inside a longer token

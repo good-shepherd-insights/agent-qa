@@ -47,6 +47,7 @@ import {
   type ClaimedCurationJob,
 } from '../../queue/curation-queue.js'
 import { readJobState, writeJobState } from '../../queue/job-state.js'
+import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CuratorAuthor, NeighborRecord } from '../author-contract.js'
 import type { CommitCurationOutcome } from '../commit.js'
 import {
@@ -698,6 +699,160 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       { candidateId, reason: 'procedure-body-unparseable' },
     ])
     expect(report.failureDetails).toEqual([])
+  })
+
+  it('carries the typed empty-delta cause when a fallback defeats procedure extraction (F-381-45-1)', async () => {
+    const candidateId = enqueue('fallback-defeated', {
+      kind: 'procedure',
+      subtype: undefined,
+      anchors: [{ t: 'flow', name: 'Checkout flow' }],
+      summarySeed: 'Checkout flow',
+      bodySeed: 'Complete checkout using the verified step sequence.',
+    })
+    const author = vi.fn<CuratorAuthor>(async () => ({
+      kind: 'fallback-required' as const,
+      reason: 'malformed' as const,
+    }))
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+      },
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 0,
+      failures: 0,
+      noops: 1,
+    })
+    expect(report.noopDetails).toEqual([
+      { candidateId, reason: 'delta-noop', emptyDeltaCause: 'fallback-malformed' },
+    ])
+  })
+
+  it('names authored-noop when a capable model authors a Noop delta', async () => {
+    const candidateId = enqueue('authored-noop')
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      const stamp = authorship(claimed)
+      return {
+        kind: 'authored' as const,
+        deltas: [
+          {
+            kind: 'Noop' as const,
+            origin: 'agent' as const,
+            scope: job.scope,
+            citedIds: [],
+            authorship: stamp,
+          },
+        ],
+        authorship: stamp,
+      }
+    })
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+      },
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 0,
+      failures: 0,
+      noops: 1,
+    })
+    expect(report.noopDetails).toEqual([
+      { candidateId, reason: 'delta-noop', emptyDeltaCause: 'authored-noop' },
+    ])
+  })
+
+  it('keeps benign dedup noops causeless (the delta-noop distinguishability boundary)', async () => {
+    const candidateId = enqueue('dedup-noop')
+    const author = vi.fn<CuratorAuthor>(async (job) => {
+      const claimed = { payload: job, candidateId: job.candidateId } as ClaimedCurationJob
+      return {
+        kind: 'authored',
+        deltas: [addDelta(claimed)],
+        authorship: authorship(claimed),
+      }
+    })
+    const commit: DrainOperations['commitCurationDelta'] = (
+      _deps,
+      job,
+    ): CommitCurationOutcome => {
+      writeJobState({ knowledgeRoot, candidateId: job.candidateId, lifecycle: 'done' })
+      return { kind: 'noop', reason: 'evidence-token-consumed' }
+    }
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      operations: {
+        ...noWriterPass(),
+        openKnowledgeReader: () => fakeReader(),
+        retrieve: async () => [],
+        commitCurationDelta: commit,
+      },
+    })
+
+    expect(report).toMatchObject({ noops: 1 })
+    expect(report.noopDetails).toEqual([
+      { candidateId, reason: 'evidence-token-consumed' },
+    ])
+    expect(
+      Object.prototype.hasOwnProperty.call(report.noopDetails[0], 'emptyDeltaCause'),
+    ).toBe(false)
+  })
+
+  it('parses a checkpoint whose fallback authorship names its reason (381-47 additive-optional)', () => {
+    const checkpoint = parseAuthoredCheckpoint({
+      schemaVersion: 1,
+      deltas: [
+        {
+          kind: 'Noop',
+          origin: 'agent',
+          scope: { tier: 'product', key: 'storefront' },
+          citedIds: [],
+          authorship: {
+            path: 'deterministic-fallback',
+            executionContext: 'local-headless',
+            fallbackReason: 'malformed',
+          },
+        },
+      ],
+      neighborIds: [],
+      preconditions: [],
+      authorship: {
+        path: 'deterministic-fallback',
+        executionContext: 'local-headless',
+        fallbackReason: 'malformed',
+      },
+    })
+    expect(checkpoint.authorship).toMatchObject({
+      path: 'deterministic-fallback',
+      fallbackReason: 'malformed',
+    })
   })
 
   it('durably breaks repeated embedding crashes into a vectorless commit', async () => {
