@@ -1271,3 +1271,177 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(source.match(/runCurationTail\(/g)).toHaveLength(2)
   })
 })
+
+describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
+  const factIdA = '1a'.repeat(32)
+  const factIdB = '2b'.repeat(32)
+  const procedureId = '3c'.repeat(32)
+
+  function summaryLineFrom(log: ReturnType<typeof vi.fn>): string | undefined {
+    return log.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => message.startsWith('Knowledge curation candidates for '))
+  }
+
+  it('renders one line per swept run naming per-kind projected counts and the outcome split', async () => {
+    const warn = vi.fn()
+    const info = vi.fn()
+    const operations = successfulOperations({
+      emitCurationCandidates: vi.fn(() => ({
+        enqueued: 2,
+        coalesced: 1,
+        capExceeded: 0,
+        refused: 0,
+        details: [
+          {
+            candidateId: factIdA,
+            kind: 'fact' as const,
+            outcome: { kind: 'enqueued' as const, candidateId: factIdA },
+          },
+          {
+            candidateId: factIdB,
+            kind: 'fact' as const,
+            outcome: { kind: 'enqueued' as const, candidateId: factIdB },
+          },
+          {
+            candidateId: procedureId,
+            kind: 'procedure' as const,
+            outcome: { kind: 'coalesced' as const, candidateId: procedureId },
+          },
+        ],
+      })),
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn, info } }))
+
+    const line = summaryLineFrom(info)
+    expect(line).toBe(
+      `Knowledge curation candidates for ${runId}: `
+      + `fact 2 projected (2 enqueued); `
+      + `procedure 1 projected (1 coalesced: ${procedureId}).`,
+    )
+    expect(info).toHaveBeenCalledTimes(1)
+    // Additive beside the ladder extractor: the line matches NEITHER harness regex.
+    expect([...String(line).matchAll(/drain produced (\d+) commit noop\(s\)/g)]).toHaveLength(0)
+    expect([...String(line).matchAll(/drain-noops=(\d+)/g)]).toHaveLength(0)
+  })
+
+  it('always names the procedure kind, even at zero projected (PROC-01 empty probe)', async () => {
+    const warn = vi.fn()
+    const info = vi.fn()
+
+    await runCurationTail(baseOptions(successfulOperations(), { log: { warn, info } }))
+
+    expect(summaryLineFrom(info)).toBe(
+      `Knowledge curation candidates for ${runId}: procedure 0 projected.`,
+    )
+  })
+
+  it('renders the F-381-48-1 silent class visibly and never gates on it', async () => {
+    // 381-49 adjudication: the round-11 candidate died queue-silently — 'coalesced'
+    // is the one enqueue outcome no surface rendered. It must be named on the line
+    // while the complete predicate stays byte-unchanged (receipt written, no warning).
+    const warn = vi.fn()
+    const info = vi.fn()
+    const writeCurationTailReceipt = vi.fn()
+    const operations = successfulOperations({
+      writeCurationTailReceipt,
+      emitCurationCandidates: vi.fn(() => ({
+        enqueued: 0,
+        coalesced: 1,
+        capExceeded: 0,
+        refused: 0,
+        details: [
+          {
+            candidateId: procedureId,
+            kind: 'procedure' as const,
+            outcome: { kind: 'coalesced' as const, candidateId: procedureId },
+          },
+        ],
+      })),
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn, info } }))
+
+    const line = summaryLineFrom(info)
+    expect(line).toContain(`procedure 1 projected (1 coalesced: ${procedureId})`)
+    expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/curation incomplete/i))
+    expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the line value-free: kinds, counts, and candidate ids only', async () => {
+    const summarySeedSentinel = 'XSENTINEL-SUMMARY-SEEDX'
+    const bodySeedSentinel = 'XSENTINEL-BODY-SEEDX'
+    const warn = vi.fn()
+    const info = vi.fn()
+    const operations = successfulOperations({
+      loadCompletedRunHandoff: () => ({
+        executionContext: 'ci',
+        runId,
+        tests: [{
+          steps: [{
+            stepText: summarySeedSentinel,
+            subActions: [{ plan: bodySeedSentinel }],
+          }],
+        }],
+      } as unknown as CompletedRunHandoff),
+      emitCurationCandidates: vi.fn(() => ({
+        enqueued: 1,
+        coalesced: 0,
+        capExceeded: 0,
+        refused: 1,
+        details: [
+          {
+            candidateId: factIdA,
+            kind: 'fact' as const,
+            outcome: { kind: 'enqueued' as const, candidateId: factIdA },
+          },
+          {
+            kind: 'procedure' as const,
+            outcome: { kind: 'refused' as const, reason: 'artifact-io-error' as const },
+          },
+        ],
+      })),
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn, info } }))
+
+    const line = summaryLineFrom(info)
+    expect(line).toBeDefined()
+    for (const rendered of [...info.mock.calls, ...warn.mock.calls].map(([m]) => String(m))) {
+      expect(rendered).not.toContain(summarySeedSentinel)
+      expect(rendered).not.toContain(bodySeedSentinel)
+    }
+    // Kinds, counts, content-address ids, and fixed punctuation only.
+    expect(line).toMatch(
+      /^Knowledge curation candidates for [\w-]+: (?:[a-z-]+ \d+ projected(?: \([^()]*\))?(?:; )?)+\.$/,
+    )
+  })
+
+  it('pins the complete predicate expression byte-identical (381-40 visibility-never-gates law)', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../curation/curation-tail.ts', import.meta.url)),
+      'utf8',
+    )
+
+    expect(source).toContain(
+      `complete = candidates.refused === 0
+            && candidates.capExceeded === 0
+            && canaries.refused === 0
+            && canaries.unresolved === 0
+            && !projectionFailed
+            && drain.kind === 'drained'
+            && drain.failures === 0
+            && drain.requeued === 0`,
+    )
+  })
+
+  it('wires an info channel on the production tail logger (run.ts)', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../commands/run.ts', import.meta.url)),
+      'utf8',
+    )
+
+    expect(source).toContain('info(message: string): void')
+  })
+})
