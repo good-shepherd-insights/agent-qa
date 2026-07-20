@@ -117,6 +117,19 @@ interface CommittedBundleResult {
   promotionHoldReason?: PromotionGateHoldReason
 }
 
+/**
+ * 381-47 (F-381-45-1): WHY a delta-noop disposition had nothing to apply. `authored-noop`
+ * = a capable-model author deliberately emitted a Noop delta; the `fallback-*` members
+ * name WHICH author fallback defeated extraction (the §7.9 one-element procedure Noop).
+ * Benign noop reasons (evidence-token dedup, disposition rejects) never carry a cause.
+ */
+export type EmptyDeltaCause =
+  | 'authored-noop'
+  | 'fallback-malformed'
+  | 'fallback-no-model'
+  | 'fallback-token-budget'
+  | 'fallback-model-error'
+
 export type CommitCurationOutcome =
   | ({ kind: 'applied' } & CommittedBundleResult)
   | ({ kind: 'downgraded'; reason: string } & CommittedBundleResult)
@@ -138,7 +151,7 @@ export type CommitCurationOutcome =
         { kind: 'identity-collision' }
       >['reason']
     }
-  | { kind: 'noop'; reason: string }
+  | { kind: 'noop'; reason: string; emptyDeltaCause?: EmptyDeltaCause }
   | { kind: 'requeue-resynthesis'; reason: string }
 
 export interface ApplyIndexDeltaForBundleInput {
@@ -728,6 +741,21 @@ function productForBundle(
   })?.product ?? fallback
 }
 
+/**
+ * 381-47: derive the delta-noop cause from the checkpoint authorship commit already holds
+ * (disposition stays authorship-blind). Absent fallbackReason on a fallback-path checkpoint
+ * predates the stamp and maps to 'fallback-malformed' — the historical dominant cause
+ * (F-381-45-1: three rejected proposals).
+ */
+function deriveEmptyDeltaCause(
+  authorship: AuthoredDeltaCheckpoint['authorship'],
+): EmptyDeltaCause {
+  if (authorship.path === 'deterministic-fallback') {
+    return `fallback-${authorship.fallbackReason ?? 'malformed'}`
+  }
+  return 'authored-noop'
+}
+
 function markDone(deps: CommitCurationDependencies, job: CommitCurationJob): void {
   if (deps.deferCompletion === true) return
   writeJobState({
@@ -891,6 +919,11 @@ export function commitCurationDelta(
   if (disposed.kind === 'requeue-resynthesis') return disposed
   if (disposed.kind === 'noop') {
     markDone(deps, job)
+    // Only the delta-noop mint is authorship-derived; every other noop reason
+    // (evidence-token dedup, the extraction-wall rejects) stays causeless.
+    if (disposed.reason === 'delta-noop') {
+      return { ...disposed, emptyDeltaCause: deriveEmptyDeltaCause(checkpoint.authorship) }
+    }
     return disposed
   }
 

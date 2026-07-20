@@ -320,6 +320,7 @@ export type {
   CommitCurationDependencies,
   CommitCurationJob,
   CommitCurationOutcome,
+  EmptyDeltaCause,
 } from './curator/commit.js'
 export {
   BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN,

@@ -18,6 +18,12 @@ export type OriginStage = 'run-curation'
 export type CurationAuthorshipPath = 'llm' | 'llm-repaired' | 'deterministic-fallback'
 
 /**
+ * 381-47: WHY the author fell back, threaded from AuthorOutcome's fallback arm so a
+ * delta-noop drain report can name its cause (F-381-45-1 diagnosability).
+ */
+export type CurationFallbackReason = 'malformed' | 'no-model' | 'token-budget' | 'model-error'
+
+/**
  * D-04 raw Curator authorship facts with the SAFE-01 write-posture context that produced them.
  */
 export interface CurationAuthorship {
@@ -28,6 +34,11 @@ export interface CurationAuthorship {
     fingerprint?: string
   }
   executionContext: ExecutionContext
+  /**
+   * Stamped only on the deterministic-fallback path and consumed only for drain-noop
+   * cause derivation — never a trust or tier input (D-06 folds `path` alone).
+   */
+  fallbackReason?: CurationFallbackReason
 }
 
 export interface CompareAndSet {

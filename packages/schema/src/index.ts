@@ -148,6 +148,7 @@ export type {
   BundleDraft,
   CurationAuthorship,
   CurationAuthorshipPath,
+  CurationFallbackReason,
   Delta,
   IssueDelta,
 } from './delta/index'

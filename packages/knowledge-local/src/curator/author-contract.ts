@@ -7,6 +7,7 @@ import {
   type BundleKind,
   type CompareAndSet,
   type CurationAuthorship,
+  type CurationFallbackReason,
   type Delta,
   type ExecutionContext,
   type FactSubtype,
@@ -69,7 +70,7 @@ export type AuthorOutcome =
   | { kind: 'authored'; deltas: Delta[]; authorship: CurationAuthorship }
   | {
       kind: 'fallback-required'
-      reason: 'malformed' | 'no-model' | 'token-budget' | 'model-error'
+      reason: CurationFallbackReason
     }
 
 /** Provider-neutral author seam injected by the CLI composition root. */
@@ -211,6 +212,10 @@ const curationAuthorshipSchema: z.ZodType<CurationAuthorship> = z
       .strict()
       .optional(),
     executionContext: z.enum(['local-interactive', 'local-headless', 'ci', 'cloud']),
+    // 381-47 additive-optional: an absent member still parses (pre-stamp checkpoints).
+    fallbackReason: z
+      .enum(['malformed', 'no-model', 'token-budget', 'model-error'])
+      .optional(),
   })
   .strict()
 

@@ -73,6 +73,7 @@ import {
   commitCurationDelta,
   deriveIndexRowFromBundle,
   type CommitCurationOutcome,
+  type EmptyDeltaCause,
 } from './commit.js'
 import type { DispositionDrainState } from './disposition.js'
 import { constructFallbackDeltas } from './fallback.js'
@@ -140,6 +141,11 @@ export type GcPassReport =
 export interface DrainNoop {
   candidateId: string
   reason: string
+  /**
+   * 381-47: present only on delta-noop entries — distinguishes a defeated extraction
+   * (`fallback-*`) from a deliberate authored Noop; benign dedup carries no cause.
+   */
+  emptyDeltaCause?: EmptyDeltaCause
 }
 
 interface DrainReportBase {
@@ -513,7 +519,7 @@ async function authorCheckpoint(
     return checkpointFromAuthored(outcome.deltas, outcome.authorship, neighbors)
   }
 
-  const fallback = constructFallbackDeltas(view, neighbors)
+  const fallback = constructFallbackDeltas(view, neighbors, outcome.reason)
   if (fallback.length !== 1 || fallback[0] === undefined) {
     throw new Error('deterministic fallback must produce exactly one delta')
   }
@@ -653,6 +659,9 @@ function mapCommitOutcome(
       report.noopDetails.push({
         candidateId: job.candidateId,
         reason: outcome.reason,
+        ...(outcome.emptyDeltaCause === undefined
+          ? {}
+          : { emptyDeltaCause: outcome.emptyDeltaCause }),
       })
       return 'continue'
     case 'failed':

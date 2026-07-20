@@ -44,6 +44,10 @@ const curationAuthorshipSchema: z.ZodType<CurationAuthorship> = z.object({
     fingerprint: z.string().optional(),
   }).strict().optional(),
   executionContext: z.enum(executionContexts),
+  // 381-47 additive-optional diagnostic; never a trust/tier input (D-06 folds path alone).
+  fallbackReason: z
+    .enum(['malformed', 'no-model', 'token-budget', 'model-error'])
+    .optional(),
 }).strict()
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'expected a lowercase SHA-256 hex digest')
 

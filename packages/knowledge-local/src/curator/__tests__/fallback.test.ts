@@ -79,7 +79,7 @@ function neighbor(
 }
 
 function onlyDelta(jobView: FallbackJobFixture, neighbors: FallbackNeighborFixture[] = []): Delta {
-  const deltas = constructFallbackDeltas(jobView, neighbors)
+  const deltas = constructFallbackDeltas(jobView, neighbors, 'no-model')
   expect(deltas).toHaveLength(1)
   return deltas[0]!
 }
@@ -203,8 +203,8 @@ describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
     const inputBefore = structuredClone(input)
     const neighborsBefore = structuredClone(neighbors)
 
-    const first = constructFallbackDeltas(input, neighbors)
-    const second = constructFallbackDeltas(input, neighbors)
+    const first = constructFallbackDeltas(input, neighbors, 'no-model')
+    const second = constructFallbackDeltas(input, neighbors, 'no-model')
 
     expect(JSON.stringify(first)).toBe(JSON.stringify(second))
     expect(input).toEqual(inputBefore)
@@ -251,11 +251,14 @@ describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
         bodySeed: 'Complete checkout using the verified step sequence.',
       }),
       [],
+      'malformed',
     )
 
     expect(deltas).toHaveLength(1)
     expect(deltas[0]?.kind).toBe('Noop')
     expect(deltas[0]?.authorship?.path).toBe('deterministic-fallback')
+    // 381-47: the stamp names WHICH fallback so the drain noop can carry its cause.
+    expect(deltas[0]?.authorship?.fallbackReason).toBe('malformed')
   })
 
   it('produces no delta kind outside the restricted set across a fixture sweep', () => {

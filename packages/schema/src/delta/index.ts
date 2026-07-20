@@ -3,6 +3,7 @@ export type {
   CompareAndSet,
   CurationAuthorship,
   CurationAuthorshipPath,
+  CurationFallbackReason,
   DeltaEnvelope,
 } from './envelope'
 export type { BundleKind, FactSubtype, OriginStage } from './envelope'

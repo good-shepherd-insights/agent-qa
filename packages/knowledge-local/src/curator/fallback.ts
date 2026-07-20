@@ -8,6 +8,7 @@ import type {
   Anchor,
   BundleDraft,
   CurationAuthorship,
+  CurationFallbackReason,
   Delta,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
@@ -85,10 +86,14 @@ function requiresCapableModelEnrichment(job: CurationJobView): boolean {
   return !evidenceFullyDerivable || job.summarySeed.trim() === ''
 }
 
-function fallbackAuthorship(job: CurationJobView): CurationAuthorship {
+function fallbackAuthorship(
+  job: CurationJobView,
+  fallbackReason: CurationFallbackReason,
+): CurationAuthorship {
   return {
     path: 'deterministic-fallback',
     executionContext: job.executionContext,
+    fallbackReason,
   }
 }
 
@@ -134,7 +139,11 @@ function exactPrimaryAnchorNeighbor(
     )[0]
 }
 
-function citedEnvelope(job: CurationJobView, neighbor?: NeighborRecord) {
+function citedEnvelope(
+  job: CurationJobView,
+  fallbackReason: CurationFallbackReason,
+  neighbor?: NeighborRecord,
+) {
   return {
     origin: 'agent' as const,
     scope: cloneScope(job.scope),
@@ -150,7 +159,7 @@ function citedEnvelope(job: CurationJobView, neighbor?: NeighborRecord) {
             },
           ],
         }),
-    authorship: fallbackAuthorship(job),
+    authorship: fallbackAuthorship(job, fallbackReason),
   }
 }
 
@@ -166,10 +175,11 @@ function citedEnvelope(job: CurationJobView, neighbor?: NeighborRecord) {
 export function constructFallbackDeltas(
   job: CurationJobView,
   neighbors: NeighborRecord[],
+  fallbackReason: CurationFallbackReason,
 ): Delta[] {
   assertStructurallyPossibleJob(job)
   if (job.kind === 'procedure') {
-    return [{ ...citedEnvelope(job), kind: 'Noop' }]
+    return [{ ...citedEnvelope(job, fallbackReason), kind: 'Noop' }]
   }
   const primaryAnchor = job.anchors[0]!
   const exactNeighbor = exactPrimaryAnchorNeighbor(primaryAnchor, neighbors)
@@ -188,7 +198,7 @@ export function constructFallbackDeltas(
   ) {
     return [
       {
-        ...citedEnvelope(job, exactNeighbor),
+        ...citedEnvelope(job, fallbackReason, exactNeighbor),
         kind: 'Supersede',
         victimId: exactNeighbor.recordId,
         newBundle: fallbackDraft(job),
@@ -200,7 +210,7 @@ export function constructFallbackDeltas(
   if (exactNeighbor !== undefined) {
     return [
       {
-        ...citedEnvelope(job, exactNeighbor),
+        ...citedEnvelope(job, fallbackReason, exactNeighbor),
         kind: 'Confirm',
         targetId: exactNeighbor.recordId,
         evidenceToken,
@@ -210,7 +220,7 @@ export function constructFallbackDeltas(
 
   return [
     {
-      ...citedEnvelope(job),
+      ...citedEnvelope(job, fallbackReason),
       kind: 'Add',
       bundle: fallbackDraft(job),
     },
