@@ -1,3 +1,9 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { HANDOFF_FILE, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import {
   asRecordId,
   asRef,
@@ -791,6 +797,180 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
       })]),
       procedureAnchors,
     )).toEqual([])
+  })
+})
+
+/**
+ * F-381-51-1 observation 3 (Plan 381-53, G-381-2 round 13): the FAILED round-12 rung-D
+ * run r_meng-mater-con-seit-acle-lade-gor-craft-abies-extern still recorded a POSITIVE
+ * `confirmed` canary event (buildOrdinal 31) because step 0's verifier passed before the
+ * test died at step 1. The fixture is the VERBATIM handoff of that run (byte-identical
+ * copy, digest-asserted below). The rows assert the DESIRED contract — positive
+ * procedure-replay canaries adopt D-01's per-trajectory passing gate — so the
+ * failed-test row is RED on the shipped build. Polarity pins P1-P5 pin what must NOT
+ * change: per-step positives on passing tests (380 D-21), guard-earned negatives and
+ * the root-cause classifier gate (D-11), the PROC-01 zero-replay empty projection, and
+ * Pin 1 (served-brief) attribution.
+ */
+describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)', () => {
+  const FIXTURE_PROCEDURE = asRecordId(
+    'procedure-flow-t-posing-clock-inject-pill-adds-i-29ff61a3638ac355',
+  )
+  const FIXTURE_PAGE_FACT = asRecordId(
+    'fact-page-http-127-0-0-1-8931-received-html-user-2a650b89fd403728',
+  )
+  const FIXTURE_EL_FACT = asRecordId('fact-el-textbox-username-20f5876cc5299c11')
+  const FIXTURE_RECEIVED_URL =
+    'http://127.0.0.1:8931/received.html?username=qa.user%2B381%40example.com'
+  /**
+   * sha-256 of the failed live run's handoff.json bytes at
+   * demo/init/.agent-qa/runs/r_meng-mater-con-seit-acle-lade-gor-craft-abies-extern/,
+   * computed at authoring time (the 381-49 fixture-fidelity discipline).
+   */
+  const FIXTURE_HANDOFF_SHA256 =
+    '102c24ced726af7a561bf2474dc500a333dd562fe2ea7feba2836ae62f417c1c'
+
+  const fixturePath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    'fixtures',
+    'f-381-51-1-run',
+    HANDOFF_FILE,
+  )
+
+  function fixtureAnchors(): Map<string, Anchor[]> {
+    return new Map<string, Anchor[]>([
+      [FIXTURE_PROCEDURE, [{ t: 'flow', name: 'form::submit-username' }]],
+      [FIXTURE_PAGE_FACT, [{ t: 'page', route: FIXTURE_RECEIVED_URL }]],
+      [FIXTURE_EL_FACT, [{ t: 'el', role: 'textbox', name: 'username', ordinal: 0 }]],
+    ])
+  }
+
+  it('fixture faithfulness: handoff bytes are the failed live run bytes', () => {
+    const digest = createHash('sha256')
+      .update(readFileSync(fixturePath))
+      .digest('hex')
+    expect(digest).toBe(FIXTURE_HANDOFF_SHA256)
+
+    const fixture = loadCompletedRunHandoff(fixturePath)
+    expect(fixture.aggregateVerdict).toBe('failed')
+    expect(fixture.tests[0]?.outcome).toBe('failed')
+    const stepZero = fixture.tests[0]?.steps[0]
+    expect(stepZero?.verifierVerdict.pass).toBe(true)
+    expect(stepZero?.planSource).toMatchObject({
+      kind: 'procedure-replay',
+      procedureId: FIXTURE_PROCEDURE,
+      guard: { checksPassed: 2, total: 2 },
+    })
+  })
+
+  it('a failed test projects no positive procedure canary from its verified-PASS replayed steps', () => {
+    const fixture = loadCompletedRunHandoff(fixturePath)
+    const outcomes = project(fixture, fixtureAnchors())
+
+    const testsByIndex = new Map(fixture.tests.map((test) => [test.testIndex, test]))
+    const positivesFromUnpassedTests = outcomes.filter((outcome) => {
+      if (outcome.runOutcome !== 'positive') return false
+      const test = testsByIndex.get(outcome.testIndex)
+      const evidence = test?.steps.find((entry) => entry.stepIndex === outcome.stepIndex)
+      return test?.outcome !== 'passed' && evidence?.planSource?.kind === 'procedure-replay'
+    })
+    expect(positivesFromUnpassedTests).toEqual([])
+    // Suppression, never inversion (D-11): the withheld positive must not surface as a
+    // negative either — the failed run contributes NOTHING to the confirmation counter.
+    expect(outcomes.filter(({ candidateId }) => candidateId === FIXTURE_PROCEDURE))
+      .toEqual([])
+  })
+
+  it('P1: a passing test keeps one positive per verified-PASS replayed step (380 D-21)', () => {
+    const outcomes = project(
+      handoff([
+        step({ stepIndex: 0, candidateIds: [], planSource: replaySource() }),
+        step({ stepIndex: 1, candidateIds: [], planSource: replaySource() }),
+      ]),
+      new Map([[PROCEDURE, PROCEDURE_ANCHORS]]),
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        candidateId: PROCEDURE,
+        runOutcome: 'positive',
+        stepIndex: 0,
+      }),
+      expect.objectContaining({
+        candidateId: PROCEDURE,
+        runOutcome: 'positive',
+        stepIndex: 1,
+      }),
+    ])
+  })
+
+  it('P2: a staleness miss in a failed test still projects a negative (D-11)', () => {
+    const outcomes = project(
+      handoff(
+        [step({
+          candidateIds: [],
+          pass: false,
+          planSource: replaySource('descriptor-missing'),
+        })],
+        rootCause('app_bug'),
+      ),
+      new Map([[PROCEDURE, PROCEDURE_ANCHORS]]),
+    )
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({ candidateId: PROCEDURE, runOutcome: 'negative' }),
+    ])
+  })
+
+  it('P3: the classifier gate keeps misses silent on non-attributable failures', () => {
+    for (const excluded of ['environment', 'timeout', 'flake'] as const) {
+      expect(project(
+        handoff(
+          [step({
+            candidateIds: [],
+            pass: false,
+            planSource: replaySource('descriptor-missing'),
+          })],
+          rootCause(excluded),
+        ),
+        new Map([[PROCEDURE, PROCEDURE_ANCHORS]]),
+      )).toEqual([])
+    }
+  })
+
+  it('P4: zero procedure-replay steps project zero procedure attributions (PROC-01 empty edge)', () => {
+    const outcomes = project(
+      handoff([step({ stepIndex: 0 }), step({ stepIndex: 1, pass: false })]),
+      new Map<string, Anchor[]>([
+        [CANDIDATE, [{ t: 'el', role: 'button', name: 'checkout', ordinal: 0 }]],
+        [PROCEDURE, PROCEDURE_ANCHORS],
+      ]),
+    )
+
+    expect(outcomes.filter(({ candidateId }) => candidateId === PROCEDURE)).toEqual([])
+    // Pin 1 stays verdict-ungated by construction: the served-brief lane keeps
+    // attributing per-step outcomes even inside this failed test.
+    expect(outcomes.filter(({ candidateId }) => candidateId === CANDIDATE))
+      .toHaveLength(2)
+  })
+
+  it('P5: served-brief (Pin 1) attribution over the verbatim fixture keeps its exact counts', () => {
+    const fixture = loadCompletedRunHandoff(fixturePath)
+    const outcomes = project(fixture, fixtureAnchors())
+
+    const briefOutcomes = outcomes.filter(
+      ({ candidateId }) => candidateId !== FIXTURE_PROCEDURE,
+    )
+    // Step 0 serves no canaries (empty channel1); step 1 serves two, of which only the
+    // page fact contacts an exercised anchor — one attributable negative, byte-unchanged.
+    expect(briefOutcomes).toEqual([
+      expect.objectContaining({
+        candidateId: FIXTURE_PAGE_FACT,
+        runOutcome: 'negative',
+        testIndex: 0,
+        stepIndex: 1,
+      }),
+    ])
   })
 })
 
