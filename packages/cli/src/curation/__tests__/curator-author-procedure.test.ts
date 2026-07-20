@@ -11,7 +11,7 @@ import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { describe, expect, it } from 'vitest'
 
-import { buildCuratorAuthor } from '../curator-author.js'
+import { buildCuratorAuthor, CURATOR_RETRY_CAP } from '../curator-author.js'
 import type { ProcedureTrajectorySeed } from '../emit-candidates.js'
 
 type CuratorModel = ReturnType<typeof createModel>
@@ -762,6 +762,121 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
       true,
       false,
     ])
+  })
+
+  it('clamps a naive whole-flow span off its non-replayable tail and builds (G-381-1)', async () => {
+    const outcome = await author([naiveWholeFlowProposal])(liveShapedJob(), [])
+
+    expect(outcome.kind).toBe('authored')
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    expect(outcome.deltas).toHaveLength(1)
+    const [bundle] = addBundles(outcome.deltas)
+    const payload = parseProcedureBody(bundle!.body)
+    // Ordinals 0..3 survive; the trailing assertAI verify step (4) is clamped off.
+    expect(payload?.steps).toHaveLength(4)
+    expect(payload?.steps.at(-1)?.instruction).toBe('Submit and open checkout')
+    expect(payload?.successAssertion).toBe('The checkout page is shown')
+  })
+
+  it('pins the delta flow anchor to seed.flowName against an invented proposal name (G-381-1)', async () => {
+    const outcome = await author([naiveWholeFlowProposal])(liveShapedJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const [bundle] = addBundles(outcome.deltas)
+
+    // checkAnchorConsistency compares against the queue candidate's primary flow anchor,
+    // which emit-candidates pins to flow:<testId> === seed.flowName.
+    expect(bundle!.anchors[0]).toEqual({
+      t: 'flow',
+      name: 'auth::sign-in-then-checkout',
+    })
+    expect(bundle!.anchors.some((anchor) => anchor.t === 'flow' && anchor.name === 'submit-username-form')).toBe(false)
+  })
+
+  it('pins a BUILDABLE sub-span proposal to seed.flowName too (anchor-downgrade precondition)', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'submit-username-form',
+          stepSpan: [0, 2],
+          parameters: [],
+          successAssertion: 'The account is signed in',
+        },
+      ],
+    })
+
+    const outcome = await author([proposal])(procedureJob(), [])
+    if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
+    const [bundle] = addBundles(outcome.deltas)
+
+    expect(bundle!.anchors[0]).toEqual({
+      t: 'flow',
+      name: 'auth::sign-in-then-checkout',
+    })
+  })
+
+  it('still rejects a span whose INTERIOR step is non-replayable (contiguity, D-02)', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'auth::sign-in-then-checkout',
+          stepSpan: [0, 4],
+          parameters: [],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+
+    const outcome = await author(
+      Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => proposal),
+    )(procedureJob({ bodySeed: canonicalJson(interiorNonReplayableSeed()) }), [])
+
+    expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
+  })
+
+  it('rejects a span that clamps below two replayable steps', async () => {
+    const seed = liveShapedSeed()
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: seed.flowName,
+          stepSpan: [3, 4],
+          parameters: [],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+
+    const outcome = await author(
+      Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => proposal),
+    )(liveShapedJob(), [])
+
+    expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
+  })
+
+  it('names the ACTUAL per-candidate constraint in procedure retry feedback (G-381-1)', async () => {
+    const proposal = JSON.stringify({
+      candidates: [
+        {
+          flowName: 'submit-username-form',
+          stepSpan: [0, 4],
+          parameters: [],
+          successAssertion: 'The checkout page is shown',
+        },
+      ],
+    })
+    const { author: run, prompts } = capturingAuthor(
+      Array.from({ length: CURATOR_RETRY_CAP + 1 }, () => proposal),
+    )
+
+    await run(procedureJob({ bodySeed: canonicalJson(interiorNonReplayableSeed()) }), [])
+
+    expect(prompts).toHaveLength(CURATOR_RETRY_CAP + 1)
+    const retry = prompts[1]!.user
+    // The constraint, not the delta-authoring boilerplate that never applied to extraction.
+    expect(retry).not.toMatch(/documented delta kinds/i)
+    expect(retry).toMatch(/ordinal 2/)
+    expect(retry).toMatch(/replayable/i)
+    expect(retry).toMatch(/flowName/)
   })
 
   it('widened multi-delta checkpoint round-trips and single-delta fact authoring still works', async () => {
