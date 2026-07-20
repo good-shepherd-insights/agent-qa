@@ -889,6 +889,122 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     })
   })
 
+  it('names the binding behind a whole-slot EMAIL placeholder from step provenance (F-381-45-1)', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::guardrail-placeholder',
+      fillText: '<EMAIL_0>',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'qa.user+381@example.com' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: '<EMAIL_0>',
+      source: 'test-variable',
+      sourceName: 'PROBE_USER',
+      targetRef: 'email',
+    })
+  })
+
+  it('is ordinal-insensitive: <EMAIL_1> names the same unambiguous binding', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::placeholder-ordinal',
+      fillText: '<EMAIL_1>',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'qa.user+381@example.com' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toMatchObject({
+      source: 'test-variable',
+      sourceName: 'PROBE_USER',
+    })
+  })
+
+  it('tie-breaks provenance names sharing ONE email value to the lexicographically smallest', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::placeholder-tie',
+      fillText: '<EMAIL_0>',
+      interpolatedVariables: [
+        { name: 'BETA_MAIL', value: 'shared.mail@example.com' },
+        { name: 'ALFA_MAIL', value: 'shared.mail@example.com' },
+      ],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toMatchObject({
+      source: 'test-variable',
+      sourceName: 'ALFA_MAIL',
+    })
+  })
+
+  it('fails closed on DISTINCT email values: the placeholder ordinal is unrecoverable (T-381-112)', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::placeholder-ambiguous',
+      fillText: '<EMAIL_0>',
+      interpolatedVariables: [
+        { name: 'FIRST_MAIL', value: 'first@example.com' },
+        { name: 'SECOND_MAIL', value: 'second@example.com' },
+      ],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: '<EMAIL_0>',
+      source: 'masked-secret',
+      targetRef: 'email',
+    })
+  })
+
+  it('keeps a placeholder slot masked-secret with NO sourceName when provenance is absent', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::placeholder-unprovenanced',
+      fillText: '<EMAIL_0>',
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: '<EMAIL_0>',
+      source: 'masked-secret',
+      targetRef: 'email',
+    })
+  })
+
+  it('keeps a placeholder slot masked-secret when no provenance value is email-shaped', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::placeholder-no-email',
+      fillText: '<EMAIL_0>',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'UATVAR-77RTQ-USERNAME' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: '<EMAIL_0>',
+      source: 'masked-secret',
+      targetRef: 'email',
+    })
+  })
+
+  it('never names an EMBEDDED placeholder: whole-slot anchoring only', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::placeholder-embedded',
+      fillText: 'prefix <EMAIL_0> suffix',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'qa.user+381@example.com' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: 'prefix <EMAIL_0> suffix',
+      source: 'masked-secret',
+      targetRef: 'email',
+    })
+  })
+
+  it('never provenance-names a <SECRET_n> placeholder: the branch is EMAIL-only', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::secret-placeholder',
+      fillText: '<SECRET_0>',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'qa.user+381@example.com' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: '<SECRET_0>',
+      source: 'masked-secret',
+      targetRef: 'email',
+    })
+  })
+
   it('rejects the whole action when a composite embeds a redacted secret marker (T-381-50)', () => {
     const steps = signInSteps()
     steps[1]!.subActions[0]!.plannedAction = {
