@@ -29,7 +29,7 @@ import {
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import { detectEmails, scan } from '@vostride/agent-qa-safety'
+import { detectEmails, getActiveMaskingContext, scan } from '@vostride/agent-qa-safety'
 
 import {
   actionRefs,
@@ -763,6 +763,24 @@ function isCompositeJsonValue(
   return value === null || typeof value === 'object'
 }
 
+/**
+ * F-381-48-1: step instruction TEXT is recorded post-interpolation, so a `{{env:}}`-bound
+ * email rides the handoff's stepText VERBATIM into every procedure-candidate prose surface
+ * (summarySeed, seed instructions, observation naturalKeys). The committed-egress
+ * checkpoint then blocks the publish (redact-action detections block on non-user parts)
+ * and the drain's 'withheld' outcome is structurally silent at the tail. The projection
+ * therefore masks prose through the SAME ambient masking context that minted the
+ * plannedAction's placeholder — the candidate survives UNDER the transform; the wall is
+ * untouched. Value slots are not routed here: D-03 forced parameterization owns them.
+ * Outside a safety scope (pure unit fixtures) this is the identity function, and
+ * non-email, unregistered values (the sentinel arm) pass through byte-identical.
+ * Deliberately NOT `{{env:}}` re-templatization — that prose design ruling stays deferred
+ * (Plan 381-42 third prohibition).
+ */
+function maskedProse(text: string): string {
+  return getActiveMaskingContext()?.mask(text) ?? text
+}
+
 function completingSubAction(step: StepEvidence): SubActionEvidence | undefined {
   for (let index = step.subActions.length - 1; index >= 0; index -= 1) {
     const candidate = step.subActions[index]!
@@ -848,7 +866,7 @@ function trajectoryStep(step: StepEvidence): ProcedureTrajectoryStep {
     : completing.stateBefore.url
   return {
     ordinal: step.stepIndex,
-    instruction: step.stepText,
+    instruction: maskedProse(step.stepText),
     ...(completing === undefined || values === undefined
       ? {}
       : {
@@ -892,14 +910,14 @@ function projectProcedureTarget(
     const previous = test.steps[position - 1]
     return {
       schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
-      step: { naturalKey: step.stepText, ordinal: step.stepIndex },
+      step: { naturalKey: maskedProse(step.stepText), ordinal: step.stepIndex },
       ...(stepPlatform === undefined
         ? {}
         : { platform: observationPlatform(stepPlatform) }),
       test: { id: test.testId },
       flow: {
         name: flowName,
-        ...(previous === undefined ? {} : { precedes: previous.stepText }),
+        ...(previous === undefined ? {} : { precedes: maskedProse(previous.stepText) }),
       },
       ...(route === undefined || stepPlatform === undefined
         ? {}
@@ -936,7 +954,7 @@ function projectProcedureTarget(
       kind: 'procedure',
       anchors,
       summarySeed: `Procedure ${flowName}: ${test.steps
-        .map((step) => step.stepText)
+        .map((step) => maskedProse(step.stepText))
         .join(' -> ')}`,
       bodySeed: canonicalJson(seed),
       observations,
