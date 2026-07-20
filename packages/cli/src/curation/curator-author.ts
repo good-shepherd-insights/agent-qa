@@ -663,11 +663,28 @@ const extractionProposalSchema = z
 
 type ExtractionCandidate = z.infer<typeof extractionCandidateSchema>
 
+/**
+ * The ONE replayability authority shared by the presentation and the builder wall (G-381-1).
+ * `buildCandidatePayload` inlined these four conditions while the prompt knew nothing about
+ * them, so every live whole-flow proposal — real flows end with a targetless assertAI verify
+ * step — was rejected with feedback that never named the constraint. Prompt, render, and wall
+ * now read the same predicate; they can no longer disagree.
+ */
+function isReplayableTrajectoryStep(step: ProcedureTrajectoryStep): boolean {
+  if (step.action === undefined || step.pageRoute === undefined) return false
+  const laneKeys = Object.keys(step.action.targets)
+  if (laneKeys.length === 0) return false
+  const fieldKeys = [...laneKeys, ...Object.keys(step.action.values)]
+  return isReplayableActionShape(step.action.type, fieldKeys)
+}
+
 function extractionInstructions(): string {
   return [
     'You are the agent-qa Curator extracting reusable procedures from one verified passing trajectory.',
     'Segment the ordered trajectory into a whole-flow candidate plus optional coherent sub-flow candidates.',
     'Each candidate covers one contiguous ordinal span [start, end] of the presented steps.',
+    'Span replayability: a span may cover ONLY steps presented with "replayable": true. Steps marked "replayable": false (verify/assert, extract, set-variable, and targetless steps) are excluded from every span — a trailing verify step must inform your successAssertion text instead of joining the span. A span containing any non-replayable ordinal is rejected by the deterministic builder.',
+    'flowName echo: every candidate\'s flowName is the presented trajectory flowName copied verbatim. Distinguish a sub-flow by its stepSpan, never by a new or invented name — an invented flowName is discarded by the builder.',
     'Propose parameter names for observed values that should vary between replays.',
     'Every value slot labeled masked-secret or test-variable MUST be parameterized (type secret for masked values).',
     'Parameter type must be one of: string, number, boolean, secret.',
@@ -682,6 +699,7 @@ function renderTrajectory(seed: ProcedureTrajectorySeed): string {
   const steps = seed.steps.map((step) => ({
     ordinal: step.ordinal,
     instruction: step.instruction,
+    replayable: isReplayableTrajectoryStep(step),
     ...(step.action === undefined
       ? {}
       : {
@@ -806,11 +824,10 @@ function buildCandidatePayload(
   const forcedParams: ProcedureParameterSpec[] = []
   const steps: ProcedureStepSpec[] = []
   for (const step of covered) {
+    // Same predicate the presentation renders (G-381-1) — one authority, zero drift.
+    if (!isReplayableTrajectoryStep(step)) return undefined
     if (step.action === undefined || step.pageRoute === undefined) return undefined
     const laneKeys = Object.keys(step.action.targets)
-    if (laneKeys.length === 0) return undefined
-    const fieldKeys = [...laneKeys, ...Object.keys(step.action.values)]
-    if (!isReplayableActionShape(step.action.type, fieldKeys)) return undefined
 
     const guardSource =
       step.action.targets['ref'] ?? step.action.targets[[...laneKeys].sort()[0]!]!

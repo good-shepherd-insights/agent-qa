@@ -726,7 +726,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const system = prompts[0]!.system
     // The span-replayability rule: only replayable-marked steps may be covered, and the
     // trailing verify/assert step informs successAssertion rather than joining the span.
-    expect(system).toContain('replayable: true')
+    expect(system).toContain('"replayable": true')
     expect(system).toMatch(/successAssertion/)
     expect(system).toMatch(/exclude|excluded/i)
     // The flowName-echo rule: echo the presented flowName verbatim; sub-flows differ by span.
