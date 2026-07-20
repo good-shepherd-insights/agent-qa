@@ -10,7 +10,7 @@ export type {
   SamplingParams,
 } from './model-call-profile'
 export type { PlanningFailureEvidence, ToolExchangeEvidence } from './tool-exchange'
-export type { StepEvidence, StepPlanSource } from './step-evidence'
+export type { StepEvidence, StepPlanSource, InterpolatedVariable } from './step-evidence'
 export type { VerifierVerdict, Decision } from './step-evidence'
 export type { SubActionEvidence } from './sub-action-evidence'
 export type {

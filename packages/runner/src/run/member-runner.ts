@@ -52,7 +52,7 @@ import type {
 import type { ConfigDigests, HookExecutorPort, MemberEventSink, MemberEvidenceContext } from './ports.js'
 import type { HookDefinition } from '../hooks/types.js'
 import { VariableStore } from '../variables/store.js'
-import { interpolateVariables, findUnresolvedTemplates } from '../variables/interpolate.js'
+import { interpolateVariables, interpolateVariablesWithProvenance, findUnresolvedTemplates } from '../variables/interpolate.js'
 import { createExtractor } from '../variables/extractor.js'
 import { executeStep as defaultExecuteStep } from '../loop/index.js'
 import { withAbort, createTimeoutAbortReason, getTimeoutAbortReason } from '../loop/abort.js'
@@ -527,7 +527,12 @@ async function runMemberAttempt(
 
     // 2. INTERPOLATION — {{env:VAR}} resolves against the store (hooks already merged).
     const originalStepName = instructionAfterHooks
-    let instruction = interpolateVariables(instructionAfterHooks, variableStore)
+    // 381 D-03/D-08 (G-381-3): the provenance variant returns the SAME text plus the
+    // binding names that produced it, so the name survives this pre-planning seam into
+    // StepEvidence. Text semantics — and therefore hasTemplateVars — are unchanged.
+    const interpolated = interpolateVariablesWithProvenance(instructionAfterHooks, variableStore)
+    let instruction = interpolated.text
+    const interpolatedVariables = interpolated.substitutions
     let hasTemplateVars = originalStepName !== instruction
 
     const stepId = makeId('step')
@@ -632,6 +637,9 @@ async function runMemberAttempt(
           ? (config.plannerModel as { modelId: string }).modelId
           : undefined,
       variables: redactSecretValue(Object.fromEntries(variableStore.getAll()), config.secretRedactor),
+      // Verbatim, deliberately unredacted — the emit fold matches these values by exact
+      // string equality against the (also unmasked) plannedAction. Empty ⇒ nothing stamped.
+      ...(interpolatedVariables.length > 0 ? { interpolatedVariables } : {}),
       isRerun: rerunContext !== undefined,
       rerunAttempt: rerunContext?.attempt,
       previousFailureSummary: rerunContext?.previousFailureSummary,

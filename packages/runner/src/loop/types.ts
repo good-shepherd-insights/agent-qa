@@ -9,6 +9,7 @@
 import type { LanguageModel } from 'ai'
 import type {
   GroundingAttempt,
+  InterpolatedVariable,
   ModelCallRecord,
   ScreenState,
   ToolExchangeEvidence,
@@ -106,6 +107,20 @@ export interface StepContext {
   verifierModel: LanguageModel
   modelId?: string
   variables?: Record<string, string>
+  /**
+   * The `{{env:NAME}}` bindings that interpolated into `stepInstruction` before this step
+   * was planned (PROC-01 · 381 D-03/D-08). DESTINATION: stamped verbatim onto
+   * `StepEvidence.interpolatedVariables` at finalize, where the procedure-extraction emit
+   * fold reads it to classify a trajectory value slot back to its source binding NAME.
+   *
+   * Carried VERBATIM end to end — never masked (unlike `variables` above, which is
+   * secret-redacted for the planner). See the masking prohibition documented on
+   * `StepEvidence.interpolatedVariables`: masking would break the consumer's exact-match
+   * classification for email-valued and credential-named bindings.
+   *
+   * Absent/empty when the step's text interpolated nothing — finalize then stamps nothing.
+   */
+  interpolatedVariables?: readonly InterpolatedVariable[]
   /**
    * D-12/D-13 compatibility slot for a directly supplied learned brief. Reader-backed runs use
    * the structured L1/L2/truncation fields below; buildVolatileTier applies the same hypotheses

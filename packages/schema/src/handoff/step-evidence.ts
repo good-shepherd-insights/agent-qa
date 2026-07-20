@@ -71,6 +71,19 @@ export interface Decision {
   result: RecordedActionResult
 }
 
+/**
+ * One `{{env:NAME}}` binding that interpolated into a step's text, recorded as the
+ * NAME the test author bound alongside the value that replaced it (PROC-01, 381 D-03/D-08).
+ *
+ * Interpolation happens BEFORE planning, so without this pair the binding name is
+ * destroyed at the capture seam and only the resolved literal survives into the
+ * trajectory — the G-381-3 root cause.
+ */
+export interface InterpolatedVariable {
+  name: string
+  value: string
+}
+
 export interface StepEvidence {
   stepIndex: number
   stepText: string
@@ -156,4 +169,32 @@ export interface StepEvidence {
    * historical single source (a planning turn, with the action cache as an exact-key shortcut).
    */
   planSource?: StepPlanSource
+  /**
+   * The `{{env:NAME}}` bindings that interpolated into `stepText` (PROC-01 · 381 D-03/D-08).
+   * Additive optional (the 358-02 `workingMemory` idiom): absent when the step's text
+   * interpolated nothing, so pre-existing handoffs stay valid unchanged.
+   *
+   * CONSUMER: the procedure-extraction emit fold (`cli/src/curation/emit-candidates.ts`).
+   * DEREFERENCE DEPTH: it applies exact string equality against `value` to classify a
+   * trajectory value slot, and copies `name` VERBATIM as the forced parameter name — so
+   * the load guard validates exactly `{name: string, value: string}` and no deeper.
+   *
+   * EXPOSURE RATIONALE (truthful baseline — no phantom control): these values are env
+   * material that ALREADY persists unmasked in this same handoff, twice over — in
+   * `stepText` (passed to finalize unmasked at `runner/src/loop/index.ts:411`) and in
+   * `plannedAction` at every `recordSubAction` site. This third derived copy therefore
+   * adds no exposure. Secret material cannot enter the channel by construction:
+   * `interpolateVariables` never resolves `{{secret:...}}`.
+   *
+   * DELIBERATELY NOT MASKED. Masking would buy zero confidentiality (see above) while
+   * actively breaking the consumer: `mask()` (`safety/src/masking/context.ts:46-48`)
+   * transforms emails UNCONDITIONALLY and registration-free, and `sensitiveEnvSlice`
+   * (`cli/src/run-session-composition.ts:504-545`) registers ordinary env vars by NAME
+   * (`_KEY`/`_TOKEN`/`_SECRET`/`_PASSWORD`/… suffixes, `ANTHROPIC_`/`OPENAI_`/`GH_`/…
+   * prefixes). An email-valued username binding — the canonical login case — or any
+   * `{{env:X_TOKEN}}` would be transformed HERE while `plannedAction` stayed raw, the
+   * exact-match classification would miss, no source name would be emitted, and replay
+   * would stay permanently `hint`. That is G-381-3 itself.
+   */
+  interpolatedVariables?: InterpolatedVariable[]
 }

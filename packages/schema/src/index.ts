@@ -157,6 +157,7 @@ export type {
   CycleEvidence,
   DeclaredModelProfile,
   LocalEffectEvidence,
+  InterpolatedVariable,
   ModelCallRecord,
   ModelIdentity,
   PerTestOutcome,

@@ -3,14 +3,47 @@
 // messages, and bare-variable detection. Semantics preserved exactly; the
 // {{secret:...}} template is deliberately SKIPPED here (resolved separately through
 // the runner secrets helper), never leaking a raw secret into interpolated text.
+import type { InterpolatedVariable } from '@vostride/agent-qa-schema'
 import type { VariableStore } from './store.js'
 
-export function interpolateVariables(template: string, store: VariableStore): string {
-  return template.replace(/\{\{env:(\w+)\}\}/g, (_match, varName) => {
+export interface InterpolationWithProvenance {
+  text: string
+  /**
+   * The bindings that actually resolved, one entry per DISTINCT name in first-occurrence
+   * order. Unresolved patterns and the skipped `{{secret:...}}` template contribute
+   * nothing. Values are recorded VERBATIM — see the masking prohibition on
+   * `StepEvidence.interpolatedVariables` (masking here would break the emit fold's
+   * exact-match classification and reintroduce G-381-3).
+   */
+  substitutions: InterpolatedVariable[]
+}
+
+/**
+ * The single replacement implementation (PROC-01 · 381 D-03/D-08). Produces byte-identical
+ * text to the historical `interpolateVariables` while reporting WHICH binding names
+ * produced it, so the name survives the pre-planning interpolation seam into StepEvidence.
+ */
+export function interpolateVariablesWithProvenance(
+  template: string,
+  store: VariableStore,
+): InterpolationWithProvenance {
+  const seen = new Map<string, string>()
+  const text = template.replace(/\{\{env:(\w+)\}\}/g, (_match, varName: string) => {
     const value = store.get(varName)
-    if (value !== undefined) return value
+    if (value !== undefined) {
+      if (!seen.has(varName)) seen.set(varName, value)
+      return value
+    }
     return _match
   })
+  return {
+    text,
+    substitutions: [...seen].map(([name, value]) => ({ name, value })),
+  }
+}
+
+export function interpolateVariables(template: string, store: VariableStore): string {
+  return interpolateVariablesWithProvenance(template, store).text
 }
 
 interface UnresolvedTemplate {

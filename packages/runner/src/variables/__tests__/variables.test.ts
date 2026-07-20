@@ -5,6 +5,7 @@ import { makeScreenState as makeBaseScreenState } from '../../testing/screen-fix
 import {
   VariableStore,
   interpolateVariables,
+  interpolateVariablesWithProvenance,
   findBareVariables,
   findUnresolvedTemplates,
   ExplicitExtractor,
@@ -236,6 +237,94 @@ describe('interpolateVariables', () => {
 
     expect(interpolateVariables('Password {{secret:loginPassword}}', store))
       .toBe('Password {{secret:loginPassword}}')
+  })
+})
+
+// G-381-3 capture half (PROC-01, D-03/D-08): interpolation must report WHICH binding
+// names produced the substituted text without changing the text it produces. The
+// delegation-equality table below is the byte-identity pin — expected strings are the
+// literal output of interpolateVariables at the time provenance was introduced, so a
+// regression in either implementation breaks the row rather than agreeing with itself.
+describe('interpolateVariablesWithProvenance', () => {
+  function provenanceStore(): VariableStore {
+    const store = new VariableStore()
+    store.set('PROBE_USER', 'qa.user@example.com', 'env')
+    store.set('PROBE_ORDER', 'ORD-123', 'env')
+    store.set('loginPassword', 'phase222-raw-secret-SHOULD-NOT-PERSIST-4f03b7', 'env')
+    return store
+  }
+
+  const delegationTable: Array<[string, string]> = [
+    ['no templates here', 'no templates here'],
+    ['', ''],
+    ['login as {{env:PROBE_USER}}', 'login as qa.user@example.com'],
+    [
+      'login as {{env:PROBE_USER}} x {{env:PROBE_USER}} and {{env:MISSING}}',
+      'login as qa.user@example.com x qa.user@example.com and {{env:MISSING}}',
+    ],
+    [
+      'order {{env:PROBE_ORDER}} for {{env:PROBE_USER}}',
+      'order ORD-123 for qa.user@example.com',
+    ],
+    ['Password {{secret:loginPassword}}', 'Password {{secret:loginPassword}}'],
+    ['bare {{PROBE_USER}} stays', 'bare {{PROBE_USER}} stays'],
+    ['{{capture:PROBE_ORDER}}', '{{capture:PROBE_ORDER}}'],
+    ['{{env:MISSING}} only', '{{env:MISSING}} only'],
+  ]
+
+  it.each(delegationTable)(
+    'delegation equality — %j interpolates byte-identically through both entry points',
+    (template, expected) => {
+      const store = provenanceStore()
+      expect(interpolateVariables(template, store)).toBe(expected)
+      expect(interpolateVariablesWithProvenance(template, store).text).toBe(expected)
+    },
+  )
+
+  it('records one insertion-ordered pair per DISTINCT resolved name (dedup)', () => {
+    const store = provenanceStore()
+    const result = interpolateVariablesWithProvenance(
+      'login as {{env:PROBE_USER}} x {{env:PROBE_USER}} for order {{env:PROBE_ORDER}}',
+      store,
+    )
+    expect(result.substitutions).toEqual([
+      { name: 'PROBE_USER', value: 'qa.user@example.com' },
+      { name: 'PROBE_ORDER', value: 'ORD-123' },
+    ])
+  })
+
+  it('unresolved {{env:MISSING}} contributes no provenance pair', () => {
+    const store = provenanceStore()
+    const result = interpolateVariablesWithProvenance(
+      'ref {{env:MISSING}} and {{env:PROBE_ORDER}}',
+      store,
+    )
+    expect(result.substitutions).toEqual([{ name: 'PROBE_ORDER', value: 'ORD-123' }])
+  })
+
+  it('the deliberately skipped {{secret:...}} template contributes no provenance pair', () => {
+    const store = provenanceStore()
+    const result = interpolateVariablesWithProvenance('Password {{secret:loginPassword}}', store)
+    expect(result.substitutions).toEqual([])
+  })
+
+  it('a template-free string yields an empty substitution list', () => {
+    const result = interpolateVariablesWithProvenance('no templates here', provenanceStore())
+    expect(result.substitutions).toEqual([])
+  })
+
+  it('records the value VERBATIM — the pair is never masked or redacted (G-381-3)', () => {
+    const store = new VariableStore()
+    store.set('PROBE_USER', 'qa.user@example.com', 'env')
+    store.set('PROBE_API_TOKEN', 'tok-live-9f3a2b', 'env')
+    const result = interpolateVariablesWithProvenance(
+      'login as {{env:PROBE_USER}} with {{env:PROBE_API_TOKEN}}',
+      store,
+    )
+    expect(result.substitutions).toEqual([
+      { name: 'PROBE_USER', value: 'qa.user@example.com' },
+      { name: 'PROBE_API_TOKEN', value: 'tok-live-9f3a2b' },
+    ])
   })
 })
 
