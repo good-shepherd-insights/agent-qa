@@ -1537,4 +1537,80 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       expect.objectContaining({ kind: 'enqueued' }),
     )
   })
+
+  describe('per-kind outcome attribution (381-50, F-381-48-1 visibility)', () => {
+    function mixedKindHandoff(artifactSha: string): CompletedRunHandoff {
+      return handoff([
+        testOutcome({ testId: 'checkout::flow' }, [
+          step({ stepIndex: 0, stepText: 'Open checkout' }, [
+            subAction([element('checkout', 'Checkout')], 'checkout', undefined, artifactSha),
+          ]),
+          step({ stepIndex: 1, stepText: 'Confirm the order' }, [
+            subAction([element('confirm', 'Confirm')], 'confirm', undefined, artifactSha),
+          ]),
+        ]),
+      ])
+    }
+
+    it('carries the projecting candidate kind on every outcome detail', () => {
+      const fixture = emitFixture()
+      const artifactSha = fixture.handoff.tests[0]!.steps[0]!.subActions[0]!
+        .decisionScreenshotRef!.sha
+
+      const report = emitCurationCandidates({
+        ...fixture,
+        handoff: mixedKindHandoff(artifactSha),
+      })
+
+      expect(report.details.map((detail) => detail.kind)).toEqual([
+        'fact',
+        'fact',
+        'procedure',
+      ])
+      expect(report.details.every((detail) => detail.candidateId !== undefined)).toBe(true)
+    })
+
+    it('derives per-kind projected and outcome counts from the report alone', () => {
+      const fixture = emitFixture()
+      const artifactSha = fixture.handoff.tests[0]!.steps[0]!.subActions[0]!
+        .decisionScreenshotRef!.sha
+      const input = mixedKindHandoff(artifactSha)
+      queueSpy.nextProjectionOutcome = {
+        kind: 'coalesced',
+        candidateId: 'queue-finalized-coalesced-id',
+      }
+
+      const report = emitCurationCandidates({ ...fixture, handoff: input })
+      const projected = projectCurationCandidates(input, fixture.policy)
+
+      // The one-outcome-per-candidate invariant, now observable per kind: projected
+      // count per kind == details of that kind, and the outcome split sums to it.
+      for (const kind of ['fact', 'measurement', 'caution', 'procedure'] as const) {
+        const details = report.details.filter((detail) => detail.kind === kind)
+        expect(details).toHaveLength(projected.filter((row) => row.kind === kind).length)
+        const split = (['enqueued', 'coalesced', 'cap-exceeded', 'refused'] as const).map(
+          (outcome) => details.filter((detail) => detail.outcome.kind === outcome).length,
+        )
+        expect(split.reduce((sum, count) => sum + count, 0)).toBe(details.length)
+      }
+      expect(
+        report.details
+          .filter((detail) => detail.kind === 'fact')
+          .map((detail) => detail.outcome.kind)
+          .sort(),
+      ).toEqual(['coalesced', 'enqueued'])
+      expect(report.enqueued + report.coalesced + report.capExceeded + report.refused)
+        .toBe(report.details.length)
+    })
+
+    it('yields no procedure detail for a single-step handoff — projected count derivably zero (PROC-01 empty probe)', () => {
+      const fixture = emitFixture()
+
+      const report = emitCurationCandidates(fixture)
+
+      expect(report.details).toHaveLength(1)
+      expect(report.details[0]?.kind).toBe('fact')
+      expect(report.details.filter((detail) => detail.kind === 'procedure')).toHaveLength(0)
+    })
+  })
 })
