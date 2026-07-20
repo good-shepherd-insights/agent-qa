@@ -788,6 +788,135 @@ describe('projectProcedureTargets (PROC-01 D-01..D-04)', () => {
     expect(seed.steps[1]?.action).toBeUndefined()
   })
 
+  function sourcedSeed(input: {
+    testId: string
+    fillText: string
+    interpolatedVariables?: { name: string; value: string }[]
+  }) {
+    const steps = signInSteps()
+    steps[1] = flowStep({
+      stepIndex: 1,
+      stepText: 'Enter the account identifier',
+      ref: 'email',
+      name: 'Email',
+      fillText: input.fillText,
+    })
+    if (input.interpolatedVariables !== undefined) {
+      steps[1]!.interpolatedVariables = input.interpolatedVariables
+    }
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: input.testId }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    return parseProcedureTrajectorySeed(target!.bodySeed)
+  }
+
+  it('names the source binding of an interpolated value slot by exact match (G-381-3)', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::interpolated',
+      fillText: 'probe-user-7',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'probe-user-7' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: 'probe-user-7',
+      source: 'test-variable',
+      sourceName: 'PROBE_USER',
+      targetRef: 'email',
+    })
+  })
+
+  it('breaks a value tie to the lexicographically smallest binding name', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::tie',
+      fillText: 'shared-value',
+      interpolatedVariables: [
+        { name: 'ZED_USER', value: 'shared-value' },
+        { name: 'ALPHA_USER', value: 'shared-value' },
+      ],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toMatchObject({
+      source: 'test-variable',
+      sourceName: 'ALPHA_USER',
+    })
+  })
+
+  it('leaves a containing-but-unequal observed value literal-source (D-03 wrong-value guard)', () => {
+    const seed = sourcedSeed({
+      testId: 'auth::containment',
+      fillText: 'prefix-probe-user-7-suffix',
+      interpolatedVariables: [{ name: 'PROBE_USER', value: 'probe-user-7' }],
+    })
+
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: 'prefix-probe-user-7-suffix',
+      source: 'literal',
+      targetRef: 'email',
+    })
+  })
+
+  it.each([
+    ['an EMAIL-valued binding (mask() transforms this shape unconditionally)', 'PROBE_USER', 'qa.user@example.com'],
+    ['a credential-NAMED binding (sensitiveEnvSlice registers this name)', 'PROBE_API_TOKEN', 'tok-live-9f3a2b'],
+  ])(
+    'classifies %s by its binding name — the matcher is shape-INSENSITIVE',
+    (_label, name, value) => {
+      const seed = sourcedSeed({
+        testId: `auth::mask-shaped-${name}`,
+        fillText: value,
+        interpolatedVariables: [{ name, value }],
+      })
+
+      expect(seed?.steps[1]?.action?.values['text']).toMatchObject({
+        observed: value,
+        source: 'test-variable',
+        sourceName: name,
+      })
+    },
+  )
+
+  it.each([
+    ['the recorded template form', '{{secret:Probe_Token}}'],
+    ['the redacted marker form', '[secret:Probe_Token]'],
+  ])('recovers a secret name case-preserved from %s', (_label, observed) => {
+    const seed = sourcedSeed({ testId: 'auth::secret-name', fillText: observed })
+
+    expect(seed?.steps[1]?.action?.values['text']).toMatchObject({
+      observed,
+      source: 'masked-secret',
+      sourceName: 'Probe_Token',
+    })
+  })
+
+  it('rejects the whole action when a composite embeds a redacted secret marker (T-381-50)', () => {
+    const steps = signInSteps()
+    steps[1]!.subActions[0]!.plannedAction = {
+      type: 'fileUpload',
+      ref: asRef('email'),
+      files: ['[secret:PROBE_TOKEN].pdf'],
+    }
+
+    const [target] = projectCurationCandidates(
+      handoff([testOutcome({ testId: 'auth::marker-composite' }, steps)]),
+      policy,
+    ).filter((row) => row.kind === 'procedure')
+    const seed = JSON.parse(target!.bodySeed) as { steps: Array<{ action?: unknown }> }
+
+    expect(seed.steps[1]?.action).toBeUndefined()
+  })
+
+  it('leaves an unprovenanced literal untouched and parses seeds carrying no sourceName', () => {
+    const seed = sourcedSeed({ testId: 'auth::plain', fillText: 'user@example.com' })
+
+    expect(seed).toBeDefined()
+    expect(seed?.steps[1]?.action?.values['text']).toEqual({
+      observed: 'user@example.com',
+      source: 'literal',
+      targetRef: 'email',
+    })
+  })
+
   it('records navigating guard routes from the pre-action page while retaining destination anchors', () => {
     const steps = signInSteps()
     steps[2] = flowStep({
