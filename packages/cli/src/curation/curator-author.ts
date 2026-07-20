@@ -687,6 +687,7 @@ function extractionInstructions(): string {
     'flowName echo: every candidate\'s flowName is the presented trajectory flowName copied verbatim. Distinguish a sub-flow by its stepSpan, never by a new or invented name — an invented flowName is discarded by the builder.',
     'Propose parameter names for observed values that should vary between replays.',
     'Every value slot labeled masked-secret or test-variable MUST be parameterized (type secret for masked values).',
+    'Binding names: a value slot presented with a "sourceName" carries the name of the live binding that produced it. The parameter covering that slot MUST be named exactly that sourceName, character for character including case — do not prettify, lowercase, or rename it. Two slots showing the SAME sourceName share ONE parameter of that name. The deterministic builder renames covering parameters to the sourceName regardless, and rejects the candidate when one parameter spans two different sourceNames or when your chosen name collides with another slot\'s sourceName.',
     'Parameter type must be one of: string, number, boolean, secret.',
     'Return one JSON object only, no markdown:',
     '{"candidates":[{"flowName":string,"stepSpan":[start,end],"parameters":[{"name":string,"type":string,"required":boolean,"appliesTo":[{"stepOrdinal":number,"field":string}]}],"successAssertion":string}]}.',
@@ -713,7 +714,13 @@ function renderTrajectory(seed: ProcedureTrajectorySeed): string {
           valueSlots: Object.fromEntries(
             Object.entries(step.action.values).map(([field, slot]) => [
               field,
-              { source: slot.source, observed: slot.observed },
+              {
+                source: slot.source,
+                observed: slot.observed,
+                ...(slot.sourceName === undefined
+                  ? {}
+                  : { sourceName: slot.sourceName }),
+              },
             ]),
           ),
         }),
@@ -859,9 +866,68 @@ function buildCandidatePayload(
     }
   }
 
+  // G-381-3: the source-binding index over the covered span. A slot's sourceName is the name of
+  // the live binding that produced its value (an interpolated test variable matched by exact
+  // equality, or a secret recovered from its masked recorded form). Consult-time fillability
+  // (D-08) matches required parameter names against the loop's binding NAMES, so a committed
+  // parameter that is not named after its binding is permanently unfillable — which is exactly
+  // why every live procedure downranked to hint. Code, not the prompt, is the authority here
+  // (D-02): whatever the model proposed, the covering parameter takes the binding name.
+  const slotSourceNames = new Map<string, string>()
+  for (const step of covered) {
+    if (step.action === undefined) continue
+    for (const [field, slot] of Object.entries(step.action.values)) {
+      if (slot.sourceName === undefined) continue
+      slotSourceNames.set(`${step.ordinal}\u0000${field}`, slot.sourceName)
+    }
+  }
+  const boundNames = new Set(slotSourceNames.values())
+
+  // Proposal name -> committed name. Every conflict is a typed fail-closed reject that leaves
+  // sibling candidates buildable; nothing is silently renamed onto an occupied name.
+  const renamedParameters = new Map<string, string>()
+  for (const parameter of candidate.parameters) {
+    const covering = new Set<string>()
+    for (const target of parameter.appliesTo) {
+      const sourceName = slotSourceNames.get(`${target.stepOrdinal}\u0000${target.field}`)
+      if (sourceName !== undefined) covering.add(sourceName)
+    }
+    if (covering.size > 1) {
+      return rejectCandidate(
+        `parameter ${parameter.name} covers value slots bound to different source names (${[...covering].sort().join(', ')}); each source binding needs its own parameter named after it`,
+      )
+    }
+    const [sourceName] = [...covering]
+    if (sourceName === undefined && boundNames.has(parameter.name)) {
+      return rejectCandidate(
+        `parameter ${parameter.name} takes the name of source binding ${parameter.name}, which belongs to a different value slot; a binding name may only name the parameter covering its own slot`,
+      )
+    }
+    renamedParameters.set(parameter.name, sourceName ?? parameter.name)
+  }
+
+  // A rename may collapse two proposals onto one name. That is correct when both describe the
+  // same binding, so merge them — but only when their declared contract already agrees; a
+  // disagreement means the model modeled one binding two incompatible ways (T-381-103).
+  const collapsed = new Map<string, ExtractionCandidate['parameters'][number]>()
+  for (const parameter of candidate.parameters) {
+    const committedName = renamedParameters.get(parameter.name)!
+    const prior = collapsed.get(committedName)
+    if (prior === undefined) {
+      collapsed.set(committedName, parameter)
+      continue
+    }
+    if (prior.type !== parameter.type || prior.required !== parameter.required) {
+      return rejectCandidate(
+        `parameters ${prior.name} and ${parameter.name} both describe source binding ${committedName} but declare different type/required contracts`,
+      )
+    }
+  }
+
   const referencedParams = new Set<string>()
   const secretEscalated = new Set<string>()
-  const usedParameterNames = new Set(candidate.parameters.map(({ name }) => name))
+  const usedParameterNames = new Set([...renamedParameters.values(), ...boundNames])
+  const forcedBySourceName = new Map<string, ProcedureParameterSpec>()
   const forcedParams: ProcedureParameterSpec[] = []
   const steps: ProcedureStepSpec[] = []
   for (const step of covered) {
@@ -899,7 +965,11 @@ function buildCandidatePayload(
         && regionKeys.has(`${step.ordinal}\u0000${slot.targetRef}`)
         && isCredentialValueField(step.action.type, field)
       const secretSlot = slot.source === 'masked-secret' || secretByReceipt
-      const proposed = appliesIndex.get(`${step.ordinal}\u0000${field}`)
+      const claimed = appliesIndex.get(`${step.ordinal}\u0000${field}`)
+      // The committed name is the binding name whenever the evidence knows one (G-381-3);
+      // a proposal's own name survives only for slots with no source binding.
+      const proposed =
+        claimed === undefined ? undefined : renamedParameters.get(claimed) ?? claimed
       if (proposed !== undefined) {
         // D-03's declared parameter types are deliberately scalar. Letting a proposal claim a
         // composite would either corrupt its shape or create a parameter the replay binder cannot
@@ -917,6 +987,24 @@ function buildCandidatePayload(
       // D-03 forced parameterization: every masked-secret/test-variable-sourced value the
       // proposal missed still becomes a {param} ref, never a committed literal.
       if (secretSlot || slot.source === 'test-variable') {
+        // A sourced slot forces a parameter named after its BINDING, not after its position
+        // (G-381-3) — a synthetic `step0_value` name is unfillable at consult by construction.
+        // Two slots sharing one binding name share ONE parameter; secret type wins the merge.
+        if (slot.sourceName !== undefined) {
+          const shared = forcedBySourceName.get(slot.sourceName)
+          if (shared === undefined) {
+            forcedBySourceName.set(slot.sourceName, {
+              name: slot.sourceName,
+              type: secretSlot ? 'secret' : 'string',
+              required: true,
+            })
+          } else if (secretSlot) {
+            shared.type = 'secret'
+          }
+          if (secretSlot) secretEscalated.add(slot.sourceName)
+          values[field] = { param: slot.sourceName }
+          continue
+        }
         const name = reserveForcedParameterName(
           `step${step.ordinal}_${field}`,
           usedParameterNames,
@@ -948,7 +1036,11 @@ function buildCandidatePayload(
   // Unreferenced proposed parameters are dropped (disposition would reject them); a proposed
   // parameter covering a masked slot is escalated to the secret type (D-03).
   const parameters: ProcedureParameterSpec[] = [
-    ...candidate.parameters
+    ...[...collapsed.values()]
+      .map((parameter) => ({
+        ...parameter,
+        name: renamedParameters.get(parameter.name)!,
+      }))
       .filter((parameter) => referencedParams.has(parameter.name))
       .map(({ name, type, required }) => ({
         name,
@@ -956,6 +1048,12 @@ function buildCandidatePayload(
         required,
       })),
     ...forcedParams,
+    // A binding-named forced parameter is skipped when a renamed proposal already declares it —
+    // the same binding must yield exactly ONE declaration (the codec's unique-parameter
+    // authority is unchanged; this keeps us from handing it a duplicate).
+    ...[...forcedBySourceName.values()].filter(
+      (parameter) => !referencedParams.has(parameter.name),
+    ),
   ]
   const pageRoutes = [
     ...new Set(
