@@ -1166,6 +1166,72 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
   })
 
+  it('renders the empty-delta cause inside the noop parenthetical (F-381-45-1)', async () => {
+    const warn = vi.fn()
+    const base = successfulOperations()
+    const operations = successfulOperations({
+      async drainQueue(options) {
+        const report = await base.drainQueue!(options)
+        return {
+          ...report,
+          noops: 2,
+          noopDetails: [
+            {
+              candidateId: 'cand-a',
+              reason: 'delta-noop',
+              emptyDeltaCause: 'fallback-malformed' as const,
+            },
+            { candidateId: 'cand-b', reason: 'evidence-token-consumed' },
+          ],
+        }
+      },
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn } }))
+
+    const noopWarning = warn.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => /noop/i.test(message))
+    expect(noopWarning).toBeDefined()
+    // The cause renders inside the existing trailing parenthetical.
+    expect(noopWarning).toContain('cand-a (delta-noop: fallback-malformed)')
+    // A causeless noop renders exactly the 381-40 form.
+    expect(noopWarning).toContain('cand-b (evidence-token-consumed)')
+  })
+
+  it('keeps the count-anchored warn prefix the ladder extractor parses (381-48 harness compatibility)', async () => {
+    const warn = vi.fn()
+    const base = successfulOperations()
+    const operations = successfulOperations({
+      async drainQueue(options) {
+        const report = await base.drainQueue!(options)
+        return {
+          ...report,
+          noops: 1,
+          noopDetails: [
+            {
+              candidateId: 'cand-a',
+              reason: 'delta-noop',
+              emptyDeltaCause: 'fallback-malformed' as const,
+            },
+          ],
+        }
+      },
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn } }))
+
+    const noopWarning = warn.mock.calls
+      .map(([message]) => String(message))
+      .find((message) => /noop/i.test(message))
+    expect(noopWarning).toBeDefined()
+    // The same count-anchored pattern demo/init/scripts/ladder-evidence.mjs embeds in its
+    // --self-check rows; the harness ships unmodified for the 381-48 ladder re-run.
+    const matches = [...String(noopWarning).matchAll(/drain produced (\d+) commit noop\(s\)[^\n]*/g)]
+    expect(matches).toHaveLength(1)
+    expect(Number(matches[0]![1])).toBe(1)
+  })
+
   it('adds a drain-noops entry to incompleteDetails when the tail is already incomplete', async () => {
     const warn = vi.fn()
     const base = successfulOperations()
