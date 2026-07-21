@@ -2,11 +2,19 @@
 // replay riding the cache-replay discipline, one-shot miss semantics with hint demotion,
 // and the typed planSource evidence (D-09..D-12). Follows the brief-routing/failure-cautions
 // loop-harness idiom: fake adapter/planner/ports, no real model or storage.
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { asRecordId, asRef, serializeProcedureBody } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  asRef,
+  parseProcedureBody,
+  serializeProcedureBody,
+} from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   BriefBlock,
+  CompletedRunHandoff,
   ProcedureBodyPayload,
   ProcedureMatch,
   ScreenState,
@@ -284,6 +292,145 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
 }
 
 describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
+  it('F-381-54-1 RED: authored prose cannot override structured parameter provenance', async () => {
+    const handoffBytes = readFileSync(
+      new URL('./fixtures/f-381-54-1/handoff.json', import.meta.url),
+    )
+    const recordBytes = readFileSync(
+      new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
+    )
+    expect(createHash('sha256').update(handoffBytes).digest('hex')).toBe(
+      '8a9812d607c6e9e7ab2c33647f37ab1e22274b9770d21cea396eab7796f37e59',
+    )
+    expect(createHash('sha256').update(recordBytes).digest('hex')).toBe(
+      '4841538eb07c0f8ce674bf9c1d90553b1d011e9799ead03090641acd102c5207',
+    )
+
+    const handoff = JSON.parse(handoffBytes.toString('utf8')) as CompletedRunHandoff
+    const failedTest = handoff.tests[0]!
+    const failedStep = failedTest.steps[0]!
+    const failedSubAction = failedStep.subActions[0]!
+    expect(handoff.aggregateVerdict).toBe('failed')
+    expect(failedTest.outcome).toBe('failed')
+    expect(failedStep.planSource).toEqual({
+      kind: 'procedure-replay',
+      procedureId: 'procedure-flow-t-posing-clock-inject-pill-adds-i-29ff61a3638ac355',
+      guard: {
+        checksPassed: 0,
+        total: 1,
+        miss: { procedureStepIndex: 0, reason: 'descriptor-missing' },
+      },
+      flow: { cursor: 0, length: 2 },
+    })
+    expect(failedStep.termination).toMatchObject({ kind: 'infeasible' })
+    if (failedStep.termination?.kind !== 'infeasible') {
+      throw new Error('fixture step must preserve the infeasible termination')
+    }
+    expect(failedStep.termination.reason).toContain('<EMAIL_0>')
+    expect(failedSubAction.plannedAction).toMatchObject({
+      type: 'fill',
+      ref: 'e2',
+      text: '<EMAIL_0>',
+      elementDescription: expect.stringContaining('Account name'),
+    })
+    expect(failedStep.interpolatedVariables).toEqual([
+      { name: 'PROBE_USER', value: 'qa.user+381@example.com' },
+    ])
+
+    const payload = parseProcedureBody(recordBytes.toString('utf8'))
+    if (!payload) throw new Error('fixture procedure body must parse')
+    expect(payload.parameters).toEqual([
+      { name: 'PROBE_USER', type: 'string', required: true },
+    ])
+    expect(payload.steps[0]).toMatchObject({
+      instruction: 'Type "<EMAIL_0>" into the Username field',
+      action: {
+        type: 'fill',
+        values: { text: { param: 'PROBE_USER' } },
+      },
+    })
+
+    const fixtureSource = failedStep.planSource
+    if (fixtureSource?.kind !== 'procedure-replay') {
+      throw new Error('fixture step must preserve procedure replay provenance')
+    }
+    const screen = failedSubAction.stateBefore
+    const accountField = screen.elements.find((element) => element.nameNormalized === 'account name')!
+    const match = makeMatch({
+      id: fixtureSource.procedureId,
+      flowAnchor: { t: 'flow', name: failedTest.testId },
+      parameterSchema: payload.parameters,
+    })
+    const reader = makeReader({ match, payload })
+    const events: string[] = []
+    const executed: Action[] = []
+    const baseAdapter = makeAdapter({ observeResults: [screen] })
+    const adapter: PlatformAdapter = {
+      ...baseAdapter,
+      async execute(action) {
+        events.push(`adapter:${action.type}`)
+        executed.push(action)
+        return baseAdapter.execute(action)
+      },
+    }
+    const plannerCalls: { l1?: string; l2?: string }[] = []
+    const planner: Planner = {
+      async plan(_step, _screen, plannerContext) {
+        events.push('planner')
+        plannerCalls.push({
+          l1: plannerContext.knowledgeBriefL1,
+          l2: plannerContext.knowledgeBriefL2,
+        })
+        return {
+          plan: makeActionPlan({
+            reasoning: 'Use the sole visible text field to finish the characterized step',
+            action: {
+              type: 'fill',
+              ref: accountField.ref,
+              text: 'qa.user+381@example.com',
+              elementDescription: 'Account name',
+              clearMode: 'replace',
+              submit: false,
+            },
+            stepComplete: true,
+          }),
+        }
+      },
+    }
+
+    const result = await executeStep(
+      failedStep.stepText,
+      ports({ adapter, planner, knowledgeReader: reader.reader }),
+      context({
+        stepInstruction: failedStep.stepText,
+        testName: failedTest.testName,
+        variables: { PROBE_USER: 'qa.user+381@example.com' },
+        interpolatedVariables: failedStep.interpolatedVariables,
+      }),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(reader.countOf('getProcedure')).toBe(1)
+    expect(plannerCalls).toHaveLength(1)
+    expect(events).toEqual(['planner', 'adapter:fill'])
+    expect(executed).toMatchObject([{ type: 'fill', ref: accountField.ref }])
+    expect(result.evidence?.planSource).toEqual(fixtureSource)
+
+    const l2 = plannerCalls[0]!.l2 ?? ''
+    expect(l2).toContain(APP_OBSERVED_DATA_OPEN)
+    expect(l2).toContain(APP_OBSERVED_DATA_CLOSE)
+    expect(l2).toContain('Type "<EMAIL_0>" into the Username field')
+    expect(l2).not.toContain('text <- parameter PROBE_USER')
+    expect(l2).not.toContain('PROBE_USER was interpolated into the authoritative current step')
+
+    const authoredInstruction = 'Type "<EMAIL_0>" into the Username field'
+    const desiredContract =
+      !l2.includes(authoredInstruction) &&
+      l2.includes('text <- parameter PROBE_USER') &&
+      l2.includes('PROBE_USER was interpolated into the authoritative current step')
+    expect(desiredContract, 'F-381-54-1_EXPECTED_RED_CONTRACT').toBe(true)
+  })
+
   it('Test 1: a replay-recommendation match drives the step\'s one body step with no planning-turn LLM call', async () => {
     // F-381-51-1 · D-09 rewrite: the old law pinned the WHOLE 2-action body replaying
     // inside one test step (fold 2/2). The new law: each test step consumes exactly the
