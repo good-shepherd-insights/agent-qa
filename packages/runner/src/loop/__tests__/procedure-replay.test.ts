@@ -497,6 +497,67 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).not.toContain('Type "<EMAIL_0>" into the Username field')
   })
 
+  it('source-bound email recovery marks the PROBE_USER slot as supplied without exposing its value', async () => {
+    const handoff = JSON.parse(readFileSync(
+      new URL('./fixtures/f-381-54-1/handoff.json', import.meta.url),
+      'utf8',
+    )) as CompletedRunHandoff
+    const record = readFileSync(
+      new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
+      'utf8',
+    )
+    const payload = parseProcedureBody(record)
+    if (!payload) throw new Error('fixture procedure body must parse')
+    const failedTest = handoff.tests[0]!
+    const failedStep = failedTest.steps[0]!
+    const failedSubAction = failedStep.subActions[0]!
+    const source = failedStep.planSource
+    if (source?.kind !== 'procedure-replay') {
+      throw new Error('fixture step must preserve procedure replay provenance')
+    }
+    const reader = makeReader({
+      match: makeMatch({
+        id: source.procedureId,
+        flowAnchor: { t: 'flow', name: failedTest.testId },
+        parameterSchema: payload.parameters,
+      }),
+      payload,
+    })
+    const { adapter, executed } = capturingAdapter([failedSubAction.stateBefore])
+    const submit = failedSubAction.stateBefore.elements.find(
+      (element) => element.nameNormalized === 'submit',
+    )!
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: submit.ref }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      failedStep.stepText,
+      ports({ adapter, planner: planner.planner, knowledgeReader: reader.reader }),
+      context({
+        stepInstruction: failedStep.stepText,
+        testName: failedTest.testName,
+        variables: { PROBE_USER: 'qa.user+381@example.com' },
+        interpolatedVariables: failedStep.interpolatedVariables,
+      }),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(reader.countOf('getProcedure')).toBe(1)
+    expect(planner.calls).toHaveLength(1)
+    expect(executed).toMatchObject([{ type: 'click', ref: submit.ref }])
+    expect(result.evidence?.planSource).toEqual(source)
+
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('miss reason: descriptor-missing')
+    expect(learned).toContain('miss location: action-target lane=ref')
+    expect(learned).not.toContain('qa.user+381@example.com')
+    expect(learned).toContain(
+      'text <- parameter PROBE_USER (string, required); supplied loop-side by variable '
+        + 'PROBE_USER (declaredType=string); treat this slot as supplied, not unresolved',
+    )
+  })
+
   it('Test 1: a replay-recommendation match drives the step\'s one body step with no planning-turn LLM call', async () => {
     // F-381-51-1 · D-09 rewrite: the old law pinned the WHOLE 2-action body replaying
     // inside one test step (fold 2/2). The new law: each test step consumes exactly the
