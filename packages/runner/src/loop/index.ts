@@ -2002,8 +2002,19 @@ interface ProcedureRecoverySourceBinding {
   canBindBoolean: boolean
 }
 
+interface ProcedureRecoverySuppliedSource {
+  kind: 'variable' | 'memory' | 'secret'
+  name: string
+  declaredType: ProcedureParamType
+}
+
 type ProcedureRecoveryValueSlot =
-  | { kind: 'parameter-ref'; field: string; name: string }
+  | {
+      kind: 'parameter-ref'
+      field: string
+      name: string
+      suppliedSource?: ProcedureRecoverySuppliedSource
+    }
   | { kind: 'literal-omitted'; field: string }
 
 /**
@@ -2035,6 +2046,42 @@ interface ProcedureGuardMissRecoveryContext {
     nameNormalized: string
     ordinal: { index: number; provenance: 'derived' }
   }[]
+}
+
+/**
+ * Project the binder's existing source precedence into value-free recovery facts. The
+ * availability DTO contains names and capability bits only, so this selector cannot carry or
+ * stringify a binding value. Secret parameters hard-wall to the secret store; number/boolean
+ * sources require their matching capability; strings preserve variable -> memory -> secret.
+ */
+function projectProcedureRecoverySuppliedSource(
+  name: string,
+  declaredType: ProcedureParamType,
+  availability: ProcedureBindingAvailability,
+): ProcedureRecoverySuppliedSource | undefined {
+  const variable = availability.variables.find((entry) => entry.name === name)
+  const memory = availability.memory.find((entry) => entry.name === name)
+  const secretAvailable = availability.secrets.includes(name)
+  const supplied = (
+    kind: ProcedureRecoverySuppliedSource['kind'],
+  ): ProcedureRecoverySuppliedSource => ({ kind, name, declaredType })
+
+  switch (declaredType) {
+    case 'secret':
+      return secretAvailable ? supplied('secret') : undefined
+    case 'number':
+      if (variable?.canBindNumber) return supplied('variable')
+      if (memory?.canBindNumber) return supplied('memory')
+      return undefined
+    case 'boolean':
+      if (variable?.canBindBoolean) return supplied('variable')
+      if (memory?.canBindBoolean) return supplied('memory')
+      return undefined
+    case 'string':
+      if (variable !== undefined) return supplied('variable')
+      if (memory !== undefined) return supplied('memory')
+      return secretAvailable ? supplied('secret') : undefined
+  }
 }
 
 /**
@@ -2232,11 +2279,27 @@ function projectProcedureGuardMissRecovery(input: {
   interpolationNames: ReadonlySet<string>
 }): ProcedureGuardMissRecoveryContext {
   const referencedNames = new Set<string>()
+  const declarations = new Map(
+    input.parameters.map((parameter) => [parameter.name, parameter]),
+  )
   const valueSlots: ProcedureRecoveryValueSlot[] = []
   for (const [field, slot] of Object.entries(input.step.action.values)) {
     if (typeof slot === 'object' && slot !== null && 'param' in slot) {
       referencedNames.add(slot.param)
-      valueSlots.push({ kind: 'parameter-ref', field, name: slot.param })
+      const declaration = declarations.get(slot.param)
+      const suppliedSource = declaration === undefined
+        ? undefined
+        : projectProcedureRecoverySuppliedSource(
+            slot.param,
+            declaration.type,
+            input.availability,
+          )
+      valueSlots.push({
+        kind: 'parameter-ref',
+        field,
+        name: slot.param,
+        ...(suppliedSource === undefined ? {} : { suppliedSource }),
+      })
     } else {
       valueSlots.push({ kind: 'literal-omitted', field })
     }
@@ -2384,7 +2447,12 @@ function renderProcedureGuardMissRecoveryBlock(
       const declaration = parameter === undefined
         ? 'undeclared'
         : `${parameter.type}, ${parameter.required ? 'required' : 'optional'}`
-      lines.push(`- ${slot.field} <- parameter ${slot.name} (${declaration})`)
+      const supplied = slot.suppliedSource === undefined
+        ? ''
+        : `; supplied loop-side (sourceKind=${slot.suppliedSource.kind}; `
+          + `sourceName=${slot.suppliedSource.name}; `
+          + `declaredType=${slot.suppliedSource.declaredType}); not unresolved`
+      lines.push(`- ${slot.field} <- parameter ${slot.name} (${declaration})${supplied}`)
     }
   }
 
@@ -2398,12 +2466,6 @@ function renderProcedureGuardMissRecoveryBlock(
           + `${parameter.required ? 'required' : 'optional'}; `
           + `interpolatedInCurrentStep=${parameter.interpolatedInCurrentStep}`,
       )
-      if (parameter.interpolatedInCurrentStep) {
-        lines.push(
-          `${parameter.name} was interpolated into the authoritative current step; `
-            + 'its value is already present there and is omitted here.',
-        )
-      }
     }
   }
   lines.push(...renderProcedureRecoverySources('variable sources', recovery.availability.variables))

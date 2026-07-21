@@ -427,7 +427,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(l2).toContain(
       'PROBE_USER (canBindNumber=false, canBindBoolean=false)',
     )
-    expect(l2).toContain('PROBE_USER was interpolated into the authoritative current step')
+    expect(l2).toContain('interpolatedInCurrentStep=true')
     expect(l2).not.toContain('ref=e2')
     expect(l2).not.toContain('qa.user+381@example.com')
 
@@ -435,7 +435,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const desiredContract =
       !l2.includes(authoredInstruction) &&
       l2.includes('text <- parameter PROBE_USER') &&
-      l2.includes('PROBE_USER was interpolated into the authoritative current step')
+      l2.includes('interpolatedInCurrentStep=true')
     expect(desiredContract, 'F-381-54-1_EXPECTED_RED_CONTRACT').toBe(true)
   })
 
@@ -553,8 +553,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).toContain('miss location: action-target lane=ref')
     expect(learned).not.toContain('qa.user+381@example.com')
     expect(learned).toContain(
-      'text <- parameter PROBE_USER (string, required); supplied loop-side by variable '
-        + 'PROBE_USER (declaredType=string); treat this slot as supplied, not unresolved',
+      'text <- parameter PROBE_USER (string, required); supplied loop-side '
+        + '(sourceKind=variable; sourceName=PROBE_USER; declaredType=string); not unresolved',
     )
   })
 
@@ -1066,7 +1066,8 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).toContain('VAR_NAME (canBindNumber=false, canBindBoolean=false)')
     expect(learned).toContain('MEM_NAME (canBindNumber=false, canBindBoolean=false)')
     expect(learned).toContain('secret sources: SECRET_NAME')
-    expect(learned).toContain('VAR_NAME was interpolated into the authoritative current step')
+    expect(learned).toContain('interpolatedInCurrentStep=true')
+    expect(learned).not.toContain('its value is already present there')
     for (const forbidden of [
       'VARIABLE_RAW_38155',
       'MEMORY_RAW_38155',
