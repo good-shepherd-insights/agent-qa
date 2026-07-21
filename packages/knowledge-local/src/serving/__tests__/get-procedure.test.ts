@@ -285,6 +285,66 @@ describe('matchProcedure anchor matching', () => {
       })),
     ).toBeUndefined()
   })
+
+  it('F-381-67-1 fixture invariant: current-target intent retains the same replay match', () => {
+    const ladderAnchors: Anchor[] = [
+      { t: 'flow', name: 't_posing-clock-inject-pill-adds-ima-rename-video-emu-fault' },
+      { t: 'page', route: 'http://127.0.0.1:8931/form.html' },
+    ]
+    const basePayload = makeProcedureBodyPayloadFixture()
+    const firstStep = basePayload.steps[0]!
+    const entries = [candidate({
+      id: 'proc-current-target-invariant',
+      anchors: ladderAnchors,
+      summary: 'Submit the local form as a returning user',
+      body: serializeProcedureBody({
+        ...basePayload,
+        parameters: [{ name: 'PROBE_USER', type: 'string', required: true }],
+        steps: [{
+          ...firstStep,
+          action: {
+            ...firstStep.action,
+            values: { text: { param: 'PROBE_USER' } },
+          },
+        }],
+      }),
+    })]
+    const availability = {
+      variables: sourceEntries({ PROBE_USER: 'available' }),
+      memory: [],
+      secrets: [],
+    }
+    const canonicalIntent = 'Type "{{env:PROBE_USER}}" into the Username field'
+    const currentTargetIntent = 'Type "{{env:PROBE_USER}}" into the Account name field'
+
+    const canonicalMatch = matchProcedure({
+      entries,
+      intent: canonicalIntent,
+      anchors: ladderAnchors,
+      availability,
+    })
+    const currentTargetMatch = matchProcedure({
+      entries,
+      intent: currentTargetIntent,
+      anchors: ladderAnchors,
+      availability,
+    })
+
+    expect(canonicalIntent.replace('Username', 'Account name')).toBe(currentTargetIntent)
+    expect(canonicalIntent.split('Username')).toEqual(currentTargetIntent.split('Account name'))
+    expect(canonicalMatch).toEqual(currentTargetMatch)
+    expect(canonicalMatch?.id).toBe('proc-current-target-invariant')
+    expect(currentTargetMatch?.id).toBe('proc-current-target-invariant')
+    expect(canonicalMatch?.replayRecommendation).toBe('replay')
+    expect(currentTargetMatch?.replayRecommendation).toBe('replay')
+
+    expect(matchProcedure({
+      entries,
+      intent: currentTargetIntent,
+      anchors: [],
+      availability,
+    })).toBeUndefined()
+  })
 })
 
 describe('matchProcedure tier x confirmations x fillability fold', () => {
