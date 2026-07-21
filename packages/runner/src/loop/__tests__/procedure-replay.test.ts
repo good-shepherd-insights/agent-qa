@@ -291,6 +291,117 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
   return { ...overrides }
 }
 
+interface SourceAssociationPolarityRow {
+  name: string
+  parameters: ProcedureBodyPayload['parameters']
+  values: ProcedureBodyPayload['steps'][number]['action']['values']
+  expectedSlot: string
+  expectedSource?: {
+    kind: 'variable' | 'memory' | 'secret'
+    name: string
+    declaredType: ProcedureBodyPayload['parameters'][number]['type']
+  }
+  variables?: Record<string, string>
+  memory?: { key: string; value: string }[]
+  secrets?: Record<string, string>
+  rawSentinels: string[]
+}
+
+const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
+  {
+    name: 'absent same-name source',
+    parameters: [{ name: 'MISSING_SOURCE', type: 'string', required: true }],
+    values: { text: { param: 'MISSING_SOURCE' } },
+    expectedSlot: 'text <- parameter MISSING_SOURCE (string, required)',
+    variables: { OTHER_SOURCE: 'ABSENT_OTHER_RAW_38161' },
+    rawSentinels: ['ABSENT_OTHER_RAW_38161'],
+  },
+  {
+    name: 'incapable number variable',
+    parameters: [{ name: 'DELAY', type: 'number', required: true }],
+    values: { clickDelay: { param: 'DELAY' } },
+    expectedSlot: 'clickDelay <- parameter DELAY (number, required)',
+    variables: { DELAY: 'NUMBER_INCAPABLE_RAW_38161' },
+    rawSentinels: ['NUMBER_INCAPABLE_RAW_38161'],
+  },
+  {
+    name: 'incapable boolean memory',
+    parameters: [{ name: 'SUBMIT_NOW', type: 'boolean', required: true }],
+    values: { submit: { param: 'SUBMIT_NOW' } },
+    expectedSlot: 'submit <- parameter SUBMIT_NOW (boolean, required)',
+    memory: [{ key: 'SUBMIT_NOW', value: 'BOOLEAN_INCAPABLE_RAW_38161' }],
+    rawSentinels: ['BOOLEAN_INCAPABLE_RAW_38161'],
+  },
+  {
+    name: 'secret-only typed mismatch',
+    parameters: [{ name: 'SECRET_DELAY', type: 'number', required: true }],
+    values: { clickDelay: { param: 'SECRET_DELAY' } },
+    expectedSlot: 'clickDelay <- parameter SECRET_DELAY (number, required)',
+    secrets: { SECRET_DELAY: 'SECRET_NUMBER_RAW_38161' },
+    rawSentinels: ['SECRET_NUMBER_RAW_38161'],
+  },
+  {
+    name: 'variable before memory precedence',
+    parameters: [{ name: 'CONTACT', type: 'string', required: true }],
+    values: { text: { param: 'CONTACT' } },
+    expectedSlot: 'text <- parameter CONTACT (string, required)',
+    expectedSource: { kind: 'variable', name: 'CONTACT', declaredType: 'string' },
+    variables: { CONTACT: 'VARIABLE_PRECEDENCE_RAW_38161' },
+    memory: [{ key: 'CONTACT', value: 'MEMORY_PRECEDENCE_RAW_38161' }],
+    rawSentinels: [
+      'VARIABLE_PRECEDENCE_RAW_38161',
+      'MEMORY_PRECEDENCE_RAW_38161',
+    ],
+  },
+  {
+    name: 'capable memory after incapable number variable',
+    parameters: [{ name: 'MEMORY_DELAY', type: 'number', required: true }],
+    values: { clickDelay: { param: 'MEMORY_DELAY' } },
+    expectedSlot: 'clickDelay <- parameter MEMORY_DELAY (number, required)',
+    expectedSource: { kind: 'memory', name: 'MEMORY_DELAY', declaredType: 'number' },
+    variables: { MEMORY_DELAY: 'MEMORY_DELAY_INCAPABLE_RAW_38161' },
+    memory: [{ key: 'MEMORY_DELAY', value: '38161042' }],
+    rawSentinels: ['MEMORY_DELAY_INCAPABLE_RAW_38161', '38161042'],
+  },
+  {
+    name: 'string secret fallback',
+    parameters: [{ name: 'SECRET_CONTACT', type: 'string', required: true }],
+    values: { text: { param: 'SECRET_CONTACT' } },
+    expectedSlot: 'text <- parameter SECRET_CONTACT (string, required)',
+    expectedSource: { kind: 'secret', name: 'SECRET_CONTACT', declaredType: 'string' },
+    secrets: { SECRET_CONTACT: 'STRING_SECRET_RAW_38161' },
+    rawSentinels: ['STRING_SECRET_RAW_38161'],
+  },
+  {
+    name: 'secret parameter ignores the same-named variable',
+    parameters: [{ name: 'LOGIN_SECRET', type: 'secret', required: true }],
+    values: { text: { param: 'LOGIN_SECRET' } },
+    expectedSlot: 'text <- parameter LOGIN_SECRET (secret, required)',
+    expectedSource: { kind: 'secret', name: 'LOGIN_SECRET', declaredType: 'secret' },
+    variables: { LOGIN_SECRET: 'VARIABLE_SECRET_MISMATCH_RAW_38161' },
+    secrets: { LOGIN_SECRET: 'SECRET_BINDING_RAW_38161' },
+    rawSentinels: [
+      'VARIABLE_SECRET_MISMATCH_RAW_38161',
+      'SECRET_BINDING_RAW_38161',
+    ],
+  },
+  {
+    name: 'undeclared parameter with a same-named variable',
+    parameters: [],
+    values: { text: { param: 'UNDECLARED_SOURCE' } },
+    expectedSlot: 'text <- parameter UNDECLARED_SOURCE (undeclared)',
+    variables: { UNDECLARED_SOURCE: 'UNDECLARED_RAW_38161' },
+    rawSentinels: ['UNDECLARED_RAW_38161'],
+  },
+  {
+    name: 'literal-omitted slot',
+    parameters: [],
+    values: { text: 'LITERAL_OMITTED_RAW_38161' },
+    expectedSlot: 'text <- stored literal omitted',
+    rawSentinels: ['LITERAL_OMITTED_RAW_38161'],
+  },
+]
+
 describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   it('F-381-54-1 RED: authored prose cannot override structured parameter provenance', async () => {
     const handoffBytes = readFileSync(
@@ -557,6 +668,81 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         + '(sourceKind=variable; sourceName=PROBE_USER; declaredType=string); not unresolved',
     )
   })
+
+  it.each(sourceAssociationPolarityRows)(
+    'source-association polarity: $name',
+    async (row) => {
+      const missingTarget = { role: 'textbox', nameNormalized: 'missing-recovery-target' }
+      const payload = singleActionPayload({
+        parameters: row.parameters,
+        type: 'fill',
+        target: missingTarget,
+        values: row.values,
+        instruction: 'AUTHORED_SOURCE_ASSOCIATION_PROSE_38161',
+      })
+      const reader = makeReader({
+        match: makeMatch({ parameterSchema: row.parameters }),
+        payload,
+      })
+      const { adapter, executed } = capturingAdapter([makeScreenState()])
+      const planner = capturingPlanner([
+        makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+      ])
+      const flowCell: { carry?: ProcedureFlowCarry } = {}
+
+      const result = await executeStep(
+        `Recover the ${row.name} case`,
+        ports({
+          adapter,
+          planner: planner.planner,
+          knowledgeReader: reader.reader,
+          recordLedger: makeLedgerSpy(true).ledger,
+          procedureFlow: flowCell,
+          ...(row.memory === undefined ? {} : { workingMemory: makeWorkingMemory(row.memory) }),
+          ...(row.secrets === undefined ? {} : { secretStore: new SecretStore(row.secrets) }),
+        }),
+        context({ variables: row.variables ?? {} }),
+      )
+
+      expect(result.status).toBe('passed')
+      expect(reader.countOf('getProcedure')).toBe(1)
+      expect(planner.calls).toHaveLength(1)
+      // The only dispatch is the live planner's click. The stored fill never executes after
+      // descriptor-missing, and replay does not re-enter after the one-shot miss.
+      expect(executed).toMatchObject([{ type: 'click', ref: 'e2' }])
+      expect(executed).toHaveLength(1)
+      expect(flowCell.carry).toBeUndefined()
+      expect(result.evidence?.planSource).toEqual({
+        kind: 'procedure-replay',
+        procedureId: PROCEDURE_ID,
+        guard: {
+          checksPassed: 0,
+          total: 1,
+          miss: { procedureStepIndex: 0, reason: 'descriptor-missing' },
+        },
+        flow: { cursor: 0, length: 1 },
+      })
+
+      const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+      expect(learned).toContain('miss location: action-target lane=ref')
+      expect(learned).toContain(row.expectedSlot)
+      const slotRow = learned.split('\n').find((line) => line.includes(row.expectedSlot)) ?? ''
+      if (row.expectedSource === undefined) {
+        expect(slotRow).not.toContain('supplied loop-side')
+        expect(slotRow).not.toContain('sourceKind=')
+      } else {
+        expect(slotRow).toContain(
+          `supplied loop-side (sourceKind=${row.expectedSource.kind}; `
+            + `sourceName=${row.expectedSource.name}; `
+            + `declaredType=${row.expectedSource.declaredType}); not unresolved`,
+        )
+      }
+      expect(learned).not.toContain('AUTHORED_SOURCE_ASSOCIATION_PROSE_38161')
+      for (const sentinel of row.rawSentinels) {
+        expect(learned).not.toContain(sentinel)
+      }
+    },
+  )
 
   it('Test 1: a replay-recommendation match drives the step\'s one body step with no planning-turn LLM call', async () => {
     // F-381-51-1 · D-09 rewrite: the old law pinned the WHOLE 2-action body replaying
