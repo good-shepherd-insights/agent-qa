@@ -247,7 +247,7 @@ interface FlowReader {
 /**
  * A form-anchored reader: the consult matches ONLY on the form route. Post-navigation the
  * flow anchor no longer matches the received page, so the consult returns undefined —
- * the healthy fail-closed behavior the live run exhibited (planSource null at step 1).
+ * the healthy fail-closed behavior the live run exhibited (planSource absent at step 1).
  */
 function makeFlowReader(): FlowReader {
   let consults = 0
@@ -468,11 +468,13 @@ describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
     expect(verifies).toBe(2)
 
     // Test step 2: no carry — the fresh consult mismatches the received page (healthy
-    // fail-closed behavior) and the step plans live with planSource null.
+    // fail-closed behavior) and the step plans live with planSource absent.
     const step2 = await executeStep('Verify the page says "Received!"', sharedPorts(), context())
     expect(step2.status).toBe('passed')
     expect(consultCount()).toBe(2)
     expect(step2.evidence?.planSource).toBeUndefined()
+    expect(step2.evidence).toBeDefined()
+    expect(Object.hasOwn(step2.evidence!, 'planSource')).toBe(false)
     expect(planner.calls).toHaveLength(1)
     expect(flowCell.carry).toBeUndefined()
   })
