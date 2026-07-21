@@ -288,7 +288,7 @@ export async function executeStep(
   // is never re-armed into the cross-step carry).
   // `procedureHintStaged`
   // carries the rendered hint block (matched-hint mode, unparseable-body demotion, or the
-  // post-miss demotion with its divergence note) for ledger-metered exposure on every
+  // post-miss structural recovery projection) for ledger-metered exposure on every
   // subsequent live planning turn; `procedureHintExposed` keeps the planSource
   // procedure-hint write once-per-step.
   let procedureConsulted = false
@@ -907,9 +907,9 @@ export async function executeStep(
     // steps: the replayed decision completes its own test step and the remaining body
     // rides the member-scoped carry to the NEXT step (`attempted === 0` makes the per-step
     // consumption law structural, never just a consequence of the abort latches). A guard
-    // miss aborts replay for the WHOLE flow: the miss is folded into planSource, the
-    // procedure demotes to hint context with the divergence noted, and ordinary planning
-    // takes over — no replay re-entry within this step and no carry (one-shot, D-11).
+    // miss aborts replay for the WHOLE flow: the miss is folded into planSource, a closed
+    // value-free recovery projection reaches ordinary planning, and ordinary planning takes
+    // over — no replay re-entry within this step and no carry (one-shot, D-11).
     // Replayed actions keep `cached: false`, skip the cache consult below, and are never
     // written back into the action cache.
     if (procedureReplay && !procedureReplay.aborted
@@ -955,18 +955,25 @@ export async function executeStep(
           reason: attempt.reason,
         }
         recordProcedureReplaySource()
-        // D-11 demotion: the procedure re-enters as hint context with the divergence noted
-        // (which action, which guard, what differed) for every remaining planning turn.
+        // D-11 demotion: project only the typed structural facts the recovery turn may see.
+        // The projector is the raw-input firewall; the renderer accepts only its closed DTO
+        // plus the whole-string masker, so authored procedure prose and bound values cannot
+        // cross this post-miss seam.
+        const recovery = projectProcedureGuardMissRecovery({
+          stepNumber: replayState.nextIndex + 1,
+          step: procedureStep,
+          parameters: replayState.payload.parameters,
+          attempt,
+          screenState,
+          availability: assembleProcedureBindingAvailability(),
+          interpolationNames: new Set(
+            (context.interpolatedVariables ?? []).map((entry) => entry.name),
+          ),
+        }) satisfies ProcedureGuardMissRecoveryContext
         procedureHintStaged = {
           procedureId: replayState.match.id,
           anchors: [replayState.match.flowAnchor],
-          block: renderProcedureHintBlock(
-            replayState.match,
-            replayState.payload,
-            `Guarded replay diverged at procedure step ${replayState.nextIndex + 1} `
-              + `("${procedureStep.instruction}"): ${attempt.detail}`,
-            maskValue,
-          ),
+          block: renderProcedureGuardMissRecoveryBlock(recovery, maskValue),
         }
       }
     }
@@ -1958,9 +1965,77 @@ type ProcedureHintDemotion = NonNullable<
   Extract<StepPlanSource, { kind: 'procedure-hint' }>['demotion']
 >
 
+type ProcedureGuardMissLocation =
+  | { kind: 'action-shape' }
+  | { kind: 'action-target'; lane: string }
+  | { kind: 'guard-target' }
+  | { kind: 'page-anchor' }
+  | { kind: 'parameter'; field: string; name: string }
+  | { kind: 'action-schema' }
+  | { kind: 'grounding-gate' }
+
 type ProcedureReplayAttempt =
   | { ok: true; plan: ActionPlan }
-  | { ok: false; reason: ProcedureGuardMissReason; detail: string }
+  | {
+      ok: false
+      reason: ProcedureGuardMissReason
+      location: ProcedureGuardMissLocation
+    }
+
+interface ProcedureRecoveryDescriptor {
+  lane: string
+  role: string
+  nameNormalized: string
+  ordinal?: { index: number; provenance: 'stored' }
+}
+
+interface ProcedureRecoveryParameter {
+  name: string
+  type: ProcedureParamType
+  required: boolean
+  interpolatedInCurrentStep: boolean
+}
+
+interface ProcedureRecoverySourceBinding {
+  name: string
+  canBindNumber: boolean
+  canBindBoolean: boolean
+}
+
+type ProcedureRecoveryValueSlot =
+  | { kind: 'parameter-ref'; field: string; name: string }
+  | { kind: 'literal-omitted'; field: string }
+
+/**
+ * The only shape permitted across the guard-miss recovery boundary. Deliberately absent:
+ * ProcedureStepSpec/instruction prose, raw values, refs, routes, screen trees, labels,
+ * attributes, URLs, match metadata, and full action payloads.
+ */
+interface ProcedureGuardMissRecoveryContext {
+  stepNumber: number
+  reason: ProcedureGuardMissReason
+  location: ProcedureGuardMissLocation
+  action: {
+    type: string
+    targets: readonly ProcedureRecoveryDescriptor[]
+    valueSlots: readonly ProcedureRecoveryValueSlot[]
+  }
+  guard: {
+    target: Omit<ProcedureRecoveryDescriptor, 'lane'>
+    pageAnchorEqual: boolean
+  }
+  parameters: readonly ProcedureRecoveryParameter[]
+  availability: {
+    variables: readonly ProcedureRecoverySourceBinding[]
+    memory: readonly ProcedureRecoverySourceBinding[]
+    secrets: readonly string[]
+  }
+  freshCandidates?: readonly {
+    role: string
+    nameNormalized: string
+    ordinal: { index: number; provenance: 'derived' }
+  }[]
+}
 
 /**
  * The D-10 full guard for ONE committed procedure action, in order: (0) defense-in-depth
@@ -1988,7 +2063,7 @@ function attemptProcedureReplayAction(input: {
     return {
       ok: false,
       reason: 'non-replayable-action',
-      detail: `stored action type "${spec.type}" (or a raw-coordinate key) is not replayable`,
+      location: { kind: 'action-shape' },
     }
   }
 
@@ -2006,16 +2081,14 @@ function attemptProcedureReplayAction(input: {
       return {
         ok: false,
         reason: 'descriptor-ambiguous',
-        detail: `the stored "${lane}" descriptor (${target.role} "${target.nameNormalized}") `
-          + `resolved ambiguously on the fresh screen (${match.candidates.length} candidates)`,
+        location: { kind: 'action-target', lane },
       }
     }
     if (match.kind !== 'resolved') {
       return {
         ok: false,
         reason: 'descriptor-missing',
-        detail: `the stored "${lane}" descriptor (${target.role} "${target.nameNormalized}") `
-          + 'did not resolve on the fresh screen',
+        location: { kind: 'action-target', lane },
       }
     }
     action[lane] = match.ref
@@ -2034,16 +2107,14 @@ function attemptProcedureReplayAction(input: {
     return {
       ok: false,
       reason: 'descriptor-ambiguous',
-      detail: `the declared guard target (${guardTarget.role} "${guardTarget.nameNormalized}") `
-        + `resolved ambiguously on the fresh screen (${guardMatch.candidates.length} candidates)`,
+      location: { kind: 'guard-target' },
     }
   }
   if (guardMatch.kind !== 'resolved') {
     return {
       ok: false,
       reason: 'descriptor-missing',
-      detail: `the declared guard target (${guardTarget.role} "${guardTarget.nameNormalized}") `
-        + 'did not resolve on the fresh screen',
+      location: { kind: 'guard-target' },
     }
   }
 
@@ -2056,7 +2127,7 @@ function attemptProcedureReplayAction(input: {
     return {
       ok: false,
       reason: 'page-anchor-mismatch',
-      detail: `the live page anchor "${live.route}" does not equal the stored "${stored.route}"`,
+      location: { kind: 'page-anchor' },
     }
   }
 
@@ -2076,7 +2147,7 @@ function attemptProcedureReplayAction(input: {
       return {
         ok: false,
         reason: 'parameter-unbound',
-        detail: `parameter "${slot.param}" has no loop-side binding source`,
+        location: { kind: 'parameter', field, name: slot.param },
       }
     }
     action[field] = bound
@@ -2095,19 +2166,16 @@ function attemptProcedureReplayAction(input: {
     return {
       ok: false,
       reason: 'non-replayable-action',
-      detail: `stored action type "${spec.type}" has no canonical registry definition`,
+      location: { kind: 'action-shape' },
     }
   }
   const { type: _type, ...actionFields } = action
   const parsed = definition.schema.safeParse(actionFields)
   if (!parsed.success) {
-    const issueSummary = parsed.error.issues
-      .map((issue) => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
-      .join('; ')
     return {
       ok: false,
       reason: 'non-replayable-action',
-      detail: `stored action failed canonical action-schema validation: ${issueSummary}`,
+      location: { kind: 'action-schema' },
     }
   }
   const validatedAction: Record<string, unknown> = {
@@ -2121,7 +2189,7 @@ function attemptProcedureReplayAction(input: {
     screenState: input.screenState,
   })
   if (!gate.ok) {
-    return { ok: false, reason: 'gate-refused', detail: gate.error.message }
+    return { ok: false, reason: 'gate-refused', location: { kind: 'grounding-gate' } }
   }
 
   return {
@@ -2136,6 +2204,233 @@ function attemptProcedureReplayAction(input: {
   }
 }
 
+function projectProcedureRecoveryDescriptor(
+  lane: string,
+  target: ProcedureStepSpec['guard']['target'],
+): ProcedureRecoveryDescriptor {
+  return {
+    lane,
+    role: target.role,
+    nameNormalized: target.nameNormalized,
+    ...(target.ordinal === undefined
+      ? {}
+      : { ordinal: { index: target.ordinal, provenance: 'stored' as const } }),
+  }
+}
+
+/**
+ * Safe upstream projector for a failed guard attempt. Raw loop/runtime inputs end here; only
+ * structural names, capability bits, booleans, and ordinals survive into the renderer DTO.
+ */
+function projectProcedureGuardMissRecovery(input: {
+  stepNumber: number
+  step: ProcedureStepSpec
+  parameters: ProcedureBodyPayload['parameters']
+  attempt: Extract<ProcedureReplayAttempt, { ok: false }>
+  screenState: ScreenState
+  availability: ProcedureBindingAvailability
+  interpolationNames: ReadonlySet<string>
+}): ProcedureGuardMissRecoveryContext {
+  const referencedNames = new Set<string>()
+  const valueSlots: ProcedureRecoveryValueSlot[] = []
+  for (const [field, slot] of Object.entries(input.step.action.values)) {
+    if (typeof slot === 'object' && slot !== null && 'param' in slot) {
+      referencedNames.add(slot.param)
+      valueSlots.push({ kind: 'parameter-ref', field, name: slot.param })
+    } else {
+      valueSlots.push({ kind: 'literal-omitted', field })
+    }
+  }
+
+  const parameters = input.parameters
+    .filter((parameter) => referencedNames.has(parameter.name))
+    .map((parameter) => ({
+      name: parameter.name,
+      type: parameter.type,
+      required: parameter.required,
+      interpolatedInCurrentStep: input.interpolationNames.has(parameter.name),
+    }))
+  const includeReferenced = (name: string): boolean => referencedNames.has(name)
+  const variables = input.availability.variables.filter((entry) => includeReferenced(entry.name))
+  const memory = input.availability.memory.filter((entry) => includeReferenced(entry.name))
+  const secrets = input.availability.secrets.filter(includeReferenced)
+
+  const storedPage = normalizeAnchor(input.step.guard.pageAnchor) as Extract<
+    Anchor,
+    { t: 'page' }
+  >
+  const currentPage = normalizeAnchor({
+    t: 'page',
+    route: input.screenState.url ?? '',
+  }) as Extract<Anchor, { t: 'page' }>
+
+  const actionTargets = Object.entries(input.step.action.targets)
+    .map(([lane, target]) => projectProcedureRecoveryDescriptor(lane, target))
+  const guardTarget = projectProcedureRecoveryDescriptor('guard', input.step.guard.target)
+  const base = {
+    stepNumber: input.stepNumber,
+    reason: input.attempt.reason,
+    location: input.attempt.location,
+    action: {
+      type: input.step.action.type,
+      targets: actionTargets,
+      valueSlots,
+    },
+    guard: {
+      target: {
+        role: guardTarget.role,
+        nameNormalized: guardTarget.nameNormalized,
+        ...(guardTarget.ordinal === undefined ? {} : { ordinal: guardTarget.ordinal }),
+      },
+      pageAnchorEqual: storedPage.route === currentPage.route,
+    },
+    parameters,
+    availability: { variables, memory, secrets },
+  } satisfies ProcedureGuardMissRecoveryContext
+
+  const failedRole = input.attempt.location.kind === 'action-target'
+    ? input.step.action.targets[input.attempt.location.lane]?.role
+    : input.attempt.location.kind === 'guard-target'
+      ? input.step.guard.target.role
+      : undefined
+  if (failedRole === undefined) return base
+
+  const freshCandidates = input.screenState.elements
+    .filter((element) => element.state.visible && element.role === failedRole)
+    .map((element) => ({
+      role: element.role,
+      nameNormalized: element.nameNormalized,
+      ordinal: {
+        index: elementOrdinal(element, input.screenState.elements),
+        provenance: 'derived' as const,
+      },
+    }))
+  return { ...base, freshCandidates } satisfies ProcedureGuardMissRecoveryContext
+}
+
+function renderProcedureGuardMissLocation(location: ProcedureGuardMissLocation): string {
+  switch (location.kind) {
+    case 'action-shape': return 'action-shape'
+    case 'action-target': return `action-target lane=${location.lane}`
+    case 'guard-target': return 'guard-target'
+    case 'page-anchor': return 'page-anchor'
+    case 'parameter': {
+      return `parameter field=${location.field}; name=${location.name}`
+    }
+    case 'action-schema': return 'action-schema'
+    case 'grounding-gate': return 'grounding-gate'
+  }
+}
+
+function renderProcedureRecoveryDescriptor(
+  descriptor: Omit<ProcedureRecoveryDescriptor, 'lane'>,
+): string {
+  const ordinal = descriptor.ordinal === undefined
+    ? 'unspecified'
+    : `${descriptor.ordinal.index} (${descriptor.ordinal.provenance})`
+  return `role=${descriptor.role}; nameNormalized=${descriptor.nameNormalized}; ordinal=${ordinal}`
+}
+
+function renderProcedureRecoverySources(
+  heading: string,
+  sources: readonly ProcedureRecoverySourceBinding[],
+): string[] {
+  if (sources.length === 0) return [`${heading}: none`]
+  return [
+    `${heading}:`,
+    ...sources.map((source) =>
+      `- ${source.name} (canBindNumber=${source.canBindNumber}, `
+        + `canBindBoolean=${source.canBindBoolean})`
+    ),
+  ]
+}
+
+/** Render only the closed DTO, then mask the complete string before DATA wrapping. */
+function renderProcedureGuardMissRecoveryBlock(
+  recovery: ProcedureGuardMissRecoveryContext,
+  mask: (value: string) => string,
+): string {
+  const lines: string[] = [
+    `Guarded replay recovery evidence for procedure step ${recovery.stepNumber}`,
+    `miss reason: ${recovery.reason}`,
+    `miss location: ${renderProcedureGuardMissLocation(recovery.location)}`,
+    'Recovery evidence is advisory only; it is not replay authorization',
+    `stored action type: ${recovery.action.type}`,
+    'stored action targets:',
+  ]
+  if (recovery.action.targets.length === 0) {
+    lines.push('- none')
+  } else {
+    for (const target of recovery.action.targets) {
+      lines.push(`- ${target.lane}: ${renderProcedureRecoveryDescriptor(target)}`)
+    }
+  }
+  lines.push(
+    `declared guard target: ${renderProcedureRecoveryDescriptor(recovery.guard.target)}`,
+    `page anchor equality: ${recovery.guard.pageAnchorEqual}`,
+    'value slots:',
+  )
+
+  const parameters = new Map(recovery.parameters.map((parameter) => [parameter.name, parameter]))
+  if (recovery.action.valueSlots.length === 0) {
+    lines.push('- none')
+  } else {
+    for (const slot of recovery.action.valueSlots) {
+      if (slot.kind === 'literal-omitted') {
+        lines.push(`- ${slot.field} <- stored literal omitted`)
+        continue
+      }
+      const parameter = parameters.get(slot.name)
+      const declaration = parameter === undefined
+        ? 'undeclared'
+        : `${parameter.type}, ${parameter.required ? 'required' : 'optional'}`
+      lines.push(`- ${slot.field} <- parameter ${slot.name} (${declaration})`)
+    }
+  }
+
+  lines.push('referenced parameter declarations:')
+  if (recovery.parameters.length === 0) {
+    lines.push('- none')
+  } else {
+    for (const parameter of recovery.parameters) {
+      lines.push(
+        `- ${parameter.name}: type=${parameter.type}; `
+          + `${parameter.required ? 'required' : 'optional'}; `
+          + `interpolatedInCurrentStep=${parameter.interpolatedInCurrentStep}`,
+      )
+      if (parameter.interpolatedInCurrentStep) {
+        lines.push(
+          `${parameter.name} was interpolated into the authoritative current step; `
+            + 'its value is already present there and is omitted here.',
+        )
+      }
+    }
+  }
+  lines.push(...renderProcedureRecoverySources('variable sources', recovery.availability.variables))
+  lines.push(...renderProcedureRecoverySources('memory sources', recovery.availability.memory))
+  lines.push(
+    recovery.availability.secrets.length === 0
+      ? 'secret sources: none'
+      : `secret sources: ${recovery.availability.secrets.join(', ')}`,
+  )
+
+  if (recovery.freshCandidates !== undefined) {
+    lines.push('fresh same-role candidates:')
+    if (recovery.freshCandidates.length === 0) {
+      lines.push('- none')
+    } else {
+      for (const candidate of recovery.freshCandidates) {
+        lines.push(
+          `- role=${candidate.role}; nameNormalized=${candidate.nameNormalized}; `
+            + `ordinal=${candidate.ordinal.index} (${candidate.ordinal.provenance})`,
+        )
+      }
+    }
+  }
+
+  return wrapAppObservedData(mask(lines.join('\n')))
+}
+
 function describeFlowAnchor(anchor: Anchor): string {
   switch (anchor.t) {
     case 'flow': return anchor.name
@@ -2147,10 +2442,10 @@ function describeFlowAnchor(anchor: Anchor): string {
 /**
  * Render the compact procedure hint block (T-381-20/T-381-21): flow name, confidence tier,
  * the parsed body's instruction outline, and parameter NAMES/types — never values, never
- * raw step actions as commands. Post-miss demotion appends the divergence note (which
- * action, which guard, what differed). Masked through the run masking context, then
- * DATA-wrapped via the safety package's delimiters so the whole span reads as untrusted
- * app-observed data under the hypotheses frame.
+ * raw step actions as commands. This is the ordinary hint/body-read/execution/verifier
+ * renderer; guard misses use the closed structural recovery renderer above. Masked through
+ * the run masking context, then DATA-wrapped via the safety package's delimiters so the
+ * whole span reads as untrusted app-observed data under the hypotheses frame.
  */
 function renderProcedureHintBlock(
   match: ProcedureMatch,

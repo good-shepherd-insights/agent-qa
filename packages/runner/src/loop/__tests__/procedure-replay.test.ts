@@ -419,9 +419,17 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     const l2 = plannerCalls[0]!.l2 ?? ''
     expect(l2).toContain(APP_OBSERVED_DATA_OPEN)
     expect(l2).toContain(APP_OBSERVED_DATA_CLOSE)
-    expect(l2).toContain('Type "<EMAIL_0>" into the Username field')
-    expect(l2).not.toContain('text <- parameter PROBE_USER')
-    expect(l2).not.toContain('PROBE_USER was interpolated into the authoritative current step')
+    expect(l2).not.toContain('Type "<EMAIL_0>" into the Username field')
+    expect(l2).toContain('miss reason: descriptor-missing')
+    expect(l2).toContain('miss location: action-target lane=ref')
+    expect(l2).toContain('text <- parameter PROBE_USER (string, required)')
+    expect(l2).toContain('variable sources:')
+    expect(l2).toContain(
+      'PROBE_USER (canBindNumber=false, canBindBoolean=false)',
+    )
+    expect(l2).toContain('PROBE_USER was interpolated into the authoritative current step')
+    expect(l2).not.toContain('ref=e2')
+    expect(l2).not.toContain('qa.user+381@example.com')
 
     const authoredInstruction = 'Type "<EMAIL_0>" into the Username field'
     const desiredContract =
@@ -429,6 +437,64 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       l2.includes('text <- parameter PROBE_USER') &&
       l2.includes('PROBE_USER was interpolated into the authoritative current step')
     expect(desiredContract, 'F-381-54-1_EXPECTED_RED_CONTRACT').toBe(true)
+  })
+
+  it('F-381-54-1 projects the real renamed screen as one advisory textbox candidate', async () => {
+    // 381-54-EVIDENCE records both renamed-screen failures. This row derives the candidate
+    // from the preserved stateBefore; it makes no Username/Account-name equivalence claim.
+    const handoff = JSON.parse(readFileSync(
+      new URL('./fixtures/f-381-54-1/handoff.json', import.meta.url),
+      'utf8',
+    )) as CompletedRunHandoff
+    const record = readFileSync(
+      new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
+      'utf8',
+    )
+    const payload = parseProcedureBody(record)
+    if (!payload) throw new Error('fixture procedure body must parse')
+    const failedTest = handoff.tests[0]!
+    const failedStep = failedTest.steps[0]!
+    const screen = failedStep.subActions[0]!.stateBefore
+    const source = failedStep.planSource
+    if (source?.kind !== 'procedure-replay') {
+      throw new Error('fixture step must preserve procedure replay provenance')
+    }
+    const reader = makeReader({
+      match: makeMatch({
+        id: source.procedureId,
+        flowAnchor: { t: 'flow', name: failedTest.testId },
+        parameterSchema: payload.parameters,
+      }),
+      payload,
+    })
+    const { adapter, executed } = capturingAdapter([screen])
+    const submit = screen.elements.find((element) => element.nameNormalized === 'submit')!
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: submit.ref }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      failedStep.stepText,
+      ports({ adapter, planner: planner.planner, knowledgeReader: reader.reader }),
+      context({
+        stepInstruction: failedStep.stepText,
+        testName: failedTest.testName,
+        variables: { PROBE_USER: 'qa.user+381@example.com' },
+        interpolatedVariables: failedStep.interpolatedVariables,
+      }),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(executed).toMatchObject([{ type: 'click', ref: submit.ref }])
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    const candidateRows = learned.split('\n').filter((line) => line.startsWith('- role='))
+    expect(candidateRows).toEqual([
+      '- role=textbox; nameNormalized=account name; ordinal=0 (derived)',
+    ])
+    expect(learned).toContain('Recovery evidence is advisory only; it is not replay authorization')
+    expect(candidateRows.join('\n').toLowerCase()).not.toMatch(/\b(rename|match|equivalent)\b/)
+    expect(learned).not.toContain('ref=e2')
+    expect(learned).not.toContain('Type "<EMAIL_0>" into the Username field')
   })
 
   it('Test 1: a replay-recommendation match drives the step\'s one body step with no planning-turn LLM call', async () => {
@@ -648,11 +714,11 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(completing.stateAfter?.url).not.toBe(completing.stateBefore.url)
   })
 
-  it('Test 2: an ambiguous descriptor at the carried step aborts replay once and demotes to hint with the divergence noted', async () => {
+  it('Test 2: an ambiguous carried descriptor aborts once and projects ordered structural recovery evidence', async () => {
     // F-381-51-1 · D-09 rewrite: the old law hit the ambiguous second descriptor INSIDE
     // one test step (fold 1-of-2 with the miss). The new law reaches body step 1 at its
     // own test step via the carry — the miss aborts one-shot THERE (per-step fold 0-of-1),
-    // demotes to hint with the divergence, and the flow is over for the run (no carry).
+    // projects structural recovery, and the flow is over for the run (no carry).
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()
@@ -678,11 +744,27 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     // Replay drove step 0's fill; the carried click missed and planning took over — once.
     expect(executed.map((action) => action.type)).toEqual(['fill', 'click'])
     expect(planner.calls).toHaveLength(1)
-    // The demoted procedure hint reached the planning context with the divergence noted.
+    // The miss reaches planning only through the generated structural recovery projection.
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned).toContain('Fill the email field')
-    expect(learned.toLowerCase()).toContain('diverged')
-    expect(learned.toLowerCase()).toContain('ambiguous')
+    expect(learned).toContain('Guarded replay recovery evidence for procedure step 2')
+    expect(learned).toContain('miss reason: descriptor-ambiguous')
+    expect(learned).toContain('miss location: action-target lane=ref')
+    expect(learned).toContain('Recovery evidence is advisory only; it is not replay authorization')
+    expect(learned).not.toContain('Fill the email field')
+    expect(learned).not.toContain('Click the Log in button')
+    const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
+    const first = candidates.indexOf(
+      'role=button; nameNormalized=log in; ordinal=0 (derived)',
+    )
+    const second = candidates.indexOf(
+      'role=button; nameNormalized=log in; ordinal=1 (derived)',
+    )
+    expect(first).toBeGreaterThanOrEqual(0)
+    expect(second).toBeGreaterThan(first)
+    expect(candidates).not.toContain('ref=e2')
+    expect(candidates).not.toContain('ref=e3')
+    const candidateRows = candidates.split('\n').filter((line) => line.startsWith('- role='))
+    expect(candidateRows.join('\n').toLowerCase()).not.toMatch(/\b(rename|match|equivalent)\b/)
 
     expect(step1.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
@@ -723,9 +805,13 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(executed.map((action) => action.type)).toEqual(['click'])
     expect(planner.calls).toHaveLength(1)
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned.toLowerCase()).toContain('diverged')
-    expect(learned.toLowerCase()).toContain('declared guard target')
-    expect(learned.toLowerCase()).toContain('reset password')
+    expect(learned).toContain('miss location: guard-target')
+    expect(learned).toContain(
+      'declared guard target: role=button; nameNormalized=reset password',
+    )
+    expect(learned).toContain('fresh same-role candidates:')
+    expect(learned).toContain('role=button; nameNormalized=log in; ordinal=0 (derived)')
+    expect(learned).not.toContain('Fill the email field')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
@@ -764,9 +850,12 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(executed.map((action) => action.type)).toEqual(['click'])
     expect(planner.calls).toHaveLength(1)
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned.toLowerCase()).toContain('diverged')
-    expect(learned.toLowerCase()).toContain('declared guard target')
-    expect(learned.toLowerCase()).toContain('log in')
+    expect(learned).toContain('miss reason: descriptor-ambiguous')
+    expect(learned).toContain('miss location: guard-target')
+    const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
+    expect(candidates).toContain('role=button; nameNormalized=log in; ordinal=0 (derived)')
+    expect(candidates).toContain('role=button; nameNormalized=log in; ordinal=1 (derived)')
+    expect(learned).not.toContain('Fill the email field')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
@@ -776,6 +865,218 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         miss: { procedureStepIndex: 0, reason: 'descriptor-ambiguous' },
       },
       flow: { cursor: 0, length: 1 },
+    })
+  })
+
+  it('projects zero candidates only for the failed lane of a multi-lane action', async () => {
+    const payload: ProcedureBodyPayload = {
+      schemaVersion: 1,
+      parameters: [],
+      steps: [{
+        instruction: 'Drag using authored prose that recovery must omit',
+        action: {
+          type: 'drag',
+          targets: {
+            fromRef: { role: 'button', nameNormalized: 'log in' },
+            toRef: { role: 'link', nameNormalized: 'destination' },
+          },
+          values: {},
+        },
+        guard: {
+          target: { role: 'button', nameNormalized: 'log in' },
+          pageAnchor: { t: 'page', route: 'https://example.test/login' },
+        },
+      }],
+      successAssertion: 'The drag completed',
+    }
+    const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
+    const { adapter, executed } = capturingAdapter([makeScreenState()])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Recover from the unavailable drag destination',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(executed.map((action) => action.type)).toEqual(['click'])
+    expect(planner.calls).toHaveLength(1)
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('miss location: action-target lane=toRef')
+    const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
+    expect(candidates).toContain('fresh same-role candidates:\n- none')
+    expect(candidates).not.toContain('role=button')
+    expect(candidates).not.toContain('nameNormalized=log in')
+    expect(learned).not.toContain('Drag using authored prose that recovery must omit')
+    expect(result.evidence?.planSource).toMatchObject({
+      guard: { miss: { reason: 'descriptor-missing' } },
+    })
+  })
+
+  it('keeps raw variable, memory, secret, and literal values behind the recovery firewall', async () => {
+    const payload: ProcedureBodyPayload = {
+      schemaVersion: 1,
+      parameters: [
+        { name: 'VAR_NAME', type: 'string', required: true },
+        { name: 'MEM_NAME', type: 'number', required: false },
+        { name: 'SECRET_NAME', type: 'secret', required: true },
+      ],
+      steps: [{
+        instruction: 'AUTHORED_RECOVERY_PROSE_38155',
+        action: {
+          type: 'fill',
+          targets: { ref: { role: 'textbox', nameNormalized: 'mask-me-missing' } },
+          values: {
+            text: { param: 'VAR_NAME' },
+            clickDelay: { param: 'MEM_NAME' },
+            secretField: { param: 'SECRET_NAME' },
+            literalField: 'LITERAL_RAW_38155',
+            jsonField: { json: { nested: 'JSON_RAW_38155' } },
+          },
+        },
+        guard: {
+          target: { role: 'textbox', nameNormalized: 'mask-me-missing' },
+          pageAnchor: {
+            t: 'page',
+            route: 'https://example.test/login?STORED_QUERY_RAW_38155',
+          },
+        },
+      }],
+      successAssertion: 'The action completed',
+    }
+    const baseScreen = makeScreenState({
+      url: 'https://example.test/login?LIVE_QUERY_RAW_38155',
+    })
+    const screen: ScreenState = {
+      ...baseScreen,
+      tree: `${baseScreen.tree}\nTREE_RAW_38155`,
+      elements: baseScreen.elements.map((element, index) =>
+        index === 0
+          ? {
+              ...element,
+              ref: asRef('SCREEN_REF_RAW_38155'),
+              value: 'SCREEN_VALUE_RAW_38155',
+              labels: { ariaLabel: 'SCREEN_LABEL_RAW_38155' },
+              attributes: { sentinel: 'SCREEN_ATTRIBUTE_RAW_38155' },
+            }
+          : element
+      ),
+    }
+    const spy = makeReader({ match: makeMatch({ parameterSchema: payload.parameters }), payload })
+    const { adapter } = capturingAdapter([screen])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true }),
+    ])
+    const ledgerSpy = makeLedgerSpy(true)
+
+    const result = await executeStep(
+      'Recover without exposing values',
+      ports({
+        adapter,
+        planner: planner.planner,
+        knowledgeReader: spy.reader,
+        recordLedger: ledgerSpy.ledger,
+        workingMemory: makeWorkingMemory([{ key: 'MEM_NAME', value: 'MEMORY_RAW_38155' }]),
+        secretStore: new SecretStore({ SECRET_NAME: 'SECRET_RAW_38155' }),
+        masking: {
+          mask: (value) => value.replaceAll('mask-me-missing', 'MASKED_DESCRIPTOR_38155'),
+          unmask: (value) => value,
+        },
+      }),
+      context({
+        variables: { VAR_NAME: 'VARIABLE_RAW_38155' },
+        interpolatedVariables: [{ name: 'VAR_NAME', value: 'VARIABLE_RAW_38155' }],
+      }),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(planner.calls).toHaveLength(1)
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('nameNormalized=MASKED_DESCRIPTOR_38155')
+    expect(learned).not.toContain('mask-me-missing')
+    expect(learned).toContain('text <- parameter VAR_NAME (string, required)')
+    expect(learned).toContain('clickDelay <- parameter MEM_NAME (number, optional)')
+    expect(learned).toContain('secretField <- parameter SECRET_NAME (secret, required)')
+    expect(learned).toContain('literalField <- stored literal omitted')
+    expect(learned).toContain('jsonField <- stored literal omitted')
+    expect(learned).toContain('VAR_NAME (canBindNumber=false, canBindBoolean=false)')
+    expect(learned).toContain('MEM_NAME (canBindNumber=false, canBindBoolean=false)')
+    expect(learned).toContain('secret sources: SECRET_NAME')
+    expect(learned).toContain('VAR_NAME was interpolated into the authoritative current step')
+    for (const forbidden of [
+      'VARIABLE_RAW_38155',
+      'MEMORY_RAW_38155',
+      'SECRET_RAW_38155',
+      'LITERAL_RAW_38155',
+      'JSON_RAW_38155',
+      'AUTHORED_RECOVERY_PROSE_38155',
+      'TREE_RAW_38155',
+      'SCREEN_REF_RAW_38155',
+      'SCREEN_VALUE_RAW_38155',
+      'SCREEN_LABEL_RAW_38155',
+      'SCREEN_ATTRIBUTE_RAW_38155',
+      'STORED_QUERY_RAW_38155',
+      'LIVE_QUERY_RAW_38155',
+      '{{secret:SECRET_NAME}}',
+      'ref=e1',
+      'ref=e2',
+    ]) {
+      expect(learned).not.toContain(forbidden)
+    }
+  })
+
+  it('drops dynamic grounding errors and refs at the typed grounding-gate location', async () => {
+    const baseScreen = makeScreenState()
+    const gateRef = asRef('GATE_ERROR_REF_RAW_38155')
+    const screen: ScreenState = {
+      ...baseScreen,
+      elements: baseScreen.elements.map((element) =>
+        element.role === 'button'
+          ? {
+              ...element,
+              ref: gateRef,
+              name: 'Gate target',
+              nameNormalized: 'gate target',
+            }
+          : element
+      ),
+      // Deliberately retain the old refMap: the descriptor resolves to gateRef, then the
+      // grounding gate raises a dynamic ref-not-in-snapshot error containing that sentinel.
+      refMap: baseScreen.refMap,
+    }
+    const payload = singleActionPayload({
+      type: 'click',
+      target: { role: 'button', nameNormalized: 'gate target' },
+      values: {},
+      instruction: 'AUTHORED_GATE_PROSE_38155',
+    })
+    const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
+    const { adapter, executed } = capturingAdapter([screen])
+    const planner = capturingPlanner([
+      makeActionPlan({ action: { type: 'click', ref: 'e1' }, stepComplete: true }),
+    ])
+
+    const result = await executeStep(
+      'Recover after the grounding gate refuses a stale ref',
+      ports({ adapter, planner: planner.planner, knowledgeReader: spy.reader }),
+      context(),
+    )
+
+    expect(result.status).toBe('passed')
+    expect(executed).toMatchObject([{ type: 'click', ref: 'e1' }])
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('miss reason: gate-refused')
+    expect(learned).toContain('miss location: grounding-gate')
+    expect(learned).toContain('role=button; nameNormalized=gate target')
+    expect(learned).not.toContain('fresh same-role candidates:')
+    expect(learned).not.toContain('GATE_ERROR_REF_RAW_38155')
+    expect(learned).not.toContain('ref_not_in_snapshot')
+    expect(learned).not.toContain('AUTHORED_GATE_PROSE_38155')
+    expect(result.evidence?.planSource).toMatchObject({
+      guard: { miss: { reason: 'gate-refused' } },
     })
   })
 
@@ -806,6 +1107,12 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(planner.calls).toHaveLength(1)
     // No replayed action executed — the click came from the planning turn.
     expect(executed.map((action) => action.type)).toEqual(['click'])
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('miss location: page-anchor')
+    expect(learned).toContain('page anchor equality: false')
+    expect(learned).not.toContain('fresh same-role candidates:')
+    expect(learned).not.toContain('https://example.test/checkout')
+    expect(learned).not.toContain('Click the Log in button')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
@@ -1167,8 +1474,14 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     expect(executed.map((action) => action.type)).toEqual(['click'])
-    expect(`${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`)
-      .toContain('has no loop-side binding source')
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('miss location: parameter field=text; name=missingEmail')
+    expect(learned).toContain('text <- parameter missingEmail (string, required)')
+    expect(learned).toContain('variable sources: none')
+    expect(learned).toContain('memory sources: none')
+    expect(learned).toContain('secret sources: none')
+    expect(learned).not.toContain('fresh same-role candidates:')
+    expect(learned).not.toContain('Fill the missing email')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
@@ -1340,8 +1653,11 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     expect(executed.map((action) => action.type)).toEqual(['click'])
-    expect(`${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`)
-      .toContain('has no loop-side binding source')
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain(`name=${name}`)
+    expect(learned).toContain(`parameter ${name} (${type}, required)`)
+    expect(learned).toContain(`secret sources: ${name}`)
+    expect(learned).not.toContain('fresh same-role candidates:')
     expect(result.evidence?.planSource).toEqual({
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
@@ -1429,8 +1745,11 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(result.evidence?.planSource).toMatchObject({
       guard: { miss: { reason: 'non-replayable-action' } },
     })
-    expect(`${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`)
-      .toContain('failed canonical action-schema validation')
+    const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
+    expect(learned).toContain('miss location: action-schema')
+    expect(learned).toContain('submit <- stored literal omitted')
+    expect(learned).not.toContain('fresh same-role candidates:')
+    expect(learned).not.toContain('Invalid fill missing its required text')
   })
 })
 
@@ -1655,11 +1974,11 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
     expect(result.evidence?.planSource).toBeUndefined()
   })
 
-  it('Test 4: the post-miss demoted hint renders in the SAME hypotheses frame with the divergence note', async () => {
+  it('Test 4: post-miss recovery evidence renders in the SAME hypotheses frame', async () => {
     // F-381-51-1 · D-09 rewrite: the old law surfaced the miss inside one test step. The
     // new law reaches the miss at the CARRIED step's own test step — the demoted hint
-    // renders in THAT step's planning turn, in the same hypotheses frame, with the same
-    // body-step-indexed divergence wording.
+    // renders in THAT step's planning turn, in the same hypotheses frame, with the body
+    // step represented only by its generated structural facts.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()
@@ -1682,14 +2001,14 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
     expect(step1.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     const l2 = planner.calls[0].l2 ?? ''
-    // DATA-wrapped, with the divergence inside the delimiters — never imperative phrasing
-    // outside the untrusted-data frame.
+    // DATA-wrapped, with recovery evidence inside the delimiters and no authored imperative.
     const open = l2.indexOf(APP_OBSERVED_DATA_OPEN)
     const close = l2.indexOf(APP_OBSERVED_DATA_CLOSE)
-    const divergence = l2.indexOf('Guarded replay diverged at procedure step 2')
+    const recovery = l2.indexOf('Guarded replay recovery evidence for procedure step 2')
     expect(open).toBeGreaterThanOrEqual(0)
-    expect(divergence).toBeGreaterThan(open)
-    expect(close).toBeGreaterThan(divergence)
+    expect(recovery).toBeGreaterThan(open)
+    expect(close).toBeGreaterThan(recovery)
+    expect(l2).not.toContain('Click the Log in button')
     // The demoted hint sits under the same hypotheses preamble as every learned span.
     const volatileTier = buildVolatileTier(makeStepContext({ knowledgeBriefL2: l2 }))
     const rendered = typeof volatileTier.content === 'string'

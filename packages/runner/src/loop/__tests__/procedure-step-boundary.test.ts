@@ -477,7 +477,7 @@ describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
     expect(flowCell.carry).toBeUndefined()
   })
 
-  it('a guard miss at a carried step aborts one-shot, demotes to hint with the divergence, and leaves no carry', async () => {
+  it('a carried guard miss aborts one-shot, projects structural recovery, and leaves no carry', async () => {
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     // Drift shape: the FILL navigates (the form disappears before the carried click's own
     // test step), so the carried body step's guards meet a screen they cannot pass on.
@@ -510,12 +510,15 @@ describe('cross-step flow carry (F-381-51-1 · D-09/D-10/D-11)', () => {
       },
       flow: { cursor: 1, length: 2 },
     })
-    // One-shot (D-11): demoted to hint with the divergence noted, and the flow is over —
+    // One-shot (D-11): structural recovery evidence reaches planning and the flow is over —
     // the take at step start emptied the cell and the miss never re-arms it.
     expect(planner.calls).toHaveLength(1)
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned.toLowerCase()).toContain('diverged')
-    expect(learned).toContain('Click the Submit button')
+    expect(learned).toContain('Guarded replay recovery evidence for procedure step 2')
+    expect(learned).toContain('miss location: action-target lane=ref')
+    expect(learned).toContain('role=button; nameNormalized=submit')
+    expect(learned).toContain('fresh same-role candidates:\n- none')
+    expect(learned).not.toContain('Click the Submit button')
     expect(flowCell.carry).toBeUndefined()
   })
 
