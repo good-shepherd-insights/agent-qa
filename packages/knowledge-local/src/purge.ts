@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -67,6 +68,7 @@ export type { PurgeReceipt } from './purge-receipt.js'
  * identities.
  */
 const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
+const PURGE_SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export interface PurgeAffectedBundleTarget {
   product: string
@@ -560,6 +562,7 @@ function readReceiptAtCycle(
   return guardPurgeReceiptForFile(
     JSON.parse(readFileSync(file, 'utf8')),
     basename(file),
+    { recordId, cycle },
   )
 }
 
@@ -640,10 +643,215 @@ function committedPurgeOrdinalsForProducts(
   return ordinals
 }
 
+function assertNoSymlinkComponents(knowledgeRoot: string, relativePath: string): void {
+  let current = knowledgeRoot
+  for (const segment of relativePath.split('/')) {
+    current = join(current, segment)
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        throw new TypeError(`purge authority path crosses a symbolic link: ${relativePath}`)
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+  }
+}
+
+function assertUnique(values: readonly string[], label: string): void {
+  if (new Set(values).size !== values.length) {
+    throw new TypeError(`${label} must not contain duplicate identities`)
+  }
+}
+
+function sorted(values: readonly string[]): string[] {
+  return [...values].sort()
+}
+
+function assertSameIdentities(
+  actual: readonly string[],
+  expected: readonly string[],
+  label: string,
+): void {
+  assertUnique(actual, label)
+  assertUnique(expected, label)
+  if (canonicalJson(sorted(actual)) !== canonicalJson(sorted(expected))) {
+    throw new TypeError(`${label} does not match the executable purge identities`)
+  }
+}
+
+function bundleAuthority(
+  relativePath: string,
+  recordId: RecordId,
+): { product: string; bundleDir: string } {
+  const segments = relativePath.split('/')
+  if (
+    segments.length !== 4
+    || segments[0] !== 'memory'
+    || !PURGE_SAFE_PATH_SEGMENT.test(segments[1]!)
+    || segments[1] === '.'
+    || segments[1] === '..'
+    || segments[2] !== 'bundles'
+    || segments[3] !== recordId
+  ) {
+    throw new TypeError(
+      `purge bundle authority must be memory/<product>/bundles/${recordId}`,
+    )
+  }
+  return { product: segments[1]!, bundleDir: relativePath }
+}
+
+function queueAuthority(relativePath: string): { candidateId: string } {
+  const segments = relativePath.split('/')
+  const queued = segments.length === 4
+    && segments[0] === 'memory'
+    && segments[1] === 'queue'
+    && segments[2] === 'queued'
+  const claimed = segments.length === 5
+    && segments[0] === 'memory'
+    && segments[1] === 'queue'
+    && segments[2] === 'claimed'
+    && PURGE_SAFE_PATH_SEGMENT.test(segments[3]!)
+    && segments[3] !== '.'
+    && segments[3] !== '..'
+  const candidateId = segments.at(-1) ?? ''
+  if ((!queued && !claimed) || !QUEUE_CANDIDATE_ID.test(candidateId)) {
+    throw new TypeError('purge queue authority must name one canonical queued/claimed candidate')
+  }
+  return { candidateId }
+}
+
+function assertBundleAffectedPaths(
+  bundleDir: string,
+  paths: readonly string[],
+  label: string,
+): void {
+  if (paths.length === 0 || paths.some((path) => (
+    path !== bundleDir && !path.startsWith(`${bundleDir}/`)
+  ))) {
+    throw new TypeError(`${label} must stay within its canonical bundle directory`)
+  }
+  assertUnique(paths, label)
+}
+
+/**
+ * Convert schema-valid persisted bytes into deletion authority only after every redundant
+ * identity agrees with the requested record and canonical filesystem layout.
+ */
+function guardPurgeIntentForRequest(
+  knowledgeRoot: string,
+  requestedRecordId: RecordId,
+  value: unknown,
+): PurgeIntent {
+  const intent = guardPurgeIntent(value)
+  if (
+    intent.purgedRecordId !== requestedRecordId
+    || intent.receipt.purgedRecordId !== requestedRecordId
+  ) {
+    throw new TypeError('purge intent record identity does not match the requested record')
+  }
+
+  assertUnique(intent.bundleDirs, 'purge intent bundleDirs')
+  for (const path of intent.bundleDirs) bundleAuthority(path, requestedRecordId)
+  const queueTargets = intent.queuePayloadDirs.map((path) => ({
+    ...queueAuthority(path),
+    candidateDir: path,
+  }))
+  assertSameIdentities(
+    queueTargets.map(({ candidateId }) => candidateId),
+    intent.queueCandidateIds,
+    'purge intent queue candidates',
+  )
+  for (const path of [
+    ...intent.bundleDirs,
+    ...intent.queuePayloadDirs,
+    ...intent.queueCandidateIds.map((candidateId) =>
+      `memory/queue/jobs/${candidateId}.state.json`,
+    ),
+    receiptCycleRelativePath(requestedRecordId, intent.receiptCycle),
+  ]) {
+    assertNoSymlinkComponents(knowledgeRoot, path)
+  }
+  for (const path of intent.receipt.affectedPaths) {
+    const owner = intent.bundleDirs.find((bundleDir) => (
+      path === bundleDir || path.startsWith(`${bundleDir}/`)
+    ))
+    if (owner === undefined) {
+      throw new TypeError('purge receipt affectedPaths escape the persisted bundle authorities')
+    }
+  }
+
+  if (intent.affectedSet !== null) {
+    const affected = intent.affectedSet
+    if (affected.recordId !== requestedRecordId || affected.state !== 'resume') {
+      throw new TypeError('purge affected set does not identify the resumable requested record')
+    }
+    if (
+      affected.intentPath !== `memory/receipts/purge-${requestedRecordId}.intent.json`
+      || affected.receiptPath
+        !== receiptCycleRelativePath(requestedRecordId, intent.receiptCycle)
+    ) {
+      throw new TypeError('purge affected-set audit paths do not match the requested receipt slot')
+    }
+    assertSameIdentities(
+      affected.bundles.map(({ bundleDir }) => bundleDir),
+      intent.bundleDirs,
+      'purge affected-set bundles',
+    )
+    for (const bundle of affected.bundles) {
+      const authority = bundleAuthority(bundle.bundleDir, requestedRecordId)
+      if (bundle.product !== authority.product) {
+        throw new TypeError('purge affected-set product does not match its bundle path')
+      }
+      assertBundleAffectedPaths(
+        bundle.bundleDir,
+        bundle.affectedPaths,
+        'purge affected-set bundle paths',
+      )
+    }
+    assertSameIdentities(
+      affected.bundles.flatMap(({ affectedPaths }) => affectedPaths),
+      intent.receipt.affectedPaths,
+      'purge affected-set bundle contents',
+    )
+    assertSameIdentities(
+      affected.receiptAffectedPaths,
+      intent.receipt.affectedPaths,
+      'purge affected-set receipt paths',
+    )
+    const expectedQueueTargets = queueTargets.map(({ candidateId, candidateDir }) =>
+      canonicalJson({
+        candidateId,
+        candidateDir,
+        jobStatePath: `memory/queue/jobs/${candidateId}.state.json`,
+      }),
+    )
+    assertSameIdentities(
+      affected.queueTargets.map((target) => canonicalJson(target)),
+      expectedQueueTargets,
+      'purge affected-set queue targets',
+    )
+    assertSameIdentities(
+      affected.projectionTargets,
+      PURGE_PROJECTION_TARGETS,
+      'purge affected-set projections',
+    )
+  }
+  return intent
+}
+
 function readExistingIntent(knowledgeRoot: string, recordId: RecordId): PurgeIntent | undefined {
   const file = intentPath(knowledgeRoot, recordId)
   if (!existsSync(file)) return undefined
-  return guardPurgeIntent(JSON.parse(readFileSync(file, 'utf8')))
+  assertNoSymlinkComponents(
+    knowledgeRoot,
+    `memory/receipts/purge-${recordId}.intent.json`,
+  )
+  return guardPurgeIntentForRequest(
+    knowledgeRoot,
+    recordId,
+    JSON.parse(readFileSync(file, 'utf8')),
+  )
 }
 
 function toReceiptPath(knowledgeRoot: string, absolutePath: string): string {

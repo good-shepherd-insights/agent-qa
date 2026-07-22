@@ -4,7 +4,9 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
@@ -1808,6 +1810,107 @@ describe('DCAY-05 sovereign purge', () => {
     expect(second.receipt).toEqual(first.receipt)
     expect(readFileSync(receiptPath)).toEqual(firstBytes)
     expect(readdirSync(receiptDir)).toEqual([`purge-${target.id}.json`])
+  })
+
+  describe('persisted purge authority validation', () => {
+    function leaveIntent(target: PublishedBundle): string {
+      expect(() => purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        hooks: {
+          afterIntentWritten: () => {
+            throw new Error('leave semantic-guard intent')
+          },
+        },
+      })).toThrow('leave semantic-guard intent')
+      return join(
+        knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${target.id}.intent.json`,
+      )
+    }
+
+    it('rejects an intent copied under another record id before deleting either record', () => {
+      const first = publish('semantic-copy-first', [
+        { t: 'el', role: 'button', name: 'Semantic copy first' },
+        { t: 'page', route: '/purge/semantic-copy/first' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const second = publish('semantic-copy-second', [
+        { t: 'el', role: 'button', name: 'Semantic copy second' },
+        { t: 'page', route: '/purge/semantic-copy/second' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const firstIntent = leaveIntent(first)
+      const copiedIntent = join(
+        knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${second.id}.intent.json`,
+      )
+      copyFileSync(firstIntent, copiedIntent)
+
+      expect(() => purge(second.id)).toThrow('record identity')
+      expect(existsSync(first.dir)).toBe(true)
+      expect(existsSync(second.dir)).toBe(true)
+    })
+
+    it('rejects a broad persisted bundle path without removing the memory tree', () => {
+      const target = publish('semantic-broad-path', [
+        { t: 'el', role: 'button', name: 'Semantic broad path' },
+        { t: 'page', route: '/purge/semantic-broad-path' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const intentFile = leaveIntent(target)
+      const intent = JSON.parse(readFileSync(intentFile, 'utf8')) as Record<string, unknown>
+      intent.bundleDirs = ['memory']
+      writeFileSync(intentFile, `${JSON.stringify(intent)}\n`, 'utf8')
+      const sentinel = join(knowledgeRoot, 'memory', 'semantic-guard-sentinel.txt')
+      writeFileSync(sentinel, 'must survive\n', 'utf8')
+
+      expect(() => purge(target.id)).toThrow('bundle authority')
+      expect(existsSync(target.dir)).toBe(true)
+      expect(readFileSync(sentinel, 'utf8')).toBe('must survive\n')
+    })
+
+    it('rejects a receipt copied into another record cycle before deletion', () => {
+      const source = publish('semantic-receipt-source', [
+        { t: 'el', role: 'button', name: 'Semantic receipt source' },
+        { t: 'page', route: '/purge/semantic-receipt/source' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const target = publish('semantic-receipt-target', [
+        { t: 'el', role: 'button', name: 'Semantic receipt target' },
+        { t: 'page', route: '/purge/semantic-receipt/target' },
+        { t: 'platform', platform: 'web' },
+      ])
+      expect(purge(source.id).kind).toBe('purged')
+      const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+      copyFileSync(
+        join(receiptsDir, `purge-${source.id}.json`),
+        join(receiptsDir, `purge-${target.id}.json`),
+      )
+
+      expect(() => purge(target.id)).toThrow('payload identifies')
+      expect(existsSync(target.dir)).toBe(true)
+    })
+
+    it('rejects a symlinked persisted target before touching its destination', () => {
+      const target = publish('semantic-symlink-target', [
+        { t: 'el', role: 'button', name: 'Semantic symlink target' },
+        { t: 'page', route: '/purge/semantic-symlink-target' },
+        { t: 'platform', platform: 'web' },
+      ])
+      leaveIntent(target)
+      const externalDir = join(root, 'semantic-symlink-destination')
+      renameSync(target.dir, externalDir)
+      symlinkSync(externalDir, target.dir, 'dir')
+
+      expect(() => purge(target.id)).toThrow('symbolic link')
+      expect(existsSync(join(externalDir, 'manifest.json'))).toBe(true)
+    })
   })
 
   describe('CR-04 crash-durable purge intent', () => {

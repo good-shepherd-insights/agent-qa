@@ -63,11 +63,29 @@ export function parseCanonicalPurgeReceiptFileName(
   }
 }
 
-/** Bind structurally valid receipt bytes to the canonical filename identity that supplied them. */
-export function guardPurgeReceiptForFile(value: unknown, fileName: string): PurgeReceipt {
+export interface ExpectedPurgeReceiptIdentity {
+  recordId: string
+  cycle: number
+}
+
+/** Bind structurally valid receipt bytes to both its filename and the requested series slot. */
+export function guardPurgeReceiptForFile(
+  value: unknown,
+  fileName: string,
+  expected?: ExpectedPurgeReceiptIdentity,
+): PurgeReceipt {
   const identity = parseCanonicalPurgeReceiptFileName(fileName)
   if (identity === undefined) {
     throw new TypeError(`non-canonical purge receipt filename: ${fileName}`)
+  }
+  if (
+    expected !== undefined
+    && (identity.recordId !== expected.recordId || identity.cycle !== expected.cycle)
+  ) {
+    throw new TypeError(
+      `purge receipt slot identifies ${identity.recordId} cycle ${identity.cycle}, `
+      + `expected ${expected.recordId} cycle ${expected.cycle}`,
+    )
   }
   const receipt = guardPurgeReceipt(value)
   if (receipt.purgedRecordId !== identity.recordId) {
