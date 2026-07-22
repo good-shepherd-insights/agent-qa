@@ -136,10 +136,11 @@ async function resolveKnowledgePaths(command: Command): Promise<KnowledgePaths> 
     loadAuthPlugins: false,
   })
   const knowledgeRoot = resolveKnowledgeRoot(config.knowledge, configDir)
+  const runtimeRoot = resolve(configDir, '.agent-qa')
   return {
     knowledgeRoot,
-    runtimeRoot: resolve(configDir, '.agent-qa'),
-    auditBaseDir: join(dirname(knowledgeRoot), '.agent-qa'),
+    runtimeRoot,
+    auditBaseDir: runtimeRoot,
   }
 }
 

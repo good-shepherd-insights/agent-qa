@@ -153,6 +153,7 @@ interface InvocationResult {
 function fixtureWorkspace(
   roots: string[],
   ordinals: Readonly<Record<string, number>> = { [PRODUCT]: BUILD_ORDINAL },
+  knowledgeDir = 'agent-qa-knowledge',
 ): FixtureWorkspace {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-knowledge-maintain-${randomUUID()}-`))
   roots.push(root)
@@ -170,7 +171,7 @@ function fixtureWorkspace(
         secretsFile: '.env.secrets.local',
       },
       knowledge: {
-        dir: 'agent-qa-knowledge',
+        dir: knowledgeDir,
         commitArtifacts: 'none',
       },
       use: {
@@ -187,7 +188,7 @@ function fixtureWorkspace(
   return {
     root,
     configPath,
-    knowledgeRoot: join(root, 'agent-qa-knowledge'),
+    knowledgeRoot: join(root, knowledgeDir),
     runtimeRoot,
   }
 }
@@ -516,6 +517,24 @@ describe('knowledge maintenance commands', () => {
       leaseId: expect.any(String),
       epoch: expect.any(Number),
     })
+  })
+
+  it('keeps nested knowledge maintenance audit evidence in the canonical runtime root', async () => {
+    const workspace = fixtureWorkspace(
+      roots,
+      { [PRODUCT]: BUILD_ORDINAL },
+      'docs/knowledge',
+    )
+    seedBundle(workspace)
+
+    const result = await invoke(workspace, [
+      'rollback', '--job', CURATION_JOB_ID, '--yes', '--json',
+    ])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(commandHarness.rollbackCurationJobInputs).toHaveLength(1)
+    expect(commandHarness.rollbackCurationJobInputs[0]?.auditBaseDir).toBe(workspace.runtimeRoot)
+    expect(existsSync(join(workspace.root, 'docs', '.agent-qa'))).toBe(false)
   })
 
   it('rolls back a job minted at the current product ordinal using the reserved next ordinal', async () => {
