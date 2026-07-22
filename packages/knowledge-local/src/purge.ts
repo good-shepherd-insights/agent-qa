@@ -583,6 +583,69 @@ function resolveReceiptSeries(knowledgeRoot: string, recordId: RecordId): Receip
   }
 }
 
+// Cycle 1 uses the unsuffixed base name; only cycles >= 2 use a numeric suffix.
+// Keep the record-id branch aligned with PURGE_SAFE_RECORD_ID.
+const CANONICAL_PURGE_RECEIPT_FILE =
+  /^purge-([A-Za-z0-9][A-Za-z0-9_-]*)(?:\.([2-9]|[1-9][0-9]+))?\.json$/u
+
+function receiptAffectedProducts(receipt: PurgeReceipt): Set<string> {
+  const products = new Set<string>()
+  for (const affectedPath of receipt.affectedPaths) {
+    const segments = affectedPath.replaceAll('\\', '/').split('/')
+    if (
+      segments.length < 4
+      || segments[0] !== 'memory'
+      || segments[1] === ''
+      || segments[2] !== 'bundles'
+      || segments[3] === ''
+    ) {
+      continue
+    }
+    products.add(segments[1])
+  }
+  return products
+}
+
+function committedPurgeOrdinalsForProducts(
+  knowledgeRoot: string,
+  affectedProducts: ReadonlySet<string>,
+): number[] {
+  const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+  let files: string[]
+  try {
+    files = readdirSync(receiptsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+
+  const ordinals: number[] = []
+  for (const file of files) {
+    const canonicalName = CANONICAL_PURGE_RECEIPT_FILE.exec(file)
+    if (canonicalName === null) continue
+
+    let receipt: PurgeReceipt
+    try {
+      receipt = guardPurgeReceipt(
+        JSON.parse(readFileSync(join(receiptsDir, file), 'utf8')),
+      )
+    } catch {
+      continue
+    }
+    if (receipt.purgedRecordId !== canonicalName[1]) continue
+
+    for (const product of receiptAffectedProducts(receipt)) {
+      if (!affectedProducts.has(product)) continue
+      ordinals.push(receipt.purgedAtOrdinal)
+      break
+    }
+  }
+  return ordinals
+}
+
 function readExistingIntent(knowledgeRoot: string, recordId: RecordId): PurgeIntent | undefined {
   const file = intentPath(knowledgeRoot, recordId)
   if (!existsSync(file)) return undefined
@@ -760,14 +823,12 @@ function bundleChronologyOrdinals(bundle: LoadedBundle): number[] {
 
 /**
  * Resolve the destructive occurrence on the same deterministic ordinal axis as maintenance diff.
- * Every canonical bundle in each affected product contributes its committed chronology, while the
- * target's latest receipt keeps revival cycles strictly ordered. Wall clock and filesystem metadata
- * never participate.
+ * Every canonical bundle and committed purge receipt in each affected product contributes its
+ * chronology. Wall clock and filesystem metadata never participate.
  */
 function resolvePurgeOccurrenceOrdinal(
   knowledgeRoot: string,
   matches: readonly ResolvedBundle[],
-  latestReceipt: PurgeReceipt | undefined,
 ): number {
   const affectedProducts = new Set(matches.map(({ product }) => product))
   let maximum = -1
@@ -779,13 +840,17 @@ function resolvePurgeOccurrenceOrdinal(
     maximum = Math.max(maximum, ordinal)
   }
 
-  if (latestReceipt !== undefined) include(latestReceipt.purgedAtOrdinal)
-
   for (const entry of enumerateBundleDirs(knowledgeRoot)) {
     if (!affectedProducts.has(entry.product)) continue
     const loaded = loadBundle(entry.dir)
     if (loaded.kind !== 'loaded') continue
     for (const ordinal of bundleChronologyOrdinals(loaded.bundle)) include(ordinal)
+  }
+  for (const ordinal of committedPurgeOrdinalsForProducts(
+    knowledgeRoot,
+    affectedProducts,
+  )) {
+    include(ordinal)
   }
 
   if (maximum >= Number.MAX_SAFE_INTEGER) {
@@ -1012,7 +1077,6 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   const occurrenceOrdinal = resolvePurgeOccurrenceOrdinal(
     input.knowledgeRoot,
     matches,
-    series.latestReceipt,
   )
   const receipt = buildReceipt(input, matches, occurrenceOrdinal)
   const receiptText = committedFileText(receipt)
