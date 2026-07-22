@@ -837,6 +837,47 @@ describe('DCAY-05 sovereign purge', () => {
       .toContain('knowledge-bundle:memory/receipts/purge-')
   })
 
+  it('refuses ordinal exhaustion before intent publication or irreversible mutation', () => {
+    const target = publish(
+      'ordinal-exhaustion',
+      [
+        { t: 'el', role: 'button', name: 'Ordinal exhaustion target' },
+        { t: 'page', route: '/purge/ordinal-exhaustion' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: Number.MAX_SAFE_INTEGER,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'purge-ordinal-exhaustion-run',
+          testId: 'purge-ordinal-exhaustion-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: Number.MAX_SAFE_INTEGER,
+        },
+      },
+    )
+    const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+    let intentPublished = false
+
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        hooks: {
+          afterIntentWritten: () => {
+            intentPublished = true
+          },
+        },
+      }),
+    ).toThrow(RangeError)
+
+    expect(intentPublished).toBe(false)
+    expect(existsSync(target.dir)).toBe(true)
+    expect(existsSync(join(receiptsDir, `purge-${target.id}.intent.json`))).toBe(false)
+    expect(existsSync(join(receiptsDir, `purge-${target.id}.json`))).toBe(false)
+  })
+
   it('returns a typed noop and preserves the original receipt on repeat purge', () => {
     const target = publish('receipt-idempotent', [
       { t: 'el', role: 'button', name: 'Receipt idempotent' },
@@ -1201,6 +1242,22 @@ describe('DCAY-05 sovereign purge', () => {
       )
       expect(appended.kind).toBe('appended')
     }
+
+    it('advances a fresh cycle strictly beyond its prior receipt chronology', () => {
+      const first = publish(...revivePublishInput())
+      const cycleOne = purge(first.id)
+      expect(cycleOne.kind).toBe('purged')
+      expect(cycleOne.receipt).toBeDefined()
+
+      const revived = publish(...revivePublishInput())
+      expect(revived.id).toBe(first.id)
+      const cycleTwo = purge(first.id)
+
+      expect(cycleTwo.kind).toBe('purged')
+      expect(cycleTwo.receipt?.purgedAtOrdinal).toBe(
+        cycleOne.receipt!.purgedAtOrdinal + 1,
+      )
+    })
 
     it('runs a fresh destruction cycle over revived live surfaces and appends the cycle-2 receipt', async () => {
       const first = publish(...revivePublishInput())

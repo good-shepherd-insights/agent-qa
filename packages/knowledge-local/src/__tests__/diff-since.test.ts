@@ -224,6 +224,44 @@ describe('diffSince deterministic maintenance history', () => {
     expect(JSON.stringify(second)).toBe(JSON.stringify(first))
   })
 
+  it('observes a real purge after the immediately prior product ordinal', () => {
+    const purgedId = publishFact('Purged after peer change', 'purged-after-peer', 12, [
+      event({
+        type: 'confirmed',
+        evidenceToken: 'purged-target-at-12',
+        curationJobId: 'purged-target-job',
+        buildOrdinal: 12,
+        origin: 'agent-verified',
+      }),
+    ])
+    publishFact('Product chronology peer', 'product-peer', 5, [
+      event({
+        type: 'promoted',
+        evidenceToken: 'product-peer-at-20',
+        curationJobId: 'product-peer-job',
+        buildOrdinal: 20,
+      }),
+    ])
+
+    const purged = knowledgeLocal.purgeRecord({
+      knowledgeRoot,
+      recordId: purgedId,
+      initiator: 'test-operator',
+      auditBaseDir: join(root, '.agent-qa'),
+    })
+
+    expect(purged.kind).toBe('purged')
+    expect(purged.receipt.purgedAtOrdinal).toBe(21)
+    expect(diffSince(knowledgeRoot, 20)).toEqual([
+      {
+        schemaVersion: 1,
+        recordId: purgedId,
+        change: 'purged',
+        atOrdinal: 21,
+      },
+    ])
+  })
+
   it('includes canonical purge receipts after the reference ordinal', () => {
     seedStore()
     const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
