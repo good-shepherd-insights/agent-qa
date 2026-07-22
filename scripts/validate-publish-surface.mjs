@@ -175,6 +175,12 @@ function validatePublicPackage(record, allVersions, errors, options = { checkFil
     assert(record.pkg.exports?.['.']?.require === './dist/index.cjs', `${name} must export dist CJS`, errors)
   }
 
+  if (record.pkg.name === '@vostride/agent-qa-knowledge-local') {
+    assert(record.pkg.exports?.['./reader']?.types === './dist/reader.d.ts', `${name} reader must export dist types`, errors)
+    assert(record.pkg.exports?.['./reader']?.import === './dist/reader.js', `${name} reader must export dist ESM`, errors)
+    assert(record.pkg.exports?.['./reader']?.require === './dist/reader.cjs', `${name} reader must export dist CJS`, errors)
+  }
+
   if (record.pkg.name === '@vostride/agent-qa-dashboard-ui') {
     assert(!record.pkg.exports, '@vostride/agent-qa-dashboard-ui must not add exports unless package.json is exported for dashboard resolution', errors)
   }
