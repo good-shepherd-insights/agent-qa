@@ -21,13 +21,16 @@ import {
 } from './fixtures/bundle-fixture.js'
 
 type DiffApi = {
-  diffSince?: (knowledgeRoot: string, sinceOrdinal: number) => RecordChange[]
+  diffSince?: (options: {
+    knowledgeRoot: string
+    sinceOrdinal: number
+  }) => RecordChange[]
 }
 
 function diffSince(knowledgeRoot: string, sinceOrdinal: number): RecordChange[] {
   const diff = (knowledgeLocal as DiffApi).diffSince
   expect(diff, 'diffSince export').toBeDefined()
-  return diff!(knowledgeRoot, sinceOrdinal)
+  return diff!({ knowledgeRoot, sinceOrdinal })
 }
 
 function event(

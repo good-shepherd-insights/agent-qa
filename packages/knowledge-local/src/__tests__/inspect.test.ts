@@ -27,7 +27,10 @@ import {
 } from './fixtures/bundle-fixture.js'
 
 type InspectApi = {
-  inspectRecords?: (knowledgeRoot: string, filter?: InspectFilter) => InspectRecordView[]
+  inspectRecords?: (options: {
+    knowledgeRoot: string
+    filter: InspectFilter
+  }) => InspectRecordView[]
 }
 
 function inspectRecords(
@@ -36,7 +39,7 @@ function inspectRecords(
 ): InspectRecordView[] {
   const inspect = (knowledgeLocal as InspectApi).inspectRecords
   expect(inspect, 'inspectRecords export').toBeDefined()
-  return inspect!(knowledgeRoot, filter)
+  return inspect!({ knowledgeRoot, filter })
 }
 
 function event(
