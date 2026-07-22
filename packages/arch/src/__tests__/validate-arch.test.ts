@@ -25,6 +25,10 @@ import {
   WRITE_SURFACE_PACKAGES,
 } from '../lint/knowledge-write.js'
 import {
+  findKnowledgeLocalWallOffenders,
+  findReaderCarveoutOffenders,
+} from '../lint/reader-carveout.js'
+import {
   contractBearingDirs,
   findContractlessWorkspaceOffenders,
   workspaceMemberDirs,
@@ -108,6 +112,10 @@ describe('validate:arch (LINT-01..05)', () => {
       }
 
       offenders.push(...findDepReconciliationOffenders(contract, sourceHits, repoRoot))
+      if (contract.packageDir === 'packages/cli') {
+        offenders.push(...findReaderCarveoutOffenders(sourceHits))
+      }
+      offenders.push(...findKnowledgeLocalWallOffenders(contract, sourceHits))
     }
 
     offenders.push(...findCycleOffenders(contracts))
