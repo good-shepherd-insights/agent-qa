@@ -361,6 +361,10 @@ export type {
   PurgeRecordInput,
   PurgeRecordOutcome,
 } from './purge.js'
+export { inspectRecords } from './inspect.js'
+export type { InspectRecordsOptions } from './inspect.js'
+export { diffSince } from './diff-since.js'
+export type { DiffSinceOptions } from './diff-since.js'
 export {
   rollbackCampaign,
   RollbackCausalityError,

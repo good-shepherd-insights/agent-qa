@@ -39,53 +39,25 @@ import {
 } from './index-open.js'
 import { jobStatePath, queueRoot } from './queue/queue-layout.js'
 import { curationCandidatePayloadSchema } from './queue/queue-payload.js'
+import {
+  PURGE_RECEIPT_SCHEMA_VERSION,
+  PURGE_SAFE_RECORD_ID as SAFE_RECORD_ID,
+  PurgeReceiptSchema,
+  guardPurgeReceipt,
+  purgeReceiptRelativePathSchema as receiptRelativePathSchema,
+} from './purge-receipt.js'
+import type { PurgeReceipt } from './purge-receipt.js'
 
-export const PURGE_RECEIPT_SCHEMA_VERSION = 1
+export {
+  PURGE_RECEIPT_SCHEMA_VERSION,
+  PurgeReceiptSchema,
+  guardPurgeReceipt,
+  purgeReceiptSchema,
+} from './purge-receipt.js'
+export type { PurgeReceipt } from './purge-receipt.js'
 
-/**
- * WR-04: the receipt series derives filenames by suffixing one directory — purge-{id}.json,
- * purge-{id}.intent.json, purge-{id}.{N}.json — so the dot must not be a legal id character:
- * record id `X.2`'s base receipt path would be byte-identical to record `X`'s cycle-2 receipt
- * path, letting one id address, forge, or shadow another id's series member. Canonical record
- * ids are 64-lowercase-hex, so no legitimate caller changes.
- */
-const SAFE_RECORD_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 /** Ordinary curation-job ids are 64-hex queue content addresses; prefixed maintenance receipt ids are not queue identities. */
 const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
-const receiptRelativePathSchema = z.string().refine((value) => {
-  if (value === '' || value.startsWith('/') || value.includes('\\')) return false
-  return value
-    .split('/')
-    .every((segment) => segment !== '' && segment !== '.' && segment !== '..')
-}, 'expected a knowledge-root-relative committed path')
-
-/**
- * A7 ratification: the receipt is committed because a purge is exactly the event a PR reviewer
- * must see. Its closed strict shape carries only identity, ordinal, caller, and path metadata;
- * bundle prose, anchors, observations, and vectors have no representable field.
- */
-export const PurgeReceiptSchema = z.object({
-  schemaVersion: z.literal(PURGE_RECEIPT_SCHEMA_VERSION),
-  purgedRecordId: z.string().regex(SAFE_RECORD_ID),
-  purgedAtOrdinal: z.number().int().nonnegative(),
-  initiator: z.string().min(1).refine((value) => value.trim() !== '', 'initiator is required'),
-  affectedPaths: z.array(receiptRelativePathSchema).min(1),
-  firstCommittedOrdinal: z.number().int().nonnegative(),
-}).strict()
-
-/** Lower-camel schema alias follows the existing knowledge-local committed-file convention. */
-export const purgeReceiptSchema = PurgeReceiptSchema
-export type PurgeReceipt = z.infer<typeof PurgeReceiptSchema>
-
-const guardPurgeReceiptVersion = createVersionGuard<PurgeReceipt>({
-  name: 'PurgeReceipt',
-  current: PURGE_RECEIPT_SCHEMA_VERSION,
-  migrations: {},
-})
-
-export function guardPurgeReceipt(value: unknown): PurgeReceipt {
-  return PurgeReceiptSchema.parse(guardPurgeReceiptVersion(value))
-}
 
 export const PURGE_INTENT_SCHEMA_VERSION = 2
 
