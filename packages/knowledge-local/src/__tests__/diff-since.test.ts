@@ -249,6 +249,7 @@ describe('diffSince deterministic maintenance history', () => {
       recordId: purgedId,
       initiator: 'test-operator',
       auditBaseDir: join(root, '.agent-qa'),
+      purgedAtOrdinal: 21,
     })
 
     expect(purged.kind).toBe('purged')
@@ -289,6 +290,7 @@ describe('diffSince deterministic maintenance history', () => {
       recordId: recordA,
       initiator: 'test-operator',
       auditBaseDir: join(root, '.agent-qa'),
+      purgedAtOrdinal: 101,
     })
     expect(firstPurge.kind).toBe('purged')
     if (firstPurge.kind !== 'purged') throw new Error('expected record A purge to complete')
@@ -299,6 +301,7 @@ describe('diffSince deterministic maintenance history', () => {
       recordId: recordB,
       initiator: 'test-operator',
       auditBaseDir: join(root, '.agent-qa'),
+      purgedAtOrdinal: 102,
     })
     expect(secondPurge.kind).toBe('purged')
     if (secondPurge.kind !== 'purged') throw new Error('expected record B purge to complete')

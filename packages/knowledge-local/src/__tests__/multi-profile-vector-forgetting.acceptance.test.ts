@@ -626,6 +626,7 @@ describe('multi-profile vector forgetting acceptance', () => {
       recordId: migrated.target.id,
       initiator: 'multi-profile-purge-user',
       auditBaseDir: join(root, '.agent-qa'),
+      purgedAtOrdinal: 43,
     })
     expect(first.kind).toBe('purged')
     expect(existsSync(migrated.target.dir)).toBe(false)
@@ -707,6 +708,7 @@ describe('multi-profile vector forgetting acceptance', () => {
         recordId: migrated.target.id,
         initiator: 'multi-profile-purge-user',
         auditBaseDir: join(root, '.agent-qa'),
+        purgedAtOrdinal: 43,
       })
     }).toThrow(/schema-owned vec table/u)
     expect(outcome).toBeUndefined()
