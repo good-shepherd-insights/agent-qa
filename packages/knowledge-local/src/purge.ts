@@ -136,6 +136,7 @@ export type PurgeRecordOutcome =
   | { kind: 'not-found' }
 
 interface ResolvedBundle {
+  product: string
   dir: string
   bundle: LoadedBundle
 }
@@ -160,7 +161,7 @@ function resolveBundles(knowledgeRoot: string, recordId: RecordId): ResolvedBund
   for (const entry of enumerateBundleDirs(knowledgeRoot)) {
     const loaded = loadBundle(entry.dir)
     if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== recordId) continue
-    matches.push({ dir: entry.dir, bundle: loaded.bundle })
+    matches.push({ product: entry.product, dir: entry.dir, bundle: loaded.bundle })
   }
   return matches
 }
@@ -481,12 +482,8 @@ function firstCommittedOrdinal(matches: readonly ResolvedBundle[]): number {
   ))
 }
 
-/**
- * The function receives no ambient/runtime ordinal. Stamp the latest deterministic ordinal on the
- * purged record's own canonical lineage (creation/provenance, events, and relations), never time.
- */
-function purgedAtOrdinal(matches: readonly ResolvedBundle[]): number {
-  const ordinals = matches.flatMap(({ bundle }) => [
+function bundleChronologyOrdinals(bundle: LoadedBundle): number[] {
+  return [
     bundle.manifest.createdAtOrdinal,
     ...(bundle.provenance.mode === 'run-linked'
       && bundle.provenance.sourceBuildOrdinal !== undefined
@@ -494,15 +491,54 @@ function purgedAtOrdinal(matches: readonly ResolvedBundle[]): number {
       : []),
     ...bundle.events.map((event) => event.buildOrdinal),
     ...bundle.relations.relations.map((relation) => relation.addedAtOrdinal),
-  ])
-  return Math.max(...ordinals)
+  ]
 }
 
-function buildReceipt(input: PurgeRecordInput, matches: readonly ResolvedBundle[]): PurgeReceipt {
+/**
+ * Resolve the destructive occurrence on the same deterministic ordinal axis as maintenance diff.
+ * Every canonical bundle in each affected product contributes its committed chronology, while the
+ * target's latest receipt keeps revival cycles strictly ordered. Wall clock and filesystem metadata
+ * never participate.
+ */
+function resolvePurgeOccurrenceOrdinal(
+  knowledgeRoot: string,
+  matches: readonly ResolvedBundle[],
+  latestReceipt: PurgeReceipt | undefined,
+): number {
+  const affectedProducts = new Set(matches.map(({ product }) => product))
+  let maximum = -1
+
+  function include(ordinal: number): void {
+    if (!Number.isSafeInteger(ordinal) || ordinal < 0) {
+      throw new RangeError('purge occurrence chronology must use non-negative safe integers')
+    }
+    maximum = Math.max(maximum, ordinal)
+  }
+
+  if (latestReceipt !== undefined) include(latestReceipt.purgedAtOrdinal)
+
+  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
+    if (!affectedProducts.has(entry.product)) continue
+    const loaded = loadBundle(entry.dir)
+    if (loaded.kind !== 'loaded') continue
+    for (const ordinal of bundleChronologyOrdinals(loaded.bundle)) include(ordinal)
+  }
+
+  if (maximum >= Number.MAX_SAFE_INTEGER) {
+    throw new RangeError('purge occurrence ordinal exhausted safe-integer chronology')
+  }
+  return maximum + 1
+}
+
+function buildReceipt(
+  input: PurgeRecordInput,
+  matches: readonly ResolvedBundle[],
+  occurrenceOrdinal: number,
+): PurgeReceipt {
   return PurgeReceiptSchema.parse({
     schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
     purgedRecordId: input.recordId,
-    purgedAtOrdinal: purgedAtOrdinal(matches),
+    purgedAtOrdinal: occurrenceOrdinal,
     initiator: input.initiator,
     affectedPaths: affectedPaths(input.knowledgeRoot, matches),
     firstCommittedOrdinal: firstCommittedOrdinal(matches),
@@ -683,7 +719,12 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
 
   // Live surfaces run a fresh destruction cycle REGARDLESS of existing receipts (option a).
   const receiptCycle = series.nextCycle
-  const receipt = buildReceipt(input, matches)
+  const occurrenceOrdinal = resolvePurgeOccurrenceOrdinal(
+    input.knowledgeRoot,
+    matches,
+    series.latestReceipt,
+  )
+  const receipt = buildReceipt(input, matches, occurrenceOrdinal)
   const receiptText = committedFileText(receipt)
   const checkpoint = checkpointCommittedParts(
     [{ label: receiptCycleRelativePath(input.recordId, receiptCycle), text: receiptText }],

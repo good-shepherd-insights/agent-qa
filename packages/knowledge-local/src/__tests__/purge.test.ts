@@ -779,7 +779,7 @@ describe('DCAY-05 sovereign purge', () => {
     expect(receipt).toEqual({
       schemaVersion: 1,
       purgedRecordId: target.id,
-      purgedAtOrdinal: 47,
+      purgedAtOrdinal: 48,
       initiator: 'user',
       affectedPaths: expect.arrayContaining([
         bundleRelPath,
@@ -1306,7 +1306,7 @@ describe('DCAY-05 sovereign purge', () => {
       const cycleTwoText = readFileSync(seriesReceiptPath(first.id, 2), 'utf8')
       const cycleTwo = purgeReceiptSchemaApi().guardPurgeReceipt(JSON.parse(cycleTwoText))
       expect(cycleTwo.purgedRecordId).toBe(first.id)
-      expect(cycleTwo.purgedAtOrdinal).toBe(77)
+      expect(cycleTwo.purgedAtOrdinal).toBe(78)
       expect(second.receipt).toEqual(cycleTwo)
 
       // The original audit fact never changes: the series is append-only.
@@ -1349,7 +1349,7 @@ describe('DCAY-05 sovereign purge', () => {
         readFileSync(seriesReceiptPath(first.id, 2), 'utf8'),
       ) as PurgeReceipt
       expect(third.receipt).toEqual(cycleTwo)
-      expect(third.receipt?.purgedAtOrdinal).toBe(77)
+      expect(third.receipt?.purgedAtOrdinal).toBe(78)
       expect(existsSync(seriesIntentPath(first.id))).toBe(false)
       expect(existsSync(seriesReceiptPath(first.id, 3))).toBe(false)
     })

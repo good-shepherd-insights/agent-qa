@@ -9,6 +9,7 @@ import {
 import type {
   BundleOutcomeEvent,
   RecordChange,
+  RecordId,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -66,7 +67,7 @@ describe('diffSince deterministic maintenance history', () => {
     scope: string,
     createdAtOrdinal: number,
     initialEvents: readonly BundleOutcomeEvent[],
-  ): string {
+  ): RecordId {
     const outcome = publishBundle(config(), {
       draft: makeBundleDraftFixture({
         anchors: [{ t: 'el', role: 'Button', name }],
@@ -251,6 +252,7 @@ describe('diffSince deterministic maintenance history', () => {
     })
 
     expect(purged.kind).toBe('purged')
+    if (purged.kind !== 'purged') throw new Error('expected purge to complete')
     expect(purged.receipt.purgedAtOrdinal).toBe(21)
     expect(diffSince(knowledgeRoot, 20)).toEqual([
       {
