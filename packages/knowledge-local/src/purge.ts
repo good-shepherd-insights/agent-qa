@@ -854,6 +854,44 @@ function readExistingIntent(knowledgeRoot: string, recordId: RecordId): PurgeInt
   )
 }
 
+function recoveryAffectedSet(
+  recordId: RecordId,
+  intent: PurgeIntent,
+): PurgeAffectedSet {
+  const bundles = intent.bundleDirs.map((bundleDir) => {
+    const { product } = bundleAuthority(bundleDir, recordId)
+    const bundlePaths = intent.receipt.affectedPaths.filter((path) => (
+      path === bundleDir || path.startsWith(`${bundleDir}/`)
+    ))
+    assertBundleAffectedPaths(bundleDir, bundlePaths, 'legacy purge receipt bundle paths')
+    return {
+      product,
+      bundleDir,
+      kind: 'unknown' as const,
+      affectedPaths: bundlePaths,
+    }
+  })
+  const queueTargets = intent.queuePayloadDirs.map((candidateDir) => {
+    const { candidateId } = queueAuthority(candidateDir)
+    return {
+      candidateId,
+      candidateDir,
+      jobStatePath: `memory/queue/jobs/${candidateId}.state.json`,
+    }
+  })
+  return PurgeAffectedSetSchema.parse({
+    recordId,
+    state: 'resume',
+    bundles,
+    receiptAffectedPaths: [...intent.receipt.affectedPaths],
+    projectionTargets: [...PURGE_PROJECTION_TARGETS],
+    embedCacheAction: 'clear-all',
+    queueTargets,
+    intentPath: `memory/receipts/purge-${recordId}.intent.json`,
+    receiptPath: receiptCycleRelativePath(recordId, intent.receiptCycle),
+  }) as PurgeAffectedSet
+}
+
 function toReceiptPath(knowledgeRoot: string, absolutePath: string): string {
   return relative(knowledgeRoot, absolutePath).split(sep).join('/')
 }
@@ -913,7 +951,9 @@ function resolvePurgeTargets(
   const persistedIntent = readExistingIntent(knowledgeRoot, recordId)
   if (persistedIntent !== undefined) {
     return {
-      affectedSet: persistedIntent.affectedSet ?? undefined,
+      affectedSet:
+        persistedIntent.affectedSet
+        ?? recoveryAffectedSet(recordId, persistedIntent),
       intent: persistedIntent,
       matches: [],
       queueSweepTargets: [],
@@ -980,10 +1020,7 @@ export function resolvePurgeAffectedSet(input: {
     throw new TypeError('recordId must be a safe path segment')
   }
   const resolved = resolvePurgeTargets(input.knowledgeRoot, input.recordId)
-  if (resolved.affectedSet === undefined) {
-    throw new Error('legacy purge intent has no canonical affected-set plan')
-  }
-  return resolved.affectedSet
+  return resolved.affectedSet!
 }
 
 export function purgeAffectedSetFingerprint(affectedSet: PurgeAffectedSet): string {

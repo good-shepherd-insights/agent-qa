@@ -17,6 +17,7 @@ import {
   guardPurgeReceipt,
   loadBundle,
   publishBundle,
+  purgeRecord,
 } from '@vostride/agent-qa-knowledge-local'
 import type {
   BundleStoreConfig,
@@ -724,6 +725,59 @@ describe('knowledge maintenance commands', () => {
       /^[0-9a-f]{64}$/u,
     )
   })
+
+  for (const legacyVersion of [1, 2] as const) {
+    it(`previews and completes a partially applied v${legacyVersion} purge intent`, async () => {
+      const workspace = fixtureWorkspace(roots)
+      const bundle = seedBundle(workspace)
+      expect(() => purgeRecord({
+        knowledgeRoot: workspace.knowledgeRoot,
+        recordId: asRecordId(bundle.id),
+        initiator: 'legacy-intent-fixture',
+        auditBaseDir: workspace.runtimeRoot,
+        hooks: {
+          afterIntentWritten: () => {
+            throw new Error('leave legacy purge intent')
+          },
+        },
+      })).toThrow('leave legacy purge intent')
+      const intentPath = join(
+        workspace.knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${bundle.id}.intent.json`,
+      )
+      const intent = JSON.parse(readFileSync(intentPath, 'utf8')) as Record<string, unknown>
+      intent.schemaVersion = legacyVersion
+      delete intent.affectedSet
+      if (legacyVersion === 1) delete intent.receiptCycle
+      writeFileSync(intentPath, `${JSON.stringify(intent)}\n`, 'utf8')
+      rmSync(bundle.dir, { recursive: true, force: true })
+      commandHarness.purgeRecordCalls = 0
+      commandHarness.purgeRecordInputs = []
+
+      const result = await invoke(workspace, [
+        'purge',
+        bundle.id,
+        '--confirm',
+        bundle.id,
+        '--json',
+      ])
+
+      expect(result.exitCode).toBeUndefined()
+      expect(guardPurgeReceipt(JSON.parse(result.stdout))).toMatchObject({
+        purgedRecordId: bundle.id,
+      })
+      expect(commandHarness.purgeRecordCalls).toBe(1)
+      expect(existsSync(intentPath)).toBe(false)
+      expect(existsSync(join(
+        workspace.knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${bundle.id}.json`,
+      ))).toBe(true)
+    })
+  }
 
   it('renders every product bundle tree and receipt-named path in the purge preview', async () => {
     const workspace = fixtureWorkspace(roots)
