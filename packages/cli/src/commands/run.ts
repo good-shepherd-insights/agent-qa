@@ -3,7 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMemoryRoot, resolveMobileRunConfig, V1_MEMORY_DEFAULTS, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
@@ -357,7 +357,6 @@ interface RunOptions {
   headless?: boolean
   disableCache?: boolean
   saveCache?: boolean
-  memory?: boolean
   bail?: boolean
   dryRun?: boolean
   listTests?: boolean
@@ -593,19 +592,6 @@ function printRunId(runId: string | null | undefined): void {
   if (runId) console.log(`Run ID: ${runId}`)
 }
 
-function printMemoryStatus(log: { added: number; confirmed: number; deprecated: number; errors: string[]; curatorDuration: number }): void {
-  const parts: string[] = []
-  if (log.added > 0) parts.push(pc.green(`${log.added} added`))
-  if (log.confirmed > 0) parts.push(`${log.confirmed} confirmed`)
-  if (log.deprecated > 0) parts.push(pc.yellow(`${log.deprecated} deprecated`))
-  if (parts.length === 0) parts.push('no changes')
-  const secs = log.curatorDuration >= 1000 ? `${Math.round(log.curatorDuration / 1000)}s` : `${log.curatorDuration}ms`
-  console.log(`  ${pc.dim('Memory:')} ${parts.join(', ')} ${pc.dim(`(${secs})`)}`)
-  for (const err of log.errors) {
-    console.log(`  ${pc.dim('Memory:')} ${pc.yellow(`warning -- ${err}`)}`)
-  }
-}
-
 function isGlobLikePattern(value: string): boolean {
   return /[*?[{]/.test(value)
 }
@@ -758,7 +744,6 @@ function buildRunArtifactContext(input: {
   attributes: RunAttributes
   timeouts: Record<string, unknown>
   cache: Record<string, unknown>
-  memory: Record<string, unknown>
   source: Record<string, unknown>
 }): { artifact: Record<string, unknown> & { kind: 'test' | 'suite-parent' | 'suite-child' } } {
   return redactAuthStateValue({
@@ -788,7 +773,6 @@ function buildRunArtifactContext(input: {
         },
         timeouts: input.timeouts,
         cache: input.cache,
-        memory: input.memory,
       },
       source: input.source,
       metadata: {
@@ -1040,7 +1024,7 @@ async function executeSuites(
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
 ): Promise<number> {
   const { parseSuiteFile, parseTestFile, patchTestForSuite,
-    createAnalyticsRunSubscriber, runCurator,
+    createAnalyticsRunSubscriber,
   } = await import('@vostride/agent-qa-core')
   const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
@@ -1198,8 +1182,6 @@ async function executeSuites(
     suiteMembers: Array<Record<string, unknown>>
     suiteRunId: string
     suiteArtifact: Record<string, unknown> | undefined
-    memoryEnabled: boolean
-    memoryRoot: string
     product: string | undefined
     testFileContents: string[]
     // Mutable run-state filled during execution.
@@ -1230,7 +1212,6 @@ async function executeSuites(
       variableContext?.inheritedRunAttributes,
     )
     const { dashboardDb, logStorage } = await createSuiteDashboardResources()
-    let lastSuiteRunId: string | undefined
     let suiteFileContent = ''
     try { suiteFileContent = await readFile(suiteFile, 'utf-8') } catch { /* best-effort */ }
 
@@ -1647,25 +1628,6 @@ async function executeSuites(
 
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
-    let suiteMemoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
-    // v1 memory config surface retired in Phase 373 (KDIR-03); subsystem runs on
-    // V1_MEMORY_DEFAULTS until Phase 382 deletes it.
-    const suiteMemoryConfig = V1_MEMORY_DEFAULTS
-    const suiteMemoryRoot = resolveMemoryRoot(undefined, configDir)
-
-    if (opts.memory !== false) {
-      try {
-        const { createMemoryProvider } = await import('@vostride/agent-qa-core')
-        suiteMemoryProvider = await createMemoryProvider({
-          provider: suiteMemoryConfig.provider,
-          memoryRoot: suiteMemoryRoot,
-          curatorLockTimeout: suiteMemoryConfig.curatorLockTimeout,
-        })
-      } catch (err) {
-        console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
-      }
-    }
-
     const suiteArtifactContext = buildRunArtifactContext({
       kind: 'suite-parent',
       configContent,
@@ -1689,12 +1651,6 @@ async function executeSuites(
         enabled: suiteEffectiveCacheEnabled,
         dir: config.services?.cache?.dir,
         ttl: config.services?.cache?.ttl,
-      },
-      memory: {
-        enabled: opts.memory !== false,
-        curatorEnabled: suiteMemoryConfig.curatorEnabled,
-        provider: suiteMemoryConfig.provider,
-        dir: suiteMemoryConfig.dir,
       },
       source: {
         kind: 'suite',
@@ -1742,10 +1698,6 @@ async function executeSuites(
       // D-11: resolve the vision gate once per run at the composition root and
       // thread it structurally into the loop (undeclared vision => full capture).
       visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
-      memoryProvider: suiteMemoryProvider,
-      memoryConfig: suiteMemoryConfig,
-      memoryRoot: suiteMemoryRoot,
-      product: resolvedTarget?.product,
       authStateCapture: suiteAuthStateCapturePaths
         ? {
             capture: () => captureAuthStateForRun({ adapter, paths: suiteAuthStateCapturePaths }),
@@ -1756,13 +1708,6 @@ async function executeSuites(
       resolveUrl: (targetName: string) => {
         try { return resolveTarget(config, targetName).url } catch { return undefined }
       },
-      onCuratorComplete: dashboardDb ? (_testName: string, memoryLog: any) => {
-        if (lastSuiteRunId) {
-          try {
-            dashboardDb.updateRun(lastSuiteRunId, { memoryLog: JSON.stringify(memoryLog) })
-          } catch { /* DB write failure must not fail the test */ }
-        }
-      } : undefined,
     }
     ;(suiteConfig as any).artifactContext = suiteArtifactContext.artifact
     ;(suiteConfig as any).secretStore = variableContext?.secretStore
@@ -1779,8 +1724,6 @@ async function executeSuites(
     const initialSuiteSandboxOptions = suiteConfig.sandboxOptions && suiteConfig.platformConfig.authState
       ? { ...suiteConfig.sandboxOptions, authState: suiteConfig.platformConfig.authState }
       : suiteConfig.sandboxOptions
-    const memoryEnabledForSuite = suiteConfig.memoryConfig?.enabled !== false && !!suiteConfig.memoryProvider
-
     return {
       suiteFile,
       suite,
@@ -1792,8 +1735,6 @@ async function executeSuites(
       suiteMembers,
       suiteRunId: preparedSuiteRunId,
       suiteArtifact: preparedSuiteArtifact,
-      memoryEnabled: memoryEnabledForSuite,
-      memoryRoot: suiteConfig.memoryRoot ?? suiteMemoryRoot,
       product: resolvedTarget?.product,
       testFileContents: suiteMembers.map((m) => (typeof m.rawYaml === 'string' ? m.rawYaml : '')),
       suiteHookVars: {},
@@ -1939,7 +1880,6 @@ async function executeSuites(
     }
 
     try { await suiteConfig.adapter.cleanup() } catch {}
-    if (suiteConfig.memoryProvider) { try { suiteConfig.memoryProvider.destroy() } catch {} }
 
     await flushWorkingMemory(prepared.suiteWorkingMemory, {
       artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
@@ -2063,25 +2003,6 @@ async function executeSuites(
             return setupFailureResult
           }
 
-          // Memory init (core-owned; runMemberTest never touches memory).
-          let memberMemoryProvider = prepared.memoryEnabled ? suiteConfig.memoryProvider : undefined
-          const memoryInitParams = memberMemoryProvider ? {
-            product: suiteConfig.product!,
-            testId: (test as any)['test-id'] ?? test.name,
-            memoryRoot: prepared.memoryRoot,
-            suiteId: (prepared.suite as any)['suite-id'] ?? prepared.suite.name,
-            currentSuiteTests: prepared.suite.tests as Array<{ test: string; id: string }>,
-            currentPosition: memberSuiteIndex,
-          } : undefined
-          if (memberMemoryProvider && memoryInitParams) {
-            try {
-              await memberMemoryProvider.init(memoryInitParams)
-            } catch (err) {
-              console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
-              memberMemoryProvider = undefined
-            }
-          }
-
           const memberRunConfig = Object.assign(buildMemberRunConfig({
             adapter: suiteConfig.adapter,
             planner: suiteConfig.planner,
@@ -2152,43 +2073,6 @@ async function executeSuites(
                   identity: { phase: 'teardown', scope: 'test', testIndex: memberSuiteIndex },
                 })
               } catch { /* teardown hook failure is best-effort */ }
-            }
-          }
-
-          // Core's runTest destroyed the per-test memory index (in its finally) BEFORE the curator ran.
-          if (memberMemoryProvider) { try { memberMemoryProvider.destroy() } catch { /* best-effort */ } }
-
-          // Memory curator (core-owned, D-05 — memory stays core).
-          if (prepared.memoryEnabled && suiteConfig.memoryProvider && suiteConfig.memoryConfig?.curatorEnabled !== false) {
-            try {
-              const injectedObservationIds = new Map<number, string[]>()
-              for (let si = 0; si < result.steps.length; si++) {
-                const ids = suiteConfig.memoryProvider.getInjectedObservations(si)
-                if (ids.length > 0) injectedObservationIds.set(si, ids)
-              }
-              const suiteId = (prepared.suite as any)['suite-id'] ?? prepared.suite.name
-              const testId = (test as any)['test-id'] ?? test.name
-              const memoryLog = await runCurator({
-                testResult: result,
-                provider: suiteConfig.memoryProvider,
-                model: suiteConfig.plannerModel,
-                memoryRoot: prepared.memoryRoot,
-                product: suiteConfig.product!,
-                testId,
-                suiteId,
-                suiteContext: {
-                  tests: prepared.suite.tests as Array<{ test: string; id: string }>,
-                  position: memberSuiteIndex,
-                },
-                injectedObservationIds,
-                trustConfirmDelta: suiteConfig.memoryConfig?.trustConfirmDelta,
-                trustContradictDelta: suiteConfig.memoryConfig?.trustContradictDelta,
-              })
-              ;(result as any).memoryLog = memoryLog
-              printMemoryStatus(memoryLog)
-              suiteConfig.onCuratorComplete?.(test.name, memoryLog)
-            } catch (err) {
-              console.warn(`  ${pc.dim('Memory:')} curator error -- ${(err as Error).message}`)
             }
           }
 
@@ -2404,7 +2288,6 @@ export function createRunCommand(): Command {
     .option('--no-headless', 'run in headed mode')
     .option('--disable-cache', 'bypass action cache for this run')
     .option('--save-cache', 'write cache even on the default/protected branch')
-    .option('--no-memory', 'disable runtime memory injection for this run')
     .option('--bail', 'stop on first test failure')
     .option('--dry-run', 'parse and list tests without executing')
     .option('--list-tests', 'list discovered test files without executing')
@@ -2861,8 +2744,6 @@ export function createRunCommand(): Command {
 
         const results: TestResult[] = []
 
-        const runtimeMemoryRoot = resolveMemoryRoot(undefined, configDir)
-
         // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
         // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
         // derives the member outcome from the returned final TestResult exactly as for suite members
@@ -3188,11 +3069,6 @@ export function createRunCommand(): Command {
                 dir: config.services?.cache?.dir,
                 ttl: config.services?.cache?.ttl,
               },
-              memory: {
-                enabled: opts.memory !== false,
-                curatorEnabled: V1_MEMORY_DEFAULTS.curatorEnabled,
-                provider: V1_MEMORY_DEFAULTS.provider,
-              },
               source: {
                 kind: 'test',
                 testId: testDef['test-id'] ?? null,
@@ -3264,38 +3140,6 @@ export function createRunCommand(): Command {
               return setupFailureResult!
             }
 
-            // Memory provider setup (best-effort)
-            let memoryProvider: import('@vostride/agent-qa-core').MemoryProvider | undefined
-            let memoryInitParams: import('@vostride/agent-qa-core').MemoryIndexParams | undefined
-            const memoryConfig = V1_MEMORY_DEFAULTS
-            let memoryRoot: string | undefined
-            if (opts.memory !== false) {
-              try {
-                const { createMemoryProvider } = await import('@vostride/agent-qa-core')
-                memoryRoot = runtimeMemoryRoot
-                memoryProvider = await createMemoryProvider({
-                  provider: memoryConfig.provider,
-                  memoryRoot,
-                  curatorLockTimeout: memoryConfig.curatorLockTimeout,
-                })
-                const product = testResolvedTarget.product
-                const testId = testDef['test-id'] ?? testDef.name
-                memoryInitParams = { product, testId, memoryRoot }
-                // 363-11: runMemberTest no longer inits memory internally (core's runTest did) —
-                // the CLI executor closure owns the core memory init/curator/destroy lifecycle now.
-                if (memoryProvider) {
-                  try {
-                    await memoryProvider.init(memoryInitParams)
-                  } catch (initErr) {
-                    console.warn(`  ${pc.dim('Memory:')} init error -- ${(initErr as Error).message}`)
-                    memoryProvider = undefined
-                  }
-                }
-              } catch (err) {
-                console.warn(`  ${pc.dim('Memory:')} init error -- ${(err as Error).message}`)
-              }
-            }
-
             // 363-11 (D-05): execute the member on runner soil via runMemberTest. The core
             // runTest/runTestWithRetry wrapper is deleted; retry lives inside runMemberTest, and the
             // adapter-backed handlers (runJS/appium/a11y/failure-shot) + secret resolver are wired by
@@ -3351,10 +3195,6 @@ export function createRunCommand(): Command {
               onEvidenceContext: ctx.setEvidenceContext,
             })
             const result = await runMemberTest(toMemberTest(testDef, filePath), memberRunConfig)
-
-            // Core's runTest destroyed the per-test memory index in its finally BEFORE the curator
-            // ran; replicate that ordering here (destroy then curate).
-            if (memoryProvider) { try { memoryProvider.destroy() } catch { /* best-effort */ } }
 
             if (!result.runId) result.runId = runId
             completedResult = result
@@ -3420,45 +3260,6 @@ export function createRunCommand(): Command {
                 runDevice: testPlatform === 'web'
                   ? `${config.use?.browser?.name ?? 'chromium'} (local)`
                   : `${testResolvedDevice?.name ?? testPlatform} (local)`,
-              }
-            }
-
-            // D-10: the memory-ablation re-run and the circuit breaker are deleted — no
-            // ablation second-attempt, no runaway-mitigation counters. Failed tests keep
-            // single-attempt semantics; the curator runs unconditionally on the result.
-            const authStateCaptureFailed = result.metadata?.phase === 'auth-state-capture'
-
-            // Memory curator: inline blocking after teardown hooks (D-02)
-            if (memoryProvider && memoryConfig.curatorEnabled) {
-              try {
-                const { runCurator } = await import('@vostride/agent-qa-core')
-                const injectedObservationIds = new Map<number, string[]>()
-                for (let i = 0; i < result.steps.length; i++) {
-                  const ids = memoryProvider.getInjectedObservations(i)
-                  if (ids.length > 0) injectedObservationIds.set(i, ids)
-                }
-                const curatorProduct = testResolvedTarget.product
-                const testId = testDef['test-id'] ?? testDef.name
-                const memoryLog = await runCurator({
-                  testResult: result,
-                  provider: memoryProvider,
-                  model: plannerModel,
-                  memoryRoot: memoryRoot ?? runtimeMemoryRoot,
-                  product: curatorProduct,
-                  testId,
-                  injectedObservationIds,
-                  trustConfirmDelta: memoryConfig.trustConfirmDelta,
-                  trustContradictDelta: memoryConfig.trustContradictDelta,
-                });
-                (result as any).memoryLog = memoryLog
-                printMemoryStatus(memoryLog)
-                if (dashboardDb && currentRunId) {
-                  try {
-                    dashboardDb.updateRun(currentRunId, { memoryLog: JSON.stringify(memoryLog) })
-                  } catch { /* DB write failure must not fail the test */ }
-                }
-              } catch (err) {
-                console.warn(`  ${pc.dim('Memory:')} curator error -- ${(err as Error).message}`)
               }
             }
 

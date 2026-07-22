@@ -16,11 +16,9 @@ const {
   mockRunSuite,
   mockRunMemberTest,
   mockPatchTestForSuite,
-  mockRunCurator,
   mockFsEventLog,
   mockFsHandoffStore,
   mockNextBuildOrdinal,
-  mockCreateMemoryProvider,
   mockCreateModel,
   mockLLMPlanner,
   mockLLMVerifier,
@@ -93,11 +91,9 @@ const {
     mockRunSuite: vi.fn(),
     mockRunMemberTest: vi.fn(),
     mockPatchTestForSuite: vi.fn((t: any) => t),
-    mockRunCurator: vi.fn(async () => ({ added: 0, confirmed: 0, deprecated: 0, errors: [], curatorDuration: 0 })),
     mockFsEventLog: vi.fn(function () { return { append: vi.fn(), read: vi.fn(() => []) } }),
     mockFsHandoffStore: vi.fn(function () { return { save: vi.fn() } }),
     mockNextBuildOrdinal: vi.fn(async () => 1),
-    mockCreateMemoryProvider: vi.fn(),
     mockCreateModel: vi.fn(() => ({})),
     mockLLMPlanner: vi.fn(),
     mockLLMVerifier: vi.fn(),
@@ -218,7 +214,6 @@ vi.mock('@vostride/agent-qa-core', () => {
   runHooks: mockRunHooks,
   runSuite: mockRunSuite,
   patchTestForSuite: mockPatchTestForSuite,
-  runCurator: mockRunCurator,
   resolveAuthStateForRun: mockResolveAuthStateForRun,
   resolveAuthStatePaths: mockResolveAuthStatePaths,
   writeAuthStateFiles: mockWriteAuthStateFiles,
@@ -445,23 +440,8 @@ vi.mock('@vostride/agent-qa-core', () => {
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
   createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
-  createMemoryProvider: mockCreateMemoryProvider,
-  // Mirrors the real resolveMemoryRoot with the retired config surface gone (KDIR-03):
-  // callers pass undefined, so the root is always the internal default under configDir.
-  resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => resolve(configDir, 'agent-qa-memory')),
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
-  V1_MEMORY_DEFAULTS: {
-    enabled: true,
-    provider: 'local',
-    dir: 'agent-qa-memory',
-    minTrust: 0.3,
-    maxInjections: 3,
-    curatorEnabled: true,
-    curatorLockTimeout: 120000,
-    trustConfirmDelta: 0.05,
-    trustContradictDelta: 0.1,
-  },
   generateRunId: mockGenerateRunId,
   isPathInsideDir: vi.fn((candidatePath: string) => !candidatePath.includes('..')),
   BetterSqlite3AbiMismatchError: MockBetterSqlite3AbiMismatchError,
@@ -1112,18 +1092,28 @@ describe('run command — reduced flag surface and target resolution', () => {
     expect(mockResolveConfig).not.toHaveBeenCalled()
   })
 
+  it('rejects removed --no-memory as an unknown option', async () => {
+    await runCommand('--no-memory', 'tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("unknown option '--no-memory'"))
+    expect(mockResolveConfig).not.toHaveBeenCalled()
+  })
+
   it('does not show removed run flags in help', () => {
     const help = createRunCommand().helpInformation()
 
     expect(help).not.toContain('--app')
     expect(help).not.toContain('--env ')
     expect(help).not.toContain('--env-file')
+    expect(help).not.toContain('--no-memory')
   })
 
   it('classifies removed run flags as Commander unknown options', async () => {
     await expect(parseRemovedRunFlag('--app', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
     await expect(parseRemovedRunFlag('--env', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
     await expect(parseRemovedRunFlag('--env-file', '.env.local')).rejects.toMatchObject({ code: 'commander.unknownOption' })
+    await expect(parseRemovedRunFlag('--no-memory')).rejects.toMatchObject({ code: 'commander.unknownOption' })
   })
 
   it('resolves target: from test YAML via resolveTarget', async () => {
@@ -3628,62 +3618,6 @@ describe('run command — dashboard video recording root', () => {
     expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
       videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
     }))
-  })
-})
-
-describe('run command — runtime memory override', () => {
-  it('does not initialize runtime memory when --no-memory is passed', async () => {
-    const cfg = defaultConfig()
-    ;(cfg.services as any).memory = { enabled: true, provider: 'local' }
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('--no-memory', 'tests/**/*.yaml')
-
-    expect(mockRunMemberTest).toHaveBeenCalled()
-    expect(mockCreateMemoryProvider).not.toHaveBeenCalled()
-  })
-
-  it('resolves the internal default memory root from the config directory (config surface retired, KDIR-03)', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-memory-config-'))
-    tempDirs.push(configDir)
-    const cfg = defaultConfig()
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockCreateMemoryProvider.mockResolvedValue({
-      getInjectedObservations: vi.fn(() => []),
-    })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
-
-    const expectedRoot = join(configDir, 'agent-qa-memory')
-    expect(mockCreateMemoryProvider).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'local',
-      memoryRoot: expectedRoot,
-    }))
-    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 })
 

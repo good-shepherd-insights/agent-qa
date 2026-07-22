@@ -148,7 +148,6 @@ vi.mock('@vostride/agent-qa-core', () => ({
   formatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
   parseHooksFile: mockParseHooksFile,
   runHooks: mockRunHooks,
-  runCurator: vi.fn(async () => ({ added: 0, confirmed: 0, deprecated: 0, errors: [], curatorDuration: 0 })),
   normalizeAuthStateUse: vi.fn((use: { authState?: unknown } | undefined) => {
     const authState = use?.authState
     if (typeof authState === 'string' && authState.trim().length > 0) {
@@ -237,21 +236,8 @@ vi.mock('@vostride/agent-qa-core', () => ({
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
   createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
-  createMemoryProvider: vi.fn(),
-  resolveMemoryRoot: vi.fn((_config: unknown, configDir: string) => `${configDir}/agent-qa-memory`),
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     path.resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
-  V1_MEMORY_DEFAULTS: {
-    enabled: true,
-    provider: 'local',
-    dir: 'agent-qa-memory',
-    minTrust: 0.3,
-    maxInjections: 3,
-    curatorEnabled: true,
-    curatorLockTimeout: 120000,
-    trustConfirmDelta: 0.05,
-    trustContradictDelta: 0.1,
-  },
   generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
   resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
     const configDir = String(configPath).includes('/')
