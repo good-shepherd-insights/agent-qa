@@ -352,11 +352,15 @@ export type {
 } from './curator/drain.js'
 export {
   acquireWriterLease,
+  refreshWriterLeaseAuthority,
   releaseLease,
+  WriterAuthorityLostError,
 } from './lease/writer-lease.js'
 export type {
   AcquireWriterLeaseOutcome,
   ReleaseLeaseOutcome,
+  WriterAuthorityLostReason,
+  WriterLeaseAuthority,
 } from './lease/writer-lease.js'
 export {
   guardPurgeReceipt,

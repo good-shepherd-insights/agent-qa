@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as publicWriterSurface from '../index.js'
-import * as writerLeaseModule from '../lease/writer-lease.js'
+import type { WriterLeaseAuthority as PublicWriterLeaseAuthority } from '../index.js'
 import {
   acquireWriterLease,
   assertEpochCurrent,
@@ -22,7 +22,10 @@ import {
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   readCurrentEpoch,
+  refreshWriterLeaseAuthority,
   releaseLease,
+  WriterAuthorityLostError,
+  type WriterAuthorityLostReason,
   type WriterLease,
 } from '../lease/writer-lease.js'
 
@@ -203,26 +206,6 @@ describe('writer lease acquire, heartbeat, release, and stale self-heal (CUR-03/
   })
 })
 
-interface ExpectedWriterLeaseAuthority {
-  knowledgeRoot: string
-  leaseId: string
-  epoch: number
-}
-
-interface ExpectedWriterAuthorityLostError extends Error {
-  reason: string
-  observedEpoch: number
-}
-
-interface ExpectedWriterAuthorityApi {
-  WriterAuthorityLostError: new (...args: never[]) => ExpectedWriterAuthorityLostError
-  refreshWriterLeaseAuthority: (
-    authority: ExpectedWriterLeaseAuthority,
-  ) => ExpectedWriterLeaseAuthority
-}
-
-const writerAuthorityApi = writerLeaseModule as unknown as ExpectedWriterAuthorityApi
-
 describe('fresh writer authority heartbeat and epoch fencing', () => {
   let root: string
   let knowledgeRoot: string
@@ -239,7 +222,7 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function acquireAuthority(): ExpectedWriterLeaseAuthority {
+  function acquireAuthority(): PublicWriterLeaseAuthority {
     const acquired = acquireWriterLease(knowledgeRoot)
     expect(acquired.kind).toBe('acquired')
     if (acquired.kind !== 'acquired') throw new Error('expected acquired writer lease')
@@ -248,14 +231,14 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
 
   function expectAuthorityLoss(
     invoke: () => unknown,
-    reason: string,
+    reason: WriterAuthorityLostReason,
     observedEpoch: number,
   ): void {
     try {
       invoke()
       throw new Error('expected writer authority loss')
     } catch (error) {
-      expect(error).toBeInstanceOf(writerAuthorityApi.WriterAuthorityLostError)
+      expect(error).toBeInstanceOf(WriterAuthorityLostError)
       expect(error).toMatchObject({
         name: 'WriterAuthorityLostError',
         reason,
@@ -265,8 +248,8 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
   }
 
   it('exports the authority guard only from the main writer surface', () => {
-    expect(writerAuthorityApi.refreshWriterLeaseAuthority).toBeTypeOf('function')
-    expect(writerAuthorityApi.WriterAuthorityLostError).toBeTypeOf('function')
+    expect(refreshWriterLeaseAuthority).toBeTypeOf('function')
+    expect(WriterAuthorityLostError).toBeTypeOf('function')
     expect(publicWriterSurface).toHaveProperty('refreshWriterLeaseAuthority')
     expect(publicWriterSurface).toHaveProperty('WriterAuthorityLostError')
   })
@@ -275,7 +258,7 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
     const authority = acquireAuthority()
     now.mockReturnValue(2_005_000)
 
-    expect(writerAuthorityApi.refreshWriterLeaseAuthority(authority)).toEqual(authority)
+    expect(refreshWriterLeaseAuthority(authority)).toEqual(authority)
     expect(
       JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')),
     ).toMatchObject({
@@ -296,7 +279,7 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
     expect(competitor.kind).toBe('acquired')
 
     expectAuthorityLoss(
-      () => writerAuthorityApi.refreshWriterLeaseAuthority(authority),
+      () => refreshWriterLeaseAuthority(authority),
       'epoch-mismatch-before-heartbeat',
       2,
     )
@@ -305,33 +288,33 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
   it.each([
     {
       name: 'mismatched lease id',
-      prepare: (authority: ExpectedWriterLeaseAuthority) => ({
+      prepare: (authority: PublicWriterLeaseAuthority) => ({
         ...authority,
         leaseId: '00000000-0000-4000-8000-000000000000',
       }),
-      reason: 'lease-id-mismatch',
+      reason: 'lease-id-mismatch' as const,
     },
     {
       name: 'missing lease',
-      prepare: (authority: ExpectedWriterLeaseAuthority) => {
+      prepare: (authority: PublicWriterLeaseAuthority) => {
         expect(releaseLease(authority)).toEqual({ kind: 'released' })
         return authority
       },
-      reason: 'lease-missing',
+      reason: 'lease-missing' as const,
     },
     {
       name: 'malformed lease',
-      prepare: (authority: ExpectedWriterLeaseAuthority) => {
+      prepare: (authority: PublicWriterLeaseAuthority) => {
         writeFileSync(join(knowledgeRoot, LEASE_FILE), 'not-json\n', 'utf8')
         return authority
       },
-      reason: 'lease-malformed',
+      reason: 'lease-malformed' as const,
     },
   ])('normalizes a $name refusal into the typed authority-lost error', ({ prepare, reason }) => {
     const authority = prepare(acquireAuthority())
 
     expectAuthorityLoss(
-      () => writerAuthorityApi.refreshWriterLeaseAuthority(authority),
+      () => refreshWriterLeaseAuthority(authority),
       reason,
       authority.epoch,
     )
@@ -345,7 +328,7 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
     })
 
     expectAuthorityLoss(
-      () => writerAuthorityApi.refreshWriterLeaseAuthority(authority),
+      () => refreshWriterLeaseAuthority(authority),
       'epoch-mismatch-after-heartbeat',
       2,
     )

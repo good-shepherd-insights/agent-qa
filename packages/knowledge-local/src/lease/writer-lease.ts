@@ -80,6 +80,31 @@ export type AssertEpochCurrentOutcome =
   | { current: true }
   | { current: false; observedEpoch: number }
 
+/** Exact writer identity carried by governed maintenance mutators. */
+export interface WriterLeaseAuthority extends LeaseOperationOptions {
+  epoch: number
+}
+
+export type WriterAuthorityLostReason =
+  | Extract<HeartbeatLeaseOutcome, { kind: 'refused' }>['reason']
+  | 'epoch-mismatch-before-heartbeat'
+  | 'epoch-mismatch-after-heartbeat'
+
+/** Fail-closed maintenance refusal with the holder and fresh disk epoch attached. */
+export class WriterAuthorityLostError extends Error {
+  override readonly name = 'WriterAuthorityLostError'
+
+  constructor(
+    readonly authority: WriterLeaseAuthority,
+    readonly reason: WriterAuthorityLostReason,
+    readonly observedEpoch: number,
+  ) {
+    super(
+      `writer authority lost (${reason}); held epoch ${authority.epoch}, observed ${observedEpoch}`,
+    )
+  }
+}
+
 type ReadLeaseOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
@@ -301,6 +326,46 @@ export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutco
     atomicRewrite(leasePath(opts.knowledgeRoot), `${JSON.stringify(holder)}\n`)
     return { kind: 'heartbeated', holder }
   })
+}
+
+/**
+ * Refresh one exact maintenance writer immediately before a mutation boundary.
+ *
+ * The epoch reads deliberately bracket the heartbeat: the first rejects an already-reclaimed
+ * holder, while the second closes a reclaim race after the lease rewrite. Callers may mutate only
+ * after this function returns.
+ */
+export function refreshWriterLeaseAuthority(
+  authority: WriterLeaseAuthority,
+): WriterLeaseAuthority {
+  const beforeHeartbeat = assertEpochCurrent(authority)
+  if (!beforeHeartbeat.current) {
+    throw new WriterAuthorityLostError(
+      authority,
+      'epoch-mismatch-before-heartbeat',
+      beforeHeartbeat.observedEpoch,
+    )
+  }
+
+  const heartbeat = heartbeatLease(authority)
+  if (heartbeat.kind === 'refused') {
+    throw new WriterAuthorityLostError(
+      authority,
+      heartbeat.reason,
+      readCurrentEpoch(authority.knowledgeRoot),
+    )
+  }
+
+  const afterHeartbeat = assertEpochCurrent(authority)
+  if (!afterHeartbeat.current) {
+    throw new WriterAuthorityLostError(
+      authority,
+      'epoch-mismatch-after-heartbeat',
+      afterHeartbeat.observedEpoch,
+    )
+  }
+
+  return authority
 }
 
 /** Remove only the matching lease file; the monotonic epoch is deliberately retained forever. */
