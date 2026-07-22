@@ -91,3 +91,17 @@ export { emitRecordMarkdown, parseRecordMarkdown } from './record-frontmatter'
 export type { RecordFrontmatter } from './record-frontmatter'
 export { renderEmbeddingInput, screenStateSnapshotRelPath } from './embedding-input'
 export { deriveEvidenceToken } from './evidence-token'
+export {
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
+  InspectFilterSchema,
+  InspectRecordViewSchema,
+  RecordChangeSchema,
+  guardInspectRecordView,
+  guardRecordChange,
+} from './maintenance-views'
+export type {
+  InspectFilter,
+  InspectRecordView,
+  RecordChange,
+} from './maintenance-views'

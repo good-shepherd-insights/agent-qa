@@ -314,6 +314,20 @@ export {
 } from './knowledge/index'
 export type { BundleStatus, DerivedTrustState } from './knowledge/index'
 export {
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
+  InspectFilterSchema,
+  InspectRecordViewSchema,
+  RecordChangeSchema,
+  guardInspectRecordView,
+  guardRecordChange,
+} from './knowledge/index'
+export type {
+  InspectFilter,
+  InspectRecordView,
+  RecordChange,
+} from './knowledge/index'
+export {
   BIMODAL_GAP_THRESHOLD,
   BIMODAL_MIN_MODE_N,
   CI_SEPARATION_Z,
