@@ -235,7 +235,14 @@ describe('inspectRecords canonical maintenance view', () => {
     expect(inspectRecords(knowledgeRoot, { recordId: retiredId, asOfBuild: 15 }))
       .toHaveLength(1)
     expect(inspectRecords(knowledgeRoot, { recordId: retiredId, asOfBuild: 20 }))
-      .toEqual([])
+      .toMatchObject([
+        {
+          recordId: retiredId,
+          status: 'superseded',
+          lastEventOrdinal: 20,
+          closedAtOrdinal: 20,
+        },
+      ])
   })
 
   it('folds fields and selectors from only events visible at the requested horizon', () => {
@@ -307,6 +314,17 @@ describe('inspectRecords canonical maintenance view', () => {
         }),
       ],
     })
+    const afterHorizonId = publish({
+      product: 'support',
+      kind: 'unknown',
+      scope: 'future-payment-triage',
+      anchor: { t: 'flow', name: 'Future payment triage' },
+      discriminant: {
+        kind: 'unknown',
+        conflictRecordIds: ['future-payment-b', 'future-payment-a'],
+      },
+      createdAtOrdinal: 16,
+    })
 
     const at15 = inspectRecords(knowledgeRoot, {
       recordId: historicalId,
@@ -324,6 +342,10 @@ describe('inspectRecords canonical maintenance view', () => {
       anchors: [canonicalJson(normalizeAnchor(historicalAnchor))],
     })
     expect(at15[0]).not.toHaveProperty('closedAtOrdinal')
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: afterHorizonId,
+      asOfBuild: 15,
+    })).toEqual([])
 
     expect(inspectRecords(knowledgeRoot, {
       recordId: historicalId,

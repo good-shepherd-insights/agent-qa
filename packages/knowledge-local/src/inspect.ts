@@ -115,15 +115,6 @@ function anchorMatches(bundle: LoadedBundle, filter: string | undefined): boolea
   return normalizedAnchors.some((anchor) => scalarAnchorMatches(anchor, filter))
 }
 
-function validAtBuild(
-  openedAtOrdinal: number,
-  closedAtOrdinal: number | undefined,
-  buildOrdinal: number,
-): boolean {
-  return openedAtOrdinal <= buildOrdinal
-    && (closedAtOrdinal === undefined || buildOrdinal < closedAtOrdinal)
-}
-
 function readTrustNarrative(dir: string, bundle: LoadedBundle): string | undefined {
   if (!(TRUST_NARRATIVE_REL_PATH in bundle.manifest.contentHashes)) return undefined
   const file = join(dir, TRUST_NARRATIVE_REL_PATH)
@@ -147,7 +138,18 @@ export function inspectRecords(options: InspectRecordsOptions): InspectRecordVie
     if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(entry.dir).ok) continue
 
     const { bundle } = loaded
-    const trust = deriveBundleTrust(bundle)
+    const asOfBuild = filter.asOfBuild
+    if (
+      asOfBuild !== undefined
+      && bundle.manifest.createdAtOrdinal > asOfBuild
+    ) continue
+    const visibleEvents = asOfBuild === undefined
+      ? bundle.events
+      : bundle.events.filter((event) => event.buildOrdinal <= asOfBuild)
+    const visibleBundle = visibleEvents === bundle.events
+      ? bundle
+      : { ...bundle, events: visibleEvents }
+    const trust = deriveBundleTrust(visibleBundle)
     if (!auditVisibility && !isServable(trust)) continue
     if (filter.scope !== undefined && filter.scope !== bundle.frontmatter.scope.key) continue
     if (filter.kind !== undefined && filter.kind !== bundle.frontmatter.kind) continue
@@ -157,16 +159,8 @@ export function inspectRecords(options: InspectRecordsOptions): InspectRecordVie
     if (filter.unresolvedOnly === true && (
       bundle.frontmatter.kind !== 'unknown' || !isServable(trust)
     )) continue
-    if (
-      filter.asOfBuild !== undefined
-      && !validAtBuild(
-        trust.validity.openedAtOrdinal,
-        trust.validity.closedAtOrdinal,
-        filter.asOfBuild,
-      )
-    ) continue
 
-    const survivingEvents = survivingOutcomeEvents(bundle.events)
+    const survivingEvents = survivingOutcomeEvents(visibleEvents)
     const evidenceTokens = [...new Set(
       survivingEvents.map((event) => String(event.evidenceToken)),
     )].sort(compareText)
