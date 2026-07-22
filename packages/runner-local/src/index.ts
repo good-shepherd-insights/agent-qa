@@ -55,8 +55,19 @@ export type {
   ImageDimensions,
   ScreenshotCompressorLogger,
 } from './screenshot-compressor.js'
-export { nextBuildOrdinal, BUILD_ORDINALS_FILE } from './build-ordinal.js'
-export type { NextBuildOrdinalOptions } from './build-ordinal.js'
+export {
+  BuildOrdinalReservationError,
+  nextBuildOrdinal,
+  reserveBuildOrdinalForProducts,
+  BUILD_ORDINALS_FILE,
+} from './build-ordinal.js'
+export type {
+  BuildOrdinalReservation,
+  BuildOrdinalReservationErrorCode,
+  NextBuildOrdinalOptions,
+  ReserveBuildOrdinalForProductsOptions,
+  ReserveBuildOrdinalForProductsResult,
+} from './build-ordinal.js'
 // Phase 375 D-14/D-16/D-17 — sibling durable tag truth uses first-seen ordinals; latest ordinal is
 // exposed as a pure read so derived-index consumers never advance the run-start counter.
 export {
