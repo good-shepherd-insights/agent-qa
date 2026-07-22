@@ -107,6 +107,7 @@ export function diffSince(options: DiffSinceOptions): RecordChange[] {
       (earliest, event) => Math.min(earliest, event.buildOrdinal),
       bundle.manifest.createdAtOrdinal,
     )
+    let eventLowerBound = options.sinceOrdinal
     if (earliestOrdinal > options.sinceOrdinal) {
       changes.push(RecordChangeSchema.parse({
         schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
@@ -114,11 +115,11 @@ export function diffSince(options: DiffSinceOptions): RecordChange[] {
         change: 'added',
         atOrdinal: earliestOrdinal,
       }))
-      continue
+      eventLowerBound = earliestOrdinal
     }
 
     for (const event of survivingEvents) {
-      if (event.buildOrdinal <= options.sinceOrdinal) continue
+      if (event.buildOrdinal <= eventLowerBound) continue
       const change = directChange(bundle.manifest.id, event)
       if (change !== undefined) changes.push(change)
     }
