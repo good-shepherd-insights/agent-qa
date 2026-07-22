@@ -13,6 +13,7 @@ import { join, relative } from 'node:path'
 
 import {
   acquireWriterLease,
+  appendOutcomeEvent,
   guardPurgeReceipt,
   loadBundle,
   publishBundle,
@@ -192,19 +193,21 @@ function fixtureWorkspace(
 
 interface SeedBundleOptions {
   product?: string
+  scopeProduct?: string
   createdAtOrdinal?: number
   curationJobId?: string
 }
 
 function bundleInput(options: SeedBundleOptions = {}): PublishBundleInput {
   const product = options.product ?? PRODUCT
+  const scopeProduct = options.scopeProduct ?? product
   const createdAtOrdinal = options.createdAtOrdinal ?? 5
   const curationJobId = options.curationJobId ?? CURATION_JOB_ID
   const draft: BundleDraft = {
     kind: 'fact',
     subtype: 'selector',
     anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
-    scope: { tier: 'product', key: product },
+    scope: { tier: 'product', key: scopeProduct },
     summary: 'Use the Checkout button to continue.',
     body: 'The checkout selector was confirmed by a completed run.',
     distilledEvidenceRef: {
@@ -261,6 +264,19 @@ function seedBundle(
     throw new Error(`expected published maintenance fixture, got ${published.kind}`)
   }
   return { id: published.id, dir: published.dir }
+}
+
+function expectedBundlePaths(workspace: FixtureWorkspace, bundleDir: string): string[] {
+  const loaded = loadBundle(bundleDir)
+  if (loaded.kind !== 'loaded') {
+    throw new Error(`expected loaded purge fixture, got ${loaded.kind}`)
+  }
+  const relativeDir = relative(workspace.knowledgeRoot, bundleDir)
+  return [
+    relativeDir,
+    ...Object.keys(loaded.bundle.manifest.contentHashes).map((path) => `${relativeDir}/${path}`),
+    `${relativeDir}/manifest.json`,
+  ].sort()
 }
 
 function rollbackInverseOrdinals(bundleDir: string): number[] {
@@ -661,6 +677,80 @@ describe('knowledge maintenance commands', () => {
       leaseId: expect.any(String),
       epoch: expect.any(Number),
     })
+    expect(commandHarness.purgeRecordInputs[0]?.expectedAffectedSetFingerprint).toMatch(
+      /^[0-9a-f]{64}$/u,
+    )
+  })
+
+  it('renders every product bundle tree and receipt-named path in the purge preview', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const primary = seedBundle(workspace)
+    const secondaryProduct = 'maintenance-z-non-servable-copy'
+    const secondary = seedBundle(workspace, {
+      product: secondaryProduct,
+      scopeProduct: PRODUCT,
+    })
+    expect(secondary.id).toBe(primary.id)
+    expect(appendOutcomeEvent(
+      {
+        knowledgeRoot: workspace.knowledgeRoot,
+        productKey: secondaryProduct,
+        auditBaseDir: workspace.runtimeRoot,
+        commitArtifacts: 'none',
+      },
+      secondary.id,
+      BundleOutcomeEventSchema.parse({
+        type: 'deprecated',
+        evidenceToken: 'maintenance-preview-non-servable',
+        curationJobId: 'maintenance-preview-non-servable-job',
+        buildOrdinal: 6,
+        reason: 'Preview must include loadable non-servable copies',
+      }),
+    ).kind).toBe('appended')
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push(`${primary.id}-abort`)
+
+    const result = await invoke(workspace, ['purge', primary.id, '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    for (const path of [
+      ...expectedBundlePaths(workspace, primary.dir),
+      ...expectedBundlePaths(workspace, secondary.dir),
+    ]) {
+      expect(result.stderr).toContain(path)
+    }
+    expect(result.stderr).toContain(relative(workspace.knowledgeRoot, primary.dir))
+    expect(result.stderr).toContain(relative(workspace.knowledgeRoot, secondary.dir))
+    expect(commandHarness.purgeRecordCalls).toBe(0)
+    expect(existsSync(primary.dir)).toBe(true)
+    expect(existsSync(secondary.dir)).toBe(true)
+  })
+
+  it('refuses purge target drift after exact-id authorization and before mutation', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const primary = seedBundle(workspace)
+    const driftProduct = 'maintenance-z-purge-drift'
+    let drifted: { id: string; dir: string } | undefined
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push(primary.id)
+    commandHarness.promptHook = () => {
+      drifted = seedBundle(workspace, {
+        product: driftProduct,
+        scopeProduct: PRODUCT,
+      })
+      expect(drifted.id).toBe(primary.id)
+    }
+
+    const result = await invoke(workspace, ['purge', primary.id, '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('preview-changed')
+    expect(commandHarness.purgeRecordCalls).toBe(0)
+    expect(existsSync(primary.dir)).toBe(true)
+    expect(drifted).toBeDefined()
+    expect(existsSync(drifted!.dir)).toBe(true)
   })
 
   it('keeps JSON stdout empty and returns non-success when interactive answers refuse', async () => {
