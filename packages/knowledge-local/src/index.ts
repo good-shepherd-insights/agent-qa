@@ -120,6 +120,7 @@ export { retrieve } from './retrieve.js'
 export type { RetrieveOptions, RetrieveResult } from './retrieve.js'
 export { rebuildIndex } from './index-rebuild.js'
 export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
+export { readLatestBuildOrdinal } from './build-ordinal-read.js'
 export {
   applyRunOutcomes,
   foldRunOutcomes,
@@ -350,6 +351,14 @@ export type {
   WriterPassReport,
 } from './curator/drain.js'
 export {
+  acquireWriterLease,
+  releaseLease,
+} from './lease/writer-lease.js'
+export type {
+  AcquireWriterLeaseOutcome,
+  ReleaseLeaseOutcome,
+} from './lease/writer-lease.js'
+export {
   guardPurgeReceipt,
   PURGE_RECEIPT_SCHEMA_VERSION,
   PurgeReceiptSchema,
@@ -366,6 +375,7 @@ export type { InspectRecordsOptions } from './inspect.js'
 export { diffSince } from './diff-since.js'
 export type { DiffSinceOptions } from './diff-since.js'
 export {
+  resolveRollbackAffectedSet,
   rollbackCampaign,
   RollbackCausalityError,
   rollbackCurationJob,
@@ -378,6 +388,7 @@ export type {
   RollbackCurationJobInput,
   RollbackKind,
   RollbackReport,
+  ResolveRollbackAffectedSetInput,
 } from './rollback.js'
 export {
   createLocalKnowledgeStore,

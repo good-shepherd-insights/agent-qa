@@ -89,6 +89,10 @@ interface RollbackResolution {
   counterEvents: ResolvedCounterEvent[]
 }
 
+export type ResolveRollbackAffectedSetInput =
+  | RollbackCurationJobInput
+  | RollbackCampaignInput
+
 /**
  * CR-02: a rollback must never attest success at a resolution ordinal that is powerless to
  * change lifecycle status. At equal buildOrdinal the trust fold's fixed STATUS_PRECEDENCE keeps
@@ -228,6 +232,17 @@ function publicAffectedSet(resolution: RollbackResolution): RollbackAffectedSet 
       type: event.type,
     })),
   }
+}
+
+/** Resolve the canonical rollback preview without appending inverse events or touching indexes. */
+export function resolveRollbackAffectedSet(
+  input: ResolveRollbackAffectedSetInput,
+): RollbackAffectedSet {
+  return publicAffectedSet(
+    'curationJobId' in input
+      ? resolveCurationJob(input)
+      : resolveCampaign(input),
+  )
 }
 
 function counterEventsFor(
