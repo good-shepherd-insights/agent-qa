@@ -238,6 +238,148 @@ describe('inspectRecords canonical maintenance view', () => {
       .toEqual([])
   })
 
+  it('folds fields and selectors from only events visible at the requested horizon', () => {
+    const historicalAnchor: Anchor = {
+      t: 'error',
+      message: 'Historical payment conflict',
+    }
+    const confirmedAt12 = event({
+      type: 'confirmed',
+      evidenceToken: 'historical-confirmed',
+      curationJobId: 'historical-confirmation-job',
+      buildOrdinal: 12,
+      origin: 'agent-verified',
+    })
+    const historicalId = publish({
+      product: 'support',
+      kind: 'unknown',
+      scope: 'historical-payment-triage',
+      anchor: historicalAnchor,
+      discriminant: {
+        kind: 'unknown',
+        conflictRecordIds: ['historical-payment-b', 'historical-payment-a'],
+      },
+      createdAtOrdinal: 5,
+      initialEvents: [
+        event({
+          type: 'promoted',
+          evidenceToken: 'historical-promoted',
+          curationJobId: 'historical-promotion-job',
+          buildOrdinal: 10,
+        }),
+        confirmedAt12,
+        event({
+          type: 'confirmed',
+          evidenceToken: 'historical-confirmed-late',
+          curationJobId: 'historical-confirmation-late-job',
+          buildOrdinal: 18,
+          origin: 'agent-verified',
+        }),
+        event({
+          type: 'contradicted',
+          evidenceToken: 'historical-contradicted-late',
+          curationJobId: 'historical-contradiction-late-job',
+          buildOrdinal: 18,
+          origin: 'agent-verified',
+        }),
+        event({
+          type: 'retracted',
+          evidenceToken: 'historical-retraction',
+          curationJobId: 'historical-retraction-job',
+          buildOrdinal: 20,
+          retractsEvidenceToken: confirmedAt12.evidenceToken,
+          retractsCurationJobId: confirmedAt12.curationJobId,
+          rollbackReceiptId: 'historical-rollback-receipt',
+        }),
+        event({
+          type: 'deprecated',
+          evidenceToken: 'historical-deprecated',
+          curationJobId: 'historical-deprecation-job',
+          buildOrdinal: 20,
+          reason: 'Historical conflict resolved',
+        }),
+        event({
+          type: 'window-close',
+          evidenceToken: 'historical-window-close',
+          curationJobId: 'historical-window-close-job',
+          buildOrdinal: 20,
+          closedAtOrdinal: 20,
+        }),
+      ],
+    })
+
+    const at15 = inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 15,
+    })
+    expect(at15).toHaveLength(1)
+    expect(at15[0]).toMatchObject({
+      recordId: historicalId,
+      status: 'active',
+      confirmations: 1,
+      contradictions: 0,
+      evidenceTokens: ['historical-confirmed', 'historical-promoted'],
+      lastEventOrdinal: 12,
+      openedAtOrdinal: 5,
+      anchors: [canonicalJson(normalizeAnchor(historicalAnchor))],
+    })
+    expect(at15[0]).not.toHaveProperty('closedAtOrdinal')
+
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 15,
+      status: 'active',
+    })).toHaveLength(1)
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 15,
+      status: 'deprecated',
+    })).toEqual([])
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 15,
+      unresolvedOnly: true,
+    })).toHaveLength(1)
+
+    const at20 = inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 20,
+    })
+    expect(at20).toHaveLength(1)
+    expect(at20[0]).toMatchObject({
+      recordId: historicalId,
+      status: 'deprecated',
+      confirmations: 1,
+      contradictions: 1,
+      evidenceTokens: [
+        'historical-confirmed-late',
+        'historical-contradicted-late',
+        'historical-deprecated',
+        'historical-promoted',
+        'historical-window-close',
+      ],
+      lastEventOrdinal: 20,
+      openedAtOrdinal: 5,
+      closedAtOrdinal: 20,
+    })
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 20,
+      unresolvedOnly: true,
+    })).toEqual([])
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      asOfBuild: 20,
+      status: 'deprecated',
+    })).toEqual(at20)
+
+    expect(inspectRecords(knowledgeRoot, { recordId: historicalId })).toEqual([])
+    expect(inspectRecords(knowledgeRoot, {
+      recordId: historicalId,
+      status: 'deprecated',
+    })).toEqual(at20)
+  })
+
   it('is byte-identical across repeated reads without wall-clock dependence', () => {
     seedStore()
 
