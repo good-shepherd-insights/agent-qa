@@ -43,7 +43,6 @@ import type {
 // handlers name the real envelope type without a runtime schema coupling.
 import { guardToolOutput } from '@vostride/agent-qa-model'
 import type { TokenAccounting } from '@vostride/agent-qa-model'
-import { openKnowledgeReader } from '@vostride/agent-qa-knowledge-local'
 import type {
   MaskingContext,
   ModelCapabilities,
@@ -114,6 +113,8 @@ import {
   scaledRecordCap,
   type KnowledgeBudgets,
 } from './composition/knowledge-budgets.js'
+import { constructKnowledgeReader } from './composition/knowledge-reader.js'
+export { createFrozenKnowledgeReader } from './composition/knowledge-reader.js'
 
 // ---- Local structural types -----------------------------------------------------------------
 // The CLI does not take a `@vostride/agent-qa-schema` dependency purely to name these injected
@@ -134,33 +135,6 @@ export interface RunKnowledgeComposition {
   nonActionTools?: NonActionToolMap
   beginMemoryTurn?: (scope?: ScopeKey, exposedIds?: readonly RecordId[]) => void
   drainMemoryReadTraces?: () => ReadTrace[]
-}
-
-/**
- * Freeze Channel 1 at the composition root. The budget is deliberately absent from the key:
- * budgets are run-fixed, while canonical `[tier,key]` material gives one immutable memo entry per
- * scope. All other reader methods remain live pass-throughs for Channels 2, 3, and canary output.
- */
-export function createFrozenKnowledgeReader(reader: KnowledgeHintReader): KnowledgeHintReader {
-  const briefs = new Map<string, ReturnType<KnowledgeHintReader['getRunBrief']>>()
-  const scopeKey = (scope: ScopeKey): string => JSON.stringify([scope.tier, scope.key])
-
-  return {
-    getRunBrief(scope, budget) {
-      const key = scopeKey(scope)
-      const existing = briefs.get(key)
-      if (existing !== undefined) return existing
-      const brief = reader.getRunBrief(scope, budget)
-      briefs.set(key, brief)
-      return brief
-    },
-    search: (query, options) => reader.search(query, options),
-    read: (id, options) => reader.read(id, options),
-    getCautions: (anchors, budget) => reader.getCautions(anchors, budget),
-    getProcedure: (intent, screenState, availability) =>
-      reader.getProcedure(intent, screenState, availability),
-    emitCanaryOutcome: (payload) => reader.emitCanaryOutcome(payload),
-  }
 }
 
 export interface OpenRunKnowledgeCompositionInput {
@@ -203,15 +177,13 @@ export function openRunKnowledgeComposition(
     ...computed,
     recordCap: scaledRecordCap(input.capabilities),
   }
-  const reader = createFrozenKnowledgeReader(openKnowledgeReader({
+  const reader = constructKnowledgeReader({
     knowledgeRoot: input.knowledgeRoot,
     ...(input.product === undefined ? {} : { product: input.product }),
-    scopeDefaults: {
-      asOfBuild: input.asOfBuild,
-      ...(input.parentScopes === undefined ? {} : { parentScopes: input.parentScopes }),
-    },
-    budgets: { recordCap: budgets.recordCap },
-  }))
+    ...(input.parentScopes === undefined ? {} : { parentScopes: input.parentScopes }),
+    asOfBuild: input.asOfBuild,
+    recordCap: budgets.recordCap,
+  })
   const channel2Enabled = memoryToolGate(input.capabilities)
   const recordLedger = createRecordLedger({
     cap: budgets.recordCap,
