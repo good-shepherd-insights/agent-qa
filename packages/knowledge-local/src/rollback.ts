@@ -29,6 +29,8 @@ import { enumerateBundleDirs } from './bundle-scan.js'
 import { applyIndexDeltaForBundle } from './curator/commit.js'
 import type { AuthoredDeltaCheckpoint } from './curator/author-contract.js'
 import { disposeDelta } from './curator/disposition.js'
+import { refreshWriterLeaseAuthority } from './lease/writer-lease.js'
+import type { WriterLeaseAuthority } from './lease/writer-lease.js'
 
 export type RollbackKind = 'job' | 'campaign'
 
@@ -55,10 +57,22 @@ export interface RollbackReport {
   affected: RollbackAffectedSet
 }
 
+export type RollbackMutationKind = 'append' | 'projection'
+
+export interface RollbackHooks {
+  /** Test/chaos seam after canonical resolution and causal preflight, before the first write. */
+  afterResolution?: () => void
+  /** Test/chaos seam after one actual append or projection mutation completes. */
+  afterMutation?: (kind: RollbackMutationKind, recordId: RecordId) => void
+}
+
 interface RollbackBaseInput {
   knowledgeRoot: string
   auditBaseDir: string
   resolvedAtOrdinal: number
+  /** Governed maintenance callers fence this exact lease at every mutation boundary. */
+  writerAuthority?: WriterLeaseAuthority
+  hooks?: RollbackHooks
 }
 
 export interface RollbackCurationJobInput extends RollbackBaseInput {
@@ -139,7 +153,21 @@ function assertBaseInput(input: RollbackBaseInput): void {
   if (!isAbsolute(input.auditBaseDir)) {
     throw new TypeError('rollback auditBaseDir must be absolute')
   }
+  if (
+    input.writerAuthority !== undefined
+    && input.writerAuthority.knowledgeRoot !== input.knowledgeRoot
+  ) {
+    throw new TypeError('rollback writerAuthority must belong to knowledgeRoot')
+  }
   assertOrdinal(input.resolvedAtOrdinal, 'rollback resolvedAtOrdinal')
+}
+
+function fenceWriterAuthority(input: RollbackBaseInput): void {
+  if (input.writerAuthority === undefined) return
+  if (input.writerAuthority.knowledgeRoot !== input.knowledgeRoot) {
+    throw new TypeError('rollback writerAuthority must belong to knowledgeRoot')
+  }
+  refreshWriterLeaseAuthority(input.writerAuthority)
 }
 
 function campaignKeys(input: RollbackCampaignInput): Readonly<Record<string, unknown>> {
@@ -356,6 +384,9 @@ function bundleConfig(
     productKey,
     auditBaseDir: input.auditBaseDir,
     commitArtifacts: 'none',
+    ...(input.writerAuthority === undefined
+      ? {}
+      : { writerLeaseId: input.writerAuthority.leaseId }),
   }
 }
 
@@ -392,6 +423,21 @@ function appendedOrThrow(
     case 'not-found':
       throw new Error(`rollback target ${targetRecordId} disappeared during commit`)
   }
+}
+
+function appendRollbackEvent(
+  input: RollbackBaseInput,
+  product: string,
+  targetRecordId: RecordId,
+  event: BundleOutcomeEvent,
+): boolean {
+  fenceWriterAuthority(input)
+  const appended = appendedOrThrow(
+    appendOutcomeEvent(bundleConfig(input, product), targetRecordId, event),
+    targetRecordId,
+  )
+  if (appended) input.hooks?.afterMutation?.('append', targetRecordId)
+  return appended
 }
 
 function maintenanceCheckpoint(delta: Delta, targetRecordId: RecordId): AuthoredDeltaCheckpoint {
@@ -447,23 +493,21 @@ function appendInverseDeprecate(
     )
   }
 
-  return appendedOrThrow(
-    appendOutcomeEvent(
-      bundleConfig(input, target.product),
-      target.recordId,
-      {
-        type: 'deprecated',
-        evidenceToken: inverseEvidenceToken(
-          resolution.receiptId,
-          target.recordId,
-          'minted-bundle',
-        ),
-        curationJobId: resolution.receiptId,
-        buildOrdinal: input.resolvedAtOrdinal,
-        reason: disposed.delta.reason,
-      },
-    ),
+  return appendRollbackEvent(
+    input,
+    target.product,
     target.recordId,
+    {
+      type: 'deprecated',
+      evidenceToken: inverseEvidenceToken(
+        resolution.receiptId,
+        target.recordId,
+        'minted-bundle',
+      ),
+      curationJobId: resolution.receiptId,
+      buildOrdinal: input.resolvedAtOrdinal,
+      reason: disposed.delta.reason,
+    },
   )
 }
 
@@ -478,25 +522,23 @@ function appendRetraction(
     evidenceToken: asEvidenceToken(targetEvidenceToken),
     curationJobId: counter.curationJobId,
   })
-  return appendedOrThrow(
-    appendOutcomeEvent(
-      bundleConfig(input, counter.product),
-      counter.recordId,
-      {
-        type: 'retracted',
-        evidenceToken: inverseEvidenceToken(
-          resolution.receiptId,
-          counter.recordId,
-          retractedKey,
-        ),
-        curationJobId: resolution.receiptId,
-        buildOrdinal: input.resolvedAtOrdinal,
-        retractsEvidenceToken: asEvidenceToken(targetEvidenceToken),
-        retractsCurationJobId: counter.curationJobId,
-        rollbackReceiptId: resolution.receiptId,
-      },
-    ),
+  return appendRollbackEvent(
+    input,
+    counter.product,
     counter.recordId,
+    {
+      type: 'retracted',
+      evidenceToken: inverseEvidenceToken(
+        resolution.receiptId,
+        counter.recordId,
+        retractedKey,
+      ),
+      curationJobId: resolution.receiptId,
+      buildOrdinal: input.resolvedAtOrdinal,
+      retractsEvidenceToken: asEvidenceToken(targetEvidenceToken),
+      retractsCurationJobId: counter.curationJobId,
+      rollbackReceiptId: resolution.receiptId,
+    },
   )
 }
 
@@ -557,6 +599,7 @@ function emitRollback(
   resolution: RollbackResolution,
 ): RollbackReport {
   assertCausalResolution(input, resolution)
+  input.hooks?.afterResolution?.()
 
   let inverseCount = 0
   const touched = new Set<RecordId>()
@@ -651,7 +694,9 @@ function emitRollback(
   // Re-project every touched bundle even on duplicate replay. This is the same healing property
   // as commitCurationDelta's append-before-index recovery: canonical truth always wins.
   for (const recordId of [...touched].sort(compareText)) {
+    fenceWriterAuthority(input)
     applyIndexDeltaForBundle({ knowledgeRoot: input.knowledgeRoot, bundleId: recordId })
+    input.hooks?.afterMutation?.('projection', recordId)
   }
 
   return {

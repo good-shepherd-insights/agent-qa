@@ -38,6 +38,8 @@ import {
   indexDbPath,
   openIndexWriter,
 } from './index-open.js'
+import { refreshWriterLeaseAuthority } from './lease/writer-lease.js'
+import type { WriterLeaseAuthority } from './lease/writer-lease.js'
 import { jobStatePath, queueRoot } from './queue/queue-layout.js'
 import { curationCandidatePayloadSchema } from './queue/queue-payload.js'
 import {
@@ -115,6 +117,8 @@ export interface PurgeRecordInput {
   initiator: string
   /** Optional explicit runtime audit root; omission uses the knowledge root's stable sibling. */
   auditBaseDir?: string
+  /** Governed maintenance callers fence this exact lease at every mutation boundary. */
+  writerAuthority?: WriterLeaseAuthority
   /** Test/chaos seam between purge phases; production callers omit it (commit.ts precedent). */
   hooks?: {
     /** Immediately after the durable intent publication. */
@@ -158,6 +162,20 @@ function assertInput(input: PurgeRecordInput): void {
   if (input.auditBaseDir !== undefined && !isAbsolute(input.auditBaseDir)) {
     throw new TypeError('auditBaseDir must be absolute when supplied')
   }
+  if (
+    input.writerAuthority !== undefined
+    && input.writerAuthority.knowledgeRoot !== input.knowledgeRoot
+  ) {
+    throw new TypeError('writerAuthority must belong to knowledgeRoot')
+  }
+}
+
+function fenceWriterAuthority(input: PurgeRecordInput): void {
+  if (input.writerAuthority === undefined) return
+  if (input.writerAuthority.knowledgeRoot !== input.knowledgeRoot) {
+    throw new TypeError('writerAuthority must belong to knowledgeRoot')
+  }
+  refreshWriterLeaseAuthority(input.writerAuthority)
 }
 
 function resolveBundles(knowledgeRoot: string, recordId: RecordId): ResolvedBundle[] {
@@ -283,10 +301,15 @@ function payloadDirectories(root: string): string[] {
   return found.sort()
 }
 
-function removeEmptyQueueParents(candidateDir: string, root: string): void {
+function removeEmptyQueueParents(
+  candidateDir: string,
+  root: string,
+  beforeMutation?: () => void,
+): void {
   let current = dirname(candidateDir)
   while (current !== root && current.startsWith(`${root}${sep}`)) {
     try {
+      beforeMutation?.()
       rmdirSync(current)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
@@ -403,14 +426,20 @@ export function resolveQueueSweepTargets(
 
 /** Pure destruction pass over the pre-resolved exact deletion set. */
 function sweepQueuePayloads(
-  knowledgeRoot: string,
+  input: PurgeRecordInput,
   targets: readonly QueueSweepTarget[],
 ): void {
-  const root = queueRoot(knowledgeRoot)
+  const root = queueRoot(input.knowledgeRoot)
   for (const target of targets) {
+    fenceWriterAuthority(input)
     rmSync(target.candidateDir, { recursive: true, force: true })
-    rmSync(jobStatePath(knowledgeRoot, target.candidateId), { force: true })
-    removeEmptyQueueParents(target.candidateDir, root)
+    fenceWriterAuthority(input)
+    rmSync(jobStatePath(input.knowledgeRoot, target.candidateId), { force: true })
+    removeEmptyQueueParents(
+      target.candidateDir,
+      root,
+      () => fenceWriterAuthority(input),
+    )
   }
 }
 
@@ -574,15 +603,22 @@ function auditBaseDir(input: PurgeRecordInput): string {
  * temp file is fsynced first and resides in the same directory. Intent and receipt publication
  * share this one pattern.
  */
-function writeDurableExclusive(finalPath: string, text: string): 'written' | 'already-exists' {
+function writeDurableExclusive(
+  finalPath: string,
+  text: string,
+  beforeMutation?: () => void,
+): 'written' | 'already-exists' {
   const directory = dirname(finalPath)
+  beforeMutation?.()
   mkdirSync(directory, { recursive: true })
   const temporary = `${finalPath}.tmp-${randomUUID()}`
   try {
+    beforeMutation?.()
     writeFileSync(temporary, text, { encoding: 'utf8', flag: 'wx' })
     fsyncFile(temporary)
     fsyncDirectory(directory)
     try {
+      beforeMutation?.()
       linkSync(temporary, finalPath)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return 'already-exists'
@@ -620,9 +656,10 @@ function buildIntent(
 }
 
 /** Remove the fulfilled intent; the durable receipt is now the sole audit fact. */
-function retireIntent(knowledgeRoot: string, recordId: RecordId): void {
-  const file = intentPath(knowledgeRoot, recordId)
+function retireIntent(input: PurgeRecordInput): void {
+  const file = intentPath(input.knowledgeRoot, input.recordId)
   if (!existsSync(file)) return
+  fenceWriterAuthority(input)
   rmSync(file, { force: true })
   fsyncDirectory(dirname(file))
 }
@@ -634,19 +671,21 @@ function publishReceiptAndRetire(
   receipt: PurgeReceipt,
   receiptCycle: number,
 ): PurgeRecordOutcome {
+  input.hooks?.beforeReceiptPublish?.()
   const writeOutcome = writeDurableExclusive(
     receiptCyclePath(input.knowledgeRoot, input.recordId, receiptCycle),
     receiptText,
+    () => fenceWriterAuthority(input),
   )
   if (writeOutcome === 'already-exists') {
     const racedReceipt = readReceiptAtCycle(input.knowledgeRoot, input.recordId, receiptCycle)
     if (racedReceipt === undefined) {
       throw new Error('purge receipt disappeared during exclusive publication')
     }
-    retireIntent(input.knowledgeRoot, input.recordId)
+    retireIntent(input)
     return { kind: 'already-purged', receipt: racedReceipt }
   }
-  retireIntent(input.knowledgeRoot, input.recordId)
+  retireIntent(input)
   return { kind: 'purged', receipt }
 }
 
@@ -678,23 +717,30 @@ function survivingBundleKind(
  * content address means the revived bundle occupies the identical paths the intent persisted.
  */
 function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRecordOutcome {
+  fenceWriterAuthority(input)
   purgeIndexSurfaces(
     input.knowledgeRoot,
     input.recordId,
     survivingBundleKind(input.knowledgeRoot, intent),
   )
+  input.hooks?.afterProjectionPurge?.()
   for (const dir of intent.bundleDirs) {
+    fenceWriterAuthority(input)
     rmSync(join(input.knowledgeRoot, dir), { recursive: true, force: true })
+    input.hooks?.afterBundleRemoval?.()
   }
   const root = queueRoot(input.knowledgeRoot)
   for (const dir of intent.queuePayloadDirs) {
     const candidateDir = join(input.knowledgeRoot, dir)
+    fenceWriterAuthority(input)
     rmSync(candidateDir, { recursive: true, force: true })
-    removeEmptyQueueParents(candidateDir, root)
+    removeEmptyQueueParents(candidateDir, root, () => fenceWriterAuthority(input))
   }
   for (const candidateId of intent.queueCandidateIds) {
+    fenceWriterAuthority(input)
     rmSync(jobStatePath(input.knowledgeRoot, candidateId), { force: true })
   }
+  input.hooks?.afterQueueSweep?.()
   return publishReceiptAndRetire(
     input,
     committedFileText(intent.receipt),
@@ -762,6 +808,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   const intentOutcome = writeDurableExclusive(
     intentPath(input.knowledgeRoot, input.recordId),
     committedFileText(intent),
+    () => fenceWriterAuthority(input),
   )
   if (intentOutcome === 'already-exists') {
     // A concurrent purge published its intent first; that durable authority wins.
@@ -775,18 +822,19 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
 
   // Projection cleanup must prove every materialized vec table was writable before any
   // irreversible bundle, queue, or receipt mutation can attest success.
+  fenceWriterAuthority(input)
   purgeIndexSurfaces(input.knowledgeRoot, input.recordId, kind)
   input.hooks?.afterProjectionPurge?.()
 
   // Capture metadata above before the only true-delete operation removes the committed tree.
   for (const match of matches) {
+    fenceWriterAuthority(input)
     rmSync(match.dir, { recursive: true, force: true })
+    input.hooks?.afterBundleRemoval?.()
   }
-  input.hooks?.afterBundleRemoval?.()
 
-  sweepQueuePayloads(input.knowledgeRoot, queueSweepTargets)
+  sweepQueuePayloads(input, queueSweepTargets)
   input.hooks?.afterQueueSweep?.()
 
-  input.hooks?.beforeReceiptPublish?.()
   return publishReceiptAndRetire(input, receiptText, receipt, receiptCycle)
 }
