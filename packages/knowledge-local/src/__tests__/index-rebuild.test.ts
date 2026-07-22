@@ -78,6 +78,7 @@ interface RebuildApi {
     embedder?: knowledgeLocal.EmbedderPort
     vecLoadablePath?: string
     writerAuthority?: knowledgeLocal.WriterLeaseAuthority
+    hooks?: { beforeTransactionCommit?: () => void }
   }): Promise<RebuildReport>
 }
 
@@ -231,6 +232,33 @@ describe('IDX-01 derived-index rebuild projection', () => {
 
     expect(existsSync(join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE))).toBe(false)
     expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+  })
+
+  it('rolls back synchronous projection when authority is reclaimed before commit', async () => {
+    const published = publishNamed('Commit Fence Product', 'Commit fence')
+    const authority = acquireAuthority()
+    let hookCalls = 0
+
+    await expect(rebuildApi().rebuildIndex({
+      knowledgeRoot,
+      writerAuthority: authority,
+      hooks: {
+        beforeTransactionCommit: () => {
+          hookCalls += 1
+          forceCompetingEpoch()
+        },
+      },
+    })).rejects.toBeInstanceOf(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(hookCalls).toBe(1)
+    const reader = openReader()
+    try {
+      expect(
+        reader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(published.id),
+      ).toBeUndefined()
+    } finally {
+      reader.db.close()
+    }
   })
 
   it('refuses the next vector mutation after a competing epoch appears during embedding', async () => {

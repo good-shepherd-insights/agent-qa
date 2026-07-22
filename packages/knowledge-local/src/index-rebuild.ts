@@ -79,6 +79,10 @@ export interface RebuildIndexOptions {
   embedder?: EmbedderPort
   vecLoadablePath?: string
   writerAuthority?: WriterLeaseAuthority
+  hooks?: {
+    /** Test/chaos seam after synchronous DML and immediately before the final commit fence. */
+    beforeTransactionCommit?: () => void
+  }
 }
 
 export interface ProjectBundleIndexRowOptions {
@@ -150,11 +154,16 @@ function transaction(
   db: DatabaseSync,
   operation: () => void,
   beforeMutation?: MutationGuard,
+  beforeCommit?: () => void,
 ): void {
   beforeMutation?.()
   db.exec('BEGIN IMMEDIATE')
   try {
     operation()
+    beforeCommit?.()
+    // Synchronous projection can block the event loop past the lease TTL. Re-fence the exact
+    // holder after all DML but before COMMIT so a competitor reclaim rolls this unit back.
+    beforeMutation?.()
     db.exec('COMMIT')
   } catch (error) {
     try {
@@ -546,6 +555,7 @@ function projectBundle(
   projected: ProjectedBundle,
   activeProfile: EmbeddingProfile,
   beforeMutation?: MutationGuard,
+  beforeCommit?: () => void,
 ): void {
   transaction(db, () => {
     const { recordRowid, status } = upsertRecord(
@@ -572,7 +582,7 @@ function projectBundle(
     `).run(EMBED_STATUS_PENDING, recordRowid, EMBED_STATUS_SCRUBBED)
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
-  }, beforeMutation)
+  }, beforeMutation, beforeCommit)
 }
 
 function applyProjectionSafety(
@@ -1289,7 +1299,14 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         continue
       }
 
-      projectBundle(writer.db, writer.vec, item, activeProfile, beforeMutation)
+      projectBundle(
+        writer.db,
+        writer.vec,
+        item,
+        activeProfile,
+        beforeMutation,
+        opts.hooks?.beforeTransactionCommit,
+      )
       projected.push(item)
       report.projected += 1
       if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
