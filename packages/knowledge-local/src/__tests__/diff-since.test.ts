@@ -185,6 +185,45 @@ describe('diffSince deterministic maintenance history', () => {
     ))).toBe(false)
   })
 
+  it('preserves later lifecycle transitions for records added after the reference', () => {
+    const addedId = publishFact('Added then deprecated', 'added-transition', 11, [
+      event({
+        type: 'confirmed',
+        evidenceToken: 'creation-confirmation',
+        curationJobId: 'creation-job',
+        buildOrdinal: 11,
+        origin: 'agent-verified',
+      }),
+      event({
+        type: 'deprecated',
+        evidenceToken: 'deprecated-at-14',
+        curationJobId: 'deprecation-job',
+        buildOrdinal: 14,
+        reason: 'superseded operating guidance',
+      }),
+    ])
+
+    const first = diffSince(knowledgeRoot, 10).map(guardRecordChange)
+    const second = diffSince(knowledgeRoot, 10).map(guardRecordChange)
+
+    expect(first.filter((change) => change.recordId === addedId)).toEqual([
+      {
+        schemaVersion: 1,
+        recordId: addedId,
+        change: 'added',
+        atOrdinal: 11,
+      },
+      {
+        schemaVersion: 1,
+        recordId: addedId,
+        change: 'deprecated',
+        atOrdinal: 14,
+        evidenceToken: 'deprecated-at-14',
+      },
+    ])
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+  })
+
   it('includes canonical purge receipts after the reference ordinal', () => {
     seedStore()
     const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
