@@ -48,6 +48,7 @@ interface PurgeRecordInput {
   knowledgeRoot: string
   recordId: string
   initiator: string
+  expectedAffectedSetFingerprint?: string
   writerAuthority?: WriterLeaseAuthority
   hooks?: {
     afterIntentWritten?: () => void
@@ -83,6 +84,40 @@ interface PurgeReceiptSchemaApi {
 
 interface PurgeApi {
   purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome
+}
+
+interface PurgeAffectedBundleTarget {
+  product: string
+  bundleDir: string
+  kind: string
+  affectedPaths: string[]
+}
+
+interface PurgeAffectedQueueTarget {
+  candidateId: string
+  candidateDir: string
+  jobStatePath: string
+}
+
+interface PurgeAffectedSet {
+  recordId: string
+  state: 'live' | 'resume' | 'already-purged' | 'not-found'
+  bundles: PurgeAffectedBundleTarget[]
+  receiptAffectedPaths: string[]
+  projectionTargets: string[]
+  embedCacheAction: string
+  queueTargets: PurgeAffectedQueueTarget[]
+  intentPath: string
+  receiptPath: string
+}
+
+interface PurgePlanningApi {
+  resolvePurgeAffectedSet(input: {
+    knowledgeRoot: string
+    recordId: string
+  }): PurgeAffectedSet
+  purgeAffectedSetFingerprint(affectedSet: PurgeAffectedSet): string
+  PurgeTargetChangedError: new (...args: never[]) => Error & { code: string }
 }
 
 interface PurgeIntent {
@@ -123,6 +158,18 @@ function purgeApi(): PurgeApi {
     throw new Error('purgeRecord public API is not implemented')
   }
   return candidate as PurgeApi
+}
+
+function purgePlanningApi(): PurgePlanningApi {
+  const candidate = knowledgeLocal as unknown as Partial<PurgePlanningApi>
+  if (
+    typeof candidate.resolvePurgeAffectedSet !== 'function'
+    || typeof candidate.purgeAffectedSetFingerprint !== 'function'
+    || typeof candidate.PurgeTargetChangedError !== 'function'
+  ) {
+    throw new Error('canonical purge affected-set public API is not implemented')
+  }
+  return candidate as PurgePlanningApi
 }
 
 function queueSweepApi(): QueueSweepApi {
@@ -219,8 +266,17 @@ describe('DCAY-05 sovereign purge', () => {
     anchors: readonly Anchor[],
     overrides: Partial<PublishBundleInput> = {},
   ): PublishedBundle {
+    return publishForProduct(PRODUCT, identity, anchors, overrides)
+  }
+
+  function publishForProduct(
+    productKey: string,
+    identity: string,
+    anchors: readonly Anchor[],
+    overrides: Partial<PublishBundleInput> = {},
+  ): PublishedBundle {
     const outcome = knowledgeLocal.publishBundle(
-      config(),
+      config(productKey),
       input(identity, anchors, overrides),
     )
     expect(outcome.kind).toBe('published')
@@ -360,6 +416,262 @@ describe('DCAY-05 sovereign purge', () => {
             : 0,
       )
   }
+
+  function relativePath(path: string): string {
+    return relative(knowledgeRoot, path).split('\\').join('/')
+  }
+
+  function expectedBundlePaths(target: PublishedBundle): string[] {
+    const loaded = loadedMatch(target.dir).bundle
+    const bundleDir = relativePath(target.dir)
+    return [
+      bundleDir,
+      ...Object.keys(loaded.manifest.contentHashes).map((path) => `${bundleDir}/${path}`),
+      `${bundleDir}/manifest.json`,
+    ].sort()
+  }
+
+  it('resolves every loadable multi-product target including non-servable copies', () => {
+    const sentinels = {
+      summary: 'PURGE-AFFECTED-SET-SUMMARY-MUST-NOT-LEAK',
+      body: 'PURGE-AFFECTED-SET-BODY-MUST-NOT-LEAK',
+      anchor: 'Purge affected-set anchor must not leak',
+    }
+    const anchors = [
+      { t: 'el', role: 'button', name: sentinels.anchor },
+      { t: 'page', route: '/purge/affected-set' },
+      { t: 'platform', platform: 'web' },
+    ] satisfies Anchor[]
+    const overrides: Partial<PublishBundleInput> = {
+      draft: makeBundleDraftFixture({
+        anchors,
+        scope: { tier: 'product', key: PRODUCT },
+        summary: sentinels.summary,
+        body: sentinels.body,
+      }),
+    }
+    const primary = publishForProduct(PRODUCT, 'affected-set-multi-product', anchors, overrides)
+    const deprecated = publishForProduct(
+      'purge-second-product',
+      'affected-set-multi-product',
+      anchors,
+      overrides,
+    )
+    expect(deprecated.id).toBe(primary.id)
+    expect(
+      knowledgeLocal.appendOutcomeEvent(
+        config('purge-second-product'),
+        deprecated.id,
+        BundleOutcomeEventSchema.parse({
+          type: 'deprecated',
+          evidenceToken: 'purge-affected-set-deprecated',
+          curationJobId: 'purge-affected-set-deprecated-job',
+          buildOrdinal: 44,
+          reason: 'Non-servable copy remains a destructive purge target',
+        }),
+      ).kind,
+    ).toBe('appended')
+    expect(
+      knowledgeLocal.scanBundleById({ knowledgeRoot, bundleId: primary.id })?.product,
+    ).toBe(PRODUCT)
+
+    const affectedSet = purgePlanningApi().resolvePurgeAffectedSet({
+      knowledgeRoot,
+      recordId: primary.id,
+    })
+
+    expect(affectedSet.state).toBe('live')
+    expect(affectedSet.bundles).toEqual([
+      {
+        product: PRODUCT,
+        bundleDir: relativePath(primary.dir),
+        kind: 'fact',
+        affectedPaths: expectedBundlePaths(primary),
+      },
+      {
+        product: 'purge-second-product',
+        bundleDir: relativePath(deprecated.dir),
+        kind: 'fact',
+        affectedPaths: expectedBundlePaths(deprecated),
+      },
+    ])
+    expect(affectedSet.receiptAffectedPaths).toEqual(
+      [...expectedBundlePaths(primary), ...expectedBundlePaths(deprecated)].sort(),
+    )
+    const rendered = JSON.stringify(affectedSet)
+    expect(rendered).not.toContain(sentinels.summary)
+    expect(rendered).not.toContain(sentinels.body)
+    expect(rendered).not.toContain(sentinels.anchor)
+    expect(purgePlanningApi().purgeAffectedSetFingerprint(affectedSet)).toMatch(
+      /^[0-9a-f]{64}$/u,
+    )
+  })
+
+  it('includes canonical curation and canary queue, projection, cache, intent, and receipt targets', () => {
+    const target = publish('affected-set-complete-targets', [
+      { t: 'el', role: 'button', name: 'Complete affected-set targets' },
+      { t: 'page', route: '/purge/affected-set/complete' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const targetBody = loadedMatch(target.dir).bundle.body
+    const curationId = enqueue(
+      'affected-set-curation-target',
+      [
+        { t: 'el', role: 'link', name: 'Affected-set curation payload' },
+        { t: 'page', route: '/purge/affected-set/curation' },
+        { t: 'platform', platform: 'web' },
+      ],
+      { bodySeed: targetBody },
+    )
+    const canaryId = enqueueCanary(target.id, 'affected-set-canary-target')
+
+    const affectedSet = purgePlanningApi().resolvePurgeAffectedSet({
+      knowledgeRoot,
+      recordId: target.id,
+    })
+
+    expect(affectedSet.projectionTargets).toEqual([
+      'records',
+      'anchors',
+      'fts',
+      'vec',
+      'graph',
+    ])
+    expect(affectedSet.embedCacheAction).toBe('clear-all')
+    expect(affectedSet.intentPath).toBe(
+      `memory/receipts/purge-${target.id}.intent.json`,
+    )
+    expect(affectedSet.receiptPath).toBe(`memory/receipts/purge-${target.id}.json`)
+    expect(affectedSet.queueTargets).toEqual(
+      [curationId, canaryId]
+        .map((candidateId) => ({
+          candidateId,
+          candidateDir: relativePath(
+            knowledgeLocal.queuedCandidateDir(knowledgeRoot, candidateId),
+          ),
+          jobStatePath: relativePath(
+            knowledgeLocal.jobStatePath(knowledgeRoot, candidateId),
+          ),
+        }))
+        .sort((left, right) => left.candidateDir.localeCompare(right.candidateDir)),
+    )
+  })
+
+  it('resolves a partially applied durable intent to the same resumable target plan and receipt', () => {
+    const anchors = [
+      { t: 'el', role: 'button', name: 'Durable affected-set resume' },
+      { t: 'page', route: '/purge/affected-set/resume' },
+      { t: 'platform', platform: 'web' },
+    ] satisfies Anchor[]
+    const first = publishForProduct(PRODUCT, 'affected-set-resume', anchors)
+    const second = publishForProduct('purge-resume-second-product', 'affected-set-resume', anchors)
+    expect(second.id).toBe(first.id)
+    let intentPlan: PurgeAffectedSet | undefined
+
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: first.id,
+        initiator: 'user',
+        hooks: {
+          afterIntentWritten: () => {
+            intentPlan = purgePlanningApi().resolvePurgeAffectedSet({
+              knowledgeRoot,
+              recordId: first.id,
+            })
+          },
+          afterBundleRemoval: () => {
+            throw new Error('injected crash after first affected-set bundle removal')
+          },
+        },
+      }),
+    ).toThrow('injected crash after first affected-set bundle removal')
+
+    const resumedPlan = purgePlanningApi().resolvePurgeAffectedSet({
+      knowledgeRoot,
+      recordId: first.id,
+    })
+    expect(resumedPlan.state).toBe('resume')
+    expect(resumedPlan).toEqual(intentPlan)
+    const expectedFingerprint = purgePlanningApi().purgeAffectedSetFingerprint(resumedPlan)
+    const intent = purgeIntentSchemaApi().guardPurgeIntent(
+      JSON.parse(
+        readFileSync(
+          join(
+            knowledgeRoot,
+            'memory',
+            'receipts',
+            `purge-${first.id}.intent.json`,
+          ),
+          'utf8',
+        ),
+      ),
+    )
+
+    const outcome = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: first.id,
+      initiator: 'user',
+      expectedAffectedSetFingerprint: expectedFingerprint,
+    })
+    expect(outcome.kind).toBe('purged')
+    expect(outcome.receipt).toEqual(intent.receipt)
+  })
+
+  it('rejects a stale affected-set fingerprint before intent or destructive mutation', async () => {
+    const anchors = [
+      { t: 'el', role: 'button', name: 'Affected-set drift target' },
+      { t: 'page', route: '/purge/affected-set/drift' },
+      { t: 'platform', platform: 'web' },
+    ] satisfies Anchor[]
+    const first = publishForProduct(PRODUCT, 'affected-set-drift', anchors)
+    const matchedId = enqueue(
+      'affected-set-drift-queue',
+      [
+        { t: 'el', role: 'link', name: 'Affected-set drift queue payload' },
+        { t: 'page', route: '/purge/affected-set/drift/queue' },
+        { t: 'platform', platform: 'web' },
+      ],
+      { bodySeed: loadedMatch(first.dir).bundle.body },
+    )
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const original = purgePlanningApi().resolvePurgeAffectedSet({
+      knowledgeRoot,
+      recordId: first.id,
+    })
+    const expectedFingerprint = purgePlanningApi().purgeAffectedSetFingerprint(original)
+    const drifted = publishForProduct('purge-drift-second-product', 'affected-set-drift', anchors)
+    expect(drifted.id).toBe(first.id)
+
+    let caught: unknown
+    try {
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: first.id,
+        initiator: 'user',
+        expectedAffectedSetFingerprint: expectedFingerprint,
+      })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(purgePlanningApi().PurgeTargetChangedError)
+    expect(caught).toMatchObject({ code: 'purge-target-changed' })
+    expect(existsSync(first.dir)).toBe(true)
+    expect(existsSync(drifted.dir)).toBe(true)
+    expect(recordsRowPresent(first.id)).toBe(true)
+    expect(
+      existsSync(knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedId)),
+    ).toBe(true)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedId))).toBe(true)
+    expect(
+      existsSync(
+        join(knowledgeRoot, 'memory', 'receipts', `purge-${first.id}.intent.json`),
+      ),
+    ).toBe(false)
+    expect(
+      existsSync(join(knowledgeRoot, 'memory', 'receipts', `purge-${first.id}.json`)),
+    ).toBe(false)
+  })
 
   it('removes the complete committed bundle directory', () => {
     const target = publish('bundle-tree', [
