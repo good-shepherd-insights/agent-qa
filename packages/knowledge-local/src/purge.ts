@@ -231,6 +231,33 @@ export class PurgeTargetChangedError extends Error {
   }
 }
 
+export class PurgeTargetIntegrityError extends Error {
+  readonly code = 'purge-target-integrity'
+
+  constructor(readonly targetPath: string, readonly reason: string) {
+    super(`purge target ${targetPath} is not safely readable: ${reason}`)
+    this.name = 'PurgeTargetIntegrityError'
+  }
+}
+
+export class PurgeQueueIdentityError extends Error {
+  readonly code = 'purge-queue-identity'
+
+  constructor(readonly targetPath: string, readonly reason: string) {
+    super(`purge cannot establish queue identity at ${targetPath}: ${reason}`)
+    this.name = 'PurgeQueueIdentityError'
+  }
+}
+
+export class PurgeCompletionVerificationError extends Error {
+  readonly code = 'purge-completion-verification'
+
+  constructor(readonly survivingSurface: string) {
+    super(`purge completion verification found a surviving surface: ${survivingSurface}`)
+    this.name = 'PurgeCompletionVerificationError'
+  }
+}
+
 function assertInput(input: PurgeRecordInput): void {
   if (!isAbsolute(input.knowledgeRoot)) {
     throw new TypeError('knowledgeRoot must be absolute')
@@ -268,10 +295,52 @@ function fenceWriterAuthority(input: PurgeRecordInput): void {
 
 function resolveBundles(knowledgeRoot: string, recordId: RecordId): ResolvedBundle[] {
   const matches: ResolvedBundle[] = []
-  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
-    const loaded = loadBundle(entry.dir)
-    if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== recordId) continue
-    matches.push({ product: entry.product, dir: entry.dir, bundle: loaded.bundle })
+  const memoryRoot = join(knowledgeRoot, 'memory')
+  let entries: Dirent<string>[]
+  try {
+    entries = readdirSync(memoryRoot, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (
+      entry.name.startsWith('.')
+      || entry.name === 'index'
+      || entry.name === 'queue'
+      || entry.name === 'receipts'
+    ) continue
+    const targetRelativePath = `memory/${entry.name}/bundles/${recordId}`
+    const targetDir = join(knowledgeRoot, targetRelativePath)
+    let targetStat
+    try {
+      targetStat = lstatSync(targetDir)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
+    }
+    if (
+      !PURGE_SAFE_PATH_SEGMENT.test(entry.name)
+      || entry.name === '.'
+      || entry.name === '..'
+    ) {
+      throw new PurgeTargetIntegrityError(targetRelativePath, 'non-canonical product path')
+    }
+    assertNoSymlinkComponents(knowledgeRoot, targetRelativePath)
+    if (!targetStat.isDirectory()) {
+      throw new PurgeTargetIntegrityError(targetRelativePath, 'target is not a directory')
+    }
+    const loaded = loadBundle(targetDir)
+    if (loaded.kind !== 'loaded') {
+      throw new PurgeTargetIntegrityError(targetRelativePath, loaded.kind)
+    }
+    if (loaded.bundle.manifest.id !== recordId) {
+      throw new PurgeTargetIntegrityError(
+        targetRelativePath,
+        `manifest identifies ${loaded.bundle.manifest.id}`,
+      )
+    }
+    matches.push({ product: entry.name, dir: targetDir, bundle: loaded.bundle })
   }
   return matches
 }
@@ -472,14 +541,24 @@ export function resolveQueueSweepTargets(
 
   const targets: QueueSweepTarget[] = []
   for (const candidateDir of payloadDirectories(queueRoot(knowledgeRoot))) {
+    const candidateId = basename(candidateDir)
+    if (!QUEUE_CANDIDATE_ID.test(candidateId)) {
+      throw new PurgeQueueIdentityError(candidateDir, 'non-canonical candidate directory')
+    }
+    if (lineage.has(candidateId)) {
+      targets.push({ candidateDir, candidateId })
+      continue
+    }
+
     let payload: unknown
     try {
       payload = JSON.parse(readFileSync(join(candidateDir, 'payload.json'), 'utf8'))
-    } catch {
-      continue
+    } catch (error) {
+      throw new PurgeQueueIdentityError(
+        candidateDir,
+        error instanceof Error ? error.message : 'malformed JSON payload',
+      )
     }
-    const candidateId = basename(candidateDir)
-    if (!QUEUE_CANDIDATE_ID.test(candidateId)) continue
 
     const curationCandidate = curationCandidatePayloadSchema.safeParse(payload)
     if (curationCandidate.success) {
@@ -501,6 +580,22 @@ export function resolveQueueSweepTargets(
     const canaryOutcome = canaryOutcomePayloadSchema.safeParse(payload)
     if (canaryOutcome.success && lineage.has(canaryOutcome.data.candidateId)) {
       targets.push({ candidateDir, candidateId })
+      continue
+    }
+
+    const payloadCandidateId = (
+      typeof payload === 'object'
+      && payload !== null
+      && 'candidateId' in payload
+      && typeof payload.candidateId === 'string'
+    ) ? payload.candidateId : undefined
+    if (payloadCandidateId !== undefined && lineage.has(payloadCandidateId)) {
+      targets.push({ candidateDir, candidateId })
+      continue
+    }
+
+    if (!curationCandidate.success && !canaryOutcome.success) {
+      throw new PurgeQueueIdentityError(candidateDir, 'payload does not match a known queue schema')
     }
   }
   return targets.sort((left, right) =>
@@ -529,6 +624,68 @@ function sweepQueuePayloads(
       () => fenceWriterAuthority(input),
     )
   }
+}
+
+function assertPurgePathAbsent(knowledgeRoot: string, relativePath: string): void {
+  try {
+    lstatSync(join(knowledgeRoot, relativePath))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  throw new PurgeCompletionVerificationError(relativePath)
+}
+
+function verifyPurgedIndexSurfaces(knowledgeRoot: string, recordId: RecordId): void {
+  if (!existsSync(indexDbPath(knowledgeRoot))) return
+  const writer = openIndexWriter(knowledgeRoot)
+  try {
+    if (writer.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(recordId)) {
+      throw new PurgeCompletionVerificationError(`index records/${recordId}`)
+    }
+    const nodeIds = ['fact', 'procedure', 'caution', 'unknown', 'policy']
+      .map((kind) => recordGraphNode(
+        kind as LoadedBundle['frontmatter']['kind'],
+        recordId,
+      ).nodeId)
+    for (const nodeId of nodeIds) {
+      if (writer.db.prepare('SELECT 1 FROM graph_nodes WHERE node_id = ?').get(nodeId)) {
+        throw new PurgeCompletionVerificationError(`index graph_nodes/${nodeId}`)
+      }
+      if (writer.db.prepare(`
+        SELECT 1 FROM graph_edges WHERE src_node_id = ? OR dst_node_id = ?
+      `).get(nodeId, nodeId)) {
+        throw new PurgeCompletionVerificationError(`index graph_edges/${nodeId}`)
+      }
+    }
+  } finally {
+    writer.close()
+  }
+}
+
+/** Fail closed immediately before receipt publication if any selected surface still exists. */
+function verifyPurgeCompletion(input: PurgeRecordInput, intent: PurgeIntent): void {
+  const rediscoveredBundles = resolveBundles(input.knowledgeRoot, input.recordId)
+  if (rediscoveredBundles.length > 0) {
+    throw new PurgeCompletionVerificationError(
+      toReceiptPath(input.knowledgeRoot, rediscoveredBundles[0]!.dir),
+    )
+  }
+  for (const path of intent.bundleDirs) assertPurgePathAbsent(input.knowledgeRoot, path)
+  for (const path of intent.queuePayloadDirs) assertPurgePathAbsent(input.knowledgeRoot, path)
+  for (const candidateId of intent.queueCandidateIds) {
+    assertPurgePathAbsent(
+      input.knowledgeRoot,
+      `memory/queue/jobs/${candidateId}.state.json`,
+    )
+  }
+  const candidateIds = new Set(intent.queueCandidateIds)
+  for (const dir of payloadDirectories(queueRoot(input.knowledgeRoot))) {
+    if (candidateIds.has(basename(dir))) {
+      throw new PurgeCompletionVerificationError(toReceiptPath(input.knowledgeRoot, dir))
+    }
+  }
+  verifyPurgedIndexSurfaces(input.knowledgeRoot, input.recordId)
 }
 
 /**
@@ -1266,6 +1423,7 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
     rmSync(jobStatePath(input.knowledgeRoot, candidateId), { force: true })
   }
   input.hooks?.afterQueueSweep?.()
+  verifyPurgeCompletion(input, intent)
   return publishReceiptAndRetire(
     input,
     committedFileText(intent.receipt),
@@ -1374,5 +1532,6 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   sweepQueuePayloads(input, queueSweepTargets)
   input.hooks?.afterQueueSweep?.()
 
+  verifyPurgeCompletion(input, intent)
   return publishReceiptAndRetire(input, receiptText, receipt, receiptCycle)
 }

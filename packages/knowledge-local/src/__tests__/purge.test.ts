@@ -1,4 +1,6 @@
 import {
+  chmodSync,
+  cpSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -697,6 +699,147 @@ describe('DCAY-05 sovereign purge', () => {
     expect(
       existsSync(join(knowledgeRoot, 'memory', 'receipts', `purge-${first.id}.json`)),
     ).toBe(false)
+  })
+
+  describe('fail-closed true-delete verification', () => {
+    const lineageId = 'a'.repeat(64)
+
+    function publishLineageTarget(identity: string): PublishedBundle {
+      return publish(identity, [
+        { t: 'el', role: 'button', name: `Queue lineage ${identity}` },
+        { t: 'page', route: `/purge/queue-lineage/${identity}` },
+        { t: 'platform', platform: 'web' },
+      ], {
+        provenance: {
+          mode: 'run-linked',
+          runId: `queue-lineage-${identity}-run`,
+          testId: `queue-lineage-${identity}-test`,
+          stepIndex: 0,
+          curationJobId: lineageId,
+          sourceBuildOrdinal: 42,
+        },
+      })
+    }
+
+    function plantQueuePayload(candidateId: string, text: string): string {
+      const dir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, candidateId)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'payload.json'), text, 'utf8')
+      knowledgeLocal.writeJobState({
+        knowledgeRoot,
+        candidateId,
+        lifecycle: 'queued',
+      })
+      return dir
+    }
+
+    it('refuses a malformed manifest at the canonical target path', () => {
+      const target = publish('malformed-manifest-target', [
+        { t: 'el', role: 'button', name: 'Malformed manifest target' },
+        { t: 'page', route: '/purge/malformed-manifest' },
+        { t: 'platform', platform: 'web' },
+      ])
+      writeFileSync(join(target.dir, 'manifest.json'), '{malformed\n', 'utf8')
+
+      expect(() => purge(target.id)).toThrow(knowledgeLocal.PurgeTargetIntegrityError)
+      expect(existsSync(target.dir)).toBe(true)
+    })
+
+    it('refuses an incomplete canonical target bundle', () => {
+      const target = publish('incomplete-bundle-target', [
+        { t: 'el', role: 'button', name: 'Incomplete bundle target' },
+        { t: 'page', route: '/purge/incomplete-bundle' },
+        { t: 'platform', platform: 'web' },
+      ])
+      rmSync(join(target.dir, 'manifest.json'))
+
+      expect(() => purge(target.id)).toThrow(knowledgeLocal.PurgeTargetIntegrityError)
+      expect(existsSync(target.dir)).toBe(true)
+    })
+
+    it('refuses an unreadable canonical target before deletion', () => {
+      const target = publish('unreadable-bundle-target', [
+        { t: 'el', role: 'button', name: 'Unreadable bundle target' },
+        { t: 'page', route: '/purge/unreadable-bundle' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const manifestPath = join(target.dir, 'manifest.json')
+      chmodSync(manifestPath, 0o000)
+      try {
+        expect(() => purge(target.id)).toThrow(knowledgeLocal.PurgeTargetIntegrityError)
+        expect(existsSync(target.dir)).toBe(true)
+      } finally {
+        chmodSync(manifestPath, 0o600)
+      }
+    })
+
+    it('deletes a known lineage queue directory despite malformed JSON payload bytes', () => {
+      const target = publishLineageTarget('malformed-lineage-payload')
+      const candidateDir = plantQueuePayload(lineageId, '{malformed\n')
+
+      expect(purge(target.id).kind).toBe('purged')
+      expect(existsSync(candidateDir)).toBe(false)
+      expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, lineageId))).toBe(false)
+    })
+
+    it('deletes schema-drifted payloads whose embedded lineage remains known', () => {
+      const target = publishLineageTarget('schema-drift-lineage-payload')
+      const entryId = 'b'.repeat(64)
+      const candidateDir = plantQueuePayload(entryId, `${JSON.stringify({
+        schemaVersion: 999,
+        candidateId: lineageId,
+        unexpected: true,
+      })}\n`)
+
+      expect(purge(target.id).kind).toBe('purged')
+      expect(existsSync(candidateDir)).toBe(false)
+      expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, entryId))).toBe(false)
+    })
+
+    it('refuses malformed queue bytes whose target linkage cannot be established', () => {
+      const target = publish('unresolved-malformed-queue', [
+        { t: 'el', role: 'button', name: 'Unresolved malformed queue' },
+        { t: 'page', route: '/purge/unresolved-malformed-queue' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const candidateDir = plantQueuePayload('c'.repeat(64), '{malformed\n')
+
+      expect(() => purge(target.id)).toThrow(knowledgeLocal.PurgeQueueIdentityError)
+      expect(existsSync(target.dir)).toBe(true)
+      expect(existsSync(candidateDir)).toBe(true)
+      expect(existsSync(join(
+        knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${target.id}.intent.json`,
+      ))).toBe(false)
+    })
+
+    it('withholds the receipt when a target reappears before completion verification', () => {
+      const target = publish('completion-verification-race', [
+        { t: 'el', role: 'button', name: 'Completion verification race' },
+        { t: 'page', route: '/purge/completion-verification-race' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const backup = join(root, 'completion-verification-backup')
+      cpSync(target.dir, backup, { recursive: true })
+
+      expect(() => purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        hooks: {
+          afterQueueSweep: () => cpSync(backup, target.dir, { recursive: true }),
+        },
+      })).toThrow(knowledgeLocal.PurgeCompletionVerificationError)
+      expect(existsSync(target.dir)).toBe(true)
+      expect(existsSync(join(
+        knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${target.id}.json`,
+      ))).toBe(false)
+    })
   })
 
   it('removes the complete committed bundle directory', () => {

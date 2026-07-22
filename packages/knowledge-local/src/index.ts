@@ -364,9 +364,12 @@ export type {
 } from './lease/writer-lease.js'
 export {
   guardPurgeReceipt,
+  PurgeCompletionVerificationError,
+  PurgeQueueIdentityError,
   PURGE_RECEIPT_SCHEMA_VERSION,
   PurgeReceiptSchema,
   PurgeTargetChangedError,
+  PurgeTargetIntegrityError,
   purgeAffectedSetFingerprint,
   purgeReceiptSchema,
   purgeRecord,
