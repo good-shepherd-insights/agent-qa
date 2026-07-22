@@ -13,6 +13,7 @@ import { join, relative } from 'node:path'
 
 import {
   guardPurgeReceipt,
+  loadBundle,
   publishBundle,
 } from '@vostride/agent-qa-knowledge-local'
 import type {
@@ -112,7 +113,10 @@ interface InvocationResult {
   commanderError?: CommanderError
 }
 
-function fixtureWorkspace(roots: string[]): FixtureWorkspace {
+function fixtureWorkspace(
+  roots: string[],
+  ordinals: Readonly<Record<string, number>> = { [PRODUCT]: BUILD_ORDINAL },
+): FixtureWorkspace {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-knowledge-maintain-${randomUUID()}-`))
   roots.push(root)
   const configPath = join(root, 'agent-qa.config.yaml')
@@ -140,7 +144,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
   )
   writeFileSync(
     join(runtimeRoot, 'build-ordinals.json'),
-    `${JSON.stringify({ [PRODUCT]: BUILD_ORDINAL })}\n`,
+    `${JSON.stringify(ordinals)}\n`,
     'utf8',
   )
   return {
@@ -151,12 +155,21 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
   }
 }
 
-function bundleInput(): PublishBundleInput {
+interface SeedBundleOptions {
+  product?: string
+  createdAtOrdinal?: number
+  curationJobId?: string
+}
+
+function bundleInput(options: SeedBundleOptions = {}): PublishBundleInput {
+  const product = options.product ?? PRODUCT
+  const createdAtOrdinal = options.createdAtOrdinal ?? 5
+  const curationJobId = options.curationJobId ?? CURATION_JOB_ID
   const draft: BundleDraft = {
     kind: 'fact',
     subtype: 'selector',
     anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
-    scope: { tier: 'product', key: PRODUCT },
+    scope: { tier: 'product', key: product },
     summary: 'Use the Checkout button to continue.',
     body: 'The checkout selector was confirmed by a completed run.',
     distilledEvidenceRef: {
@@ -174,41 +187,55 @@ function bundleInput(): PublishBundleInput {
     draft,
     discriminant,
     originClass: 'agent-verified',
-    createdAtOrdinal: 5,
+    createdAtOrdinal,
     screenStates: [],
     initialEvents: [BundleOutcomeEventSchema.parse({
       type: 'confirmed',
-      evidenceToken: asEvidenceToken('maintenance-confirmation'),
-      curationJobId: CURATION_JOB_ID,
-      buildOrdinal: 5,
+      evidenceToken: asEvidenceToken(`maintenance-confirmation-${product}-${createdAtOrdinal}`),
+      curationJobId,
+      buildOrdinal: createdAtOrdinal,
       origin: 'agent-verified',
     })],
     relations: [],
     provenance: {
       mode: 'run-linked',
-      runId: 'run-knowledge-maintenance',
+      runId: `run-knowledge-maintenance-${product}`,
       testId: 'test-knowledge-maintenance',
       stepIndex: 0,
-      curationJobId: CURATION_JOB_ID,
-      sourceBuildOrdinal: 5,
+      curationJobId,
+      sourceBuildOrdinal: createdAtOrdinal,
     },
     artifacts: [],
     evidenceMarkdown: 'Checkout was observed deterministically.\n',
   }
 }
 
-function seedBundle(workspace: FixtureWorkspace): { id: string; dir: string } {
+function seedBundle(
+  workspace: FixtureWorkspace,
+  options: SeedBundleOptions = {},
+): { id: string; dir: string } {
+  const product = options.product ?? PRODUCT
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
-    productKey: PRODUCT,
+    productKey: product,
     auditBaseDir: workspace.runtimeRoot,
     commitArtifacts: 'none',
   }
-  const published = publishBundle(config, bundleInput())
+  const published = publishBundle(config, bundleInput(options))
   if (published.kind !== 'published') {
     throw new Error(`expected published maintenance fixture, got ${published.kind}`)
   }
   return { id: published.id, dir: published.dir }
+}
+
+function rollbackInverseOrdinals(bundleDir: string): number[] {
+  const loaded = loadBundle(bundleDir)
+  if (loaded.kind !== 'loaded') {
+    throw new Error(`expected loaded rollback fixture, got ${loaded.kind}`)
+  }
+  return loaded.bundle.events
+    .filter(({ curationJobId }) => curationJobId.startsWith('rollback:'))
+    .map(({ buildOrdinal }) => buildOrdinal)
 }
 
 function snapshotFiles(root: string): Record<string, string> {
@@ -422,6 +449,139 @@ describe('knowledge maintenance commands', () => {
       question: 'Apply this rollback? (y/N) ',
     }])
     expect(commandHarness.rollbackCurationJobCalls).toBe(1)
+  })
+
+  it('rolls back a job minted at the current product ordinal using the reserved next ordinal', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(workspace, { createdAtOrdinal: BUILD_ORDINAL })
+
+    const result = await invoke(workspace, [
+      'rollback',
+      '--job',
+      CURATION_JOB_ID,
+      '--yes',
+      '--json',
+    ])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      inverseCount: 1,
+      deprecatedBundles: [bundle.id],
+    })
+    expect(commandHarness.rollbackCurationJobCalls).toBe(1)
+    expect(JSON.parse(readFileSync(
+      join(workspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    ))).toEqual({ [PRODUCT]: BUILD_ORDINAL + 1 })
+    expect(rollbackInverseOrdinals(bundle.dir)).toEqual([BUILD_ORDINAL + 1])
+  })
+
+  it('advances every affected campaign product to one reserved ordinal', async () => {
+    const firstProduct = 'campaign-alpha'
+    const secondProduct = 'campaign-beta'
+    const workspace = fixtureWorkspace(roots, {
+      [firstProduct]: 7,
+      [secondProduct]: 11,
+      untouched: 99,
+    })
+    const first = seedBundle(workspace, {
+      product: firstProduct,
+      createdAtOrdinal: 7,
+      curationJobId: 'campaign-job-alpha',
+    })
+    const second = seedBundle(workspace, {
+      product: secondProduct,
+      createdAtOrdinal: 11,
+      curationJobId: 'campaign-job-beta',
+    })
+
+    const result = await invoke(workspace, [
+      'rollback',
+      '--from-build',
+      '7',
+      '--to-build',
+      '11',
+      '--yes',
+      '--json',
+    ])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      inverseCount: 2,
+      deprecatedBundles: [first.id, second.id].sort(),
+    })
+    expect(commandHarness.rollbackCampaignCalls).toBe(1)
+    expect(JSON.parse(readFileSync(
+      join(workspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    ))).toEqual({
+      [firstProduct]: 12,
+      [secondProduct]: 12,
+      untouched: 99,
+    })
+    expect(rollbackInverseOrdinals(first.dir)).toEqual([12])
+    expect(rollbackInverseOrdinals(second.dir)).toEqual([12])
+  })
+
+  it('refuses missing and exhausted affected counters before invoking rollback mutators', async () => {
+    const missingProduct = 'missing-counter-product'
+    const missingWorkspace = fixtureWorkspace(roots, { untouched: 4 })
+    seedBundle(missingWorkspace, {
+      product: missingProduct,
+      createdAtOrdinal: 5,
+      curationJobId: 'missing-counter-job',
+    })
+    const missingCounters = readFileSync(
+      join(missingWorkspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    )
+
+    const missing = await invoke(missingWorkspace, [
+      'rollback',
+      '--job',
+      'missing-counter-job',
+      '--yes',
+      '--json',
+    ])
+    expect(missing.exitCode).toBe(1)
+    expect(missing.stderr).toContain('missing-counter-product')
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+    expect(readFileSync(
+      join(missingWorkspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    )).toBe(missingCounters)
+
+    const exhaustedProduct = 'exhausted-counter-product'
+    const exhaustedWorkspace = fixtureWorkspace(roots, {
+      [exhaustedProduct]: Number.MAX_SAFE_INTEGER,
+    })
+    seedBundle(exhaustedWorkspace, {
+      product: exhaustedProduct,
+      createdAtOrdinal: 6,
+      curationJobId: 'exhausted-counter-job',
+    })
+    const exhaustedCounters = readFileSync(
+      join(exhaustedWorkspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    )
+
+    const exhausted = await invoke(exhaustedWorkspace, [
+      'rollback',
+      '--job',
+      'exhausted-counter-job',
+      '--yes',
+      '--json',
+    ])
+    expect(exhausted.exitCode).toBe(1)
+    expect(exhausted.stderr).toContain('exhausted')
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+    expect(readFileSync(
+      join(exhaustedWorkspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    )).toBe(exhaustedCounters)
+    expect(readdirSync(exhaustedWorkspace.runtimeRoot).some(file => file.endsWith('.tmp'))).toBe(
+      false,
+    )
   })
 
   it('keeps interactive purge JSON stdout parseable while prompting on stderr', async () => {
