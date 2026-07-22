@@ -17,7 +17,7 @@ import {
   DEFAULT_EMBEDDING_PROFILE,
   graphNodeId,
 } from '@vostride/agent-qa-schema'
-import type { Anchor } from '@vostride/agent-qa-schema'
+import type { Anchor, CanaryOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
@@ -27,6 +27,7 @@ import type {
   PublishBundleInput,
   PublishBundleOutcome,
 } from '../index.js'
+import { enqueueCanaryOutcome } from '../canary-emit.js'
 import * as purgeModule from '../purge.js'
 import {
   candidateProjectionFixture,
@@ -265,6 +266,38 @@ describe('DCAY-05 sovereign purge', () => {
       lifecycle: 'queued',
     })
     return outcome.candidateId
+  }
+
+  function enqueueCanary(
+    candidateId: CanaryOutcome['candidateId'],
+    identity: string,
+  ): string {
+    const outcome = enqueueCanaryOutcome(knowledgeRoot, {
+      candidateId,
+      runOutcome: 'positive',
+      runId: `purge-canary-${identity}-run`,
+      testId: `purge-canary-${identity}-test`,
+      testIndex: 0,
+      buildOrdinal: 43,
+      stepIndex: 0,
+      briefDigest: `purge-canary-${identity}-brief`,
+      attribution: `Canary attribution for ${identity}`,
+      exercisedAnchor: {
+        t: 'el',
+        role: 'button',
+        name: `Canary control ${identity}`,
+      },
+    })
+    expect(outcome.kind).toBe('enqueued')
+    if (outcome.kind !== 'enqueued') {
+      throw new Error(`expected ${identity} canary admission, got ${outcome.kind}`)
+    }
+    knowledgeLocal.writeJobState({
+      knowledgeRoot,
+      candidateId: outcome.entryId,
+      lifecycle: 'queued',
+    })
+    return outcome.entryId
   }
 
   function loadedMatch(dir: string): { dir: string; bundle: LoadedBundle } {
@@ -508,6 +541,112 @@ describe('DCAY-05 sovereign purge', () => {
     expect(readdirSync(knowledgeLocal.queuedRoot(knowledgeRoot))).toEqual([survivorId])
     expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, lineageId))).toBe(false)
     expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
+  })
+
+  it('deletes a matching canary outcome by lineage and its queue-entry keyed job state', () => {
+    const target = publish('queue-canary-target', [
+      { t: 'el', role: 'button', name: 'Canary purge target' },
+      { t: 'page', route: '/purge/queue/canary-target' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const unrelated = publish('queue-canary-unrelated-record', [
+      { t: 'el', role: 'link', name: 'Unrelated canary record' },
+      { t: 'page', route: '/purge/queue/canary-unrelated' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const matchedEntryId = enqueueCanary(target.id, 'matching')
+    const survivorEntryId = enqueueCanary(unrelated.id, 'survivor')
+    const matchedDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedEntryId)
+    const survivorDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, survivorEntryId)
+    const survivorPayloadBytes = readFileSync(join(survivorDir, 'payload.json'))
+    const survivorStatePath = knowledgeLocal.jobStatePath(knowledgeRoot, survivorEntryId)
+    const survivorStateBytes = readFileSync(survivorStatePath)
+    let intentAtPublication: PurgeIntent | undefined
+
+    expect(matchedEntryId).not.toBe(target.id)
+    const outcome = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: target.id,
+      initiator: 'user',
+      hooks: {
+        afterIntentWritten: () => {
+          intentAtPublication = purgeIntentSchemaApi().guardPurgeIntent(
+            JSON.parse(
+              readFileSync(
+                join(
+                  knowledgeRoot,
+                  'memory',
+                  'receipts',
+                  `purge-${target.id}.intent.json`,
+                ),
+                'utf8',
+              ),
+            ),
+          )
+          expect(existsSync(matchedDir)).toBe(true)
+          expect(
+            existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedEntryId)),
+          ).toBe(true)
+        },
+      },
+    })
+
+    expect(outcome.kind).toBe('purged')
+    expect(intentAtPublication?.queueCandidateIds).toEqual([matchedEntryId])
+    expect(intentAtPublication?.queuePayloadDirs).toEqual([
+      relative(knowledgeRoot, matchedDir),
+    ])
+    expect(existsSync(matchedDir)).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedEntryId))).toBe(
+      false,
+    )
+    expect(existsSync(survivorDir)).toBe(true)
+    expect(readFileSync(join(survivorDir, 'payload.json'))).toEqual(survivorPayloadBytes)
+    expect(readFileSync(survivorStatePath)).toEqual(survivorStateBytes)
+  })
+
+  it('resumes the persisted canary deletion set without rescanning changed payload bytes', () => {
+    const target = publish('queue-canary-resume-target', [
+      { t: 'el', role: 'button', name: 'Canary resume target' },
+      { t: 'page', route: '/purge/queue/canary-resume' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const matchedEntryId = enqueueCanary(target.id, 'resume-matching')
+    const matchedDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedEntryId)
+    const intentFile = join(
+      knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${target.id}.intent.json`,
+    )
+
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        hooks: {
+          afterIntentWritten: () => {
+            throw new Error('injected crash after canary intent')
+          },
+        },
+      }),
+    ).toThrow('injected crash after canary intent')
+
+    const intent = purgeIntentSchemaApi().guardPurgeIntent(
+      JSON.parse(readFileSync(intentFile, 'utf8')),
+    )
+    expect(intent.queueCandidateIds).toEqual([matchedEntryId])
+    expect(intent.queuePayloadDirs).toEqual([relative(knowledgeRoot, matchedDir)])
+
+    writeFileSync(join(matchedDir, 'payload.json'), '{"changedAfterIntent":true}\n')
+
+    expect(purge(target.id).kind).toBe('purged')
+    expect(existsSync(matchedDir)).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedEntryId))).toBe(
+      false,
+    )
+    expect(existsSync(intentFile)).toBe(false)
   })
 
   it('deletes a queue payload sharing an artifact digest with the purged manifests', () => {
