@@ -462,6 +462,26 @@ function renderPurgePreview(affected: PurgeAffectedSet): string {
   ].join('\n')
 }
 
+async function purgeOrdinal(
+  paths: KnowledgePaths,
+  affected: PurgeAffectedSet,
+  writerAuthority: WriterLeaseAuthority,
+): Promise<number | undefined> {
+  if (affected.state !== 'live') return undefined
+  const ordinal = await reserveBuildOrdinalForProducts({
+    root: paths.runtimeRoot,
+    products: affected.bundles.map(({ product }) => product),
+    beforePersist: () => refreshWriterLeaseAuthority(writerAuthority),
+  })
+  if (ordinal === undefined) {
+    throw new KnowledgeMaintainCommandError(
+      'invalid-ordinal',
+      'live purge affected no product ordinal counters',
+    )
+  }
+  return ordinal
+}
+
 function assertPreviewUnchanged(verb: 'rollback' | 'purge', before: string, after: string): void {
   if (before === after) return
   throw new KnowledgeMaintainCommandError(
@@ -647,6 +667,11 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               previewFingerprint,
               underLeaseFingerprint,
             )
+            const purgedAtOrdinal = await purgeOrdinal(
+              paths,
+              underLeaseAffectedSet,
+              writerAuthority,
+            )
             const outcome = purgeRecord({
               knowledgeRoot: paths.knowledgeRoot,
               recordId,
@@ -654,6 +679,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               auditBaseDir: paths.auditBaseDir,
               writerAuthority,
               expectedAffectedSetFingerprint: underLeaseFingerprint,
+              ...(purgedAtOrdinal === undefined ? {} : { purgedAtOrdinal }),
             })
             switch (outcome.kind) {
               case 'purged':

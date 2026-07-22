@@ -32,7 +32,6 @@ import { z } from 'zod'
 import { checkpointCommittedParts } from './bundle-egress.js'
 import { loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
-import { enumerateBundleDirs } from './bundle-scan.js'
 import { canaryOutcomePayloadSchema } from './canary-emit.js'
 import { fsyncDirectory, fsyncFile } from './durable-fs.js'
 import {
@@ -185,6 +184,8 @@ export interface PurgeRecordInput {
   initiator: string
   /** Optional explicit runtime audit root; omission uses the knowledge root's stable sibling. */
   auditBaseDir?: string
+  /** Runtime-counter reservation used for a fresh destruction receipt; resumes reuse intent. */
+  purgedAtOrdinal?: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority
   /** Fingerprint confirmed by the caller; drift must fail before any mutation. */
@@ -258,6 +259,15 @@ export class PurgeCompletionVerificationError extends Error {
   }
 }
 
+export class PurgeChronologyRequiredError extends Error {
+  readonly code = 'purge-chronology-required'
+
+  constructor() {
+    super('fresh purge requires a runtime-counter purgedAtOrdinal reservation')
+    this.name = 'PurgeChronologyRequiredError'
+  }
+}
+
 function assertInput(input: PurgeRecordInput): void {
   if (!isAbsolute(input.knowledgeRoot)) {
     throw new TypeError('knowledgeRoot must be absolute')
@@ -276,6 +286,12 @@ function assertInput(input: PurgeRecordInput): void {
   }
   if (input.auditBaseDir !== undefined && !isAbsolute(input.auditBaseDir)) {
     throw new TypeError('auditBaseDir must be absolute when supplied')
+  }
+  if (
+    input.purgedAtOrdinal !== undefined
+    && (!Number.isSafeInteger(input.purgedAtOrdinal) || input.purgedAtOrdinal < 0)
+  ) {
+    throw new RangeError('purgedAtOrdinal must be a non-negative safe integer')
   }
   if (
     input.writerAuthority !== undefined
@@ -748,28 +764,7 @@ function resolveReceiptSeries(knowledgeRoot: string, recordId: RecordId): Receip
   }
 }
 
-function receiptAffectedProducts(receipt: PurgeReceipt): Set<string> {
-  const products = new Set<string>()
-  for (const affectedPath of receipt.affectedPaths) {
-    const segments = affectedPath.replaceAll('\\', '/').split('/')
-    if (
-      segments.length < 4
-      || segments[0] !== 'memory'
-      || segments[1] === ''
-      || segments[2] !== 'bundles'
-      || segments[3] === ''
-    ) {
-      continue
-    }
-    products.add(segments[1])
-  }
-  return products
-}
-
-function committedPurgeOrdinalsForProducts(
-  knowledgeRoot: string,
-  affectedProducts: ReadonlySet<string>,
-): number[] {
+function assertCanonicalPurgeReceiptHistory(knowledgeRoot: string): void {
   const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
   let files: string[]
   try {
@@ -778,26 +773,19 @@ function committedPurgeOrdinalsForProducts(
       .map((entry) => entry.name)
       .sort()
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
   }
 
-  const ordinals: number[] = []
   for (const file of files) {
     const canonicalName = parseCanonicalPurgeReceiptFileName(file)
     if (canonicalName === undefined) continue
-    const receipt = guardPurgeReceiptForFile(
+    guardPurgeReceiptForFile(
       JSON.parse(readFileSync(join(receiptsDir, file), 'utf8')),
       file,
+      canonicalName,
     )
-
-    for (const product of receiptAffectedProducts(receipt)) {
-      if (!affectedProducts.has(product)) continue
-      ordinals.push(receipt.purgedAtOrdinal)
-      break
-    }
   }
-  return ordinals
 }
 
 function assertNoSymlinkComponents(knowledgeRoot: string, relativePath: string): void {
@@ -1105,6 +1093,7 @@ function resolvePurgeTargets(
   knowledgeRoot: string,
   recordId: RecordId,
 ): ResolvedPurgeTargets {
+  assertCanonicalPurgeReceiptHistory(knowledgeRoot)
   const persistedIntent = readExistingIntent(knowledgeRoot, recordId)
   if (persistedIntent !== undefined) {
     return {
@@ -1205,54 +1194,9 @@ function firstCommittedOrdinal(matches: readonly ResolvedBundle[]): number {
   ))
 }
 
-function bundleChronologyOrdinals(bundle: LoadedBundle): number[] {
-  return [
-    bundle.manifest.createdAtOrdinal,
-    ...(bundle.provenance.mode === 'run-linked'
-      && bundle.provenance.sourceBuildOrdinal !== undefined
-      ? [bundle.provenance.sourceBuildOrdinal]
-      : []),
-    ...bundle.events.map((event) => event.buildOrdinal),
-    ...bundle.relations.relations.map((relation) => relation.addedAtOrdinal),
-  ]
-}
-
-/**
- * Resolve the destructive occurrence on the same deterministic ordinal axis as maintenance diff.
- * Every canonical bundle and committed purge receipt in each affected product contributes its
- * chronology. Wall clock and filesystem metadata never participate.
- */
-function resolvePurgeOccurrenceOrdinal(
-  knowledgeRoot: string,
-  matches: readonly ResolvedBundle[],
-): number {
-  const affectedProducts = new Set(matches.map(({ product }) => product))
-  let maximum = -1
-
-  function include(ordinal: number): void {
-    if (!Number.isSafeInteger(ordinal) || ordinal < 0) {
-      throw new RangeError('purge occurrence chronology must use non-negative safe integers')
-    }
-    maximum = Math.max(maximum, ordinal)
-  }
-
-  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
-    if (!affectedProducts.has(entry.product)) continue
-    const loaded = loadBundle(entry.dir)
-    if (loaded.kind !== 'loaded') continue
-    for (const ordinal of bundleChronologyOrdinals(loaded.bundle)) include(ordinal)
-  }
-  for (const ordinal of committedPurgeOrdinalsForProducts(
-    knowledgeRoot,
-    affectedProducts,
-  )) {
-    include(ordinal)
-  }
-
-  if (maximum >= Number.MAX_SAFE_INTEGER) {
-    throw new RangeError('purge occurrence ordinal exhausted safe-integer chronology')
-  }
-  return maximum + 1
+function freshPurgeOrdinal(input: PurgeRecordInput): number {
+  if (input.purgedAtOrdinal === undefined) throw new PurgeChronologyRequiredError()
+  return input.purgedAtOrdinal
 }
 
 function buildReceipt(
@@ -1471,10 +1415,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
 
   // Live surfaces run a fresh destruction cycle REGARDLESS of existing receipts (option a).
   const receiptCycle = series.nextCycle
-  const occurrenceOrdinal = resolvePurgeOccurrenceOrdinal(
-    input.knowledgeRoot,
-    matches,
-  )
+  const occurrenceOrdinal = freshPurgeOrdinal(input)
   const receipt = buildReceipt(input, matches, occurrenceOrdinal)
   const receiptText = committedFileText(receipt)
   const checkpoint = checkpointCommittedParts(

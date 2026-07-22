@@ -52,6 +52,7 @@ interface PurgeRecordInput {
   knowledgeRoot: string
   recordId: string
   initiator: string
+  purgedAtOrdinal?: number
   expectedAffectedSetFingerprint?: string
   writerAuthority?: WriterLeaseAuthority
   hooks?: {
@@ -162,7 +163,12 @@ function purgeApi(): PurgeApi {
   if (typeof candidate.purgeRecord !== 'function') {
     throw new Error('purgeRecord public API is not implemented')
   }
-  return candidate as PurgeApi
+  return {
+    purgeRecord: (input) => candidate.purgeRecord!({
+      purgedAtOrdinal: 43,
+      ...input,
+    }),
+  }
 }
 
 function purgePlanningApi(): PurgePlanningApi {
@@ -291,8 +297,13 @@ describe('DCAY-05 sovereign purge', () => {
     return outcome
   }
 
-  function purge(recordId: string): PurgeRecordOutcome {
-    return purgeApi().purgeRecord({ knowledgeRoot, recordId, initiator: 'user' })
+  function purge(recordId: string, purgedAtOrdinal = 43): PurgeRecordOutcome {
+    return purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId,
+      initiator: 'user',
+      purgedAtOrdinal,
+    })
   }
 
   function acquireWriterAuthority(): WriterLeaseAuthority {
@@ -1421,7 +1432,7 @@ describe('DCAY-05 sovereign purge', () => {
       ],
     })
 
-    const outcome = purge(target.id)
+    const outcome = purge(target.id, 48)
 
     expect(outcome.kind).toBe('purged')
     expect(outcome.receipt).toBeDefined()
@@ -1495,7 +1506,7 @@ describe('DCAY-05 sovereign purge', () => {
       .toContain('knowledge-bundle:memory/receipts/purge-')
   })
 
-  it('refuses ordinal exhaustion before intent publication or irreversible mutation', () => {
+  it('requires a runtime-counter reservation before intent publication or mutation', () => {
     const target = publish(
       'ordinal-exhaustion',
       [
@@ -1518,7 +1529,7 @@ describe('DCAY-05 sovereign purge', () => {
     let intentPublished = false
 
     expect(() =>
-      purgeApi().purgeRecord({
+      knowledgeLocal.purgeRecord({
         knowledgeRoot,
         recordId: target.id,
         initiator: 'user',
@@ -1528,7 +1539,7 @@ describe('DCAY-05 sovereign purge', () => {
           },
         },
       }),
-    ).toThrow(RangeError)
+    ).toThrow(knowledgeLocal.PurgeChronologyRequiredError)
 
     expect(intentPublished).toBe(false)
     expect(existsSync(target.dir)).toBe(true)
@@ -1536,7 +1547,7 @@ describe('DCAY-05 sovereign purge', () => {
     expect(existsSync(join(receiptsDir, `purge-${target.id}.json`))).toBe(false)
   })
 
-  it('advances a later record beyond committed purge chronology in the same product', () => {
+  it('uses explicit runtime reservations across sparse product bundle chronology', () => {
     const recordA = publish(
       'product-chronology-record-a',
       [
@@ -1574,12 +1585,12 @@ describe('DCAY-05 sovereign purge', () => {
       },
     )
 
-    const first = purge(recordA.id)
+    const first = purge(recordA.id, 101)
     expect(first.kind).toBe('purged')
     expect(first.receipt?.purgedAtOrdinal).toBe(101)
     expect(existsSync(recordA.dir)).toBe(false)
 
-    const second = purge(recordB.id)
+    const second = purge(recordB.id, 102)
     expect(second.kind).toBe('purged')
     expect(second.receipt?.purgedAtOrdinal).toBeGreaterThan(101)
   })
@@ -1616,7 +1627,7 @@ describe('DCAY-05 sovereign purge', () => {
     )
     expect(historyB.id).toBe(historyA.id)
 
-    const prior = purge(historyA.id)
+    const prior = purge(historyA.id, 71)
     expect(prior.kind).toBe('purged')
     expect(prior.receipt?.purgedAtOrdinal).toBe(71)
 
@@ -1666,11 +1677,11 @@ describe('DCAY-05 sovereign purge', () => {
       },
     )
 
-    expect(purge(targetA.id).receipt?.purgedAtOrdinal).toBe(72)
-    expect(purge(targetB.id).receipt?.purgedAtOrdinal).toBe(72)
+    expect(purge(targetA.id, 72).receipt?.purgedAtOrdinal).toBe(72)
+    expect(purge(targetB.id, 72).receipt?.purgedAtOrdinal).toBe(72)
   })
 
-  it('folds canonical receipt cycles deterministically and ignores non-committed shapes', () => {
+  it('fails closed on malformed or filename-mismatched canonical receipt history', () => {
     const product = 'purge-cycle-order-product'
     const target = publishForProduct(
       product,
@@ -1752,12 +1763,17 @@ describe('DCAY-05 sovereign purge', () => {
       'utf8',
     )
 
-    const outcome = purge(target.id)
-    expect(outcome.kind).toBe('purged')
-    expect(outcome.receipt?.purgedAtOrdinal).toBe(61)
+    expect(() => purge(target.id, 61)).toThrow()
+    expect(existsSync(target.dir)).toBe(true)
+    expect(existsSync(join(
+      knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${target.id}.intent.json`,
+    ))).toBe(false)
   })
 
-  it('refuses relevant committed receipt exhaustion before intent or destruction', () => {
+  it('uses the runtime reservation rather than deriving from valid receipt maxima', () => {
     const product = 'purge-receipt-exhaustion-product'
     const target = publishForProduct(
       product,
@@ -1786,21 +1802,22 @@ describe('DCAY-05 sovereign purge', () => {
     })
     let intentPublished = false
 
-    expect(() =>
-      purgeApi().purgeRecord({
-        knowledgeRoot,
-        recordId: target.id,
-        initiator: 'user',
-        hooks: {
-          afterIntentWritten: () => {
-            intentPublished = true
-          },
+    const outcome = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: target.id,
+      initiator: 'user',
+      purgedAtOrdinal: 11,
+      hooks: {
+        afterIntentWritten: () => {
+          intentPublished = true
         },
-      }),
-    ).toThrow(RangeError)
+      },
+    })
 
-    expect(intentPublished).toBe(false)
-    expect(existsSync(target.dir)).toBe(true)
+    expect(outcome.kind).toBe('purged')
+    expect(outcome.receipt?.purgedAtOrdinal).toBe(11)
+    expect(intentPublished).toBe(true)
+    expect(existsSync(target.dir)).toBe(false)
     expect(
       existsSync(
         join(knowledgeRoot, 'memory', 'receipts', `purge-${target.id}.intent.json`),
@@ -1808,7 +1825,7 @@ describe('DCAY-05 sovereign purge', () => {
     ).toBe(false)
     expect(
       existsSync(join(knowledgeRoot, 'memory', 'receipts', `purge-${target.id}.json`)),
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('refuses intent publication when the supplied writer authority is already reclaimed', () => {
@@ -2407,7 +2424,7 @@ describe('DCAY-05 sovereign purge', () => {
 
       const revived = publish(...revivePublishInput())
       expect(revived.id).toBe(first.id)
-      const cycleTwo = purge(first.id)
+      const cycleTwo = purge(first.id, cycleOne.receipt!.purgedAtOrdinal + 1)
 
       expect(cycleTwo.kind).toBe('purged')
       expect(cycleTwo.receipt?.purgedAtOrdinal).toBe(
@@ -2449,6 +2466,7 @@ describe('DCAY-05 sovereign purge', () => {
         knowledgeRoot,
         recordId: first.id,
         initiator: 'user',
+        purgedAtOrdinal: 78,
         hooks: {
           afterIntentWritten: () => {
             intentText = readFileSync(seriesIntentPath(first.id), 'utf8')
@@ -2497,7 +2515,7 @@ describe('DCAY-05 sovereign purge', () => {
       const revived = publish(...revivePublishInput())
       expect(revived.id).toBe(first.id)
       confirmRevived(revived.id, 77)
-      expect(purge(first.id).kind).toBe('purged')
+      expect(purge(first.id, 78).kind).toBe('purged')
 
       const third = purge(first.id)
       expect(third.kind).toBe('already-purged')
@@ -2515,7 +2533,7 @@ describe('DCAY-05 sovereign purge', () => {
       expect(purge(first.id).kind).toBe('purged')
       const second = publish(...revivePublishInput())
       expect(second.id).toBe(first.id)
-      expect(purge(first.id).kind).toBe('purged')
+      expect(purge(first.id, 44).kind).toBe('purged')
       const third = publish(...revivePublishInput())
       expect(third.id).toBe(first.id)
 
@@ -2527,6 +2545,7 @@ describe('DCAY-05 sovereign purge', () => {
           knowledgeRoot,
           recordId: first.id,
           initiator: 'user',
+          purgedAtOrdinal: 45,
           hooks: {
             beforeReceiptPublish: () => {
               throw new Error('injected crash at beforeReceiptPublish')

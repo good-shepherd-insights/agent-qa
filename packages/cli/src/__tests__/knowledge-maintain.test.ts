@@ -705,6 +705,7 @@ describe('knowledge maintenance commands', () => {
     expect(result.exitCode).toBeUndefined()
     expect(guardPurgeReceipt(JSON.parse(result.stdout))).toMatchObject({
       purgedRecordId: bundle.id,
+      purgedAtOrdinal: BUILD_ORDINAL + 1,
     })
     expect(result.stderr).toContain(`Purge preview for ${bundle.id}`)
     expect(result.stderr).toContain(`Type ${bundle.id} to confirm irreversible purge: `)
@@ -724,6 +725,11 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.purgeRecordInputs[0]?.expectedAffectedSetFingerprint).toMatch(
       /^[0-9a-f]{64}$/u,
     )
+    expect(commandHarness.purgeRecordInputs[0]?.purgedAtOrdinal).toBe(BUILD_ORDINAL + 1)
+    expect(JSON.parse(readFileSync(
+      join(workspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    ))).toEqual({ [PRODUCT]: BUILD_ORDINAL + 1 })
   })
 
   for (const legacyVersion of [1, 2] as const) {
@@ -735,6 +741,7 @@ describe('knowledge maintenance commands', () => {
         recordId: asRecordId(bundle.id),
         initiator: 'legacy-intent-fixture',
         auditBaseDir: workspace.runtimeRoot,
+        purgedAtOrdinal: BUILD_ORDINAL + 1,
         hooks: {
           afterIntentWritten: () => {
             throw new Error('leave legacy purge intent')
@@ -753,6 +760,9 @@ describe('knowledge maintenance commands', () => {
       if (legacyVersion === 1) delete intent.receiptCycle
       writeFileSync(intentPath, `${JSON.stringify(intent)}\n`, 'utf8')
       rmSync(bundle.dir, { recursive: true, force: true })
+      const countersBeforeResume = readFileSync(
+        join(workspace.runtimeRoot, 'build-ordinals.json'),
+      )
       commandHarness.purgeRecordCalls = 0
       commandHarness.purgeRecordInputs = []
 
@@ -769,6 +779,10 @@ describe('knowledge maintenance commands', () => {
         purgedRecordId: bundle.id,
       })
       expect(commandHarness.purgeRecordCalls).toBe(1)
+      expect(commandHarness.purgeRecordInputs[0]?.purgedAtOrdinal).toBeUndefined()
+      expect(readFileSync(join(workspace.runtimeRoot, 'build-ordinals.json'))).toEqual(
+        countersBeforeResume,
+      )
       expect(existsSync(intentPath)).toBe(false)
       expect(existsSync(join(
         workspace.knowledgeRoot,
@@ -778,6 +792,104 @@ describe('knowledge maintenance commands', () => {
       ))).toBe(true)
     })
   }
+
+  it('reserves one purge ordinal across every affected product counter', async () => {
+    const secondProduct = 'maintenance-purge-secondary'
+    const workspace = fixtureWorkspace(roots, {
+      [PRODUCT]: BUILD_ORDINAL,
+      [secondProduct]: 20,
+      untouched: 99,
+    })
+    const primary = seedBundle(workspace)
+    const secondary = seedBundle(workspace, {
+      product: secondProduct,
+      scopeProduct: PRODUCT,
+    })
+    expect(secondary.id).toBe(primary.id)
+
+    const result = await invoke(workspace, [
+      'purge',
+      primary.id,
+      '--confirm',
+      primary.id,
+      '--json',
+    ])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(guardPurgeReceipt(JSON.parse(result.stdout))).toMatchObject({
+      purgedRecordId: primary.id,
+      purgedAtOrdinal: 21,
+    })
+    expect(commandHarness.purgeRecordInputs[0]?.purgedAtOrdinal).toBe(21)
+    expect(JSON.parse(readFileSync(
+      join(workspace.runtimeRoot, 'build-ordinals.json'),
+      'utf8',
+    ))).toEqual({
+      [PRODUCT]: 21,
+      [secondProduct]: 21,
+      untouched: 99,
+    })
+  })
+
+  it('does not reserve another ordinal for an already-purged retry', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(workspace)
+    const args = [
+      'purge',
+      bundle.id,
+      '--confirm',
+      bundle.id,
+      '--json',
+    ] as const
+
+    const first = await invoke(workspace, args)
+    expect(first.exitCode).toBeUndefined()
+    const counterPath = join(workspace.runtimeRoot, 'build-ordinals.json')
+    const countersAfterFirst = readFileSync(counterPath)
+    const second = await invoke(workspace, args)
+
+    expect(second.exitCode).toBeUndefined()
+    expect(guardPurgeReceipt(JSON.parse(second.stdout))).toEqual(
+      guardPurgeReceipt(JSON.parse(first.stdout)),
+    )
+    expect(readFileSync(counterPath)).toEqual(countersAfterFirst)
+    expect(commandHarness.purgeRecordInputs.at(-1)?.purgedAtOrdinal).toBeUndefined()
+  })
+
+  it('refuses missing and exhausted purge counters before invoking the mutator', async () => {
+    for (const [name, counters] of [
+      ['missing', {}],
+      ['exhausted', { [PRODUCT]: Number.MAX_SAFE_INTEGER }],
+    ] as const) {
+      const workspace = fixtureWorkspace(roots, counters)
+      const bundle = seedBundle(workspace)
+      const counterPath = join(workspace.runtimeRoot, 'build-ordinals.json')
+      const counterBytes = readFileSync(counterPath)
+      const bundleBytes = snapshotFiles(bundle.dir)
+      const callsBefore = commandHarness.purgeRecordCalls
+
+      const result = await invoke(workspace, [
+        'purge',
+        bundle.id,
+        '--confirm',
+        bundle.id,
+        '--json',
+      ])
+
+      expect(result.exitCode, name).toBe(1)
+      expect(result.stderr, name).toContain(name)
+      expect(result.stdout, name).toBe('')
+      expect(commandHarness.purgeRecordCalls, name).toBe(callsBefore)
+      expect(readFileSync(counterPath), name).toEqual(counterBytes)
+      expect(snapshotFiles(bundle.dir), name).toEqual(bundleBytes)
+      expect(existsSync(join(
+        workspace.knowledgeRoot,
+        'memory',
+        'receipts',
+        `purge-${bundle.id}.intent.json`,
+      )), name).toBe(false)
+    }
+  })
 
   it('renders every product bundle tree and receipt-named path in the purge preview', async () => {
     const workspace = fixtureWorkspace(roots)
