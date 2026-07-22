@@ -366,10 +366,14 @@ export {
   guardPurgeReceipt,
   PURGE_RECEIPT_SCHEMA_VERSION,
   PurgeReceiptSchema,
+  PurgeTargetChangedError,
+  purgeAffectedSetFingerprint,
   purgeReceiptSchema,
   purgeRecord,
+  resolvePurgeAffectedSet,
 } from './purge.js'
 export type {
+  PurgeAffectedSet,
   PurgeReceipt,
   PurgeRecordInput,
   PurgeRecordOutcome,

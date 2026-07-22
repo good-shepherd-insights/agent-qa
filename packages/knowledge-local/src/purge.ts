@@ -5,7 +5,7 @@
  * attempts to rewrite repository history; Phase 382's sovereign CLI binding leaves that
  * destructive, repository-wide decision with the human operator.
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   existsSync,
   linkSync,
@@ -20,6 +20,7 @@ import type { Dirent } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 import {
+  canonicalJson,
   committedFileText,
   createVersionGuard,
   recordGraphNode,
@@ -65,7 +66,61 @@ export type { PurgeReceipt } from './purge-receipt.js'
  */
 const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
 
-export const PURGE_INTENT_SCHEMA_VERSION = 2
+export interface PurgeAffectedBundleTarget {
+  product: string
+  bundleDir: string
+  kind: LoadedBundle['frontmatter']['kind']
+  affectedPaths: string[]
+}
+
+export interface PurgeAffectedQueueTarget {
+  candidateId: string
+  candidateDir: string
+  jobStatePath: string
+}
+
+/**
+ * Content-free, deterministic statement of every local surface one purge operation will affect.
+ * This is the single planning shape shared by preview, confirmation, and destructive execution.
+ */
+export interface PurgeAffectedSet {
+  recordId: string
+  state: 'live' | 'resume' | 'already-purged' | 'not-found'
+  bundles: PurgeAffectedBundleTarget[]
+  receiptAffectedPaths: string[]
+  projectionTargets: string[]
+  embedCacheAction: 'clear-all'
+  queueTargets: PurgeAffectedQueueTarget[]
+  intentPath: string
+  receiptPath: string
+}
+
+const PurgeAffectedBundleTargetSchema = z.object({
+  product: z.string().min(1),
+  bundleDir: receiptRelativePathSchema,
+  kind: z.enum(['fact', 'procedure', 'caution', 'unknown', 'policy']),
+  affectedPaths: z.array(receiptRelativePathSchema),
+}).strict()
+
+const PurgeAffectedQueueTargetSchema = z.object({
+  candidateId: z.string().regex(QUEUE_CANDIDATE_ID),
+  candidateDir: receiptRelativePathSchema,
+  jobStatePath: receiptRelativePathSchema,
+}).strict()
+
+const PurgeAffectedSetSchema = z.object({
+  recordId: z.string().regex(SAFE_RECORD_ID),
+  state: z.enum(['live', 'resume', 'already-purged', 'not-found']),
+  bundles: z.array(PurgeAffectedBundleTargetSchema),
+  receiptAffectedPaths: z.array(receiptRelativePathSchema),
+  projectionTargets: z.array(z.string()),
+  embedCacheAction: z.literal('clear-all'),
+  queueTargets: z.array(PurgeAffectedQueueTargetSchema),
+  intentPath: receiptRelativePathSchema,
+  receiptPath: receiptRelativePathSchema,
+}).strict()
+
+export const PURGE_INTENT_SCHEMA_VERSION = 3
 
 /**
  * D-14/CR-04: the durable, content-free purge intent published before the first irreversible
@@ -78,6 +133,7 @@ export const PURGE_INTENT_SCHEMA_VERSION = 2
  * v2 adds receiptCycle: the cycle number the intent's receipt publishes at, derived once from
  * the durable series on disk and persisted so a crash-interrupted revival purge resumes to the
  * SAME cycle's byte-identical receipt and never re-derives a different cycle (DCAY-05 ordering).
+ * v3 embeds the canonical affected set so partial destruction cannot change the resumable plan.
  */
 export const PurgeIntentSchema = z.object({
   schemaVersion: z.literal(PURGE_INTENT_SCHEMA_VERSION),
@@ -87,6 +143,8 @@ export const PurgeIntentSchema = z.object({
   bundleDirs: z.array(receiptRelativePathSchema).min(1),
   queueCandidateIds: z.array(z.string().regex(QUEUE_CANDIDATE_ID)),
   queuePayloadDirs: z.array(receiptRelativePathSchema),
+  /** Null only for a migrated pre-v3 intent; new intents always persist their affected set. */
+  affectedSet: PurgeAffectedSetSchema.nullable(),
 }).strict()
 
 /** Lower-camel schema alias follows the existing knowledge-local committed-file convention. */
@@ -102,6 +160,12 @@ const guardPurgeIntentVersion = createVersionGuard<PurgeIntent>({
       ...(doc as Record<string, unknown>),
       schemaVersion: 2,
       receiptCycle: 1,
+    }),
+    // Legacy intent paths remain authoritative, but they predate canonical preview metadata.
+    2: (doc) => ({
+      ...(doc as Record<string, unknown>),
+      schemaVersion: 3,
+      affectedSet: null,
     }),
   },
 })
@@ -119,6 +183,8 @@ export interface PurgeRecordInput {
   auditBaseDir?: string
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority
+  /** Fingerprint confirmed by the caller; drift must fail before any mutation. */
+  expectedAffectedSetFingerprint?: string
   /** Test/chaos seam between purge phases; production callers omit it (commit.ts precedent). */
   hooks?: {
     /** Immediately after the durable intent publication. */
@@ -149,6 +215,18 @@ interface ResolvedBundle {
   bundle: LoadedBundle
 }
 
+export class PurgeTargetChangedError extends Error {
+  readonly code = 'purge-target-changed'
+
+  constructor(
+    readonly expectedFingerprint: string,
+    readonly actualFingerprint: string,
+  ) {
+    super('purge target set changed after confirmation')
+    this.name = 'PurgeTargetChangedError'
+  }
+}
+
 function assertInput(input: PurgeRecordInput): void {
   if (!isAbsolute(input.knowledgeRoot)) {
     throw new TypeError('knowledgeRoot must be absolute')
@@ -158,6 +236,12 @@ function assertInput(input: PurgeRecordInput): void {
   }
   if (!SAFE_RECORD_ID.test(input.recordId)) {
     throw new TypeError('recordId must be a safe path segment')
+  }
+  if (
+    input.expectedAffectedSetFingerprint !== undefined
+    && !/^[0-9a-f]{64}$/u.test(input.expectedAffectedSetFingerprint)
+  ) {
+    throw new TypeError('expectedAffectedSetFingerprint must be a lowercase SHA-256 hex digest')
   }
   if (input.auditBaseDir !== undefined && !isAbsolute(input.auditBaseDir)) {
     throw new TypeError('auditBaseDir must be absolute when supplied')
@@ -522,6 +606,138 @@ function affectedPaths(knowledgeRoot: string, matches: readonly ResolvedBundle[]
   return [...paths].sort()
 }
 
+const PURGE_PROJECTION_TARGETS = ['records', 'anchors', 'fts', 'vec', 'graph'] as const
+
+interface ResolvedPurgeTargets {
+  /** Absent only for a migrated pre-v3 intent whose destructive identities remain authoritative. */
+  affectedSet: PurgeAffectedSet | undefined
+  intent: PurgeIntent | undefined
+  matches: ResolvedBundle[]
+  queueSweepTargets: QueueSweepTarget[]
+  series: ReceiptSeries | undefined
+}
+
+function baseAffectedSet(
+  knowledgeRoot: string,
+  recordId: RecordId,
+  state: PurgeAffectedSet['state'],
+  receiptCycle: number,
+): PurgeAffectedSet {
+  return {
+    recordId,
+    state,
+    bundles: [],
+    receiptAffectedPaths: [],
+    projectionTargets: [...PURGE_PROJECTION_TARGETS],
+    embedCacheAction: 'clear-all',
+    queueTargets: [],
+    intentPath: toReceiptPath(knowledgeRoot, intentPath(knowledgeRoot, recordId)),
+    receiptPath: receiptCycleRelativePath(recordId, receiptCycle),
+  }
+}
+
+/**
+ * The sole selector for purge preview and execution. New resolutions inspect every loadable
+ * bundle and matching queue payload; resumptions use only the durable plan embedded in the
+ * standing intent, even when some selected paths have already disappeared.
+ */
+function resolvePurgeTargets(
+  knowledgeRoot: string,
+  recordId: RecordId,
+): ResolvedPurgeTargets {
+  const persistedIntent = readExistingIntent(knowledgeRoot, recordId)
+  if (persistedIntent !== undefined) {
+    return {
+      affectedSet: persistedIntent.affectedSet ?? undefined,
+      intent: persistedIntent,
+      matches: [],
+      queueSweepTargets: [],
+      series: undefined,
+    }
+  }
+
+  const matches = resolveBundles(knowledgeRoot, recordId)
+  const series = resolveReceiptSeries(knowledgeRoot, recordId)
+  if (matches.length === 0) {
+    const state = series.latestReceipt === undefined ? 'not-found' : 'already-purged'
+    const receiptCycle = series.latestReceipt === undefined
+      ? series.nextCycle
+      : series.nextCycle - 1
+    return {
+      affectedSet: baseAffectedSet(knowledgeRoot, recordId, state, receiptCycle),
+      intent: undefined,
+      matches,
+      queueSweepTargets: [],
+      series,
+    }
+  }
+
+  const queueSweepTargets = resolveQueueSweepTargets(knowledgeRoot, matches)
+  const affectedSet: PurgeAffectedSet = {
+    ...baseAffectedSet(knowledgeRoot, recordId, 'live', series.nextCycle),
+    bundles: matches
+      .map((match) => ({
+        product: match.product,
+        bundleDir: toReceiptPath(knowledgeRoot, match.dir),
+        kind: match.bundle.frontmatter.kind,
+        affectedPaths: affectedPaths(knowledgeRoot, [match]),
+      }))
+      .sort((left, right) => left.bundleDir.localeCompare(right.bundleDir)),
+    receiptAffectedPaths: affectedPaths(knowledgeRoot, matches),
+    queueTargets: queueSweepTargets
+      .map((target) => ({
+        candidateId: target.candidateId,
+        candidateDir: toReceiptPath(knowledgeRoot, target.candidateDir),
+        jobStatePath: toReceiptPath(
+          knowledgeRoot,
+          jobStatePath(knowledgeRoot, target.candidateId),
+        ),
+      }))
+      .sort((left, right) => left.candidateDir.localeCompare(right.candidateDir)),
+  }
+  return {
+    affectedSet: PurgeAffectedSetSchema.parse(affectedSet) as PurgeAffectedSet,
+    intent: undefined,
+    matches,
+    queueSweepTargets,
+    series,
+  }
+}
+
+export function resolvePurgeAffectedSet(input: {
+  knowledgeRoot: string
+  recordId: RecordId
+}): PurgeAffectedSet {
+  if (!isAbsolute(input.knowledgeRoot)) {
+    throw new TypeError('knowledgeRoot must be absolute')
+  }
+  if (!SAFE_RECORD_ID.test(input.recordId)) {
+    throw new TypeError('recordId must be a safe path segment')
+  }
+  const resolved = resolvePurgeTargets(input.knowledgeRoot, input.recordId)
+  if (resolved.affectedSet === undefined) {
+    throw new Error('legacy purge intent has no canonical affected-set plan')
+  }
+  return resolved.affectedSet
+}
+
+export function purgeAffectedSetFingerprint(affectedSet: PurgeAffectedSet): string {
+  return createHash('sha256').update(canonicalJson(affectedSet)).digest('hex')
+}
+
+function assertExpectedAffectedSet(
+  expectedFingerprint: string | undefined,
+  affectedSet: PurgeAffectedSet | undefined,
+): void {
+  if (expectedFingerprint === undefined) return
+  const actualFingerprint = affectedSet === undefined
+    ? 'legacy-intent-without-affected-set'
+    : purgeAffectedSetFingerprint(affectedSet)
+  if (actualFingerprint !== expectedFingerprint) {
+    throw new PurgeTargetChangedError(expectedFingerprint, actualFingerprint)
+  }
+}
+
 function firstCommittedOrdinal(matches: readonly ResolvedBundle[]): number {
   return Math.min(...matches.map(({ bundle }) =>
     bundle.provenance.mode === 'run-linked'
@@ -639,6 +855,7 @@ function buildIntent(
   receiptCycle: number,
   matches: readonly ResolvedBundle[],
   targets: readonly QueueSweepTarget[],
+  affectedSet: PurgeAffectedSet,
 ): PurgeIntent {
   return PurgeIntentSchema.parse({
     schemaVersion: PURGE_INTENT_SCHEMA_VERSION,
@@ -652,6 +869,10 @@ function buildIntent(
     queuePayloadDirs: targets
       .map((target) => toReceiptPath(input.knowledgeRoot, target.candidateDir))
       .sort(),
+    affectedSet: {
+      ...affectedSet,
+      state: 'resume',
+    },
   })
 }
 
@@ -765,15 +986,19 @@ function resumeFromIntent(input: PurgeRecordInput, intent: PurgeIntent): PurgeRe
 export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
   assertInput(input)
 
+  // Preview and execution share this one resolution. The caller's confirmed fingerprint is
+  // checked before checkpoint publication, durable intent creation, or destructive mutation.
+  const resolved = resolvePurgeTargets(input.knowledgeRoot, input.recordId)
+  assertExpectedAffectedSet(input.expectedAffectedSetFingerprint, resolved.affectedSet)
+
   // An existing intent is the standing durable destruction authority — resume it before any
-  // fresh resolution (this also retires fulfilled intents left by a crash after publication).
-  const persistedIntent = readExistingIntent(input.knowledgeRoot, input.recordId)
-  if (persistedIntent !== undefined) return resumeFromIntent(input, persistedIntent)
+  // fresh work (this also retires fulfilled intents left by a crash after publication).
+  if (resolved.intent !== undefined) return resumeFromIntent(input, resolved.intent)
 
   // Resolve live surfaces BEFORE consulting the receipt series, so every attestation below
   // reflects actually-resolved state, never a stale audit fact.
-  const matches = resolveBundles(input.knowledgeRoot, input.recordId)
-  const series = resolveReceiptSeries(input.knowledgeRoot, input.recordId)
+  const matches = resolved.matches
+  const series = resolved.series!
   if (matches.length === 0) {
     // Verified-dead surfaces: attest already-purged carrying the LATEST series receipt, or
     // not-found when no destruction was ever receipted. Nothing mutates on this path.
@@ -799,12 +1024,18 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
 
   const kind = matches[0]!.bundle.frontmatter.kind
 
-  // Resolve the exact queue deletion set before the first irreversible mutation so the durable
-  // intent persists the complete destruction authority (CR-03).
-  const queueSweepTargets = resolveQueueSweepTargets(input.knowledgeRoot, matches)
+  // The exact queue deletion set came from the same canonical resolution shown to the caller.
+  const queueSweepTargets = resolved.queueSweepTargets
 
   // The intent publication is the LAST act before the first irreversible mutation (CR-04).
-  const intent = buildIntent(input, receipt, receiptCycle, matches, queueSweepTargets)
+  const intent = buildIntent(
+    input,
+    receipt,
+    receiptCycle,
+    matches,
+    queueSweepTargets,
+    resolved.affectedSet!,
+  )
   const intentOutcome = writeDurableExclusive(
     intentPath(input.knowledgeRoot, input.recordId),
     committedFileText(intent),
@@ -816,6 +1047,10 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
     if (publishedIntent === undefined) {
       throw new Error('purge intent disappeared during exclusive publication')
     }
+    assertExpectedAffectedSet(
+      input.expectedAffectedSetFingerprint,
+      publishedIntent.affectedSet ?? undefined,
+    )
     return resumeFromIntent(input, publishedIntent)
   }
   input.hooks?.afterIntentWritten?.()

@@ -128,6 +128,7 @@ interface PurgeIntent {
   bundleDirs: string[]
   queueCandidateIds: string[]
   queuePayloadDirs: string[]
+  affectedSet: PurgeAffectedSet | null
 }
 
 interface PurgeIntentSchemaApi {
@@ -452,7 +453,7 @@ describe('DCAY-05 sovereign purge', () => {
     }
     const primary = publishForProduct(PRODUCT, 'affected-set-multi-product', anchors, overrides)
     const deprecated = publishForProduct(
-      'purge-second-product',
+      'purge-z-second-product',
       'affected-set-multi-product',
       anchors,
       overrides,
@@ -460,7 +461,7 @@ describe('DCAY-05 sovereign purge', () => {
     expect(deprecated.id).toBe(primary.id)
     expect(
       knowledgeLocal.appendOutcomeEvent(
-        config('purge-second-product'),
+        config('purge-z-second-product'),
         deprecated.id,
         BundleOutcomeEventSchema.parse({
           type: 'deprecated',
@@ -489,7 +490,7 @@ describe('DCAY-05 sovereign purge', () => {
         affectedPaths: expectedBundlePaths(primary),
       },
       {
-        product: 'purge-second-product',
+        product: 'purge-z-second-product',
         bundleDir: relativePath(deprecated.dir),
         kind: 'fact',
         affectedPaths: expectedBundlePaths(deprecated),
@@ -1742,18 +1743,24 @@ describe('DCAY-05 sovereign purge', () => {
 
       const schemaApi = purgeIntentSchemaApi()
       const intent = JSON.parse(intentText) as Record<string, unknown>
-      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(2)
+      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(3)
       expect(schemaApi.purgeIntentSchema.safeParse(intent).success).toBe(true)
       expect(
         schemaApi.purgeIntentSchema.safeParse({ ...intent, unexpected: 'field' }).success,
       ).toBe(false)
-      expect(() => schemaApi.guardPurgeIntent({ ...intent, schemaVersion: 3 })).toThrow(
-        /schemaVersion 3 is not supported/u,
+      expect(() => schemaApi.guardPurgeIntent({ ...intent, schemaVersion: 4 })).toThrow(
+        /schemaVersion 4 is not supported/u,
       )
-      const { receiptCycle: _dropped, ...v1Shape } = intent
+      const { affectedSet: _affectedSet, receiptCycle: _dropped, ...v1Shape } = intent
       const migrated = schemaApi.guardPurgeIntent({ ...v1Shape, schemaVersion: 1 })
-      expect(migrated.schemaVersion).toBe(2)
+      expect(migrated.schemaVersion).toBe(3)
       expect(migrated.receiptCycle).toBe(1)
+      expect(migrated.affectedSet).toBeNull()
+      const { affectedSet: _v2AffectedSet, ...v2Shape } = intent
+      expect(schemaApi.guardPurgeIntent({ ...v2Shape, schemaVersion: 2 })).toMatchObject({
+        schemaVersion: 3,
+        affectedSet: null,
+      })
 
       const retry = purge(fixture.targetId)
       expect(retry.kind).toBe('purged')
