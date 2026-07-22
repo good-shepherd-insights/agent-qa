@@ -1,11 +1,10 @@
 import { userInfo } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
   acquireWriterLease,
-  enumerateBundleDirs,
   purgeAffectedSetFingerprint,
   purgeRecord,
   rebuildIndex,
@@ -13,6 +12,7 @@ import {
   releaseLease,
   resolvePurgeAffectedSet,
   resolveRollbackAffectedSet,
+  rollbackAffectedSetFingerprint,
   rollbackCampaign,
   rollbackCurationJob,
 } from '@vostride/agent-qa-knowledge-local'
@@ -34,7 +34,7 @@ import {
   createMaskingContext,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-safety'
-import { asRecordId, canonicalJson } from '@vostride/agent-qa-schema'
+import { asRecordId } from '@vostride/agent-qa-schema'
 import type { OriginClass } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
@@ -347,12 +347,16 @@ function rollbackInput(
   paths: KnowledgePaths,
   resolvedAtOrdinal: number,
   writerAuthority?: WriterLeaseAuthority,
+  expectedAffectedSetFingerprint?: string,
 ): RollbackCurationJobInput | RollbackCampaignInput {
   const base = {
     knowledgeRoot: paths.knowledgeRoot,
     auditBaseDir: paths.auditBaseDir,
     resolvedAtOrdinal,
     ...(writerAuthority === undefined ? {} : { writerAuthority }),
+    ...(expectedAffectedSetFingerprint === undefined
+      ? {}
+      : { expectedAffectedSetFingerprint }),
   }
   return selector.kind === 'job'
     ? { ...base, curationJobId: selector.curationJobId }
@@ -367,43 +371,21 @@ function rollbackInput(
       }
 }
 
-function rollbackProducts(
-  knowledgeRoot: string,
-  affected: RollbackAffectedSet,
-): string[] {
-  const affectedIds = new Set<string>([
-    ...affected.mintedBundleIds,
-    ...affected.counterEvents.map(({ recordId }) => recordId),
-  ])
-  if (affectedIds.size === 0) return []
-
-  return [...new Set(
-    enumerateBundleDirs(knowledgeRoot)
-      .filter(({ dir }) => affectedIds.has(basename(dir)))
-      .map(({ product }) => product),
-  )].sort()
-}
-
 async function rollbackOrdinal(
   paths: KnowledgePaths,
   affected: RollbackAffectedSet,
   writerAuthority: WriterLeaseAuthority,
 ): Promise<number> {
-  const products = rollbackProducts(paths.knowledgeRoot, affected)
+  if (affected.plannedEffects.length === 0) return 0
   return (await reserveBuildOrdinalForProducts({
     root: paths.runtimeRoot,
-    products,
+    products: affected.products,
     beforePersist: () => refreshWriterLeaseAuthority(writerAuthority),
   })) ?? 0
 }
 
 function rollbackPreviewFingerprint(affected: RollbackAffectedSet): string {
-  return canonicalJson({
-    mintedBundleIds: [...affected.mintedBundleIds].sort(),
-    counterEvents: [...affected.counterEvents]
-      .map((event) => canonicalJson(event))
-      .sort(),
-  })
+  return rollbackAffectedSetFingerprint(affected)
 }
 
 function renderRollbackPreview(affected: RollbackAffectedSet): string {
@@ -419,6 +401,14 @@ function renderRollbackPreview(affected: RollbackAffectedSet): string {
       : affected.counterEvents.map((event) => (
           `    ${event.type} ${event.recordId} `
           + `(job ${event.curationJobId}, evidence ${event.evidenceToken})`
+        ))),
+    `  complete inverse effects (${affected.plannedEffects.length}):`,
+    ...(affected.plannedEffects.length === 0
+      ? ['    none']
+      : affected.plannedEffects.map((effect) => (
+          effect.kind === 'deprecate-bundle'
+            ? `    ${effect.kind} ${effect.product}/${effect.recordId}`
+            : `    ${effect.kind} ${effect.product}/${effect.recordId} (${effect.eventKey})`
         ))),
   ].join('\n')
 }
@@ -557,7 +547,13 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               rollbackPreviewFingerprint(affected),
             )
             const resolvedAtOrdinal = await rollbackOrdinal(paths, affected, writerAuthority)
-            const input = rollbackInput(selector, paths, resolvedAtOrdinal, writerAuthority)
+            const input = rollbackInput(
+              selector,
+              paths,
+              resolvedAtOrdinal,
+              writerAuthority,
+              rollbackPreviewFingerprint(affected),
+            )
             const report = selector.kind === 'job'
               ? rollbackCurationJob(input as RollbackCurationJobInput)
               : rollbackCampaign(input as RollbackCampaignInput)

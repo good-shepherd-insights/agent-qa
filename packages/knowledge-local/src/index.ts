@@ -386,9 +386,11 @@ export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export {
   resolveRollbackAffectedSet,
+  rollbackAffectedSetFingerprint,
   rollbackCampaign,
   RollbackCausalityError,
   rollbackCurationJob,
+  RollbackPlanChangedError,
   rollbackReceiptId,
 } from './rollback.js'
 export type {
@@ -397,6 +399,7 @@ export type {
   RollbackCounterEvent,
   RollbackCurationJobInput,
   RollbackKind,
+  RollbackPlannedEffect,
   RollbackReport,
   ResolveRollbackAffectedSetInput,
 } from './rollback.js'

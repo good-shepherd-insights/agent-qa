@@ -51,12 +51,17 @@ interface RollbackReport {
   deprecatedBundles: string[]
   retractedPromotions: string[]
   affected: {
+    operationId?: string
     mintedBundleIds: string[]
     counterEvents: RollbackCounterEvent[]
+    plannedEffects?: unknown[]
+    projectionTargets?: unknown[]
+    products?: string[]
   }
 }
 
 interface RollbackApi {
+  resolveRollbackAffectedSet(input: Parameters<RollbackApi['rollbackCampaign']>[0]): RollbackReport['affected']
   rollbackCurationJob(input: {
     knowledgeRoot: string
     auditBaseDir: string
@@ -85,7 +90,7 @@ interface RollbackApi {
   rollbackReceiptId(
     kind: 'job' | 'campaign',
     keys: Readonly<Record<string, unknown>>,
-    resolvedAtOrdinal: number,
+    effectKeys?: readonly string[],
   ): string
 }
 
@@ -94,6 +99,7 @@ function rollbackApi(): RollbackApi {
   if (
     typeof candidate.rollbackCurationJob !== 'function'
     || typeof candidate.rollbackCampaign !== 'function'
+    || typeof candidate.resolveRollbackAffectedSet !== 'function'
     || typeof candidate.rollbackReceiptId !== 'function'
   ) {
     throw new Error('rollback public API is not implemented')
@@ -374,51 +380,52 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })
 
     const base = { knowledgeRoot, auditBaseDir, resolvedAtOrdinal: 20 }
-    expect(rollbackApi().rollbackCampaign({ ...base, fromOrdinal: 8 })
-      .affected.mintedBundleIds).toEqual([
+    expect(rollbackApi().resolveRollbackAffectedSet({ ...base, fromOrdinal: 8 })
+      .mintedBundleIds).toEqual([
       highAlphaVerified.id,
       highBetaObserved.id,
       highAlphaObserved.id,
     ].sort())
-    expect(rollbackApi().rollbackCampaign({
+    expect(rollbackApi().resolveRollbackAffectedSet({
       ...base,
       anchorClusterKey: supersessionKey(alphaAnchors),
-    }).affected.mintedBundleIds).toEqual([
+    }).mintedBundleIds).toEqual([
       lowAlpha.id,
       highAlphaVerified.id,
       highAlphaObserved.id,
     ].sort())
-    expect(rollbackApi().rollbackCampaign({ ...base, originClass: 'agent-observed' })
-      .affected.mintedBundleIds).toEqual([
+    expect(rollbackApi().resolveRollbackAffectedSet({ ...base, originClass: 'agent-observed' })
+      .mintedBundleIds).toEqual([
       highBetaObserved.id,
       highAlphaObserved.id,
     ].sort())
-    expect(rollbackApi().rollbackCampaign({
+    expect(rollbackApi().resolveRollbackAffectedSet({
       ...base,
       fromOrdinal: 8,
       toOrdinal: 10,
       anchorClusterKey: supersessionKey(alphaAnchors),
       originClass: 'agent-observed',
-    }).affected.mintedBundleIds).toEqual([highAlphaObserved.id])
+    }).mintedBundleIds).toEqual([highAlphaObserved.id])
   })
 
-  it('derives the receipt from canonical kind, keys, and resolution ordinal bytes', () => {
+  it('derives the receipt from canonical selector and product-qualified effect bytes', () => {
     const keys = {
       originClass: 'agent-observed',
       anchorClusterKey: 'cluster-a',
       fromOrdinal: 8,
     }
+    const effectKeys = ['product-b/record-2/event-z', 'product-a/record-1/event-a']
     const expected = `rollback:${sha256hex(canonicalJson({
       kind: 'campaign',
       keys,
-      resolvedAtOrdinal: 20,
+      effectKeys: [...effectKeys].sort(),
     }))}`
 
-    const first = rollbackApi().rollbackReceiptId('campaign', keys, 20)
+    const first = rollbackApi().rollbackReceiptId('campaign', keys, effectKeys)
     const second = rollbackApi().rollbackReceiptId(
       'campaign',
       { fromOrdinal: 8, anchorClusterKey: 'cluster-a', originClass: 'agent-observed' },
-      20,
+      [...effectKeys].reverse(),
     )
     expect(first).toBe(expected)
     expect(second).toBe(expected)
@@ -895,6 +902,46 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(trust.counters.confirmed).toBe(0)
   })
 
+  it('refuses a promotion that appears after preview before writing any inverse', () => {
+    const target = publishForJob({
+      identity: 'promotion-preview-race',
+      curationJobId: 'job-promotion-preview-base',
+      sourceBuildOrdinal: 4,
+      initialEvents: [],
+    })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('promotion-preview-selected-confirmation'),
+      curationJobId: 'job-promotion-preview-race',
+      buildOrdinal: 8,
+      origin: 'agent-verified',
+    })).toEqual({ kind: 'appended' })
+    const baseInput = {
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-promotion-preview-race',
+      resolvedAtOrdinal: 20,
+    }
+    const preview = knowledgeLocal.resolveRollbackAffectedSet(baseInput)
+    const previewFingerprint = knowledgeLocal.rollbackAffectedSetFingerprint(preview)
+    expect(preview.plannedEffects.map(({ kind }) => kind)).toEqual(['retract-counter'])
+
+    expect(knowledgeLocal.appendOutcomeEvent(config(), target.id, {
+      type: 'promoted',
+      evidenceToken: asEvidenceToken('promotion-preview-late-promotion'),
+      curationJobId: 'job-unrelated-late-promotion',
+      buildOrdinal: 9,
+    })).toEqual({ kind: 'appended' })
+    const before = readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')
+
+    expect(() => knowledgeLocal.rollbackCurationJob({
+      ...baseInput,
+      expectedAffectedSetFingerprint: previewFingerprint,
+    })).toThrow(knowledgeLocal.RollbackPlanChangedError)
+    expect(readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
+    expect(loaded(target).events.some(({ type }) => type === 'retracted')).toBe(false)
+  })
+
   it('does not cascade promoted retraction while another job\'s confirmation survives', () => {
     const target = publishForJob({
       identity: 'cascade-survivor',
@@ -1152,7 +1199,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       resolvedAtOrdinal: 9,
     })
 
-    expect(report.deprecatedBundles).toEqual([target.id])
+    expect(report.deprecatedBundles).toEqual([])
     expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('deprecated')
   })
 
@@ -1175,7 +1222,13 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(report.restoredVictims).toEqual([])
     expect(report.deprecatedBundles).toEqual([])
     expect(report.retractedPromotions).toEqual([])
-    expect(report.affected).toEqual({ mintedBundleIds: [], counterEvents: [] })
+    expect(report.affected).toMatchObject({
+      mintedBundleIds: [],
+      counterEvents: [],
+      plannedEffects: [],
+      projectionTargets: [],
+      products: [],
+    })
     expect(readFileSync(join(bystander.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
   })
 

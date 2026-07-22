@@ -25,10 +25,7 @@ import { appendOutcomeEvent } from './bundle-append.js'
 import { deriveBundleTrust, loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
-import {
-  enumerateBundleDirs,
-  resolveProductQualifiedBundleDir,
-} from './bundle-scan.js'
+import { enumerateBundleDirs } from './bundle-scan.js'
 import { applyIndexDeltaForBundle } from './curator/commit.js'
 import type { AuthoredDeltaCheckpoint } from './curator/author-contract.js'
 import { disposeDelta } from './curator/disposition.js'
@@ -44,9 +41,35 @@ export interface RollbackCounterEvent {
   type: 'confirmed' | 'deprecated' | 'superseded' | 'promoted'
 }
 
+export type RollbackPlannedEffect =
+  | {
+      kind: 'deprecate-bundle'
+      product: string
+      recordId: RecordId
+    }
+  | {
+      kind: 'retract-counter' | 'retract-window-close' | 'retract-promotion'
+      product: string
+      recordId: RecordId
+      eventKey: string
+      evidenceToken: string
+      curationJobId: string
+    }
+
+export interface RollbackBundleTarget {
+  product: string
+  recordId: RecordId
+}
+
 export interface RollbackAffectedSet {
+  operationId: string
+  /** Compatibility summary; plannedEffects is the product-qualified mutation authority. */
   mintedBundleIds: RecordId[]
   counterEvents: RollbackCounterEvent[]
+  plannedEffects: RollbackPlannedEffect[]
+  /** Projection healing targets; these never require a new rollback ordinal on their own. */
+  projectionTargets: RollbackBundleTarget[]
+  products: string[]
 }
 
 export interface RollbackReport {
@@ -75,6 +98,8 @@ interface RollbackBaseInput {
   resolvedAtOrdinal: number
   /** Governed maintenance callers fence this exact lease at every mutation boundary. */
   writerAuthority?: WriterLeaseAuthority
+  /** Confirmation fingerprint revalidated by the mutator immediately before its first write. */
+  expectedAffectedSetFingerprint?: string
   hooks?: RollbackHooks
 }
 
@@ -101,10 +126,24 @@ interface ResolvedCounterEvent extends RollbackCounterEvent {
   product: string
 }
 
+interface ResolvedRetractionEvent {
+  recordId: RecordId
+  product: string
+  event: BundleOutcomeEvent
+  effectKind: Extract<
+    RollbackPlannedEffect['kind'],
+    'retract-window-close' | 'retract-promotion'
+  >
+}
+
 interface RollbackResolution {
   receiptId: string
   mintedBundles: CanonicalRollbackBundle[]
   counterEvents: ResolvedCounterEvent[]
+  windowCloseEvents: ResolvedRetractionEvent[]
+  promotionEvents: ResolvedRetractionEvent[]
+  projectionTargets: RollbackBundleTarget[]
+  affected: RollbackAffectedSet
 }
 
 export type ResolveRollbackAffectedSetInput =
@@ -129,6 +168,18 @@ export class RollbackCausalityError extends Error {
     this.name = 'RollbackCausalityError'
     this.offendingRecordIds = offendingRecordIds
     this.minimumRequiredOrdinal = minimumRequiredOrdinal
+  }
+}
+
+export class RollbackPlanChangedError extends Error {
+  override readonly name = 'RollbackPlanChangedError'
+  readonly expectedFingerprint: string
+  readonly actualFingerprint: string
+
+  constructor(expectedFingerprint: string, actualFingerprint: string) {
+    super('rollback affected set changed before mutation; confirm the new preview')
+    this.expectedFingerprint = expectedFingerprint
+    this.actualFingerprint = actualFingerprint
   }
 }
 
@@ -219,14 +270,17 @@ function campaignKeys(input: RollbackCampaignInput): Readonly<Record<string, unk
   }
 }
 
-/** Content-addressed identity for one stable affected-set resolution horizon. */
+/** Stable identity for one selector and its product-qualified source-effect universe. */
 export function rollbackReceiptId(
   kind: RollbackKind,
   keys: Readonly<Record<string, unknown>>,
-  resolvedAtOrdinal: number,
+  effectKeys: readonly string[] = [],
 ): string {
-  assertOrdinal(resolvedAtOrdinal, 'rollback resolvedAtOrdinal')
-  return `rollback:${sha256hex(canonicalJson({ kind, keys, resolvedAtOrdinal }))}`
+  return `rollback:${sha256hex(canonicalJson({
+    kind,
+    keys,
+    effectKeys: [...effectKeys].sort(compareText),
+  }))}`
 }
 
 function canonicalBundles(knowledgeRoot: string): CanonicalRollbackBundle[] {
@@ -254,17 +308,11 @@ function isCounterEvent(
 }
 
 function publicAffectedSet(resolution: RollbackResolution): RollbackAffectedSet {
-  return {
-    mintedBundleIds: resolution.mintedBundles
-      .map(({ recordId }) => recordId)
-      .sort(compareText),
-    counterEvents: resolution.counterEvents.map((event) => ({
-      recordId: event.recordId,
-      evidenceToken: event.evidenceToken,
-      curationJobId: event.curationJobId,
-      type: event.type,
-    })),
-  }
+  return resolution.affected
+}
+
+export function rollbackAffectedSetFingerprint(affected: RollbackAffectedSet): string {
+  return canonicalJson(affected)
 }
 
 /** Resolve the canonical rollback preview without appending inverse events or touching indexes. */
@@ -280,14 +328,14 @@ export function resolveRollbackAffectedSet(
 
 function counterEventsFor(
   bundles: readonly CanonicalRollbackBundle[],
-  mintedIds: ReadonlySet<RecordId>,
+  mintedTargets: ReadonlySet<string>,
   predicate: (bundle: CanonicalRollbackBundle, event: BundleOutcomeEvent) => boolean,
 ): ResolvedCounterEvent[] {
   const events: ResolvedCounterEvent[] = []
   for (const bundle of bundles) {
     // A minted bundle is inverted as a whole. Its initial confirmation is part of that Add,
     // Supersede, or MintUnknown effect and must not be independently retracted.
-    if (mintedIds.has(bundle.recordId)) continue
+    if (mintedTargets.has(bundleTargetKey(bundle.product, bundle.recordId))) continue
     for (const event of bundle.bundle.events) {
       if (!isCounterEvent(event) || event.curationJobId.startsWith('rollback:')) continue
       if (!predicate(bundle, event)) continue
@@ -302,11 +350,266 @@ function counterEventsFor(
     }
   }
   return events.sort((left, right) =>
-    compareText(left.recordId, right.recordId)
+    compareText(left.product, right.product)
+    || compareText(left.recordId, right.recordId)
     || compareText(left.evidenceToken, right.evidenceToken)
     || compareText(left.curationJobId, right.curationJobId)
     || compareText(left.type, right.type),
   )
+}
+
+function bundleTargetKey(product: string, recordId: RecordId): string {
+  return `${product}\0${recordId}`
+}
+
+function eventEffectKey(
+  kind: RollbackPlannedEffect['kind'],
+  product: string,
+  recordId: RecordId,
+  event?: BundleOutcomeEvent,
+): string {
+  return canonicalJson({
+    kind,
+    product,
+    recordId,
+    ...(event === undefined ? {} : { eventKey: eventDedupKey(event) }),
+  })
+}
+
+function eventSurvivalKeys(bundle: LoadedBundle): Set<string> {
+  return new Set(survivingOutcomeEvents(bundle.events).map(eventDedupKey))
+}
+
+function hasExactRetraction(
+  bundle: LoadedBundle,
+  receiptId: string,
+  targetRecordId: RecordId,
+  target: BundleOutcomeEvent,
+): boolean {
+  const targetKey = eventDedupKey(target)
+  const token = inverseEvidenceToken(receiptId, targetRecordId, targetKey)
+  return bundle.events.some((event) =>
+    event.type === 'retracted'
+    && event.evidenceToken === token
+    && event.curationJobId === receiptId
+    && event.retractsEvidenceToken === target.evidenceToken
+    && event.retractsCurationJobId === target.curationJobId,
+  )
+}
+
+function windowCloseFor(
+  bundle: CanonicalRollbackBundle,
+  superseded: ResolvedCounterEvent,
+): ResolvedRetractionEvent | undefined {
+  const closeToken = asEvidenceToken(sha256hex(canonicalJson({
+    token: superseded.evidenceToken,
+    event: 'window-close',
+  })))
+  const event = bundle.bundle.events.find((candidate) =>
+    candidate.type === 'window-close'
+    && candidate.evidenceToken === closeToken
+    && candidate.curationJobId === superseded.curationJobId,
+  )
+  return event === undefined
+    ? undefined
+    : {
+        recordId: bundle.recordId,
+        product: bundle.product,
+        event,
+        effectKind: 'retract-window-close',
+      }
+}
+
+function promotionCascadeUniverse(
+  bundles: readonly CanonicalRollbackBundle[],
+  counters: readonly ResolvedCounterEvent[],
+): ResolvedRetractionEvent[] {
+  const selectedConfirmations = new Map<string, Set<string>>()
+  const directlySelectedEvents = new Set(counters.map(({ product, recordId, event }) =>
+    `${bundleTargetKey(product, recordId)}\0${eventDedupKey(event)}`,
+  ))
+  for (const counter of counters) {
+    if (counter.type !== 'confirmed') continue
+    const key = bundleTargetKey(counter.product, counter.recordId)
+    const selected = selectedConfirmations.get(key) ?? new Set<string>()
+    selected.add(eventDedupKey(counter.event))
+    selectedConfirmations.set(key, selected)
+  }
+
+  const cascades: ResolvedRetractionEvent[] = []
+  for (const bundle of bundles) {
+    const selected = selectedConfirmations.get(
+      bundleTargetKey(bundle.product, bundle.recordId),
+    )
+    if (selected === undefined) continue
+    const surviving = survivingOutcomeEvents(bundle.bundle.events)
+    if (surviving.some((event) =>
+      event.type === 'confirmed' && !selected.has(eventDedupKey(event)),
+    )) continue
+    for (const event of bundle.bundle.events) {
+      const selectedEventKey = [
+        bundleTargetKey(bundle.product, bundle.recordId),
+        eventDedupKey(event),
+      ].join('\0')
+      if (event.type !== 'promoted' || directlySelectedEvents.has(selectedEventKey)) continue
+      cascades.push({
+        recordId: bundle.recordId,
+        product: bundle.product,
+        event,
+        effectKind: 'retract-promotion',
+      })
+    }
+  }
+  return cascades.sort((left, right) =>
+    compareText(left.product, right.product)
+    || compareText(left.recordId, right.recordId)
+    || compareText(eventDedupKey(left.event), eventDedupKey(right.event)),
+  )
+}
+
+function buildResolution(input: {
+  kind: RollbackKind
+  keys: Readonly<Record<string, unknown>>
+  bundles: readonly CanonicalRollbackBundle[]
+  mintedUniverse: readonly CanonicalRollbackBundle[]
+  counterUniverse: readonly ResolvedCounterEvent[]
+}): RollbackResolution {
+  const byTarget = new Map(input.bundles.map((bundle) => [
+    bundleTargetKey(bundle.product, bundle.recordId),
+    bundle,
+  ]))
+  const windowCloseUniverse = input.counterUniverse.flatMap((counter) => {
+    if (counter.type !== 'superseded') return []
+    const bundle = byTarget.get(bundleTargetKey(counter.product, counter.recordId))
+    if (bundle === undefined) return []
+    const close = windowCloseFor(bundle, counter)
+    return close === undefined ? [] : [close]
+  })
+  const promotionUniverse = promotionCascadeUniverse(input.bundles, input.counterUniverse)
+  const operationEffectKeys = [
+    ...input.mintedUniverse.map((bundle) =>
+      eventEffectKey('deprecate-bundle', bundle.product, bundle.recordId),
+    ),
+    ...input.counterUniverse.map((counter) =>
+      eventEffectKey('retract-counter', counter.product, counter.recordId, counter.event),
+    ),
+    ...windowCloseUniverse.map((effect) =>
+      eventEffectKey(effect.effectKind, effect.product, effect.recordId, effect.event),
+    ),
+    ...promotionUniverse.map((effect) =>
+      eventEffectKey(effect.effectKind, effect.product, effect.recordId, effect.event),
+    ),
+  ].sort(compareText)
+  const receiptId = rollbackReceiptId(input.kind, input.keys, operationEffectKeys)
+  const survivingByTarget = new Map(input.bundles.map((bundle) => [
+    bundleTargetKey(bundle.product, bundle.recordId),
+    eventSurvivalKeys(bundle.bundle),
+  ]))
+  const mintedHasExactInverse = (bundle: CanonicalRollbackBundle) => {
+    const token = inverseEvidenceToken(receiptId, bundle.recordId, 'minted-bundle')
+    return bundle.bundle.events.some((event) =>
+      event.evidenceToken === token && event.curationJobId === receiptId,
+    )
+  }
+  const mintedBundles = input.mintedUniverse.filter((bundle) =>
+    deriveBundleTrust(bundle.bundle).status !== 'deprecated'
+    && !mintedHasExactInverse(bundle),
+  )
+  const hasAppliedRetraction = (
+    effect: ResolvedCounterEvent | ResolvedRetractionEvent,
+  ): boolean => {
+    const bundle = byTarget.get(bundleTargetKey(effect.product, effect.recordId))
+    return bundle !== undefined
+      && hasExactRetraction(bundle.bundle, receiptId, effect.recordId, effect.event)
+  }
+  const pending = <T extends ResolvedCounterEvent | ResolvedRetractionEvent>(effect: T) => {
+    const bundle = byTarget.get(bundleTargetKey(effect.product, effect.recordId))
+    const surviving = survivingByTarget.get(bundleTargetKey(effect.product, effect.recordId))
+    return bundle !== undefined
+      && surviving?.has(eventDedupKey(effect.event)) === true
+      && !hasExactRetraction(bundle.bundle, receiptId, effect.recordId, effect.event)
+  }
+  const counterEvents = input.counterUniverse.filter(pending)
+  const windowCloseEvents = windowCloseUniverse.filter(pending)
+  const promotionEvents = promotionUniverse.filter(pending)
+  const plannedEffects: RollbackPlannedEffect[] = [
+    ...mintedBundles.map(({ product, recordId }) => ({
+      kind: 'deprecate-bundle' as const,
+      product,
+      recordId,
+    })),
+    ...counterEvents.map((effect) => ({
+      kind: 'retract-counter' as const,
+      product: effect.product,
+      recordId: effect.recordId,
+      eventKey: eventDedupKey(effect.event),
+      evidenceToken: effect.evidenceToken,
+      curationJobId: effect.curationJobId,
+    })),
+    ...windowCloseEvents.map((effect) => ({
+      kind: effect.effectKind,
+      product: effect.product,
+      recordId: effect.recordId,
+      eventKey: eventDedupKey(effect.event),
+      evidenceToken: effect.event.evidenceToken,
+      curationJobId: effect.event.curationJobId,
+    })),
+    ...promotionEvents.map((effect) => ({
+      kind: effect.effectKind,
+      product: effect.product,
+      recordId: effect.recordId,
+      eventKey: eventDedupKey(effect.event),
+      evidenceToken: effect.event.evidenceToken,
+      curationJobId: effect.event.curationJobId,
+    })),
+  ].sort((left, right) => compareText(canonicalJson(left), canonicalJson(right)))
+  const projectionTargetMap = new Map<string, RollbackBundleTarget>()
+  const includeProjection = (product: string, recordId: RecordId) => {
+    projectionTargetMap.set(bundleTargetKey(product, recordId), { product, recordId })
+  }
+  for (const bundle of input.mintedUniverse) {
+    if (mintedBundles.includes(bundle) || mintedHasExactInverse(bundle)) {
+      includeProjection(bundle.product, bundle.recordId)
+    }
+  }
+  for (const effect of [
+    ...input.counterUniverse,
+    ...windowCloseUniverse,
+    ...promotionUniverse,
+  ]) {
+    if (pending(effect) || hasAppliedRetraction(effect)) {
+      includeProjection(effect.product, effect.recordId)
+    }
+  }
+  const projectionTargets = [...projectionTargetMap.values()].sort((left, right) =>
+    compareText(left.product, right.product) || compareText(left.recordId, right.recordId),
+  )
+  const products = [...new Set([
+    ...plannedEffects.map(({ product }) => product),
+    ...projectionTargets.map(({ product }) => product),
+  ])].sort(compareText)
+  const affected: RollbackAffectedSet = {
+    operationId: receiptId,
+    mintedBundleIds: mintedBundles.map(({ recordId }) => recordId).sort(compareText),
+    counterEvents: counterEvents.map((event) => ({
+      recordId: event.recordId,
+      evidenceToken: event.evidenceToken,
+      curationJobId: event.curationJobId,
+      type: event.type,
+    })),
+    plannedEffects,
+    projectionTargets,
+    products,
+  }
+  return {
+    receiptId,
+    mintedBundles,
+    counterEvents,
+    windowCloseEvents,
+    promotionEvents,
+    projectionTargets,
+    affected,
+  }
 }
 
 function resolveCurationJob(input: RollbackCurationJobInput): RollbackResolution {
@@ -315,24 +618,24 @@ function resolveCurationJob(input: RollbackCurationJobInput): RollbackResolution
     throw new TypeError('rollback curationJobId must be non-empty')
   }
   const bundles = canonicalBundles(input.knowledgeRoot)
-  const mintedBundles = bundles.filter(({ bundle }) =>
+  const mintedUniverse = bundles.filter(({ bundle }) =>
     bundle.provenance.mode === 'run-linked'
     && bundle.provenance.curationJobId === input.curationJobId,
   )
-  const mintedIds = new Set(mintedBundles.map(({ recordId }) => recordId))
-  return {
-    receiptId: rollbackReceiptId(
-      'job',
-      { curationJobId: input.curationJobId },
-      input.resolvedAtOrdinal,
-    ),
-    mintedBundles,
-    counterEvents: counterEventsFor(
+  const mintedTargets = new Set(mintedUniverse.map(({ product, recordId }) =>
+    bundleTargetKey(product, recordId),
+  ))
+  return buildResolution({
+    kind: 'job',
+    keys: { curationJobId: input.curationJobId },
+    bundles,
+    mintedUniverse,
+    counterUniverse: counterEventsFor(
       bundles,
-      mintedIds,
+      mintedTargets,
       (_bundle, event) => event.curationJobId === input.curationJobId,
     ),
-  }
+  })
 }
 
 function ordinalMatches(
@@ -361,23 +664,27 @@ function resolveCampaign(input: RollbackCampaignInput): RollbackResolution {
   assertBaseInput(input)
   const keys = campaignKeys(input)
   const bundles = canonicalBundles(input.knowledgeRoot)
-  const mintedBundles = bundles.filter((bundle) =>
+  const mintedUniverse = bundles.filter((bundle) =>
     bundle.bundle.provenance.mode === 'run-linked'
     && bundle.bundle.provenance.sourceBuildOrdinal !== undefined
     && ordinalMatches(bundle.bundle.provenance.sourceBuildOrdinal, input)
     && bundleAxesMatch(bundle, input),
   )
-  const mintedIds = new Set(mintedBundles.map(({ recordId }) => recordId))
-  return {
-    receiptId: rollbackReceiptId('campaign', keys, input.resolvedAtOrdinal),
-    mintedBundles,
-    counterEvents: counterEventsFor(
+  const mintedTargets = new Set(mintedUniverse.map(({ product, recordId }) =>
+    bundleTargetKey(product, recordId),
+  ))
+  return buildResolution({
+    kind: 'campaign',
+    keys,
+    bundles,
+    mintedUniverse,
+    counterUniverse: counterEventsFor(
       bundles,
-      mintedIds,
+      mintedTargets,
       (bundle, event) => ordinalMatches(event.buildOrdinal, input)
         && bundleAxesMatch(bundle, input),
     ),
-  }
+  })
 }
 
 function bundleConfig(
@@ -398,7 +705,7 @@ function bundleConfig(
 /**
  * Every inverse token binds the receipt, target, and exact effect key. The existing
  * (recordId, evidenceToken, curationJobId) append dedup therefore makes a repeated rollback a
- * byte-level noop while a different resolution horizon receives a different audit identity.
+ * byte-level noop while a different selector/effect universe receives a different audit identity.
  */
 function inverseEvidenceToken(
   receiptId: string,
@@ -519,29 +826,24 @@ function appendInverseDeprecate(
 function appendRetraction(
   input: RollbackBaseInput,
   resolution: RollbackResolution,
-  counter: ResolvedCounterEvent,
-  targetEvidenceToken: string,
+  target: ResolvedCounterEvent | ResolvedRetractionEvent,
 ): boolean {
-  const retractedKey = eventDedupKey({
-    ...counter.event,
-    evidenceToken: asEvidenceToken(targetEvidenceToken),
-    curationJobId: counter.curationJobId,
-  })
+  const retractedKey = eventDedupKey(target.event)
   return appendRollbackEvent(
     input,
-    counter.product,
-    counter.recordId,
+    target.product,
+    target.recordId,
     {
       type: 'retracted',
       evidenceToken: inverseEvidenceToken(
         resolution.receiptId,
-        counter.recordId,
+        target.recordId,
         retractedKey,
       ),
       curationJobId: resolution.receiptId,
       buildOrdinal: input.resolvedAtOrdinal,
-      retractsEvidenceToken: asEvidenceToken(targetEvidenceToken),
-      retractsCurationJobId: counter.curationJobId,
+      retractsEvidenceToken: target.event.evidenceToken,
+      retractsCurationJobId: target.event.curationJobId,
       rollbackReceiptId: resolution.receiptId,
     },
   )
@@ -602,18 +904,37 @@ function assertCausalResolution(
 function emitRollback(
   input: RollbackBaseInput,
   resolution: RollbackResolution,
+  resolveAgain: () => RollbackResolution,
 ): RollbackReport {
+  const initialFingerprint = rollbackAffectedSetFingerprint(resolution.affected)
+  if (
+    input.expectedAffectedSetFingerprint !== undefined
+    && input.expectedAffectedSetFingerprint !== initialFingerprint
+  ) {
+    throw new RollbackPlanChangedError(
+      input.expectedAffectedSetFingerprint,
+      initialFingerprint,
+    )
+  }
   assertCausalResolution(input, resolution)
   input.hooks?.afterResolution?.()
+  const revalidated = resolveAgain()
+  const revalidatedFingerprint = rollbackAffectedSetFingerprint(revalidated.affected)
+  if (revalidatedFingerprint !== initialFingerprint) {
+    throw new RollbackPlanChangedError(initialFingerprint, revalidatedFingerprint)
+  }
+  assertCausalResolution(input, revalidated)
+  resolution = revalidated
 
   let inverseCount = 0
-  const touched = new Map<string, { recordId: RecordId; product: string }>()
+  const touched = new Map<string, { recordId: RecordId; product: string }>(
+    resolution.projectionTargets.map((target) => [
+      bundleTargetKey(target.product, target.recordId),
+      target,
+    ]),
+  )
   const restoredVictims = new Set<RecordId>()
   const retractedPromotions = new Set<RecordId>()
-  const supportLossCandidates = new Map<
-    string,
-    { recordId: RecordId; product: string }
-  >()
 
   for (const minted of resolution.mintedBundles) {
     if (appendInverseDeprecate(input, resolution, minted)) inverseCount += 1
@@ -625,83 +946,23 @@ function emitRollback(
       input,
       resolution,
       counter,
-      counter.evidenceToken,
     )) {
       inverseCount += 1
     }
     touched.set(`${counter.product}\0${counter.recordId}`, counter)
-    if (counter.type === 'confirmed') {
-      supportLossCandidates.set(
-        `${counter.product}\0${counter.recordId}`,
-        { recordId: counter.recordId, product: counter.product },
-      )
-    }
-
-    if (counter.type === 'superseded') {
-      const closeToken = asEvidenceToken(sha256hex(canonicalJson({
-        token: counter.evidenceToken,
-        event: 'window-close',
-      })))
-      if (appendRetraction(input, resolution, counter, closeToken)) {
-        inverseCount += 1
-      }
-      restoredVictims.add(counter.recordId)
-    }
+    if (counter.type === 'superseded') restoredVictims.add(counter.recordId)
   }
 
-  /**
-   * D-15/D-17 support-loss cascade: the V4 promotion-gate support
-   * (`confirmedOutcomeEvidenceTokens` in assemblePromotionGateInput) is at least one surviving
-   * confirmation, so a promotion whose last qualifying support this rollback removed is
-   * retracted here under the same auditable receipt. The cascade fires only where THIS
-   * rollback retracted a confirmed event and no confirmation survives: a promotion that never
-   * had confirmed support was not deposed by this receipt and is left to the D-17 gate. If
-   * surviving evidence still merits promotion, the gate re-grants it on the next drain;
-   * authority is never left standing on support this rollback removed. Cascade targets are
-   * exact eventDedupKey identities and every inverse is an append — existing outcome lines are
-   * never rewritten.
-   */
-  const cascadeTargets = [...supportLossCandidates.values()]
-    .sort((left, right) =>
-      compareText(left.product, right.product) || compareText(left.recordId, right.recordId),
-    )
-  if (cascadeTargets.length > 0) {
-    for (const { recordId, product } of cascadeTargets) {
-      const target = resolveProductQualifiedBundleDir({
-        knowledgeRoot: input.knowledgeRoot,
-        product,
-        recordId,
-      })
-      const reloaded = loadBundle(target.dir)
-      if (reloaded.kind !== 'loaded') {
-        throw new Error(`rollback target ${recordId} disappeared during commit`)
-      }
-      const surviving = survivingOutcomeEvents(reloaded.bundle.events)
-      const survivingPromoted = surviving.filter((event) => event.type === 'promoted')
-      if (
-        surviving.some((event) => event.type === 'confirmed')
-        || survivingPromoted.length === 0
-      ) {
-        continue
-      }
-      for (const promoted of survivingPromoted) {
-        const appended = appendRetraction(
-          input,
-          resolution,
-          {
-            recordId,
-            evidenceToken: promoted.evidenceToken,
-            curationJobId: promoted.curationJobId,
-            type: 'promoted',
-            event: promoted,
-            product,
-          },
-          promoted.evidenceToken,
-        )
-        if (appended) inverseCount += 1
-      }
-      retractedPromotions.add(recordId)
-    }
+  for (const close of resolution.windowCloseEvents) {
+    if (appendRetraction(input, resolution, close)) inverseCount += 1
+    touched.set(bundleTargetKey(close.product, close.recordId), close)
+    restoredVictims.add(close.recordId)
+  }
+
+  for (const promoted of resolution.promotionEvents) {
+    if (appendRetraction(input, resolution, promoted)) inverseCount += 1
+    touched.set(bundleTargetKey(promoted.product, promoted.recordId), promoted)
+    retractedPromotions.add(promoted.recordId)
   }
 
   // Re-project every touched bundle even on duplicate replay. This is the same healing property
@@ -732,10 +993,10 @@ function emitRollback(
 
 /** Resolve and append the ratified inverse map for one curation job. */
 export function rollbackCurationJob(input: RollbackCurationJobInput): RollbackReport {
-  return emitRollback(input, resolveCurationJob(input))
+  return emitRollback(input, resolveCurationJob(input), () => resolveCurationJob(input))
 }
 
 /** Resolve and append the inverse map for an AND-composed provenance campaign. */
 export function rollbackCampaign(input: RollbackCampaignInput): RollbackReport {
-  return emitRollback(input, resolveCampaign(input))
+  return emitRollback(input, resolveCampaign(input), () => resolveCampaign(input))
 }

@@ -932,6 +932,53 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.rollbackCurationJobCalls).toBe(0)
   })
 
+  it('rejects a promotion added while the rollback preview awaits authorization', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const baseJob = 'promotion-preview-base-job'
+    const bundle = seedBundle(workspace, { curationJobId: baseJob, createdAtOrdinal: 5 })
+    const config: BundleStoreConfig = {
+      knowledgeRoot: workspace.knowledgeRoot,
+      productKey: PRODUCT,
+      auditBaseDir: workspace.runtimeRoot,
+      commitArtifacts: 'none',
+    }
+    expect(appendOutcomeEvent(config, asRecordId(bundle.id), {
+      type: 'retracted',
+      evidenceToken: asEvidenceToken('promotion-preview-base-retraction'),
+      curationJobId: 'promotion-preview-setup',
+      buildOrdinal: 6,
+      retractsEvidenceToken: asEvidenceToken(`maintenance-confirmation-${PRODUCT}-5`),
+      retractsCurationJobId: baseJob,
+      rollbackReceiptId: 'promotion-preview-setup',
+    })).toEqual({ kind: 'appended' })
+    expect(appendOutcomeEvent(config, asRecordId(bundle.id), {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('promotion-preview-selected-confirmation'),
+      curationJobId: CURATION_JOB_ID,
+      buildOrdinal: 7,
+      origin: 'agent-verified',
+    })).toEqual({ kind: 'appended' })
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push('y')
+    commandHarness.promptHook = () => {
+      expect(appendOutcomeEvent(config, asRecordId(bundle.id), {
+        type: 'promoted',
+        evidenceToken: asEvidenceToken('promotion-preview-late-promotion'),
+        curationJobId: 'promotion-preview-other-job',
+        buildOrdinal: 8,
+      })).toEqual({ kind: 'appended' })
+    }
+
+    const result = await invoke(workspace, ['rollback', '--job', CURATION_JOB_ID, '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('preview-changed')
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+    const loaded = loadBundle(bundle.dir)
+    if (loaded.kind !== 'loaded') throw new Error('expected promotion race bundle')
+    expect(loaded.bundle.events.filter(({ type }) => type === 'retracted')).toHaveLength(1)
+  })
+
   it('heartbeats work beyond the lease TTL and passes authority into rebuild', async () => {
     const workspace = fixtureWorkspace(roots)
     seedBundle(workspace)
