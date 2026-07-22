@@ -10,13 +10,12 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
-  rmdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
@@ -29,8 +28,7 @@ export const EPOCH_FILE = '.epoch'
 /** Provisional writer-heartbeat TTL; retune from operational evidence without adding config. */
 export const LEASE_HEARTBEAT_TTL_MS = 30_000
 
-const MUTATION_LOCK_DIR = '.writer-lease-mutation-lock'
-const MUTATION_LOCK_STALE_MS = 5_000
+const MUTATION_LOCK_FILE = '.writer-lease-mutation-lock'
 const MUTATION_LOCK_POLL_MS = 5
 const MUTATION_LOCK_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
 
@@ -93,15 +91,21 @@ export type WriterAuthorityLostReason =
 /** Fail-closed maintenance refusal with the holder and fresh disk epoch attached. */
 export class WriterAuthorityLostError extends Error {
   override readonly name = 'WriterAuthorityLostError'
+  readonly authority: WriterLeaseAuthority
+  readonly reason: WriterAuthorityLostReason
+  readonly observedEpoch: number
 
   constructor(
-    readonly authority: WriterLeaseAuthority,
-    readonly reason: WriterAuthorityLostReason,
-    readonly observedEpoch: number,
+    authority: WriterLeaseAuthority,
+    reason: WriterAuthorityLostReason,
+    observedEpoch: number,
   ) {
     super(
       `writer authority lost (${reason}); held epoch ${authority.epoch}, observed ${observedEpoch}`,
     )
+    this.authority = authority
+    this.reason = reason
+    this.observedEpoch = observedEpoch
   }
 }
 
@@ -125,7 +129,7 @@ function epochPath(knowledgeRoot: string): string {
 }
 
 function mutationLockPath(knowledgeRoot: string): string {
-  return join(knowledgeRoot, 'memory', 'index', MUTATION_LOCK_DIR)
+  return join(knowledgeRoot, 'memory', 'index', MUTATION_LOCK_FILE)
 }
 
 function bestEffortFsyncDirectory(dir: string): void {
@@ -149,11 +153,26 @@ function bestEffortFsyncDirectory(dir: string): void {
   }
 }
 
-function removeEmptyMutationLock(lockDir: string): void {
+interface MutationLockOwner {
+  pid: number
+  token: string
+}
+
+function readMutationLockOwner(lockFile: string): MutationLockOwner | undefined {
   try {
-    rmdirSync(lockDir)
+    const parsed = JSON.parse(readFileSync(lockFile, 'utf8')) as unknown
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+    const value = parsed as Record<string, unknown>
+    return typeof value.pid === 'number'
+      && Number.isSafeInteger(value.pid)
+      && value.pid > 0
+      && typeof value.token === 'string'
+      && value.token !== ''
+      ? { pid: value.pid, token: value.token }
+      : undefined
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
   }
 }
 
@@ -161,36 +180,79 @@ function waitForMutationLock(): void {
   Atomics.wait(MUTATION_LOCK_WAIT, 0, 0, MUTATION_LOCK_POLL_MS)
 }
 
-function withMutationLock<T>(knowledgeRoot: string, mutate: () => T): T {
-  const lockDir = mutationLockPath(knowledgeRoot)
-  const lockParent = dirname(lockDir)
-  mkdirSync(lockParent, { recursive: true })
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    if (code === 'EPERM') return true
+    throw error
+  }
+}
 
-  while (true) {
-    try {
-      mkdirSync(lockDir)
-      bestEffortFsyncDirectory(lockParent)
-      break
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+function writeMutationLockOwner(file: string, owner: MutationLockOwner): void {
+  const fd = openSync(file, 'wx')
+  try {
+    writeFileSync(fd, `${JSON.stringify(owner)}\n`, 'utf8')
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function withMutationLock<T>(
+  knowledgeRoot: string,
+  mutate: () => T,
+  afterLockAcquired?: () => void,
+): T {
+  const lockFile = mutationLockPath(knowledgeRoot)
+  const lockParent = dirname(lockFile)
+  mkdirSync(lockParent, { recursive: true })
+  const owner: MutationLockOwner = { pid: process.pid, token: randomUUID() }
+  const ownerFile = `${lockFile}.owner-${owner.token}`
+  writeMutationLockOwner(ownerFile, owner)
+
+  let acquired = false
+  try {
+    while (!acquired) {
       try {
-        if (Date.now() - statSync(lockDir).mtimeMs >= MUTATION_LOCK_STALE_MS) {
-          removeEmptyMutationLock(lockDir)
+        linkSync(ownerFile, lockFile)
+        bestEffortFsyncDirectory(lockParent)
+        acquired = true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        const current = readMutationLockOwner(lockFile)
+        if (current === undefined) {
+          if (!existsSync(lockFile)) continue
+          throw new Error('writer lease mutation lock owner is malformed')
+        }
+        if (!processIsAlive(current.pid)) {
+          const quarantine = `${lockFile}.dead-${current.token}-${randomUUID()}`
+          try {
+            renameSync(lockFile, quarantine)
+            bestEffortFsyncDirectory(lockParent)
+            rmSync(quarantine, { force: true })
+            bestEffortFsyncDirectory(lockParent)
+          } catch (recoveryError) {
+            if ((recoveryError as NodeJS.ErrnoException).code === 'ENOENT') continue
+            throw recoveryError
+          }
           continue
         }
-      } catch (statError) {
-        if ((statError as NodeJS.ErrnoException).code === 'ENOENT') continue
-        throw statError
+        waitForMutationLock()
       }
-      waitForMutationLock()
     }
-  }
 
-  try {
+    afterLockAcquired?.()
     return mutate()
   } finally {
-    removeEmptyMutationLock(lockDir)
-    bestEffortFsyncDirectory(lockParent)
+    if (acquired && readMutationLockOwner(lockFile)?.token === owner.token) {
+      rmSync(lockFile, { force: true })
+      bestEffortFsyncDirectory(lockParent)
+    }
+    rmSync(ownerFile, { force: true })
   }
 }
 
@@ -277,7 +339,10 @@ export function isLeaseStale(lease: unknown, nowMs: number): boolean {
 }
 
 /** Return a live holder or atomically mint a new, monotonically fenced writer identity. */
-export function acquireWriterLease(knowledgeRoot: string): AcquireWriterLeaseOutcome {
+export function acquireWriterLease(
+  knowledgeRoot: string,
+  hooks?: { afterMutationLockAcquired?: () => void },
+): AcquireWriterLeaseOutcome {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
   return withMutationLock(knowledgeRoot, () => {
     const current = readLease(knowledgeRoot)
@@ -296,7 +361,7 @@ export function acquireWriterLease(knowledgeRoot: string): AcquireWriterLeaseOut
     atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
     atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
     return { kind: 'acquired', leaseId: holder.leaseId, epoch: holder.epoch }
-  })
+  }, hooks?.afterMutationLockAcquired)
 }
 
 /** Refresh the matching current-epoch holder; reclaim races return a typed refusal. */

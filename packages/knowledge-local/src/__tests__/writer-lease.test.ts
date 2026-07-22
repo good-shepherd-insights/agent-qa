@@ -1,8 +1,10 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -28,6 +30,66 @@ import {
   type WriterAuthorityLostReason,
   type WriterLease,
 } from '../lease/writer-lease.js'
+
+const WRITER_LEASE_MODULE_URL = new URL('../lease/writer-lease.ts', import.meta.url).href
+
+function spawnLeaseAcquirer(
+  knowledgeRoot: string,
+  stallInsideLockMs: number,
+): ChildProcessWithoutNullStreams {
+  const source = `
+    const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
+      afterMutationLockAcquired: () => {
+        process.stdout.write('locked\\n');
+        Atomics.wait(wait, 0, 0, Number(process.env.AGENT_QA_LEASE_TEST_STALL_MS));
+      },
+    });
+    process.stdout.write(JSON.stringify(outcome) + '\\n');
+  `
+  return spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    {
+      env: {
+        ...process.env,
+        AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+        AGENT_QA_LEASE_TEST_STALL_MS: String(stallInsideLockMs),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+}
+
+function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let output = ''
+    const onData = (chunk: Buffer): void => {
+      output += chunk.toString('utf8')
+      if (!output.includes(expected)) return
+      child.stdout.off('data', onData)
+      resolve()
+    }
+    child.stdout.on('data', onData)
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      if (!output.includes(expected)) reject(new Error(`lease child exited ${code}: ${output}`))
+    })
+  })
+}
+
+function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let stderr = ''
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk })
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`lease child exited ${code}: ${stderr}`))
+    })
+  })
+}
 
 describe('writer lease acquire, heartbeat, release, and stale self-heal (CUR-03/CUR-04)', () => {
   let root: string
@@ -333,4 +395,39 @@ describe('fresh writer authority heartbeat and epoch fencing', () => {
       2,
     )
   })
+})
+
+describe('writer lease mutation lock ownership', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-lock-owner-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('does not steal or remove a live owner lock after the former five-second threshold', async () => {
+    const first = spawnLeaseAcquirer(knowledgeRoot, 6_500)
+    await waitForOutput(first, 'locked\n')
+
+    const second = spawnLeaseAcquirer(knowledgeRoot, 0)
+    let secondExited = false
+    second.once('exit', () => { secondExited = true })
+    await new Promise((resolve) => setTimeout(resolve, 5_500))
+
+    expect(secondExited).toBe(false)
+    await Promise.all([waitForExit(first), waitForExit(second)])
+    expect(
+      readdirSync(join(knowledgeRoot, 'memory', 'index'))
+        .filter((entry) => entry.startsWith('.writer-lease-mutation-lock')),
+    ).toEqual([])
+    expect(JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'))).toMatchObject({
+      pid: first.pid,
+      epoch: 1,
+    })
+  }, 10_000)
 })
