@@ -150,6 +150,24 @@ function checkConfigFile(configPath: string): DoctorCheck {
   }
 }
 
+function checkLegacyV1MemoryData(configPath: string): DoctorCheck {
+  const legacyMemoryDir = resolve(dirname(resolve(configPath)), 'agent-qa-memory')
+
+  return {
+    name: 'Legacy v1 memory data',
+    fixInstructions: `Remove ${legacyMemoryDir} manually if you no longer need the retired v1 data.`,
+    check: async () => {
+      if (existsSync(legacyMemoryDir)) {
+        return {
+          status: 'warn',
+          message: `v1 memory data found at ${legacyMemoryDir} — no longer used by agent-qa; safe to delete`,
+        }
+      }
+      return { status: 'pass', message: `no v1 memory data found at ${legacyMemoryDir}` }
+    },
+  }
+}
+
 function checkConfigValidation(config: Record<string, unknown> | null): DoctorCheck {
   return {
     name: 'Config validation',
@@ -606,6 +624,7 @@ export function createDoctorCommand(): Command {
       const checks: DoctorCheck[] = [
         checkNodeVersion(),
         checkConfigFile(configPath),
+        checkLegacyV1MemoryData(configPath),
         checkConfigValidation(config),
         checkSecretsFile(config, configPath),
         checkWorkspaceSupportFiles(config, configPath),

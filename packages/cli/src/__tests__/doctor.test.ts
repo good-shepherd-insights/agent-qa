@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+import { resolve } from 'node:path'
 
 vi.mock('node:child_process', () => ({
   execSync: vi.fn(),
@@ -218,6 +219,30 @@ describe('doctor command', () => {
     const output = getOutput()
     expect(output).toContain('not found')
     expect(output).toContain('WARN')
+  })
+
+  it('warns with the resolved path when legacy v1 memory data exists', async () => {
+    const configPath = resolve(process.cwd(), 'fixture', 'agent-qa.config.yaml')
+    const legacyMemoryDir = resolve(process.cwd(), 'fixture', 'agent-qa-memory')
+    mockExistsSync.mockImplementation(path => path === legacyMemoryDir)
+
+    await runDoctor(configPath)
+
+    expect(getOutput()).toContain(
+      `v1 memory data found at ${legacyMemoryDir} — no longer used by agent-qa; safe to delete`,
+    )
+    expect(getOutput()).toContain('WARN')
+  })
+
+  it('passes the legacy v1 memory check without modifying an absent directory', async () => {
+    const configPath = resolve(process.cwd(), 'fixture', 'agent-qa.config.yaml')
+    const legacyMemoryDir = resolve(process.cwd(), 'fixture', 'agent-qa-memory')
+    mockExistsSync.mockReturnValue(false)
+
+    await runDoctor(configPath)
+
+    expect(getOutput()).toContain(`no v1 memory data found at ${legacyMemoryDir}`)
+    expect(mockExistsSync).toHaveBeenCalledWith(legacyMemoryDir)
   })
 
   it('uses the current Claude fallback model when config is missing', async () => {

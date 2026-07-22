@@ -4,7 +4,6 @@ import {
   createAuthCommand,
   createAuthStateCommand,
   createCacheCommand,
-  createCleanMemoryCommand,
   createConfigCommand,
   createCreateSuiteCommand,
   createCreateTestCommand,
@@ -63,7 +62,6 @@ program.addCommand(createIdsCommand())
 program.addCommand(createEvalCommand())
 program.addCommand(createCreateTestCommand())
 program.addCommand(createCreateSuiteCommand())
-program.addCommand(createCleanMemoryCommand())
 program.addCommand(createSkillsCommand())
 
 program.parse()
