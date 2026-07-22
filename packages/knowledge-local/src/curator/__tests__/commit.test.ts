@@ -658,7 +658,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   })
 
   it('routes promotion retraction survival through the schema authority', () => {
-    const source = readFileSync(new URL('../commit.ts', import.meta.url), 'utf8')
+    const source = readFileSync(new URL('../../promotion-gate-input.ts', import.meta.url), 'utf8')
 
     expect(source).toContain('  survivingOutcomeEvents,')
     expect(source).not.toContain('function survivingOutcomeEvents(')
