@@ -13,15 +13,22 @@ const knowledgeRecordKindSchema = z.enum([
   'policy',
 ])
 
+const bundleStatusSchema = z.enum([
+  'active',
+  'candidate',
+  'superseded',
+  'deprecated',
+])
+
 /** Closed structural filter for deterministic maintenance inspection (D-06). */
 export const InspectFilterSchema = z.object({
   product: z.string().optional(),
   scope: z.string().optional(),
   kind: knowledgeRecordKindSchema.optional(),
-  status: z.string().optional(),
+  status: bundleStatusSchema.optional(),
   anchor: z.string().optional(),
   recordId: z.string().optional(),
-  asOfBuild: z.number().int().optional(),
+  asOfBuild: z.number().int().nonnegative().optional(),
   unresolvedOnly: z.boolean().optional(),
 }).strict()
 
@@ -34,7 +41,7 @@ export const InspectRecordViewSchema = z.object({
   product: z.string(),
   scope: z.string(),
   kind: knowledgeRecordKindSchema,
-  status: z.string(),
+  status: bundleStatusSchema,
   confirmations: z.number().int().nonnegative(),
   contradictions: z.number().int().nonnegative(),
   evidenceTokens: z.array(z.string()),

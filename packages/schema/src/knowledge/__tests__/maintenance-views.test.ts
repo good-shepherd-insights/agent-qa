@@ -53,11 +53,15 @@ describe('maintenance view contracts', () => {
     })).toThrow()
   })
 
-  it('accepts an empty inspect filter and rejects unknown dimensions', () => {
+  it('keeps inspect filters closed over dimensions, statuses, and ordinals', () => {
     const { InspectFilterSchema } = maintenanceViews()
 
     expect(InspectFilterSchema.parse({})).toEqual({})
+    expect(InspectFilterSchema.parse({ status: 'superseded', asOfBuild: 0 }))
+      .toEqual({ status: 'superseded', asOfBuild: 0 })
     expect(() => InspectFilterSchema.parse({ query: 'free text' })).toThrow()
+    expect(() => InspectFilterSchema.parse({ status: 'invented' })).toThrow()
+    expect(() => InspectFilterSchema.parse({ asOfBuild: -1 })).toThrow()
   })
 
   it('round-trips a valid inspect view and rejects a wrong schema version', () => {
