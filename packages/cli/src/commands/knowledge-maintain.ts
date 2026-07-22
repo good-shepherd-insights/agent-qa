@@ -8,6 +8,7 @@ import {
   enumerateBundleDirs,
   purgeRecord,
   rebuildIndex,
+  refreshWriterLeaseAuthority,
   releaseLease,
   resolveRollbackAffectedSet,
   rollbackCampaign,
@@ -21,6 +22,7 @@ import type {
   RollbackCampaignInput,
   RollbackCurationJobInput,
   RollbackReport,
+  WriterLeaseAuthority,
 } from '@vostride/agent-qa-knowledge-local'
 import {
   BuildOrdinalReservationError,
@@ -30,7 +32,7 @@ import {
   createMaskingContext,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-safety'
-import { asRecordId } from '@vostride/agent-qa-schema'
+import { asRecordId, canonicalJson } from '@vostride/agent-qa-schema'
 import type { OriginClass, RecordId } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
@@ -73,6 +75,7 @@ type MaintainErrorCode =
   | 'invalid-selector'
   | 'invalid-ordinal'
   | 'invalid-origin-class'
+  | 'preview-changed'
   | 'release-refused'
 
 class KnowledgeMaintainCommandError extends Error {
@@ -114,6 +117,9 @@ const ORIGIN_CLASSES = new Set<OriginClass>([
   'agent-observed',
   'import',
 ])
+
+/** Five seconds is strictly below the writer lease's fixed 30-second TTL divided by three. */
+const WRITER_LEASE_HEARTBEAT_INTERVAL_MS = 5_000
 
 function globalOptions(command: Command): { config?: string } {
   return command.parent?.parent?.opts<{ config?: string }>() ?? {}
@@ -177,7 +183,7 @@ function renderLeaseRefusal(
 async function withWriterLease<T>(
   verb: 'rebuild-index' | 'rollback' | 'purge',
   knowledgeRoot: string,
-  operation: () => Promise<T> | T,
+  operation: (writerAuthority: WriterLeaseAuthority) => Promise<T> | T,
 ): Promise<LeaseRunOutcome<T>> {
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind === 'held') {
@@ -186,19 +192,41 @@ async function withWriterLease<T>(
     return { kind: 'refused' }
   }
 
-  let value: T
+  const writerAuthority: WriterLeaseAuthority = {
+    knowledgeRoot,
+    leaseId: lease.leaseId,
+    epoch: lease.epoch,
+  }
+  let heartbeatError: unknown
+  const heartbeatTimer = setInterval(() => {
+    if (heartbeatError !== undefined) return
+    try {
+      refreshWriterLeaseAuthority(writerAuthority)
+    } catch (error) {
+      heartbeatError = error
+    }
+  }, WRITER_LEASE_HEARTBEAT_INTERVAL_MS)
+  heartbeatTimer.unref()
+
+  let operationError: unknown
   try {
-    value = await operation()
+    const value = await operation(writerAuthority)
+    if (heartbeatError !== undefined) throw heartbeatError
+    refreshWriterLeaseAuthority(writerAuthority)
+    return { kind: 'completed', value }
+  } catch (error) {
+    operationError = error
+    throw error
   } finally {
+    clearInterval(heartbeatTimer)
     const release = releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
-    if (release.kind === 'refused') {
+    if (release.kind === 'refused' && operationError === undefined) {
       throw new KnowledgeMaintainCommandError(
         'release-refused',
         `writer lease release was refused (${release.reason})`,
       )
     }
   }
-  return { kind: 'completed', value }
 }
 
 function promptDestination(json: boolean): PromptDestination {
@@ -315,11 +343,13 @@ function rollbackInput(
   selector: RollbackSelector,
   paths: KnowledgePaths,
   resolvedAtOrdinal: number,
+  writerAuthority?: WriterLeaseAuthority,
 ): RollbackCurationJobInput | RollbackCampaignInput {
   const base = {
     knowledgeRoot: paths.knowledgeRoot,
     auditBaseDir: paths.auditBaseDir,
     resolvedAtOrdinal,
+    ...(writerAuthority === undefined ? {} : { writerAuthority }),
   }
   return selector.kind === 'job'
     ? { ...base, curationJobId: selector.curationJobId }
@@ -354,12 +384,23 @@ function rollbackProducts(
 async function rollbackOrdinal(
   paths: KnowledgePaths,
   affected: RollbackAffectedSet,
+  writerAuthority: WriterLeaseAuthority,
 ): Promise<number> {
   const products = rollbackProducts(paths.knowledgeRoot, affected)
   return (await reserveBuildOrdinalForProducts({
     root: paths.runtimeRoot,
     products,
+    beforePersist: () => refreshWriterLeaseAuthority(writerAuthority),
   })) ?? 0
+}
+
+function rollbackPreviewFingerprint(affected: RollbackAffectedSet): string {
+  return canonicalJson({
+    mintedBundleIds: [...affected.mintedBundleIds].sort(),
+    counterEvents: [...affected.counterEvents]
+      .map((event) => canonicalJson(event))
+      .sort(),
+  })
 }
 
 function renderRollbackPreview(affected: RollbackAffectedSet): string {
@@ -390,12 +431,26 @@ function renderRollbackReport(report: RollbackReport): string {
   ].join('\n')
 }
 
-function renderPurgePreview(
+interface PurgePreview {
+  recordId: RecordId
+  bundle: { bundleId: string; product: string } | null
+}
+
+function resolvePurgePreview(
   knowledgeRoot: string,
   recordId: RecordId,
-): string {
+): PurgePreview {
   const hit = scanBundleById({ knowledgeRoot, bundleId: recordId })
-  if (hit === undefined) {
+  return {
+    recordId,
+    bundle: hit === undefined ? null : { bundleId: hit.bundleId, product: hit.product },
+  }
+}
+
+function renderPurgePreview(preview: PurgePreview): string {
+  const { recordId } = preview
+  const hit = preview.bundle
+  if (hit === null) {
     return [
       pc.bold(`Purge preview for ${recordId}`),
       '  live bundle: not found (purge will verify the receipt series)',
@@ -414,6 +469,14 @@ function renderPurgePreview(
     '  embed cache: all cached embeddings',
     '  receipt: content-free purge audit record under memory/receipts/',
   ].join('\n')
+}
+
+function assertPreviewUnchanged(verb: 'rollback' | 'purge', before: string, after: string): void {
+  if (before === after) return
+  throw new KnowledgeMaintainCommandError(
+    'preview-changed',
+    `authorized ${verb} target changed before writer authority was acquired; rerun the command`,
+  )
 }
 
 function renderPurgeReceipt(receipt: PurgeReceipt, alreadyPurged: boolean): string {
@@ -440,8 +503,8 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .action(async (options: RebuildOptions, rebuildCommand: Command) => {
       try {
         const paths = await resolveKnowledgePaths(rebuildCommand)
-        const result = await withWriterLease('rebuild-index', paths.knowledgeRoot, () => (
-          rebuildIndex({ knowledgeRoot: paths.knowledgeRoot })
+        const result = await withWriterLease('rebuild-index', paths.knowledgeRoot, (writerAuthority) => (
+          rebuildIndex({ knowledgeRoot: paths.knowledgeRoot, writerAuthority })
         ))
         if (result.kind === 'refused') return
         if (options.json === true) emitJson(result.value)
@@ -465,37 +528,44 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
       try {
         const selector = rollbackSelector(options)
         const paths = await resolveKnowledgePaths(rollbackCommand)
+        const prompt = promptDestination(options.json === true)
+        const previewInput = rollbackInput(selector, paths, 0)
+        const previewAffected = resolveRollbackAffectedSet(previewInput)
+        const previewFingerprint = rollbackPreviewFingerprint(previewAffected)
+        emitHuman(renderRollbackPreview(previewAffected), prompt.name)
+
+        if (options.yes !== true) {
+          if (!canPromptInteractively(prompt)) {
+            emitHuman(
+              pc.red(
+                'knowledge rollback: refusal [confirmation-required]: '
+                + 'non-interactive use requires --yes',
+              ),
+              'stderr',
+            )
+            process.exitCode = 1
+            return
+          }
+          const answer = await promptForAnswer('Apply this rollback? (y/N) ', prompt)
+          if (answer.trim().toLowerCase() !== 'y') {
+            emitHuman(pc.dim('Rollback aborted.'), prompt.name)
+            process.exitCode = 1
+            return
+          }
+        }
+
         const leaseResult = await withWriterLease(
           'rollback',
           paths.knowledgeRoot,
-          async (): Promise<RollbackExecutionOutcome> => {
-            const prompt = promptDestination(options.json === true)
-            const previewInput = rollbackInput(selector, paths, 0)
+          async (writerAuthority): Promise<RollbackExecutionOutcome> => {
             const affected = resolveRollbackAffectedSet(previewInput)
-            emitHuman(renderRollbackPreview(affected), prompt.name)
-
-            if (options.yes !== true) {
-              if (!canPromptInteractively(prompt)) {
-                emitHuman(
-                  pc.red(
-                    'knowledge rollback: refusal [confirmation-required]: '
-                    + 'non-interactive use requires --yes',
-                  ),
-                  'stderr',
-                )
-                process.exitCode = 1
-                return { kind: 'aborted' }
-              }
-              const answer = await promptForAnswer('Apply this rollback? (y/N) ', prompt)
-              if (answer.trim().toLowerCase() !== 'y') {
-                emitHuman(pc.dim('Rollback aborted.'), prompt.name)
-                process.exitCode = 1
-                return { kind: 'aborted' }
-              }
-            }
-
-            const resolvedAtOrdinal = await rollbackOrdinal(paths, affected)
-            const input = rollbackInput(selector, paths, resolvedAtOrdinal)
+            assertPreviewUnchanged(
+              'rollback',
+              previewFingerprint,
+              rollbackPreviewFingerprint(affected),
+            )
+            const resolvedAtOrdinal = await rollbackOrdinal(paths, affected, writerAuthority)
+            const input = rollbackInput(selector, paths, resolvedAtOrdinal, writerAuthority)
             const report = selector.kind === 'job'
               ? rollbackCurationJob(input as RollbackCurationJobInput)
               : rollbackCampaign(input as RollbackCampaignInput)
@@ -520,56 +590,64 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
       try {
         const recordId = asRecordId(recordIdValue)
         const paths = await resolveKnowledgePaths(purgeCommand)
+        const prompt = promptDestination(options.json === true)
+        const preview = resolvePurgePreview(paths.knowledgeRoot, recordId)
+        const previewFingerprint = canonicalJson(preview)
+        emitHuman(renderPurgePreview(preview), prompt.name)
+
+        if (options.confirm !== undefined) {
+          if (options.confirm !== recordId) {
+            emitHuman(
+              pc.red(
+                'knowledge purge: refusal [confirmation-mismatch]: '
+                + '--confirm must exactly match the record id',
+              ),
+              'stderr',
+            )
+            process.exitCode = 1
+            return
+          }
+        } else {
+          if (!canPromptInteractively(prompt)) {
+            emitHuman(
+              pc.red(
+                'knowledge purge: refusal [confirmation-required]: '
+                + 'non-interactive use requires --confirm <record-id>',
+              ),
+              'stderr',
+            )
+            process.exitCode = 1
+            return
+          }
+          const answer = await promptForAnswer(
+            `Type ${recordId} to confirm irreversible purge: `,
+            prompt,
+          )
+          if (answer !== recordId) {
+            emitHuman(
+              pc.red('knowledge purge: refusal [confirmation-mismatch]: record id did not match'),
+              'stderr',
+            )
+            process.exitCode = 1
+            return
+          }
+        }
+
         const leaseResult = await withWriterLease(
           'purge',
           paths.knowledgeRoot,
-          async (): Promise<PurgeExecutionOutcome> => {
-            const prompt = promptDestination(options.json === true)
-            emitHuman(renderPurgePreview(paths.knowledgeRoot, recordId), prompt.name)
-
-            if (options.confirm !== undefined) {
-              if (options.confirm !== recordId) {
-                emitHuman(
-                  pc.red(
-                    'knowledge purge: refusal [confirmation-mismatch]: '
-                    + '--confirm must exactly match the record id',
-                  ),
-                  'stderr',
-                )
-                process.exitCode = 1
-                return { kind: 'aborted' }
-              }
-            } else {
-              if (!canPromptInteractively(prompt)) {
-                emitHuman(
-                  pc.red(
-                    'knowledge purge: refusal [confirmation-required]: '
-                    + 'non-interactive use requires --confirm <record-id>',
-                  ),
-                  'stderr',
-                )
-                process.exitCode = 1
-                return { kind: 'aborted' }
-              }
-              const answer = await promptForAnswer(
-                `Type ${recordId} to confirm irreversible purge: `,
-                prompt,
-              )
-              if (answer !== recordId) {
-                emitHuman(
-                  pc.red('knowledge purge: refusal [confirmation-mismatch]: record id did not match'),
-                  'stderr',
-                )
-                process.exitCode = 1
-                return { kind: 'aborted' }
-              }
-            }
-
+          async (writerAuthority): Promise<PurgeExecutionOutcome> => {
+            assertPreviewUnchanged(
+              'purge',
+              previewFingerprint,
+              canonicalJson(resolvePurgePreview(paths.knowledgeRoot, recordId)),
+            )
             const outcome = purgeRecord({
               knowledgeRoot: paths.knowledgeRoot,
               recordId,
               initiator: `cli:${userInfo().username}`,
               auditBaseDir: paths.auditBaseDir,
+              writerAuthority,
             })
             switch (outcome.kind) {
               case 'purged':
