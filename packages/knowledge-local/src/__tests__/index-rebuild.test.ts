@@ -48,6 +48,10 @@ import {
   MIN_READABLE_INDEX_SCHEMA_VERSION,
   readIndexMaintenanceState,
 } from '../index-open.js'
+import {
+  LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
+} from '../lease/writer-lease.js'
 import { readRebuildRequest, requestRebuild } from '../rebuild-marker.js'
 import {
   makeBundleDraftFixture,
@@ -73,6 +77,7 @@ interface RebuildApi {
     knowledgeRoot: string
     embedder?: knowledgeLocal.EmbedderPort
     vecLoadablePath?: string
+    writerAuthority?: knowledgeLocal.WriterLeaseAuthority
   }): Promise<RebuildReport>
 }
 
@@ -188,6 +193,89 @@ describe('IDX-01 derived-index rebuild projection', () => {
   function openReader(): knowledgeLocal.IndexReaderConnection {
     return knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
   }
+
+  function acquireAuthority(): knowledgeLocal.WriterLeaseAuthority {
+    const acquired = knowledgeLocal.acquireWriterLease(knowledgeRoot)
+    expect(acquired.kind).toBe('acquired')
+    if (acquired.kind !== 'acquired') throw new Error('expected acquired writer lease')
+    return { knowledgeRoot, leaseId: acquired.leaseId, epoch: acquired.epoch }
+  }
+
+  function forceCompetingEpoch(): knowledgeLocal.WriterLeaseAuthority {
+    const leasePath = join(knowledgeRoot, LEASE_FILE)
+    const holder = JSON.parse(readFileSync(leasePath, 'utf8')) as Record<string, unknown>
+    writeFileSync(
+      leasePath,
+      `${JSON.stringify({
+        ...holder,
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+      })}\n`,
+      'utf8',
+    )
+    return acquireAuthority()
+  }
+
+  it('refuses stale authority before an index open can create database bytes', async () => {
+    publishNamed('Pre-open Authority Product', 'Pre-open authority')
+    requestRebuild({
+      knowledgeRoot,
+      reason: 'corrupt',
+      detail: 'marker must survive a pre-open authority refusal',
+    })
+    const authority = acquireAuthority()
+    forceCompetingEpoch()
+
+    await expect(
+      rebuildApi().rebuildIndex({ knowledgeRoot, writerAuthority: authority }),
+    ).rejects.toBeInstanceOf(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(existsSync(join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE))).toBe(false)
+    expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+  })
+
+  it('refuses the next vector mutation after a competing epoch appears during embedding', async () => {
+    const published = publishNamed('Embedding Authority Product', 'Embedding authority')
+    requestRebuild({
+      knowledgeRoot,
+      reason: 'corrupt',
+      detail: 'marker must survive authority loss before vector persistence',
+    })
+    const authority = acquireAuthority()
+    const baseEmbedder = makeFakeEmbedder()
+    const reclaimingEmbedder: knowledgeLocal.EmbedderPort = {
+      async embedDocument(rendering) {
+        forceCompetingEpoch()
+        return baseEmbedder.embedDocument(rendering)
+      },
+      embedQuery: (rendering) => baseEmbedder.embedQuery(rendering),
+    }
+
+    await expect(
+      rebuildApi().rebuildIndex({
+        knowledgeRoot,
+        embedder: reclaimingEmbedder,
+        writerAuthority: authority,
+      }),
+    ).rejects.toBeInstanceOf(knowledgeLocal.WriterAuthorityLostError)
+
+    const reader = openReader()
+    try {
+      expect(
+        reader.db
+          .prepare('SELECT embed_status, embedding FROM records WHERE bundle_id = ?')
+          .get(published.id),
+      ).toEqual({ embed_status: 'pending', embedding: null })
+      expect(
+        rows(
+          reader.db,
+          `SELECT record_rowid FROM ${knowledgeLocal.vecTableName(DEFAULT_EMBEDDING_PROFILE)}`,
+        ),
+      ).toEqual([])
+    } finally {
+      reader.db.close()
+    }
+    expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
+  })
 
   it('inspects an absent or pending index without creating or changing files', async () => {
     const indexDir = join(knowledgeRoot, 'memory', 'index')
