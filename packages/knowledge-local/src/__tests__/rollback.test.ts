@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -22,6 +22,7 @@ import * as knowledgeLocal from '../index.js'
 import type {
   BundleStoreConfig,
   PublishBundleOutcome,
+  WriterLeaseAuthority,
 } from '../index.js'
 import {
   EMBED_STATUS_PENDING,
@@ -30,6 +31,7 @@ import {
   EMBED_STATUS_SUPPRESSED,
   projectBundleIndexRow,
 } from '../index-rebuild.js'
+import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import { makeBundleDraftFixture } from './fixtures/bundle-fixture.js'
 import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 
@@ -60,6 +62,11 @@ interface RollbackApi {
     auditBaseDir: string
     curationJobId: string
     resolvedAtOrdinal: number
+    writerAuthority?: WriterLeaseAuthority
+    hooks?: {
+      afterResolution?: () => void
+      afterMutation?: (kind: 'append' | 'projection', recordId: string) => void
+    }
   }): RollbackReport
   rollbackCampaign(input: {
     knowledgeRoot: string
@@ -69,6 +76,11 @@ interface RollbackApi {
     toOrdinal?: number
     anchorClusterKey?: string
     originClass?: OriginClass
+    writerAuthority?: WriterLeaseAuthority
+    hooks?: {
+      afterResolution?: () => void
+      afterMutation?: (kind: 'append' | 'projection', recordId: string) => void
+    }
   }): RollbackReport
   rollbackReceiptId(
     kind: 'job' | 'campaign',
@@ -115,6 +127,31 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       auditBaseDir,
       commitArtifacts: 'none',
     }
+  }
+
+  function acquireWriterAuthority(): WriterLeaseAuthority {
+    const acquired = knowledgeLocal.acquireWriterLease(knowledgeRoot)
+    expect(acquired.kind).toBe('acquired')
+    if (acquired.kind !== 'acquired') throw new Error('expected acquired writer authority')
+    return { knowledgeRoot, leaseId: acquired.leaseId, epoch: acquired.epoch }
+  }
+
+  function reclaimWriterAuthority(authority: WriterLeaseAuthority): WriterLeaseAuthority {
+    const leasePath = join(knowledgeRoot, LEASE_FILE)
+    const holder = JSON.parse(readFileSync(leasePath, 'utf8')) as Record<string, unknown>
+    writeFileSync(
+      leasePath,
+      `${JSON.stringify({
+        ...holder,
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+      })}\n`,
+      'utf8',
+    )
+    const reclaimed = knowledgeLocal.acquireWriterLease(knowledgeRoot)
+    expect(reclaimed.kind).toBe('acquired')
+    if (reclaimed.kind !== 'acquired') throw new Error('expected reclaimed writer authority')
+    expect(reclaimed.epoch).toBe(authority.epoch + 1)
+    return { knowledgeRoot, leaseId: reclaimed.leaseId, epoch: reclaimed.epoch }
   }
 
   function publishForJob(input: {
@@ -1109,5 +1146,101 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     expect(report.retractedPromotions).toEqual([])
     expect(report.affected).toEqual({ mintedBundleIds: [], counterEvents: [] })
     expect(readFileSync(join(bystander.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
+  })
+
+  it('refuses the first append when authority is reclaimed after resolution', async () => {
+    const target = publishForJob({
+      identity: 'authority-after-resolution',
+      curationJobId: 'job-authority-after-resolution',
+      sourceBuildOrdinal: 5,
+      initialEvents: activeEvents('job-authority-after-resolution', 5),
+    })
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const before = readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')
+    const authority = acquireWriterAuthority()
+
+    expect(() =>
+      rollbackApi().rollbackCurationJob({
+        knowledgeRoot,
+        auditBaseDir,
+        curationJobId: 'job-authority-after-resolution',
+        resolvedAtOrdinal: 20,
+        writerAuthority: authority,
+        hooks: {
+          afterResolution: () => {
+            reclaimWriterAuthority(authority)
+          },
+        },
+      }),
+    ).toThrow(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(readFileSync(join(target.dir, 'evidence', 'outcomes.jsonl'), 'utf8')).toBe(before)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(target)).status).toBe('active')
+    expect(hasFtsRow(target.id)).toBe(true)
+  })
+
+  it('performs no later append or projection after authority loss and resumes idempotently', async () => {
+    const minted = publishForJob({
+      identity: 'authority-partial-minted',
+      curationJobId: 'job-authority-partial',
+      sourceBuildOrdinal: 5,
+      initialEvents: activeEvents('job-authority-partial', 5),
+    })
+    const counterTarget = publishForJob({
+      identity: 'authority-partial-counter',
+      curationJobId: 'job-authority-bystander',
+      sourceBuildOrdinal: 6,
+      initialEvents: activeEvents('job-authority-bystander', 6),
+    })
+    expect(knowledgeLocal.appendOutcomeEvent(config(), counterTarget.id, {
+      type: 'confirmed',
+      evidenceToken: asEvidenceToken('authority-partial-counter-token'),
+      curationJobId: 'job-authority-partial',
+      buildOrdinal: 7,
+      origin: 'agent-verified',
+    })).toEqual({ kind: 'appended' })
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const counterBefore = readFileSync(
+      join(counterTarget.dir, 'evidence', 'outcomes.jsonl'),
+      'utf8',
+    )
+    const authority = acquireWriterAuthority()
+    let successor: WriterLeaseAuthority | undefined
+    let completedMutations = 0
+
+    expect(() =>
+      rollbackApi().rollbackCurationJob({
+        knowledgeRoot,
+        auditBaseDir,
+        curationJobId: 'job-authority-partial',
+        resolvedAtOrdinal: 20,
+        writerAuthority: authority,
+        hooks: {
+          afterMutation: () => {
+            completedMutations += 1
+            if (completedMutations === 1) successor = reclaimWriterAuthority(authority)
+          },
+        },
+      }),
+    ).toThrow(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(completedMutations).toBe(1)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(minted)).status).toBe('deprecated')
+    expect(readFileSync(join(counterTarget.dir, 'evidence', 'outcomes.jsonl'), 'utf8'))
+      .toBe(counterBefore)
+    expect(hasFtsRow(minted.id)).toBe(true)
+    expect(hasFtsRow(counterTarget.id)).toBe(true)
+
+    if (successor === undefined) throw new Error('expected successor writer authority')
+    const resumed = rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-authority-partial',
+      resolvedAtOrdinal: 20,
+      writerAuthority: successor,
+    })
+    expect(resumed.inverseCount).toBe(1)
+    expect(knowledgeLocal.deriveBundleTrust(loaded(counterTarget)).counters.confirmed).toBe(1)
+    expect(hasFtsRow(minted.id)).toBe(false)
   })
 })

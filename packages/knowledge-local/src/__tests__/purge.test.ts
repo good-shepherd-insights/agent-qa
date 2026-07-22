@@ -26,8 +26,10 @@ import type {
   LoadedBundle,
   PublishBundleInput,
   PublishBundleOutcome,
+  WriterLeaseAuthority,
 } from '../index.js'
 import { enqueueCanaryOutcome } from '../canary-emit.js'
+import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import * as purgeModule from '../purge.js'
 import {
   candidateProjectionFixture,
@@ -46,6 +48,7 @@ interface PurgeRecordInput {
   knowledgeRoot: string
   recordId: string
   initiator: string
+  writerAuthority?: WriterLeaseAuthority
   hooks?: {
     afterIntentWritten?: () => void
     afterProjectionPurge?: () => void
@@ -229,6 +232,41 @@ describe('DCAY-05 sovereign purge', () => {
 
   function purge(recordId: string): PurgeRecordOutcome {
     return purgeApi().purgeRecord({ knowledgeRoot, recordId, initiator: 'user' })
+  }
+
+  function acquireWriterAuthority(): WriterLeaseAuthority {
+    const acquired = knowledgeLocal.acquireWriterLease(knowledgeRoot)
+    expect(acquired.kind).toBe('acquired')
+    if (acquired.kind !== 'acquired') throw new Error('expected acquired writer authority')
+    return { knowledgeRoot, leaseId: acquired.leaseId, epoch: acquired.epoch }
+  }
+
+  function reclaimWriterAuthority(authority: WriterLeaseAuthority): WriterLeaseAuthority {
+    const leasePath = join(knowledgeRoot, LEASE_FILE)
+    const holder = JSON.parse(readFileSync(leasePath, 'utf8')) as Record<string, unknown>
+    writeFileSync(
+      leasePath,
+      `${JSON.stringify({
+        ...holder,
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+      })}\n`,
+      'utf8',
+    )
+    const reclaimed = knowledgeLocal.acquireWriterLease(knowledgeRoot)
+    expect(reclaimed.kind).toBe('acquired')
+    if (reclaimed.kind !== 'acquired') throw new Error('expected reclaimed writer authority')
+    expect(reclaimed.epoch).toBe(authority.epoch + 1)
+    return { knowledgeRoot, leaseId: reclaimed.leaseId, epoch: reclaimed.epoch }
+  }
+
+  function recordsRowPresent(recordId: string): boolean {
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      return reader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(recordId)
+        !== undefined
+    } finally {
+      reader.db.close()
+    }
   }
 
   function enqueue(
@@ -1015,6 +1053,122 @@ describe('DCAY-05 sovereign purge', () => {
     expect(existsSync(target.dir)).toBe(true)
     expect(existsSync(join(receiptsDir, `purge-${target.id}.intent.json`))).toBe(false)
     expect(existsSync(join(receiptsDir, `purge-${target.id}.json`))).toBe(false)
+  })
+
+  it('refuses intent publication when the supplied writer authority is already reclaimed', () => {
+    const target = publish('authority-before-intent', [
+      { t: 'el', role: 'button', name: 'Authority before intent' },
+      { t: 'page', route: '/purge/authority-before-intent' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const authority = acquireWriterAuthority()
+    reclaimWriterAuthority(authority)
+
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        writerAuthority: authority,
+      }),
+    ).toThrow(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(existsSync(target.dir)).toBe(true)
+    expect(
+      existsSync(
+        join(knowledgeRoot, 'memory', 'receipts', `purge-${target.id}.intent.json`),
+      ),
+    ).toBe(false)
+  })
+
+  it('stops fresh and resumed purge at the next boundary while preserving durable recovery', async () => {
+    const target = publish('authority-resume-target', [
+      { t: 'el', role: 'button', name: 'Authority resume target' },
+      { t: 'page', route: '/purge/authority-resume' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const matchedId = enqueue(
+      'authority-resume-match',
+      [
+        { t: 'el', role: 'link', name: 'Authority resume payload' },
+        { t: 'page', route: '/purge/authority-resume/payload' },
+        { t: 'platform', platform: 'web' },
+      ],
+      { bodySeed: loadedMatch(target.dir).bundle.body },
+    )
+    await knowledgeLocal.rebuildIndex({ knowledgeRoot })
+    const intentFile = join(
+      knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${target.id}.intent.json`,
+    )
+    const receiptFile = join(
+      knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${target.id}.json`,
+    )
+    const matchedDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedId)
+    const authority = acquireWriterAuthority()
+    let resumeAuthority: WriterLeaseAuthority | undefined
+
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        writerAuthority: authority,
+        hooks: {
+          afterIntentWritten: () => {
+            resumeAuthority = reclaimWriterAuthority(authority)
+          },
+        },
+      }),
+    ).toThrow(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(existsSync(intentFile)).toBe(true)
+    expect(existsSync(receiptFile)).toBe(false)
+    expect(existsSync(target.dir)).toBe(true)
+    expect(recordsRowPresent(target.id)).toBe(true)
+    expect(existsSync(matchedDir)).toBe(true)
+
+    if (resumeAuthority === undefined) throw new Error('expected resume writer authority')
+    let finalAuthority: WriterLeaseAuthority | undefined
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        writerAuthority: resumeAuthority,
+        hooks: {
+          afterProjectionPurge: () => {
+            finalAuthority = reclaimWriterAuthority(resumeAuthority!)
+          },
+        },
+      }),
+    ).toThrow(knowledgeLocal.WriterAuthorityLostError)
+
+    expect(existsSync(intentFile)).toBe(true)
+    expect(existsSync(receiptFile)).toBe(false)
+    expect(existsSync(target.dir)).toBe(true)
+    expect(recordsRowPresent(target.id)).toBe(false)
+    expect(existsSync(matchedDir)).toBe(true)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedId))).toBe(true)
+
+    if (finalAuthority === undefined) throw new Error('expected final writer authority')
+    const resumed = purgeApi().purgeRecord({
+      knowledgeRoot,
+      recordId: target.id,
+      initiator: 'user',
+      writerAuthority: finalAuthority,
+    })
+    expect(resumed.kind).toBe('purged')
+    expect(existsSync(intentFile)).toBe(false)
+    expect(existsSync(receiptFile)).toBe(true)
+    expect(existsSync(target.dir)).toBe(false)
+    expect(existsSync(matchedDir)).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, matchedId))).toBe(false)
   })
 
   it('returns a typed noop and preserves the original receipt on repeat purge', () => {
