@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
-import { dirname, isAbsolute, join, relative, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 
 import {
   committedFileText,
@@ -31,6 +31,7 @@ import { checkpointCommittedParts } from './bundle-egress.js'
 import { loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
+import { canaryOutcomePayloadSchema } from './canary-emit.js'
 import { fsyncDirectory, fsyncFile } from './durable-fs.js'
 import {
   deleteRecordFromAllSchemaVecTables,
@@ -56,7 +57,10 @@ export {
 } from './purge-receipt.js'
 export type { PurgeReceipt } from './purge-receipt.js'
 
-/** Ordinary curation-job ids are 64-hex queue content addresses; prefixed maintenance receipt ids are not queue identities. */
+/**
+ * Queue entries use 64-hex content addresses; prefixed maintenance receipt ids are not queue
+ * identities.
+ */
 const QUEUE_CANDIDATE_ID = /^[0-9a-f]{64}$/
 
 export const PURGE_INTENT_SCHEMA_VERSION = 2
@@ -300,11 +304,12 @@ function removeEmptyQueueParents(candidateDir: string, root: string): void {
 /** One exact queue deletion decided before any destruction (CR-03). */
 export interface QueueSweepTarget {
   candidateDir: string
+  /** Queue-entry identity used by the transport and job-state store, not payload lineage. */
   candidateId: string
 }
 
 function lineageCandidateIds(matches: readonly ResolvedBundle[]): Set<string> {
-  const ids = new Set<string>()
+  const ids = new Set<string>(matches.map(({ bundle }) => bundle.manifest.id))
   for (const { bundle } of matches) {
     const jobIds = [
       ...(bundle.provenance.mode === 'run-linked'
@@ -362,16 +367,30 @@ export function resolveQueueSweepTargets(
     } catch {
       continue
     }
-    const parsed = curationCandidatePayloadSchema.safeParse(payload)
-    if (!parsed.success) continue
+    const candidateId = basename(candidateDir)
+    if (!QUEUE_CANDIDATE_ID.test(candidateId)) continue
 
-    const { candidateId, summarySeed, bodySeed, artifactInventory } = parsed.data
-    const carriesPurgedIdentity =
-      lineage.has(candidateId)
-      || seeds.has(summarySeed)
-      || seeds.has(bodySeed)
-      || artifactInventory.some((artifact) => digests.has(artifact.sha256))
-    if (carriesPurgedIdentity) targets.push({ candidateDir, candidateId })
+    const curationCandidate = curationCandidatePayloadSchema.safeParse(payload)
+    if (curationCandidate.success) {
+      const {
+        candidateId: lineageId,
+        summarySeed,
+        bodySeed,
+        artifactInventory,
+      } = curationCandidate.data
+      const carriesPurgedIdentity =
+        lineage.has(lineageId)
+        || seeds.has(summarySeed)
+        || seeds.has(bodySeed)
+        || artifactInventory.some((artifact) => digests.has(artifact.sha256))
+      if (carriesPurgedIdentity) targets.push({ candidateDir, candidateId })
+      continue
+    }
+
+    const canaryOutcome = canaryOutcomePayloadSchema.safeParse(payload)
+    if (canaryOutcome.success && lineage.has(canaryOutcome.data.candidateId)) {
+      targets.push({ candidateDir, candidateId })
+    }
   }
   return targets.sort((left, right) =>
     left.candidateDir < right.candidateDir
