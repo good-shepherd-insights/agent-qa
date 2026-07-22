@@ -6,16 +6,18 @@ import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
   acquireWriterLease,
   enumerateBundleDirs,
+  purgeAffectedSetFingerprint,
   purgeRecord,
   rebuildIndex,
   refreshWriterLeaseAuthority,
   releaseLease,
+  resolvePurgeAffectedSet,
   resolveRollbackAffectedSet,
   rollbackCampaign,
   rollbackCurationJob,
-  scanBundleById,
 } from '@vostride/agent-qa-knowledge-local'
 import type {
+  PurgeAffectedSet,
   PurgeReceipt,
   RebuildReport,
   RollbackAffectedSet,
@@ -33,7 +35,7 @@ import {
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-safety'
 import { asRecordId, canonicalJson } from '@vostride/agent-qa-schema'
-import type { OriginClass, RecordId } from '@vostride/agent-qa-schema'
+import type { OriginClass } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
@@ -431,43 +433,32 @@ function renderRollbackReport(report: RollbackReport): string {
   ].join('\n')
 }
 
-interface PurgePreview {
-  recordId: RecordId
-  bundle: { bundleId: string; product: string } | null
-}
-
-function resolvePurgePreview(
-  knowledgeRoot: string,
-  recordId: RecordId,
-): PurgePreview {
-  const hit = scanBundleById({ knowledgeRoot, bundleId: recordId })
-  return {
-    recordId,
-    bundle: hit === undefined ? null : { bundleId: hit.bundleId, product: hit.product },
-  }
-}
-
-function renderPurgePreview(preview: PurgePreview): string {
-  const { recordId } = preview
-  const hit = preview.bundle
-  if (hit === null) {
-    return [
-      pc.bold(`Purge preview for ${recordId}`),
-      '  live bundle: not found (purge will verify the receipt series)',
-      '  projections: record/FTS/anchor/graph/vector rows for this id',
-      '  queue payloads: exact content and curation-job lineage matches',
-      '  embed cache: all cached embeddings',
-    ].join('\n')
-  }
-
-  const bundlePath = `memory/${hit.product}/bundles/${hit.bundleId}`
+function renderPurgePreview(affected: PurgeAffectedSet): string {
   return [
-    pc.bold(`Purge preview for ${recordId}`),
-    `  bundle tree: ${bundlePath}`,
-    `  projections: record/FTS/anchor/graph/vector rows for ${hit.bundleId}`,
-    '  queue payloads: exact content and curation-job lineage matches',
-    '  embed cache: all cached embeddings',
-    '  receipt: content-free purge audit record under memory/receipts/',
+    pc.bold(`Purge preview for ${affected.recordId}`),
+    `  state: ${affected.state}`,
+    `  bundle trees (${affected.bundles.length}):`,
+    ...(affected.bundles.length === 0
+      ? ['    none']
+      : affected.bundles.flatMap((bundle) => [
+          `    ${bundle.bundleDir} (product ${bundle.product}, kind ${bundle.kind})`,
+          ...bundle.affectedPaths.map((path) => `      ${path}`),
+        ])),
+    `  receipt-named affected paths (${affected.receiptAffectedPaths.length}):`,
+    ...(affected.receiptAffectedPaths.length === 0
+      ? ['    none']
+      : affected.receiptAffectedPaths.map((path) => `    ${path}`)),
+    `  queue targets (${affected.queueTargets.length}):`,
+    ...(affected.queueTargets.length === 0
+      ? ['    none']
+      : affected.queueTargets.flatMap((target) => [
+          `    payload: ${target.candidateDir} (${target.candidateId})`,
+          `    job state: ${target.jobStatePath}`,
+        ])),
+    `  projections: ${affected.projectionTargets.join(', ')}`,
+    `  embed cache: ${affected.embedCacheAction}`,
+    `  intent: ${affected.intentPath}`,
+    `  receipt: ${affected.receiptPath}`,
   ].join('\n')
 }
 
@@ -591,8 +582,11 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
         const recordId = asRecordId(recordIdValue)
         const paths = await resolveKnowledgePaths(purgeCommand)
         const prompt = promptDestination(options.json === true)
-        const preview = resolvePurgePreview(paths.knowledgeRoot, recordId)
-        const previewFingerprint = canonicalJson(preview)
+        const preview = resolvePurgeAffectedSet({
+          knowledgeRoot: paths.knowledgeRoot,
+          recordId,
+        })
+        const previewFingerprint = purgeAffectedSetFingerprint(preview)
         emitHuman(renderPurgePreview(preview), prompt.name)
 
         if (options.confirm !== undefined) {
@@ -637,10 +631,15 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           'purge',
           paths.knowledgeRoot,
           async (writerAuthority): Promise<PurgeExecutionOutcome> => {
+            const underLeaseAffectedSet = resolvePurgeAffectedSet({
+              knowledgeRoot: paths.knowledgeRoot,
+              recordId,
+            })
+            const underLeaseFingerprint = purgeAffectedSetFingerprint(underLeaseAffectedSet)
             assertPreviewUnchanged(
               'purge',
               previewFingerprint,
-              canonicalJson(resolvePurgePreview(paths.knowledgeRoot, recordId)),
+              underLeaseFingerprint,
             )
             const outcome = purgeRecord({
               knowledgeRoot: paths.knowledgeRoot,
@@ -648,6 +647,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               initiator: `cli:${userInfo().username}`,
               auditBaseDir: paths.auditBaseDir,
               writerAuthority,
+              expectedAffectedSetFingerprint: underLeaseFingerprint,
             })
             switch (outcome.kind) {
               case 'purged':

@@ -24,6 +24,7 @@ import type {
 } from '@vostride/agent-qa-knowledge-local'
 import {
   asEvidenceToken,
+  asRecordId,
   BundleOutcomeEventSchema,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -698,7 +699,7 @@ describe('knowledge maintenance commands', () => {
         auditBaseDir: workspace.runtimeRoot,
         commitArtifacts: 'none',
       },
-      secondary.id,
+      asRecordId(secondary.id),
       BundleOutcomeEventSchema.parse({
         type: 'deprecated',
         evidenceToken: 'maintenance-preview-non-servable',
