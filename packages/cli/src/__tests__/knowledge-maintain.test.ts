@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 import {
+  acquireWriterLease,
   guardPurgeReceipt,
   loadBundle,
   publishBundle,
@@ -38,6 +39,17 @@ const commandHarness = vi.hoisted(() => ({
     output: 'stdout' | 'stderr' | 'other'
     question: string
   }>,
+  promptHook: undefined as (() => void) | undefined,
+  rebuildIndexHook: undefined as ((input: Record<string, unknown>) => Promise<unknown>) | undefined,
+  authorityRefreshHook: undefined as (
+    (authority: Record<string, unknown>, call: number) => void
+  ) | undefined,
+  authorityRefreshCalls: 0,
+  releaseLeaseCalls: 0,
+  rebuildIndexInputs: [] as Record<string, unknown>[],
+  purgeRecordInputs: [] as Record<string, unknown>[],
+  rollbackCampaignInputs: [] as Record<string, unknown>[],
+  rollbackCurationJobInputs: [] as Record<string, unknown>[],
   purgeRecordCalls: 0,
   rollbackCampaignCalls: 0,
   rollbackCurationJobCalls: 0,
@@ -63,6 +75,7 @@ vi.mock('node:readline', async (importOriginal) => {
           question,
         })
         output.write(question)
+        commandHarness.promptHook?.()
         const answer = commandHarness.promptAnswers.shift()
         if (answer === undefined) throw new Error(`missing prompt answer for ${question}`)
         resolveAnswer(answer)
@@ -77,16 +90,38 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
   >()
   return {
     ...actual,
+    rebuildIndex: vi.fn((...args: Parameters<typeof actual.rebuildIndex>) => {
+      const input = args[0] as unknown as Record<string, unknown>
+      commandHarness.rebuildIndexInputs.push(input)
+      return commandHarness.rebuildIndexHook === undefined
+        ? actual.rebuildIndex(...args)
+        : commandHarness.rebuildIndexHook(input)
+    }),
+    refreshWriterLeaseAuthority: vi.fn((...args: Parameters<typeof actual.refreshWriterLeaseAuthority>) => {
+      commandHarness.authorityRefreshCalls += 1
+      commandHarness.authorityRefreshHook?.(
+        args[0] as unknown as Record<string, unknown>,
+        commandHarness.authorityRefreshCalls,
+      )
+      return actual.refreshWriterLeaseAuthority(...args)
+    }),
+    releaseLease: vi.fn((...args: Parameters<typeof actual.releaseLease>) => {
+      commandHarness.releaseLeaseCalls += 1
+      return actual.releaseLease(...args)
+    }),
     purgeRecord: vi.fn((...args: Parameters<typeof actual.purgeRecord>) => {
       commandHarness.purgeRecordCalls += 1
+      commandHarness.purgeRecordInputs.push(args[0] as unknown as Record<string, unknown>)
       return actual.purgeRecord(...args)
     }),
     rollbackCampaign: vi.fn((...args: Parameters<typeof actual.rollbackCampaign>) => {
       commandHarness.rollbackCampaignCalls += 1
+      commandHarness.rollbackCampaignInputs.push(args[0] as unknown as Record<string, unknown>)
       return actual.rollbackCampaign(...args)
     }),
     rollbackCurationJob: vi.fn((...args: Parameters<typeof actual.rollbackCurationJob>) => {
       commandHarness.rollbackCurationJobCalls += 1
+      commandHarness.rollbackCurationJobInputs.push(args[0] as unknown as Record<string, unknown>)
       return actual.rollbackCurationJob(...args)
     }),
   }
@@ -359,6 +394,15 @@ describe('knowledge maintenance commands', () => {
     setTerminalTopology({ stdin: false, stdout: false, stderr: false })
     commandHarness.promptAnswers.splice(0)
     commandHarness.promptCalls.splice(0)
+    commandHarness.promptHook = undefined
+    commandHarness.rebuildIndexHook = undefined
+    commandHarness.authorityRefreshHook = undefined
+    commandHarness.authorityRefreshCalls = 0
+    commandHarness.releaseLeaseCalls = 0
+    commandHarness.rebuildIndexInputs.splice(0)
+    commandHarness.purgeRecordInputs.splice(0)
+    commandHarness.rollbackCampaignInputs.splice(0)
+    commandHarness.rollbackCurationJobInputs.splice(0)
     commandHarness.purgeRecordCalls = 0
     commandHarness.rollbackCampaignCalls = 0
     commandHarness.rollbackCurationJobCalls = 0
@@ -379,6 +423,7 @@ describe('knowledge maintenance commands', () => {
       value: originalStderrIsTty,
     })
     vi.restoreAllMocks()
+    vi.useRealTimers()
     for (const root of roots.splice(0)) {
       rmSync(root, { recursive: true, force: true })
     }
@@ -449,6 +494,11 @@ describe('knowledge maintenance commands', () => {
       question: 'Apply this rollback? (y/N) ',
     }])
     expect(commandHarness.rollbackCurationJobCalls).toBe(1)
+    expect(commandHarness.rollbackCurationJobInputs[0]?.writerAuthority).toMatchObject({
+      knowledgeRoot: workspace.knowledgeRoot,
+      leaseId: expect.any(String),
+      epoch: expect.any(Number),
+    })
   })
 
   it('rolls back a job minted at the current product ordinal using the reserved next ordinal', async () => {
@@ -606,6 +656,11 @@ describe('knowledge maintenance commands', () => {
       question: `Type ${bundle.id} to confirm irreversible purge: `,
     }])
     expect(commandHarness.purgeRecordCalls).toBe(1)
+    expect(commandHarness.purgeRecordInputs[0]?.writerAuthority).toMatchObject({
+      knowledgeRoot: workspace.knowledgeRoot,
+      leaseId: expect.any(String),
+      epoch: expect.any(Number),
+    })
   })
 
   it('keeps JSON stdout empty and returns non-success when interactive answers refuse', async () => {
@@ -724,5 +779,119 @@ describe('knowledge maintenance commands', () => {
       pendingEmbeddings: expect.any(Number),
       maintenanceRemaining: expect.any(Boolean),
     })
+  })
+
+  it('holds no writer lease while rollback and purge await human authorization', async () => {
+    const rollbackWorkspace = fixtureWorkspace(roots)
+    seedBundle(rollbackWorkspace)
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push('y')
+    commandHarness.promptHook = () => {
+      expect(existsSync(join(rollbackWorkspace.knowledgeRoot, '.lease'))).toBe(false)
+    }
+    expect((await invoke(rollbackWorkspace, [
+      'rollback', '--job', CURATION_JOB_ID, '--json',
+    ])).exitCode).toBeUndefined()
+
+    const purgeWorkspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(purgeWorkspace)
+    commandHarness.promptAnswers.push(bundle.id)
+    commandHarness.promptHook = () => {
+      expect(existsSync(join(purgeWorkspace.knowledgeRoot, '.lease'))).toBe(false)
+    }
+    expect((await invoke(purgeWorkspace, ['purge', bundle.id, '--json'])).exitCode).toBeUndefined()
+  })
+
+  it('rejects an authorized rollback when the under-lease target fingerprint changes', async () => {
+    const driftProduct = 'preview-drift-product'
+    const workspace = fixtureWorkspace(roots, {
+      [PRODUCT]: BUILD_ORDINAL,
+      [driftProduct]: 6,
+    })
+    seedBundle(workspace)
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push('y')
+    commandHarness.promptHook = () => {
+      seedBundle(workspace, { product: driftProduct, createdAtOrdinal: 6 })
+    }
+
+    const result = await invoke(workspace, ['rollback', '--job', CURATION_JOB_ID, '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('preview-changed')
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+  })
+
+  it('heartbeats work beyond the lease TTL and passes authority into rebuild', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedBundle(workspace)
+    vi.useFakeTimers({ now: 1_000_000 })
+    let continueOperation!: () => void
+    let markStarted!: () => void
+    const started = new Promise<void>((resolveStarted) => {
+      markStarted = resolveStarted
+    })
+    const operationGate = new Promise<void>((resolveOperation) => {
+      continueOperation = resolveOperation
+    })
+    commandHarness.rebuildIndexHook = async () => {
+      markStarted()
+      await operationGate
+      return {
+        projected: 0,
+        skippedIncomplete: 0,
+        scanIssues: [],
+        removed: 0,
+        backfilled: 0,
+        vec: 'brute',
+        pendingEmbeddings: 0,
+        maintenanceRemaining: false,
+      }
+    }
+
+    const invocation = invoke(workspace, ['rebuild-index', '--json'])
+    await started
+    expect(commandHarness.rebuildIndexInputs[0]?.writerAuthority).toMatchObject({
+      knowledgeRoot: workspace.knowledgeRoot,
+      leaseId: expect.any(String),
+      epoch: 1,
+    })
+    await vi.advanceTimersByTimeAsync(30_001)
+    const competitor = acquireWriterLease(workspace.knowledgeRoot)
+    expect(competitor.kind).toBe('held')
+    continueOperation()
+
+    expect((await invocation).exitCode).toBeUndefined()
+    expect(commandHarness.releaseLeaseCalls).toBe(1)
+  })
+
+  it('leaves ordinal counters byte-identical when reclaim wins before persistence', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedBundle(workspace, { createdAtOrdinal: BUILD_ORDINAL })
+    const ordinalFile = join(workspace.runtimeRoot, 'build-ordinals.json')
+    const before = readFileSync(ordinalFile, 'utf8')
+    commandHarness.authorityRefreshHook = (authority, call) => {
+      if (call !== 1) return
+      const leaseFile = join(String(authority.knowledgeRoot), '.lease')
+      const lease = JSON.parse(readFileSync(leaseFile, 'utf8')) as Record<string, unknown>
+      writeFileSync(
+        leaseFile,
+        `${JSON.stringify({ ...lease, heartbeatAtMs: Date.now() - 30_000 })}\n`,
+        'utf8',
+      )
+      expect(acquireWriterLease(String(authority.knowledgeRoot)).kind).toBe('acquired')
+    }
+
+    const result = await invoke(workspace, [
+      'rollback', '--job', CURATION_JOB_ID, '--yes', '--json',
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('writer authority lost')
+    expect(readFileSync(ordinalFile, 'utf8')).toBe(before)
+    expect(readdirSync(workspace.runtimeRoot).some((file) => file.endsWith('.tmp'))).toBe(false)
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+    expect(commandHarness.rollbackCampaignCalls).toBe(0)
+    expect(commandHarness.releaseLeaseCalls).toBe(1)
   })
 })
