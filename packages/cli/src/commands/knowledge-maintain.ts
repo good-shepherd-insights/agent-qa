@@ -376,12 +376,21 @@ async function rollbackOrdinal(
   affected: RollbackAffectedSet,
   writerAuthority: WriterLeaseAuthority,
 ): Promise<number> {
-  if (affected.plannedEffects.length === 0) return 0
+  if (!rollbackNeedsOrdinal(affected)) return 0
   return (await reserveBuildOrdinalForProducts({
     root: paths.runtimeRoot,
     products: affected.products,
     beforePersist: () => refreshWriterLeaseAuthority(writerAuthority),
   })) ?? 0
+}
+
+function rollbackNeedsOrdinal(affected: RollbackAffectedSet): boolean {
+  return affected.plannedEffects.some((effect) =>
+    effect.kind === 'deprecate-bundle'
+    || effect.kind === 'retract-counter'
+    || effect.kind === 'retract-window-close'
+    || effect.kind === 'retract-promotion',
+  )
 }
 
 function rollbackPreviewFingerprint(affected: RollbackAffectedSet): string {

@@ -562,6 +562,29 @@ describe('knowledge maintenance commands', () => {
     expect(rollbackInverseOrdinals(bundle.dir)).toEqual([BUILD_ORDINAL + 1])
   })
 
+  it('retries the same completed rollback without changing bundle or counter bytes', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(workspace, { createdAtOrdinal: BUILD_ORDINAL })
+    const args = ['rollback', '--job', CURATION_JOB_ID, '--yes', '--json'] as const
+
+    const first = await invoke(workspace, args)
+    expect(first.exitCode).toBeUndefined()
+    expect(JSON.parse(first.stdout)).toMatchObject({ inverseCount: 1 })
+    const bundleAfterFirst = snapshotFiles(bundle.dir)
+    const counterPath = join(workspace.runtimeRoot, 'build-ordinals.json')
+    const counterAfterFirst = readFileSync(counterPath)
+
+    const second = await invoke(workspace, args)
+    expect(second.exitCode).toBeUndefined()
+    expect(JSON.parse(second.stdout)).toMatchObject({
+      inverseCount: 0,
+      affected: { plannedEffects: [] },
+    })
+    expect(snapshotFiles(bundle.dir)).toEqual(bundleAfterFirst)
+    expect(readFileSync(counterPath)).toEqual(counterAfterFirst)
+    expect(commandHarness.rollbackCurationJobCalls).toBe(2)
+  })
+
   it('advances every affected campaign product to one reserved ordinal', async () => {
     const firstProduct = 'campaign-alpha'
     const secondProduct = 'campaign-beta'
