@@ -7,7 +7,6 @@ import {
   acquireWriterLease,
   enumerateBundleDirs,
   purgeRecord,
-  readLatestBuildOrdinal,
   rebuildIndex,
   releaseLease,
   resolveRollbackAffectedSet,
@@ -23,6 +22,10 @@ import type {
   RollbackCurationJobInput,
   RollbackReport,
 } from '@vostride/agent-qa-knowledge-local'
+import {
+  BuildOrdinalReservationError,
+  reserveBuildOrdinalForProducts,
+} from '@vostride/agent-qa-runner-local'
 import {
   createMaskingContext,
   unmaskForHumanOutput,
@@ -70,7 +73,6 @@ type MaintainErrorCode =
   | 'invalid-selector'
   | 'invalid-ordinal'
   | 'invalid-origin-class'
-  | 'missing-build-ordinal'
   | 'release-refused'
 
 class KnowledgeMaintainCommandError extends Error {
@@ -155,7 +157,9 @@ function errorMessage(error: unknown): string {
 function reportError(verb: 'rebuild-index' | 'rollback' | 'purge', error: unknown): void {
   const message = error instanceof KnowledgeMaintainCommandError
     ? `knowledge ${verb}: error [${error.code}]: ${error.message}`
-    : `knowledge ${verb}: error: ${errorMessage(error)}`
+    : error instanceof BuildOrdinalReservationError
+      ? `knowledge ${verb}: error [${error.code}]: ${error.message}`
+      : `knowledge ${verb}: error: ${errorMessage(error)}`
   emitHuman(pc.red(message), 'stderr')
   process.exitCode = 1
 }
@@ -347,25 +351,15 @@ function rollbackProducts(
   )].sort()
 }
 
-function rollbackOrdinal(
+async function rollbackOrdinal(
   paths: KnowledgePaths,
   affected: RollbackAffectedSet,
-): number {
+): Promise<number> {
   const products = rollbackProducts(paths.knowledgeRoot, affected)
-  if (products.length === 0) return 0
-
-  const values = products.map((product) => ({
-    product,
-    ordinal: readLatestBuildOrdinal(paths.runtimeRoot, product),
-  }))
-  const missing = values.filter(({ ordinal }) => ordinal === undefined)
-  if (missing.length > 0) {
-    throw new KnowledgeMaintainCommandError(
-      'missing-build-ordinal',
-      `no current build ordinal for ${missing.map(({ product }) => product).join(', ')}`,
-    )
-  }
-  return Math.max(...values.map(({ ordinal }) => ordinal!))
+  return (await reserveBuildOrdinalForProducts({
+    root: paths.runtimeRoot,
+    products,
+  })) ?? 0
 }
 
 function renderRollbackPreview(affected: RollbackAffectedSet): string {
@@ -500,7 +494,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               }
             }
 
-            const resolvedAtOrdinal = rollbackOrdinal(paths, affected)
+            const resolvedAtOrdinal = await rollbackOrdinal(paths, affected)
             const input = rollbackInput(selector, paths, resolvedAtOrdinal)
             const report = selector.kind === 'job'
               ? rollbackCurationJob(input as RollbackCurationJobInput)
