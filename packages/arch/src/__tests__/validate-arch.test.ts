@@ -337,7 +337,7 @@ describe('validate:arch held-out fixtures', () => {
     ).toEqual([])
   })
 
-  it('held-out core ratchet rejects a new off-baseline node import', () => {
+  it('held-out core ratchet rejects new off-baseline node and native-store imports', () => {
     expect(
       applyLedger(
         transitionalLeaks([
@@ -347,6 +347,9 @@ describe('validate:arch held-out fixtures', () => {
         AGENT_QA_CORE_MIGRATION_LEDGER,
         new Set(AGENT_QA_CORE_HOST_BASELINE),
       ),
-    ).toEqual(['packages/core | fixture.ts:1 | node:dgram | unwaived transitional leak'])
+    ).toEqual([
+      'packages/core | fixture.ts:1 | node:dgram | unwaived transitional leak',
+      'packages/core | fixture.ts:2 | better-sqlite3 | unwaived transitional leak',
+    ])
   })
 })

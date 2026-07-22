@@ -13,7 +13,6 @@ export * from './farm/index.js'
 export * from './suite/index.js'
 export * from './validation/index.js'
 export * from './hooks/index.js'
-export * from './memory/index.js'
 export * from './ids/index.js'
 // 363 D-08: the run-artifact type family relocated to @vostride/agent-qa-schema (was ./artifacts).
 export * from './workspace/index.js'
@@ -21,7 +20,6 @@ export * from './analytics/index.js'
 export * from './run-attributes.js'
 export * from './version.js'
 export * from './version-check/index.js'
-export * from './sqlite.js'
 export * from './runtime-paths.js'
 // 363 D-08/Q10: the sharp screenshot pipeline (compress/align/dimensions) moved to
 // @vostride/agent-qa-runner-local (sharp left core); mobile adapters import it from there.

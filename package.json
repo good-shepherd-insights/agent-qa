@@ -37,7 +37,7 @@
     "lint:namespace": "! grep -r '@agent-qa/' packages/ --include='*.ts' --include='*.json' --include='*.js' -l --exclude-dir=node_modules --exclude-dir=dist"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3", "esbuild", "sharp"],
+    "onlyBuiltDependencies": ["esbuild", "sharp"],
     "overrides": {
       "@hono/node-server": "1.19.14",
       "basic-ftp": "5.3.1",

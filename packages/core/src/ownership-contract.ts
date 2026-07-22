@@ -10,7 +10,6 @@ export const AGENT_QA_CORE_ALLOWED_RESPONSIBILITIES = [
   // subsystems, each with its own milestone home. Every top-level dir under core/src
   // is accounted for below (D-05).
   'suite/test parsing + discovery: yaml/suite/test/config parsing, hooks-file parser + schema, and workspace file discovery — feeding the resolved RunConfig at the CLI composition root (parser, suite, schema, types, hooks, workspace, validation)',
-  'memory/knowledge subsystem pending its M2 milestone home, incl. the better-sqlite3 native host (memory, sqlite)',
   'analytics subsystem: PostHog identity + core-owned bus-subscriber run feed per D-16 (analytics)',
   'LLM provider auth + captured browser auth-state reuse: OAuth/PKCE plugin auth and auth-state redaction/resolution (auth, auth-state)',
   'mobile + device-farm support: appium launch/element/gesture resolution and BrowserStack capability mapping (mobile, farm)',
@@ -23,7 +22,6 @@ export const AGENT_QA_CORE_FORBIDDEN_RESPONSIBILITIES = [
 ] as const
 export const AGENT_QA_CORE_EXTERNAL_DEPENDENCIES = [
   'ai',
-  'better-sqlite3',
   'bytes',
   'fast-xml-parser',
   'glob',
@@ -49,12 +47,6 @@ export const AGENT_QA_CORE_INTERNAL_DEPENDENCIES = [
  * delete the parser/suite/hooks/reporter and memory subsystems.
  */
 export const AGENT_QA_CORE_MIGRATION_LEDGER = [
-  {
-    rule: 'storageImplementation',
-    target: 'better-sqlite3',
-    clearedBy: 'M2 Knowledge store',
-    reason: 'memory/knowledge-store SQLite subsystem still in core',
-  },
   // 363-06 (D-08/Q10): the sharp entry was cleared here — the screenshot pipeline moved to
   // runner-local (its host-adapter home) and sharp left core, so the ledger no longer carries it.
 ] as const

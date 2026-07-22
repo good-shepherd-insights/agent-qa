@@ -17,8 +17,6 @@ import type {
 import type { MaskingContext } from '@vostride/agent-qa-schema'
 import type { LanguageModel } from 'ai'
 import type { LogManager } from '../logging/log-manager.js'
-import type { MemoryProvider } from '../memory/provider.js'
-import type { MemoryLog } from '../memory/curator.js'
 
 /**
  * Suite run configuration — a types-only contract consumed by the CLI composition root.
@@ -88,18 +86,9 @@ export interface RunSuiteConfig {
   vision?: { screenshotSize?: number; effectiveResolution?: number }
   /** Vision gate resolved once per run at the composition root (D-11); passed through to each test. */
   visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
-  memoryProvider?: MemoryProvider
-  memoryRoot?: string
-  memoryConfig?: {
-    enabled?: boolean
-    curatorEnabled?: boolean
-    trustConfirmDelta?: number
-    trustContradictDelta?: number
-  }
   product?: string
   createAdapter?: () => Promise<PlatformAdapter>
   resolveUrl?: (targetName: string) => string | undefined
-  onCuratorComplete?: (testName: string, memoryLog: MemoryLog) => void
   artifactContext?: Record<string, unknown>
   authStateCapture?: {
     capture: () => Promise<RuntimeAuthStateConfig>
