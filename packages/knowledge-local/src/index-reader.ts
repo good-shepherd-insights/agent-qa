@@ -42,7 +42,7 @@ import type { IndexReaderConnection, VecCapability } from './index-open.js'
 import { requestRebuild } from './rebuild-marker.js'
 import type { RebuildReason } from './rebuild-marker.js'
 import { buildLexicalMatchExpression } from './retrieval/fts-match.js'
-import { assemblePromotionGateInput } from './curator/commit.js'
+import { assemblePromotionGateInput } from './promotion-gate-input.js'
 
 export interface KnowledgeSearchOptions {
   product?: string

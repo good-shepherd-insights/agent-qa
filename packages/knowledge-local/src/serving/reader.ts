@@ -30,7 +30,7 @@ import {
   type LoadedBundle,
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import { assemblePromotionGateInput } from '../curator/commit.js'
+import { enqueueCanaryOutcome } from '../canary-emit.js'
 import {
   indexDbPath,
   openIndexReaderConnection,
@@ -40,7 +40,7 @@ import {
   type KnowledgeReader,
   type OpenKnowledgeReaderOptions,
 } from '../index-reader.js'
-import { enqueueCanaryOutcome } from '../queue/canary-queue.js'
+import { assemblePromotionGateInput } from '../promotion-gate-input.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import { selectCautions } from './get-cautions.js'
 import { admitsProcedure, matchProcedure } from './get-procedure.js'

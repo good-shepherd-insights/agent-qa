@@ -7,7 +7,6 @@ import {
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
-  Anchor,
   ArtifactRef,
   BundleKind,
   CautionRootCauseClass,
@@ -15,6 +14,8 @@ import type {
   FactSubtype,
   ScopeKey,
 } from '@vostride/agent-qa-schema'
+
+import { anchorSchema } from '../anchor-schema.js'
 
 export const CURATION_QUEUE_SCHEMA_VERSION = 2
 
@@ -26,27 +27,6 @@ const scopeSchema: z.ZodType<ScopeKey> = z
     key: z.string().min(1),
   })
   .strict()
-
-const anchorSchema: z.ZodType<Anchor> = z.discriminatedUnion('t', [
-  z.object({ t: z.literal('page'), route: z.string() }).strict(),
-  z.object({ t: z.literal('flow'), name: z.string() }).strict(),
-  z
-    .object({
-      t: z.literal('el'),
-      role: z.string(),
-      name: z.string(),
-      ordinal: z.number().int().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      t: z.literal('platform'),
-      platform: z.enum(['web', 'android', 'ios']),
-    })
-    .strict(),
-  z.object({ t: z.literal('selector'), literal: z.string() }).strict(),
-  z.object({ t: z.literal('error'), message: z.string() }).strict(),
-])
 
 const bundleKindSchema: z.ZodType<BundleKind> = z.enum([
   'fact',

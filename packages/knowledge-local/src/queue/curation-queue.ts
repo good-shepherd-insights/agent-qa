@@ -8,11 +8,9 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
-  rmdirSync,
   rmSync,
-  writeFileSync,
 } from 'node:fs'
-import { basename, dirname, isAbsolute, join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 
 import { canonicalJson } from '@vostride/agent-qa-schema'
 import { ZodError } from 'zod'
@@ -24,6 +22,19 @@ import type {
   CopiedArtifact,
   SkippedArtifact,
 } from '../artifact-copy.js'
+import {
+  bestEffortFsyncDirectory,
+  durableWrite,
+  publishStagedQueueEntry,
+  removeEmptyDir,
+} from '../queue-transport.js'
+export {
+  bestEffortFsyncDirectory,
+  durableWrite,
+  publishStagedQueueEntry,
+  removeEmptyDir,
+} from '../queue-transport.js'
+export type { PublishStagedQueueEntryOutcome } from '../queue-transport.js'
 import {
   classifyCaptureBlacklist,
   filterArtifactsForCapture,
@@ -116,63 +127,6 @@ export type ClaimNextJobOutcome = ClaimedCurationJob | MalformedClaimedCurationJ
 export interface RequeueClaimedOptions {
   knowledgeRoot: string
   leaseId: string
-}
-
-export function removeEmptyDir(dir: string): void {
-  try {
-    rmdirSync(dir)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error
-  }
-}
-
-export function durableWrite(file: string, bytes: string | Uint8Array): void {
-  mkdirSync(dirname(file), { recursive: true })
-  const fd = openSync(file, 'wx')
-  try {
-    writeFileSync(fd, bytes)
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-}
-
-export function bestEffortFsyncDirectory(dir: string): void {
-  let fd: number | undefined
-  try {
-    fd = openSync(dir, 'r')
-    fsyncSync(fd)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code !== 'EINVAL' && code !== 'EISDIR' && code !== 'EPERM' && code !== 'ENOTSUP') {
-      throw error
-    }
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
-}
-
-export type PublishStagedQueueEntryOutcome = 'published' | 'coalesced'
-
-/** Publish one fully durable staging directory, coalescing an existing content address. */
-export function publishStagedQueueEntry(
-  stagingDir: string,
-  finalDir: string,
-  queueDir: string,
-): PublishStagedQueueEntryOutcome {
-  mkdirSync(queueDir, { recursive: true })
-  try {
-    renameSync(stagingDir, finalDir)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(finalDir)) {
-      return 'coalesced'
-    }
-    throw error
-  }
-  bestEffortFsyncDirectory(queueDir)
-  return 'published'
 }
 
 function directoryNames(dir: string): string[] {
