@@ -61,6 +61,11 @@ interface KnowledgePaths {
 
 type OutputStream = 'stdout' | 'stderr'
 
+interface PromptDestination {
+  name: OutputStream
+  stream: typeof process.stdout | typeof process.stderr
+}
+
 type MaintainErrorCode =
   | 'invalid-selector'
   | 'invalid-ordinal'
@@ -192,8 +197,18 @@ async function withWriterLease<T>(
   return { kind: 'completed', value }
 }
 
-function promptForAnswer(question: string): Promise<string> {
-  const readline = createInterface({ input: process.stdin, output: process.stdout })
+function promptDestination(json: boolean): PromptDestination {
+  return json
+    ? { name: 'stderr', stream: process.stderr }
+    : { name: 'stdout', stream: process.stdout }
+}
+
+function canPromptInteractively(destination: PromptDestination): boolean {
+  return process.stdin.isTTY === true && destination.stream.isTTY === true
+}
+
+function promptForAnswer(question: string, destination: PromptDestination): Promise<string> {
+  const readline = createInterface({ input: process.stdin, output: destination.stream })
   return new Promise((resolveAnswer) => {
     readline.question(question, (answer) => {
       readline.close()
@@ -460,15 +475,13 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           'rollback',
           paths.knowledgeRoot,
           async (): Promise<RollbackExecutionOutcome> => {
+            const prompt = promptDestination(options.json === true)
             const previewInput = rollbackInput(selector, paths, 0)
             const affected = resolveRollbackAffectedSet(previewInput)
-            emitHuman(
-              renderRollbackPreview(affected),
-              options.json === true ? 'stderr' : 'stdout',
-            )
+            emitHuman(renderRollbackPreview(affected), prompt.name)
 
             if (options.yes !== true) {
-              if (process.stdout.isTTY !== true) {
+              if (!canPromptInteractively(prompt)) {
                 emitHuman(
                   pc.red(
                     'knowledge rollback: refusal [confirmation-required]: '
@@ -479,9 +492,10 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
                 process.exitCode = 1
                 return { kind: 'aborted' }
               }
-              const answer = await promptForAnswer('Apply this rollback? (y/N) ')
+              const answer = await promptForAnswer('Apply this rollback? (y/N) ', prompt)
               if (answer.trim().toLowerCase() !== 'y') {
-                emitHuman(pc.dim('Rollback aborted.'))
+                emitHuman(pc.dim('Rollback aborted.'), prompt.name)
+                process.exitCode = 1
                 return { kind: 'aborted' }
               }
             }
@@ -516,10 +530,8 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           'purge',
           paths.knowledgeRoot,
           async (): Promise<PurgeExecutionOutcome> => {
-            emitHuman(
-              renderPurgePreview(paths.knowledgeRoot, recordId),
-              options.json === true ? 'stderr' : 'stdout',
-            )
+            const prompt = promptDestination(options.json === true)
+            emitHuman(renderPurgePreview(paths.knowledgeRoot, recordId), prompt.name)
 
             if (options.confirm !== undefined) {
               if (options.confirm !== recordId) {
@@ -534,7 +546,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
                 return { kind: 'aborted' }
               }
             } else {
-              if (process.stdout.isTTY !== true) {
+              if (!canPromptInteractively(prompt)) {
                 emitHuman(
                   pc.red(
                     'knowledge purge: refusal [confirmation-required]: '
@@ -547,6 +559,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
               }
               const answer = await promptForAnswer(
                 `Type ${recordId} to confirm irreversible purge: `,
+                prompt,
               )
               if (answer !== recordId) {
                 emitHuman(
