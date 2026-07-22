@@ -48,6 +48,8 @@ import {
   PURGE_SAFE_RECORD_ID as SAFE_RECORD_ID,
   PurgeReceiptSchema,
   guardPurgeReceipt,
+  guardPurgeReceiptForFile,
+  parseCanonicalPurgeReceiptFileName,
   purgeReceiptRelativePathSchema as receiptRelativePathSchema,
 } from './purge-receipt.js'
 import type { PurgeReceipt } from './purge-receipt.js'
@@ -555,7 +557,10 @@ function readReceiptAtCycle(
 ): PurgeReceipt | undefined {
   const file = receiptCyclePath(knowledgeRoot, recordId, cycle)
   if (!existsSync(file)) return undefined
-  return guardPurgeReceipt(JSON.parse(readFileSync(file, 'utf8')))
+  return guardPurgeReceiptForFile(
+    JSON.parse(readFileSync(file, 'utf8')),
+    basename(file),
+  )
 }
 
 interface ReceiptSeries {
@@ -582,11 +587,6 @@ function resolveReceiptSeries(knowledgeRoot: string, recordId: RecordId): Receip
     nextCycle: cycle,
   }
 }
-
-// Cycle 1 uses the unsuffixed base name; only cycles >= 2 use a numeric suffix.
-// Keep the record-id branch aligned with PURGE_SAFE_RECORD_ID.
-const CANONICAL_PURGE_RECEIPT_FILE =
-  /^purge-([A-Za-z0-9][A-Za-z0-9_-]*)(?:\.([2-9]|[1-9][0-9]+))?\.json$/u
 
 function receiptAffectedProducts(receipt: PurgeReceipt): Set<string> {
   const products = new Set<string>()
@@ -624,18 +624,12 @@ function committedPurgeOrdinalsForProducts(
 
   const ordinals: number[] = []
   for (const file of files) {
-    const canonicalName = CANONICAL_PURGE_RECEIPT_FILE.exec(file)
-    if (canonicalName === null) continue
-
-    let receipt: PurgeReceipt
-    try {
-      receipt = guardPurgeReceipt(
-        JSON.parse(readFileSync(join(receiptsDir, file), 'utf8')),
-      )
-    } catch {
-      continue
-    }
-    if (receipt.purgedRecordId !== canonicalName[1]) continue
+    const canonicalName = parseCanonicalPurgeReceiptFileName(file)
+    if (canonicalName === undefined) continue
+    const receipt = guardPurgeReceiptForFile(
+      JSON.parse(readFileSync(join(receiptsDir, file), 'utf8')),
+      file,
+    )
 
     for (const product of receiptAffectedProducts(receipt)) {
       if (!affectedProducts.has(product)) continue

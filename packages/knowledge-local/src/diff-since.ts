@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -11,9 +12,15 @@ import type {
   RecordChange,
 } from '@vostride/agent-qa-schema'
 
-import { loadBundle, verifyBundleIntegrity } from './bundle-read.js'
-import { enumerateBundleDirs } from './bundle-scan.js'
-import { guardPurgeReceipt } from './purge-receipt.js'
+import {
+  enumerateMaintenanceBundleDirs,
+  KnowledgeMaintenanceScanError,
+  loadMaintenanceBundle,
+} from './maintenance-scan.js'
+import {
+  guardPurgeReceiptForFile,
+  parseCanonicalPurgeReceiptFileName,
+} from './purge-receipt.js'
 
 export interface DiffSinceOptions {
   knowledgeRoot: string
@@ -55,27 +62,60 @@ function directChange(
 
 function purgeChanges(knowledgeRoot: string, sinceOrdinal: number): RecordChange[] {
   const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
-  let files: string[]
+  let entries: Dirent<string>[]
   try {
-    files = readdirSync(receiptsDir, { withFileTypes: true })
-      .filter((entry) => (
-        entry.isFile()
-        && entry.name.startsWith('purge-')
-        && entry.name.endsWith('.json')
-        && !entry.name.endsWith('.intent.json')
-      ))
-      .map((entry) => entry.name)
-      .sort(compareText)
-  } catch {
-    return []
+    entries = readdirSync(receiptsDir, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw new KnowledgeMaintenanceScanError(
+      'directory-read',
+      receiptsDir,
+      error instanceof Error ? error.message : String(error),
+    )
   }
 
   const changes: RecordChange[] = []
+  const identities = new Set<string>()
+  const files = entries
+    .filter((entry) => (
+      entry.name.startsWith('purge-')
+      && entry.name.endsWith('.json')
+      && !entry.name.endsWith('.intent.json')
+    ))
+    .sort((left, right) => compareText(left.name, right.name))
   for (const file of files) {
-    try {
-      const receipt = guardPurgeReceipt(
-        JSON.parse(readFileSync(join(receiptsDir, file), 'utf8')),
+    const path = join(receiptsDir, file.name)
+    if (!file.isFile()) {
+      throw new KnowledgeMaintenanceScanError(
+        'receipt-invalid',
+        path,
+        'canonical receipt entry is not a regular file',
       )
+    }
+    const name = parseCanonicalPurgeReceiptFileName(file.name)
+    if (name === undefined) {
+      throw new KnowledgeMaintenanceScanError(
+        'receipt-invalid',
+        path,
+        'purge-prefixed JSON does not use a canonical receipt filename',
+      )
+    }
+    const identity = `${name.recordId}:${name.cycle}`
+    if (identities.has(identity)) continue
+    identities.add(identity)
+
+    let raw: string
+    try {
+      raw = readFileSync(path, 'utf8')
+    } catch (error) {
+      throw new KnowledgeMaintenanceScanError(
+        'receipt-read',
+        path,
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    try {
+      const receipt = guardPurgeReceiptForFile(JSON.parse(raw), file.name)
       if (receipt.purgedAtOrdinal <= sinceOrdinal) continue
       changes.push(RecordChangeSchema.parse({
         schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
@@ -83,8 +123,12 @@ function purgeChanges(knowledgeRoot: string, sinceOrdinal: number): RecordChange
         change: 'purged',
         atOrdinal: receipt.purgedAtOrdinal,
       }))
-    } catch {
-      // A malformed or foreign purge-prefixed file is not canonical receipt truth.
+    } catch (error) {
+      throw new KnowledgeMaintenanceScanError(
+        'receipt-invalid',
+        path,
+        error instanceof Error ? error.message : String(error),
+      )
     }
   }
   return changes
@@ -97,11 +141,8 @@ export function diffSince(options: DiffSinceOptions): RecordChange[] {
   }
 
   const changes: RecordChange[] = []
-  for (const entry of enumerateBundleDirs(options.knowledgeRoot)) {
-    const loaded = loadBundle(entry.dir)
-    if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(entry.dir).ok) continue
-
-    const { bundle } = loaded
+  for (const entry of enumerateMaintenanceBundleDirs(options.knowledgeRoot)) {
+    const bundle = loadMaintenanceBundle(entry)
     const survivingEvents = survivingOutcomeEvents(bundle.events)
     const earliestOrdinal = survivingEvents.reduce(
       (earliest, event) => Math.min(earliest, event.buildOrdinal),

@@ -382,6 +382,8 @@ export { inspectRecords } from './inspect.js'
 export type { InspectRecordsOptions } from './inspect.js'
 export { diffSince } from './diff-since.js'
 export type { DiffSinceOptions } from './diff-since.js'
+export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
+export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export {
   resolveRollbackAffectedSet,
   rollbackCampaign,

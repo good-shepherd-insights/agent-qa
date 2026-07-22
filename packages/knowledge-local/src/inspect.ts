@@ -15,9 +15,13 @@ import type {
   InspectRecordView,
 } from '@vostride/agent-qa-schema'
 
-import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
+import { deriveBundleTrust } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
-import { enumerateBundleDirs, isServable } from './bundle-scan.js'
+import { isServable } from './bundle-scan.js'
+import {
+  enumerateMaintenanceBundleDirs,
+  loadMaintenanceBundle,
+} from './maintenance-scan.js'
 
 export interface InspectRecordsOptions {
   knowledgeRoot: string
@@ -132,12 +136,9 @@ export function inspectRecords(options: InspectRecordsOptions): InspectRecordVie
     || filter.status === 'superseded'
     || filter.status === 'deprecated'
 
-  for (const entry of enumerateBundleDirs(options.knowledgeRoot)) {
+  for (const entry of enumerateMaintenanceBundleDirs(options.knowledgeRoot)) {
     if (filter.product !== undefined && filter.product !== entry.product) continue
-    const loaded = loadBundle(entry.dir)
-    if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(entry.dir).ok) continue
-
-    const { bundle } = loaded
+    const bundle = loadMaintenanceBundle(entry)
     const asOfBuild = filter.asOfBuild
     if (
       asOfBuild !== undefined

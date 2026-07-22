@@ -345,6 +345,48 @@ describe('diffSince deterministic maintenance history', () => {
       .toBe(false)
   })
 
+  it('rejects copied, malformed, and non-canonical purge receipt truth', () => {
+    const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+    mkdirSync(receiptsDir, { recursive: true })
+    const receipt = {
+      schemaVersion: 1,
+      purgedRecordId: 'record-a',
+      purgedAtOrdinal: 14,
+      initiator: 'test-operator',
+      affectedPaths: ['memory/shop/bundles/record-a'],
+      firstCommittedOrdinal: 2,
+    }
+    writeFileSync(
+      join(receiptsDir, 'purge-record-b.json'),
+      `${JSON.stringify(receipt)}\n`,
+      'utf8',
+    )
+    expect(() => diffSince(knowledgeRoot, 10)).toThrowError(
+      knowledgeLocal.KnowledgeMaintenanceScanError,
+    )
+
+    rmSync(join(receiptsDir, 'purge-record-b.json'))
+    writeFileSync(join(receiptsDir, 'purge-record-a.01.json'), '{}\n', 'utf8')
+    expect(() => diffSince(knowledgeRoot, 10)).toThrow(/canonical receipt filename/i)
+
+    rmSync(join(receiptsDir, 'purge-record-a.01.json'))
+    writeFileSync(join(receiptsDir, 'purge-record-a.json'), 'not-json\n', 'utf8')
+    expect(() => diffSince(knowledgeRoot, 10)).toThrowError(
+      knowledgeLocal.KnowledgeMaintenanceScanError,
+    )
+  })
+
+  it('fails closed when receipt history cannot be enumerated', () => {
+    const receiptsPath = join(knowledgeRoot, 'memory', 'receipts')
+    mkdirSync(join(knowledgeRoot, 'memory'), { recursive: true })
+    writeFileSync(receiptsPath, 'not a directory', 'utf8')
+
+    expect(() => diffSince(knowledgeRoot, 0)).toThrowError(
+      knowledgeLocal.KnowledgeMaintenanceScanError,
+    )
+    expect(() => diffSince(knowledgeRoot, 0)).toThrow(/scan incomplete/i)
+  })
+
   it('is stable in record-id, ordinal, and change-kind order', () => {
     seedStore()
 

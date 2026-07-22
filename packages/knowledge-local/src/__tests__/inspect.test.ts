@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -409,5 +409,30 @@ describe('inspectRecords canonical maintenance view', () => {
     const second = JSON.stringify(inspectRecords(knowledgeRoot, { status: 'active' }))
 
     expect(second).toBe(first)
+  })
+
+  it('fails closed when a canonical bundle cannot be loaded or verified', () => {
+    const recordId = publish({
+      product: 'shop',
+      kind: 'fact',
+      scope: 'damaged-inspect',
+      anchor: { t: 'el', role: 'button', name: 'Damaged inspect' },
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: 'button', name: 'Damaged inspect' },
+      },
+      createdAtOrdinal: 4,
+    })
+    writeFileSync(
+      join(knowledgeRoot, 'memory', 'shop', 'bundles', recordId, 'manifest.json'),
+      'not-json\n',
+      'utf8',
+    )
+
+    expect(() => inspectRecords(knowledgeRoot)).toThrowError(
+      knowledgeLocal.KnowledgeMaintenanceScanError,
+    )
+    expect(() => inspectRecords(knowledgeRoot)).toThrow(/scan incomplete.*bundle/i)
   })
 })

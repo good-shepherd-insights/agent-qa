@@ -313,4 +313,47 @@ describe('knowledge read commands', () => {
     expect(stripVTControlCharacters(unknown.stderr)).toContain('[unknown-build-tag]')
     expect(stripVTControlCharacters(unknown.stderr)).toContain('Unknown build tag "missing-tag"')
   })
+
+  it('exits non-zero instead of rendering partial output from damaged maintenance truth', async () => {
+    const inspectWorkspace = fixtureWorkspace(roots)
+    const { factId } = seedStore(inspectWorkspace)
+    writeFileSync(
+      join(
+        inspectWorkspace.knowledgeRoot,
+        'memory',
+        PRODUCT,
+        'bundles',
+        factId,
+        'manifest.json',
+      ),
+      'not-json\n',
+      'utf8',
+    )
+
+    const inspect = await invoke(inspectWorkspace, ['inspect', '--json'])
+    expect(inspect.exitCode).toBe(1)
+    expect(inspect.stdout).toBe('')
+    expect(stripVTControlCharacters(inspect.stderr)).toContain('scan incomplete')
+
+    const diffWorkspace = fixtureWorkspace(roots)
+    const receiptsDir = join(diffWorkspace.knowledgeRoot, 'memory', 'receipts')
+    mkdirSync(receiptsDir, { recursive: true })
+    writeFileSync(
+      join(receiptsDir, 'purge-record-b.json'),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        purgedRecordId: 'record-a',
+        purgedAtOrdinal: 14,
+        initiator: 'test-operator',
+        affectedPaths: ['memory/shop/bundles/record-a'],
+        firstCommittedOrdinal: 2,
+      })}\n`,
+      'utf8',
+    )
+
+    const diff = await invoke(diffWorkspace, ['diff', '10', '--json'])
+    expect(diff.exitCode).toBe(1)
+    expect(diff.stdout).toBe('')
+    expect(stripVTControlCharacters(diff.stderr)).toContain('scan incomplete')
+  })
 })

@@ -42,3 +42,38 @@ const guardPurgeReceiptVersion = createVersionGuard<PurgeReceipt>({
 export function guardPurgeReceipt(value: unknown): PurgeReceipt {
   return PurgeReceiptSchema.parse(guardPurgeReceiptVersion(value))
 }
+
+// Cycle 1 uses the unsuffixed base name; only cycles >= 2 use a numeric suffix.
+const CANONICAL_PURGE_RECEIPT_FILE =
+  /^purge-([A-Za-z0-9][A-Za-z0-9_-]*)(?:\.([2-9]|[1-9][0-9]+))?\.json$/u
+
+export interface CanonicalPurgeReceiptName {
+  recordId: string
+  cycle: number
+}
+
+export function parseCanonicalPurgeReceiptFileName(
+  fileName: string,
+): CanonicalPurgeReceiptName | undefined {
+  const match = CANONICAL_PURGE_RECEIPT_FILE.exec(fileName)
+  if (match === null) return undefined
+  return {
+    recordId: match[1]!,
+    cycle: match[2] === undefined ? 1 : Number(match[2]),
+  }
+}
+
+/** Bind structurally valid receipt bytes to the canonical filename identity that supplied them. */
+export function guardPurgeReceiptForFile(value: unknown, fileName: string): PurgeReceipt {
+  const identity = parseCanonicalPurgeReceiptFileName(fileName)
+  if (identity === undefined) {
+    throw new TypeError(`non-canonical purge receipt filename: ${fileName}`)
+  }
+  const receipt = guardPurgeReceipt(value)
+  if (receipt.purgedRecordId !== identity.recordId) {
+    throw new TypeError(
+      `purge receipt filename identifies ${identity.recordId}, payload identifies ${receipt.purgedRecordId}`,
+    )
+  }
+  return receipt
+}
