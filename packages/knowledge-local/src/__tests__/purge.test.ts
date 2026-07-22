@@ -432,6 +432,29 @@ describe('DCAY-05 sovereign purge', () => {
     ].sort()
   }
 
+  function writeReceiptFixture(input: {
+    fileName: string
+    recordId: string
+    purgedAtOrdinal: number
+    affectedPaths: string[]
+    firstCommittedOrdinal?: number
+  }): void {
+    const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+    mkdirSync(receiptsDir, { recursive: true })
+    writeFileSync(
+      join(receiptsDir, input.fileName),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        purgedRecordId: input.recordId,
+        purgedAtOrdinal: input.purgedAtOrdinal,
+        initiator: 'fixture-operator',
+        affectedPaths: input.affectedPaths,
+        firstCommittedOrdinal: input.firstCommittedOrdinal ?? 1,
+      })}\n`,
+      'utf8',
+    )
+  }
+
   it('resolves every loadable multi-product target including non-servable copies', () => {
     const sentinels = {
       summary: 'PURGE-AFFECTED-SET-SUMMARY-MUST-NOT-LEAK',
@@ -1366,6 +1389,281 @@ describe('DCAY-05 sovereign purge', () => {
     expect(existsSync(target.dir)).toBe(true)
     expect(existsSync(join(receiptsDir, `purge-${target.id}.intent.json`))).toBe(false)
     expect(existsSync(join(receiptsDir, `purge-${target.id}.json`))).toBe(false)
+  })
+
+  it('advances a later record beyond committed purge chronology in the same product', () => {
+    const recordA = publish(
+      'product-chronology-record-a',
+      [
+        { t: 'el', role: 'button', name: 'Product chronology record A' },
+        { t: 'page', route: '/purge/product-chronology/a' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 100,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'product-chronology-a-run',
+          testId: 'product-chronology-a-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 100,
+        },
+      },
+    )
+    const recordB = publish(
+      'product-chronology-record-b',
+      [
+        { t: 'el', role: 'button', name: 'Product chronology record B' },
+        { t: 'page', route: '/purge/product-chronology/b' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 20,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'product-chronology-b-run',
+          testId: 'product-chronology-b-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 20,
+        },
+      },
+    )
+
+    const first = purge(recordA.id)
+    expect(first.kind).toBe('purged')
+    expect(first.receipt?.purgedAtOrdinal).toBe(101)
+    expect(existsSync(recordA.dir)).toBe(false)
+
+    const second = purge(recordB.id)
+    expect(second.kind).toBe('purged')
+    expect(second.receipt?.purgedAtOrdinal).toBeGreaterThan(101)
+  })
+
+  it('applies multi-product receipts to each named product without coupling unrelated products', () => {
+    const productA = 'purge-chronology-product-a'
+    const productB = 'purge-chronology-product-b'
+    const historyAnchors = [
+      { t: 'el', role: 'button', name: 'Multi-product purge history' },
+      { t: 'page', route: '/purge/product-chronology/multi' },
+      { t: 'platform', platform: 'web' },
+    ] satisfies Anchor[]
+    const historyOverrides: Partial<PublishBundleInput> = {
+      createdAtOrdinal: 70,
+      provenance: {
+        mode: 'run-linked',
+        runId: 'multi-product-history-run',
+        testId: 'multi-product-history-test',
+        stepIndex: 0,
+        sourceBuildOrdinal: 70,
+      },
+    }
+    const historyA = publishForProduct(
+      productA,
+      'multi-product-history',
+      historyAnchors,
+      historyOverrides,
+    )
+    const historyB = publishForProduct(
+      productB,
+      'multi-product-history',
+      historyAnchors,
+      historyOverrides,
+    )
+    expect(historyB.id).toBe(historyA.id)
+
+    const prior = purge(historyA.id)
+    expect(prior.kind).toBe('purged')
+    expect(prior.receipt?.purgedAtOrdinal).toBe(71)
+
+    writeReceiptFixture({
+      fileName: 'purge-unrelated-high.json',
+      recordId: 'unrelated-high',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths: ['memory/unrelated-product/bundles/unrelated-high'],
+    })
+
+    const targetA = publishForProduct(
+      productA,
+      'multi-product-later-a',
+      [
+        { t: 'el', role: 'button', name: 'Later product A target' },
+        { t: 'page', route: '/purge/product-chronology/later-a' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 10,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'multi-product-later-a-run',
+          testId: 'multi-product-later-a-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 10,
+        },
+      },
+    )
+    const targetB = publishForProduct(
+      productB,
+      'multi-product-later-b',
+      [
+        { t: 'el', role: 'button', name: 'Later product B target' },
+        { t: 'page', route: '/purge/product-chronology/later-b' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 11,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'multi-product-later-b-run',
+          testId: 'multi-product-later-b-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 11,
+        },
+      },
+    )
+
+    expect(purge(targetA.id).receipt?.purgedAtOrdinal).toBe(72)
+    expect(purge(targetB.id).receipt?.purgedAtOrdinal).toBe(72)
+  })
+
+  it('folds canonical receipt cycles deterministically and ignores non-committed shapes', () => {
+    const product = 'purge-cycle-order-product'
+    const target = publishForProduct(
+      product,
+      'cycle-order-target',
+      [
+        { t: 'el', role: 'button', name: 'Cycle order target' },
+        { t: 'page', route: '/purge/product-chronology/cycles' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 5,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'cycle-order-target-run',
+          testId: 'cycle-order-target-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 5,
+        },
+      },
+    )
+    const affectedPaths = [`memory/${product}/bundles/cycle-history`]
+
+    // Deliberately create the dense series out of lexical and cycle order.
+    writeReceiptFixture({
+      fileName: 'purge-cycle-history.3.json',
+      recordId: 'cycle-history',
+      purgedAtOrdinal: 60,
+      affectedPaths,
+    })
+    writeReceiptFixture({
+      fileName: 'purge-cycle-history.json',
+      recordId: 'cycle-history',
+      purgedAtOrdinal: 40,
+      affectedPaths,
+    })
+    writeReceiptFixture({
+      fileName: 'purge-cycle-history.2.json',
+      recordId: 'cycle-history',
+      purgedAtOrdinal: 50,
+      affectedPaths,
+    })
+
+    writeReceiptFixture({
+      fileName: 'purge-cycle-history.intent.json',
+      recordId: 'cycle-history',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths,
+    })
+    writeReceiptFixture({
+      fileName: 'purge-cycle-history.1.json',
+      recordId: 'cycle-history',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths,
+    })
+    writeReceiptFixture({
+      fileName: 'purge-prefixed-product.json',
+      recordId: 'prefixed-product',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths: [`memory/${product}-extra/bundles/prefixed-product`],
+    })
+    writeReceiptFixture({
+      fileName: 'purge-arbitrary-path.json',
+      recordId: 'arbitrary-path',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths: [
+        `archive/memory/${product}/bundles/arbitrary-path`,
+        `memory/${product}/not-bundles/arbitrary-path`,
+      ],
+    })
+    writeReceiptFixture({
+      fileName: 'purge-name-bound.json',
+      recordId: 'different-record-id',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths,
+    })
+    writeFileSync(
+      join(knowledgeRoot, 'memory', 'receipts', 'purge-malformed.json'),
+      '{"schemaVersion":1,"purgedAtOrdinal":900}\n',
+      'utf8',
+    )
+
+    const outcome = purge(target.id)
+    expect(outcome.kind).toBe('purged')
+    expect(outcome.receipt?.purgedAtOrdinal).toBe(61)
+  })
+
+  it('refuses relevant committed receipt exhaustion before intent or destruction', () => {
+    const product = 'purge-receipt-exhaustion-product'
+    const target = publishForProduct(
+      product,
+      'receipt-exhaustion-target',
+      [
+        { t: 'el', role: 'button', name: 'Receipt exhaustion target' },
+        { t: 'page', route: '/purge/product-chronology/exhaustion' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 10,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'receipt-exhaustion-target-run',
+          testId: 'receipt-exhaustion-target-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 10,
+        },
+      },
+    )
+    writeReceiptFixture({
+      fileName: 'purge-exhausted-history.json',
+      recordId: 'exhausted-history',
+      purgedAtOrdinal: Number.MAX_SAFE_INTEGER,
+      affectedPaths: [`memory/${product}/bundles/exhausted-history`],
+    })
+    let intentPublished = false
+
+    expect(() =>
+      purgeApi().purgeRecord({
+        knowledgeRoot,
+        recordId: target.id,
+        initiator: 'user',
+        hooks: {
+          afterIntentWritten: () => {
+            intentPublished = true
+          },
+        },
+      }),
+    ).toThrow(RangeError)
+
+    expect(intentPublished).toBe(false)
+    expect(existsSync(target.dir)).toBe(true)
+    expect(
+      existsSync(
+        join(knowledgeRoot, 'memory', 'receipts', `purge-${target.id}.intent.json`),
+      ),
+    ).toBe(false)
+    expect(
+      existsSync(join(knowledgeRoot, 'memory', 'receipts', `purge-${target.id}.json`)),
+    ).toBe(false)
   })
 
   it('refuses intent publication when the supplied writer authority is already reclaimed', () => {

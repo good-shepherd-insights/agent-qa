@@ -264,6 +264,60 @@ describe('diffSince deterministic maintenance history', () => {
     ])
   })
 
+  it('observes a later cross-record purge after the earlier high-ordinal bundle is gone', () => {
+    const recordA = publishFact('Cross-record purge A', 'cross-record-a', 100, [
+      event({
+        type: 'confirmed',
+        evidenceToken: 'cross-record-a-at-100',
+        curationJobId: 'cross-record-a-job',
+        buildOrdinal: 100,
+        origin: 'agent-verified',
+      }),
+    ])
+    const recordB = publishFact('Cross-record purge B', 'cross-record-b', 20, [
+      event({
+        type: 'confirmed',
+        evidenceToken: 'cross-record-b-at-20',
+        curationJobId: 'cross-record-b-job',
+        buildOrdinal: 20,
+        origin: 'agent-verified',
+      }),
+    ])
+
+    const firstPurge = knowledgeLocal.purgeRecord({
+      knowledgeRoot,
+      recordId: recordA,
+      initiator: 'test-operator',
+      auditBaseDir: join(root, '.agent-qa'),
+    })
+    expect(firstPurge.kind).toBe('purged')
+    if (firstPurge.kind !== 'purged') throw new Error('expected record A purge to complete')
+    expect(firstPurge.receipt.purgedAtOrdinal).toBe(101)
+
+    const secondPurge = knowledgeLocal.purgeRecord({
+      knowledgeRoot,
+      recordId: recordB,
+      initiator: 'test-operator',
+      auditBaseDir: join(root, '.agent-qa'),
+    })
+    expect(secondPurge.kind).toBe('purged')
+    if (secondPurge.kind !== 'purged') throw new Error('expected record B purge to complete')
+    expect(secondPurge.receipt.purgedAtOrdinal).toBeGreaterThan(101)
+
+    const firstDiff = diffSince(knowledgeRoot, 101).map(guardRecordChange)
+    const secondDiff = diffSince(knowledgeRoot, 101).map(guardRecordChange)
+    expect(firstDiff).toEqual([
+      {
+        schemaVersion: 1,
+        recordId: recordB,
+        change: 'purged',
+        atOrdinal: secondPurge.receipt.purgedAtOrdinal,
+      },
+    ])
+    expect(firstDiff.some((change) => change.recordId === recordA)).toBe(false)
+    expect(JSON.stringify(secondDiff)).toBe(JSON.stringify(firstDiff))
+  })
+
   it('includes canonical purge receipts after the reference ordinal', () => {
     seedStore()
     const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
