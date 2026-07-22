@@ -190,16 +190,11 @@ describe('diffSince deterministic maintenance history', () => {
       join(receiptsDir, 'purge-purged-record.json'),
       `${JSON.stringify({
         schemaVersion: 1,
-        purgeJobId: 'purge-job-1',
         purgedRecordId: 'purged-record',
         purgedAtOrdinal: 14,
+        initiator: 'test-operator',
+        affectedPaths: ['memory/shop/bundles/purged-record'],
         firstCommittedOrdinal: 2,
-        reasonCode: 'user-request',
-        deletedBundlePaths: ['memory/shop/bundles/purged-record'],
-        deletedQueuePaths: [],
-        deletedJournalPaths: [],
-        vectorOutcome: 'not-configured',
-        commitStatus: 'not-requested',
       })}\n`,
       'utf8',
     )
