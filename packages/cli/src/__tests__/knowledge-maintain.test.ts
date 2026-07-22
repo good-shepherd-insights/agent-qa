@@ -30,6 +30,67 @@ import type {
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+const commandHarness = vi.hoisted(() => ({
+  promptAnswers: [] as string[],
+  promptCalls: [] as Array<{
+    input: 'stdin' | 'other'
+    output: 'stdout' | 'stderr' | 'other'
+    question: string
+  }>,
+  purgeRecordCalls: 0,
+  rollbackCampaignCalls: 0,
+  rollbackCurationJobCalls: 0,
+}))
+
+vi.mock('node:readline', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:readline')>()
+  return {
+    ...actual,
+    createInterface: vi.fn((options: {
+      input: NodeJS.ReadableStream
+      output?: NodeJS.WritableStream
+    }) => ({
+      close: vi.fn(),
+      question: (question: string, resolveAnswer: (answer: string) => void) => {
+        const output = options.output
+        if (output === undefined) throw new Error('maintenance prompt requires an output stream')
+        commandHarness.promptCalls.push({
+          input: options.input === process.stdin ? 'stdin' : 'other',
+          output: output === process.stdout
+            ? 'stdout'
+            : output === process.stderr ? 'stderr' : 'other',
+          question,
+        })
+        output.write(question)
+        const answer = commandHarness.promptAnswers.shift()
+        if (answer === undefined) throw new Error(`missing prompt answer for ${question}`)
+        resolveAnswer(answer)
+      },
+    })),
+  }
+})
+
+vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@vostride/agent-qa-knowledge-local')
+  >()
+  return {
+    ...actual,
+    purgeRecord: vi.fn((...args: Parameters<typeof actual.purgeRecord>) => {
+      commandHarness.purgeRecordCalls += 1
+      return actual.purgeRecord(...args)
+    }),
+    rollbackCampaign: vi.fn((...args: Parameters<typeof actual.rollbackCampaign>) => {
+      commandHarness.rollbackCampaignCalls += 1
+      return actual.rollbackCampaign(...args)
+    }),
+    rollbackCurationJob: vi.fn((...args: Parameters<typeof actual.rollbackCurationJob>) => {
+      commandHarness.rollbackCurationJobCalls += 1
+      return actual.rollbackCurationJob(...args)
+    }),
+  }
+})
+
 import { createKnowledgeCommand } from '../commands/knowledge.js'
 
 const PRODUCT = 'maintenance-storefront'
@@ -240,22 +301,55 @@ function plantLiveWriterLease(workspace: FixtureWorkspace): void {
 describe('knowledge maintenance commands', () => {
   const roots: string[] = []
   let originalExitCode: typeof process.exitCode
-  let originalIsTty: boolean | undefined
+  let originalStderrIsTty: boolean | undefined
+  let originalStdinIsTty: boolean | undefined
+  let originalStdoutIsTty: boolean | undefined
+
+  function setTerminalTopology(input: {
+    stderr: boolean
+    stdin: boolean
+    stdout: boolean
+  }): void {
+    Object.defineProperty(process.stdin, 'isTTY', {
+      configurable: true,
+      value: input.stdin,
+    })
+    Object.defineProperty(process.stdout, 'isTTY', {
+      configurable: true,
+      value: input.stdout,
+    })
+    Object.defineProperty(process.stderr, 'isTTY', {
+      configurable: true,
+      value: input.stderr,
+    })
+  }
 
   beforeEach(() => {
     originalExitCode = process.exitCode
-    originalIsTty = process.stdout.isTTY
-    Object.defineProperty(process.stdout, 'isTTY', {
-      configurable: true,
-      value: false,
-    })
+    originalStdinIsTty = process.stdin.isTTY
+    originalStdoutIsTty = process.stdout.isTTY
+    originalStderrIsTty = process.stderr.isTTY
+    setTerminalTopology({ stdin: false, stdout: false, stderr: false })
+    commandHarness.promptAnswers.splice(0)
+    commandHarness.promptCalls.splice(0)
+    commandHarness.purgeRecordCalls = 0
+    commandHarness.rollbackCampaignCalls = 0
+    commandHarness.rollbackCurationJobCalls = 0
   })
 
   afterEach(() => {
     process.exitCode = originalExitCode
+    Object.defineProperty(process.stdin, 'isTTY', {
+      configurable: true,
+      value: originalStdinIsTty,
+    })
     Object.defineProperty(process.stdout, 'isTTY', {
       configurable: true,
-      value: originalIsTty,
+      value: originalStdoutIsTty,
+    })
+    Object.defineProperty(process.stderr, 'isTTY', {
+      configurable: true,
+      value: originalStderrIsTty,
     })
     vi.restoreAllMocks()
     for (const root of roots.splice(0)) {
@@ -277,6 +371,108 @@ describe('knowledge maintenance commands', () => {
     expect(purge.exitCode).toBe(1)
     expect(purge.stderr).toContain('knowledge purge: refusal [confirmation-required]')
     expect(snapshotFiles(bundle.dir)).toEqual(before)
+  })
+
+  it('refuses piped stdin even when stdout is a TTY without invoking destructive mutators', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(workspace)
+    const before = snapshotFiles(bundle.dir)
+    setTerminalTopology({ stdin: false, stdout: true, stderr: true })
+
+    const rollback = await invoke(workspace, ['rollback', '--job', CURATION_JOB_ID])
+    expect(rollback.exitCode).toBe(1)
+    expect(rollback.stderr).toContain('knowledge rollback: refusal [confirmation-required]')
+
+    const purge = await invoke(workspace, ['purge', bundle.id])
+    expect(purge.exitCode).toBe(1)
+    expect(purge.stderr).toContain('knowledge purge: refusal [confirmation-required]')
+
+    expect(commandHarness.promptCalls).toEqual([])
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+    expect(commandHarness.rollbackCampaignCalls).toBe(0)
+    expect(commandHarness.purgeRecordCalls).toBe(0)
+    expect(snapshotFiles(bundle.dir)).toEqual(before)
+  })
+
+  it('keeps interactive rollback JSON stdout parseable while prompting on stderr', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedBundle(workspace)
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push('y')
+
+    const result = await invoke(workspace, [
+      'rollback',
+      '--job',
+      CURATION_JOB_ID,
+      '--json',
+    ])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      receiptId: expect.stringMatching(/^rollback:/u),
+      affected: { mintedBundleIds: expect.any(Array) },
+    })
+    expect(result.stderr).toContain('Rollback preview')
+    expect(result.stderr).toContain('Apply this rollback? (y/N) ')
+    expect(result.stdout).not.toContain('Rollback preview')
+    expect(result.stdout).not.toContain('Apply this rollback?')
+    expect(commandHarness.promptCalls).toEqual([{
+      input: 'stdin',
+      output: 'stderr',
+      question: 'Apply this rollback? (y/N) ',
+    }])
+    expect(commandHarness.rollbackCurationJobCalls).toBe(1)
+  })
+
+  it('keeps interactive purge JSON stdout parseable while prompting on stderr', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(workspace)
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push(bundle.id)
+
+    const result = await invoke(workspace, ['purge', bundle.id, '--json'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(guardPurgeReceipt(JSON.parse(result.stdout))).toMatchObject({
+      purgedRecordId: bundle.id,
+    })
+    expect(result.stderr).toContain(`Purge preview for ${bundle.id}`)
+    expect(result.stderr).toContain(`Type ${bundle.id} to confirm irreversible purge: `)
+    expect(result.stdout).not.toContain('Purge preview')
+    expect(result.stdout).not.toContain('Type ')
+    expect(commandHarness.promptCalls).toEqual([{
+      input: 'stdin',
+      output: 'stderr',
+      question: `Type ${bundle.id} to confirm irreversible purge: `,
+    }])
+    expect(commandHarness.purgeRecordCalls).toBe(1)
+  })
+
+  it('keeps JSON stdout empty and returns non-success when interactive answers refuse', async () => {
+    const rollbackWorkspace = fixtureWorkspace(roots)
+    seedBundle(rollbackWorkspace)
+    setTerminalTopology({ stdin: true, stdout: true, stderr: true })
+    commandHarness.promptAnswers.push('n')
+
+    const rollback = await invoke(rollbackWorkspace, [
+      'rollback',
+      '--job',
+      CURATION_JOB_ID,
+      '--json',
+    ])
+    expect(rollback.exitCode).toBe(1)
+    expect(rollback.stdout).toBe('')
+    expect(commandHarness.rollbackCurationJobCalls).toBe(0)
+
+    const purgeWorkspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(purgeWorkspace)
+    commandHarness.promptAnswers.push(`${bundle.id}-mismatch`)
+
+    const purge = await invoke(purgeWorkspace, ['purge', bundle.id, '--json'])
+    expect(purge.exitCode).toBe(1)
+    expect(purge.stdout).toBe('')
+    expect(purge.stderr).toContain('knowledge purge: refusal [confirmation-mismatch]')
+    expect(commandHarness.purgeRecordCalls).toBe(0)
   })
 
   it('requires the exact purge id, rejects --yes, and emits the persisted receipt verbatim', async () => {
