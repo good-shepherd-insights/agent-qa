@@ -5,6 +5,7 @@
 // Contract source: 361-CONTEXT.md D-18 (project-local .agent-qa state file, per-product
 // key, read → write-temp → atomic-rename increment; monotonic best-effort, corrupt/missing
 // state restarts at 1, never throws; no lockfile) + eval-and-core-types.md §A8 buildOrdinal.
+import { spawn } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { mkdtemp, readFile, rm, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,6 +19,51 @@ import {
   reserveBuildOrdinalForProducts,
   BUILD_ORDINALS_FILE,
 } from '../build-ordinal.js'
+
+const BUILD_ORDINAL_MODULE_URL = new URL('../build-ordinal.ts', import.meta.url).href
+
+function runOrdinalChild(input: {
+  root: string
+  operation: 'run' | 'maintenance'
+  products: string[]
+}): Promise<number> {
+  const source = `
+    const api = await import(${JSON.stringify(BUILD_ORDINAL_MODULE_URL)});
+    const root = process.env.AGENT_QA_ORDINAL_TEST_ROOT;
+    const products = JSON.parse(process.env.AGENT_QA_ORDINAL_TEST_PRODUCTS);
+    const result = process.env.AGENT_QA_ORDINAL_TEST_OPERATION === 'run'
+      ? await api.nextBuildOrdinal({ root, product: products[0] })
+      : await api.reserveBuildOrdinalForProducts({ root, products });
+    process.stdout.write(String(result));
+  `
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      {
+        env: {
+          ...process.env,
+          AGENT_QA_ORDINAL_TEST_ROOT: input.root,
+          AGENT_QA_ORDINAL_TEST_OPERATION: input.operation,
+          AGENT_QA_ORDINAL_TEST_PRODUCTS: JSON.stringify(input.products),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk })
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk })
+    child.once('error', reject)
+    child.once('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ordinal child exited ${code}: ${stderr}`))
+        return
+      }
+      resolve(Number(stdout))
+    })
+  })
+}
 
 describe('nextBuildOrdinal (D-18)', () => {
   let root: string
@@ -50,16 +96,63 @@ describe('nextBuildOrdinal (D-18)', () => {
     expect(await nextBuildOrdinal({ root, product: 'ios-app' })).toBe(2)
   })
 
-  it('restarts at 1 on a corrupt/missing state file — never throws', async () => {
-    await writeFile(join(root, BUILD_ORDINALS_FILE), '{ not valid json', 'utf8')
+  it('starts at 1 only when state is missing and rejects corrupt state', async () => {
     await expect(nextBuildOrdinal({ root, product: 'web-app' })).resolves.toBe(1)
+    await writeFile(join(root, BUILD_ORDINALS_FILE), '{ not valid json', 'utf8')
+    await expect(nextBuildOrdinal({ root, product: 'web-app' })).rejects.toMatchObject({
+      code: 'invalid-state',
+      product: 'web-app',
+    } satisfies Partial<BuildOrdinalReservationError>)
   })
 
-  it('writes via temp-file + atomic rename — no lingering .tmp after completion', async () => {
+  it('rejects arrays, invalid values, and non-ENOENT read failures', async () => {
+    const file = join(root, BUILD_ORDINALS_FILE)
+    await writeFile(file, '[]\n', 'utf8')
+    await expect(nextBuildOrdinal({ root, product: 'web-app' })).rejects.toMatchObject({
+      code: 'invalid-state',
+    } satisfies Partial<BuildOrdinalReservationError>)
+
+    await writeFile(file, '{"web-app":"bad"}\n', 'utf8')
+    await expect(nextBuildOrdinal({ root, product: 'web-app' })).rejects.toMatchObject({
+      code: 'invalid-counter',
+      product: 'web-app',
+      value: 'bad',
+    } satisfies Partial<BuildOrdinalReservationError>)
+
+    await rm(file)
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(file))
+    await expect(nextBuildOrdinal({ root, product: 'web-app' })).rejects.toMatchObject({
+      code: 'EISDIR',
+    })
+  })
+
+  it('treats prototype-looking product names as own keys', async () => {
+    expect(await nextBuildOrdinal({ root, product: 'constructor' })).toBe(1)
+    expect(JSON.parse(await readFile(join(root, BUILD_ORDINALS_FILE), 'utf8'))).toEqual({
+      constructor: 1,
+    })
+  })
+
+  it('writes via a unique durable replacement with no lingering authority files', async () => {
     await nextBuildOrdinal({ root, product: 'web-app' })
     await nextBuildOrdinal({ root, product: 'web-app' })
     const files = await readdir(root)
-    expect(files.some(file => file.endsWith('.tmp'))).toBe(false)
+    expect(files).toEqual([BUILD_ORDINALS_FILE])
+  })
+
+  it('serializes concurrent run starts without losing same-product increments', async () => {
+    const ordinals = await Promise.all(
+      Array.from({ length: 8 }, () => runOrdinalChild({
+        root,
+        operation: 'run',
+        products: ['web-app'],
+      })),
+    )
+
+    expect([...ordinals].sort((left, right) => left - right)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(JSON.parse(await readFile(join(root, BUILD_ORDINALS_FILE), 'utf8'))).toEqual({
+      'web-app': 8,
+    })
   })
 })
 
@@ -140,13 +233,60 @@ describe('reserveBuildOrdinalForProducts', () => {
         beforePersist: reservation => {
           expect(reservation).toEqual({ products: ['ios', 'web'], ordinal: 12 })
           expect(readFileSync(file, 'utf8')).toBe(original)
-          expect(JSON.parse(readFileSync(`${file}.tmp`, 'utf8'))).toEqual({ web: 12, ios: 12 })
+          const temporary = readdirSync(root).find((entry) => entry.startsWith(
+            `${BUILD_ORDINALS_FILE}.tmp-`,
+          ))
+          expect(temporary).toBeDefined()
+          expect(JSON.parse(readFileSync(join(root, temporary!), 'utf8'))).toEqual({
+            web: 12,
+            ios: 12,
+          })
           throw refusal
         },
       }),
     ).rejects.toBe(refusal)
 
     expect(readFileSync(file, 'utf8')).toBe(original)
+    expect(readdirSync(root)).toEqual([BUILD_ORDINALS_FILE])
+  })
+
+  it('serializes a run start against maintenance on the same product', async () => {
+    await writeFile(join(root, BUILD_ORDINALS_FILE), '{"web":0}\n', 'utf8')
+
+    const ordinals = await Promise.all([
+      runOrdinalChild({ root, operation: 'run', products: ['web'] }),
+      runOrdinalChild({ root, operation: 'maintenance', products: ['web'] }),
+    ])
+
+    expect([...ordinals].sort((left, right) => left - right)).toEqual([1, 2])
+    expect(JSON.parse(await readFile(join(root, BUILD_ORDINALS_FILE), 'utf8'))).toEqual({ web: 2 })
+  })
+
+  it('serializes concurrent multi-product maintenance reservations', async () => {
+    await writeFile(join(root, BUILD_ORDINALS_FILE), '{"ios":0,"web":0}\n', 'utf8')
+
+    const ordinals = await Promise.all([
+      runOrdinalChild({ root, operation: 'maintenance', products: ['ios', 'web'] }),
+      runOrdinalChild({ root, operation: 'maintenance', products: ['web', 'ios'] }),
+    ])
+
+    expect([...ordinals].sort((left, right) => left - right)).toEqual([1, 2])
+    expect(JSON.parse(await readFile(join(root, BUILD_ORDINALS_FILE), 'utf8'))).toEqual({
+      ios: 2,
+      web: 2,
+    })
+  })
+
+  it('leaves a durable counter after an immediate child-process exit', async () => {
+    await expect(runOrdinalChild({
+      root,
+      operation: 'run',
+      products: ['durable-product'],
+    })).resolves.toBe(1)
+
+    expect(readFileSync(join(root, BUILD_ORDINALS_FILE), 'utf8')).toBe(
+      '{"durable-product":1}\n',
+    )
     expect(readdirSync(root)).toEqual([BUILD_ORDINALS_FILE])
   })
 })
