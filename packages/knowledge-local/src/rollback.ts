@@ -25,7 +25,10 @@ import { appendOutcomeEvent } from './bundle-append.js'
 import { deriveBundleTrust, loadBundle } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
-import { enumerateBundleDirs } from './bundle-scan.js'
+import {
+  enumerateBundleDirs,
+  resolveProductQualifiedBundleDir,
+} from './bundle-scan.js'
 import { applyIndexDeltaForBundle } from './curator/commit.js'
 import type { AuthoredDeltaCheckpoint } from './curator/author-contract.js'
 import { disposeDelta } from './curator/disposition.js'
@@ -89,6 +92,7 @@ export interface RollbackCampaignInput extends RollbackBaseInput {
 interface CanonicalRollbackBundle {
   recordId: RecordId
   product: string
+  dir: string
   bundle: LoadedBundle
 }
 
@@ -233,6 +237,7 @@ function canonicalBundles(knowledgeRoot: string): CanonicalRollbackBundle[] {
     bundles.push({
       recordId: asRecordId(loaded.bundle.manifest.id),
       product: entry.product,
+      dir: entry.dir,
       bundle: loaded.bundle,
     })
   }
@@ -602,14 +607,17 @@ function emitRollback(
   input.hooks?.afterResolution?.()
 
   let inverseCount = 0
-  const touched = new Set<RecordId>()
+  const touched = new Map<string, { recordId: RecordId; product: string }>()
   const restoredVictims = new Set<RecordId>()
   const retractedPromotions = new Set<RecordId>()
-  const supportLossCandidates = new Map<RecordId, string>()
+  const supportLossCandidates = new Map<
+    string,
+    { recordId: RecordId; product: string }
+  >()
 
   for (const minted of resolution.mintedBundles) {
     if (appendInverseDeprecate(input, resolution, minted)) inverseCount += 1
-    touched.add(minted.recordId)
+    touched.set(`${minted.product}\0${minted.recordId}`, minted)
   }
 
   for (const counter of resolution.counterEvents) {
@@ -621,9 +629,12 @@ function emitRollback(
     )) {
       inverseCount += 1
     }
-    touched.add(counter.recordId)
+    touched.set(`${counter.product}\0${counter.recordId}`, counter)
     if (counter.type === 'confirmed') {
-      supportLossCandidates.set(counter.recordId, counter.product)
+      supportLossCandidates.set(
+        `${counter.product}\0${counter.recordId}`,
+        { recordId: counter.recordId, product: counter.product },
+      )
     }
 
     if (counter.type === 'superseded') {
@@ -650,16 +661,18 @@ function emitRollback(
    * exact eventDedupKey identities and every inverse is an append — existing outcome lines are
    * never rewritten.
    */
-  const cascadeTargets = [...supportLossCandidates.entries()]
-    .sort(([left], [right]) => compareText(left, right))
+  const cascadeTargets = [...supportLossCandidates.values()]
+    .sort((left, right) =>
+      compareText(left.product, right.product) || compareText(left.recordId, right.recordId),
+    )
   if (cascadeTargets.length > 0) {
-    const bundleDirs = enumerateBundleDirs(input.knowledgeRoot)
-    for (const [recordId, product] of cascadeTargets) {
-      const dir = bundleDirs.find((entry) => entry.dir.endsWith(`/${recordId}`))?.dir
-      if (dir === undefined) {
-        throw new Error(`rollback target ${recordId} disappeared during commit`)
-      }
-      const reloaded = loadBundle(dir)
+    for (const { recordId, product } of cascadeTargets) {
+      const target = resolveProductQualifiedBundleDir({
+        knowledgeRoot: input.knowledgeRoot,
+        product,
+        recordId,
+      })
+      const reloaded = loadBundle(target.dir)
       if (reloaded.kind !== 'loaded') {
         throw new Error(`rollback target ${recordId} disappeared during commit`)
       }
@@ -693,10 +706,16 @@ function emitRollback(
 
   // Re-project every touched bundle even on duplicate replay. This is the same healing property
   // as commitCurationDelta's append-before-index recovery: canonical truth always wins.
-  for (const recordId of [...touched].sort(compareText)) {
+  for (const target of [...touched.values()].sort((left, right) =>
+    compareText(left.product, right.product) || compareText(left.recordId, right.recordId),
+  )) {
     fenceWriterAuthority(input)
-    applyIndexDeltaForBundle({ knowledgeRoot: input.knowledgeRoot, bundleId: recordId })
-    input.hooks?.afterMutation?.('projection', recordId)
+    applyIndexDeltaForBundle({
+      knowledgeRoot: input.knowledgeRoot,
+      bundleId: target.recordId,
+      product: target.product,
+    })
+    input.hooks?.afterMutation?.('projection', target.recordId)
   }
 
   return {

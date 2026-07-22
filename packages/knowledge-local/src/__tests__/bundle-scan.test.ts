@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 
 import {
   asRecordId,
@@ -228,6 +228,31 @@ describe('IDX-02 authoritative degraded bundle scan', () => {
       { product: 'manifest-source', dir: source.dir },
       { product: 'partial', dir: incompleteDir },
     ])
+  })
+
+  it('resolves native Windows names and refuses record-only cross-product ambiguity', async () => {
+    const {
+      bundleDirRecordId,
+      resolveProductQualifiedBundleDir,
+    } = await scanApi()
+    const first = publish('alpha-product')
+    const second = publish('beta-product')
+    expect(second.id).toBe(first.id)
+
+    expect(bundleDirRecordId(win32.join('C:\\knowledge', 'bundles', first.id))).toBe(first.id)
+    expect(() => resolveProductQualifiedBundleDir({
+      knowledgeRoot,
+      recordId: first.id,
+    })).toThrow(/ambiguous/i)
+    expect(resolveProductQualifiedBundleDir({
+      knowledgeRoot,
+      product: 'beta-product',
+      recordId: first.id,
+    })).toEqual({
+      product: 'beta-product',
+      recordId: first.id,
+      dir: second.dir,
+    })
   })
 
   it('refuses a parseable digest tamper across every degraded scan face', async () => {

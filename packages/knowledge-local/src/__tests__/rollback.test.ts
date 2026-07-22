@@ -120,10 +120,10 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  function config(): BundleStoreConfig {
+  function config(productKey = PRODUCT): BundleStoreConfig {
     return {
       knowledgeRoot,
-      productKey: PRODUCT,
+      productKey,
       auditBaseDir,
       commitArtifacts: 'none',
     }
@@ -164,13 +164,14 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     initialEvents?: readonly BundleOutcomeEvent[]
     relations?: readonly BundleRelation[]
     discriminant?: BundleDiscriminant
+    product?: string
   }): PublishedBundle {
     const kind = input.kind ?? 'fact'
     const anchors = input.anchors ?? [
       { t: 'el', role: 'button', name: `${input.identity} control` },
       { t: 'page', route: `/rollback/${input.identity}` },
     ]
-    const outcome = knowledgeLocal.publishBundle(config(), {
+    const outcome = knowledgeLocal.publishBundle(config(input.product), {
       draft: makeBundleDraftFixture({
         kind,
         anchors: [...anchors],
@@ -459,6 +460,36 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     // Reaching a deprecated fold without minting another bundle proves maintenance origin system.
     expect(knowledgeLocal.enumerateBundleDirs(knowledgeRoot)).toHaveLength(1)
     expect(hasFtsRow(added.id)).toBe(false)
+  })
+
+  it('mutates only the product-qualified copy when record ids collide across products', () => {
+    const targeted = publishForJob({
+      identity: 'cross-product-shared-id',
+      curationJobId: 'job-cross-product-target',
+      sourceBuildOrdinal: 7,
+      initialEvents: activeEvents('job-cross-product-target', 7),
+    })
+    const untouched = publishForJob({
+      identity: 'cross-product-shared-id',
+      curationJobId: 'job-cross-product-other',
+      sourceBuildOrdinal: 8,
+      initialEvents: activeEvents('job-cross-product-other', 8),
+      product: 'rollback-shadow-product',
+    })
+    expect(untouched.id).toBe(targeted.id)
+
+    rollbackApi().rollbackCurationJob({
+      knowledgeRoot,
+      auditBaseDir,
+      curationJobId: 'job-cross-product-target',
+      resolvedAtOrdinal: 20,
+    })
+
+    expect(knowledgeLocal.deriveBundleTrust(loaded(targeted)).status).toBe('deprecated')
+    expect(knowledgeLocal.deriveBundleTrust(loaded(untouched)).status).toBe('active')
+    expect(loaded(untouched).events.some((event) =>
+      event.curationJobId.startsWith('rollback:'),
+    )).toBe(false)
   })
 
   it('retracts a Confirm on a pre-existing bundle so its counter drops on re-fold', () => {

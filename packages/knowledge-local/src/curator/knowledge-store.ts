@@ -33,7 +33,10 @@ import { appendOutcomeEvent } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
 import type { LoadedBundle } from '../bundle-read.js'
 import type { BundleStoreConfig } from '../bundle-publish.js'
-import { enumerateBundleDirs } from '../bundle-scan.js'
+import {
+  BundleTargetResolutionError,
+  resolveProductQualifiedBundleDir,
+} from '../bundle-scan.js'
 import { readCurrentEpoch } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
 import {
@@ -152,20 +155,27 @@ interface ResolvedTruth {
 }
 
 function resolveTruth(knowledgeRoot: string, id: RecordId): ResolvedTruth | undefined {
-  for (const entry of enumerateBundleDirs(knowledgeRoot)) {
-    const loaded = loadBundle(entry.dir)
-    if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) continue
-    const trust = deriveBundleTrust(loaded.bundle)
-    return {
-      id,
-      bundle: loaded.bundle,
-      bundleDir: entry.dir,
-      product: entry.product,
-      observedStatus: trust.status,
-      observedOrdinal: trust.validity.closedAtOrdinal ?? trust.validity.openedAtOrdinal,
-    }
+  let target: ReturnType<typeof resolveProductQualifiedBundleDir>
+  try {
+    target = resolveProductQualifiedBundleDir({ knowledgeRoot, recordId: id })
+  } catch (error) {
+    if (
+      error instanceof BundleTargetResolutionError
+      && error.reason === 'not-found'
+    ) return undefined
+    throw error
   }
-  return undefined
+  const loaded = loadBundle(target.dir)
+  if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) return undefined
+  const trust = deriveBundleTrust(loaded.bundle)
+  return {
+    id,
+    bundle: loaded.bundle,
+    bundleDir: target.dir,
+    product: target.product,
+    observedStatus: trust.status,
+    observedOrdinal: trust.validity.closedAtOrdinal ?? trust.validity.openedAtOrdinal,
+  }
 }
 
 function targetId(delta: Delta): RecordId | undefined {
@@ -275,6 +285,10 @@ function bridgeDelta(
       candidateDir,
       payloadPath: join(candidateDir, 'payload.json'),
       artifactsDir,
+      targetProducts: Object.fromEntries(
+        [...neighbors, ...(targetTruth === undefined ? [] : [targetTruth])]
+          .map((truth) => [truth.id, truth.product]),
+      ),
       ...(config.screenStates === undefined ? {} : { screenStates: config.screenStates }),
     },
     checkpoint: {
@@ -444,6 +458,7 @@ export function createLocalKnowledgeStore(
           applyIndexDeltaForBundle({
             knowledgeRoot: config.knowledgeRoot,
             bundleId: outcome.candidateId,
+            product: resolved.product,
           })
           return
         }
@@ -499,7 +514,11 @@ export function createLocalKnowledgeStore(
         if (revalidated.verdict === 'promote') {
           // Still authorized: heal append-before-projection retries while preserving the
           // already-active noop contract byte-for-byte.
-          applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
+          applyIndexDeltaForBundle({
+            knowledgeRoot: config.knowledgeRoot,
+            bundleId: candidateId,
+            product: resolved.product,
+          })
           return
         }
         // Stale authority: append-only retraction of every surviving promoted event under a
@@ -528,7 +547,11 @@ export function createLocalKnowledgeStore(
             throw new KnowledgePromotionError(candidateId, appended.kind)
           }
         }
-        applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
+        applyIndexDeltaForBundle({
+          knowledgeRoot: config.knowledgeRoot,
+          bundleId: candidateId,
+          product: resolved.product,
+        })
         throw new KnowledgePromotionError(candidateId, revalidated.reason)
       }
 
@@ -552,7 +575,11 @@ export function createLocalKnowledgeStore(
       if (appended.kind === 'not-found') {
         throw new KnowledgePromotionError(candidateId, appended.kind)
       }
-      applyIndexDeltaForBundle({ knowledgeRoot: config.knowledgeRoot, bundleId: candidateId })
+      applyIndexDeltaForBundle({
+        knowledgeRoot: config.knowledgeRoot,
+        bundleId: candidateId,
+        product: resolved.product,
+      })
     },
   }
   return store

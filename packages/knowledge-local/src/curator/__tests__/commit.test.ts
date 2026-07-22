@@ -1,4 +1,5 @@
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -290,6 +291,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     authored: AuthoredDeltaCheckpoint
   } {
     const claimed = measurementJob(value, buildOrdinal)
+    claimed.targetProducts = { [victimId]: 'storefront' }
     const delta: Extract<Delta, { kind: 'Supersede' }> = {
       kind: 'Supersede',
       origin: 'agent',
@@ -1137,6 +1139,17 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       measurementObservation(202, 45),
       measurementObservation(203, 46),
     ])
+    const shadowVictimDir = join(
+      knowledgeRoot,
+      'memory',
+      'shadow-product',
+      'bundles',
+      victim.bundleId,
+    )
+    mkdirSync(join(shadowVictimDir, '..'), { recursive: true })
+    cpSync(victim.bundleDir, shadowVictimDir, { recursive: true })
+    const shadowVictimBytes = mutableBundleBytes(shadowVictimDir)
+    const shadowMeasurements = readFileSync(join(shadowVictimDir, MEASUREMENTS_REL_PATH))
     const replacement = measurementSupersede(victim.bundleId, '204', 47)
 
     const outcome = commitCurationDelta(deps(), replacement.claimed, replacement.authored)
@@ -1170,6 +1183,10 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       status: 'superseded',
       validity: { openedAtOrdinal: 42, closedAtOrdinal: 47 },
     })
+    expect(mutableBundleBytes(shadowVictimDir)).toEqual(shadowVictimBytes)
+    expect(readFileSync(join(shadowVictimDir, MEASUREMENTS_REL_PATH))).toEqual(
+      shadowMeasurements,
+    )
   })
 
   it('keeps born-active promotion and baseline singular on an idempotent re-run', () => {
@@ -1240,6 +1257,17 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     })
     const first = commitCurationDelta(deps(), firstJob, checkpoint(addDelta()))
     expect(first.kind).toBe('applied')
+    if (first.kind !== 'applied') throw new Error('expected first Add')
+    const shadowDir = join(
+      knowledgeRoot,
+      'memory',
+      'shadow-product',
+      'bundles',
+      first.bundleId,
+    )
+    mkdirSync(join(shadowDir, '..'), { recursive: true })
+    cpSync(first.bundleDir, shadowDir, { recursive: true })
+    const shadowOutcomes = readFileSync(join(shadowDir, 'evidence/outcomes.jsonl'))
 
     const duplicateJob = job(artifactFreeCaptureReceipt(), {
       evidenceToken: 'evidence-second',
@@ -1248,9 +1276,60 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     const duplicateCheckpoint = checkpoint(addDelta())
     const converted = commitCurationDelta(deps(), duplicateJob, duplicateCheckpoint)
     expect(converted.kind).toBe('converted-confirm')
+    if (converted.kind !== 'converted-confirm') throw new Error('expected converted Confirm')
+    expect(converted.bundleDir).toBe(first.bundleDir)
+    expect(readFileSync(join(shadowDir, 'evidence/outcomes.jsonl'))).toEqual(shadowOutcomes)
 
     const consumed = commitCurationDelta(deps(), duplicateJob, duplicateCheckpoint)
     expect(consumed).toMatchObject({ kind: 'noop', reason: 'evidence-token-consumed' })
+  })
+
+  it('refuses a broader-scope mutation when the record id exists in two products', () => {
+    const scope = { tier: 'suite', key: 'checkout-suite' } as const
+    const bundle = draft({ scope })
+    const addJob = job(artifactFreeCaptureReceipt(), { scope })
+    const added = commitCurationDelta(deps(), addJob, checkpoint(addDelta(bundle)))
+    if (added.kind !== 'applied') throw new Error('expected suite-scoped Add')
+
+    const shadowDir = join(
+      knowledgeRoot,
+      'memory',
+      'shadow-product',
+      'bundles',
+      added.bundleId,
+    )
+    mkdirSync(join(shadowDir, '..'), { recursive: true })
+    cpSync(added.bundleDir, shadowDir, { recursive: true })
+    const sourceBefore = readFileSync(join(added.bundleDir, 'evidence/outcomes.jsonl'))
+    const shadowBefore = readFileSync(join(shadowDir, 'evidence/outcomes.jsonl'))
+
+    const confirmJob = job(artifactFreeCaptureReceipt(), {
+      scope,
+      evidenceToken: 'ambiguous-suite-confirm',
+      attributingObservationId: 'ambiguous-suite-observation',
+    })
+    const confirm: Extract<Delta, { kind: 'Confirm' }> = {
+      kind: 'Confirm',
+      origin: 'agent',
+      scope,
+      citedIds: [added.bundleId],
+      authorship: {
+        path: 'llm',
+        model: { id: 'curator-fixture' },
+        executionContext: 'local-interactive',
+      },
+      targetId: added.bundleId,
+      evidenceToken: asEvidenceToken(confirmJob.payload.evidenceToken),
+    }
+
+    expect(() => commitCurationDelta(
+      deps(),
+      confirmJob,
+      checkpoint(confirm, [added.bundleId]),
+    )).toThrow(/ambiguous/i)
+    expect(readFileSync(join(added.bundleDir, 'evidence/outcomes.jsonl'))).toEqual(sourceBefore)
+    expect(readFileSync(join(shadowDir, 'evidence/outcomes.jsonl'))).toEqual(shadowBefore)
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
   })
 
   it('maps committed-egress refusal to a typed withheld outcome', () => {

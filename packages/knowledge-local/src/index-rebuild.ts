@@ -29,7 +29,10 @@ import type {
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
-import { enumerateBundleDirs } from './bundle-scan.js'
+import {
+  enumerateBundleDirs,
+  resolveProductQualifiedBundleDir,
+} from './bundle-scan.js'
 import {
   buildSituatingLine,
   computeRenderingDrift,
@@ -88,6 +91,8 @@ export interface RebuildIndexOptions {
 export interface ProjectBundleIndexRowOptions {
   knowledgeRoot: string
   bundleId: string
+  /** Required whenever the same content-addressed id exists in more than one product. */
+  product?: string
   /** SAFE-02 lexical bytes after governed redaction. */
   lexicalInput?: string
   /** Terminal dense suppression; ordinary backfill must never select this row. */
@@ -639,20 +644,27 @@ function applyProjectionSafety(
  * either orchestration layer.
  */
 export function projectBundleIndexRow(opts: ProjectBundleIndexRowOptions): void {
-  let projected: ProjectedBundle | undefined
-  for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
-    const outcome = loadBundle(entry.dir)
-    if (outcome.kind !== 'loaded' || outcome.bundle.manifest.id !== opts.bundleId) continue
-    const integrity = verifyBundleIntegrity(entry.dir)
-    if (!integrity.ok) {
-      throw new Error(
-        `cannot project invalid bundle ${opts.bundleId}: ${integrity.violations.join('; ')}`,
-      )
-    }
-    projected = { bundle: outcome.bundle, dir: entry.dir, product: entry.product }
-    break
+  const target = resolveProductQualifiedBundleDir({
+    knowledgeRoot: opts.knowledgeRoot,
+    recordId: opts.bundleId,
+    ...(opts.product === undefined ? {} : { product: opts.product }),
+  })
+  const outcome = loadBundle(target.dir)
+  if (outcome.kind !== 'loaded' || outcome.bundle.manifest.id !== opts.bundleId) {
+    throw new Error(`bundle ${target.product}/${opts.bundleId} was not loadable`)
   }
-  if (projected === undefined) throw new Error(`bundle ${opts.bundleId} was not found`)
+  const integrity = verifyBundleIntegrity(target.dir)
+  if (!integrity.ok) {
+    throw new Error(
+      `cannot project invalid bundle ${target.product}/${opts.bundleId}: `
+      + integrity.violations.join('; '),
+    )
+  }
+  const projected: ProjectedBundle = {
+    bundle: outcome.bundle,
+    dir: target.dir,
+    product: target.product,
+  }
 
   const writer = openIndexWriter(opts.knowledgeRoot)
   const activeProfile = resolveActiveProfile(writer.db)

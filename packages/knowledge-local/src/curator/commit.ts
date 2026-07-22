@@ -48,7 +48,10 @@ import type {
   PublishBundleInput,
   PublishBundleOutcome,
 } from '../bundle-publish.js'
-import { enumerateBundleDirs } from '../bundle-scan.js'
+import {
+  resolveProductQualifiedBundleDir,
+  type ProductQualifiedBundleDir,
+} from '../bundle-scan.js'
 import { projectBundleIndexRow } from '../index-rebuild.js'
 import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.js'
 import { assertEpochCurrent } from '../lease/writer-lease.js'
@@ -74,6 +77,8 @@ type CheckpointDraft = BundleDraft & { needsEnrichment?: true }
 
 export interface CommitCurationJob extends ClaimedCurationJob {
   screenStates?: readonly ScreenState[]
+  /** Product authority resolved with the checkpoint; absent ids must be globally unique. */
+  targetProducts?: Readonly<Record<string, string>>
 }
 
 export interface CommitCurationDependencies {
@@ -155,6 +160,7 @@ export type CommitCurationOutcome =
 export interface ApplyIndexDeltaForBundleInput {
   knowledgeRoot: string
   bundleId: string
+  product?: string
   lexicalInput?: string
   suppressDense?: boolean
 }
@@ -620,7 +626,11 @@ function commitUnknownMintIntent(
       collisionReason: published.reason,
     }
   }
-  applyIndexDeltaForBundle({ knowledgeRoot: deps.knowledgeRoot, bundleId: published.id })
+  applyIndexDeltaForBundle({
+    knowledgeRoot: deps.knowledgeRoot,
+    bundleId: published.id,
+    product: intent.scope.key,
+  })
   return undefined
 }
 
@@ -628,12 +638,9 @@ function commitUnknownResolutionIntent(
   deps: CommitCurationDependencies,
   job: CommitCurationJob,
   intent: UnknownResolutionIntent,
+  target: ProductQualifiedBundleDir,
 ): CommitCurationOutcome | undefined {
-  const config = storeConfig(
-    deps,
-    productForBundle(deps.knowledgeRoot, intent.targetId, job.payload.scope.key),
-    job.leaseId,
-  )
+  const config = storeConfig(deps, target.product, job.leaseId)
   const evidenceToken = asEvidenceToken(
     sha256hex(canonicalJson({
       token: job.payload.evidenceToken,
@@ -652,19 +659,24 @@ function commitUnknownResolutionIntent(
   })
   const failure = appendFailure(appended)
   if (failure !== undefined) return failure
-  applyIndexDeltaForBundle({ knowledgeRoot: deps.knowledgeRoot, bundleId: intent.targetId })
+  applyIndexDeltaForBundle({
+    knowledgeRoot: deps.knowledgeRoot,
+    bundleId: intent.targetId,
+    product: target.product,
+  })
   return undefined
 }
 
-function productForBundle(
+function resolveExistingTarget(
   knowledgeRoot: string,
   bundleId: RecordId,
-  fallback: string,
-): string {
-  return enumerateBundleDirs(knowledgeRoot).find((entry) => {
-    const manifest = join(entry.dir, 'manifest.json')
-    return entry.dir.endsWith(`/${bundleId}`) || manifest.endsWith(`/${bundleId}/manifest.json`)
-  })?.product ?? fallback
+  product: string | undefined,
+): ProductQualifiedBundleDir {
+  return resolveProductQualifiedBundleDir({
+    knowledgeRoot,
+    recordId: bundleId,
+    ...(product === undefined ? {} : { product }),
+  })
 }
 
 /**
@@ -707,13 +719,10 @@ function appendFailure(
 
 function appendMeasurementObservationOnce(
   config: BundleStoreConfig,
-  victimId: RecordId,
+  victim: ProductQualifiedBundleDir,
   observation: Parameters<typeof appendMeasurementObservation>[2],
 ): ReturnType<typeof appendMeasurementObservation> {
-  const entry = enumerateBundleDirs(config.knowledgeRoot).find(
-    (candidate) => candidate.dir.endsWith(`/${victimId}`),
-  )
-  const existing = entry === undefined ? undefined : readMeasurements(entry.dir)
+  const existing = readMeasurements(victim.dir)
   const consumed = existing?.observations.find(
     (candidate) =>
       candidate.evidenceToken === observation.evidenceToken
@@ -725,7 +734,7 @@ function appendMeasurementObservationOnce(
     }
     return { kind: 'duplicate' }
   }
-  return appendMeasurementObservation(config, victimId, observation)
+  return appendMeasurementObservation(config, victim.recordId as RecordId, observation)
 }
 
 function mutationTarget(delta: Delta): RecordId | undefined {
@@ -868,8 +877,31 @@ export function commitCurationDelta(
     return { kind: 'noop', reason: 'procedure-body-unparseable' }
   }
   const productKey = delta.scope.key
+  const existingTargetIds = new Set<RecordId>()
+  const directTarget = mutationTarget(delta)
+  if (directTarget !== undefined) existingTargetIds.add(directTarget)
+  if (disposed.measurementAppend !== undefined) {
+    existingTargetIds.add(disposed.measurementAppend.victimId)
+  }
+  for (const intent of disposed.unknownResolutionIntents ?? []) {
+    existingTargetIds.add(intent.targetId)
+  }
+  // Resolve every existing mutation target before publishing an intent or appending any bytes.
+  // Scope keys are not storage products: use upstream product authority or require uniqueness.
+  const existingTargets = new Map<RecordId, ProductQualifiedBundleDir>()
+  for (const targetId of [...existingTargetIds].sort()) {
+    existingTargets.set(
+      targetId,
+      resolveExistingTarget(
+        deps.knowledgeRoot,
+        targetId,
+        job.targetProducts?.[targetId],
+      ),
+    )
+  }
   let bundleId: RecordId
   let bundleDir: string | undefined
+  let bundleProduct = productKey
   let publishInput: PublishBundleInput | undefined
   const preflightDir = join(job.candidateDir, `.commit-artifacts-${randomUUID()}`)
 
@@ -939,6 +971,12 @@ export function commitCurationDelta(
         return { kind: 'failed', reason: 'append-failed' }
       }
       bundleId = target
+      const resolved = existingTargets.get(target)
+      if (resolved === undefined) {
+        throw new Error(`bundle target ${target} was not resolved during preflight`)
+      }
+      bundleDir = resolved.dir
+      bundleProduct = resolved.product
     }
 
     const beforeIntent = staleEpoch(deps)
@@ -985,9 +1023,16 @@ export function commitCurationDelta(
         }
       }
       if (published.kind === 'already-exists') {
+        const existingTarget = resolveProductQualifiedBundleDir({
+          knowledgeRoot: deps.knowledgeRoot,
+          product: productKey,
+          recordId: published.id,
+        })
+        bundleDir = existingTarget.dir
+        bundleProduct = existingTarget.product
         const existingConfig = storeConfig(
           deps,
-          productForBundle(deps.knowledgeRoot, published.id, productKey),
+          existingTarget.product,
           job.leaseId,
         )
         const capableEnrichment =
@@ -1041,6 +1086,7 @@ export function commitCurationDelta(
         convertedConfirm = true
       } else {
         bundleDir = published.dir
+        bundleProduct = productKey
         freshlyPublished = true
       }
 
@@ -1054,11 +1100,7 @@ export function commitCurationDelta(
          * clean facts active in the same drain. D-02 is flat: propose-only never
          * reaches this branch, and promote() re-evaluates posture at call time.
          */
-        const promotionBundleDir = published.kind === 'published'
-          ? published.dir
-          : enumerateBundleDirs(deps.knowledgeRoot).find(
-              (entry) => entry.dir.endsWith(`/${published.id}`),
-            )?.dir
+        const promotionBundleDir = bundleDir
         const loaded = promotionBundleDir === undefined
           ? { kind: 'not-found' as const }
           : loadBundle(promotionBundleDir)
@@ -1137,14 +1179,19 @@ export function commitCurationDelta(
         applyIndexDeltaForBundle({
           knowledgeRoot: deps.knowledgeRoot,
           bundleId: published.id,
+          product: bundleProduct,
           lexicalInput: embedGate.redactedLexicalInput,
           suppressDense: embedGate.suppressDense,
         })
       }
     } else if (delta.kind === 'Confirm') {
+      const target = existingTargets.get(delta.targetId)
+      if (target === undefined) {
+        throw new Error(`bundle target ${delta.targetId} was not resolved during preflight`)
+      }
       const targetConfig = storeConfig(
         deps,
-        productForBundle(deps.knowledgeRoot, delta.targetId, productKey),
+        target.product,
         job.leaseId,
       )
       const appended = appendOutcomeEvent(
@@ -1167,9 +1214,13 @@ export function commitCurationDelta(
         confirmedEventDuplicate = true
       }
     } else if (delta.kind === 'Deprecate') {
+      const target = existingTargets.get(delta.targetId)
+      if (target === undefined) {
+        throw new Error(`bundle target ${delta.targetId} was not resolved during preflight`)
+      }
       const targetConfig = storeConfig(
         deps,
-        productForBundle(deps.knowledgeRoot, delta.targetId, productKey),
+        target.product,
         job.leaseId,
       )
       const appended = appendOutcomeEvent(targetConfig, delta.targetId, {
@@ -1189,14 +1240,18 @@ export function commitCurationDelta(
 
     if (disposed.measurementAppend !== undefined) {
       const { victimId, observation } = disposed.measurementAppend
+      const victim = existingTargets.get(victimId)
+      if (victim === undefined) {
+        throw new Error(`bundle target ${victimId} was not resolved during preflight`)
+      }
       const measurementConfig = storeConfig(
         deps,
-        productForBundle(deps.knowledgeRoot, victimId, productKey),
+        victim.product,
         job.leaseId,
       )
       const appended = appendMeasurementObservationOnce(
         measurementConfig,
-        victimId,
+        victim,
         observation,
       )
       const failure = appendFailure(appended)
@@ -1210,7 +1265,7 @@ export function commitCurationDelta(
 
     const canonicalConfig = storeConfig(
       deps,
-      productForBundle(deps.knowledgeRoot, bundleId, productKey),
+      bundleProduct,
       job.leaseId,
     )
     for (const relation of relationRows) {
@@ -1223,9 +1278,13 @@ export function commitCurationDelta(
     }
 
     if (delta.kind === 'Supersede') {
+      const victim = existingTargets.get(delta.victimId)
+      if (victim === undefined) {
+        throw new Error(`bundle target ${delta.victimId} was not resolved during preflight`)
+      }
       const victimConfig = storeConfig(
         deps,
-        productForBundle(deps.knowledgeRoot, delta.victimId, productKey),
+        victim.product,
         job.leaseId,
       )
       const superseded = appendOutcomeEvent(victimConfig, delta.victimId, {
@@ -1257,12 +1316,17 @@ export function commitCurationDelta(
         markDone(deps, job)
         return closeFailure
       }
-      applyIndexDeltaForBundle({ knowledgeRoot: deps.knowledgeRoot, bundleId: delta.victimId })
+      applyIndexDeltaForBundle({
+        knowledgeRoot: deps.knowledgeRoot,
+        bundleId: delta.victimId,
+        product: victim.product,
+      })
     }
 
     applyIndexDeltaForBundle({
       knowledgeRoot: deps.knowledgeRoot,
       bundleId,
+      product: bundleProduct,
       ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
       ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
     })
@@ -1276,7 +1340,11 @@ export function commitCurationDelta(
       if (failure !== undefined) return failure
     }
     for (const intent of disposed.unknownResolutionIntents ?? []) {
-      const failure = commitUnknownResolutionIntent(deps, job, intent)
+      const target = existingTargets.get(intent.targetId)
+      if (target === undefined) {
+        throw new Error(`bundle target ${intent.targetId} was not resolved during preflight`)
+      }
+      const failure = commitUnknownResolutionIntent(deps, job, intent, target)
       if (failure !== undefined) return failure
     }
     deps.hooks?.afterIndexApplied?.(bundleId)
@@ -1299,11 +1367,7 @@ export function commitCurationDelta(
 
     const result: CommittedBundleResult = {
       bundleId,
-      bundleDir:
-        bundleDir
-        ?? enumerateBundleDirs(deps.knowledgeRoot).find((entry) => entry.dir.endsWith(`/${bundleId}`))
-          ?.dir
-        ?? '',
+      bundleDir: bundleDir ?? '',
       deltaKind: delta.kind,
       ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
     }

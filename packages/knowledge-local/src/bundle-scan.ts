@@ -62,6 +62,32 @@ export interface EnumeratedBundleDir {
   dir: string
 }
 
+export interface ProductQualifiedBundleDir extends EnumeratedBundleDir {
+  recordId: string
+}
+
+export class BundleTargetResolutionError extends Error {
+  override readonly name = 'BundleTargetResolutionError'
+  readonly recordId: string
+  readonly product: string | undefined
+  readonly reason: 'not-found' | 'ambiguous'
+
+  constructor(
+    recordId: string,
+    product: string | undefined,
+    reason: 'not-found' | 'ambiguous',
+  ) {
+    super(
+      product === undefined
+        ? `bundle target ${recordId} is ${reason}`
+        : `bundle target ${product}/${recordId} is ${reason}`,
+    )
+    this.recordId = recordId
+    this.product = product
+    this.reason = reason
+  }
+}
+
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
@@ -90,6 +116,35 @@ export function enumerateBundleDirs(knowledgeRoot: string): EnumeratedBundleDir[
       .sort(compareText)
       .map((bundleDir) => ({ product, dir: join(bundlesDir, bundleDir) }))
   })
+}
+
+/**
+ * Extract a record id without assuming the host separator. Native Windows paths appear in
+ * production while POSIX fixtures may deliberately exercise them during portability tests.
+ */
+export function bundleDirRecordId(dir: string): string {
+  const portable = dir.replaceAll('\\', '/')
+  return portable.slice(portable.lastIndexOf('/') + 1)
+}
+
+/** Resolve exactly one product-qualified target; record-only ambiguity is never first-match. */
+export function resolveProductQualifiedBundleDir(input: {
+  knowledgeRoot: string
+  recordId: string
+  product?: string
+}): ProductQualifiedBundleDir {
+  const matches = enumerateBundleDirs(input.knowledgeRoot)
+    .filter((entry) => (
+      bundleDirRecordId(entry.dir) === input.recordId
+      && (input.product === undefined || entry.product === input.product)
+    ))
+  if (matches.length === 0) {
+    throw new BundleTargetResolutionError(input.recordId, input.product, 'not-found')
+  }
+  if (matches.length !== 1) {
+    throw new BundleTargetResolutionError(input.recordId, input.product, 'ambiguous')
+  }
+  return { ...matches[0]!, recordId: input.recordId }
 }
 
 /** The single withdrawn-fact firewall reused by degraded and indexed reader paths. */
