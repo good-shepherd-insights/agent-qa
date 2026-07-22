@@ -27,7 +27,6 @@ vi.mock('@/lib/api', () => ({
     missing: false,
   }),
   fetchSuiteFiles: vi.fn().mockResolvedValue({ files: [] }),
-  fetchMemoryCatalog: vi.fn().mockResolvedValue({ products: [] }),
 }))
 
 vi.mock('@/components/product-tour', () => ({

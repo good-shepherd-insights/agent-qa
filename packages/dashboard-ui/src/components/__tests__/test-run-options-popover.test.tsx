@@ -89,12 +89,10 @@ async function renderPopover(
         selectedCount={3}
         hiddenCount={1}
         useCache
-        useMemory
         browserStackAvailable
         open
         onOpenChange={() => {}}
         onUseCacheChange={() => {}}
-        onUseMemoryChange={() => {}}
         onRunLocal={() => {}}
         onRunBrowserStack={() => {}}
         {...props}
@@ -116,14 +114,13 @@ afterEach(() => {
 })
 
 describe("TestRunOptionsPopover", () => {
-  it("renders the queue summary, runtime toggles, and a primary run dropdown", async () => {
+  it("renders the queue summary, cache toggle, and a primary run dropdown", async () => {
     const view = await renderPopover()
     const dropdownItems = Array.from(view.querySelectorAll('[data-testid="dropdown-item"]'))
 
     expect(view.textContent).toContain("3 selected")
     expect(view.textContent).toContain("1 hidden by filters")
     expect(view.textContent).toContain("Use cache")
-    expect(view.textContent).toContain("Use memory")
     expect(view.querySelector('[data-testid="dropdown-trigger"]')?.textContent).toContain("Run")
     expect(dropdownItems).toHaveLength(2)
     expect(dropdownItems[0]?.textContent).toContain("Run Local")

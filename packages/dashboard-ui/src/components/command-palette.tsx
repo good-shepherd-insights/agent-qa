@@ -1,14 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useNavigate } from "react-router"
-import { Play, FileText, FolderOpen, BarChart3, SlidersHorizontal, Search, Webhook, BrainCircuit, LifeBuoy } from "lucide-react"
+import { Play, FileText, FolderOpen, BarChart3, SlidersHorizontal, Search, Webhook, LifeBuoy } from "lucide-react"
 import {
   fetchHookCatalog,
-  fetchMemoryCatalog,
   fetchRuns,
   fetchTestFiles,
   fetchSuiteFiles,
   type HookCatalogEntry,
-  type MemoryCatalogProduct,
   type RunRow,
   type TestFileInfo,
   type SuiteFileInfo,
@@ -31,7 +29,6 @@ const pages = [
   { title: "Tests", url: routes.tests, icon: FileText },
   { title: "Hooks", url: routes.hooks, icon: Webhook },
   { title: "Suites", url: routes.suites, icon: FolderOpen },
-  { title: "Memory", url: routes.memory, icon: BrainCircuit },
   { title: "Insights", url: routes.insights, icon: BarChart3 },
   { title: "Config", url: routes.config, icon: SlidersHorizontal },
 ]
@@ -62,18 +59,10 @@ interface SearchResults {
   tests: TestFileInfo[]
   hooks: HookCatalogEntry[]
   suites: SuiteFileInfo[]
-  memoryProducts: MemoryCatalogProduct[]
 }
 
 function emptySearchResults(): SearchResults {
-  return { runs: [], tests: [], hooks: [], suites: [], memoryProducts: [] }
-}
-
-function summarizeTargetReferences(targetReferences: string[]) {
-  const visibleReferences = targetReferences.slice(0, 3)
-  const remainingCount = targetReferences.length - visibleReferences.length
-  if (remainingCount <= 0) return visibleReferences.join(", ")
-  return `${visibleReferences.join(", ")}, +${remainingCount} more`
+  return { runs: [], tests: [], hooks: [], suites: [] }
 }
 
 function buildCommandValue(...values: Array<string | string[] | null | undefined>): string {
@@ -120,12 +109,11 @@ export function CommandPalette() {
     }
     if (requestId === searchRequestRef.current) setIsSearching(true)
     try {
-      const [runsData, testsData, hooksData, suitesData, memoryData] = await Promise.all([
+      const [runsData, testsData, hooksData, suitesData] = await Promise.all([
         fetchRuns({ name: query, limit: 5 }),
         fetchTestFiles(),
         fetchHookCatalog(),
         fetchSuiteFiles(),
-        fetchMemoryCatalog().catch(() => ({ products: [] })),
       ])
       const lowerQuery = query.toLowerCase()
       const filteredTests = testsData.files
@@ -143,19 +131,12 @@ export function CommandPalette() {
       const filteredSuites = suitesData.files
         .filter((suite) => matchesCommandQuery([suite.name, suite.path, suite.suiteId], lowerQuery))
         .slice(0, 5)
-      const filteredMemoryProducts = memoryData.products
-        .filter((product) =>
-          product.productKey.toLowerCase().includes(lowerQuery)
-          || product.targetReferences.some((targetReference) => targetReference.toLowerCase().includes(lowerQuery)),
-        )
-        .slice(0, 5)
       if (requestId !== searchRequestRef.current) return
       setSearchResults({
         runs: runsData.runs,
         tests: filteredTests,
         hooks: filteredHooks,
         suites: filteredSuites,
-        memoryProducts: filteredMemoryProducts,
       })
     } catch {
       if (requestId === searchRequestRef.current) setSearchResults(emptySearchResults())
@@ -203,11 +184,11 @@ export function CommandPalette() {
       open={open}
       onOpenChange={setOpen}
       title="Command Palette"
-      description="Search runs, tests, memory, pages..."
+      description="Search runs, tests, hooks, suites, and pages..."
       className="top-[18vh] translate-y-0"
     >
       <CommandInput
-        placeholder="Search runs, tests, memory, pages..."
+        placeholder="Search runs, tests, hooks, suites, and pages..."
         value={searchQuery}
         onValueChange={setSearchQuery}
       />
@@ -343,35 +324,6 @@ export function CommandPalette() {
                   </CommandItem>
                 ) : null
               )}
-            </CommandGroup>
-          </>
-        )}
-
-        {searchResults.memoryProducts.length > 0 && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Memory">
-              {searchResults.memoryProducts.map((product) => {
-                const targetSummary = summarizeTargetReferences(product.targetReferences)
-                return (
-                  <CommandItem
-                    key={product.productKey}
-                    value={`memory-${product.productKey}-${product.targetReferences.join(" ")}`}
-                    onSelect={() => handleSelect(routes.memoryProduct(product.productKey))}
-                  >
-                    <BrainCircuit />
-                    <span className="truncate">{product.productKey}</span>
-                    {targetSummary && (
-                      <span
-                        className="ml-auto max-w-[45%] truncate text-xs text-muted-foreground"
-                        title={product.targetReferences.join(", ")}
-                      >
-                        {targetSummary}
-                      </span>
-                    )}
-                  </CommandItem>
-                )
-              })}
             </CommandGroup>
           </>
         )}

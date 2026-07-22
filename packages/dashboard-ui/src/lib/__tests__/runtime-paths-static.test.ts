@@ -86,22 +86,6 @@ describe('runtime path static contract', () => {
     expect(doctorSource).not.toContain('config?.testMatch')
   })
 
-  it('keeps memory runtime consumers on the shared configured root resolver', () => {
-    const cliSource = readSource('packages/cli/src/')
-    const dashboardSource = readSource('packages/dashboard-server/src/')
-    const memoryFactorySource = readFileSync(new URL('../../../../../packages/core/src/memory/factory.ts', import.meta.url), 'utf-8')
-    const localProviderSource = readFileSync(new URL('../../../../../packages/core/src/memory/local-provider.ts', import.meta.url), 'utf-8')
-
-    expect(cliSource).toContain('resolveMemoryRoot')
-    expect(dashboardSource).toContain('resolveMemoryRoot')
-    expect(dashboardSource).not.toContain("join(workspaceDir, 'agent-qa-memory')")
-    expect(dashboardSource).not.toContain("join(configDir, 'agent-qa-memory')")
-    expect(memoryFactorySource).toContain('DEFAULT_MEMORY_DIR')
-    expect(localProviderSource).toContain('DEFAULT_MEMORY_DIR')
-    expect(memoryFactorySource).not.toContain("?? 'agent-qa-memory'")
-    expect(localProviderSource).not.toContain("?? 'agent-qa-memory'")
-  })
-
   it('keeps dashboard UI source exposing audited config paths and create actions', () => {
     const uiSource = readSource('packages/dashboard-ui/src/')
 

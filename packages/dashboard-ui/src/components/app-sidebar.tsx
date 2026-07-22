@@ -5,7 +5,6 @@ import {
   FileText,
   Webhook,
   FolderOpen,
-  BrainCircuit,
   BarChart3,
   SlidersHorizontal,
   Sun,
@@ -53,7 +52,6 @@ const navItems = [
   { title: "Tests", url: routes.tests, icon: FileText, tourId: "tour-nav-tests" },
   { title: "Hooks", url: routes.hooks, icon: Webhook, tourId: "tour-nav-hooks" },
   { title: "Suites", url: routes.suites, icon: FolderOpen, tourId: "tour-nav-suites" },
-  { title: "Memory", url: routes.memory, icon: BrainCircuit, tourId: "tour-nav-memory" },
   { title: "Insights", url: routes.insights, icon: BarChart3 },
   { title: "Config", url: routes.config, icon: SlidersHorizontal, tourId: "tour-nav-config" },
 ]

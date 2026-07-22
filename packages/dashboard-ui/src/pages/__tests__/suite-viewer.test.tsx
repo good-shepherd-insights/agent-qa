@@ -150,11 +150,6 @@ vi.mock('@/components/monaco-editor', () => ({
   ),
 }))
 
-vi.mock('@/components/memory-reader/shared-scope-memory-reader', () => ({
-  SharedScopeMemoryReader: ({ scope, scopeId }: { scope: string; scopeId: string }) => (
-    <div data-testid="memory-panel">Shared Memory Reader: {scope}:{scopeId}</div>
-  ),
-}))
 
 vi.mock('@/components/pass-rate-chart', () => ({
   PassRateChart: ({ data }: { data: Array<unknown> }) => (
@@ -351,7 +346,6 @@ describe('SuiteViewerPage parity contract', () => {
     expect(view.textContent).toContain('Total Runs')
     expect(view.textContent).toContain('Flaky Score')
     expect(view.textContent).toContain('No runs yet')
-    expect(view.textContent).toContain('Memory')
 
     const sidebar = view.querySelector('[data-testid="suite-detail-analytics-sidebar"]')
     expect(sidebar).not.toBeNull()
@@ -362,20 +356,11 @@ describe('SuiteViewerPage parity contract', () => {
     expect(sidebarLineGrids[0]?.className).toContain('border-x-0')
   })
 
-  it('canonicalizes invalid suite viewer tabs while preserving a valid memory subview', async () => {
-    const view = await renderAt('/suite/s_alpha?tab=bogus&view=memory&sub=yaml')
+  it('canonicalizes invalid suite viewer tabs and subviews', async () => {
+    const view = await renderAt('/suite/s_alpha?tab=bogus&view=bogus&sub=yaml')
 
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?tab=overview&view=memory')
-    expect(view.textContent).toContain('Shared Memory Reader: suite:s_alpha')
-    expect(view.textContent).toContain('Memory')
-  })
-
-  it('respects ?tab=overview&view=memory and renders shared suite memory content', async () => {
-    const view = await renderAt('/suite/s_alpha?tab=overview&view=memory')
-
-    expect(view.textContent).toContain('Shared Memory Reader: suite:s_alpha')
-    expect(view.textContent).not.toContain('YAML Panel:')
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?tab=overview&view=memory')
+    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?tab=overview&view=builder')
+    expect(view.textContent).toContain('Builder Panel:')
   })
 
   it('uses suite-keyed analytics and renders suite-only insights', async () => {

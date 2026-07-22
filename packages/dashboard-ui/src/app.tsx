@@ -42,8 +42,6 @@ const HookEditorPage = lazy(() => import("@/pages/hook-editor"))
 const HookViewerPage = lazy(() => import("@/pages/hook-viewer"))
 const TestEditorPage = lazy(() => import("@/pages/test-editor"))
 const TestViewerPage = lazy(() => import("@/pages/test-viewer"))
-const MemoryPage = lazy(() => import("@/pages/memory"))
-const MemoryProductPage = lazy(() => import("@/pages/memory-product"))
 const InsightsPage = lazy(() => import("@/pages/insights"))
 const ConfigPage = lazy(() => import("@/pages/config"))
 const SuitesPage = lazy(() => import("@/pages/suites"))
@@ -55,7 +53,6 @@ const UPDATE_BANNER_ELIGIBLE_PATHS = new Set<string>([
   routes.tests,
   routes.hooks,
   routes.suites,
-  routes.memory,
   routes.config,
 ])
 
@@ -322,34 +319,6 @@ const router = createBrowserRouter([
             element: (
               <Suspense fallback={<EditorSkeleton />}>
                 <SuiteEditorPage />
-              </Suspense>
-            ),
-          },
-        ],
-      },
-      {
-        path: "memory",
-        handle: { crumb: "Memory" },
-        errorElement: <RouteErrorBoundary />,
-        children: [
-          {
-            index: true,
-            element: (
-              <Suspense fallback={<TableSkeleton />}>
-                <MemoryPage />
-              </Suspense>
-            ),
-          },
-          {
-            path: ":product",
-            handle: {
-              crumb: (params: Record<string, string>) => params.product ?? "Memory",
-              hideHeader: true,
-            },
-            errorElement: <RouteErrorBoundary />,
-            element: (
-              <Suspense fallback={<DetailSkeleton />}>
-                <MemoryProductPage />
               </Suspense>
             ),
           },

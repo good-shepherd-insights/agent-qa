@@ -7,7 +7,6 @@ type SourceKey =
   | 'tests'
   | 'hooks'
   | 'suites'
-  | 'memory'
   | 'config'
   | 'testViewer'
   | 'liveRun'
@@ -22,7 +21,6 @@ const sources: Record<SourceKey, string> = {
   tests: readSource('../../pages/tests.tsx'),
   hooks: readSource('../../pages/hooks.tsx'),
   suites: readSource('../../pages/suites.tsx'),
-  memory: readSource('../../pages/memory.tsx'),
   config: readSource('../../pages/config.tsx'),
   testViewer: readSource('../../pages/test-viewer.tsx'),
   liveRun: readSource('../../pages/live-run.tsx'),
@@ -38,7 +36,6 @@ const routeSources = [
   sources.tests,
   sources.hooks,
   sources.suites,
-  sources.memory,
   sources.config,
 ].join('\n')
 
@@ -47,7 +44,6 @@ const approvedUiSpecAnchorIds = [
   'tour-nav-tests',
   'tour-nav-hooks',
   'tour-nav-suites',
-  'tour-nav-memory',
   'tour-nav-config',
   'tour-help-menu',
   'tour-help-product-tour',
@@ -59,7 +55,6 @@ const approvedUiSpecAnchorIds = [
   'tour-hooks-new',
   'tour-suites-table',
   'tour-suites-new',
-  'tour-memory-table',
   'tour-config-nav',
   'tour-config-section',
   'tour-test-detail-overview',
@@ -103,11 +98,6 @@ const approvedAnchors = [
     file: 'suites',
     anchor: 'tour-suites-new',
     element: 'Button',
-  },
-  {
-    file: 'memory',
-    anchor: 'tour-memory-table',
-    element: 'ScrollArea',
   },
 ] as const satisfies readonly {
   file: SourceKey
@@ -160,10 +150,6 @@ const emptyStateAnchors = [
     file: 'suites',
     anchor: 'tour-suites-table',
   },
-  {
-    file: 'memory',
-    anchor: 'tour-memory-table',
-  },
 ] as const satisfies readonly {
   file: SourceKey
   anchor: string
@@ -171,7 +157,6 @@ const emptyStateAnchors = [
 
 const forbiddenDynamicPatterns = [
   'data-runs-row-surface',
-  'data-memory-product',
   'row.id',
   'run.id',
   'child.id',

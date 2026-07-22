@@ -58,12 +58,6 @@ vi.mock('@/pages/suite-editor', () => ({
 vi.mock('@/pages/suite-viewer', () => ({
   default: () => <div data-testid="suite-viewer-page">Suite Viewer Page</div>,
 }))
-vi.mock('@/pages/memory', () => ({
-  default: () => <div data-testid="memory-page">Memory Page</div>,
-}))
-vi.mock('@/pages/memory-product', () => ({
-  default: () => <div data-testid="memory-product-page">Memory Product Page</div>,
-}))
 
 vi.mock('@/components/theme-provider', () => ({
   ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -126,7 +120,6 @@ const eligibleRoutes = [
   ['/tests', 'tests-page'],
   ['/hooks', 'hooks-page'],
   ['/suites', 'suites-page'],
-  ['/memory', 'memory-page'],
   ['/config', 'config-page'],
 ] as const
 
@@ -143,7 +136,6 @@ const excludedRoutes = [
   '/suites/new',
   '/suite/s_1',
   '/suite/s_1/edit',
-  '/memory/product-1',
 ] as const
 
 let container: HTMLDivElement | null = null

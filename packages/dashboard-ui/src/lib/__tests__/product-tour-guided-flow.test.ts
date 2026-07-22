@@ -42,14 +42,13 @@ describe('guided first-run product tour flow', () => {
   })
 
   it('keeps the wayfinding sweep short and outcome-focused', () => {
-    expect(stepIds({ exampleTestId: 'example-test-id', runId: 'run-123' }).slice(0, 8)).toEqual([
+    expect(stepIds({ exampleTestId: 'example-test-id', runId: 'run-123' }).slice(0, 7)).toEqual([
       'intro',
       'llm-setup',
       'runs',
       'tests',
       'suites',
       'hooks',
-      'memory',
       'config',
     ])
 
@@ -57,7 +56,6 @@ describe('guided first-run product tour flow', () => {
     expect(step('tests').body).toContain('natural-language')
     expect(step('suites').body).toContain('repeatable')
     expect(step('hooks').body).toContain('between steps')
-    expect(step('memory').body).toContain('learned')
     expect(step('config').body).toContain('model')
   })
 

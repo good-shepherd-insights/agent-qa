@@ -17,10 +17,9 @@ describe('canonical dashboard routes', () => {
     expect('trends' in routes).toBe(false)
   })
 
-  it('adds canonical memory routes without alternate helpers', () => {
-    expect(routes.memory).toBe('/memory')
-    expect(routes.memoryProduct('my-product')).toBe('/memory/my-product')
-    expect('memoryProducts' in routes).toBe(false)
+  it('does not expose retired memory routes', () => {
+    expect('memory' in routes).toBe(false)
+    expect('memoryProduct' in routes).toBe(false)
   })
 })
 

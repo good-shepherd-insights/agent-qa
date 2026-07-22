@@ -116,11 +116,9 @@ vi.mock("@/components/test-run-options-popover", () => ({
     onRunBrowserStack,
     onRunLocal,
     onUseCacheChange,
-    onUseMemoryChange,
     open,
     selectedCount,
     useCache,
-    useMemory,
   }: {
     browserStackAvailable: boolean
     disabled?: boolean
@@ -129,11 +127,9 @@ vi.mock("@/components/test-run-options-popover", () => ({
     onRunBrowserStack: () => void
     onRunLocal: () => void
     onUseCacheChange: (checked: boolean) => void
-    onUseMemoryChange: (checked: boolean) => void
     open: boolean
     selectedCount: number
     useCache: boolean
-    useMemory: boolean
   }) => (
     <div data-testid="run-options-popover">
       <button type="button" disabled={disabled} onClick={() => onOpenChange(!open)}>
@@ -150,14 +146,6 @@ vi.mock("@/components/test-run-options-popover", () => ({
               onChange={(event) => onUseCacheChange(event.currentTarget.checked)}
             />
             <span>Use cache</span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={useMemory}
-              onChange={(event) => onUseMemoryChange(event.currentTarget.checked)}
-            />
-            <span>Use memory</span>
           </label>
           <button type="button" disabled={disabled} onClick={onRunLocal}>
             Run Local
@@ -606,7 +594,6 @@ describe("RunsPage", () => {
       file: "tests/web/login.yaml",
       local: true,
       noCache: false,
-      noMemory: false,
     })
 
     await clickByText("Purge cache")

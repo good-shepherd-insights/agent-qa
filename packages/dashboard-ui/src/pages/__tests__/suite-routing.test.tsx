@@ -35,12 +35,6 @@ vi.mock('@/lib/api', () => ({
   triggerRun: vi.fn(),
   purgeCache: vi.fn(),
   fetchTestAnalytics: vi.fn().mockRejectedValue(new Error('no analytics in test')),
-  fetchMemoryScope: vi.fn().mockResolvedValue({
-    scope: 'suite',
-    scopeId: 's_abc-def',
-    observations: [],
-    invalidFiles: [],
-  }),
   fetchConfig: vi.fn().mockResolvedValue({
     config: { workspace: { suiteMatch: ['**/*.suite.yaml'] } },
   }),

@@ -31,7 +31,6 @@ import { useVariableSuggestions } from '@/hooks/use-variable-suggestions'
 import { TestSettingsPanel } from "@/components/test-settings-panel"
 import { TestNavbar } from "@/components/test-navbar"
 import { RunResultsPanel } from "@/components/run-results-panel"
-import { MemoryObservationsPanel } from "@/components/memory-observations-panel"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useLiveEditor } from "@/hooks/use-live-editor"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -844,7 +843,6 @@ export default function TestEditorPage() {
       <TabsList variant="line" className="px-4">
         <TabsTrigger value="builder">Builder</TabsTrigger>
         <TabsTrigger value="yaml">YAML</TabsTrigger>
-        {!isCreateMode && <TabsTrigger value="memory">Memory</TabsTrigger>}
       </TabsList>
       <TabsContent value="builder" className="mt-2 flex-1 overflow-auto">
         {builderPanel}
@@ -852,11 +850,6 @@ export default function TestEditorPage() {
       <TabsContent value="yaml" className="flex-1 min-h-0 mt-2">
         {monacoPanel}
       </TabsContent>
-      {!isCreateMode && (
-        <TabsContent value="memory" className="mt-2 flex-1 overflow-auto">
-          <MemoryObservationsPanel testId={testId} />
-        </TabsContent>
-      )}
     </Tabs>
   )
 

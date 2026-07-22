@@ -177,7 +177,6 @@ describe('foundation product tour step contracts', () => {
       '/tests',
       '/hooks',
       '/suites',
-      '/memory',
       '/config',
     ])
   })
@@ -197,7 +196,6 @@ describe('foundation product tour step contracts', () => {
       { id: 'tests', route: '/tests' },
       { id: 'suites', route: '/suites' },
       { id: 'hooks', route: '/hooks' },
-      { id: 'memory', route: '/memory' },
       { id: 'config', route: '/config' },
       { id: 'example-test', route: null },
       { id: 'example-missing', route: '/tests' },
@@ -215,7 +213,6 @@ describe('foundation product tour step contracts', () => {
       'tests',
       'suites',
       'hooks',
-      'memory',
       'config',
       'example-test',
       'example-missing',

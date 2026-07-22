@@ -25,7 +25,6 @@ import { EmptyState } from "@/components/empty-state"
 import { MonacoEditor } from "@/components/monaco-editor"
 import { SuiteVisualBuilder } from "@/components/suite-visual-builder"
 import { SuiteNavbar } from "@/components/suite-navbar"
-import { SharedScopeMemoryReader } from "@/components/memory-reader/shared-scope-memory-reader"
 import {
   InsightsLineCell,
   InsightsLineGrid,
@@ -53,7 +52,7 @@ import {
   normalizeTimestamp,
 } from "@/lib/utils"
 
-const VALID_SUITE_VIEWS = ["builder", "yaml", "memory"] as const
+const VALID_SUITE_VIEWS = ["builder", "yaml"] as const
 type SuiteViewerView = (typeof VALID_SUITE_VIEWS)[number]
 type MetricScopeMode = "scoped" | "all"
 
@@ -561,11 +560,10 @@ export default function SuiteViewerPage() {
                 <div className="border-b border-border">
                   <TabsList
                     variant="line"
-                    className="w-full grid grid-cols-3 px-4 md:w-fit md:inline-flex"
+                    className="w-full grid grid-cols-2 px-4 md:w-fit md:inline-flex"
                   >
                     <TabsTrigger value="builder">Builder</TabsTrigger>
                     <TabsTrigger value="yaml">YAML</TabsTrigger>
-                    <TabsTrigger value="memory">Memory</TabsTrigger>
                   </TabsList>
                 </div>
                 <div className="relative flex-1 min-h-0">
@@ -580,17 +578,6 @@ export default function SuiteViewerPage() {
                     className="absolute inset-0 data-[state=inactive]:hidden"
                   >
                     {monacoPanel}
-                  </TabsContent>
-                  <TabsContent
-                    value="memory"
-                    className="absolute inset-0 overflow-y-auto data-[state=inactive]:hidden"
-                  >
-                    <SharedScopeMemoryReader
-                      scope="suite"
-                      scopeId={suiteId}
-                      emptyTitle="No suite memory yet"
-                      emptyDescription="This suite doesn't have cataloged observations in this workspace yet. Run the suite with memory enabled, then reopen this tab."
-                    />
                   </TabsContent>
                 </div>
               </Tabs>

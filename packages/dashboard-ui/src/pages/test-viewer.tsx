@@ -29,7 +29,6 @@ import { MonacoEditor } from "@/components/monaco-editor"
 import { VisualBuilder } from "@/components/visual-builder"
 import { TestNavbar } from "@/components/test-navbar"
 import { useOptionalProductTour } from "@/components/product-tour"
-import { SharedScopeMemoryReader } from "@/components/memory-reader/shared-scope-memory-reader"
 import {
   InsightsLineCell,
   InsightsLineGrid,
@@ -111,7 +110,7 @@ function MetricScopeControl({
   )
 }
 
-const VALID_TEST_VIEWS = ['builder', 'yaml', 'memory'] as const
+const VALID_TEST_VIEWS = ['builder', 'yaml'] as const
 type TestViewerView = typeof VALID_TEST_VIEWS[number]
 
 function StatusBadge({ status }: { status: string }) {
@@ -573,11 +572,10 @@ export default function TestViewerPage() {
                 <div className="px-4 border-b border-border">
                   <TabsList
                     variant="line"
-                    className="w-full grid grid-cols-3 md:w-fit md:inline-flex"
+                    className="w-full grid grid-cols-2 md:w-fit md:inline-flex"
                   >
                     <TabsTrigger value="builder">Builder</TabsTrigger>
                     <TabsTrigger value="yaml">YAML</TabsTrigger>
-                    <TabsTrigger value="memory">Memory</TabsTrigger>
                   </TabsList>
                 </div>
                 <div className="relative flex-1 min-h-0">
@@ -592,17 +590,6 @@ export default function TestViewerPage() {
                     className="absolute inset-0 data-[state=inactive]:hidden"
                   >
                     {monacoPanel}
-                  </TabsContent>
-                  <TabsContent
-                    value="memory"
-                    className="absolute inset-0 overflow-y-auto data-[state=inactive]:hidden"
-                  >
-                    <SharedScopeMemoryReader
-                      scope="test"
-                      scopeId={testId}
-                      emptyTitle="No test memory yet"
-                      emptyDescription="This test doesn't have cataloged observations in this workspace yet. Run the test with memory enabled, then reopen this tab."
-                    />
                   </TabsContent>
                 </div>
               </Tabs>

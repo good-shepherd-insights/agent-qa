@@ -66,13 +66,6 @@ vi.mock('@/pages/suites', () => ({
     </div>
   ),
 }))
-vi.mock('@/pages/memory', () => ({
-  default: () => (
-    <div data-testid="memory-page">
-      <div data-tour-id="tour-memory-table">Memory table</div>
-    </div>
-  ),
-}))
 vi.mock('@/pages/config', () => ({
   default: () => (
     <div data-testid="config-page">
@@ -103,9 +96,6 @@ vi.mock('@/pages/suite-editor', () => ({
 }))
 vi.mock('@/pages/suite-viewer', () => ({
   default: () => <div data-testid="suite-viewer-page">Suite Viewer Page</div>,
-}))
-vi.mock('@/pages/memory-product', () => ({
-  default: () => <div data-testid="memory-product-page">Memory Product Page</div>,
 }))
 vi.mock('@/pages/insights', () => ({
   default: () => <div data-testid="insights-page">Insights Page</div>,
@@ -156,7 +146,7 @@ vi.mock('@/components/page-skeleton', () => ({
   EditorSkeleton: () => <div data-testid="editor-skeleton" />,
 }))
 
-const allowedRoutes = ['/runs', '/tests', '/hooks', '/suites', '/memory', '/config'] as const
+const allowedRoutes = ['/runs', '/tests', '/hooks', '/suites', '/config'] as const
 const excludedRoutes = [
   '/runs/r_123',
   '/runs/r_123/live',
@@ -887,7 +877,6 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
     await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')
-    await clickButton('Next')
     await act(async () => {
       vi.runOnlyPendingTimers()
     })
@@ -1257,7 +1246,6 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
       ),
     })
     await clickButton('Start tour')
-    await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')

@@ -556,7 +556,7 @@ export async function fetchActiveExecutions(): Promise<{ executions: ActiveExecu
   return request('/api/execution/active')
 }
 
-export async function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; noMemory?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
+export async function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
   return postJson('/api/runs/trigger', opts)
 }
 
@@ -1309,107 +1309,6 @@ export async function fetchLiveEditorSessions(): Promise<{ sessions: Array<{ ses
   const res = await fetch('/api/live-editor/sessions')
   if (!res.ok) throw new Error(`${res.status}`)
   return res.json()
-}
-
-export interface ObservationSummary {
-  id: string
-  title: string
-  content: string
-  trust: number
-  created: string
-  last_confirmed: string
-  confirmed_count: number
-  contradicted_count: number
-  source_test: string
-}
-
-export type MemoryScope = 'product' | 'suite' | 'test'
-
-export interface MemoryInvalidFile {
-  scope: MemoryScope
-  scopeId: string
-  filename: string
-  code: string
-  message: string
-}
-
-export interface MemoryAtlasObservation extends ObservationSummary {
-  scope: MemoryScope
-  scopeId: string
-}
-
-export interface MemoryObservationReference {
-  kind: 'suite' | 'test' | 'source_test'
-  id: string
-  label: string
-  targetName: string | null
-  href: string | null
-}
-
-export interface MemoryWorkspaceObservation extends MemoryAtlasObservation {
-  updated: string
-  scopeRef: MemoryObservationReference | null
-  sourceTestRef: MemoryObservationReference | null
-}
-
-export interface MemoryScopeCounts {
-  product: number
-  suite: number
-  test: number
-}
-
-export interface MemoryCatalogSourceCounts {
-  suite: number
-  test: number
-}
-
-export interface MemoryCatalogProduct {
-  productKey: string
-  observationCount: number
-  scopeCounts: MemoryScopeCounts
-  targetReferences: string[]
-  sourceCounts: MemoryCatalogSourceCounts
-  freshness: string | null
-  sourceCoverage: number
-}
-
-export interface MemoryScopeSummary {
-  scope: MemoryScope
-  observationCount: number
-  freshness: string | null
-  sourceCoverage: number
-  scopeIds: string[]
-}
-
-export interface MemoryProductDetail extends MemoryCatalogProduct {
-  scopes: Record<MemoryScope, MemoryScopeSummary>
-  observations: MemoryWorkspaceObservation[]
-  invalidFiles: MemoryInvalidFile[]
-}
-
-export async function fetchMemoryCatalog(): Promise<{ products: MemoryCatalogProduct[] }> {
-  return request('/api/memory/catalog')
-}
-
-export async function fetchMemoryProductDetail(product: string): Promise<{ product: MemoryProductDetail }> {
-  return request(`/api/memory/products/${encodeURIComponent(product)}`)
-}
-
-export async function fetchMemoryScope(
-  scope: MemoryScope,
-  scopeId: string,
-): Promise<{ scope: MemoryScope; scopeId: string; observations: MemoryWorkspaceObservation[]; invalidFiles: MemoryInvalidFile[] }> {
-  return request(`/api/memory/scopes/${encodeURIComponent(scope)}/${encodeURIComponent(scopeId)}`)
-}
-
-export async function fetchTestObservations(testId: string): Promise<{ observations: ObservationSummary[]; invalidFiles: MemoryInvalidFile[] }> {
-  const res = await fetch(`/api/memory/observations/${encodeURIComponent(testId)}`)
-  if (!res.ok) throw new Error(`${res.status}`)
-  return res.json()
-}
-
-export async function deleteTestObservation(testId: string, observationId: string): Promise<{ deleted: boolean }> {
-  return postJson(`/api/memory/observations/${encodeURIComponent(testId)}/${encodeURIComponent(observationId)}`, undefined, 'DELETE')
 }
 
 // Variable suggestion API (env keys, hook names, captured vars)

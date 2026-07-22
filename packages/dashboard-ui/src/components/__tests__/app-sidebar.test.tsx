@@ -237,15 +237,6 @@ describe("AppSidebar", () => {
     expect(hooksLink?.querySelector('[data-icon="Wrench"]')).toBeNull()
   })
 
-  it("renders the Memory nav item with the BrainCircuit icon", async () => {
-    await renderSidebar("/memory")
-
-    const memoryLink = container.querySelector('a[href="/memory"]')
-    expect(memoryLink).not.toBeNull()
-    expect(memoryLink?.textContent).toContain("Memory")
-    expect(memoryLink?.querySelector('[data-icon="BrainCircuit"]')).not.toBeNull()
-  })
-
   it("renders footer support links with exact outbound targets and grouped help control", async () => {
     await renderSidebar()
 
@@ -325,7 +316,6 @@ describe("AppSidebar", () => {
       { href: "/tests", title: "Tests", tourId: "tour-nav-tests" },
       { href: "/hooks", title: "Hooks", tourId: "tour-nav-hooks" },
       { href: "/suites", title: "Suites", tourId: "tour-nav-suites" },
-      { href: "/memory", title: "Memory", tourId: "tour-nav-memory" },
       { href: "/config", title: "Config", tourId: "tour-nav-config" },
     ]
 

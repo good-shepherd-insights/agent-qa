@@ -83,7 +83,6 @@ export default function RunsPage() {
   const [batchLoading, setBatchLoading] = useState(false)
   const [runOptionsOpen, setRunOptionsOpen] = useState(false)
   const [useCache, setUseCache] = useState(true)
-  const [useMemory, setUseMemory] = useState(true)
   const { hasFarm, isLoading: isRunConfigLoading } = useRunConfig()
 
   const mergeActiveExecutions = useCallback(async (
@@ -256,7 +255,6 @@ export default function RunsPage() {
     selectionQueue.clearSelection()
     setRunOptionsOpen(false)
     setUseCache(true)
-    setUseMemory(true)
   }, [selectionQueue])
 
   const handleRunDestination = useCallback(async (local: boolean) => {
@@ -274,7 +272,6 @@ export default function RunsPage() {
           file: filePath,
           local,
           noCache: !useCache,
-          noMemory: !useMemory,
         })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
@@ -288,7 +285,7 @@ export default function RunsPage() {
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedRuns, useCache, useMemory])
+  }, [selectedRuns, useCache])
 
   const handleBatchPurgeCache = useCallback(async () => {
     if (selectedRuns.length === 0) return
@@ -544,12 +541,10 @@ export default function RunsPage() {
               selectedCount={selectionQueue.selectedCount}
               hiddenCount={selectionQueue.hiddenCount}
               useCache={useCache}
-              useMemory={useMemory}
               browserStackAvailable={!isRunConfigLoading && hasFarm}
               open={runOptionsOpen}
               onOpenChange={setRunOptionsOpen}
               onUseCacheChange={setUseCache}
-              onUseMemoryChange={setUseMemory}
               onRunLocal={() => handleRunDestination(true)}
               onRunBrowserStack={() => handleRunDestination(false)}
               disabled={batchLoading}

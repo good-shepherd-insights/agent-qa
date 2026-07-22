@@ -6,7 +6,6 @@ export const PRODUCT_TOUR_AUTO_START_PATHS = [
   routes.tests,
   routes.hooks,
   routes.suites,
-  routes.memory,
   routes.config,
 ] as const
 
@@ -95,13 +94,6 @@ export const foundationProductTourSteps = [
     body: 'Hooks can prepare setup, run inline between steps, and handle cleanup around a test or suite.',
     route: routes.hooks,
     targetId: 'tour-hooks-table',
-  },
-  {
-    id: 'memory',
-    title: 'Memory keeps learned observations',
-    body: 'Memory lets you review learned product observations that can make future runs more aware.',
-    route: routes.memory,
-    targetId: 'tour-memory-table',
   },
   {
     id: 'config',

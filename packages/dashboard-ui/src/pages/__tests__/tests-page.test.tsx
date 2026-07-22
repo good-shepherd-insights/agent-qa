@@ -235,11 +235,9 @@ vi.mock("@/components/test-run-options-popover", () => ({
     onRunBrowserStack,
     onRunLocal,
     onUseCacheChange,
-    onUseMemoryChange,
     open,
     selectedCount,
     useCache,
-    useMemory,
   }: {
     browserStackAvailable: boolean
     disabled?: boolean
@@ -248,11 +246,9 @@ vi.mock("@/components/test-run-options-popover", () => ({
     onRunBrowserStack: () => void
     onRunLocal: () => void
     onUseCacheChange: (checked: boolean) => void
-    onUseMemoryChange: (checked: boolean) => void
     open: boolean
     selectedCount: number
     useCache: boolean
-    useMemory: boolean
   }) => (
     <div data-testid="run-options-popover">
       <button type="button" disabled={disabled} onClick={() => onOpenChange(!open)}>
@@ -269,14 +265,6 @@ vi.mock("@/components/test-run-options-popover", () => ({
               onChange={(event) => onUseCacheChange(event.currentTarget.checked)}
             />
             <span>Use cache</span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={useMemory}
-              onChange={(event) => onUseMemoryChange(event.currentTarget.checked)}
-            />
-            <span>Use memory</span>
           </label>
           <button type="button" disabled={disabled} onClick={onRunLocal}>
             Run Local
@@ -695,7 +683,7 @@ describe("TestsPage", () => {
     expect(nameLabel?.className).not.toContain("truncate")
   })
 
-  it("remembers toggle changes for the current page session, launches local runs with runtime overrides, and only clears the queue on the close button", async () => {
+  it("remembers cache changes for the current page session, launches local runs with runtime overrides, and only clears the queue on the close button", async () => {
     await renderAt()
 
     await click(findRow("Login flow")?.querySelector('input[aria-label="Select row"]') as HTMLInputElement | null)
@@ -704,26 +692,22 @@ describe("TestsPage", () => {
     await click(findBatchButton("Run"))
 
     const useCache = findCheckboxByLabel("Use cache")
-    const useMemory = findCheckboxByLabel("Use memory")
     expect(useCache?.checked).toBe(true)
-    expect(useMemory?.checked).toBe(true)
 
     await click(useCache)
-    await click(useMemory)
 
     await click(findBatchButton("Run"))
     await click(findBatchButton("Run"))
 
     expect(findCheckboxByLabel("Use cache")?.checked).toBe(false)
-    expect(findCheckboxByLabel("Use memory")?.checked).toBe(false)
 
     await click(findBatchButton("Run Local"))
 
     const payloads = triggerRunMock.mock.calls.map(([payload]) => payload)
     expect(payloads).toHaveLength(2)
     expect(payloads).toEqual(expect.arrayContaining([
-      { file: "tests/web/login.yaml", local: true, noCache: true, noMemory: true },
-      { file: "tests/android/signup.yaml", local: true, noCache: true, noMemory: true },
+      { file: "tests/web/login.yaml", local: true, noCache: true },
+      { file: "tests/android/signup.yaml", local: true, noCache: true },
     ]))
     expect(findBatchButton("Run Local")).toBeUndefined()
     expect(container?.textContent).toContain("2 selected")

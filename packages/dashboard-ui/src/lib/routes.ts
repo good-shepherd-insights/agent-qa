@@ -6,7 +6,6 @@ export const routes = {
   testNew: '/tests/new',
   hooks: '/hooks',
   hookNew: '/hooks/new',
-  memory: '/memory',
   insights: '/insights',
   config: '/config',
 
@@ -19,7 +18,6 @@ export const routes = {
   testEditLive: (testId: string) => `/test/${testId}/edit?live=1`,
   hookView: (hookId: string) => `/hook/${hookId}`,
   hookEdit: (hookId: string) => `/hook/${hookId}/edit`,
-  memoryProduct: (product: string) => `/memory/${product}`,
   suites: '/suites',
   suiteNew: '/suites/new',
   suiteView: (suiteId: string) => `/suite/${suiteId}`,

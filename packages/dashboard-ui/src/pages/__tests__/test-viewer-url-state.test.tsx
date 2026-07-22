@@ -67,11 +67,6 @@ vi.mock('@/components/monaco-editor', () => ({
     <div data-testid="yaml-panel">YAML Panel: {value}</div>
   ),
 }))
-vi.mock('@/components/memory-reader/shared-scope-memory-reader', () => ({
-  SharedScopeMemoryReader: ({ scope, scopeId }: { scope: string; scopeId: string }) => (
-    <div data-testid="memory-panel">Shared Memory Reader: {scope}:{scopeId}</div>
-  ),
-}))
 vi.mock('@/components/pass-rate-chart', () => ({ PassRateChart: () => <div /> }))
 vi.mock('@/components/duration-chart', () => ({ DurationChart: () => <div /> }))
 vi.mock('@/components/page-skeleton', () => ({ EditorSkeleton: () => <div>Loading...</div> }))
@@ -312,16 +307,7 @@ describe('TestViewerPage URL state contract', () => {
     const view = await renderAt('/test/t_alpha?tab=overview&view=yaml')
 
     expect(view.textContent).toContain('YAML Panel:')
-    expect(view.textContent).not.toContain('Memory Panel:')
     expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?tab=overview&view=yaml')
-  })
-
-  it('respects ?tab=overview&view=memory and renders memory content', async () => {
-    const view = await renderAt('/test/t_alpha?tab=overview&view=memory')
-
-    expect(view.textContent).toContain('Shared Memory Reader: test:t_alpha')
-    expect(view.textContent).not.toContain('YAML Panel:')
-    expect(view.querySelector('[data-testid="location"]')?.getAttribute('data-search')).toBe('?tab=overview&view=memory')
   })
 
   it('canonicalizes invalid and legacy params back to the default viewer state', async () => {

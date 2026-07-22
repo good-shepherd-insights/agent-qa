@@ -310,7 +310,6 @@ export default function TestsPage() {
   const [batchLoading, setBatchLoading] = useState(false)
   const [runOptionsOpen, setRunOptionsOpen] = useState(false)
   const [useCache, setUseCache] = useState(true)
-  const [useMemory, setUseMemory] = useState(true)
   const navigate = useNavigate()
   const { hasFarm, isLoading: isRunConfigLoading } = useRunConfig()
 
@@ -479,7 +478,6 @@ export default function TestsPage() {
     selectionQueue.clearSelection()
     setRunOptionsOpen(false)
     setUseCache(true)
-    setUseMemory(true)
   }, [selectionQueue])
 
   const handleRunDestination = useCallback(async (local: boolean) => {
@@ -491,7 +489,6 @@ export default function TestsPage() {
           file: path,
           local,
           noCache: !useCache,
-          noMemory: !useMemory,
         })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
@@ -505,7 +502,7 @@ export default function TestsPage() {
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedPaths, useCache, useMemory])
+  }, [selectedPaths, useCache])
 
   const handleBatchPurgeCache = useCallback(async () => {
     if (selectedPaths.length === 0) return
@@ -853,12 +850,10 @@ export default function TestsPage() {
                 selectedCount={selectionQueue.selectedCount}
                 hiddenCount={hiddenCount}
                 useCache={useCache}
-                useMemory={useMemory}
                 browserStackAvailable={!isRunConfigLoading && hasFarm}
                 open={runOptionsOpen}
                 onOpenChange={setRunOptionsOpen}
                 onUseCacheChange={setUseCache}
-                onUseMemoryChange={setUseMemory}
                 onRunLocal={() => handleRunDestination(true)}
                 onRunBrowserStack={() => handleRunDestination(false)}
                 disabled={batchLoading}
