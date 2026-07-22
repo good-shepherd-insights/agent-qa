@@ -864,11 +864,10 @@ export function createAgentQaMcpServer(options: AgentQaMcpServerOptions = {}): M
         file: z.string().optional().describe('Workspace-relative test file path'),
         patterns: z.array(z.string()).optional().describe('Optional test patterns'),
         noCache: z.boolean().optional(),
-        noMemory: z.boolean().optional(),
         local: z.boolean().optional(),
       },
     },
-    async ({ dashboardUrl, file, patterns, noCache, noMemory, local }) => dashboardTool(dashboardUrl, '/api/runs/trigger', 'POST', { file, patterns, noCache, noMemory, local, triggerSource: 'mcp' }),
+    async ({ dashboardUrl, file, patterns, noCache, local }) => dashboardTool(dashboardUrl, '/api/runs/trigger', 'POST', { file, patterns, noCache, local, triggerSource: 'mcp' }),
   )
 
   registerAnalyticsTool(
@@ -880,11 +879,10 @@ export function createAgentQaMcpServer(options: AgentQaMcpServerOptions = {}): M
         dashboardUrl: dashboardUrlField,
         file: z.string().describe('Workspace-relative suite file path'),
         noCache: z.boolean().optional(),
-        noMemory: z.boolean().optional(),
         local: z.boolean().optional(),
       },
     },
-    async ({ dashboardUrl, file, noCache, noMemory, local }) => dashboardTool(dashboardUrl, '/api/runs/trigger', 'POST', { file, noCache, noMemory, local, triggerSource: 'mcp' }),
+    async ({ dashboardUrl, file, noCache, local }) => dashboardTool(dashboardUrl, '/api/runs/trigger', 'POST', { file, noCache, local, triggerSource: 'mcp' }),
   )
 
   registerAnalyticsTool(

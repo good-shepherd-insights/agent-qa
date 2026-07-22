@@ -3,7 +3,6 @@
 // Clearance map: memory/* -> M2; parser/*, suite/*, hooks/*, and reporter/* -> M1.
 export const AGENT_QA_CORE_HOST_BASELINE = [
   'glob',
-  'node:child_process',
   'node:crypto',
   'node:fs',
   'node:fs/promises',

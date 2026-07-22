@@ -3,14 +3,16 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { MIGRATIONS, SCHEMA_VERSION, type DashboardMigration } from './schema.js'
 import {
-  createBetterSqlite3Database,
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   generateRunId,
-  type BetterSqlite3Database,
   type LogEntry,
   type LogStorage,
   type RunAttributes,
 } from '@vostride/agent-qa-core'
+import {
+  createDashboardSqliteDatabase,
+  type DashboardSqliteDatabase,
+} from './sqlite.js'
 import {
   RUN_ARTIFACT_SCHEMA_VERSION,
   type RunArtifactFinalizeInput,
@@ -232,7 +234,7 @@ export interface AttributeValueSuggestion {
 }
 
 export function runSqliteMigrations(
-  db: BetterSqlite3Database,
+  db: DashboardSqliteDatabase,
   migrations: readonly DashboardMigration[],
   schemaVersion: number,
 ): void {
@@ -275,11 +277,11 @@ export function runSqliteMigrations(
 }
 
 export class DashboardDatabase {
-  private db: BetterSqlite3Database
+  private db: DashboardSqliteDatabase
 
   constructor({ dbPath = DASHBOARD_DB_PATH_FALLBACK }: { dbPath?: string } = {}) {
     mkdirSync(dirname(dbPath), { recursive: true })
-    this.db = createBetterSqlite3Database(dbPath)
+    this.db = createDashboardSqliteDatabase(dbPath)
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('busy_timeout = 5000')
     this.runMigrations()

@@ -56,7 +56,6 @@ import {
 } from '../curation/curation-tail.js'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
-import { BetterSqlite3AbiMismatchError, isBetterSqlite3AbiMismatch } from '@vostride/agent-qa-core'
 import { createShutdownController } from './shutdown-controller.js'
 import { buildDirectRunMembers } from './direct-run-members.js'
 import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
@@ -3540,14 +3539,6 @@ export function createRunCommand(): Command {
         })
         process.exit(exitCode)
       } catch (err) {
-        // RUNX-02 / D1: a better-sqlite3 ABI/bindings mismatch (from 364-02's fail-fast) is an
-        // actionable environment problem, not a framework crash. Surface its own guidance calmly and
-        // exit clean and non-zero — never an opaque "Framework error" or an unhandled hang.
-        if (err instanceof BetterSqlite3AbiMismatchError || isBetterSqlite3AbiMismatch(err)) {
-          console.error(pc.red(err instanceof Error ? err.message : String(err)))
-          if (_crashDb) { try { _crashDb.close() } catch {} }
-          process.exit(1)
-        }
         const errMsg = err instanceof Error ? err.message : String(err)
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)

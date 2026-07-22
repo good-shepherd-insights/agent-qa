@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
-import { createBetterSqlite3Database } from '@vostride/agent-qa-core'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DashboardDatabase, runSqliteMigrations } from '../db/database.js'
+import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { SCHEMA_VERSION, MIGRATIONS } from '../db/schema.js'
 
 let db: DashboardDatabase
@@ -248,7 +248,7 @@ describe('DashboardDatabase', () => {
 
   describe('generic migration infrastructure', () => {
     it('applies future migrations after the current user_version', () => {
-      const raw = createBetterSqlite3Database(':memory:')
+      const raw = createDashboardSqliteDatabase(':memory:')
       try {
         runSqliteMigrations(raw, [
           {
@@ -276,7 +276,7 @@ describe('DashboardDatabase', () => {
     })
 
     it('skips migrations at or below the current user_version', () => {
-      const raw = createBetterSqlite3Database(':memory:')
+      const raw = createDashboardSqliteDatabase(':memory:')
       try {
         raw.exec(`
           CREATE TABLE future_baseline (id TEXT PRIMARY KEY);
@@ -305,7 +305,7 @@ describe('DashboardDatabase', () => {
     })
 
     it('does not apply migrations above the target schema version', () => {
-      const raw = createBetterSqlite3Database(':memory:')
+      const raw = createDashboardSqliteDatabase(':memory:')
       try {
         runSqliteMigrations(raw, [
           {
@@ -329,7 +329,7 @@ describe('DashboardDatabase', () => {
     })
 
     it('rejects databases whose user_version is above the supported schema version', () => {
-      const raw = createBetterSqlite3Database(':memory:')
+      const raw = createDashboardSqliteDatabase(':memory:')
       try {
         raw.exec('PRAGMA user_version = 17')
 
@@ -345,7 +345,7 @@ describe('DashboardDatabase', () => {
     })
 
     it('rejects missing and unsorted future migration sets', () => {
-      const raw = createBetterSqlite3Database(':memory:')
+      const raw = createDashboardSqliteDatabase(':memory:')
       try {
         expect(() => runSqliteMigrations(raw, [
           { version: 1, sql: ['SELECT 1'] },

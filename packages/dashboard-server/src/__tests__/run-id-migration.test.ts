@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, afterEach } from 'vitest'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
-import { createBetterSqlite3Database } from '@vostride/agent-qa-core'
 import { DashboardDatabase } from '../db/database.js'
 import { migrateWorkspaceRunIds } from '../db/run-id-migration.js'
+import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 
 const tempDirs: string[] = []
 
@@ -187,7 +187,7 @@ describe('migrateWorkspaceRunIds', () => {
     expectCanonicalRunId(migratedSuiteParentRunId)
     expectCanonicalRunId(migratedSuiteChildRunId)
 
-    const db = createBetterSqlite3Database(fixture.dbPath)
+      const db = createDashboardSqliteDatabase(fixture.dbPath)
     try {
       const runs = db.prepare('SELECT id, parent_run_id, video_path FROM runs ORDER BY rowid ASC').all() as Array<{
         id: string
@@ -298,7 +298,7 @@ describe('migrateWorkspaceRunIds', () => {
     })
     const migratedRunId = result.runIdMap['legacy-external-video-run']
 
-    const migratedDb = createBetterSqlite3Database(dbPath)
+    const migratedDb = createDashboardSqliteDatabase(dbPath)
     try {
       const run = migratedDb.prepare('SELECT id, video_path FROM runs').get() as { id: string; video_path: string }
       expect(run.id).toBe(migratedRunId)

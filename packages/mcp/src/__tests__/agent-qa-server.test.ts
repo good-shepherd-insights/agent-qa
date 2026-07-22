@@ -211,7 +211,6 @@ describe('agent-qa MCP schema references', () => {
 
     await callRegisteredTool(server, 'agent_qa_enqueue_suite_run', {
       file: 'suites/smoke.suite.yaml',
-      noMemory: true,
       local: false,
     })
 
@@ -219,7 +218,6 @@ describe('agent-qa MCP schema references', () => {
     const body = JSON.parse(String((init as RequestInit).body)) as Record<string, unknown>
     expect(body).toMatchObject({
       file: 'suites/smoke.suite.yaml',
-      noMemory: true,
       local: false,
       triggerSource: 'mcp',
     })

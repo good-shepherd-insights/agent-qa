@@ -186,14 +186,6 @@ vi.mock('@vostride/agent-qa-core', () => {
     }
   }
 
-  class MockBetterSqlite3AbiMismatchError extends Error {
-    constructor(originalError: unknown) {
-      const detail = originalError instanceof Error ? originalError.message : String(originalError)
-      super(`better-sqlite3's native binding does not match the running Node.js. Rebuild it out of band with \`pnpm rebuild better-sqlite3\` and re-run.\nUnderlying error: ${detail}`)
-      this.name = 'BetterSqlite3AbiMismatchError'
-    }
-  }
-
   return {
   parseAllTests: mockParseAllTests,
   parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
@@ -444,13 +436,6 @@ vi.mock('@vostride/agent-qa-core', () => {
     resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: mockGenerateRunId,
   isPathInsideDir: vi.fn((candidatePath: string) => !candidatePath.includes('..')),
-  BetterSqlite3AbiMismatchError: MockBetterSqlite3AbiMismatchError,
-  isBetterSqlite3AbiMismatch: vi.fn((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error)
-    return message.includes('better_sqlite3.node')
-      && message.includes('compiled against a different Node.js version')
-      && message.includes('NODE_MODULE_VERSION')
-  }),
   resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
     const configDir = String(configPath).includes('/')
       ? String(configPath).split('/').slice(0, -1).join('/')
@@ -1092,28 +1077,18 @@ describe('run command — reduced flag surface and target resolution', () => {
     expect(mockResolveConfig).not.toHaveBeenCalled()
   })
 
-  it('rejects removed --no-memory as an unknown option', async () => {
-    await runCommand('--no-memory', 'tests/**/*.yaml')
-
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("unknown option '--no-memory'"))
-    expect(mockResolveConfig).not.toHaveBeenCalled()
-  })
-
   it('does not show removed run flags in help', () => {
     const help = createRunCommand().helpInformation()
 
     expect(help).not.toContain('--app')
     expect(help).not.toContain('--env ')
     expect(help).not.toContain('--env-file')
-    expect(help).not.toContain('--no-memory')
   })
 
   it('classifies removed run flags as Commander unknown options', async () => {
     await expect(parseRemovedRunFlag('--app', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
     await expect(parseRemovedRunFlag('--env', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
     await expect(parseRemovedRunFlag('--env-file', '.env.local')).rejects.toMatchObject({ code: 'commander.unknownOption' })
-    await expect(parseRemovedRunFlag('--no-memory')).rejects.toMatchObject({ code: 'commander.unknownOption' })
   })
 
   it('resolves target: from test YAML via resolveTarget', async () => {
@@ -2325,43 +2300,6 @@ describe('run command — framework error handling', () => {
     expect(allOutput).toContain(`Run ID: ${runningRun.id}`)
   })
 
-  it('surfaces a typed better-sqlite3 ABI mismatch as an actionable message with a clean non-zero exit (RUNX-02/D1)', async () => {
-    const { BetterSqlite3AbiMismatchError } = await import('@vostride/agent-qa-core')
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    const rawAbiError = new Error(
-      "The module 'better_sqlite3.node' was compiled against a different Node.js version using "
-      + 'NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 127.',
-    )
-    mockWebAdapterSetup.mockRejectedValueOnce(new (BetterSqlite3AbiMismatchError as any)(rawAbiError))
-
-    await runCommand('tests/**/*.yaml')
-
-    // Clean, actionable, non-zero exit (1) — an environment problem, NOT the exit-2 framework crash.
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(exitSpy).not.toHaveBeenCalledWith(2)
-    const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    // The typed error's own rebuild guidance is surfaced verbatim, never wrapped as "Framework error".
-    expect(allErrors).toContain('pnpm rebuild better-sqlite3')
-    expect(allErrors).not.toContain('Framework error')
-  })
-
-  it('surfaces a raw native ABI-mismatch error cleanly via the predicate, without an opaque framework wrap', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    const rawAbiError = new Error(
-      "The module 'better_sqlite3.node' was compiled against a different Node.js version using "
-      + 'NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 127.',
-    )
-    mockWebAdapterSetup.mockRejectedValueOnce(rawAbiError)
-
-    await runCommand('tests/**/*.yaml')
-
-    // Detected via isBetterSqlite3AbiMismatch and surfaced calmly with a clean non-zero exit.
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allErrors).not.toContain('Framework error')
-  })
 })
 
 describe('run command — reporter integration', () => {

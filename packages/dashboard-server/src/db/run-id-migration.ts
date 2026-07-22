@@ -1,7 +1,11 @@
 import { copyFile, mkdir, rename, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
-import { createBetterSqlite3Database, generateRunId, type BetterSqlite3Database } from '@vostride/agent-qa-core'
+import { generateRunId } from '@vostride/agent-qa-core'
+import {
+  createDashboardSqliteDatabase,
+  type DashboardSqliteDatabase,
+} from './sqlite.js'
 
 interface RunIdMigrationRunRow {
   id: string
@@ -240,7 +244,7 @@ function mappingHasValue(mapping: Map<string, string>, value: string): boolean {
   return false
 }
 
-function runForeignKeyCheck(db: BetterSqlite3Database): void {
+function runForeignKeyCheck(db: DashboardSqliteDatabase): void {
   const violations = db.pragma('foreign_key_check') as Array<Record<string, unknown>>
   if (violations.length === 0) return
   throw new Error(`Run-id migration left ${violations.length} foreign key violation(s)`)
@@ -252,7 +256,7 @@ export async function migrateWorkspaceRunIds({
   videosDir,
   logger,
 }: RunIdMigrationOptions): Promise<RunIdMigrationResult> {
-  const db = createBetterSqlite3Database(dbPath)
+  const db = createDashboardSqliteDatabase(dbPath)
   const renamedScreenshotDirs: Array<{ from: string; to: string }> = []
   const renamedVideoDirs: Array<{ from: string; to: string }> = []
   const flatVideoFileMoves: FlatVideoFileMove[] = []

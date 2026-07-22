@@ -129,7 +129,7 @@ function deltaFrom(value: unknown): MemoryDelta | null {
   }
 }
 
-function isMemoryLogRecord(value: unknown): value is ArtifactRecord {
+function isArtifactLogRecord(value: unknown): value is ArtifactRecord {
   if (!isArtifactRecord(value)) return false
   return ["added", "confirmed", "deprecated", "deleted", "deltas", "errors", "curatorDuration", "tokenUsage"]
     .some((key) => key in value)
@@ -141,20 +141,20 @@ function memoryLogFromArtifact(artifact: RunArtifactResponse["artifact"]): Artif
   const memory = valueAt(payload, "memory")
   if (!isArtifactRecord(memory)) return null
   const log = valueAt(memory, "log")
-  return isMemoryLogRecord(log) ? log : null
+  return isArtifactLogRecord(log) ? log : null
 }
 
 function memoryLogFromRunJson(memoryLog: string | null | undefined): ArtifactRecord | null {
   if (!memoryLog) return null
   try {
     const parsed = JSON.parse(memoryLog)
-    return isMemoryLogRecord(parsed) ? parsed : null
+    return isArtifactLogRecord(parsed) ? parsed : null
   } catch {
     return null
   }
 }
 
-function childMemoryLogsFrom(response: RunArtifactResponse): ArtifactRecord[] {
+function childArtifactLogsFrom(response: RunArtifactResponse): ArtifactRecord[] {
   const logs: ArtifactRecord[] = []
   for (const child of response.children) {
     const artifactLog = memoryLogFromArtifact(child.artifact)
@@ -186,7 +186,7 @@ function mergeTokenUsage(logs: ArtifactRecord[]): Record<string, number> | undef
   return sawUsage ? tokenUsage : undefined
 }
 
-function mergeMemoryLogs(logs: ArtifactRecord[]): ArtifactRecord | null {
+function mergeArtifactLogs(logs: ArtifactRecord[]): ArtifactRecord | null {
   if (logs.length === 0) return null
   const deltas = logs.flatMap((log) => {
     const value = valueAt(log, "deltas")
@@ -213,8 +213,8 @@ function mergeMemoryLogs(logs: ArtifactRecord[]): ArtifactRecord | null {
 function memoryLogFrom(response: RunArtifactResponse): ArtifactRecord | null {
   const directLog = memoryLogFromArtifact(response.artifact)
   if (directLog) return directLog
-  const childLogs = childMemoryLogsFrom(response)
-  if (childLogs.length > 0) return mergeMemoryLogs(childLogs)
+  const childLogs = childArtifactLogsFrom(response)
+  if (childLogs.length > 0) return mergeArtifactLogs(childLogs)
   return memoryLogFromRunJson(response.run.memoryLog)
 }
 
