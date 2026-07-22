@@ -2125,7 +2125,7 @@ describe('API Routes', () => {
       }))
     })
 
-    it('passes cache and memory overrides through to the queued args and labels BrowserStack explicitly', async () => {
+    it('passes the cache override through to the queued args and labels BrowserStack explicitly', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
       tempDirs.push(testsDir)
       await mkdir(join(testsDir, 'web'), { recursive: true })
@@ -2146,7 +2146,6 @@ describe('API Routes', () => {
           file: 'web/15-github-trending.yaml',
           local: false,
           noCache: true,
-          noMemory: true,
         }),
       })
 
@@ -2161,7 +2160,6 @@ describe('API Routes', () => {
           args: [
             join(testsDir, 'web/15-github-trending.yaml'),
             '--disable-cache',
-            '--no-memory',
           ],
         }),
       }))
@@ -2546,49 +2544,6 @@ describe('API Routes', () => {
       const data = JSON.parse(res.body) as { purged: number }
       expect(data.purged).toBe(1)
       await expect(stat(cacheEntryPath)).rejects.toMatchObject({ code: 'ENOENT' })
-    })
-  })
-
-  describe('DELETE /api/memory/observations/:testId/:obsId', () => {
-    it('deletes observations from the internal default memory root — the config dir surface is retired (Phase 373, KDIR-03)', async () => {
-      const obsId = 'obs_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
-      const configContent = [
-        'workspace:',
-        '  testMatch:',
-        '    - tests/**/*.yaml',
-        '  suiteMatch:',
-        '    - suites/**/*.suite.yaml',
-        '  hooksFile: hooks.yaml',
-        '  envFile: .env',
-        '  secretsFile: .env.secrets.local',
-        'use:',
-        '  mobile:',
-        '    appState: preserve',
-        '',
-      ].join('\n')
-      const { configManager, configPath } = await createConfigWorkspace(configContent)
-      const configDir = dirname(configPath)
-      const defaultObservationPath = join(configDir, 'agent-qa-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
-      const strayObservationPath = join(configDir, '.agent-qa/custom-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
-      await mkdir(join(defaultObservationPath, '..'), { recursive: true })
-      await mkdir(join(strayObservationPath, '..'), { recursive: true })
-      await writeFile(defaultObservationPath, 'default-root observation', 'utf-8')
-      await writeFile(strayObservationPath, 'stray non-default observation', 'utf-8')
-
-      router = createRouter({
-        db: db as any,
-        configManager,
-        configPath,
-      })
-
-      const res = await invokeRoute(`/api/memory/observations/${SEEDED_TEST_ID}/${obsId}`, {
-        method: 'DELETE',
-      })
-
-      expect(res.status).toBe(200)
-      expect(JSON.parse(res.body)).toEqual({ deleted: true })
-      await expect(stat(defaultObservationPath)).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(readFile(strayObservationPath, 'utf-8')).resolves.toBe('stray non-default observation')
     })
   })
 

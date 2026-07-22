@@ -7,14 +7,13 @@ import { join, isAbsolute, basename, resolve, dirname, relative } from 'node:pat
 import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow, StepRow } from '../db/database.js'
 import type { TestRunner } from '../execution/test-runner.js'
 import type { JobQueue } from '../queue/job-queue.js'
-import { MemoryCatalogManager, isValidMemoryScopeId, type MemoryScope } from '../memory/memory-catalog-manager.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -994,7 +993,6 @@ function getArtifactMissingSections(artifact: RunArtifactRow | null): string[] {
   const payload = artifact.payload
   if (!('config' in payload)) missing.push('config')
   if (!('source' in payload)) missing.push('source')
-  if (!('memory' in payload)) missing.push('memory')
   return missing
 }
 
@@ -1389,7 +1387,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
   }
   const ssDir = deps.artifactsDir ? join(deps.artifactsDir, 'screenshots') : undefined
   const vidDir = deps.artifactsDir ? join(deps.artifactsDir, 'videos') : undefined
-  const memoryCatalogManager = new MemoryCatalogManager({ configManager, configPath: deps.configPath })
 
   return (req: IncomingMessage, res: ServerResponse) => {
     if (req.method === 'OPTIONS') {
@@ -2033,7 +2030,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         json(res, { error: 'Queue not available' }, 503)
         return
       }
-      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; noMemory?: boolean; local?: boolean; triggerSource?: unknown }>(req)
+      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; local?: boolean; triggerSource?: unknown }>(req)
         .then(async (body) => {
           if (body.tags !== undefined) {
             json(res, { error: 'tags are not supported for dashboard-triggered runs' }, 400)
@@ -2078,9 +2075,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             : null
           if (body.noCache) {
             args.push('--disable-cache')
-          }
-          if (body.noMemory) {
-            args.push('--no-memory')
           }
           const isSuite = Boolean(isSuiteFile)
 
@@ -4174,116 +4168,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    if (path === '/api/memory/catalog' && req.method === 'GET') {
-      ;(async () => {
-        try {
-          json(res, await memoryCatalogManager.readCatalog())
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read memory catalog' }, 500)
-        }
-      })()
-      return
-    }
-
-    const memoryProductMatch = path.match(/^\/api\/memory\/products\/([^/]+)$/)
-    if (memoryProductMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const productKey = decodeURIComponent(memoryProductMatch[1])
-          if (!isValidMemoryScopeId(productKey)) {
-            json(res, { error: 'Invalid memory product id' }, 400)
-            return
-          }
-          const product = await memoryCatalogManager.readProductDetail(productKey)
-          if (!product) {
-            json(res, { error: 'Memory product not found' }, 404)
-            return
-          }
-          json(res, { product })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read memory product' }, 500)
-        }
-      })()
-      return
-    }
-
-    const memoryScopeMatch = path.match(/^\/api\/memory\/scopes\/([^/]+)\/([^/]+)$/)
-    if (memoryScopeMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const scope = decodeURIComponent(memoryScopeMatch[1])
-          const scopeId = decodeURIComponent(memoryScopeMatch[2])
-          if (!isMemoryScope(scope)) {
-            json(res, { error: 'Invalid memory scope' }, 400)
-            return
-          }
-          if (!isValidMemoryScopeId(scopeId)) {
-            json(res, { error: 'Invalid memory scope id' }, 400)
-            return
-          }
-          const payload = await memoryCatalogManager.readScopedObservations(scope, scopeId)
-          if (!payload) {
-            json(res, { error: 'Memory scope not found' }, 404)
-            return
-          }
-          json(res, payload)
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read memory scope' }, 500)
-        }
-      })()
-      return
-    }
-
-    // Memory observations: list for a test
-    const obsListMatch = path.match(/^\/api\/memory\/observations\/([^/]+)$/)
-    if (obsListMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const testId = decodeURIComponent(obsListMatch[1])
-          const payload = await memoryCatalogManager.readScopedObservations('test', testId)
-          json(res, {
-            observations: payload?.observations ?? [],
-            invalidFiles: payload?.invalidFiles ?? [],
-          })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read observations' }, 500)
-        }
-      })()
-      return
-    }
-
-    // Memory observations: delete
-    const obsDeleteMatch = path.match(/^\/api\/memory\/observations\/([^/]+)\/([^/]+)$/)
-    if (obsDeleteMatch && req.method === 'DELETE') {
-      ;(async () => {
-        try {
-          const testId = decodeURIComponent(obsDeleteMatch[1])
-          const obsId = decodeURIComponent(obsDeleteMatch[2])
-          if (!isValidMemoryScopeId(testId) || !isValidMemoryScopeId(obsId)) {
-            json(res, { error: 'Invalid memory observation id' }, 400)
-            return
-          }
-
-          const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-          // v1 memory config surface retired in Phase 373 (KDIR-03) — the parsed config no
-          // longer carries a memory dir; the subsystem root is the internal default until 382.
-          const memoryRoot = resolveMemoryRoot(undefined, configDir)
-          const testsRoot = join(memoryRoot, 'tests')
-          const resolved = resolve(testsRoot, testId, `${obsId}.md`)
-          if (!getPathInsideDir(resolved, testsRoot)) {
-            json(res, { error: 'Invalid path' }, 400)
-            return
-          }
-
-          await rm(resolved, { force: true })
-          json(res, { deleted: true })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to delete observation' }, 500)
-        }
-      })()
-      return
-    }
-
     // Unknown API route
     if (path.startsWith('/api/')) {
       notFound(res)
@@ -4293,8 +4177,4 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     // Non-API routes handled by server.ts (static files)
     notFound(res)
   }
-}
-
-function isMemoryScope(value: string): value is MemoryScope {
-  return value === 'product' || value === 'suite' || value === 'test'
 }

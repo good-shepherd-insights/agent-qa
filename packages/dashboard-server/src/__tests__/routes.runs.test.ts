@@ -771,7 +771,7 @@ describe('GET /api/runs route contract', () => {
     expect(data.children).toHaveLength(1)
     expect(data.children[0].run.id).toBe('suite-child')
     expect(data.children[0].artifact).toBeNull()
-    expect(data.missingSections).toEqual(['config', 'memory'])
+    expect(data.missingSections).toEqual(['config'])
   })
 
   it('returns artifact missing when the run has no artifact row', async () => {
