@@ -261,9 +261,9 @@ describe('computeBriefDigest', () => {
     expect(computeBriefDigest(changed)).not.toBe(computeBriefDigest(fixtureBrief))
   })
 
-  it('uses a distinct v2 digest domain for lossless proof', () => {
-    expect(computeBriefDigest(losslessFixtureBrief)).not.toBe(
-      'd71b935ac67bda8109f6501c8e01e6d58090f093a8aebc0bfd21dfef791b2e12',
+  it('matches the lossless served brief v2 known vector', () => {
+    expect(computeBriefDigest(losslessFixtureBrief)).toBe(
+      '61e5a1aaf27676eaf0121622c1cfb1b4709402fc449c1a6f838ce4e764bfa42a',
     )
   })
 
