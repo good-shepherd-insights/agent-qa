@@ -25,11 +25,116 @@ interface PolicyRung {
   text: string
 }
 
+export type MalformedPolicyCommentReason =
+  | 'nested-opener'
+  | 'stray-closer'
+  | 'unclosed-comment'
+
+export class MalformedPolicyCommentError extends SyntaxError {
+  readonly sourceFile: string
+  readonly reason: MalformedPolicyCommentReason
+  readonly line: number
+  readonly column: number
+
+  constructor(
+    sourceFile: string,
+    reason: MalformedPolicyCommentReason,
+    line: number,
+    column: number,
+  ) {
+    super(`Malformed HTML comment in ${sourceFile} at ${line}:${column} (${reason})`)
+    this.name = 'MalformedPolicyCommentError'
+    this.sourceFile = sourceFile
+    this.reason = reason
+    this.line = line
+    this.column = column
+  }
+}
+
+/**
+ * Remove authored HTML comment regions without changing any active byte.
+ * `sourceFile` is the already-sanitized policy-relative label used for diagnostics.
+ */
+export function stripPolicyHtmlComments(text: string, sourceFile: string): string {
+  let index = 0
+  let line = 1
+  let column = 1
+  let activeStart = 0
+  let rendered = ''
+
+  const advance = (characters: number): void => {
+    const end = index + characters
+    while (index < end) {
+      if (text[index] === '\n') {
+        line += 1
+        column = 1
+      } else {
+        column += 1
+      }
+      index += 1
+    }
+  }
+
+  while (index < text.length) {
+    if (text.startsWith('<!--', index)) {
+      rendered += text.slice(activeStart, index)
+      const commentStart = { line, column }
+      advance(4)
+
+      let closed = false
+      while (index < text.length) {
+        if (text.startsWith('<!--', index)) {
+          throw new MalformedPolicyCommentError(
+            sourceFile,
+            'nested-opener',
+            line,
+            column,
+          )
+        }
+        if (text.startsWith('-->', index)) {
+          advance(3)
+          activeStart = index
+          closed = true
+          break
+        }
+        advance(1)
+      }
+
+      if (!closed) {
+        throw new MalformedPolicyCommentError(
+          sourceFile,
+          'unclosed-comment',
+          commentStart.line,
+          commentStart.column,
+        )
+      }
+      continue
+    }
+
+    if (text.startsWith('-->', index)) {
+      throw new MalformedPolicyCommentError(
+        sourceFile,
+        'stray-closer',
+        line,
+        column,
+      )
+    }
+    advance(1)
+  }
+
+  return rendered + text.slice(activeStart)
+}
+
 function readOptionalPolicy(knowledgeRoot: string, file: string): PolicyRung | undefined {
   try {
+    const text = stripPolicyHtmlComments(
+      readFileSync(join(knowledgeRoot, ...file.split('/')), 'utf8'),
+      file,
+    )
+    if (text.trim().length === 0) return undefined
     return {
       file,
-      text: readFileSync(join(knowledgeRoot, ...file.split('/')), 'utf8'),
+      text,
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
@@ -66,8 +171,8 @@ export function readPolicyLadder(
   })
 
   return {
-    // D-07: Policy bytes are concatenated whole. Labels frame sources but no
-    // policy text is summarized, truncated, normalized, or reflowed.
+    // D-07: Validated active policy bytes are concatenated whole. Labels frame
+    // sources but no active text is summarized, truncated, normalized, or reflowed.
     text: renderPolicyLadder(rungs),
     files: rungs.map(({ file }) => file),
     oversized: rungs.flatMap(({ file, text }) =>
