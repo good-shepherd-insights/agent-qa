@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { stripVTControlCharacters } from 'node:util'
 
 // Mock fs and child_process before importing
@@ -1139,8 +1140,73 @@ describe('init command', () => {
 
       const content = gitignoreCall![1] as string
       expect(content.startsWith('# agent-qa-knowledge/.gitignore\n')).toBe(true)
-      for (const line of FUNCTIONAL_LINES) {
-        expect(content).toContain(line)
+      const activeLines = content
+        .split(/\r?\n/)
+        .filter(line => line.length > 0 && !line.startsWith('#'))
+        .map(line => line.replace(/[ \t]+$/u, ''))
+      expect(activeLines).toEqual(FUNCTIONAL_LINES)
+    })
+
+    it('scaffolded knowledge .gitignore enforces committed and derived partitions in real Git', async () => {
+      const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+      const actualChildProcess =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+
+      await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+      const gitignoreCall = findWriteCallEndingWith('agent-qa-knowledge/.gitignore')
+      expect(gitignoreCall).toBeDefined()
+
+      const repository = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-kdir-git-'))
+      try {
+        actualChildProcess.execFileSync('git', ['init', '--quiet'], {
+          cwd: repository,
+          stdio: 'pipe',
+        })
+        actualFs.writeFileSync(join(repository, '.gitignore'), gitignoreCall![1] as string)
+
+        const ignoredPaths = [
+          'memory/index/knowledge.sqlite',
+          'memory/queue/candidate.json',
+          '.lease',
+          '.epoch',
+          'memory/local-form/bundles/fact-example/artifacts/screenshot.png',
+          'skills/.staging/draft.md',
+        ]
+        const committedPaths = [
+          'memory/local-form/bundles/fact-example/record.md',
+          'memory/local-form/bundles/fact-example/manifest.json',
+          'memory/local-form/bundles/fact-example/evidence/outcomes.jsonl',
+          'memory/local-form/bundles/fact-example/artifacts.index.json',
+          'policies/global.md',
+        ]
+
+        for (const fixturePath of [...ignoredPaths, ...committedPaths]) {
+          const absolutePath = join(repository, fixturePath)
+          actualFs.mkdirSync(dirname(absolutePath), { recursive: true })
+          actualFs.writeFileSync(absolutePath, 'fixture\n')
+        }
+
+        for (const fixturePath of ignoredPaths) {
+          const result = actualChildProcess.spawnSync(
+            'git',
+            ['check-ignore', '--quiet', '--', fixturePath],
+            { cwd: repository, stdio: 'pipe' },
+          )
+          if (result.error) throw result.error
+          expect(result.status, `${fixturePath} should be ignored`).toBe(0)
+        }
+
+        for (const fixturePath of committedPaths) {
+          const result = actualChildProcess.spawnSync(
+            'git',
+            ['check-ignore', '--quiet', '--', fixturePath],
+            { cwd: repository, stdio: 'pipe' },
+          )
+          if (result.error) throw result.error
+          expect(result.status, `${fixturePath} should remain commit-visible`).toBe(1)
+        }
+      } finally {
+        actualFs.rmSync(repository, { recursive: true, force: true })
       }
     })
 
@@ -1189,9 +1255,10 @@ skills/.staging/
       await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
       expect(findWriteCallEndingWith('agent-qa-knowledge/.gitignore')).toBeUndefined()
-      expect(vi.mocked(console.warn)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(console.warn)).toHaveBeenCalledTimes(2)
       const warning = warnOutput()
       expect(warning).toContain('".epoch"')
+      expect(warning).toContain('"**/artifacts/"')
       expect(warning).toContain('add it manually')
     })
 

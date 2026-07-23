@@ -577,8 +577,9 @@ memory/index/
 memory/queue/
 .lease
 .epoch
-**/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
-                     # (artifact inventories are committed and live OUTSIDE artifacts/)
+# binary blobs; flip to thumbnails via knowledge.commitArtifacts
+# (artifact inventories are committed and live OUTSIDE artifacts/)
+**/artifacts/
 skills/.staging/
 `
 }
@@ -668,15 +669,25 @@ in the agent-qa design docs: \`spec/v2/knowledge-store.md\` §3–§6.
 `
 }
 
+function trimGitignoreTrailingWhitespace(line: string): string {
+  let end = line.length
+  while (end > 0 && (line[end - 1] === ' ' || line[end - 1] === '\t')) {
+    let precedingBackslashes = 0
+    for (let index = end - 2; index >= 0 && line[index] === '\\'; index -= 1) {
+      precedingBackslashes += 1
+    }
+    if (precedingBackslashes % 2 === 1) break
+    end -= 1
+  }
+  return line.slice(0, end)
+}
+
 function knowledgeGitignoreFunctionalLines(content: string): Set<string> {
   return new Set(
     content
       .split(/\r?\n/)
-      .map(line => {
-        const hashIndex = line.indexOf('#')
-        return (hashIndex === -1 ? line : line.slice(0, hashIndex)).trim()
-      })
-      .filter(Boolean),
+      .map(trimGitignoreTrailingWhitespace)
+      .filter(line => line.length > 0 && !line.startsWith('#')),
   )
 }
 
