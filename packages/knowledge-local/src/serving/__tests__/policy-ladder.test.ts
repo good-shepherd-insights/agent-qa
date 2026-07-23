@@ -1,7 +1,6 @@
 import {
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -155,22 +154,30 @@ describe('authored policy ladder', () => {
     expect((thrown as Error).message).not.toContain('secret-policy-body')
   })
 
-  it('serves global then product policy with each file byte-verbatim', () => {
+  it('serves comment-bearing global then product policy deterministically', () => {
     const globalText = 'Always preserve CRLF.\r\nKeep trailing spaces.  '
     const productText = 'Product rule → preserve UTF-8\nSecond rule'
-    const globalFile = writePolicy('policies/global.md', globalText)
-    const productFile = writePolicy('policies/acme.md', productText)
-
-    const result = readPolicyLadder(knowledgeRoot, 'acme')
-    const globalSlice = result.text.slice(0, globalText.length)
-    const productSlice = result.text.slice(-productText.length)
-
-    expect(Buffer.from(globalSlice)).toEqual(readFileSync(globalFile))
-    expect(Buffer.from(productSlice)).toEqual(readFileSync(productFile))
-    expect(result.text.slice(globalText.length, -productText.length)).toBe(
-      '\n--- POLICY SOURCE: policies/acme.md ---\n',
+    writePolicy(
+      'policies/global.md',
+      `${globalText}<!-- global reviewer note -->`,
     )
-    expect(result.files).toEqual(['policies/global.md', 'policies/acme.md'])
+    writePolicy(
+      'policies/acme.md',
+      `<!-- product reviewer note -->${productText}`,
+    )
+
+    const first = readPolicyLadder(knowledgeRoot, 'acme')
+    const second = readPolicyLadder(knowledgeRoot, 'acme')
+    const expected = [
+      globalText,
+      '\n--- POLICY SOURCE: policies/acme.md ---\n',
+      productText,
+    ].join('')
+
+    expect(Buffer.from(first.text)).toEqual(Buffer.from(expected))
+    expect(Buffer.from(second.text)).toEqual(Buffer.from(first.text))
+    expect(second).toEqual(first)
+    expect(first.files).toEqual(['policies/global.md', 'policies/acme.md'])
   })
 
   it('silently omits missing policy rungs', () => {
