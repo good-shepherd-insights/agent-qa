@@ -18,6 +18,59 @@ vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
 }))
 
+vi.mock('../commands/init-filesystem.js', async () => {
+  const fs = await import('node:fs')
+  const entries = [
+    '.agent-qa/',
+    '.agent-qa/auth-states/',
+    'node_modules/',
+    'agent-qa.local.yaml',
+    '.env',
+    '.env.secrets.local',
+  ]
+  const writePlan = (plan: {
+    path: string
+    content: string | Uint8Array
+    force?: boolean
+    preserveOnForce?: boolean
+  }) => {
+    const exists = fs.existsSync(plan.path)
+    if (exists && (!plan.force || plan.preserveOnForce)) {
+      return { path: plan.path, outcome: 'preserved' as const }
+    }
+    fs.writeFileSync(plan.path, plan.content)
+    return {
+      path: plan.path,
+      outcome: exists ? 'updated' as const : 'created' as const,
+    }
+  }
+
+  return {
+    KNOWLEDGE_GITIGNORE_PROBES: [],
+    TARGET_GITIGNORE_PROBES: [],
+    classifyInitPath: vi.fn((path: string) => fs.existsSync(path) ? 'regular' : 'missing'),
+    preflightInitPlan: vi.fn((plans: Array<{ path: string }>) => plans.map(plan => ({
+      path: plan.path,
+      classification: fs.existsSync(plan.path) ? 'regular' : 'missing',
+    }))),
+    writeScaffoldFileAtomic: vi.fn(writePlan),
+    writeConfigMarkerLast: vi.fn(writePlan),
+    upsertManagedGitignoreBlock: vi.fn((path: string) => {
+      const exists = fs.existsSync(path)
+      const original = exists ? String(fs.readFileSync(path, 'utf8')) : ''
+      const prefix = original.length === 0
+        ? ''
+        : original.endsWith('\n')
+          ? '\n'
+          : '\n\n'
+      const content = `${original}${prefix}# agent-qa init:start\n${entries.join('\n')}\n# agent-qa init:end\n`
+      fs.writeFileSync(path, content)
+      return { path, outcome: exists ? 'updated' as const : 'created' as const }
+    }),
+    verifyEffectiveGitignore: vi.fn(() => ({ checked: true })),
+  }
+})
+
 vi.mock('../commands/install-browsers.js', () => ({
   formatInstallBrowsersRetryCommand: vi.fn(() => 'agent-qa install-browsers --chromium'),
   runBrowserInstall: vi.fn(() => ({ ok: true, status: 0, stage: 'installer' })),
@@ -63,6 +116,13 @@ import {
   defaultModelForProvider,
   LLM_SETUP_CHOICES,
 } from '../commands/init.js'
+import {
+  preflightInitPlan,
+  upsertManagedGitignoreBlock,
+  verifyEffectiveGitignore,
+  writeConfigMarkerLast,
+  writeScaffoldFileAtomic,
+} from '../commands/init-filesystem.js'
 import { formatInstallBrowsersRetryCommand, runBrowserInstall } from '../commands/install-browsers.js'
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
@@ -90,6 +150,11 @@ const mockConfirm = vi.mocked(confirm)
 const mockPassword = vi.mocked(password)
 const mockWriteAuth = vi.mocked(writeAuth)
 const mockResolveAppiumExecutable = vi.mocked(resolveAppiumExecutable)
+const mockPreflightInitPlan = vi.mocked(preflightInitPlan)
+const mockWriteScaffoldFileAtomic = vi.mocked(writeScaffoldFileAtomic)
+const mockWriteConfigMarkerLast = vi.mocked(writeConfigMarkerLast)
+const mockUpsertManagedGitignoreBlock = vi.mocked(upsertManagedGitignoreBlock)
+const mockVerifyEffectiveGitignore = vi.mocked(verifyEffectiveGitignore)
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 async function runInit(args: string[] = []): Promise<void> {
@@ -1274,5 +1339,204 @@ skills/.staging/
       expect(content).toContain('.agent-qa/')
       expect(content).not.toContain('agent-qa-memory')
     })
+  })
+
+  it('preflights the complete web inventory before writing and writes the config marker last', async () => {
+    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+    expect(mockPreflightInitPlan).toHaveBeenCalledTimes(1)
+    const plannedPaths = new Set(
+      mockPreflightInitPlan.mock.calls[0]![0].map(plan => plan.path),
+    )
+    expect(plannedPaths).toEqual(new Set([
+      '/tmp/test-project/.env',
+      '/tmp/test-project/.env.secrets.local',
+      '/tmp/test-project/.gitignore',
+      '/tmp/test-project/agent-qa-knowledge/.gitignore',
+      '/tmp/test-project/agent-qa-knowledge/README.md',
+      '/tmp/test-project/agent-qa-knowledge/policies/global.md',
+      '/tmp/test-project/agent-qa.config.yaml',
+      '/tmp/test-project/agent-qa.local.yaml',
+      '/tmp/test-project/hooks.yaml',
+      '/tmp/test-project/package.json',
+      '/tmp/test-project/scripts/fetch-hn-top-story.mjs',
+      '/tmp/test-project/suites/automation-exercise.suite.yaml',
+      '/tmp/test-project/tests/automation-exercise/cart-smoke.yaml',
+      '/tmp/test-project/tests/automation-exercise/home-smoke.yaml',
+      '/tmp/test-project/tests/automation-exercise/products-smoke.yaml',
+      '/tmp/test-project/tests/bad-a11y.yaml',
+      '/tmp/test-project/tests/example-fail.yaml',
+      '/tmp/test-project/tests/example-pass.yaml',
+      '/tmp/test-project/tests/hacker-news-top-story.yaml',
+    ]))
+
+    const preflightOrder = mockPreflightInitPlan.mock.invocationCallOrder[0]!
+    const firstWriteOrder = Math.min(
+      mockWriteScaffoldFileAtomic.mock.invocationCallOrder[0]!,
+      mockUpsertManagedGitignoreBlock.mock.invocationCallOrder[0]!,
+    )
+    const configOrder = mockWriteConfigMarkerLast.mock.invocationCallOrder[0]!
+    const priorWriteOrders = [
+      ...mockWriteScaffoldFileAtomic.mock.invocationCallOrder,
+      ...mockUpsertManagedGitignoreBlock.mock.invocationCallOrder,
+    ]
+
+    expect(preflightOrder).toBeLessThan(firstWriteOrder)
+    expect(configOrder).toBeGreaterThan(Math.max(...priorWriteOrders))
+    expect(mockWriteConfigMarkerLast).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/tmp/test-project/agent-qa.config.yaml',
+    }), expect.anything())
+    expect(mockVerifyEffectiveGitignore).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/tmp/test-project',
+      label: 'target .gitignore',
+    }))
+  })
+
+  it('preserves every completed generated file on partial recovery and reports actual outcomes', async () => {
+    const packageJson = `${JSON.stringify({
+      private: true,
+      scripts: { test: 'vitest' },
+      devDependencies: {
+        '@vostride/agent-qa-subscription-auth': '0.1.1',
+      },
+    }, null, 2)}\n`
+    mockExistsSync.mockImplementation(path => !String(path).endsWith('agent-qa.config.yaml'))
+    mockReadFileSync.mockImplementation(path => {
+      const value = String(path)
+      if (value.endsWith('package.json')) return packageJson
+      if (value.endsWith('agent-qa-knowledge/.gitignore')) {
+        return 'memory/index/\nmemory/queue/\n.lease\n.epoch\n**/artifacts/\nskills/.staging/\n'
+      }
+      if (value.endsWith('.gitignore')) return '# existing project rules\n'
+      return 'user-owned sentinel\n'
+    })
+
+    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+    const generatedResults = mockWriteScaffoldFileAtomic.mock.results
+      .map(result => result.value)
+      .filter((value): value is { path: string; outcome: string } => Boolean(value))
+    expect(generatedResults.filter(result => result.path.endsWith('agent-qa.config.yaml')))
+      .toEqual([])
+    expect(
+      generatedResults
+        .filter(result => !result.path.endsWith('package.json'))
+        .every(result => result.outcome === 'preserved'),
+    ).toBe(true)
+
+    const output = consoleOutput()
+    expect(output).toContain('Preserved:')
+    expect(output).toContain('tests/example-pass.yaml')
+    expect(output).not.toMatch(/Created:[\s\S]*tests\/example-pass\.yaml/)
+  })
+
+  it('performs zero writes when any full-plan preflight destination fails', async () => {
+    mockPreflightInitPlan.mockImplementationOnce(() => {
+      throw new Error('late generated path is a symbolic link')
+    })
+
+    await expect(runInit([
+      '--dir',
+      '/tmp/test-project',
+      '--platform',
+      'web',
+      '--skip-install',
+    ])).rejects.toThrow('late generated path is a symbolic link')
+
+    expect(mockWriteScaffoldFileAtomic).not.toHaveBeenCalled()
+    expect(mockWriteConfigMarkerLast).not.toHaveBeenCalled()
+    expect(mockUpsertManagedGitignoreBlock).not.toHaveBeenCalled()
+    expect(mockWriteFileSync).not.toHaveBeenCalled()
+  })
+
+  it('recovers after every real write boundary while preserving completed bytes', async () => {
+    vi.resetModules()
+    vi.doUnmock('node:fs')
+    vi.doUnmock('node:child_process')
+    vi.doUnmock('../commands/init-filesystem.js')
+
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const actualChildProcess =
+      await vi.importActual<typeof import('node:child_process')>('node:child_process')
+    const actualInit =
+      await vi.importActual<typeof import('../commands/init.js')>('../commands/init.js')
+    type Outcome = { path: string; outcome: 'created' | 'updated' | 'preserved' }
+    type Hooks = { afterWrite?: (result: Outcome, boundary: number) => void }
+
+    const runRealInit = async (dir: string, hooks: Hooks = {}): Promise<void> => {
+      const parent = new Command()
+      parent.addCommand(actualInit.createInitCommand(hooks))
+      await parent.parseAsync([
+        'node',
+        'test',
+        'init',
+        '--dir',
+        dir,
+        '--platform',
+        'web',
+        '--skip-install',
+      ])
+    }
+    const createRepository = (): string => {
+      const dir = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-init-recovery-'))
+      actualChildProcess.execFileSync('git', ['init', '--quiet'], {
+        cwd: dir,
+        stdio: 'pipe',
+      })
+      return dir
+    }
+    const snapshotFiles = (root: string): Map<string, Buffer> => {
+      const snapshot = new Map<string, Buffer>()
+      const visit = (dir: string, prefix = ''): void => {
+        for (const entry of actualFs.readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name === '.git') continue
+          const relativePath = prefix ? join(prefix, entry.name) : entry.name
+          const absolutePath = join(dir, entry.name)
+          if (entry.isDirectory()) visit(absolutePath, relativePath)
+          else if (entry.isFile()) snapshot.set(relativePath, actualFs.readFileSync(absolutePath))
+        }
+      }
+      visit(root)
+      return snapshot
+    }
+
+    const repositories: string[] = []
+    try {
+      const baseline = createRepository()
+      repositories.push(baseline)
+      const successfulWrites: Outcome[] = []
+      await runRealInit(baseline, {
+        afterWrite: result => {
+          successfulWrites.push(result)
+        },
+      })
+
+      expect(successfulWrites.length).toBeGreaterThan(10)
+      expect(successfulWrites.at(-1)?.path).toBe(join(baseline, 'agent-qa.config.yaml'))
+
+      for (let boundary = 1; boundary < successfulWrites.length; boundary += 1) {
+        const repository = createRepository()
+        repositories.push(repository)
+        let writes = 0
+        await expect(runRealInit(repository, {
+          afterWrite: () => {
+            writes += 1
+            if (writes === boundary) throw new Error(`injected boundary ${boundary}`)
+          },
+        })).rejects.toThrow(`injected boundary ${boundary}`)
+
+        expect(actualFs.existsSync(join(repository, 'agent-qa.config.yaml'))).toBe(false)
+        const completedBytes = snapshotFiles(repository)
+        await runRealInit(repository)
+        expect(actualFs.existsSync(join(repository, 'agent-qa.config.yaml'))).toBe(true)
+        for (const [relativePath, bytes] of completedBytes) {
+          expect(actualFs.readFileSync(join(repository, relativePath))).toEqual(bytes)
+        }
+      }
+    } finally {
+      for (const repository of repositories) {
+        actualFs.rmSync(repository, { recursive: true, force: true })
+      }
+    }
   })
 })
