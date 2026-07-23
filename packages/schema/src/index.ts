@@ -127,7 +127,12 @@ export {
   mintBundleId,
   slugBranch,
 } from './ids/index'
-export { computeBriefDigest } from './brief/index'
+export {
+  LosslessServedBriefError,
+  LosslessServedBriefSchema,
+  computeBriefDigest,
+  guardLosslessServedBrief,
+} from './brief/index'
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
 // 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).
 export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './handoff/index'
@@ -152,7 +157,17 @@ export type {
   Delta,
   IssueDelta,
 } from './delta/index'
-export type { ServedBrief, BriefLine, ReadTrace, CautionLine } from './brief/index'
+export type {
+  BriefLine,
+  CautionLine,
+  LosslessServedBrief,
+  LosslessServedBriefProofV1,
+  ReadTrace,
+  ServedAdmissionEvent,
+  ServedAdmissionSurface,
+  ServedBrief,
+  ServedPromptTurn,
+} from './brief/index'
 export type {
   CompletedRunHandoff,
   CycleEvidence,

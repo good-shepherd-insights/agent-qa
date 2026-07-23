@@ -1,2 +1,17 @@
 export { computeBriefDigest } from './compute-brief-digest'
-export type { BriefLine, CautionLine, ReadTrace, ServedBrief } from './served-brief'
+export {
+  LosslessServedBriefError,
+  LosslessServedBriefSchema,
+  guardLosslessServedBrief,
+} from './guard-lossless-served-brief'
+export type { LosslessServedBrief } from './guard-lossless-served-brief'
+export type {
+  BriefLine,
+  CautionLine,
+  LosslessServedBriefProofV1,
+  ReadTrace,
+  ServedAdmissionEvent,
+  ServedAdmissionSurface,
+  ServedBrief,
+  ServedPromptTurn,
+} from './served-brief'
