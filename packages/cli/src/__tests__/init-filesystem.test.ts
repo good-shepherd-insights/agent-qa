@@ -51,37 +51,43 @@ afterEach(() => {
 })
 
 describe('safe init filesystem primitives', () => {
-  it('creates absent files exclusively, preserves regular files by default, and atomically updates only with force', () => {
-    const root = tempRoot()
-    const path = join(root, 'nested', 'scaffold.yaml')
-    const initial: InitPathPlan = {
-      path,
-      content: 'first\n',
-      force: false,
-    }
+  it(
+    'creates absent files exclusively, preserves regular files, and atomically force-updates',
+    () => {
+      const root = tempRoot()
+      const path = join(root, 'nested', 'scaffold.yaml')
+      const initial: InitPathPlan = {
+        root,
+        path,
+        content: 'first\n',
+        force: false,
+      }
 
-    expect(preflightInitPlan([initial])).toEqual([
-      expect.objectContaining({ path, classification: 'missing' }),
-    ])
-    expect(writeScaffoldFileAtomic(initial)).toEqual({ path, outcome: 'created' })
-    expect(readFileSync(path, 'utf8')).toBe('first\n')
+      expect(preflightInitPlan([initial])).toEqual([
+        expect.objectContaining({ path, classification: 'missing' }),
+      ])
+      expect(writeScaffoldFileAtomic(initial)).toEqual({ path, outcome: 'created' })
+      expect(readFileSync(path, 'utf8')).toBe('first\n')
 
-    const preserved = writeScaffoldFileAtomic({
-      path,
-      content: 'must-not-replace\n',
-      force: false,
-    })
-    expect(preserved).toEqual({ path, outcome: 'preserved' })
-    expect(readFileSync(path, 'utf8')).toBe('first\n')
+      const preserved = writeScaffoldFileAtomic({
+        root,
+        path,
+        content: 'must-not-replace\n',
+        force: false,
+      })
+      expect(preserved).toEqual({ path, outcome: 'preserved' })
+      expect(readFileSync(path, 'utf8')).toBe('first\n')
 
-    const updated = writeScaffoldFileAtomic({
-      path,
-      content: 'forced\n',
-      force: true,
-    })
-    expect(updated).toEqual({ path, outcome: 'updated' })
-    expect(readFileSync(path, 'utf8')).toBe('forced\n')
-  })
+      const updated = writeScaffoldFileAtomic({
+        root,
+        path,
+        content: 'forced\n',
+        force: true,
+      })
+      expect(updated).toEqual({ path, outcome: 'updated' })
+      expect(readFileSync(path, 'utf8')).toBe('forced\n')
+    },
+  )
 
   it('refuses symlink, directory, FIFO, and symlinked-parent collisions before clobbering', () => {
     const root = tempRoot()
@@ -108,7 +114,12 @@ describe('safe init filesystem primitives', () => {
       [fifo, 'FIFO'],
       [join(parentSymlink, 'nested.yaml'), 'symbolic link parent'],
     ] as const) {
-      expect(() => preflightInitPlan([{ path, content: 'replacement\n', force: true }]))
+      expect(() => preflightInitPlan([{
+        root,
+        path,
+        content: 'replacement\n',
+        force: true,
+      }]))
         .toThrow(expectedKind)
     }
 
@@ -120,7 +131,7 @@ describe('safe init filesystem primitives', () => {
     const path = join(root, 'raced.yaml')
 
     expect(() => writeScaffoldFileAtomic(
-      { path, content: 'scaffold\n', force: false },
+      { root, path, content: 'scaffold\n', force: false },
       {
         beforeExclusivePublish: () => {
           writeFileSync(path, 'racer\n', { flag: 'wx' })
@@ -131,7 +142,7 @@ describe('safe init filesystem primitives', () => {
     expect(readFileSync(path, 'utf8')).toBe('racer\n')
   })
 
-  it('places one managed target .gitignore block at EOF so prior negations cannot expose runtime or secret paths', () => {
+  it('places one managed target .gitignore block at EOF after prior negations', () => {
     const root = tempRoot()
     initializeGit(root)
     const gitignorePath = join(root, '.gitignore')
@@ -167,7 +178,7 @@ describe('safe init filesystem primitives', () => {
     expect(readFileSync(gitignorePath, 'utf8')).toBe(firstBytes)
   })
 
-  it('rejects an ineffective sovereign knowledge .gitignore with exact remediation and preserves its bytes', () => {
+  it('rejects an ineffective sovereign knowledge .gitignore without changing bytes', () => {
     const root = tempRoot()
     initializeGit(root)
     const gitignorePath = join(root, '.gitignore')
@@ -191,7 +202,8 @@ describe('safe init filesystem primitives', () => {
       label: 'existing agent-qa-knowledge/.gitignore',
       probes: KNOWLEDGE_GITIGNORE_PROBES,
     })).toThrow(
-      'existing agent-qa-knowledge/.gitignore is unsafe: "memory/index/knowledge.sqlite" must be ignored. '
+      'existing agent-qa-knowledge/.gitignore is unsafe: '
+      + '"memory/index/knowledge.sqlite" must be ignored. '
       + 'Move "memory/index/" after any negation, then rerun agent-qa init; no files were changed.',
     )
     expect(readFileSync(gitignorePath, 'utf8')).toBe(unsafeBytes)
