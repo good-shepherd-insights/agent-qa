@@ -1,6 +1,6 @@
 import { Command } from 'commander'
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import { stringify } from 'yaml'
 import pc from 'picocolors'
 import select from '@inquirer/select'
@@ -13,6 +13,19 @@ import {
 } from '@vostride/agent-qa-core'
 import { getProvider, listProviders } from '@vostride/agent-qa-model'
 import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
+import {
+  KNOWLEDGE_GITIGNORE_PROBES,
+  TARGET_GITIGNORE_PROBES,
+  classifyInitPath,
+  preflightInitPlan,
+  upsertManagedGitignoreBlock,
+  verifyEffectiveGitignore,
+  writeConfigMarkerLast,
+  writeScaffoldFileAtomic,
+  type InitFileResult,
+  type InitFilesystemHooks,
+  type InitPathPlan,
+} from './init-filesystem.js'
 
 type Platform = 'web' | 'android' | 'ios' | 'web+android' | 'web+ios'
 type PlatformCapability = 'web' | 'mobile'
@@ -307,32 +320,51 @@ function configUsesSubscriptionAuth(config: Record<string, unknown>): boolean {
   return authPlugins.some(plugin => objectRecord(plugin)?.package === SUBSCRIPTION_AUTH_PACKAGE)
 }
 
-type SubscriptionAuthDependencyResult = {
-  path: string
-  created: boolean
+type SubscriptionAuthDependencyPlan = {
+  plan: InitPathPlan
   range: string
 }
 
-export function upsertSubscriptionAuthPackageDependency(dir: string): SubscriptionAuthDependencyResult {
+type SubscriptionAuthDependencyResult = InitFileResult & {
+  range: string
+}
+
+function buildSubscriptionAuthPackageDependencyPlan(
+  dir: string,
+): SubscriptionAuthDependencyPlan {
   const packageJsonPath = join(dir, PACKAGE_JSON_FILE)
-  const created = !existsSync(packageJsonPath)
-  const pkg = created
+  const classification = classifyInitPath(packageJsonPath, dir)
+  const existing = classification === 'regular'
+    ? readFileSync(packageJsonPath, 'utf-8')
+    : null
+  const pkg = existing === null
     ? { private: true } as Record<string, unknown>
-    : JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as Record<string, unknown>
+    : JSON.parse(existing) as Record<string, unknown>
 
   if (!objectRecord(pkg)) {
     throw new Error(`${PACKAGE_JSON_FILE} must contain a JSON object to add ${SUBSCRIPTION_AUTH_PACKAGE}`)
   }
 
-  const dependencyBlocks = ['devDependencies', 'dependencies', 'optionalDependencies', 'peerDependencies'] as const
+  const dependencyBlocks = [
+    'devDependencies',
+    'dependencies',
+    'optionalDependencies',
+    'peerDependencies',
+  ] as const
   const existingBlock = dependencyBlocks.find(blockName => {
     const block = objectRecord(pkg[blockName])
     return block && Object.prototype.hasOwnProperty.call(block, SUBSCRIPTION_AUTH_PACKAGE)
   })
   const targetBlock = existingBlock ?? 'devDependencies'
+  const range = subscriptionAuthDependencyRange()
+  let changed = existing === null
+  const existingTargetDependencies = objectRecord(pkg[targetBlock])
+  if (existingTargetDependencies?.[SUBSCRIPTION_AUTH_PACKAGE] !== range) {
+    changed = true
+  }
   const targetDependencies = {
-    ...(objectRecord(pkg[targetBlock]) ?? {}),
-    [SUBSCRIPTION_AUTH_PACKAGE]: subscriptionAuthDependencyRange(),
+    ...(existingTargetDependencies ?? {}),
+    [SUBSCRIPTION_AUTH_PACKAGE]: range,
   }
 
   pkg[targetBlock] = targetDependencies
@@ -340,17 +372,35 @@ export function upsertSubscriptionAuthPackageDependency(dir: string): Subscripti
     if (blockName === targetBlock) continue
     const block = objectRecord(pkg[blockName])
     if (!block || !Object.prototype.hasOwnProperty.call(block, SUBSCRIPTION_AUTH_PACKAGE)) continue
+    changed = true
     const nextBlock = { ...block }
     delete nextBlock[SUBSCRIPTION_AUTH_PACKAGE]
     if (Object.keys(nextBlock).length > 0) pkg[blockName] = nextBlock
     else delete pkg[blockName]
   }
 
-  writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`)
+  const content = existing !== null && !changed
+    ? existing
+    : `${JSON.stringify(pkg, null, 2)}\n`
   return {
-    path: packageJsonPath,
-    created,
-    range: String(targetDependencies[SUBSCRIPTION_AUTH_PACKAGE]),
+    plan: {
+      path: packageJsonPath,
+      root: dir,
+      content,
+      force: existing !== null && changed,
+    },
+    range,
+  }
+}
+
+export function upsertSubscriptionAuthPackageDependency(
+  dir: string,
+  hooks: InitFilesystemHooks = {},
+): SubscriptionAuthDependencyResult {
+  const dependency = buildSubscriptionAuthPackageDependencyPlan(dir)
+  return {
+    ...writeScaffoldFileAtomic(dependency.plan, hooks),
+    range: dependency.range,
   }
 }
 
@@ -691,58 +741,15 @@ function knowledgeGitignoreFunctionalLines(content: string): Set<string> {
   )
 }
 
-function scaffoldKnowledgeRoot(dir: string): void {
-  const knowledgeDir = join(dir, KNOWLEDGE_ROOT_DIR)
-  mkdirSync(join(knowledgeDir, 'policies'), { recursive: true })
-
-  // Sovereign files: --force never clobbers these — create-missing only (D-15).
-  const readmePath = join(knowledgeDir, 'README.md')
-  if (!existsSync(readmePath)) {
-    writeFileSync(readmePath, buildKnowledgeReadme())
-    console.log(pc.green(`✓ Created ${readmePath}`))
+function warnForMissingKnowledgeGitignoreRules(path: string): void {
+  const existingLines = knowledgeGitignoreFunctionalLines(readFileSync(path, 'utf-8'))
+  for (const requiredLine of KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES) {
+    if (existingLines.has(requiredLine)) continue
+    console.warn(pc.yellow(
+      `⚠ ${path} is missing the required line "${requiredLine}" — `
+      + 'add it manually to keep the committed/derived split intact.',
+    ))
   }
-
-  const globalPolicyPath = join(knowledgeDir, 'policies', 'global.md')
-  if (!existsSync(globalPolicyPath)) {
-    writeFileSync(globalPolicyPath, buildGlobalPolicyTemplate())
-    console.log(pc.green(`✓ Created ${globalPolicyPath}`))
-  }
-
-  const knowledgeGitignorePath = join(knowledgeDir, '.gitignore')
-  if (!existsSync(knowledgeGitignorePath)) {
-    writeFileSync(knowledgeGitignorePath, buildKnowledgeGitignore())
-    console.log(pc.green(`✓ Created ${knowledgeGitignorePath}`))
-  } else {
-    // Never rewrite an existing knowledge .gitignore (the user may have customized
-    // it deliberately, D-15) — verify the functional split and warn per missing line.
-    const existingLines = knowledgeGitignoreFunctionalLines(readFileSync(knowledgeGitignorePath, 'utf-8'))
-    for (const requiredLine of KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES) {
-      if (existingLines.has(requiredLine)) continue
-      console.warn(pc.yellow(
-        `⚠ ${knowledgeGitignorePath} is missing the required line "${requiredLine}" — add it manually to keep the committed/derived split intact.`,
-      ))
-    }
-  }
-}
-
-function appendGitignore(dir: string): void {
-  const gitignorePath = join(dir, '.gitignore')
-  let existing = ''
-  if (existsSync(gitignorePath)) {
-    existing = readFileSync(gitignorePath, 'utf-8')
-  }
-
-  const existingEntries = new Set(
-    existing
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean),
-  )
-  const missing = buildGitignoreEntries().filter((entry) => !existingEntries.has(entry))
-  if (missing.length === 0) return
-
-  const append = (existing.length > 0 && !existing.endsWith('\n') ? '\n' : '') + missing.join('\n') + '\n'
-  writeFileSync(gitignorePath, existing + append)
 }
 
 function browserSetupCommand(platform: InitPlatformInput): string | null {
@@ -777,7 +784,182 @@ function initNextSteps(platform: InitPlatformInput): Array<{ command: string; de
   return steps
 }
 
-export function createInitCommand(): Command {
+export interface InitCommandHooks {
+  afterWrite?: (result: InitFileResult, boundary: number) => void
+  onComplete?: (outcomes: readonly InitFileResult[]) => void
+}
+
+function scaffoldFilePlan(
+  root: string,
+  path: string,
+  content: string,
+  force: boolean,
+  preserveOnForce = false,
+): InitPathPlan {
+  return {
+    root,
+    path: join(root, path),
+    content,
+    force,
+    preserveOnForce,
+  }
+}
+
+function buildScaffoldFilePlans(
+  dir: string,
+  platform: InitPlatformInput,
+  force: boolean,
+): InitPathPlan[] {
+  const plans = [
+    scaffoldFilePlan(dir, DEFAULT_ENV_FILE, '', force),
+    scaffoldFilePlan(dir, DEFAULT_SECRETS_FILE, '', force),
+    scaffoldFilePlan(dir, DEFAULT_HOOKS_FILE, buildHooksFile(platform), force),
+    scaffoldFilePlan(
+      dir,
+      DEFAULT_LOCAL_CONFIG_FILE,
+      buildLocalConfigTemplate(),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, 'README.md'),
+      buildKnowledgeReadme(),
+      force,
+      true,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, 'policies', 'global.md'),
+      buildGlobalPolicyTemplate(),
+      force,
+      true,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, '.gitignore'),
+      buildKnowledgeGitignore(),
+      force,
+      true,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join('tests', 'example-pass.yaml'),
+      buildExampleTest(platform, 'pass'),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join('tests', 'example-fail.yaml'),
+      buildExampleTest(platform, 'fail'),
+      force,
+    ),
+  ]
+
+  if (!hasWeb(platform)) return plans
+
+  for (const test of AUTOMATION_EXERCISE_TESTS) {
+    plans.push(scaffoldFilePlan(
+      dir,
+      join('tests', 'automation-exercise', test.fileName),
+      buildAutomationExerciseTest(test),
+      force,
+    ))
+  }
+
+  plans.push(
+    scaffoldFilePlan(
+      dir,
+      join('suites', 'automation-exercise.suite.yaml'),
+      buildAutomationExerciseSuite(),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join('scripts', 'fetch-hn-top-story.mjs'),
+      buildHackerNewsHookScript(),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join('tests', 'hacker-news-top-story.yaml'),
+      buildHackerNewsTopStoryTest(),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join('tests', 'bad-a11y.yaml'),
+      buildBadA11yTest(),
+      force,
+    ),
+  )
+
+  return plans
+}
+
+function displayInitPath(dir: string, path: string): string {
+  const localPath = relative(dir, path)
+  return localPath.length > 0 ? localPath : path
+}
+
+function printOutcomeSummary(dir: string, outcomes: readonly InitFileResult[]): void {
+  const groups = [
+    ['created', 'Created'],
+    ['updated', 'Updated'],
+    ['preserved', 'Preserved'],
+  ] as const
+
+  for (const [outcome, label] of groups) {
+    const matching = outcomes.filter(result => result.outcome === outcome)
+    if (matching.length === 0) continue
+    console.log(`  ${label}:`)
+    for (const result of matching) {
+      console.log(`    ${pc.dim('•')} ${displayInitPath(dir, result.path)}`)
+    }
+  }
+}
+
+function printNextSteps(
+  platform: InitPlatformInput,
+  config: Record<string, unknown>,
+  provider: string,
+): void {
+  console.log('')
+  console.log('  Next steps:')
+  for (const [index, step] of initNextSteps(platform).entries()) {
+    console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
+  }
+  const registry = config.registry as Record<string, unknown> | undefined
+  const generatedLLMs = (registry?.llms ?? []) as InitLLMConfig[]
+  const subscriptionLLMs = generatedLLMs.filter(
+    llm => isSubscriptionProvider(String(llm.provider)),
+  )
+  if (subscriptionLLMs.length === 0) {
+    console.log(
+      `    ${pc.dim('•')} Save credentials with `
+      + pc.cyan('agent-qa auth set --config default --type api-key'),
+    )
+    if (getProvider(provider)?.authModes.includes('bearer-token')) {
+      console.log(
+        `    ${pc.dim('•')} Bearer tokens use `
+        + pc.cyan('agent-qa auth set --config default --type bearer-token'),
+      )
+    }
+    return
+  }
+
+  console.log(
+    `    ${pc.dim('•')} Fetch ${SUBSCRIPTION_AUTH_PACKAGE} `
+    + 'with your package manager install command',
+  )
+  for (const llm of subscriptionLLMs) {
+    console.log(
+      `    ${pc.dim('•')} Authenticate ${pc.cyan(String(llm.name))} `
+      + `from ${pc.cyan('agent-qa dashboard')}`,
+    )
+  }
+}
+
+export function createInitCommand(hooks: InitCommandHooks = {}): Command {
   const cmd = new Command('init')
     .description('Initialize a new agent-qa project')
     .option('--dir <path>', 'target directory', process.cwd())
@@ -858,156 +1040,98 @@ export function createInitCommand(): Command {
       }
 
       const configPath = join(dir, 'agent-qa.config.yaml')
-
-      // Check existing config
-      if (existsSync(configPath) && !force) {
-        console.log(pc.yellow(`Config file already exists at ${configPath}. Use --force to overwrite.`))
+      const configClassification = classifyInitPath(configPath, dir)
+      if (configClassification === 'regular' && !force) {
+        const completed = [{ path: configPath, outcome: 'preserved' }] as const
+        console.log(pc.yellow(`Project is already initialized at ${dir}. Use --force to rebuild it.`))
+        printOutcomeSummary(dir, completed)
+        hooks.onComplete?.(completed)
         return
       }
 
-      // Create tests directory
-      const testsDir = join(dir, 'tests')
-      if (!existsSync(testsDir)) {
-        mkdirSync(testsDir, { recursive: true })
-      }
-
-      // Write config file
       const config = buildDefaultConfig(platform, llmConfigs ?? provider, model, baseURL)
       const usesSubscriptionAuth = configUsesSubscriptionAuth(config)
-      const yamlStr = stringify(config)
-      const configContent = addYamlComments(yamlStr)
-      writeFileSync(configPath, configContent)
-      console.log(pc.green(`✓ Created ${configPath}`))
-
       const subscriptionAuthDependency = usesSubscriptionAuth
-        ? upsertSubscriptionAuthPackageDependency(dir)
+        ? buildSubscriptionAuthPackageDependencyPlan(dir)
         : null
+      const filePlans = buildScaffoldFilePlans(dir, platform, force)
+      const targetGitignorePath = join(dir, '.gitignore')
+      const targetGitignorePlan: InitPathPlan = {
+        root: dir,
+        path: targetGitignorePath,
+        content: '',
+      }
+      const configPlan: InitPathPlan = {
+        root: dir,
+        path: configPath,
+        content: addYamlComments(stringify(config)),
+        force,
+      }
+      const completePlan = [
+        ...filePlans,
+        ...(subscriptionAuthDependency ? [subscriptionAuthDependency.plan] : []),
+        targetGitignorePlan,
+        configPlan,
+      ]
+      const preflight = preflightInitPlan(completePlan)
+
+      const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
+      const knowledgeGitignoreWasPresent = preflight.some(
+        result => result.path === knowledgeGitignorePath
+          && result.classification === 'regular',
+      )
+      if (knowledgeGitignoreWasPresent) {
+        warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
+        verifyEffectiveGitignore({
+          cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+          label: 'existing agent-qa-knowledge/.gitignore',
+          probes: KNOWLEDGE_GITIGNORE_PROBES,
+        })
+      }
+
+      const outcomes: InitFileResult[] = []
+      let boundary = 0
+      const recordOutcome = (result: InitFileResult): void => {
+        outcomes.push(result)
+        if (result.outcome === 'preserved') return
+        boundary += 1
+        hooks.afterWrite?.(result, boundary)
+      }
+
+      for (const plan of filePlans) {
+        recordOutcome(writeScaffoldFileAtomic(plan, {}))
+      }
+
+      if (!knowledgeGitignoreWasPresent) {
+        verifyEffectiveGitignore({
+          cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+          label: 'agent-qa-knowledge/.gitignore',
+          probes: KNOWLEDGE_GITIGNORE_PROBES,
+        })
+      }
+
       if (subscriptionAuthDependency) {
-        const action = subscriptionAuthDependency.created ? 'Created' : 'Updated'
-        console.log(pc.green(`✓ ${action} ${subscriptionAuthDependency.path}`))
+        recordOutcome(writeScaffoldFileAtomic(subscriptionAuthDependency.plan, {}))
       }
 
-      const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
-      if (force || !existsSync(secretsPath)) {
-        writeFileSync(secretsPath, '')
-        console.log(pc.green(`✓ Created ${secretsPath}`))
-      }
+      recordOutcome(upsertManagedGitignoreBlock(
+        targetGitignorePath,
+        buildGitignoreEntries(),
+      ))
+      verifyEffectiveGitignore({
+        cwd: dir,
+        label: 'target .gitignore',
+        probes: TARGET_GITIGNORE_PROBES,
+      })
 
-      const envPath = join(dir, DEFAULT_ENV_FILE)
-      if (force || !existsSync(envPath)) {
-        writeFileSync(envPath, '')
-        console.log(pc.green(`✓ Created ${envPath}`))
-      }
+      recordOutcome(writeConfigMarkerLast(configPlan, {}))
+      hooks.onComplete?.([...outcomes])
 
-      const hooksPath = join(dir, DEFAULT_HOOKS_FILE)
-      if (force || !existsSync(hooksPath)) {
-        writeFileSync(hooksPath, buildHooksFile(platform))
-        console.log(pc.green(`✓ Created ${hooksPath}`))
-      }
-
-      const localConfigPath = join(dir, DEFAULT_LOCAL_CONFIG_FILE)
-      if (force || !existsSync(localConfigPath)) {
-        writeFileSync(localConfigPath, buildLocalConfigTemplate())
-        console.log(pc.green(`✓ Created ${localConfigPath}`))
-      }
-
-      // Committed knowledge root (KDIR-01) — create-missing, never overwrite.
-      scaffoldKnowledgeRoot(dir)
-
-      // Write example tests
-      const examplePassPath = join(testsDir, 'example-pass.yaml')
-      writeFileSync(examplePassPath, buildExampleTest(platform, 'pass'))
-      console.log(pc.green(`✓ Created ${examplePassPath}`))
-
-      const exampleFailPath = join(testsDir, 'example-fail.yaml')
-      writeFileSync(exampleFailPath, buildExampleTest(platform, 'fail'))
-      console.log(pc.green(`✓ Created ${exampleFailPath}`))
-
-      if (hasWeb(platform)) {
-        const suitesDir = join(dir, 'suites')
-        if (!existsSync(suitesDir)) {
-          mkdirSync(suitesDir, { recursive: true })
-        }
-
-        const scriptsDir = join(dir, 'scripts')
-        if (!existsSync(scriptsDir)) {
-          mkdirSync(scriptsDir, { recursive: true })
-        }
-
-        const automationTestsDir = join(testsDir, 'automation-exercise')
-        if (!existsSync(automationTestsDir)) {
-          mkdirSync(automationTestsDir, { recursive: true })
-        }
-
-        for (const test of AUTOMATION_EXERCISE_TESTS) {
-          const testPath = join(automationTestsDir, test.fileName)
-          writeFileSync(testPath, buildAutomationExerciseTest(test))
-          console.log(pc.green(`✓ Created ${testPath}`))
-        }
-
-        const automationSuitePath = join(suitesDir, 'automation-exercise.suite.yaml')
-        writeFileSync(automationSuitePath, buildAutomationExerciseSuite())
-        console.log(pc.green(`✓ Created ${automationSuitePath}`))
-
-        const hnScriptPath = join(scriptsDir, 'fetch-hn-top-story.mjs')
-        writeFileSync(hnScriptPath, buildHackerNewsHookScript())
-        console.log(pc.green(`✓ Created ${hnScriptPath}`))
-
-        const hnTestPath = join(testsDir, 'hacker-news-top-story.yaml')
-        writeFileSync(hnTestPath, buildHackerNewsTopStoryTest())
-        console.log(pc.green(`✓ Created ${hnTestPath}`))
-
-        const badA11yTestPath = join(testsDir, 'bad-a11y.yaml')
-        writeFileSync(badA11yTestPath, buildBadA11yTest())
-        console.log(pc.green(`✓ Created ${badA11yTestPath}`))
-      }
-
-      // Update .gitignore
-      appendGitignore(dir)
-      console.log(pc.green('✓ Updated .gitignore'))
-
-      // Post-init summary
       console.log('')
       console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))
       console.log('')
-      console.log('  Created:')
-      console.log(`    ${pc.dim('•')} agent-qa.config.yaml`)
-      if (subscriptionAuthDependency) {
-        console.log(`    ${pc.dim('•')} ${PACKAGE_JSON_FILE} dependency for ${SUBSCRIPTION_AUTH_PACKAGE}@${subscriptionAuthDependency.range}`)
-      }
-      console.log(`    ${pc.dim('•')} ${DEFAULT_HOOKS_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_ENV_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_SECRETS_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_LOCAL_CONFIG_FILE}`)
-      console.log(`    ${pc.dim('•')} ${KNOWLEDGE_ROOT_DIR}/ (README.md, .gitignore, policies/global.md)`)
-      console.log(`    ${pc.dim('•')} tests/example-pass.yaml`)
-      console.log(`    ${pc.dim('•')} tests/example-fail.yaml`)
-      if (hasWeb(platform)) {
-        console.log(`    ${pc.dim('•')} tests/automation-exercise/*.yaml`)
-        console.log(`    ${pc.dim('•')} tests/hacker-news-top-story.yaml`)
-        console.log(`    ${pc.dim('•')} tests/bad-a11y.yaml`)
-        console.log(`    ${pc.dim('•')} suites/automation-exercise.suite.yaml`)
-        console.log(`    ${pc.dim('•')} scripts/fetch-hn-top-story.mjs`)
-      }
-      console.log(`    ${pc.dim('•')} .gitignore entries`)
-      console.log('')
-      console.log('  Next steps:')
-      for (const [index, step] of initNextSteps(platform).entries()) {
-        console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
-      }
-      const generatedLLMs = ((config.registry as Record<string, unknown> | undefined)?.llms ?? []) as InitLLMConfig[]
-      const subscriptionLLMs = generatedLLMs.filter(llm => isSubscriptionProvider(String(llm.provider)))
-      if (subscriptionLLMs.length === 0) {
-        console.log(`    ${pc.dim('•')} Save credentials with ${pc.cyan('agent-qa auth set --config default --type api-key')}`)
-        if (getProvider(provider)?.authModes.includes('bearer-token')) {
-          console.log(`    ${pc.dim('•')} Bearer tokens use ${pc.cyan('agent-qa auth set --config default --type bearer-token')}`)
-        }
-      } else {
-        console.log(`    ${pc.dim('•')} Fetch ${SUBSCRIPTION_AUTH_PACKAGE} with your package manager install command`)
-        for (const llm of subscriptionLLMs) {
-          console.log(`    ${pc.dim('•')} Authenticate ${pc.cyan(String(llm.name))} from ${pc.cyan('agent-qa dashboard')}`)
-        }
-      }
+      printOutcomeSummary(dir, outcomes)
+      printNextSteps(platform, config, provider)
       console.log('')
     })
 

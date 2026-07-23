@@ -124,7 +124,7 @@ import {
   writeScaffoldFileAtomic,
 } from '../commands/init-filesystem.js'
 import { formatInstallBrowsersRetryCommand, runBrowserInstall } from '../commands/install-browsers.js'
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
+import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
 import select from '@inquirer/select'
 import input from '@inquirer/input'
@@ -136,7 +136,6 @@ import { clearProviderRegistry, registerProvider, type ProviderDescriptor } from
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
-const mockMkdirSync = vi.mocked(mkdirSync)
 const mockExistsSync = vi.mocked(existsSync)
 const mockReadFileSync = vi.mocked(readFileSync)
 const mockExecSync = vi.mocked(execSync)
@@ -157,9 +156,12 @@ const mockUpsertManagedGitignoreBlock = vi.mocked(upsertManagedGitignoreBlock)
 const mockVerifyEffectiveGitignore = vi.mocked(verifyEffectiveGitignore)
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
-async function runInit(args: string[] = []): Promise<void> {
+async function runInit(
+  args: string[] = [],
+  hooks: Parameters<typeof createInitCommand>[0] = {},
+): Promise<void> {
   const parent = new Command()
-  parent.addCommand(createInitCommand())
+  parent.addCommand(createInitCommand(hooks))
   await parent.parseAsync(['node', 'test', 'init', ...args])
 }
 
@@ -747,9 +749,6 @@ describe('init command', () => {
     expect(cartCall).toBeDefined()
     expect(suiteCall).toBeDefined()
 
-    expect(mockMkdirSync).toHaveBeenCalledWith('/tmp/test-project/suites', { recursive: true })
-    expect(mockMkdirSync).toHaveBeenCalledWith('/tmp/test-project/tests/automation-exercise', { recursive: true })
-
     expect(homeCall?.[1]).toContain('target: automation-exercise')
     expect(homeCall?.[1]).toContain('Verify the page says "Automation Exercise"')
     expect(homeCall?.[1]).toContain('Verify the page has "Signup / Login"')
@@ -767,7 +766,9 @@ describe('init command', () => {
     expect(suiteContent).toContain('test: tests/automation-exercise/cart-smoke.yaml')
 
     const output = consoleOutput()
-    expect(output).toContain('tests/automation-exercise/*.yaml')
+    expect(output).toContain('tests/automation-exercise/home-smoke.yaml')
+    expect(output).toContain('tests/automation-exercise/products-smoke.yaml')
+    expect(output).toContain('tests/automation-exercise/cart-smoke.yaml')
     expect(output).toContain('suites/automation-exercise.suite.yaml')
   })
 
@@ -780,8 +781,6 @@ describe('init command', () => {
     expect(hooksCall).toBeDefined()
     expect(scriptCall).toBeDefined()
     expect(testCall).toBeDefined()
-
-    expect(mockMkdirSync).toHaveBeenCalledWith('/tmp/test-project/scripts', { recursive: true })
 
     const hooksContent = hooksCall?.[1] as string
     expect(hooksContent).toContain('Fetch first Hacker News story')
@@ -962,7 +961,7 @@ describe('init command', () => {
     expect(output).toContain('agent-qa.local.yaml')
   })
 
-  it('appends to .gitignore without duplicating entries', async () => {
+  it('places a complete managed .gitignore block after existing entries', async () => {
     mockExistsSync.mockImplementation((p) => {
       if ((p as string).endsWith('.gitignore')) return true
       return false
@@ -977,17 +976,17 @@ describe('init command', () => {
     expect(gitignoreCall).toBeDefined()
 
     const content = gitignoreCall![1] as string
-    // Should contain auth-state credential material entries but not duplicate node_modules/
+    // Existing rules remain byte-preserved; the complete terminal block is authoritative.
     expect(content).toContain('.agent-qa/')
     expect(content).toContain('.agent-qa/auth-states/')
     expect(content).toContain('agent-qa.local.yaml')
     expect(content).toContain('.env')
     expect(content).toContain('.env.secrets.local')
-    // Original content + only the missing entry
+    // The original node_modules rule remains and is repeated in the managed block.
     const nodeModulesCount = (content.match(/node_modules\//g) || []).length
     const runtimeCount = (content.match(/^\.agent-qa\/$/gm) || []).length
     const authStatesCount = (content.match(/^\.agent-qa\/auth-states\/$/gm) || []).length
-    expect(nodeModulesCount).toBe(1)
+    expect(nodeModulesCount).toBe(2)
     expect(runtimeCount).toBe(1)
     expect(authStatesCount).toBe(1)
   })
@@ -1010,7 +1009,7 @@ describe('init command', () => {
     expect(content).toContain('.agent-qa/')
     expect(content).toContain('.agent-qa/auth-states/')
     expect((content.match(/^\.agent-qa\/$/gm) || []).length).toBe(1)
-    expect((content.match(/^\.agent-qa\/auth-states\/$/gm) || []).length).toBe(1)
+    expect((content.match(/^\.agent-qa\/auth-states\/$/gm) || []).length).toBe(2)
   })
 
   it('skips if config exists and no --force', async () => {
@@ -1026,6 +1025,7 @@ describe('init command', () => {
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
     expect(configCall).toBeUndefined()
+    expect(consoleOutput()).toContain('Preserved:\n    • agent-qa.config.yaml')
   })
 
   it('overwrites with --force', async () => {
@@ -1138,12 +1138,15 @@ describe('init command', () => {
     expect(output).toContain('agent-qa install-browsers --chromium')
   })
 
-  it('creates tests directory when it does not exist', async () => {
+  it('routes nested test files through the safe filesystem writer', async () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
-    expect(mockMkdirSync).toHaveBeenCalledWith(
-      expect.stringContaining('tests'),
-      { recursive: true },
+    expect(mockWriteScaffoldFileAtomic).toHaveBeenCalledWith(
+      expect.objectContaining({
+        root: '/tmp/test-project',
+        path: '/tmp/test-project/tests/example-pass.yaml',
+      }),
+      expect.anything(),
     )
   })
 
@@ -1188,13 +1191,10 @@ describe('init command', () => {
       ])
       expect(knowledgeWritePaths().some((path) => path.includes('.gitkeep'))).toBe(false)
 
-      const knowledgeMkdirs = mockMkdirSync.mock.calls
-        .map((call) => call[0] as string)
-        .filter((path) => path.includes('agent-qa-knowledge'))
-      expect(knowledgeMkdirs).toEqual([`${KNOWLEDGE_ROOT}/policies`])
-
       const output = consoleOutput()
-      expect(output).toContain('agent-qa-knowledge/ (README.md, .gitignore, policies/global.md)')
+      expect(output).toContain('agent-qa-knowledge/README.md')
+      expect(output).toContain('agent-qa-knowledge/.gitignore')
+      expect(output).toContain('agent-qa-knowledge/policies/global.md')
     })
 
     it('scaffolded knowledge .gitignore carries all six functional lines', async () => {
@@ -1342,7 +1342,11 @@ skills/.staging/
   })
 
   it('preflights the complete web inventory before writing and writes the config marker last', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+    const onComplete = vi.fn()
+    await runInit(
+      ['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'],
+      { onComplete },
+    )
 
     expect(mockPreflightInitPlan).toHaveBeenCalledTimes(1)
     const plannedPaths = new Set(
@@ -1390,6 +1394,13 @@ skills/.staging/
       cwd: '/tmp/test-project',
       label: 'target .gitignore',
     }))
+    expect(onComplete).toHaveBeenCalledTimes(1)
+    const completedOutcomes = onComplete.mock.calls[0]![0]
+    expect(completedOutcomes).toHaveLength(plannedPaths.size)
+    expect(completedOutcomes.at(-1)).toEqual({
+      path: '/tmp/test-project/agent-qa.config.yaml',
+      outcome: 'created',
+    })
   })
 
   it('preserves every completed generated file on partial recovery and reports actual outcomes', async () => {
@@ -1423,11 +1434,22 @@ skills/.staging/
         .filter(result => !result.path.endsWith('package.json'))
         .every(result => result.outcome === 'preserved'),
     ).toBe(true)
+    const packageJsonCall = findWriteCallEndingWith('package.json')
+    expect(JSON.parse(String(packageJsonCall?.[1]))).toMatchObject({
+      private: true,
+      scripts: { test: 'vitest' },
+      devDependencies: {
+        '@vostride/agent-qa-subscription-auth': '*',
+      },
+    })
 
     const output = consoleOutput()
     expect(output).toContain('Preserved:')
     expect(output).toContain('tests/example-pass.yaml')
-    expect(output).not.toMatch(/Created:[\s\S]*tests\/example-pass\.yaml/)
+    const createdSection = output.match(
+      /  Created:\n([\s\S]*?)(?:\n  (?:Updated|Preserved|Next steps):|$)/,
+    )?.[1] ?? ''
+    expect(createdSection).not.toContain('tests/example-pass.yaml')
   })
 
   it('performs zero writes when any full-plan preflight destination fails', async () => {
@@ -1538,5 +1560,5 @@ skills/.staging/
         actualFs.rmSync(repository, { recursive: true, force: true })
       }
     }
-  })
+  }, 30_000)
 })
