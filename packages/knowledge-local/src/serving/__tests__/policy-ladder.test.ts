@@ -12,6 +12,31 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { readPolicyLadder } from '../policy-ladder.js'
 
+const INIT_GLOBAL_POLICY_SCAFFOLD = `<!--
+agent-qa policies — global scope
+
+Write one rule per line, in plain imperative English. Every active (non-comment)
+line in this file becomes a QA rule the agent follows.
+
+Example (inactive — it lives inside this comment):
+Always dismiss the cookie banner before asserting page content
+
+Scoping: this file is the global scope. Add sibling files named <product>.md
+next to it for product-scoped rules.
+
+Sovereignty: policies are human-asserted and win every conflict. Once policy
+serving lands, every active line here is served to the agent verbatim on every
+run — never summarized, never budgeted out — so keep rules few and deliberate.
+
+HTML comments are stripped at serve time: a comment-only file like this one is
+an empty policy. Add rules below this comment block to activate them.
+-->
+`
+
+const PHASE_383_ACTIVE_POLICY = `Never submit real payment or checkout forms on automationexercise.com.
+Dismiss cookie or consent dialogs before interacting with page content.
+`
+
 describe('authored policy ladder', () => {
   let knowledgeRoot: string
 
@@ -29,6 +54,106 @@ describe('authored policy ladder', () => {
     writeFileSync(file, text, 'utf8')
     return file
   }
+
+  it('treats the exact init scaffold as an empty policy rung', () => {
+    writePolicy('policies/global.md', INIT_GLOBAL_POLICY_SCAFFOLD)
+
+    expect(readPolicyLadder(knowledgeRoot)).toEqual({
+      text: '',
+      files: [],
+      oversized: [],
+    })
+  })
+
+  it('preserves the two active Phase 383 policy lines byte-for-byte', () => {
+    writePolicy(
+      'policies/global.md',
+      `${INIT_GLOBAL_POLICY_SCAFFOLD}${PHASE_383_ACTIVE_POLICY}`,
+    )
+
+    const result = readPolicyLadder(knowledgeRoot)
+
+    expect(result.text).toBe(`\n${PHASE_383_ACTIVE_POLICY}`)
+    expect(Buffer.from(result.text.slice(1))).toEqual(Buffer.from(PHASE_383_ACTIVE_POLICY))
+    expect(result.files).toEqual(['policies/global.md'])
+  })
+
+  it('preserves active bytes before, between, and after multiline comments', () => {
+    const authored = [
+      'before  \r\n',
+      '<!-- first\r\nmultiline comment -->',
+      '\r\nbetween\t',
+      '<!-- second\ncomment -->',
+      'after →\n',
+    ].join('')
+    const expected = 'before  \r\n\r\nbetween\tafter →\n'
+    writePolicy('policies/global.md', authored)
+
+    const result = readPolicyLadder(knowledgeRoot)
+
+    expect(result.text).toBe(expected)
+    expect(Buffer.from(result.text)).toEqual(Buffer.from(expected))
+  })
+
+  it('removes adjacent comments while retaining their non-comment separator', () => {
+    writePolicy(
+      'policies/global.md',
+      'left<!-- first --><!-- second -->\r\nright',
+    )
+
+    expect(readPolicyLadder(knowledgeRoot).text).toBe('left\r\nright')
+  })
+
+  it.each([
+    {
+      name: 'a nested opener',
+      text: 'safe\n<!-- outer\n<!-- secret-policy-body -->\n-->',
+      reason: 'nested-opener',
+      line: 3,
+      column: 1,
+    },
+    {
+      name: 'a closer without an opener',
+      text: 'safe\n--> secret-policy-body',
+      reason: 'stray-closer',
+      line: 2,
+      column: 1,
+    },
+    {
+      name: 'an unclosed comment',
+      text: 'safe\n<!-- secret-policy-body',
+      reason: 'unclosed-comment',
+      line: 2,
+      column: 1,
+    },
+  ])('rejects $name without disclosing policy contents', ({
+    text,
+    reason,
+    line,
+    column,
+  }) => {
+    writePolicy('policies/global.md', text)
+
+    let thrown: unknown
+    try {
+      readPolicyLadder(knowledgeRoot)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect(thrown).toMatchObject({
+      name: 'MalformedPolicyCommentError',
+      sourceFile: 'policies/global.md',
+      reason,
+      line,
+      column,
+    })
+    expect((thrown as Error).message).toBe(
+      `Malformed HTML comment in policies/global.md at ${line}:${column} (${reason})`,
+    )
+    expect((thrown as Error).message).not.toContain('secret-policy-body')
+  })
 
   it('serves global then product policy with each file byte-verbatim', () => {
     const globalText = 'Always preserve CRLF.\r\nKeep trailing spaces.  '
