@@ -103,6 +103,7 @@ vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: '.agent-qa/auth-states',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_RUNTIME_DIR: '.agent-qa',
+  getAgentQaVersion: vi.fn(() => '0.1.1'),
 }))
 
 // Suppress console output in tests
@@ -131,7 +132,7 @@ import input from '@inquirer/input'
 import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import password from '@inquirer/password'
-import { resolveAppiumExecutable, writeAuth } from '@vostride/agent-qa-core'
+import { getAgentQaVersion, resolveAppiumExecutable, writeAuth } from '@vostride/agent-qa-core'
 import { clearProviderRegistry, registerProvider, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -148,6 +149,7 @@ const mockCheckbox = vi.mocked(checkbox)
 const mockConfirm = vi.mocked(confirm)
 const mockPassword = vi.mocked(password)
 const mockWriteAuth = vi.mocked(writeAuth)
+const mockGetAgentQaVersion = vi.mocked(getAgentQaVersion)
 const mockResolveAppiumExecutable = vi.mocked(resolveAppiumExecutable)
 const mockPreflightInitPlan = vi.mocked(preflightInitPlan)
 const mockWriteScaffoldFileAtomic = vi.mocked(writeScaffoldFileAtomic)
@@ -201,6 +203,7 @@ describe('init command', () => {
     vi.clearAllMocks()
     mockExistsSync.mockReturnValue(false)
     mockReadFileSync.mockImplementation((path) => String(path).endsWith('package.json') ? '{"version":"0.1.1"}' : '')
+    mockGetAgentQaVersion.mockReturnValue('0.1.1')
     mockRunBrowserInstall.mockReturnValue({ ok: true, status: 0, stage: 'installer' })
     mockFormatInstallBrowsersRetryCommand.mockReturnValue('agent-qa install-browsers --chromium')
     mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
@@ -237,6 +240,7 @@ describe('init command', () => {
     expect(content).toContain('# knowledge:')
     expect(content).toContain('#   dir: agent-qa-knowledge')
     expect(content).toContain('#   commitArtifacts: none')
+    expect(content).not.toContain('thumbnail')
     expect(content).toContain('authState:')
     expect(content).toContain('dir: .agent-qa/auth-states')
     expect(content).toContain('registry:')
@@ -538,6 +542,49 @@ describe('init command', () => {
     },
   )
 
+  it('rejects an invalid Commander platform before preflight or filesystem writes', async () => {
+    await expect(runInit([
+      '--dir',
+      '/tmp/test-project',
+      '--platform',
+      'bogus',
+      '--skip-install',
+    ])).rejects.toMatchObject({ code: 'commander.invalidArgument' })
+
+    expect(mockPreflightInitPlan).not.toHaveBeenCalled()
+    expect(mockWriteScaffoldFileAtomic).not.toHaveBeenCalled()
+    expect(mockWriteConfigMarkerLast).not.toHaveBeenCalled()
+    expect(mockWriteFileSync).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid programmatic platform with a closed diagnostic', () => {
+    expect(() => buildDefaultConfig(
+      'bogus' as never,
+      'anthropic-subscription',
+      'claude-sonnet-4-6',
+    )).toThrow('Unsupported init platform "bogus"')
+  })
+
+  it.each(['', '0.0.0', '  '])(
+    'refuses invalid installed version %j before preflight or filesystem writes',
+    async (version) => {
+      mockGetAgentQaVersion.mockReturnValueOnce(version)
+
+      await expect(runInit([
+        '--dir',
+        '/tmp/test-project',
+        '--platform',
+        'web',
+        '--skip-install',
+      ])).rejects.toThrow('installed agent-qa version')
+
+      expect(mockPreflightInitPlan).not.toHaveBeenCalled()
+      expect(mockWriteScaffoldFileAtomic).not.toHaveBeenCalled()
+      expect(mockWriteConfigMarkerLast).not.toHaveBeenCalled()
+      expect(mockWriteFileSync).not.toHaveBeenCalled()
+    },
+  )
+
   it('prompts model as free text and does not collect first-party API keys during interactive init', async () => {
     mockCheckbox
       .mockResolvedValueOnce(['web'])
@@ -810,6 +857,45 @@ describe('init command', () => {
     expect(output).toContain('scripts/fetch-hn-top-story.mjs')
   })
 
+  it('round-trips generated Hacker News values through the runtime env decoder', async () => {
+    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
+
+    const scriptCall = findWriteCallEndingWith('scripts/fetch-hn-top-story.mjs')
+    expect(scriptCall).toBeDefined()
+    const script = String(scriptCall?.[1]).replace(
+      "import { writeFile } from 'node:fs/promises'\n",
+      '',
+    )
+    const title = 'quote " slash \\ apostrophe \' carriage\rreturn line\nfeed equals=a hash=#'
+    const fetch = vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => url.endsWith('topstories.json')
+        ? [38315]
+        : { title },
+    }))
+    let envBytes = ''
+    const writeFile = vi.fn(async (path: string, content: string) => {
+      expect(path).toBe('/tmp/agent-qa.env')
+      envBytes = content
+    })
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+      ...args: string[]
+    ) => (...values: unknown[]) => Promise<void>
+
+    await new AsyncFunction('fetch', 'writeFile', script)(fetch, writeFile)
+
+    const runnerCodecUrl = pathToFileURL(
+      resolve(repoRoot, 'packages/runner/src/hooks/env-file.ts'),
+    ).href
+    const runtimeCodec = await import(/* @vite-ignore */ runnerCodecUrl)
+    expect(runtimeCodec.parseEnvFile(envBytes)).toEqual({
+      HN_FIRST_STORY_TITLE: title,
+      HN_FIRST_STORY_ID: '38315',
+    })
+  })
+
   it('creates a W3C BAD accessibility reporting demo for web init', async () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
@@ -893,6 +979,8 @@ describe('init command', () => {
   it('does not create web demo tests for mobile-only init', async () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'android', '--skip-install'])
 
+    expect(findWriteCallEndingWith('tests/example-pass.yaml')).toBeUndefined()
+    expect(findWriteCallEndingWith('tests/example-fail.yaml')).toBeUndefined()
     expect(findWriteCallEndingWith('tests/automation-exercise/home-smoke.yaml')).toBeUndefined()
     expect(findWriteCallEndingWith('tests/automation-exercise/products-smoke.yaml')).toBeUndefined()
     expect(findWriteCallEndingWith('tests/automation-exercise/cart-smoke.yaml')).toBeUndefined()
@@ -909,6 +997,9 @@ describe('init command', () => {
 
     const hooksCall = findWriteCallEndingWith('hooks.yaml')
     expect(hooksCall?.[1]).toBe('hooks: []\n')
+    expect(consoleOutput()).not.toContain('tests/example-pass.yaml')
+    expect(consoleOutput()).not.toContain('tests/example-fail.yaml')
+    expect(consoleOutput()).not.toContain('Edit tests/example-pass.yaml')
   })
 
   it('creates an empty local secrets file', async () => {
@@ -1191,6 +1282,9 @@ describe('init command', () => {
       ])
       expect(knowledgeWritePaths().some((path) => path.includes('.gitkeep'))).toBe(false)
 
+      const readmeCall = findWriteCallEndingWith('agent-qa-knowledge/README.md')
+      expect(readmeCall?.[1]).not.toContain('thumbnail')
+
       const output = consoleOutput()
       expect(output).toContain('agent-qa-knowledge/README.md')
       expect(output).toContain('agent-qa-knowledge/.gitignore')
@@ -1205,6 +1299,7 @@ describe('init command', () => {
 
       const content = gitignoreCall![1] as string
       expect(content.startsWith('# agent-qa-knowledge/.gitignore\n')).toBe(true)
+      expect(content).not.toContain('thumbnail')
       const activeLines = content
         .split(/\r?\n/)
         .filter(line => line.length > 0 && !line.startsWith('#'))
@@ -1439,7 +1534,7 @@ skills/.staging/
       private: true,
       scripts: { test: 'vitest' },
       devDependencies: {
-        '@vostride/agent-qa-subscription-auth': '*',
+        '@vostride/agent-qa-subscription-auth': '0.1.1',
       },
     })
 
@@ -1564,4 +1659,63 @@ skills/.staging/
       }
     }
   }, 120_000)
+
+  it('uses the exact installed version from a fresh built CLI layout', async () => {
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const actualChildProcess =
+      await vi.importActual<typeof import('node:child_process')>('node:child_process')
+    const cliRoot = resolve(repoRoot, 'packages/cli')
+    const bundleDir = actualFs.mkdtempSync(join(cliRoot, '.init-dist-test-'))
+    const projectDir = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-init-dist-project-'))
+
+    try {
+      actualChildProcess.execFileSync('pnpm', [
+        'exec',
+        'tsup',
+        'src/cli.ts',
+        '--out-dir',
+        bundleDir,
+        '--format',
+        'esm',
+        '--target',
+        'node24',
+        '--no-splitting',
+        '--no-config',
+        '--silent',
+      ], {
+        cwd: cliRoot,
+        stdio: 'pipe',
+      })
+      actualChildProcess.execFileSync('git', ['init', '--quiet'], {
+        cwd: projectDir,
+        stdio: 'pipe',
+      })
+      actualChildProcess.execFileSync(process.execPath, [
+        join(bundleDir, 'cli.js'),
+        'init',
+        '--dir',
+        projectDir,
+        '--platform',
+        'web',
+        '--skip-install',
+      ], {
+        cwd: repoRoot,
+        stdio: 'pipe',
+      })
+
+      const cliManifest = JSON.parse(
+        actualFs.readFileSync(join(cliRoot, 'package.json'), 'utf8'),
+      ) as { version: string }
+      const projectManifest = JSON.parse(
+        actualFs.readFileSync(join(projectDir, 'package.json'), 'utf8'),
+      ) as { devDependencies: Record<string, string> }
+      const installedRange =
+        projectManifest.devDependencies['@vostride/agent-qa-subscription-auth']
+      expect(installedRange).toBe(cliManifest.version)
+      expect(installedRange).not.toBe('*')
+    } finally {
+      actualFs.rmSync(bundleDir, { recursive: true, force: true })
+      actualFs.rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })
