@@ -19,7 +19,7 @@
 //                                   here and NEVER in the system tiers; empty slots omitted.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ModelMessage, SystemModelMessage } from 'ai'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import { sha256hex, type ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import {
@@ -27,6 +27,7 @@ import {
   // Plan-03 tier API — intentionally unresolved today (the RED reason for this suite):
   buildContextTier,
   buildVolatileTier,
+  captureServedPromptTurn,
   composeTurnMessages,
 } from '../prompts.js'
 
@@ -169,6 +170,63 @@ describe('volatile tier — date-granularity stamp (CTXB-01 / D-07)', () => {
     expect(beforeMidnight).toContain('Current date: 2026-07-24')
     expect(afterMidnight).toContain('Current date: 2026-07-25')
     expect(afterMidnight).not.toBe(beforeMidnight)
+  })
+})
+
+describe('served prompt-turn capture (CR-08 / D-11)', () => {
+  it('snapshots the exact production tier bytes and their named SHA-256 digests', () => {
+    const ctx = makeContext({
+      promptDate: '2026-07-24',
+      knowledgePolicyL0: 'Policy line one\nPolicy line two',
+      knowledgeBriefL1: 'Caution line',
+      knowledgeBriefL2: 'Procedure line',
+    })
+    const expectedContextTier = contentText(buildContextTier(ctx).content)
+    const expectedVolatileTier = contentText(buildVolatileTier(ctx).content)
+
+    const turn = captureServedPromptTurn(ctx, 7, 13)
+
+    expect(turn).toEqual({
+      ordinal: 7,
+      turnOrdinal: 13,
+      runDate: '2026-07-24',
+      policyL0: ctx.knowledgePolicyL0,
+      learnedL1: ctx.knowledgeBriefL1,
+      learnedL2: ctx.knowledgeBriefL2,
+      contextTier: expectedContextTier,
+      volatileTier: expectedVolatileTier,
+      policyDigest: sha256hex(ctx.knowledgePolicyL0 ?? ''),
+      contextTierDigest: sha256hex(expectedContextTier),
+      volatileTierDigest: sha256hex(expectedVolatileTier),
+    })
+  })
+
+  it('copies ordinals unchanged and is byte-deterministic for repeated identical input', () => {
+    const ctx = makeContext({
+      promptDate: '2026-07-24',
+      knowledgePolicyL0: 'Keep the checkout policy stable.',
+      knowledgeBriefL1: 'Treat stale totals cautiously.',
+      knowledgeBriefL2: 'Open the cart before checkout.',
+    })
+
+    const first = captureServedPromptTurn(ctx, 41, 9)
+    const second = captureServedPromptTurn(ctx, 41, 9)
+
+    expect(first.ordinal).toBe(41)
+    expect(first.turnOrdinal).toBe(9)
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+  })
+
+  it('requires a valid bound UTC date without falling back to the wall clock', () => {
+    expect(() => captureServedPromptTurn(makeContext(), 0, 0)).toThrow(
+      /valid YYYY-MM-DD UTC date/,
+    )
+    expect(() =>
+      captureServedPromptTurn(makeContext({ promptDate: '2026-02-30' }), 0, 0),
+    ).toThrow(/valid YYYY-MM-DD UTC date/)
+    expect(() =>
+      captureServedPromptTurn(makeContext({ promptDate: '2026/07/24' }), 0, 0),
+    ).toThrow(/valid YYYY-MM-DD UTC date/)
   })
 })
 

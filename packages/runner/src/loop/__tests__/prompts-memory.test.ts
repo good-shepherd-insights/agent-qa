@@ -13,7 +13,11 @@ import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { StepContext } from '../types.js'
 // Plan-03 tier/turn API — intentionally unresolved today (the RED reason for this suite):
-import { buildVolatileTier, composeTurnMessages } from '../prompts.js'
+import {
+  buildVolatileTier,
+  captureServedPromptTurn,
+  composeTurnMessages,
+} from '../prompts.js'
 import { buildAgentScreenState } from './screen-fixtures.js'
 
 // The two v2 memory slots on StepContext (D-12/D-13): knowledgeBrief (volatile tier) and
@@ -120,5 +124,79 @@ describe('the two channels are distinct (D-04/D-13)', () => {
     // Working memory lives in turn content (below the system region), never in the tier.
     expect(turn).toContain(emailValue)
     expect(volatile).not.toContain(emailValue)
+  })
+})
+
+describe('served prompt-turn knowledge ingredients (CR-08 / D-11)', () => {
+  it('retains policy, L1, and L2 ingredient bytes without trimming or normalization', () => {
+    const policyL0 = '  Preserve policy leading spaces.\nPolicy trailing spaces.  \n'
+    const learnedL1 = '\n  Caution with boundary whitespace.  \n'
+    const learnedL2 = '\tProcedure bytes stay exact.\n\n'
+    const context = makeStepContext({
+      promptDate: '2026-07-24',
+      knowledgePolicyL0: policyL0,
+      knowledgeBriefL1: learnedL1,
+      knowledgeBriefL2: learnedL2,
+    })
+
+    const turn = captureServedPromptTurn(context, 0, 0)
+
+    expect(turn.policyL0).toBe(policyL0)
+    expect(turn.learnedL1).toBe(learnedL1)
+    expect(turn.learnedL2).toBe(learnedL2)
+  })
+
+  it('changes only the tier digests affected by each prompt ingredient', () => {
+    const baseContext = makeStepContext({
+      promptDate: '2026-07-24',
+      suiteContext: 'Checkout suite',
+      knowledgePolicyL0: 'Policy A',
+      knowledgeBriefL1: 'Caution A',
+      knowledgeBriefL2: 'Procedure A',
+    })
+    const base = captureServedPromptTurn(baseContext, 0, 0)
+    const policyChanged = captureServedPromptTurn(
+      { ...baseContext, knowledgePolicyL0: 'Policy B' },
+      0,
+      0,
+    )
+    const l1Changed = captureServedPromptTurn(
+      { ...baseContext, knowledgeBriefL1: 'Caution B' },
+      0,
+      0,
+    )
+    const l2Changed = captureServedPromptTurn(
+      { ...baseContext, knowledgeBriefL2: 'Procedure B' },
+      0,
+      0,
+    )
+    const contextChanged = captureServedPromptTurn(
+      { ...baseContext, suiteContext: 'Returns suite' },
+      0,
+      0,
+    )
+    const dateChanged = captureServedPromptTurn(
+      { ...baseContext, promptDate: '2026-07-25' },
+      0,
+      0,
+    )
+
+    expect(policyChanged.policyDigest).not.toBe(base.policyDigest)
+    expect(policyChanged.contextTierDigest).not.toBe(base.contextTierDigest)
+    expect(policyChanged.volatileTierDigest).toBe(base.volatileTierDigest)
+
+    for (const learnedChanged of [l1Changed, l2Changed]) {
+      expect(learnedChanged.policyDigest).toBe(base.policyDigest)
+      expect(learnedChanged.contextTierDigest).toBe(base.contextTierDigest)
+      expect(learnedChanged.volatileTierDigest).not.toBe(base.volatileTierDigest)
+    }
+
+    expect(contextChanged.policyDigest).toBe(base.policyDigest)
+    expect(contextChanged.contextTierDigest).not.toBe(base.contextTierDigest)
+    expect(contextChanged.volatileTierDigest).toBe(base.volatileTierDigest)
+
+    expect(dateChanged.policyDigest).toBe(base.policyDigest)
+    expect(dateChanged.contextTierDigest).toBe(base.contextTierDigest)
+    expect(dateChanged.volatileTierDigest).not.toBe(base.volatileTierDigest)
   })
 })
