@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
+  chownSync,
   closeSync,
   existsSync,
   fchmodSync,
@@ -464,12 +465,22 @@ const REVERT_MODES = [
   0o1600,
 ] as const
 
+// Files inherit their group from the containing directory. When TMPDIR is unset the
+// system temporary root belongs to a group this process is not in, and the kernel then
+// silently drops setgid and sticky bits from chmod, so an adversarial high-bit revert
+// would never actually land. Bind the fixture root to the process group instead.
+function credentialRoot(): string {
+  const root = tempRoot()
+  chownSync(root, -1, process.getgid?.() ?? -1)
+  return root
+}
+
 describe('credential-file mode confirmation fails closed', () => {
   for (const revertMode of REVERT_MODES) {
     it.skipIf(isWindows)(
       `refuses a retained secrets file reverted to ${octal(revertMode)} on the same inode`,
       () => {
-        const root = tempRoot()
+        const root = credentialRoot()
         const plan = secretsPlan(root)
         const bytes = 'API_KEY=abc\n'
         writeFileSync(plan.path, bytes, { mode: 0o644 })
@@ -489,7 +500,7 @@ describe('credential-file mode confirmation fails closed', () => {
   }
 
   it.skipIf(isWindows)('refuses a reverted zero-byte retained secrets file', () => {
-    const root = tempRoot()
+    const root = credentialRoot()
     const plan = secretsPlan(root)
     writeFileSync(plan.path, '', { mode: 0o644 })
     const inode = lstatSync(plan.path).ino
@@ -508,7 +519,7 @@ describe('credential-file mode confirmation fails closed', () => {
   it.skipIf(isWindows)(
     'refuses a revert on a destination that already carried the requested mode',
     () => {
-      const root = tempRoot()
+      const root = credentialRoot()
       const plan = secretsPlan(root)
       const bytes = 'API_KEY=abc\n'
       writeFileSync(plan.path, bytes, { mode: 0o600 })
@@ -527,7 +538,7 @@ describe('credential-file mode confirmation fails closed', () => {
   )
 
   it.skipIf(isWindows)('refuses a revert applied through a second descriptor', () => {
-    const root = tempRoot()
+    const root = credentialRoot()
     const plan = secretsPlan(root)
     const bytes = 'API_KEY=abc\n'
     writeFileSync(plan.path, bytes, { mode: 0o644 })
@@ -552,7 +563,7 @@ describe('credential-file mode confirmation fails closed', () => {
   it.skipIf(isWindows)(
     'names the destination, both octal modes, and a remedy when the mode does not land',
     () => {
-      const root = tempRoot()
+      const root = credentialRoot()
       const plan = secretsPlan(root)
       writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
 
@@ -576,7 +587,7 @@ describe('credential-file mode confirmation fails closed', () => {
   )
 
   it.skipIf(isWindows)('never confirms a retained plan that declares no mode', () => {
-    const root = tempRoot()
+    const root = credentialRoot()
     const path = join(root, '.env')
     writeFileSync(path, 'EXISTING=1\n', { mode: 0o640 })
 
@@ -614,7 +625,7 @@ describe('credential-file mode confirmation fails closed', () => {
       `refuses a created secrets file whose temporary is reverted to ${octal(revertMode)} `
       + 'before any content is written',
       () => {
-        const root = tempRoot()
+        const root = credentialRoot()
         const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
 
         expect(() => writeScaffoldFileAtomic(plan, {
@@ -629,11 +640,34 @@ describe('credential-file mode confirmation fails closed', () => {
     )
   }
 
+  it.skipIf(isWindows)(
+    'refuses a pre-content revert before any content byte is written or published',
+    () => {
+      const root = credentialRoot()
+      const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
+      let observedAtPublish: { mode: number, size: number } | undefined
+
+      expect(() => writeScaffoldFileAtomic(plan, {
+        afterTemporaryModeApply: (temporary) => {
+          chmodSync(temporary, 0o644)
+        },
+        beforeExclusivePublish: () => {
+          const temporary = locateTemporary(root)
+          observedAtPublish = { mode: modeBits(temporary), size: lstatSync(temporary).size }
+        },
+      })).toThrow(UNAPPLIED_MODE_REASON)
+
+      expect(observedAtPublish).toBeUndefined()
+      expect(existsSync(plan.path)).toBe(false)
+      expect(initTemporaries(root)).toEqual([])
+    },
+  )
+
   for (const revertMode of [0o644, 0o666] as const) {
     it.skipIf(isWindows)(
       `refuses a temporary reverted to ${octal(revertMode)} inside the publish window`,
       () => {
-        const root = tempRoot()
+        const root = credentialRoot()
         const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
 
         expect(() => writeScaffoldFileAtomic(plan, {
@@ -651,7 +685,7 @@ describe('credential-file mode confirmation fails closed', () => {
   it.skipIf(isWindows)(
     'refuses a publish-window temporary substitution whose mode is exactly 0600',
     () => {
-      const root = tempRoot()
+      const root = credentialRoot()
       const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
 
       expect(() => writeScaffoldFileAtomic(plan, {
@@ -669,7 +703,7 @@ describe('credential-file mode confirmation fails closed', () => {
   )
 
   it.skipIf(isWindows)('never confirms a creation plan that declares no mode', () => {
-    const root = tempRoot()
+    const root = credentialRoot()
     const path = join(root, 'scaffold.yaml')
 
     expect(writeScaffoldFileAtomic({ root, path, content: 'first\n', force: false }, {

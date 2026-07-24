@@ -43,6 +43,7 @@ export interface InitFilesystemHooks {
   beforeExclusivePublish?: (path: string) => void
   beforeRetainedModeOpen?: (path: string) => void
   afterRetainedModeOpen?: (path: string) => void
+  afterTemporaryModeApply?: (temporaryPath: string) => void
 }
 
 const PERMISSION_MASK = 0o7777
@@ -315,7 +316,15 @@ function unlinkIfPresent(path: string): void {
   }
 }
 
-function writeDurableTemporary(plan: InitPathPlan): string {
+interface DurableTemporary {
+  temporary: string
+  confirmed?: { dev: number, ino: number }
+}
+
+function writeDurableTemporary(
+  plan: InitPathPlan,
+  hooks: InitFilesystemHooks = {},
+): DurableTemporary {
   const path = resolve(plan.path)
   const temporary = resolve(
     dirname(path),
@@ -324,20 +333,54 @@ function writeDurableTemporary(plan: InitPathPlan): string {
   let fd: number | undefined
   try {
     fd = openSync(temporary, 'wx', plan.mode ?? 0o666)
+    let confirmed: { dev: number, ino: number } | undefined
     if (plan.mode !== undefined && MODE_ENFORCEMENT_SUPPORTED) {
-      // The creation mode is masked by the process umask; harden the descriptor
-      // before any content reaches the inode that exclusive publication links.
-      fchmodSync(fd, plan.mode & PERMISSION_MASK)
+      // The creation mode is masked by the process umask; harden the descriptor and
+      // re-read the bits before any content reaches the inode, then record that
+      // inode so publication can prove it linked the file it confirmed.
+      const requested = plan.mode & PERMISSION_MASK
+      fchmodSync(fd, requested)
+      hooks.afterTemporaryModeApply?.(temporary)
+      const opened = confirmDescriptorMode(fd, path, requested)
+      confirmed = { dev: opened.dev, ino: opened.ino }
     }
     writeFileSync(fd, plan.content)
     fsyncSync(fd)
     closeSync(fd)
     fd = undefined
-    return temporary
+    return { temporary, confirmed }
   } catch (error) {
     if (fd !== undefined) closeSync(fd)
     unlinkIfPresent(temporary)
     throw error
+  }
+}
+
+function confirmPublishedDestination(
+  path: string,
+  requested: number,
+  identity: { dev: number, ino: number },
+): void {
+  const { O_RDONLY, O_NOFOLLOW = 0 } = fsConstants
+  let fd: number | undefined
+  try {
+    fd = openSync(path, O_RDONLY | O_NOFOLLOW)
+    const published = confirmDescriptorMode(fd, path, requested)
+    if (!published.isFile()) {
+      refuseModeEnforcement(path, 'on a non-regular destination')
+    }
+    if (
+      published.dev !== identity.dev
+      || published.ino !== identity.ino
+      || published.nlink !== 1
+    ) {
+      refuseModeEnforcement(path, 'because the destination changed at publication')
+    }
+  } catch (error) {
+    unlinkIfPresent(path)
+    throw error
+  } finally {
+    if (fd !== undefined) closeSync(fd)
   }
 }
 
@@ -347,7 +390,7 @@ function publishExclusive(
 ): InitFileResult {
   const path = resolve(plan.path)
   const parent = dirname(path)
-  const temporary = writeDurableTemporary(plan)
+  const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
   try {
     hooks.beforeExclusivePublish?.(path)
     try {
@@ -361,6 +404,9 @@ function publishExclusive(
       throw error
     }
     unlinkSync(temporary)
+    if (confirmed !== undefined && plan.mode !== undefined) {
+      confirmPublishedDestination(path, plan.mode & PERMISSION_MASK, confirmed)
+    }
     bestEffortFsyncDirectory(parent)
     return { path, outcome: 'created' }
   } finally {
@@ -371,7 +417,7 @@ function publishExclusive(
 function replaceRegularAtomic(plan: InitPathPlan): InitFileResult {
   const path = resolve(plan.path)
   const parent = dirname(path)
-  const temporary = writeDurableTemporary(plan)
+  const { temporary } = writeDurableTemporary(plan)
   try {
     const classification = classifyInitPath(path, plan.root)
     if (classification !== 'regular') {
