@@ -124,6 +124,52 @@ describe('volatile tier — date-granularity stamp (CTXB-01 / D-07)', () => {
     // Same calendar day → identical bytes (minute/second precision would bust the KV cache).
     expect(afternoon).toBe(morning)
   })
+
+  it('uses one bound UTC date byte-exactly across a midnight boundary', () => {
+    const ctx = makeContext({ promptDate: '2026-07-24' })
+    vi.useFakeTimers()
+
+    vi.setSystemTime(new Date('2026-07-24T23:59:59.999Z'))
+    const beforeMidnight = contentText((buildVolatileTier(ctx) as SystemModelMessage).content)
+
+    vi.setSystemTime(new Date('2026-07-25T00:00:00.001Z'))
+    const afterMidnight = contentText((buildVolatileTier(ctx) as SystemModelMessage).content)
+
+    expect(beforeMidnight).toContain('Current date: 2026-07-24')
+    expect(afterMidnight).toBe(beforeMidnight)
+  })
+
+  it('keeps every turn for one StepContext on its bound date', () => {
+    const ctx = makeContext({ promptDate: '2026-07-24' })
+    vi.useFakeTimers()
+
+    const turnDates = [
+      '2026-07-24T00:00:00.000Z',
+      '2026-07-25T12:34:56.789Z',
+      '2026-08-01T23:59:59.999Z',
+    ].map((now) => {
+      vi.setSystemTime(new Date(now))
+      return contentText((buildVolatileTier(ctx) as SystemModelMessage).content)
+    })
+
+    expect(new Set(turnDates)).toEqual(new Set([turnDates[0]]))
+    expect(turnDates[0]).toContain('Current date: 2026-07-24')
+  })
+
+  it('retains the current UTC-date fallback for legacy callers without a bound date', () => {
+    const ctx = makeContext()
+    vi.useFakeTimers()
+
+    vi.setSystemTime(new Date('2026-07-24T23:59:59.999Z'))
+    const beforeMidnight = contentText((buildVolatileTier(ctx) as SystemModelMessage).content)
+
+    vi.setSystemTime(new Date('2026-07-25T00:00:00.001Z'))
+    const afterMidnight = contentText((buildVolatileTier(ctx) as SystemModelMessage).content)
+
+    expect(beforeMidnight).toContain('Current date: 2026-07-24')
+    expect(afterMidnight).toContain('Current date: 2026-07-25')
+    expect(afterMidnight).not.toBe(beforeMidnight)
+  })
 })
 
 describe('per-turn state placement (CTXB-01 / D-04/D-09)', () => {
