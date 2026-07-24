@@ -1,4 +1,4 @@
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 import { readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { stringify } from 'yaml'
@@ -10,6 +10,7 @@ import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
   DEFAULT_AGENT_QA_RUNTIME_DIR,
+  getAgentQaVersion,
 } from '@vostride/agent-qa-core'
 import { getProvider, listProviders } from '@vostride/agent-qa-model'
 import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
@@ -27,7 +28,14 @@ import {
   type InitPathPlan,
 } from './init-filesystem.js'
 
-type Platform = 'web' | 'android' | 'ios' | 'web+android' | 'web+ios'
+export const SUPPORTED_INIT_PLATFORMS = [
+  'web',
+  'android',
+  'ios',
+  'web+android',
+  'web+ios',
+] as const
+type Platform = (typeof SUPPORTED_INIT_PLATFORMS)[number]
 type PlatformCapability = 'web' | 'mobile'
 type MobileRuntime = 'android' | 'ios'
 type InitPlatformSelection = {
@@ -85,6 +93,13 @@ export const LLM_SETUP_CHOICES: Array<{ value: LLMSetupChoice; name: string; des
   },
 ]
 
+export function parseInitPlatform(value: string): Platform {
+  if ((SUPPORTED_INIT_PLATFORMS as readonly string[]).includes(value)) {
+    return value as Platform
+  }
+  throw new Error(`Unsupported init platform "${value}"`)
+}
+
 function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSelection {
   if (typeof platform !== 'string') {
     return {
@@ -93,7 +108,8 @@ function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSe
     }
   }
 
-  switch (platform) {
+  const selectedPlatform = parseInitPlatform(platform)
+  switch (selectedPlatform) {
     case 'web':
       return { capabilities: ['web'], mobileRuntimes: [] }
     case 'android':
@@ -104,6 +120,10 @@ function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSe
       return { capabilities: ['web', 'mobile'], mobileRuntimes: ['android'] }
     case 'web+ios':
       return { capabilities: ['web', 'mobile'], mobileRuntimes: ['ios'] }
+    default: {
+      const exhaustivePlatform: never = selectedPlatform
+      throw new Error(`Unsupported init platform "${String(exhaustivePlatform)}"`)
+    }
   }
 }
 
@@ -239,11 +259,12 @@ async function getJson(url) {
   return response.json()
 }
 
-function escapeEnvValue(value) {
+function serializeEnvValue(value) {
   return value
-    .replace(/\\r?\\n/g, ' ')
     .replace(/\\\\/g, '\\\\\\\\')
     .replace(/"/g, '\\\\"')
+    .replace(/\\r/g, '\\\\r')
+    .replace(/\\n/g, '\\\\n')
 }
 
 const storyIds = await getJson(topStoriesUrl)
@@ -259,7 +280,7 @@ if (!title) {
 }
 
 await writeFile('/tmp/agent-qa.env', [
-  \`HN_FIRST_STORY_TITLE="\${escapeEnvValue(title)}"\`,
+  \`HN_FIRST_STORY_TITLE="\${serializeEnvValue(title)}"\`,
   \`HN_FIRST_STORY_ID=\${firstStoryId}\`,
   '',
 ].join('\\n'), 'utf-8')
@@ -294,17 +315,20 @@ function isSubscriptionProvider(provider: string): boolean {
   return getProvider(provider)?.subscription === true
 }
 
-function readAgentQaPackageVersion(): string | null {
-  try {
-    const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as Record<string, unknown>
-    return typeof manifest.version === 'string' && manifest.version.trim() ? manifest.version.trim() : null
-  } catch {
-    return null
+export function installedAgentQaVersion(): string {
+  const version = getAgentQaVersion().trim()
+  const exactSemver =
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u
+  if (!exactSemver.test(version) || version === '0.0.0') {
+    throw new Error(
+      'Unable to resolve the installed agent-qa version; refusing to write a dependency range.',
+    )
   }
+  return version
 }
 
 function subscriptionAuthDependencyRange(): string {
-  return readAgentQaPackageVersion() ?? '*'
+  return installedAgentQaVersion()
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
@@ -627,8 +651,7 @@ memory/index/
 memory/queue/
 .lease
 .epoch
-# binary blobs; flip to thumbnails via knowledge.commitArtifacts
-# (artifact inventories are committed and live OUTSIDE artifacts/)
+# binary blobs; artifact inventories are committed and live OUTSIDE artifacts/
 **/artifacts/
 skills/.staging/
 `
@@ -698,8 +721,7 @@ directory enforces the split:
 - \`memory/queue/\`, \`.lease\`, \`.epoch\` — machine-local curation runtime state.
 - \`**/artifacts/\` — binary blobs (screenshots, DOM snapshots, HAR). Excluded
   from git by default; artifact *inventories* are text, live outside
-  \`artifacts/\`, and are committed. Set \`knowledge.commitArtifacts: thumbnails\`
-  in the agent-qa config to commit small thumbnails for in-PR visual context.
+  \`artifacts/\`, and are committed.
 - \`skills/.staging/\` — pending skill writes awaiting approval.
 
 Everything else — every \`*.md\` and \`*.json\`/\`*.jsonl\` of distilled or
@@ -776,7 +798,13 @@ function initNextSteps(platform: InitPlatformInput): Array<{ command: string; de
 
   steps.push(
     { command: 'agent-qa doctor', description: 'Verify your environment' },
-    { command: 'Edit tests/example-pass.yaml', description: 'Write your first test' },
+  )
+  if (hasWeb(platform)) {
+    steps.push({ command: 'Edit tests/example-pass.yaml', description: 'Write your first test' })
+  } else {
+    steps.push({ command: 'Edit agent-qa.local.yaml', description: 'Bind your mobile app' })
+  }
+  steps.push(
     { command: 'agent-qa run', description: 'Run all tests' },
     { command: 'agent-qa dashboard', description: 'View results in browser' },
   )
@@ -841,6 +869,11 @@ function buildScaffoldFilePlans(
       force,
       true,
     ),
+  ]
+
+  if (!hasWeb(platform)) return plans
+
+  plans.push(
     scaffoldFilePlan(
       dir,
       join('tests', 'example-pass.yaml'),
@@ -853,9 +886,7 @@ function buildScaffoldFilePlans(
       buildExampleTest(platform, 'fail'),
       force,
     ),
-  ]
-
-  if (!hasWeb(platform)) return plans
+  )
 
   for (const test of AUTOMATION_EXERCISE_TESTS) {
     plans.push(scaffoldFilePlan(
@@ -963,7 +994,10 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
   const cmd = new Command('init')
     .description('Initialize a new agent-qa project')
     .option('--dir <path>', 'target directory', process.cwd())
-    .option('--platform <type>', 'platform to configure (web, android, ios, web+android, web+ios)')
+    .addOption(
+      new Option('--platform <type>', 'platform to configure')
+        .choices([...SUPPORTED_INIT_PLATFORMS]),
+    )
     .option('--skip-install', 'deprecated no-op; setup commands are shown after init')
     .option('--force', 'overwrite existing files')
     .action(async (opts) => {

@@ -163,7 +163,10 @@ async function runInit(
   hooks: Parameters<typeof createInitCommand>[0] = {},
 ): Promise<void> {
   const parent = new Command()
-  parent.addCommand(createInitCommand(hooks))
+  const init = createInitCommand(hooks)
+  parent.exitOverride()
+  init.exitOverride()
+  parent.addCommand(init)
   await parent.parseAsync(['node', 'test', 'init', ...args])
 }
 
@@ -1526,11 +1529,11 @@ skills/.staging/
       .toEqual([])
     expect(
       generatedResults
-        .filter(result => !result.path.endsWith('package.json'))
         .every(result => result.outcome === 'preserved'),
     ).toBe(true)
     const packageJsonCall = findWriteCallEndingWith('package.json')
-    expect(JSON.parse(String(packageJsonCall?.[1]))).toMatchObject({
+    expect(packageJsonCall).toBeUndefined()
+    expect(JSON.parse(packageJson)).toMatchObject({
       private: true,
       scripts: { test: 'vitest' },
       devDependencies: {
