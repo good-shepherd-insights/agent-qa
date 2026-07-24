@@ -456,7 +456,8 @@ export function buildVolatileTier(context: StepContext): SystemModelMessage {
   const parts: string[] = []
   const brief = renderStructuredBriefAsHypotheses(context)
   if (brief) parts.push(brief)
-  parts.push(`Current date: ${new Date().toISOString().slice(0, 10)}`)
+  const promptDate = context.promptDate ?? new Date().toISOString().slice(0, 10)
+  parts.push(`Current date: ${promptDate}`)
   return { role: 'system', content: parts.join('\n\n') }
 }
 

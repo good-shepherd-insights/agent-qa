@@ -139,6 +139,13 @@ export interface StepContext {
   /** BRIF-01 reader-provided clipping signal; empty/undefined means no signal is rendered. */
   knowledgeBriefTruncation?: string
   /**
+   * CR-08 immutable UTC date for planner prompt evidence, captured once per step as
+   * `YYYY-MM-DD`. When absent, direct legacy prompt-builder callers retain the current
+   * UTC-date fallback. Bound values cross this type unchanged; the production capture
+   * boundary validates the closed date form before persistence.
+   */
+  promptDate?: string
+  /**
    * D-12/D-13 working-memory channel (structured turn content). The run-scoped
    * `WorkingMemoryStore` set, injected verbatim as its own turn message by `composeTurnMessages`
    * — the second v2 channel replacing the retired single memory-context string. Phase 358
