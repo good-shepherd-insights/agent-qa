@@ -5,8 +5,12 @@
 // warning behavior, the token-composition logging (Pitfall 10), and the
 // sub-action-history "no visible change" warning (Pitfall 5). D-13 adds a re-run
 // context block surfaced to the planner (LOOP-03).
-import { asRef } from '@vostride/agent-qa-schema'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import {
+  asRef,
+  sha256hex,
+  type ScreenState,
+  type ServedPromptTurn,
+} from '@vostride/agent-qa-schema'
 import type { ModelMessage, SystemModelMessage } from 'ai'
 import type { Action } from '../platform.js'
 import type { StepContext, AssertionInput, ExtractorInput } from './types.js'
@@ -459,6 +463,80 @@ export function buildVolatileTier(context: StepContext): SystemModelMessage {
   const promptDate = context.promptDate ?? new Date().toISOString().slice(0, 10)
   parts.push(`Current date: ${promptDate}`)
   return { role: 'system', content: parts.join('\n\n') }
+}
+
+function isValidUtcPromptDate(value: string | undefined): value is string {
+  if (value === undefined) return false
+  const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.exec(value)
+  if (match === null) return false
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ]
+  return day <= daysInMonth[month - 1]
+}
+
+function exactSystemTierContent(
+  tier: SystemModelMessage,
+  tierName: 'context' | 'volatile',
+): string {
+  if (typeof tier.content !== 'string') {
+    throw new Error(`${tierName} prompt tier must render string content`)
+  }
+  return tier.content
+}
+
+/**
+ * Capture the exact prompt material assembled for one production planning turn.
+ *
+ * The step date must already be bound: evidence capture never samples the wall clock.
+ * Both tiers are rendered once through the same builders used by planner assembly, and
+ * their string contents plus the unmodified knowledge ingredients are snapshotted before
+ * any later policy or clock state can drift.
+ */
+export function captureServedPromptTurn(
+  context: StepContext,
+  ordinal: number,
+  turnOrdinal: number,
+): ServedPromptTurn {
+  if (!isValidUtcPromptDate(context.promptDate)) {
+    throw new Error(
+      'captureServedPromptTurn requires context.promptDate as a valid YYYY-MM-DD UTC date',
+    )
+  }
+
+  const contextTier = exactSystemTierContent(buildContextTier(context), 'context')
+  const volatileTier = exactSystemTierContent(buildVolatileTier(context), 'volatile')
+  const policyL0 = context.knowledgePolicyL0 ?? ''
+
+  return {
+    ordinal,
+    turnOrdinal,
+    runDate: context.promptDate,
+    policyL0,
+    learnedL1: context.knowledgeBriefL1 ?? '',
+    learnedL2: context.knowledgeBriefL2 ?? '',
+    contextTier,
+    volatileTier,
+    policyDigest: sha256hex(policyL0),
+    contextTierDigest: sha256hex(contextTier),
+    volatileTierDigest: sha256hex(volatileTier),
+  }
 }
 
 /**
