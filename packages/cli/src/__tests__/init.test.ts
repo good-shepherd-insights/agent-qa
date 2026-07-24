@@ -33,6 +33,7 @@ vi.mock('../commands/init-filesystem.js', async () => {
     content: string | Uint8Array
     force?: boolean
     preserveOnForce?: boolean
+    mode?: number
   }) => {
     const exists = fs.existsSync(plan.path)
     if (exists && (!plan.force || plan.preserveOnForce)) {
@@ -1164,6 +1165,126 @@ describe('init command', () => {
       (call) => (call[0] as string).endsWith('agent-qa.local.yaml'),
     )
     expect(localCall).toBeDefined()
+  })
+
+  describe('credential-file scaffold policy', () => {
+    const projectDir = '/tmp/test-project'
+    const envPath = join(projectDir, '.env')
+    const secretsPath = join(projectDir, '.env.secrets.local')
+
+    function scaffoldPlanFor(path: string) {
+      return mockWriteScaffoldFileAtomic.mock.calls.find(
+        ([plan]) => plan.path === path,
+      )?.[0]
+    }
+
+    async function runInitCollectingOutcomes(args: string[]) {
+      const outcomes: { path: string; outcome: string }[] = []
+      const written: string[] = []
+      await runInit(args, {
+        afterWrite: (result) => { written.push(result.path) },
+        onComplete: (results) => {
+          outcomes.push(...results.map(result => ({
+            path: result.path,
+            outcome: result.outcome as string,
+          })))
+        },
+      })
+      return { outcomes, written }
+    }
+
+    it('declares preservation for both env files and mode 0600 only for the secrets file', async () => {
+      await runInit(['--dir', projectDir, '--platform', 'web', '--skip-install'])
+
+      const envPlan = scaffoldPlanFor(envPath)
+      const secretsPlan = scaffoldPlanFor(secretsPath)
+      expect(envPlan?.preserveOnForce).toBe(true)
+      expect(envPlan?.mode).toBeUndefined()
+      expect(secretsPlan?.preserveOnForce).toBe(true)
+      expect(secretsPlan?.mode).toBe(0o600)
+    })
+
+    it('keeps the same credential policy under --force', async () => {
+      mockExistsSync.mockImplementation((p) => (p as string).endsWith('agent-qa.config.yaml'))
+
+      await runInit(['--dir', projectDir, '--platform', 'web', '--force', '--skip-install'])
+
+      const envPlan = scaffoldPlanFor(envPath)
+      const secretsPlan = scaffoldPlanFor(secretsPath)
+      expect(envPlan?.force).toBe(true)
+      expect(envPlan?.preserveOnForce).toBe(true)
+      expect(envPlan?.mode).toBeUndefined()
+      expect(secretsPlan?.force).toBe(true)
+      expect(secretsPlan?.preserveOnForce).toBe(true)
+      expect(secretsPlan?.mode).toBe(0o600)
+    })
+
+    for (const [label, bytes] of [['empty', ''], ['populated', 'API_KEY=abc\n']] as const) {
+      it(`never rewrites ${label} existing credential files under --force`, async () => {
+        mockExistsSync.mockImplementation((p) => {
+          const path = p as string
+          return path === envPath || path === secretsPath
+            || path.endsWith('agent-qa.config.yaml')
+        })
+        mockReadFileSync.mockImplementation((p) => {
+          const path = String(p)
+          if (path.endsWith('package.json')) return '{"version":"0.1.1"}'
+          if (path === envPath || path === secretsPath) return bytes
+          return ''
+        })
+
+        const { outcomes, written } = await runInitCollectingOutcomes(
+          ['--dir', projectDir, '--platform', 'web', '--force', '--skip-install'],
+        )
+
+        expect(mockWriteFileSync.mock.calls.some(call => call[0] === envPath)).toBe(false)
+        expect(mockWriteFileSync.mock.calls.some(call => call[0] === secretsPath)).toBe(false)
+        expect(written).not.toContain(envPath)
+        expect(written).not.toContain(secretsPath)
+
+        const paths = outcomes.map(outcome => outcome.path)
+        expect(paths[0]).toBe(envPath)
+        expect(paths[1]).toBe(secretsPath)
+        expect(outcomes[0]?.outcome).toBe('preserved')
+        expect(outcomes[1]?.outcome).toBe('preserved')
+
+        const output = consoleOutput()
+        expect(output).toContain('Preserved:\n    • .env\n    • .env.secrets.local')
+      })
+    }
+
+    it('still creates both absent credential files empty and in scaffold order', async () => {
+      const { outcomes } = await runInitCollectingOutcomes(
+        ['--dir', projectDir, '--platform', 'web', '--skip-install'],
+      )
+
+      const paths = outcomes.map(outcome => outcome.path)
+      expect(paths[0]).toBe(envPath)
+      expect(paths[1]).toBe(secretsPath)
+      expect(outcomes[0]?.outcome).toBe('created')
+      expect(outcomes[1]?.outcome).toBe('created')
+
+      const envWrite = mockWriteFileSync.mock.calls.find(call => call[0] === envPath)
+      const secretsWrite = mockWriteFileSync.mock.calls.find(call => call[0] === secretsPath)
+      expect(envWrite?.[1]).toBe('')
+      expect(secretsWrite?.[1]).toBe('')
+    })
+
+    it('leaves non-credential scaffold files force-updatable', async () => {
+      mockExistsSync.mockImplementation((p) => {
+        const path = p as string
+        return path === envPath || path === secretsPath
+          || path.endsWith('agent-qa.config.yaml')
+          || path.endsWith('agent-qa.local.yaml')
+          || path.endsWith('hooks.yaml')
+      })
+
+      await runInit(['--dir', projectDir, '--platform', 'web', '--force', '--skip-install'])
+
+      expect(findWriteCallEndingWith('agent-qa.local.yaml')).toBeDefined()
+      expect(findWriteCallEndingWith('hooks.yaml')).toBeDefined()
+      expect(findWriteCallEndingWith('agent-qa.config.yaml')).toBeDefined()
+    })
   })
 
   it('does not auto-install browser support for web projects', async () => {
