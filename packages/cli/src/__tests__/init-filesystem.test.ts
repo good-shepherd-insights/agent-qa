@@ -1,9 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import {
+  chmodSync,
+  closeSync,
+  fchmodSync,
   linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -432,5 +436,159 @@ describe('credential-file permission and byte preservation', () => {
         rmSync(plan.path)
       },
     })).toThrow(/destination disappeared/)
+  })
+})
+
+function modeBits(path: string): number {
+  return lstatSync(path).mode & 0o7777
+}
+
+function octal(mode: number): string {
+  return mode.toString(8).padStart(4, '0')
+}
+
+const UNAPPLIED_MODE_REASON = /requested mode \d{4} was not applied/
+
+const REVERT_MODES = [
+  0o644,
+  0o666,
+  0o640,
+  0o604,
+  0o400,
+  0o700,
+  0o4600,
+  0o2600,
+  0o1600,
+] as const
+
+describe('credential-file mode confirmation fails closed', () => {
+  for (const revertMode of REVERT_MODES) {
+    it.skipIf(isWindows)(
+      `refuses a retained secrets file reverted to ${octal(revertMode)} on the same inode`,
+      () => {
+        const root = tempRoot()
+        const plan = secretsPlan(root)
+        const bytes = 'API_KEY=abc\n'
+        writeFileSync(plan.path, bytes, { mode: 0o644 })
+        const inode = lstatSync(plan.path).ino
+
+        expect(() => writeScaffoldFileAtomic(plan, {
+          afterRetainedModeOpen: () => {
+            chmodSync(plan.path, revertMode)
+          },
+        })).toThrow(UNAPPLIED_MODE_REASON)
+
+        expect(modeBits(plan.path)).toBe(revertMode)
+        expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
+        expect(lstatSync(plan.path).ino).toBe(inode)
+      },
+    )
+  }
+
+  it.skipIf(isWindows)('refuses a reverted zero-byte retained secrets file', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, '', { mode: 0o644 })
+    const inode = lstatSync(plan.path).ino
+
+    expect(() => writeScaffoldFileAtomic(plan, {
+      afterRetainedModeOpen: () => {
+        chmodSync(plan.path, 0o644)
+      },
+    })).toThrow(UNAPPLIED_MODE_REASON)
+
+    expect(modeBits(plan.path)).toBe(0o644)
+    expect(readFileSync(plan.path, 'utf8')).toBe('')
+    expect(lstatSync(plan.path).ino).toBe(inode)
+  })
+
+  it.skipIf(isWindows)(
+    'refuses a revert on a destination that already carried the requested mode',
+    () => {
+      const root = tempRoot()
+      const plan = secretsPlan(root)
+      const bytes = 'API_KEY=abc\n'
+      writeFileSync(plan.path, bytes, { mode: 0o600 })
+      const inode = lstatSync(plan.path).ino
+
+      expect(() => writeScaffoldFileAtomic(plan, {
+        afterRetainedModeOpen: () => {
+          chmodSync(plan.path, 0o644)
+        },
+      })).toThrow(UNAPPLIED_MODE_REASON)
+
+      expect(modeBits(plan.path)).toBe(0o644)
+      expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
+      expect(lstatSync(plan.path).ino).toBe(inode)
+    },
+  )
+
+  it.skipIf(isWindows)('refuses a revert applied through a second descriptor', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    const bytes = 'API_KEY=abc\n'
+    writeFileSync(plan.path, bytes, { mode: 0o644 })
+    const inode = lstatSync(plan.path).ino
+
+    expect(() => writeScaffoldFileAtomic(plan, {
+      afterRetainedModeOpen: () => {
+        const fd = openSync(plan.path, 'r')
+        try {
+          fchmodSync(fd, 0o644)
+        } finally {
+          closeSync(fd)
+        }
+      },
+    })).toThrow(UNAPPLIED_MODE_REASON)
+
+    expect(modeBits(plan.path)).toBe(0o644)
+    expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
+    expect(lstatSync(plan.path).ino).toBe(inode)
+  })
+
+  it.skipIf(isWindows)(
+    'names the destination, both octal modes, and a remedy when the mode does not land',
+    () => {
+      const root = tempRoot()
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+      let message = ''
+      try {
+        writeScaffoldFileAtomic(plan, {
+          afterRetainedModeOpen: () => {
+            chmodSync(plan.path, 0o644)
+          },
+        })
+      } catch (error) {
+        message = (error as Error).message
+      }
+
+      expect(message).not.toBe('')
+      expect(message).toContain(plan.path)
+      expect(message).toContain('0600')
+      expect(message).toContain('0644')
+      expect(message).toContain('store POSIX permissions')
+    },
+  )
+
+  it.skipIf(isWindows)('never confirms a retained plan that declares no mode', () => {
+    const root = tempRoot()
+    const path = join(root, '.env')
+    writeFileSync(path, 'EXISTING=1\n', { mode: 0o640 })
+
+    expect(writeScaffoldFileAtomic({
+      root,
+      path,
+      content: '',
+      force: true,
+      preserveOnForce: true,
+    }, {
+      afterRetainedModeOpen: () => {
+        throw new Error('retained mode confirmation must not run without a declared mode')
+      },
+    })).toEqual({ path, outcome: 'preserved' })
+    expect(readFileSync(path, 'utf8')).toBe('EXISTING=1\n')
+    expect(modeBits(path)).toBe(0o640)
   })
 })
