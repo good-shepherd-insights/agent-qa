@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   closeSync,
+  existsSync,
   fchmodSync,
   linkSync,
   lstatSync,
@@ -9,9 +10,11 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -590,5 +593,91 @@ describe('credential-file mode confirmation fails closed', () => {
     })).toEqual({ path, outcome: 'preserved' })
     expect(readFileSync(path, 'utf8')).toBe('EXISTING=1\n')
     expect(modeBits(path)).toBe(0o640)
+  })
+
+  function initTemporaries(directory: string): string[] {
+    return readdirSync(directory).filter(entry => entry.includes('.agent-qa-init-'))
+  }
+
+  function locateTemporary(directory: string): string {
+    const entries = initTemporaries(directory)
+    if (entries.length !== 1) {
+      throw new Error(
+        `expected exactly one init temporary in ${directory}, found ${entries.length}`,
+      )
+    }
+    return join(directory, entries[0]!)
+  }
+
+  for (const revertMode of [0o644, 0o666, 0o2600] as const) {
+    it.skipIf(isWindows)(
+      `refuses a created secrets file whose temporary is reverted to ${octal(revertMode)} `
+      + 'before any content is written',
+      () => {
+        const root = tempRoot()
+        const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
+
+        expect(() => writeScaffoldFileAtomic(plan, {
+          afterTemporaryModeApply: (temporary) => {
+            chmodSync(temporary, revertMode)
+          },
+        })).toThrow(UNAPPLIED_MODE_REASON)
+
+        expect(existsSync(plan.path)).toBe(false)
+        expect(initTemporaries(root)).toEqual([])
+      },
+    )
+  }
+
+  for (const revertMode of [0o644, 0o666] as const) {
+    it.skipIf(isWindows)(
+      `refuses a temporary reverted to ${octal(revertMode)} inside the publish window`,
+      () => {
+        const root = tempRoot()
+        const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
+
+        expect(() => writeScaffoldFileAtomic(plan, {
+          beforeExclusivePublish: () => {
+            chmodSync(locateTemporary(root), revertMode)
+          },
+        })).toThrow(UNAPPLIED_MODE_REASON)
+
+        expect(existsSync(plan.path)).toBe(false)
+        expect(initTemporaries(root)).toEqual([])
+      },
+    )
+  }
+
+  it.skipIf(isWindows)(
+    'refuses a publish-window temporary substitution whose mode is exactly 0600',
+    () => {
+      const root = tempRoot()
+      const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
+
+      expect(() => writeScaffoldFileAtomic(plan, {
+        beforeExclusivePublish: () => {
+          const temporary = locateTemporary(root)
+          unlinkSync(temporary)
+          writeFileSync(temporary, 'substitute\n')
+          chmodSync(temporary, 0o600)
+        },
+      })).toThrow(/destination changed at publication/)
+
+      expect(existsSync(plan.path)).toBe(false)
+      expect(initTemporaries(root)).toEqual([])
+    },
+  )
+
+  it.skipIf(isWindows)('never confirms a creation plan that declares no mode', () => {
+    const root = tempRoot()
+    const path = join(root, 'scaffold.yaml')
+
+    expect(writeScaffoldFileAtomic({ root, path, content: 'first\n', force: false }, {
+      afterTemporaryModeApply: () => {
+        throw new Error('creation mode confirmation must not run without a declared mode')
+      },
+    })).toEqual({ path, outcome: 'created' })
+    expect(readFileSync(path, 'utf8')).toBe('first\n')
+    expect(initTemporaries(root)).toEqual([])
   })
 })
