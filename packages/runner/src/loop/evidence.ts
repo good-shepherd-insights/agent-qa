@@ -26,6 +26,7 @@ import type {
   DeclaredModelProfile,
   InterpolatedVariable,
   LocalEffectEvidence,
+  LosslessServedBriefProofV1,
   ModelIdentity,
   ModelCallRecord,
   PlanningFailureEvidence,
@@ -35,7 +36,9 @@ import type {
   ReadTrace,
   ScopeKey,
   ScreenState,
+  ServedAdmissionEvent,
   ServedBrief,
+  ServedPromptTurn,
   StagnationEvidence,
   StepEvidence,
   StepPlanSource,
@@ -298,6 +301,96 @@ export class EvidenceRecorder {
     this.toolSchemaDigest = options?.toolSchemaDigest
   }
 
+  private replaceServedBrief(next: ServedBrief): void {
+    const unsigned: ServedBrief = { ...next, briefDigest: '' }
+    this.servedBrief = {
+      ...unsigned,
+      briefDigest: computeBriefDigest(unsigned),
+    }
+  }
+
+  private losslessProof(): LosslessServedBriefProofV1 {
+    const proof = this.servedBrief.proof
+    if (proof === undefined) {
+      throw new Error('lossless served brief proof has not been initialized')
+    }
+    return proof
+  }
+
+  /**
+   * Upgrade this production recorder from the proof-less historical shape to a live lossless
+   * proof. The model-visible channel bytes stay unchanged; only the actual serving caps and
+   * empty chronological journals are introduced.
+   */
+  beginLosslessServedBrief(input: {
+    recordCap: number
+    combinedBudget: number
+  }): void {
+    this.replaceServedBrief({
+      ...this.servedBrief,
+      proof: {
+        schemaVersion: 1,
+        completeness: 'lossless',
+        recordCap: input.recordCap,
+        combinedBudget: input.combinedBudget,
+        admissionEvents: [],
+        promptTurns: [],
+      },
+      briefDigest: '',
+    })
+  }
+
+  /**
+   * Append observations drained from the production admission authority. Ordinals must remain
+   * contiguous across batches; validation occurs before mutation so a bad batch appends nothing.
+   */
+  recordServedAdmissionEvents(events: readonly ServedAdmissionEvent[]): void {
+    if (events.length === 0) return
+    const proof = this.losslessProof()
+    const firstOrdinal = proof.admissionEvents.length
+    let previousTurn = proof.admissionEvents.at(-1)?.turnOrdinal
+    for (const [index, event] of events.entries()) {
+      if (event.ordinal !== firstOrdinal + index) {
+        throw new Error('served admission event ordinal must be contiguous')
+      }
+      if (previousTurn !== undefined && event.turnOrdinal < previousTurn) {
+        throw new Error('served admission event turn ordinal must be nondecreasing')
+      }
+      previousTurn = event.turnOrdinal
+    }
+    this.replaceServedBrief({
+      ...this.servedBrief,
+      proof: {
+        ...proof,
+        admissionEvents: [
+          ...proof.admissionEvents,
+          ...events.map(event => ({ ...event })),
+        ],
+      },
+      briefDigest: '',
+    })
+  }
+
+  /** Append one exact production prompt snapshot and re-address the complete served proof. */
+  recordServedPromptTurn(turn: ServedPromptTurn): void {
+    const proof = this.losslessProof()
+    if (turn.ordinal !== proof.promptTurns.length) {
+      throw new Error('served prompt turn ordinal must be contiguous')
+    }
+    const previousTurn = proof.promptTurns.at(-1)?.turnOrdinal
+    if (previousTurn !== undefined && turn.turnOrdinal < previousTurn) {
+      throw new Error('served prompt turn ordinal must be nondecreasing')
+    }
+    this.replaceServedBrief({
+      ...this.servedBrief,
+      proof: {
+        ...proof,
+        promptTurns: [...proof.promptTurns, { ...turn }],
+      },
+      briefDigest: '',
+    })
+  }
+
   /** Append a §A8 SubActionEvidence. Returns its index (for attachStateAfter). */
   recordSubAction(input: RecordSubActionInput): number {
     const result: RecordedActionResult = toRecordedActionResult(input.result)
@@ -378,9 +471,12 @@ export class EvidenceRecorder {
       // direct-read or failure-caution evidence already served by an earlier turn in this step.
       channel2: [...this.servedBrief.channel2],
       channel3: [...this.servedBrief.channel3],
+      ...(this.servedBrief.proof === undefined
+        ? {}
+        : { proof: this.servedBrief.proof }),
       briefDigest: '',
     }
-    this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }
+    this.replaceServedBrief(served)
   }
 
   /**
@@ -395,7 +491,7 @@ export class EvidenceRecorder {
       channel3: [...this.servedBrief.channel3, ...cautions],
       briefDigest: '',
     }
-    this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }
+    this.replaceServedBrief(served)
   }
 
   /** Append successful Channel-2 direct reads and re-address the complete served brief. */
@@ -406,7 +502,7 @@ export class EvidenceRecorder {
       channel2: [...this.servedBrief.channel2, ...traces],
       briefDigest: '',
     }
-    this.servedBrief = { ...served, briefDigest: computeBriefDigest(served) }
+    this.replaceServedBrief(served)
   }
 
   /**
