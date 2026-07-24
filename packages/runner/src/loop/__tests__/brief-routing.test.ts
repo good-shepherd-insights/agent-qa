@@ -549,7 +549,10 @@ describe('live lossless served-brief proof (E2E-01 / CR-07 / CR-08)', () => {
           return { plan: makeActionPlan({ stepComplete: true }) }
         },
       },
-    }, makeStepContext({ testName: 'No-reader lossless proof' }))
+    }, makeStepContext({
+      testName: 'No-reader lossless proof',
+      testContext: 'Verify checkout without a bound knowledge reader.',
+    }))
 
     expect(result.status).toBe('passed')
     const served = guardLosslessServedBrief(result.evidence?.servedBrief)

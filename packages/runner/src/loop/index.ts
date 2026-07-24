@@ -90,7 +90,7 @@ import {
   redactSecretValue,
   resolveSecretTemplatesInValue,
 } from './secrets.js'
-import { estimateTokens } from './prompts.js'
+import { captureServedPromptTurn, estimateTokens } from './prompts.js'
 import { EvidenceRecorder, collapseAnnotation, projectLegacyTrace } from './evidence.js'
 import type { RecordSubActionInput } from './evidence.js'
 import { maskToolExchanges } from './mask-exchanges.js'
@@ -184,6 +184,14 @@ export async function executeStep(
   const gate = ports.visionGate ?? { attachImage: true, captureMode: 'full' as const, promptNote: '' }
   // D-11: the ONLY surviving resource backstop. Not a healing-attempts counter.
   const maxSubActions = ports.plannerConfig?.maxSubActions ?? 50
+  const promptDate = context.promptDate ?? new Date().toISOString().slice(0, 10)
+  context.promptDate = promptDate
+  const recordCap = ports.knowledgeBudgets?.recordCap ?? PROVISIONAL_DISTINCT_RECORD_CAP
+  const combinedBudget = (ports.knowledgeBudgets?.brief ?? PROVISIONAL_BRIEF_TOKEN_BUDGET)
+    + (ports.knowledgeBudgets?.caution ?? PROVISIONAL_CAUTION_TOKEN_BUDGET)
+    + (ports.beginMemoryTurn === undefined
+      ? 0
+      : (ports.knowledgeBudgets?.searchResults ?? PROVISIONAL_BRIEF_TOKEN_BUDGET))
   // D-10: MUTABLE (was const) so the measured async-gate/confirm await extends it in-flight — the
   // three usage sites (loop-top check, settle gate) re-read this closure variable each iteration,
   // so a slow human confirm can never fake a step timeout (RESEARCH Pitfall 5).
@@ -194,6 +202,8 @@ export async function executeStep(
   // present, so every recordSubAction append emits `subActionRecorded` live — the five call
   // sites stay untouched. Unbound ⇒ no callback (byte-identical to today, D-05).
   const recorder = new EvidenceRecorder({
+    scope: { tier: 'test', key: context.testName },
+    asOfBuild: ports.knowledgeAsOfBuild ?? 0,
     onSubActionRecorded: ports.events
       ? (evidence, index) => ports.events?.subActionRecorded(evidence, index)
       : undefined,
@@ -211,14 +221,23 @@ export async function executeStep(
   // D-17: one ledger object lives where turns live. A bound object is shared with Channel-2 tool
   // closures; otherwise this step-local instance still accounts for the frozen Channel-1 brief.
   const recordLedger = ports.recordLedger ?? createRecordLedger({
-    cap: ports.knowledgeBudgets?.recordCap ?? PROVISIONAL_DISTINCT_RECORD_CAP,
-    budget: (ports.knowledgeBudgets?.brief ?? PROVISIONAL_BRIEF_TOKEN_BUDGET)
-      + (ports.knowledgeBudgets?.caution ?? PROVISIONAL_CAUTION_TOKEN_BUDGET)
-      + (ports.beginMemoryTurn === undefined
-        ? 0
-        : (ports.knowledgeBudgets?.searchResults ?? PROVISIONAL_BRIEF_TOKEN_BUDGET)),
+    cap: recordCap,
+    budget: combinedBudget,
     seedRecords: [],
   })
+  recorder.beginLosslessServedBrief({ recordCap, combinedBudget })
+  recordLedger.beginStepEvidence?.()
+  let nextLiveTurnOrdinal = 0
+  let nextPromptOrdinal = 0
+  // Optional-port compatibility: historical LoopPorts doubles accept two arguments; the
+  // production memory wrapper accepts the additive third turn ordinal used by its journal.
+  const beginMemoryTurn = ports.beginMemoryTurn as
+    | ((
+        activeScope?: { tier: 'test'; key: string },
+        exposedIds?: readonly RecordId[],
+        turnOrdinal?: number,
+      ) => void)
+    | undefined
 
   // Phase 358 progress subsystem (CYCLE-01..03). Fresh per-step instances (the Plan 04
   // documented scope): the revisitation window is per-step bookkeeping, the stagnation tree
@@ -442,6 +461,10 @@ export async function executeStep(
     verdict: VerifierVerdict,
     error?: string,
   ): StepResult => {
+    // Capture any model-visible reads admitted immediately before a terminal return. Normal
+    // planner turns drain at their own boundary; this final drain is the no-loss backstop.
+    recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
+    recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
     // WM-01 masked snapshot (Pitfall 7 boundary 3): the whole served set snapshots into
     // StepEvidence.workingMemory with values masked (ports.masking.mask — identity pre-362),
     // BESIDE the brief. Unbound port ⇒ no snapshot (optional-port idiom).
@@ -1013,8 +1036,12 @@ export async function executeStep(
     }
 
     if (!procedureReplayed && !cached) {
+      const turnOrdinal = nextLiveTurnOrdinal
       // Safety context attachment point (loop.ts:265) — optional-chained (D-05).
       context = ports.safetyHooks?.runContext(context).context ?? context
+      // A safety hook may replace the context object. Re-bind the one date captured at step
+      // start so every live prompt byte snapshot and the actual planner call share it.
+      context.promptDate = promptDate
       // Knowledge-brief sourcing seam (D-12): source the full three-tier brief through the
       // optional KnowledgeHintReader port, mirroring the safetyHooks optional-chain idiom
       // above. In M1 `ports.knowledgeReader` is unbound, so this yields undefined and the
@@ -1047,10 +1074,17 @@ export async function executeStep(
       }
       // The brief rides every planning turn, so its distinct ids are already spent before any
       // agentic search/read or automatic failure caution can admit a record (Pitfall 9).
-      recordLedger.resetTurn(brief?.admissions ?? [])
+      recordLedger.resetTurn(brief?.admissions ?? [], {
+        surface: 'brief-line',
+        turnOrdinal,
+      })
       // D-11: reset the independent cumulative read-body counter only after the shared distinct-id
       // ledger has been reseeded for this turn. An unregistered Channel-2 surface leaves this absent.
-      ports.beginMemoryTurn?.(briefScope, brief?.lines.map((line) => line.id) ?? [])
+      beginMemoryTurn?.(
+        briefScope,
+        brief?.lines.map((line) => line.id) ?? [],
+        turnOrdinal,
+      )
       // D-13/D-16/D-17 Channel 3 has no agency: surface the staged records as failure-adjacent
       // observations inside the existing hypotheses frame, then clear them. Re-emphasizing an
       // id already present in Channel 1 is intentionally free — the planner should not have to
@@ -1074,7 +1108,10 @@ export async function executeStep(
           }
           recordCount++
           const metadata = admissionById.get(String(caution.id))
-          if (metadata !== undefined && recordLedger.admit(metadata).admitted) {
+          if (metadata !== undefined && recordLedger.admit(metadata, {
+            surface: 'caution',
+            turnOrdinal,
+          }).admitted) {
             injected.push(caution)
           } else {
             // Missing cost/source/cluster metadata is a fail-closed omission, never an unmetered
@@ -1103,11 +1140,17 @@ export async function executeStep(
       // unmetered fallback. Empty-slot omission is preserved: no staged hint ⇒ no section.
       if (procedureHintStaged) {
         const hint = procedureHintStaged
-        const admitted = recordLedger.admit(servingRecordMetadata({
-          id: hint.procedureId,
-          anchors: hint.anchors,
-          renderedCost: estimateTokens(hint.block),
-        })).admitted
+        const admitted = recordLedger.admit(
+          servingRecordMetadata({
+            id: hint.procedureId,
+            anchors: hint.anchors,
+            renderedCost: estimateTokens(hint.block),
+          }),
+          {
+            surface: 'procedure-hint',
+            turnOrdinal,
+          },
+        ).admitted
         if (admitted) {
           context.knowledgeBriefL2 = context.knowledgeBriefL2?.trim()
             ? `${context.knowledgeBriefL2}\n\n${hint.block}`
@@ -1132,6 +1175,15 @@ export async function executeStep(
       // D-09 active bulk-completion predicate — re-stated as volatile turn content each turn
       // (persisted once declared); the planner re-evaluates + cites, the verifier backstops.
       context.bulkCompletionPredicate = activePredicate
+      // The production ledger has already decided every automatic surface for this turn.
+      // Persist those exact decisions before snapshotting the exact tier bytes the planner
+      // is about to receive; Channel-2 events are appended after the call in tool order.
+      recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
+      recorder.recordServedPromptTurn(
+        captureServedPromptTurn(context, nextPromptOrdinal, turnOrdinal),
+      )
+      nextPromptOrdinal++
+      nextLiveTurnOrdinal++
       try {
         planResult = await withAbort(
           ports.planner.plan(stepInstruction, screenState, context, ports.abortSignal),
@@ -1139,6 +1191,7 @@ export async function executeStep(
         )
       } catch (planError: unknown) {
         recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
+        recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
         const abortDuringPlan = checkAbort()
         if (abortDuringPlan) return abortDuringPlan
         if (planError instanceof PlanningTurnError) {
@@ -1157,6 +1210,7 @@ export async function executeStep(
         return failure(displayMsg)
       }
       recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
+      recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
     }
 
     if (planResult!.tokenUsage) {
