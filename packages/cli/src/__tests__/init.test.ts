@@ -1471,6 +1471,9 @@ skills/.staging/
     expect(mockWriteFileSync).not.toHaveBeenCalled()
   })
 
+  // This exhaustive real-Git matrix creates and recovers one repository per
+  // mutation boundary. It finishes in about six seconds alone, but full Turbo
+  // runs co-schedule other filesystem-heavy suites, so keep a local 120s budget.
   it('recovers after every real write boundary while preserving completed bytes', async () => {
     vi.resetModules()
     vi.doUnmock('node:fs')
@@ -1560,5 +1563,5 @@ skills/.staging/
         actualFs.rmSync(repository, { recursive: true, force: true })
       }
     }
-  }, 30_000)
+  }, 120_000)
 })
