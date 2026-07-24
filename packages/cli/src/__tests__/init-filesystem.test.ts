@@ -1,8 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import {
+  linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -207,5 +210,227 @@ describe('safe init filesystem primitives', () => {
       + 'Move "memory/index/" after any negation, then rerun agent-qa init; no files were changed.',
     )
     expect(readFileSync(gitignorePath, 'utf8')).toBe(unsafeBytes)
+  })
+})
+
+const isWindows = process.platform === 'win32'
+
+function permissionBits(path: string): number {
+  return lstatSync(path).mode & 0o777
+}
+
+function secretsPlan(root: string, overrides: Partial<InitPathPlan> = {}): InitPathPlan {
+  return {
+    root,
+    path: join(root, '.env.secrets.local'),
+    content: 'must-never-be-written\n',
+    force: true,
+    preserveOnForce: true,
+    mode: 0o600,
+    ...overrides,
+  }
+}
+
+describe('credential-file permission and byte preservation', () => {
+  it.skipIf(isWindows)('creates a planned 0600 file exactly under an all-masking umask', () => {
+    const root = tempRoot()
+    const path = join(root, '.env.secrets.local')
+    const previousUmask = process.umask(0o777)
+    try {
+      expect(writeScaffoldFileAtomic({
+        root,
+        path,
+        content: '',
+        force: false,
+        mode: 0o600,
+      })).toEqual({ path, outcome: 'created' })
+    } finally {
+      process.umask(previousUmask)
+    }
+
+    expect(readFileSync(path, 'utf8')).toBe('')
+    expect(permissionBits(path)).toBe(0o600)
+  })
+
+  it.skipIf(isWindows)('creates a planned 0600 file exactly under an ordinary umask', () => {
+    const root = tempRoot()
+    const path = join(root, '.env.secrets.local')
+
+    expect(writeScaffoldFileAtomic({
+      root,
+      path,
+      content: 'API_KEY=abc\n',
+      force: false,
+      mode: 0o600,
+    })).toEqual({ path, outcome: 'created' })
+    expect(readFileSync(path, 'utf8')).toBe('API_KEY=abc\n')
+    expect(permissionBits(path)).toBe(0o600)
+  })
+
+  for (const [label, bytes] of [['empty', ''], ['populated', 'API_KEY=abc\n']] as const) {
+    it.skipIf(isWindows)(
+      `tightens a retained ${label} 0644 secrets file to 0600 without rewriting bytes`,
+      () => {
+        const root = tempRoot()
+        const plan = secretsPlan(root)
+        writeFileSync(plan.path, bytes, { mode: 0o644 })
+        expect(permissionBits(plan.path)).toBe(0o644)
+
+        expect(writeScaffoldFileAtomic(plan)).toEqual({
+          path: plan.path,
+          outcome: 'preserved',
+        })
+        expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
+        expect(permissionBits(plan.path)).toBe(0o600)
+      },
+    )
+  }
+
+  it.skipIf(isWindows)('leaves an already-0600 retained secrets file untouched', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o600 })
+    const before = lstatSync(plan.path)
+
+    expect(writeScaffoldFileAtomic(plan)).toEqual({
+      path: plan.path,
+      outcome: 'preserved',
+    })
+    const after = lstatSync(plan.path)
+    expect(readFileSync(plan.path, 'utf8')).toBe('API_KEY=abc\n')
+    expect(permissionBits(plan.path)).toBe(0o600)
+    expect(after.ino).toBe(before.ino)
+  })
+
+  it.skipIf(isWindows)('leaves permissions alone for a preserved plan without a mode', () => {
+    const root = tempRoot()
+    const path = join(root, '.env')
+    writeFileSync(path, 'EXISTING=1\n', { mode: 0o640 })
+
+    expect(writeScaffoldFileAtomic({
+      root,
+      path,
+      content: '',
+      force: true,
+      preserveOnForce: true,
+    })).toEqual({ path, outcome: 'preserved' })
+    expect(readFileSync(path, 'utf8')).toBe('EXISTING=1\n')
+    expect(permissionBits(path)).toBe(0o640)
+  })
+
+  it('preserves both credential files byte-for-byte under force', () => {
+    const root = tempRoot()
+    const envPath = join(root, '.env')
+    const secretsPath = join(root, '.env.secrets.local')
+    writeFileSync(envPath, 'BASE_URL=https://example.test\n')
+    writeFileSync(secretsPath, 'API_KEY=abc\n')
+
+    const outcomes = [
+      writeScaffoldFileAtomic({
+        root,
+        path: envPath,
+        content: '',
+        force: true,
+        preserveOnForce: true,
+      }),
+      writeScaffoldFileAtomic(secretsPlan(root)),
+    ]
+
+    expect(outcomes).toEqual([
+      { path: envPath, outcome: 'preserved' },
+      { path: secretsPath, outcome: 'preserved' },
+    ])
+    expect(readFileSync(envPath, 'utf8')).toBe('BASE_URL=https://example.test\n')
+    expect(readFileSync(secretsPath, 'utf8')).toBe('API_KEY=abc\n')
+  })
+
+  it.skipIf(isWindows)('refuses a symbolic-link or FIFO destination for a mode-bearing plan', () => {
+    const root = tempRoot()
+    const sentinel = join(root, 'sentinel.env')
+    writeFileSync(sentinel, 'API_KEY=abc\n', { mode: 0o644 })
+
+    const symlink = join(root, '.env.secrets.local')
+    symlinkSync(sentinel, symlink)
+    expect(() => writeScaffoldFileAtomic(secretsPlan(root)))
+      .toThrow('symbolic link')
+
+    const fifoRoot = tempRoot()
+    const fifo = join(fifoRoot, '.env.secrets.local')
+    execFileSync('mkfifo', [fifo], { stdio: 'pipe' })
+    expect(() => writeScaffoldFileAtomic(secretsPlan(fifoRoot))).toThrow('FIFO')
+
+    expect(readFileSync(sentinel, 'utf8')).toBe('API_KEY=abc\n')
+    expect(permissionBits(sentinel)).toBe(0o644)
+  })
+
+  it.skipIf(isWindows)('refuses a pre-existing multiply linked secrets inode', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+    const alias = join(root, 'alias.env')
+    linkSync(plan.path, alias)
+
+    expect(() => writeScaffoldFileAtomic(plan)).toThrow(/multiple hard links/)
+    expect(readFileSync(plan.path, 'utf8')).toBe('API_KEY=abc\n')
+    expect(permissionBits(plan.path)).toBe(0o644)
+    expect(permissionBits(alias)).toBe(0o644)
+  })
+
+  it.skipIf(isWindows)('refuses a same-type replacement raced in before the hardening open', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+    const decoy = join(root, 'decoy.env')
+    writeFileSync(decoy, 'RACER=1\n', { mode: 0o644 })
+
+    expect(() => writeScaffoldFileAtomic(plan, {
+      beforeRetainedModeOpen: () => {
+        renameSync(decoy, plan.path)
+      },
+    })).toThrow(/destination changed/)
+    expect(readFileSync(plan.path, 'utf8')).toBe('RACER=1\n')
+    expect(permissionBits(plan.path)).toBe(0o644)
+  })
+
+  it.skipIf(isWindows)('refuses a hard link created after the identity capture', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+    expect(() => writeScaffoldFileAtomic(plan, {
+      beforeRetainedModeOpen: () => {
+        linkSync(plan.path, join(root, 'alias.env'))
+      },
+    })).toThrow(/multiple hard links/)
+    expect(readFileSync(plan.path, 'utf8')).toBe('API_KEY=abc\n')
+    expect(permissionBits(plan.path)).toBe(0o644)
+  })
+
+  it.skipIf(isWindows)('refuses a path swap performed after the hardening open', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+    const decoy = join(root, 'decoy.env')
+    writeFileSync(decoy, 'SWAPPED=1\n', { mode: 0o644 })
+
+    expect(() => writeScaffoldFileAtomic(plan, {
+      afterRetainedModeOpen: () => {
+        renameSync(decoy, plan.path)
+      },
+    })).toThrow(/destination changed/)
+    expect(readFileSync(plan.path, 'utf8')).toBe('SWAPPED=1\n')
+    expect(permissionBits(plan.path)).toBe(0o644)
+  })
+
+  it.skipIf(isWindows)('refuses a destination that disappears after the identity capture', () => {
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+    expect(() => writeScaffoldFileAtomic(plan, {
+      beforeRetainedModeOpen: () => {
+        rmSync(plan.path)
+      },
+    })).toThrow(/destination disappeared/)
   })
 })
