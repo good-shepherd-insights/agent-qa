@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -38,7 +41,12 @@ export interface InitPreflightResult {
 
 export interface InitFilesystemHooks {
   beforeExclusivePublish?: (path: string) => void
+  beforeRetainedModeOpen?: (path: string) => void
+  afterRetainedModeOpen?: (path: string) => void
 }
+
+const PERMISSION_MASK = 0o7777
+const MODE_ENFORCEMENT_SUPPORTED = process.platform !== 'win32'
 
 export interface GitignoreProbe {
   path: string
@@ -216,20 +224,38 @@ function ensureSafeParentDirectories(file: string, planRoot?: string): void {
   }
 }
 
-export function classifyInitPath(
-  path: string,
-  root?: string,
-): 'missing' | 'regular' {
+interface InitPathInspection {
+  classification: 'missing' | 'regular'
+  dev?: number
+  ino?: number
+  nlink?: number
+  permissions?: number
+}
+
+function inspectInitPath(path: string, root?: string): InitPathInspection {
   const absolutePath = resolve(path)
   assertSafeParentComponents(absolutePath, root)
   const stat = lstatIfPresent(absolutePath)
-  if (stat === undefined) return 'missing'
+  if (stat === undefined) return { classification: 'missing' }
   if (!stat.isFile() || stat.isSymbolicLink()) {
     throw new Error(
       `Refusing init destination ${absolutePath}: existing path is a ${pathKind(stat)}`,
     )
   }
-  return 'regular'
+  return {
+    classification: 'regular',
+    dev: stat.dev,
+    ino: stat.ino,
+    nlink: stat.nlink,
+    permissions: stat.mode & PERMISSION_MASK,
+  }
+}
+
+export function classifyInitPath(
+  path: string,
+  root?: string,
+): 'missing' | 'regular' {
+  return inspectInitPath(path, root).classification
 }
 
 export function preflightInitPlan(
@@ -298,6 +324,11 @@ function writeDurableTemporary(plan: InitPathPlan): string {
   let fd: number | undefined
   try {
     fd = openSync(temporary, 'wx', plan.mode ?? 0o666)
+    if (plan.mode !== undefined && MODE_ENFORCEMENT_SUPPORTED) {
+      // The creation mode is masked by the process umask; harden the descriptor
+      // before any content reaches the inode that exclusive publication links.
+      fchmodSync(fd, plan.mode & PERMISSION_MASK)
+    }
     writeFileSync(fd, plan.content)
     fsyncSync(fd)
     closeSync(fd)
@@ -354,15 +385,111 @@ function replaceRegularAtomic(plan: InitPathPlan): InitFileResult {
   }
 }
 
+function refuseModeEnforcement(path: string, reason: string): never {
+  throw new Error(
+    `Refusing init destination ${path}: cannot enforce owner-only permissions ${reason}`,
+  )
+}
+
+/**
+ * Applies an explicitly requested mode to a retained file through a descriptor
+ * bound to the inode that classification inspected. Credential bytes are never
+ * read, rewritten, or logged, and any identity, link-count, or type change
+ * between inspection, open, chmod, and the post-check fails closed.
+ */
+function enforceRetainedFileMode(
+  path: string,
+  inspection: InitPathInspection,
+  mode: number,
+  hooks: InitFilesystemHooks,
+): void {
+  if (!MODE_ENFORCEMENT_SUPPORTED) return
+
+  if (
+    inspection.classification !== 'regular'
+    || inspection.dev === undefined
+    || inspection.ino === undefined
+  ) {
+    refuseModeEnforcement(path, 'on a non-regular destination')
+  }
+  if (inspection.nlink !== 1) {
+    refuseModeEnforcement(path, 'on a file with multiple hard links')
+  }
+
+  const requested = mode & PERMISSION_MASK
+  hooks.beforeRetainedModeOpen?.(path)
+
+  const { O_RDONLY, O_NOFOLLOW = 0 } = fsConstants
+  let fd: number | undefined
+  try {
+    try {
+      fd = openSync(path, O_RDONLY | O_NOFOLLOW)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') {
+        refuseModeEnforcement(path, 'because the destination disappeared')
+      }
+      if (code === 'ELOOP' || code === 'EMLINK') {
+        refuseModeEnforcement(path, 'on a symbolic-link destination')
+      }
+      if (code === 'EACCES' || code === 'EPERM') {
+        throw new Error(
+          `Refusing init destination ${path}: cannot enforce owner-only permissions `
+          + `(permission denied). Run \`chmod 600 ${path}\` and rerun agent-qa init.`,
+        )
+      }
+      throw error
+    }
+
+    const opened = fstatSync(fd)
+    if (!opened.isFile()) refuseModeEnforcement(path, 'on a non-regular destination')
+    if (opened.dev !== inspection.dev || opened.ino !== inspection.ino) {
+      refuseModeEnforcement(path, 'because the destination changed')
+    }
+    if (opened.nlink !== 1) {
+      refuseModeEnforcement(path, 'on a file with multiple hard links')
+    }
+
+    if ((opened.mode & PERMISSION_MASK) !== requested) fchmodSync(fd, requested)
+
+    hooks.afterRetainedModeOpen?.(path)
+
+    const settled = lstatIfPresent(path)
+    if (settled === undefined) {
+      refuseModeEnforcement(path, 'because the destination disappeared')
+    }
+    if (settled.isSymbolicLink() || !settled.isFile()) {
+      refuseModeEnforcement(path, 'on a non-regular destination')
+    }
+    if (
+      settled.dev !== inspection.dev
+      || settled.ino !== inspection.ino
+      || settled.nlink !== 1
+    ) {
+      refuseModeEnforcement(path, 'because the destination changed')
+    }
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
 export function writeScaffoldFileAtomic(
   plan: InitPathPlan,
   hooks: InitFilesystemHooks = {},
 ): InitFileResult {
   const normalizedPlan = { ...plan, path: resolve(plan.path) }
-  const classification = classifyInitPath(normalizedPlan.path, normalizedPlan.root)
+  const inspection = inspectInitPath(normalizedPlan.path, normalizedPlan.root)
 
-  if (classification === 'regular') {
+  if (inspection.classification === 'regular') {
     if (!normalizedPlan.force || normalizedPlan.preserveOnForce) {
+      if (normalizedPlan.mode !== undefined) {
+        enforceRetainedFileMode(
+          normalizedPlan.path,
+          inspection,
+          normalizedPlan.mode,
+          hooks,
+        )
+      }
       return { path: normalizedPlan.path, outcome: 'preserved' }
     }
     ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
