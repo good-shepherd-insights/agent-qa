@@ -239,6 +239,96 @@ describe('createMemoryTools — Channel 2 retrieval (D-11/D-12/D-17)', () => {
     expect(drainReadTraces()).toHaveLength(1)
   })
 
+  it('journals search and exact read-body admissions in model-exposure order', async () => {
+    const found = entry('record-journalled-search', {
+      anchors: [{ t: 'page', route: '/search-result' }],
+    })
+    const returned = body(found.id, 'exact returned body')
+    returned.anchors = [{ t: 'page', route: '/read-body' }]
+    const ledger = createRecordLedger({ cap: 8, budget: 1_000, seedRecords: [] })
+    const estimateTokens = vi.fn((text: string) => {
+      if (text === returned.body) return 17
+      if (text.includes(String(found.id))) return 11
+      return 1
+    })
+    const { tools, beginTurn } = factory(
+      stubReader({
+        search: vi.fn(() => [found]),
+        read: vi.fn(() => returned),
+      }),
+      { recordLedger: ledger, estimateTokens },
+    )
+
+    ledger.beginStepEvidence()
+    beginTurn(SCOPE, [], 3)
+    expect(await tools['memory.search'].execute({ query: 'journal order' })).toMatchObject({
+      kind: 'search-results',
+      entries: [found],
+    })
+    expect(await tools['memory.read'].execute({ id: found.id })).toEqual({
+      kind: 'record',
+      record: returned,
+    })
+
+    expect(ledger.drainEvidenceEvents()).toEqual([
+      {
+        ordinal: 0,
+        turnOrdinal: 3,
+        surface: 'search-result',
+        id: found.id,
+        sourceId: String(found.id),
+        clusterKey: servingClusterKey(found.anchors),
+        renderedCost: 11,
+        chargeRepeated: true,
+      },
+      {
+        ordinal: 1,
+        turnOrdinal: 3,
+        surface: 'read-body',
+        id: returned.id,
+        sourceId: String(returned.id),
+        clusterKey: servingClusterKey(returned.anchors),
+        renderedCost: 17,
+        chargeRepeated: true,
+      },
+    ])
+  })
+
+  it('refuses a direct read before exposing its body when combined admission fails', async () => {
+    const returned = body('record-read-refused', 'SECRET_BODY_MUST_NOT_ESCAPE')
+    const existing = servingRecordMetadata({
+      id: returned.id,
+      anchors: returned.anchors,
+      renderedCost: 50,
+    })
+    const ledger = createRecordLedger({
+      cap: 1,
+      budget: 100,
+      seedRecords: [existing],
+    })
+    const { tools, beginTurn, drainReadTraces } = factory(
+      stubReader({ read: vi.fn(() => returned) }),
+      {
+        recordLedger: ledger,
+        estimateTokens: text => text === returned.body ? 1 : text.length,
+      },
+    )
+
+    ledger.beginStepEvidence()
+    beginTurn(SCOPE, [returned.id], 0)
+    const result = await tools['memory.read'].execute({ id: returned.id })
+
+    expect(result).toEqual({
+      kind: 'read-admission-refused',
+      id: returned.id,
+      reason: 'source-dominance',
+    })
+    expect(JSON.stringify(result)).not.toContain(returned.body)
+    expect(drainReadTraces()).toEqual([])
+    expect(ledger.drainEvidenceEvents()).toEqual([])
+    expect(ledger.spent()).toBe(50)
+  })
+
   it('refuses ids not exposed by this turn, including cap drops and relation targets', async () => {
     const exposed = entry('record-exposed')
     const dropped = entry('record-dropped')

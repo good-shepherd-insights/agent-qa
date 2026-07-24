@@ -103,4 +103,92 @@ describe('createRecordLedger — combined turn serving authority (D-16/D-17/D-18
       reason: 'source-dominance',
     })
   })
+
+  it('journals only admitted production exposures in one contiguous step order', () => {
+    const brief = record('record-brief', { renderedCost: 5 })
+    const repeated = record('record-repeated', { renderedCost: 4 })
+    const search = record('record-search', { renderedCost: 3 })
+    const refused = record('record-refused', { renderedCost: 100 })
+    const ledger = createRecordLedger({ cap: 8, budget: 100, seedRecords: [] })
+
+    ledger.beginStepEvidence()
+    ledger.resetTurn([brief], { surface: 'brief-line', turnOrdinal: 0 })
+    expect(ledger.admit(repeated, { surface: 'caution', turnOrdinal: 0 })).toEqual({
+      admitted: true,
+    })
+    expect(
+      ledger.admit(repeated, { surface: 'procedure-hint', turnOrdinal: 0 }),
+    ).toEqual({ admitted: true })
+    expect(ledger.admit(search, { surface: 'search-result', turnOrdinal: 1 })).toEqual({
+      admitted: true,
+    })
+    expect(ledger.admit(refused, { surface: 'read-body', turnOrdinal: 1 })).toEqual({
+      admitted: false,
+      reason: 'budget-cap',
+    })
+
+    expect(ledger.drainEvidenceEvents()).toEqual([
+      {
+        ordinal: 0,
+        turnOrdinal: 0,
+        surface: 'brief-line',
+        id: brief.id,
+        sourceId: brief.sourceId,
+        clusterKey: brief.clusterKey,
+        renderedCost: brief.renderedCost,
+        chargeRepeated: false,
+      },
+      {
+        ordinal: 1,
+        turnOrdinal: 0,
+        surface: 'caution',
+        id: repeated.id,
+        sourceId: repeated.sourceId,
+        clusterKey: repeated.clusterKey,
+        renderedCost: repeated.renderedCost,
+        chargeRepeated: true,
+      },
+      {
+        ordinal: 2,
+        turnOrdinal: 0,
+        surface: 'procedure-hint',
+        id: repeated.id,
+        sourceId: repeated.sourceId,
+        clusterKey: repeated.clusterKey,
+        renderedCost: repeated.renderedCost,
+        chargeRepeated: true,
+      },
+      {
+        ordinal: 3,
+        turnOrdinal: 1,
+        surface: 'search-result',
+        id: search.id,
+        sourceId: search.sourceId,
+        clusterKey: search.clusterKey,
+        renderedCost: search.renderedCost,
+        chargeRepeated: true,
+      },
+    ])
+    expect(ledger.drainEvidenceEvents()).toEqual([])
+  })
+
+  it('clears only evidence chronology without changing configured admission caps', () => {
+    const seed = record('record-seed', { renderedCost: 20 })
+    const overflow = record('record-overflow', { renderedCost: 1 })
+    const ledger = createRecordLedger({ cap: 1, budget: 80, seedRecords: [seed] })
+
+    ledger.beginStepEvidence()
+    ledger.resetTurn([seed], { surface: 'brief-line', turnOrdinal: 4 })
+    expect(ledger.drainEvidenceEvents()).toHaveLength(1)
+
+    ledger.beginStepEvidence()
+    expect(ledger.drainEvidenceEvents()).toEqual([])
+    expect(ledger.size()).toBe(1)
+    expect(ledger.spent()).toBe(20)
+    expect(ledger.admit(overflow, { surface: 'search-result', turnOrdinal: 5 })).toEqual({
+      admitted: false,
+      reason: 'volume-cap',
+    })
+    expect(ledger.drainEvidenceEvents()).toEqual([])
+  })
 })
