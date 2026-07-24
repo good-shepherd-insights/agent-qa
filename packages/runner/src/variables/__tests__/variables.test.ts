@@ -12,7 +12,7 @@ import {
   LLMVariableExtractor,
   createExtractor,
 } from '../index.js'
-import { parseEnvFile } from '../../hooks/env-file.js'
+import { parseEnvFile, serializeEnvFile } from '../../hooks/env-file.js'
 import type { ExtractorInput } from '../../loop/types.js'
 
 vi.mock('ai', () => ({
@@ -196,6 +196,41 @@ describe('parseEnvFile', () => {
 
   it('returns empty for empty string', () => {
     expect(parseEnvFile('')).toEqual({})
+  })
+
+  it('round-trips the closed quoted grammar without changing value bytes', () => {
+    const values = {
+      DOUBLE_QUOTE: 'before"after',
+      APOSTROPHE: "it's preserved",
+      BACKSLASH: String.raw`C:\tmp\agent-qa`,
+      CARRIAGE_RETURN: 'before\rafter',
+      LINE_FEED: 'before\nafter',
+      EMPTY: '',
+      SPACES: '  padded value  ',
+      EQUALS: 'left=middle=right',
+      HASH: '#literal-hash',
+    }
+
+    expect(parseEnvFile(serializeEnvFile(values))).toEqual(values)
+  })
+
+  it.each([
+    ['unterminated double quote', 'TOKEN="phase383-sensitive-value'],
+    ['unknown quoted escape', String.raw`TOKEN="phase383-sensitive-value\q"`],
+    ['trailing bytes after closing quote', 'TOKEN="phase383-sensitive-value"junk'],
+  ])('fails closed on %s with a key/location-only diagnostic', (_name, content) => {
+    let error: unknown
+    try {
+      parseEnvFile(content)
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(Error)
+    const message = (error as Error).message
+    expect(message).toContain('TOKEN')
+    expect(message).toContain('line 1')
+    expect(message).not.toContain('phase383-sensitive-value')
   })
 })
 
