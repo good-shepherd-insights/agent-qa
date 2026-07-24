@@ -592,6 +592,7 @@ function addYamlComments(yamlStr: string): string {
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
 const DEFAULT_ENV_FILE = '.env'
 const DEFAULT_SECRETS_FILE = '.env.secrets.local'
+const SECRETS_FILE_MODE = 0o600
 const DEFAULT_LOCAL_CONFIG_FILE = 'agent-qa.local.yaml'
 
 function directoryGitignoreEntry(value: string): string {
@@ -823,6 +824,7 @@ function scaffoldFilePlan(
   content: string,
   force: boolean,
   preserveOnForce = false,
+  mode?: number,
 ): InitPathPlan {
   return {
     root,
@@ -830,6 +832,7 @@ function scaffoldFilePlan(
     content,
     force,
     preserveOnForce,
+    ...(mode === undefined ? {} : { mode }),
   }
 }
 
@@ -839,8 +842,9 @@ function buildScaffoldFilePlans(
   force: boolean,
 ): InitPathPlan[] {
   const plans = [
-    scaffoldFilePlan(dir, DEFAULT_ENV_FILE, '', force),
-    scaffoldFilePlan(dir, DEFAULT_SECRETS_FILE, '', force),
+    // User-owned credential bytes are never replaced, including under --force.
+    scaffoldFilePlan(dir, DEFAULT_ENV_FILE, '', force, true),
+    scaffoldFilePlan(dir, DEFAULT_SECRETS_FILE, '', force, true, SECRETS_FILE_MODE),
     scaffoldFilePlan(dir, DEFAULT_HOOKS_FILE, buildHooksFile(platform), force),
     scaffoldFilePlan(
       dir,
