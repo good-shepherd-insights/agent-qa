@@ -2,19 +2,38 @@ import {
   createServingAdmissionState,
   inspectServingRecord,
   tryAdmitServingRecord,
+  type ServedAdmissionEvent,
+  type ServedAdmissionSurface,
   type ServingAdmissionDecision,
   type ServingRecordMetadata,
 } from '@vostride/agent-qa-schema'
 
 export type RecordAdmission = ServingAdmissionDecision
+export type ServingExposureSurface = ServedAdmissionSurface
+
+export interface ServingExposure {
+  readonly surface: ServingExposureSurface
+  readonly turnOrdinal: number
+}
 
 export interface RecordLedger {
   /** Preview without mutation so channel-local and combined-turn checks can commit atomically. */
   inspect(record: ServingRecordMetadata): RecordAdmission
-  admit(record: ServingRecordMetadata): RecordAdmission
-  resetTurn(seedRecords: readonly ServingRecordMetadata[]): void
+  admit(record: ServingRecordMetadata, exposure?: ServingExposure): RecordAdmission
+  resetTurn(
+    seedRecords: readonly ServingRecordMetadata[],
+    exposure?: ServingExposure,
+  ): void
+  /** Optional-compatible evidence seam; production ledgers provide both methods. */
+  beginStepEvidence?(): void
+  drainEvidenceEvents?(): ServedAdmissionEvent[]
   size(): number
   spent(): number
+}
+
+export interface ProductionRecordLedger extends RecordLedger {
+  beginStepEvidence(): void
+  drainEvidenceEvents(): ServedAdmissionEvent[]
 }
 
 function normalizeLimit(value: number): number {
@@ -32,10 +51,12 @@ export function createRecordLedger(input: {
   cap: number
   budget: number
   seedRecords: readonly ServingRecordMetadata[]
-}): RecordLedger {
+}): ProductionRecordLedger {
   const cap = normalizeLimit(input.cap)
   const budget = normalizeLimit(input.budget)
   let admission = createServingAdmissionState(input.seedRecords)
+  let evidenceEvents: ServedAdmissionEvent[] = []
+  let nextEvidenceOrdinal = 0
 
   const admissionInput = (record: ServingRecordMetadata) => ({
     record,
@@ -44,15 +65,46 @@ export function createRecordLedger(input: {
     chargeRepeated: true,
   }) as const
 
+  const recordEvidenceEvent = (
+    record: ServingRecordMetadata,
+    exposure: ServingExposure | undefined,
+    chargeRepeated: boolean,
+  ): void => {
+    if (exposure === undefined) return
+    evidenceEvents.push({
+      ordinal: nextEvidenceOrdinal,
+      turnOrdinal: exposure.turnOrdinal,
+      surface: exposure.surface,
+      id: record.id,
+      sourceId: record.sourceId,
+      clusterKey: record.clusterKey,
+      renderedCost: record.renderedCost,
+      chargeRepeated,
+    })
+    nextEvidenceOrdinal += 1
+  }
+
   return {
     inspect(record) {
       return inspectServingRecord(admissionInput(record), admission)
     },
-    admit(record) {
-      return tryAdmitServingRecord(admissionInput(record), admission)
+    admit(record, exposure) {
+      const decision = tryAdmitServingRecord(admissionInput(record), admission)
+      if (decision.admitted) recordEvidenceEvent(record, exposure, true)
+      return decision
     },
-    resetTurn(seedRecords) {
+    resetTurn(seedRecords, exposure) {
       admission = createServingAdmissionState(seedRecords)
+      for (const seed of seedRecords) recordEvidenceEvent(seed, exposure, false)
+    },
+    beginStepEvidence() {
+      evidenceEvents = []
+      nextEvidenceOrdinal = 0
+    },
+    drainEvidenceEvents() {
+      const drained = evidenceEvents.map(event => ({ ...event }))
+      evidenceEvents = []
+      return drained
     },
     size() {
       return admission.selectedCount

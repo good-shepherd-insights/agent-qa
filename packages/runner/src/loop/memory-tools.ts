@@ -124,6 +124,11 @@ type MemoryReadResult =
   | { kind: 'not-found'; id: ReturnType<typeof asRecordId> }
   | { kind: 'not-authorized'; id: ReturnType<typeof asRecordId> }
   | { kind: 'read-budget-exhausted'; budget: number; spent: number }
+  | {
+      kind: 'read-admission-refused'
+      id: ReturnType<typeof asRecordId>
+      reason: ServingAdmissionRejectionReason
+    }
 
 function normalizeBudget(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0
@@ -227,7 +232,11 @@ export function createMemoryTools(deps: {
   onReadTrace?: (trace: ReadTrace) => void
 }): {
   tools: NonActionToolMap
-  beginTurn(scope?: ScopeKey, exposedIds?: readonly RecordId[]): void
+  beginTurn(
+    scope?: ScopeKey,
+    exposedIds?: readonly RecordId[],
+    turnOrdinal?: number,
+  ): void
   drainReadTraces(): ReadTrace[]
 } {
   const searchResultBudget = normalizeBudget(deps.searchResultBudget)
@@ -237,6 +246,7 @@ export function createMemoryTools(deps: {
   let exposedIds = new Set<RecordId>()
   let readTraces: ReadTrace[] = []
   let searchAdmission = createServingAdmissionState()
+  let activeTurnOrdinal = 0
 
   const tools: NonActionToolMap = {
     'memory.search': {
@@ -320,7 +330,10 @@ export function createMemoryTools(deps: {
 
           // Both previews passed synchronously; commit them together so a refusal from one
           // authority never consumes headroom in the other.
-          const combinedCommit = deps.recordLedger.admit(metadata)
+          const combinedCommit = deps.recordLedger.admit(metadata, {
+            surface: 'search-result',
+            turnOrdinal: activeTurnOrdinal,
+          })
           if (!combinedCommit.admitted) {
             recordSearchOmission(omissions, {
               id: candidate.id,
@@ -383,6 +396,38 @@ export function createMemoryTools(deps: {
         if (record === undefined) return { kind: 'not-found', id }
 
         const measured = normalizeMeasuredTokens(deps.estimateTokens(record.body), remaining)
+        if (measured > remaining) {
+          return {
+            kind: 'read-budget-exhausted',
+            budget: readBodyBudget,
+            spent: spentReadBodyTokens,
+          }
+        }
+        const metadata = servingRecordMetadata({
+          id: record.id,
+          anchors: record.anchors,
+          renderedCost: measured,
+        })
+        const combinedDecision = deps.recordLedger.inspect(metadata)
+        if (!combinedDecision.admitted) {
+          return {
+            kind: 'read-admission-refused',
+            id,
+            reason: combinedDecision.reason,
+          }
+        }
+        const combinedCommit = deps.recordLedger.admit(metadata, {
+          surface: 'read-body',
+          turnOrdinal: activeTurnOrdinal,
+        })
+        if (!combinedCommit.admitted) {
+          return {
+            kind: 'read-admission-refused',
+            id,
+            reason: combinedCommit.reason,
+          }
+        }
+
         spentReadBodyTokens += measured
         const trace: ReadTrace = {
           id: record.id,
@@ -398,7 +443,11 @@ export function createMemoryTools(deps: {
 
   return {
     tools,
-    beginTurn(scope?: ScopeKey, authorizedIds: readonly RecordId[] = []) {
+    beginTurn(
+      scope?: ScopeKey,
+      authorizedIds: readonly RecordId[] = [],
+      turnOrdinal = 0,
+    ) {
       // D-11/D-17 turn order: the loop reseeds recordLedger from the frozen brief first,
       // then calls beginTurn() to reset the independent search-result and read-body ledgers.
       if (scope !== undefined) activeScope = scope
@@ -406,6 +455,7 @@ export function createMemoryTools(deps: {
       readTraces = []
       spentReadBodyTokens = 0
       searchAdmission = createServingAdmissionState()
+      activeTurnOrdinal = Math.max(0, Math.floor(turnOrdinal))
     },
     drainReadTraces() {
       const drained = readTraces
