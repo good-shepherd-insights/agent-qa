@@ -391,11 +391,30 @@ function refuseModeEnforcement(path: string, reason: string): never {
   )
 }
 
+function octalMode(mode: number): string {
+  return (mode & PERMISSION_MASK).toString(8).padStart(4, '0')
+}
+
+function confirmDescriptorMode(fd: number, path: string, requested: number): Stats {
+  const observed = fstatSync(fd)
+  if ((observed.mode & PERMISSION_MASK) !== requested) {
+    refuseModeEnforcement(
+      path,
+      `because the requested mode ${octalMode(requested)} was not applied `
+      + `(observed ${octalMode(observed.mode)}); the destination filesystem may not `
+      + 'persist POSIX permissions. Remount the destination with permission support '
+      + 'or place the project on a filesystem that can store POSIX permissions.',
+    )
+  }
+  return observed
+}
+
 /**
  * Applies an explicitly requested mode to a retained file through a descriptor
  * bound to the inode that classification inspected. Credential bytes are never
- * read, rewritten, or logged, and any identity, link-count, or type change
- * between inspection, open, chmod, and the post-check fails closed.
+ * read, rewritten, or logged, and any identity, link-count, type, or permission
+ * change between inspection, open, chmod, and the post-check fails closed — the
+ * permission bits are re-read from the descriptor rather than assumed applied.
  */
 function enforceRetainedFileMode(
   path: string,
@@ -453,6 +472,8 @@ function enforceRetainedFileMode(
     if ((opened.mode & PERMISSION_MASK) !== requested) fchmodSync(fd, requested)
 
     hooks.afterRetainedModeOpen?.(path)
+
+    confirmDescriptorMode(fd, path, requested)
 
     const settled = lstatIfPresent(path)
     if (settled === undefined) {
