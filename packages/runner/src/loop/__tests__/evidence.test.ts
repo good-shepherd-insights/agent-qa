@@ -1,8 +1,24 @@
 // Behavior tests for the §A8 evidence module (353-03, SCREEN-02 / D-14). Evidence is
 // produced by construction as schema DTOs; the legacy trace is projected from it.
 import { describe, it, expect } from 'vitest'
-import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
-import type { Action, ArtifactRef, Decision, MaskingContext, ScopeKey, SubActionEvidence, VerifierVerdict } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  asRef,
+  computeBriefDigest,
+  guardLosslessServedBrief,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
+import type {
+  Action,
+  ArtifactRef,
+  Decision,
+  MaskingContext,
+  ScopeKey,
+  ServedAdmissionEvent,
+  ServedPromptTurn,
+  SubActionEvidence,
+  VerifierVerdict,
+} from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { Action as PlatformAction, ActionResult as PlatformActionResult } from '../../platform.js'
 import {
@@ -151,6 +167,176 @@ describe('makeEmptyServedBrief', () => {
     expect(brief.budget).toBe(0)
     expect(brief.truncation).toContain('no brief served')
     expect(brief.briefDigest).toBe(computeBriefDigest(brief))
+  })
+})
+
+function servedAdmissionEvent(
+  overrides: Partial<ServedAdmissionEvent> = {},
+): ServedAdmissionEvent {
+  return {
+    ordinal: 0,
+    turnOrdinal: 0,
+    surface: 'brief-line',
+    id: asRecordId('record-checkout'),
+    sourceId: 'record-checkout',
+    clusterKey: '/checkout',
+    renderedCost: 12,
+    chargeRepeated: false,
+    ...overrides,
+  }
+}
+
+function servedPromptTurn(
+  overrides: Partial<ServedPromptTurn> = {},
+): ServedPromptTurn {
+  const policyL0 = overrides.policyL0 ?? 'Treat checkout policy as authoritative.'
+  const contextTier = overrides.contextTier ?? 'Current test: checkout\nCurrent step: pay'
+  const volatileTier = overrides.volatileTier ?? 'Current date: 2026-07-24'
+  return {
+    ordinal: 0,
+    turnOrdinal: 0,
+    runDate: '2026-07-24',
+    policyL0,
+    learnedL1: '',
+    learnedL2: '',
+    contextTier,
+    volatileTier,
+    policyDigest: sha256hex(policyL0),
+    contextTierDigest: sha256hex(contextTier),
+    volatileTierDigest: sha256hex(volatileTier),
+    ...overrides,
+  }
+}
+
+describe('EvidenceRecorder — lossless ServedBrief proof', () => {
+  it('begins with exact production caps and empty ordered histories', () => {
+    const recorder = new EvidenceRecorder()
+
+    recorder.beginLosslessServedBrief({ recordCap: 8, combinedBudget: 576 })
+    const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
+
+    expect(brief.proof).toEqual({
+      schemaVersion: 1,
+      completeness: 'lossless',
+      recordCap: 8,
+      combinedBudget: 576,
+      admissionEvents: [],
+      promptTurns: [],
+    })
+    expect(brief.briefDigest).toBe(computeBriefDigest(brief))
+  })
+
+  it('clones contiguous event and prompt appends and re-addresses every mutation', () => {
+    const recorder = new EvidenceRecorder()
+    const events = [
+      servedAdmissionEvent(),
+      servedAdmissionEvent({
+        ordinal: 1,
+        surface: 'search-result',
+        id: asRecordId('record-search'),
+        sourceId: 'record-search',
+      }),
+    ]
+    const firstTurn = servedPromptTurn()
+
+    recorder.beginLosslessServedBrief({ recordCap: 8, combinedBudget: 576 })
+    const emptyDigest = recorder.finalize(passVerdict, 0, 'checkout').servedBrief.briefDigest
+    recorder.recordServedAdmissionEvents(events)
+    const eventDigest = recorder.finalize(passVerdict, 0, 'checkout').servedBrief.briefDigest
+    recorder.recordServedPromptTurn(firstTurn)
+    const promptDigest = recorder.finalize(passVerdict, 0, 'checkout').servedBrief.briefDigest
+
+    events[0].sourceId = 'mutated-after-append'
+    firstTurn.contextTier = 'mutated-after-append'
+    const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
+    expect(brief.proof?.admissionEvents[0].sourceId).toBe('record-checkout')
+    expect(brief.proof?.promptTurns[0].contextTier).toBe(
+      'Current test: checkout\nCurrent step: pay',
+    )
+    expect(brief.proof?.admissionEvents).not.toBe(events)
+    expect(brief.proof?.promptTurns[0]).not.toBe(firstTurn)
+    expect(new Set([emptyDigest, eventDigest, promptDigest]).size).toBe(3)
+    expect(brief.briefDigest).toBe(computeBriefDigest(brief))
+  })
+
+  it('rejects discontinuous event and prompt ordinals without mutating proof history', () => {
+    const recorder = new EvidenceRecorder()
+    recorder.beginLosslessServedBrief({ recordCap: 8, combinedBudget: 576 })
+
+    expect(() => recorder.recordServedAdmissionEvents([
+      servedAdmissionEvent({ ordinal: 1 }),
+    ])).toThrow(/admission event ordinal/i)
+    expect(() => recorder.recordServedPromptTurn(
+      servedPromptTurn({ ordinal: 1 }),
+    )).toThrow(/prompt turn ordinal/i)
+
+    const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
+    expect(brief.proof?.admissionEvents).toEqual([])
+    expect(brief.proof?.promptTurns).toEqual([])
+    expect(brief.briefDigest).toBe(computeBriefDigest(brief))
+  })
+
+  it('preserves prior proof history when Channel 1 is re-read on a replan', () => {
+    const recorder = new EvidenceRecorder()
+    const event = servedAdmissionEvent()
+    const turn = servedPromptTurn()
+    recorder.beginLosslessServedBrief({ recordCap: 8, combinedBudget: 576 })
+    recorder.recordServedAdmissionEvents([event])
+    recorder.recordServedPromptTurn(turn)
+
+    recorder.recordServedBrief({
+      scope: { tier: 'test', key: 'checkout' },
+      asOfBuild: 42,
+      budget: 100,
+      block: {
+        tiers: { L0: 'policy', L1: 'learned', L2: '' },
+        lines: [{
+          id: event.id,
+          kind: 'fact',
+          summary: 'Checkout requires confirmation.',
+          trust: 0.9,
+          status: 'active',
+          servedAsCanary: false,
+          tier: 'L1',
+        }],
+        truncation: 'none',
+        admissions: [],
+      },
+    })
+
+    const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
+    expect(brief.proof?.admissionEvents).toEqual([event])
+    expect(brief.proof?.promptTurns).toEqual([turn])
+    expect(guardLosslessServedBrief(brief)).toEqual(brief)
+  })
+
+  it('finalizes reader-backed and no-reader records as guard-valid after a real prompt turn', () => {
+    const readerBacked = new EvidenceRecorder()
+    readerBacked.beginLosslessServedBrief({ recordCap: 8, combinedBudget: 576 })
+    readerBacked.recordServedBrief({
+      scope: { tier: 'test', key: 'checkout' },
+      asOfBuild: 42,
+      budget: 100,
+      block: {
+        tiers: { L0: 'policy', L1: '', L2: '' },
+        lines: [],
+        truncation: 'none',
+        admissions: [],
+      },
+    })
+    readerBacked.recordServedPromptTurn(servedPromptTurn())
+
+    const noReader = new EvidenceRecorder({
+      scope: { tier: 'test', key: 'checkout' },
+      asOfBuild: 42,
+    })
+    noReader.beginLosslessServedBrief({ recordCap: 8, combinedBudget: 576 })
+    noReader.recordServedPromptTurn(servedPromptTurn())
+
+    for (const recorder of [readerBacked, noReader]) {
+      const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
+      expect(guardLosslessServedBrief(brief)).toEqual(brief)
+    }
   })
 })
 
