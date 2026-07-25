@@ -1793,8 +1793,12 @@ describe('every refusal writeScaffoldFileAtomic can raise carries exactly one di
 
     // And the removal-sentence root spells a WHOLE disposition rather than only its lead
     // token, which is what made the round-7 inversion — a retained refusal reading as a
-    // destroyed destination — possible in the first place.
-    const removalRoot = REFUSAL_WALK_ROOTS[2].make()
+    // destroyed destination — possible in the first place. Looked up by name rather than by
+    // index so that dropping the variant fails this assertion instead of crashing on it.
+    const removalVariant = REFUSAL_WALK_ROOTS
+      .find(variant => variant.name === 'root directory named after the removal sentence')
+    expect(removalVariant).toBeDefined()
+    const removalRoot = removalVariant!.make()
     expect(removalRoot).toMatch(REMOVED_DISPOSITION_PATTERN)
     expect(removalRoot).not.toMatch(RETAINED_DISPOSITION_PATTERN)
   })
