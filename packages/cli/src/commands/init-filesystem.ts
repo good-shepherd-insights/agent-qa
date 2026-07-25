@@ -460,8 +460,9 @@ function octalMode(mode: number): string {
 // reason string still reads verbatim at the head of the message. They are deliberately
 // non-overlapping — neither is a substring of the other — so a caller holding only the
 // thrown message can tell a removed destination from a retained one. Ratified as D-22.
-// The token both disposition sentences open with. Both constants are built from it so the
-// predicate below cannot drift from the sentences it has to recognise.
+// The token both disposition sentences open with, so the two sentences cannot drift apart in
+// how they announce themselves to a reader. Nothing in this module DECIDES anything by
+// looking for this token in a message: see `dispositionedRefusals` below for why.
 const REFUSAL_DISPOSITION_LEAD = 'Disposition:'
 
 const REFUSAL_DISPOSITION_REMOVED
@@ -478,10 +479,6 @@ const REFUSAL_DISPOSITION_RETAINED
   + 'still exists it '
   + 'retains its original contents at an unconfirmed mode.'
 
-function carriesRefusalDisposition(message: string): boolean {
-  return message.includes(REFUSAL_DISPOSITION_LEAD)
-}
-
 // Errors that must leave `writeScaffoldFileAtomic` exactly as they were thrown, because
 // neither disposition is this module's to claim about them:
 //
@@ -495,13 +492,42 @@ function carriesRefusalDisposition(message: string): boolean {
 // it cannot retain the errors it marks.
 const passthroughRefusalErrors = new WeakSet<object>()
 
+// The refusals to which this module has ALREADY appended a disposition sentence, recorded the
+// same way and for the same reasons as the passthrough set above.
+//
+// Identity rather than text, because the text is partly the caller's. "Has a disposition
+// already been appended?" is a question about what THIS module did, and every refusal message
+// embeds the destination path verbatim — a public parameter. Deciding the question by testing
+// the message for the disposition's lead token therefore let a caller-supplied path decide it:
+// a destination under a directory named after the lead token suppressed the disposition
+// entirely, one named after the removal sentence made a RETAINED refusal read as a destroyed
+// destination, and either one could produce a second sentence. Membership in this set cannot
+// be forged by any byte of any path.
+const dispositionedRefusals = new WeakSet<object>()
+
+// `WeakSet` keys on object identity, but `typeof` reports 'function' rather than 'object' for
+// callable values — which are legal throw values. Marking and testing have to agree on which
+// values are markable, or a thrown function would be marked and then never recognised.
+function isMarkable(value: unknown): value is object {
+  return (typeof value === 'object' && value !== null) || typeof value === 'function'
+}
+
 function markPassthrough(error: unknown): unknown {
-  if (typeof error === 'object' && error !== null) passthroughRefusalErrors.add(error)
-  return error
+  if (isMarkable(error)) {
+    passthroughRefusalErrors.add(error)
+    return error
+  }
+  // A primitive cannot carry an identity mark, and leaving it unmarked is precisely what let a
+  // consumer's own `throw 'oops'` acquire a factual claim about a destination this module never
+  // acted on. Wrap it so identity marking always applies: the message is the thrown value's own
+  // string form and the value itself stays reachable as the cause, so nothing is lost.
+  const wrapper = new Error(String(error), { cause: error })
+  passthroughRefusalErrors.add(wrapper)
+  return wrapper
 }
 
 function isPassthrough(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && passthroughRefusalErrors.has(error)
+  return isMarkable(error) && passthroughRefusalErrors.has(error)
 }
 
 // Every caller hook is invoked through here, at exactly the point it was invoked before —
@@ -530,7 +556,15 @@ function withRefusalDisposition(error: unknown, disposition: string): Error {
   // A non-`Error` throw value is converted rather than rethrown bare, so the removal path
   // can never deliver a destination-was-unlinked outcome carrying no disposition at all.
   const reason = error instanceof Error ? error.message : String(error)
-  return new Error(`${reason} ${disposition}`, { cause: error })
+  const refusal = new Error(`${reason} ${disposition}`, { cause: error })
+  // Recorded at the moment the sentence is appended, so the fact travels with the error object
+  // rather than having to be recovered from its text later.
+  dispositionedRefusals.add(refusal)
+  return refusal
+}
+
+function carriesDisposition(error: unknown): boolean {
+  return isMarkable(error) && dispositionedRefusals.has(error)
 }
 
 // The floor under the whole refusal contract, not a replacement for the inner wraps: those
@@ -543,7 +577,7 @@ function withRefusalBackstop<T>(operation: () => T): T {
     return operation()
   } catch (error) {
     if (isPassthrough(error)) throw error
-    if (error instanceof Error && carriesRefusalDisposition(error.message)) throw error
+    if (carriesDisposition(error)) throw error
     throw withRefusalDisposition(error, REFUSAL_DISPOSITION_RETAINED)
   }
 }
@@ -709,15 +743,38 @@ function enforceRetainedFileMode(
  * unlinked or left in place. That is a floor, held by an outermost backstop rather than by
  * each throw site, so a refusal added anywhere beneath this function inherits it.
  *
+ * **The floor is held by identity, not by reading the message.** Whether a refusal already
+ * carries a disposition is recorded by adding the error OBJECT to a module-private `WeakSet`
+ * at the moment the sentence is appended; the backstop tests membership. It is not decided by
+ * looking for the disposition's lead token in the message. That distinction is load-bearing:
+ * every refusal message embeds the destination path verbatim and the destination path is a
+ * caller-supplied parameter, so a message-reading predicate handed those bytes a decision
+ * about what this code did. Under identity marking a destination path cannot suppress the
+ * disposition, cannot invert which of the two is reported, and cannot produce a second one,
+ * because no decision is taken from the message at all. What a caller-supplied path CAN still
+ * do is put the lead token, or an entire disposition sentence, inside the reason — so a
+ * message may contain either more than once. Only the sentence appended past the reason is
+ * this function's claim; a reader recovering the claim programmatically should take it from
+ * the suffix past the root `cause`'s message rather than by scanning the whole string.
+ *
  * Exactly two classes of error escape WITHOUT a disposition, and neither is a refusal of
  * this function's:
  *
- * - an error thrown by a caller-supplied hook, which is rethrown with its own message
- *   untouched rather than restated as an init refusal carrying a claim about the
- *   destination;
+ * - an error thrown by a caller-supplied hook, which is rethrown carrying its own message
+ *   rather than restated as an init refusal with a claim about the destination. This holds
+ *   for EVERY throw value, not only object ones: a primitive cannot carry an identity mark,
+ *   so it is wrapped in an `Error` whose message is the value's own string form and whose
+ *   `cause` is the value itself, and the wrapper is what gets marked;
  * - an error raised after a publication has already SUCCEEDED (the parent-directory fsync),
  *   for which neither sentence is true — the destination was rewritten, so it was not
  *   retained, and it was not unlinked either.
+ *
+ * Two limits on the EVIDENCE for this floor, carried forward rather than dropped. The refusal
+ * walk asserting it enumerates 15 of the 21 refusal sites reachable beneath this function, so
+ * the floor is structural by construction but sampled by test. And the temporary-cleanup
+ * `finally` in both publication paths remains a site where neither sentence is true: a throw
+ * there after a publication has already succeeded is stamped retained by the backstop, which
+ * is false on that one path. Neither is changed here.
  *
  * Ratified as decision D-22 (phase 383).
  */
