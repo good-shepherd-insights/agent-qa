@@ -138,6 +138,79 @@ describe('safe init filesystem primitives', () => {
     expect(readFileSync(sentinel, 'utf8')).toBe('sentinel\n')
   })
 
+  // The path shapes are taken from what this scaffold actually publishes — `tests/` holding
+  // `example-pass.yaml` alongside a sibling whose name extends `tests` with a hyphen — rather
+  // than invented, because the defeating arrangement is one the real plan set can produce.
+  describe('nested-destination guarding survives a sibling sorting between parent and child', () => {
+    function preflightPaths(root: string, names: readonly string[]): void {
+      preflightInitPlan(names.map(name => ({
+        root,
+        path: join(root, ...name.split('/')),
+        content: '',
+        force: false,
+      })))
+    }
+
+    it('refuses a parent and its child when an unrelated sibling sorts between them', () => {
+      const root = tempRoot()
+      const parent = join(root, 'tests')
+      const child = join(root, 'tests', 'example-pass.yaml')
+      const expected = `Init plan destination ${parent} is a parent of ${child}`
+
+      // The exact three-path set the round-7 review and verification both drove to NO THROW.
+      // `-` (0x2D) sorts below `/` (0x2F), so `tests-extra.md` lands strictly between `tests`
+      // and `tests/example-pass.yaml` and an adjacent-pair comparison never sees the overlap.
+      expect(() => preflightPaths(root, [
+        'tests',
+        'tests-extra.md',
+        'tests/example-pass.yaml',
+      ])).toThrow(expected)
+
+      // The paired control: the SAME parent and child with the sibling removed. Asserting the
+      // identical message is what proves the sibling is not what decides the verdict — without
+      // it, a guard that only ever fires on two-path sets would look the same from here.
+      expect(() => preflightPaths(root, [
+        'tests',
+        'tests/example-pass.yaml',
+      ])).toThrow(expected)
+    })
+
+    it('names the nearest ancestor when several plans nest', () => {
+      const root = tempRoot()
+      const nearest = join(root, 'tests', 'suite')
+      const leaf = join(root, 'tests', 'suite', 'example-pass.yaml')
+
+      expect(() => preflightPaths(root, [
+        'tests/suite',
+        'tests/suite-extra.md',
+        'tests/suite/example-pass.yaml',
+      ])).toThrow(`Init plan destination ${nearest} is a parent of ${leaf}`)
+    })
+
+    it('admits destinations that share a leading name fragment without nesting', () => {
+      const root = tempRoot()
+
+      // The negative control. An ancestor walk that compared name PREFIXES rather than whole
+      // path components would reject all of these, and would be indistinguishable from a
+      // correct one without this case.
+      expect(() => preflightPaths(root, [
+        'tests',
+        'tests-extra.md',
+        'tests.backup',
+        'testsuite/example-pass.yaml',
+        'agent-qa.config.yaml',
+      ])).not.toThrow()
+    })
+
+    it('still refuses a duplicate destination', () => {
+      const root = tempRoot()
+      expect(() => preflightPaths(root, [
+        'agent-qa.config.yaml',
+        'agent-qa.config.yaml',
+      ])).toThrow(/duplicate destination/)
+    })
+  })
+
   it('loses an exclusive-create race without replacing the raced-in regular file', () => {
     const root = tempRoot()
     const path = join(root, 'raced.yaml')

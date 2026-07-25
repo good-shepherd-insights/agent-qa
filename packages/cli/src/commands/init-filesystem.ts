@@ -273,12 +273,22 @@ export function preflightInitPlan(
     seen.add(plan.path)
   }
 
+  // An ancestor WALK, not a comparison of adjacent sorted pairs. Sorting does not put a
+  // parent next to its child: `-` (0x2D) and `.` (0x2E) both sort below the path separator
+  // (0x2F), so any sibling whose name extends the parent with such a byte lands strictly
+  // between them — and `tests/` beside `tests-extra.md` is a shape this scaffold publishes.
+  // Walking each destination's own ancestors and testing set membership cannot be defeated by
+  // what else happens to be in the plan, because it never consults a neighbour. Iterating the
+  // sorted list and climbing from the nearest parent upward keeps the reported pair
+  // deterministic and names the closest true ancestor.
   const orderedPaths = [...seen].sort()
-  for (let index = 0; index < orderedPaths.length - 1; index += 1) {
-    const path = orderedPaths[index]!
-    const nextPath = orderedPaths[index + 1]!
-    if (nextPath.startsWith(`${path}${sep}`)) {
-      throw new Error(`Init plan destination ${path} is a parent of ${nextPath}`)
+  for (const path of orderedPaths) {
+    let ancestor = dirname(path)
+    while (ancestor !== dirname(ancestor)) {
+      if (seen.has(ancestor)) {
+        throw new Error(`Init plan destination ${ancestor} is a parent of ${path}`)
+      }
+      ancestor = dirname(ancestor)
     }
   }
 
