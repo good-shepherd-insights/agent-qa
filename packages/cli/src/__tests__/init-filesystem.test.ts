@@ -29,6 +29,7 @@ import {
   upsertManagedGitignoreBlock,
   verifyEffectiveGitignore,
   writeScaffoldFileAtomic,
+  type InitFilesystemHooks,
   type InitPathPlan,
 } from '../commands/init-filesystem.js'
 
@@ -714,4 +715,308 @@ describe('credential-file mode confirmation fails closed', () => {
     expect(readFileSync(path, 'utf8')).toBe('first\n')
     expect(initTemporaries(root)).toEqual([])
   })
+})
+
+// Every hook member the module may ever fire, including the two this wave adds. The
+// recorder below installs all of them so a path that silently drops its caller's hooks
+// records an empty list rather than passing vacuously over an unexercised branch.
+const ALL_INIT_HOOK_NAMES = [
+  'beforeExclusivePublish',
+  'beforeRetainedModeOpen',
+  'afterRetainedModeOpen',
+  'afterTemporaryModeApply',
+  'beforeAtomicReplacePublish',
+  'afterRetainedModeConfirm',
+] as const
+
+// The ordered hook names a force-replace invocation carrying a declared mode must fire
+// once the atomic-replacement path forwards its caller's hooks.
+const ATOMIC_REPLACE_HOOK_NAMES = [
+  'afterTemporaryModeApply',
+  'beforeAtomicReplacePublish',
+] as const
+
+// Hooks that exist only because a mode was declared; a plan declaring no mode must fire
+// none of them on any publication path.
+const CONFIRMATION_DEPENDENT_HOOK_NAMES = [
+  'afterTemporaryModeApply',
+  'afterRetainedModeOpen',
+  'afterRetainedModeConfirm',
+] as const
+
+const SETTLE_REVERT_MODES = [0o644, 0o666, 0o640, 0o604, 0o400, 0o2600] as const
+
+const REPLACEMENT_PUBLISH_REVERT_MODES = [0o644, 0o666, 0o2600] as const
+
+const UNSETTLED_MODE_REASON = /requested mode \d{4} did not settle/
+
+function initHooks(members: Record<string, (path: string) => void>): InitFilesystemHooks {
+  return members as InitFilesystemHooks
+}
+
+function recordAllHooks(
+  fired: string[],
+  overrides: Record<string, (path: string) => void> = {},
+): InitFilesystemHooks {
+  const members: Record<string, (path: string) => void> = {}
+  for (const name of ALL_INIT_HOOK_NAMES) {
+    members[name] = (path) => {
+      fired.push(name)
+      overrides[name]?.(path)
+    }
+  }
+  return initHooks(members)
+}
+
+// The shape production never constructs: an existing regular destination, force enabled,
+// preserve-on-force absent, and a declared owner-only mode.
+function atomicReplacePlan(root: string, overrides: Partial<InitPathPlan> = {}): InitPathPlan {
+  return {
+    root,
+    path: join(root, '.env.secrets.local'),
+    content: 'REPLACED=1\n',
+    force: true,
+    mode: 0o600,
+    ...overrides,
+  }
+}
+
+function listInitTemporaries(directory: string): string[] {
+  return readdirSync(directory).filter(entry => entry.includes('.agent-qa-init-'))
+}
+
+function findInitTemporary(directory: string): string {
+  const entries = listInitTemporaries(directory)
+  if (entries.length !== 1) {
+    throw new Error(
+      `expected exactly one init temporary in ${directory}, found ${entries.length}`,
+    )
+  }
+  return join(directory, entries[0]!)
+}
+
+describe('atomic-replacement publication confirmation', () => {
+  it.skipIf(isWindows)(
+    'fires no hook at all for a force-replace invocation carrying a declared mode',
+    () => {
+      const root = credentialRoot()
+      const plan = atomicReplacePlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      const fired: string[] = []
+
+      expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired))).toEqual({
+        path: plan.path,
+        outcome: 'updated',
+      })
+
+      expect(fired).toEqual([])
+      for (const name of ATOMIC_REPLACE_HOOK_NAMES) {
+        expect(fired).not.toContain(name)
+      }
+    },
+  )
+
+  it.skipIf(isWindows)(
+    'publishes a mode-bearing replacement with no seam between confirmation and rename',
+    () => {
+      const root = credentialRoot()
+      const plan = atomicReplacePlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      const fired: string[] = []
+
+      expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired))).toEqual({
+        path: plan.path,
+        outcome: 'updated',
+      })
+
+      expect(fired).toEqual([])
+      expect(readFileSync(plan.path, 'utf8')).toBe('REPLACED=1\n')
+      expect(modeBits(plan.path)).toBe(0o600)
+      expect(listInitTemporaries(root)).toEqual([])
+    },
+  )
+
+  for (const revertMode of REPLACEMENT_PUBLISH_REVERT_MODES) {
+    it.skipIf(isWindows)(
+      `publishes a replacement unrefused when the temporary is reverted to ${octal(revertMode)} `
+      + 'inside the publication window',
+      () => {
+        const root = credentialRoot()
+        const plan = atomicReplacePlan(root)
+        writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+        const fired: string[] = []
+
+        expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
+          beforeAtomicReplacePublish: () => {
+            chmodSync(findInitTemporary(root), revertMode)
+          },
+        }))).toEqual({ path: plan.path, outcome: 'updated' })
+
+        expect(fired).toEqual([])
+        expect(modeBits(plan.path)).toBe(0o600)
+        expect(listInitTemporaries(root)).toEqual([])
+      },
+    )
+  }
+
+  it.skipIf(isWindows)('publishes an empty-content replacement at the declared mode', () => {
+    const root = credentialRoot()
+    const plan = atomicReplacePlan(root, { content: '' })
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+    expect(writeScaffoldFileAtomic(plan)).toEqual({ path: plan.path, outcome: 'updated' })
+    expect(readFileSync(plan.path, 'utf8')).toBe('')
+    expect(modeBits(plan.path)).toBe(0o600)
+    expect(listInitTemporaries(root)).toEqual([])
+  })
+
+  it.skipIf(isWindows)(
+    'never fires a confirmation-dependent hook for a plan that declares no mode, '
+    + 'on any of the three publication paths',
+    () => {
+      const root = credentialRoot()
+
+      const created = join(root, 'scaffold.yaml')
+      const createdFired: string[] = []
+      expect(writeScaffoldFileAtomic(
+        { root, path: created, content: 'first\n', force: false },
+        recordAllHooks(createdFired),
+      )).toEqual({ path: created, outcome: 'created' })
+
+      const retained = join(root, '.env')
+      writeFileSync(retained, 'EXISTING=1\n', { mode: 0o640 })
+      const retainedFired: string[] = []
+      expect(writeScaffoldFileAtomic(
+        { root, path: retained, content: '', force: true, preserveOnForce: true },
+        recordAllHooks(retainedFired),
+      )).toEqual({ path: retained, outcome: 'preserved' })
+
+      const replaced = join(root, 'replaced.yaml')
+      writeFileSync(replaced, 'before\n', { mode: 0o644 })
+      const replacedFired: string[] = []
+      expect(writeScaffoldFileAtomic(
+        { root, path: replaced, content: 'after\n', force: true },
+        recordAllHooks(replacedFired),
+      )).toEqual({ path: replaced, outcome: 'updated' })
+
+      for (const fired of [createdFired, retainedFired, replacedFired]) {
+        for (const name of CONFIRMATION_DEPENDENT_HOOK_NAMES) {
+          expect(fired).not.toContain(name)
+        }
+      }
+      expect(modeBits(retained)).toBe(0o640)
+      expect(readFileSync(retained, 'utf8')).toBe('EXISTING=1\n')
+      expect(readFileSync(replaced, 'utf8')).toBe('after\n')
+      expect(listInitTemporaries(root)).toEqual([])
+    },
+  )
+})
+
+describe('retained-path settle window', () => {
+  for (const revertMode of SETTLE_REVERT_MODES) {
+    it.skipIf(isWindows)(
+      `keeps a retained secrets file at 0600 when ${octal(revertMode)} is injected after `
+      + 'the descriptor confirmation',
+      () => {
+        const root = credentialRoot()
+        const plan = secretsPlan(root)
+        const bytes = 'API_KEY=abc\n'
+        writeFileSync(plan.path, bytes, { mode: 0o644 })
+        const inode = lstatSync(plan.path).ino
+        const fired: string[] = []
+
+        expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
+          afterRetainedModeConfirm: () => {
+            chmodSync(plan.path, revertMode)
+          },
+        }))).toEqual({ path: plan.path, outcome: 'preserved' })
+
+        expect(fired.at(-1)).toBe('afterRetainedModeOpen')
+        expect(fired).not.toContain('afterRetainedModeConfirm')
+        expect(modeBits(plan.path)).toBe(0o600)
+        expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
+        expect(lstatSync(plan.path).ino).toBe(inode)
+      },
+    )
+  }
+
+  it.skipIf(isWindows)(
+    'keeps the settle-time refusal reason distinct from the unapplied-mode reason',
+    () => {
+      const root = credentialRoot()
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+      let message = ''
+      try {
+        writeScaffoldFileAtomic(plan, {
+          afterRetainedModeOpen: () => {
+            chmodSync(plan.path, 0o644)
+          },
+        })
+      } catch (error) {
+        message = (error as Error).message
+      }
+
+      expect(message).toMatch(UNAPPLIED_MODE_REASON)
+      expect(message).not.toMatch(UNSETTLED_MODE_REASON)
+    },
+  )
+
+  it.skipIf(isWindows)(
+    'retains, hardens, and confirms a zero-byte credential file on the same inode',
+    () => {
+      const root = credentialRoot()
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, '', { mode: 0o644 })
+      const before = lstatSync(plan.path)
+      const fired: string[] = []
+
+      expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired))).toEqual({
+        path: plan.path,
+        outcome: 'preserved',
+      })
+
+      expect(lstatSync(plan.path).size).toBe(0)
+      expect(lstatSync(plan.path).ino).toBe(before.ino)
+      expect(modeBits(plan.path)).toBe(0o600)
+      expect(fired).toContain('afterRetainedModeOpen')
+    },
+  )
+
+  it.skipIf(isWindows)(
+    'takes the skip branch without a chmod when the requested mode already matches, '
+    + 'and still confirms',
+    () => {
+      const root = credentialRoot()
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o600 })
+      const before = lstatSync(plan.path, { bigint: true }).ctimeNs
+      const fired: string[] = []
+
+      expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired))).toEqual({
+        path: plan.path,
+        outcome: 'preserved',
+      })
+
+      expect(lstatSync(plan.path, { bigint: true }).ctimeNs).toBe(before)
+      expect(fired).toContain('afterRetainedModeOpen')
+      expect(modeBits(plan.path)).toBe(0o600)
+
+      // Control: the ctime probe above is sensitive rather than vacuous — a mode that
+      // must actually be applied moves ctime on the very same filesystem.
+      const controlRoot = credentialRoot()
+      const controlPlan = secretsPlan(controlRoot)
+      writeFileSync(controlPlan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      const controlBefore = lstatSync(controlPlan.path, { bigint: true }).ctimeNs
+
+      expect(writeScaffoldFileAtomic(controlPlan)).toEqual({
+        path: controlPlan.path,
+        outcome: 'preserved',
+      })
+
+      expect(lstatSync(controlPlan.path, { bigint: true }).ctimeNs).not.toBe(controlBefore)
+      expect(modeBits(controlPlan.path)).toBe(0o600)
+    },
+  )
 })
