@@ -342,7 +342,7 @@ function writeDurableTemporary(
       // inode so publication can prove it linked the file it confirmed.
       const requested = plan.mode & PERMISSION_MASK
       fchmodSync(fd, requested)
-      hooks.afterTemporaryModeApply?.(temporary)
+      invokeHook(hooks.afterTemporaryModeApply, temporary)
       const opened = confirmDescriptorMode(fd, path, requested)
       confirmed = { dev: opened.dev, ino: opened.ino }
     }
@@ -398,7 +398,7 @@ function publishExclusive(
   const parent = dirname(path)
   const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
   try {
-    hooks.beforeExclusivePublish?.(path)
+    invokeHook(hooks.beforeExclusivePublish, path)
     try {
       linkSync(temporary, path)
     } catch (error) {
@@ -413,7 +413,7 @@ function publishExclusive(
     if (confirmed !== undefined && plan.mode !== undefined) {
       confirmPublishedDestination(path, plan.mode & PERMISSION_MASK, confirmed)
     }
-    bestEffortFsyncDirectory(parent)
+    afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'created' }
   } finally {
     unlinkIfPresent(temporary)
@@ -434,12 +434,12 @@ function replaceRegularAtomic(
     if (classification !== 'regular') {
       throw new Error(`Refusing atomic replacement of missing init destination ${path}`)
     }
-    hooks.beforeAtomicReplacePublish?.(path)
+    invokeHook(hooks.beforeAtomicReplacePublish, path)
     renameSync(temporary, path)
     if (confirmed !== undefined && plan.mode !== undefined) {
       confirmPublishedDestination(path, plan.mode & PERMISSION_MASK, confirmed)
     }
-    bestEffortFsyncDirectory(parent)
+    afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'updated' }
   } finally {
     unlinkIfPresent(temporary)
@@ -460,8 +460,13 @@ function octalMode(mode: number): string {
 // reason string still reads verbatim at the head of the message. They are deliberately
 // non-overlapping — neither is a substring of the other — so a caller holding only the
 // thrown message can tell a removed destination from a retained one. Ratified as D-22.
+// The token both disposition sentences open with. Both constants are built from it so the
+// predicate below cannot drift from the sentences it has to recognise.
+const REFUSAL_DISPOSITION_LEAD = 'Disposition:'
+
 const REFUSAL_DISPOSITION_REMOVED
-  = 'Disposition: the unconfirmed destination was not left in place — it was unlinked. '
+  = `${REFUSAL_DISPOSITION_LEAD} the unconfirmed destination was not left in place — `
+  + 'it was unlinked. '
   + 'If it was published by replacement, the bytes it held beforehand were already '
   + 'consumed by the rename and are not recoverable.'
 
@@ -469,12 +474,78 @@ const REFUSAL_DISPOSITION_REMOVED
 // vanished: this code did not remove or rewrite it, and the retention clause is
 // conditioned on the destination still existing.
 const REFUSAL_DISPOSITION_RETAINED
-  = 'Disposition: the destination was not removed or rewritten — if it still exists it '
+  = `${REFUSAL_DISPOSITION_LEAD} the destination was not removed or rewritten — if it `
+  + 'still exists it '
   + 'retains its original contents at an unconfirmed mode.'
 
+function carriesRefusalDisposition(message: string): boolean {
+  return message.includes(REFUSAL_DISPOSITION_LEAD)
+}
+
+// Errors that must leave `writeScaffoldFileAtomic` exactly as they were thrown, because
+// neither disposition is this module's to claim about them:
+//
+//   - a caller-supplied hook's own error. It is the consumer's, not a refusal of ours, and
+//     grafting a factual claim about the destination onto it is a false statement.
+//   - an error raised AFTER a publication has already succeeded (the directory fsync). The
+//     destination was rewritten, so the retention sentence would be false, and it was not
+//     unlinked, so the removal sentence would be false too.
+//
+// Keyed by identity in a module-private WeakSet: nothing about it is observable as API, and
+// it cannot retain the errors it marks.
+const passthroughRefusalErrors = new WeakSet<object>()
+
+function markPassthrough(error: unknown): unknown {
+  if (typeof error === 'object' && error !== null) passthroughRefusalErrors.add(error)
+  return error
+}
+
+function isPassthrough(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && passthroughRefusalErrors.has(error)
+}
+
+// Every caller hook is invoked through here, at exactly the point it was invoked before —
+// the hooks are marked, never hoisted, so their firing order is unchanged.
+function invokeHook(
+  hook: ((argument: string) => void) | undefined,
+  argument: string,
+): void {
+  if (hook === undefined) return
+  try {
+    hook(argument)
+  } catch (error) {
+    throw markPassthrough(error)
+  }
+}
+
+function afterPublication(operation: () => void): void {
+  try {
+    operation()
+  } catch (error) {
+    throw markPassthrough(error)
+  }
+}
+
 function withRefusalDisposition(error: unknown, disposition: string): Error {
-  if (!(error instanceof Error)) throw error
-  return new Error(`${error.message} ${disposition}`, { cause: error })
+  // A non-`Error` throw value is converted rather than rethrown bare, so the removal path
+  // can never deliver a destination-was-unlinked outcome carrying no disposition at all.
+  const reason = error instanceof Error ? error.message : String(error)
+  return new Error(`${reason} ${disposition}`, { cause: error })
+}
+
+// The floor under the whole refusal contract, not a replacement for the inner wraps: those
+// are what keep each disposition specific to its path. Anything that reaches here escaped
+// without one, and on every such path this module neither removed nor rewrote the
+// destination — so retention is the correct default. A refusal added anywhere below
+// inherits it, which is what makes the universal structural rather than sampled.
+function withRefusalBackstop<T>(operation: () => T): T {
+  try {
+    return operation()
+  } catch (error) {
+    if (isPassthrough(error)) throw error
+    if (error instanceof Error && carriesRefusalDisposition(error.message)) throw error
+    throw withRefusalDisposition(error, REFUSAL_DISPOSITION_RETAINED)
+  }
 }
 
 function confirmDescriptorMode(fd: number, path: string, requested: number): Stats {
@@ -499,6 +570,9 @@ function confirmDescriptorMode(fd: number, path: string, requested: number): Sta
  * permission bits are re-read from the descriptor rather than assumed applied and are
  * compared again on the settle observation, so the composite claim is a single one: the
  * path resolves to the inspected inode carrying the requested mode.
+ *
+ * Conditional on the platform: where `process.platform === 'win32'` this returns
+ * immediately and none of the above happens — no chmod, no confirmation, no refusal.
  */
 function enforceRetainedFileMode(
   path: string,
@@ -525,7 +599,7 @@ function enforceRetainedFileMode(
     }
 
     const requested = mode & PERMISSION_MASK
-    hooks.beforeRetainedModeOpen?.(path)
+    invokeHook(hooks.beforeRetainedModeOpen, path)
 
     const { O_RDONLY, O_NOFOLLOW = 0 } = fsConstants
     let fd: number | undefined
@@ -560,11 +634,11 @@ function enforceRetainedFileMode(
 
       if ((opened.mode & PERMISSION_MASK) !== requested) fchmodSync(fd, requested)
 
-      hooks.afterRetainedModeOpen?.(path)
+      invokeHook(hooks.afterRetainedModeOpen, path)
 
       confirmDescriptorMode(fd, path, requested)
 
-      hooks.afterRetainedModeConfirm?.(path)
+      invokeHook(hooks.afterRetainedModeConfirm, path)
 
       const settled = lstatIfPresent(path)
       if (settled === undefined) {
@@ -594,6 +668,9 @@ function enforceRetainedFileMode(
       if (fd !== undefined) closeSync(fd)
     }
   } catch (error) {
+    // A caller hook's own error is the consumer's; it is not restated as an init refusal
+    // and acquires no factual claim about the destination.
+    if (isPassthrough(error)) throw error
     throw withRefusalDisposition(error, REFUSAL_DISPOSITION_RETAINED)
   }
 }
@@ -605,8 +682,15 @@ function enforceRetainedFileMode(
  *   (`link` from a durable temporary).
  * - `updated` — the destination existed, `force` was set without `preserveOnForce`, and it
  *   was published by the atomic-replacement path (`rename` over the existing inode).
- * - `preserved` — the destination existed and was kept; when the plan declares a mode, its
- *   permission bits are enforced in place on the retained inode.
+ * - `preserved` — the destination existed and was kept; when the plan declares a mode AND
+ *   the host platform enforces POSIX permissions, its permission bits are enforced in place
+ *   on the retained inode.
+ *
+ * **Mode enforcement is conditional on the platform.** Every mode claim here — on all three
+ * outcomes — holds only where `process.platform !== 'win32'`. On win32 a declared mode is a
+ * silent no-op: nothing is applied, nothing is confirmed, and no refusal is raised, so a
+ * plan that declares owner-only bits publishes at whatever mode the host gives it. This is
+ * the shipped behaviour, stated rather than changed.
  *
  * **A refused post-publication confirmation DESTROYS the destination.** On both the
  * `created` and `updated` paths, if the mode or identity of the published file cannot be
@@ -620,8 +704,20 @@ function enforceRetainedFileMode(
  * The asymmetry is deliberate, not accidental. For a credential-bearing publication a file
  * left at a mode that could not be confirmed is the worse failure, and on the replacement
  * path "leave it alone" was never available — the rename runs before the confirmation. The
- * two outcomes are told apart from the thrown error alone: every refusal appends a
- * disposition sentence stating whether the destination was unlinked or left in place.
+ * two outcomes are told apart from the thrown error alone: every refusal this function
+ * raises appends exactly one disposition sentence stating whether the destination was
+ * unlinked or left in place. That is a floor, held by an outermost backstop rather than by
+ * each throw site, so a refusal added anywhere beneath this function inherits it.
+ *
+ * Exactly two classes of error escape WITHOUT a disposition, and neither is a refusal of
+ * this function's:
+ *
+ * - an error thrown by a caller-supplied hook, which is rethrown with its own message
+ *   untouched rather than restated as an init refusal carrying a claim about the
+ *   destination;
+ * - an error raised after a publication has already SUCCEEDED (the parent-directory fsync),
+ *   for which neither sentence is true — the destination was rewritten, so it was not
+ *   retained, and it was not unlinked either.
  *
  * Ratified as decision D-22 (phase 383).
  */
@@ -629,27 +725,29 @@ export function writeScaffoldFileAtomic(
   plan: InitPathPlan,
   hooks: InitFilesystemHooks = {},
 ): InitFileResult {
-  const normalizedPlan = { ...plan, path: resolve(plan.path) }
-  const inspection = inspectInitPath(normalizedPlan.path, normalizedPlan.root)
+  return withRefusalBackstop(() => {
+    const normalizedPlan = { ...plan, path: resolve(plan.path) }
+    const inspection = inspectInitPath(normalizedPlan.path, normalizedPlan.root)
 
-  if (inspection.classification === 'regular') {
-    if (!normalizedPlan.force || normalizedPlan.preserveOnForce) {
-      if (normalizedPlan.mode !== undefined) {
-        enforceRetainedFileMode(
-          normalizedPlan.path,
-          inspection,
-          normalizedPlan.mode,
-          hooks,
-        )
+    if (inspection.classification === 'regular') {
+      if (!normalizedPlan.force || normalizedPlan.preserveOnForce) {
+        if (normalizedPlan.mode !== undefined) {
+          enforceRetainedFileMode(
+            normalizedPlan.path,
+            inspection,
+            normalizedPlan.mode,
+            hooks,
+          )
+        }
+        return { path: normalizedPlan.path, outcome: 'preserved' }
       }
-      return { path: normalizedPlan.path, outcome: 'preserved' }
+      ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
+      return replaceRegularAtomic(normalizedPlan, hooks)
     }
-    ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
-    return replaceRegularAtomic(normalizedPlan, hooks)
-  }
 
-  ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
-  return publishExclusive(normalizedPlan, hooks)
+    ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
+    return publishExclusive(normalizedPlan, hooks)
+  })
 }
 
 export function writeConfigMarkerLast(
