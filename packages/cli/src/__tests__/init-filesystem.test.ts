@@ -1187,6 +1187,74 @@ describe('refusal disposition distinctness', () => {
     },
   )
 
+  // THE CELL THE SUITE NEVER GENERATED. `afterTemporaryModeApply` reverts were exercised
+  // only on the creation path and `beforeAtomicReplacePublish` reverts only on the
+  // replacement path, so the replacement x pre-rename cross product was never built — and
+  // that absence is exactly what let the JSDoc universal survive while being false.
+  it.skipIf(isWindows)(
+    'refuses a replacement whose temporary mode is reverted BEFORE the rename, and says the '
+    + 'destination was retained',
+    () => {
+      const root = credentialRoot()
+      const plan = atomicReplacePlan(root)
+      const original = 'USERDATA=important\n'
+      writeFileSync(plan.path, original, { mode: 0o644 })
+      const inode = lstatSync(plan.path).ino
+
+      const message = capturedRefusalMessage(() => {
+        writeScaffoldFileAtomic(plan, {
+          afterTemporaryModeApply: (temporary) => {
+            chmodSync(temporary, 0o644)
+          },
+        })
+      })
+
+      // Same reason as the post-rename refusal, OPPOSITE post-state. Only the disposition
+      // distinguishes them, which is why it has to be present and has to be the right one.
+      expect(message).toMatch(UNAPPLIED_MODE_REASON)
+      expect(message).toMatch(RETAINED_DISPOSITION_PATTERN)
+      expect(message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
+
+      // Measured on the SAME invocation that produced the message.
+      expect(existsSync(plan.path)).toBe(true)
+      expect(readFileSync(plan.path, 'utf8')).toBe(original)
+      expect(modeBits(plan.path)).toBe(0o644)
+      expect(lstatSync(plan.path).ino).toBe(inode)
+      expect(listInitTemporaries(root)).toEqual([])
+    },
+  )
+
+  for (const [arm, hooks] of [
+    ['retained', (throwing: () => never): InitFilesystemHooks => ({
+      beforeRetainedModeOpen: () => throwing(),
+    })],
+    ['replacement', (throwing: () => never): InitFilesystemHooks => ({
+      afterTemporaryModeApply: () => throwing(),
+    })],
+  ] as const) {
+    it.skipIf(isWindows)(
+      `rethrows a caller hook's own error untouched on the ${arm} path`,
+      () => {
+        const root = credentialRoot()
+        const plan = arm === 'retained' ? secretsPlan(root) : atomicReplacePlan(root)
+        writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+        const message = capturedRefusalMessage(() => {
+          writeScaffoldFileAtomic(plan, hooks(() => {
+            throw new Error('caller-side bookkeeping failed')
+          }))
+        })
+
+        // The consumer's error is not this module's refusal to restate, and it must not
+        // acquire a factual claim about a destination this module did not act on.
+        expect(message).toBe('caller-side bookkeeping failed')
+        expect(message).not.toContain('Disposition:')
+        expect(message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
+        expect(message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
+      },
+    )
+  }
+
   it.skipIf(isWindows)('preserves the original refusal as the rethrown error cause', () => {
     const root = credentialRoot()
     const plan = secretsPlan(root)
@@ -1212,5 +1280,305 @@ describe('refusal disposition distinctness', () => {
     expect((cause as Error).message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
     expect((cause as Error).message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
     expect((caught as Error).message.startsWith((cause as Error).message)).toBe(true)
+  })
+})
+
+// Counted over the message bytes rather than tested for presence, so a message that
+// acquired a SECOND disposition — the failure mode a backstop layered over an inner wrap
+// can introduce — fails this walk just as loudly as one carrying none.
+function dispositionSentenceCount(message: string): number {
+  return message.split('Disposition:').length - 1
+}
+
+// Every path on which `writeScaffoldFileAtomic` can refuse and that a test can actually
+// reach, with the disposition each one must carry. This is the enumeration the universal
+// is asserted over — the point being that it is a WALK, not three sampled cells.
+//
+// Deliberately EXCLUDED, and not a walk failure: `upsertManagedGitignoreBlock`'s
+// pre-publication refusals, including the inverted-marker refusal. They are thrown by
+// `stripManagedGitignoreBlock` BEFORE `writeScaffoldFileAtomic` is called at all, so they
+// are outside the universal's scope by construction and need no disposition — nothing has
+// been published, opened or unlinked when they fire.
+const REFUSAL_PATH_WALK = [
+  {
+    name: 'path inspection: symbolic-link destination',
+    disposition: 'retained',
+    run: (root: string) => {
+      const sentinel = join(root, 'sentinel.txt')
+      writeFileSync(sentinel, 'sentinel\n')
+      const path = join(root, 'scaffold.yaml')
+      symlinkSync(sentinel, path)
+      writeScaffoldFileAtomic({ root, path, content: 'replacement\n', force: true })
+    },
+  },
+  {
+    name: 'path inspection: FIFO destination',
+    disposition: 'retained',
+    run: (root: string) => {
+      const path = join(root, 'scaffold.yaml')
+      execFileSync('mkfifo', [path], { stdio: 'pipe' })
+      writeScaffoldFileAtomic({ root, path, content: 'replacement\n', force: true })
+    },
+  },
+  {
+    name: 'parent component: symbolic-link parent',
+    disposition: 'retained',
+    run: (root: string) => {
+      const external = join(root, 'external')
+      mkdirSync(external)
+      const linkedParent = join(root, 'linked-parent')
+      symlinkSync(external, linkedParent, 'dir')
+      writeScaffoldFileAtomic({
+        root,
+        path: join(linkedParent, 'nested.yaml'),
+        content: 'first\n',
+        force: false,
+      })
+    },
+  },
+  {
+    name: 'parent component: non-directory parent',
+    disposition: 'retained',
+    run: (root: string) => {
+      const blocker = join(root, 'blocker')
+      writeFileSync(blocker, 'not a directory\n')
+      writeScaffoldFileAtomic({
+        root,
+        path: join(blocker, 'nested.yaml'),
+        content: 'first\n',
+        force: false,
+      })
+    },
+  },
+  {
+    name: 'plan root: destination resolves outside its declared scaffold root',
+    disposition: 'retained',
+    run: (root: string) => {
+      writeScaffoldFileAtomic({
+        root: join(root, 'inner'),
+        path: join(root, 'outside.yaml'),
+        content: 'first\n',
+        force: false,
+      })
+    },
+  },
+  {
+    name: 'retained mode: multiply linked inode',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      linkSync(plan.path, join(root, 'alias.env'))
+      writeScaffoldFileAtomic(plan)
+    },
+  },
+  {
+    name: 'retained mode: destination disappears after the identity capture',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      writeScaffoldFileAtomic(plan, {
+        beforeRetainedModeOpen: () => {
+          rmSync(plan.path)
+        },
+      })
+    },
+  },
+  {
+    name: 'retained mode: requested mode not applied',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      writeScaffoldFileAtomic(plan, {
+        afterRetainedModeOpen: () => {
+          chmodSync(plan.path, 0o644)
+        },
+      })
+    },
+  },
+  {
+    name: 'retained mode: requested mode did not settle',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = secretsPlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      writeScaffoldFileAtomic(plan, {
+        afterRetainedModeConfirm: () => {
+          chmodSync(plan.path, 0o644)
+        },
+      })
+    },
+  },
+  {
+    name: 'durable temporary: creation-path pre-publication mode revert',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
+      writeScaffoldFileAtomic(plan, {
+        afterTemporaryModeApply: (temporary) => {
+          chmodSync(temporary, 0o644)
+        },
+      })
+    },
+  },
+  {
+    // Round-6 gap 3: this is the path the verifier reproduced escaping with NO disposition.
+    name: 'durable temporary: replacement-path PRE-RENAME mode revert',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = atomicReplacePlan(root)
+      writeFileSync(plan.path, 'USERDATA=important\n', { mode: 0o644 })
+      writeScaffoldFileAtomic(plan, {
+        afterTemporaryModeApply: (temporary) => {
+          chmodSync(temporary, 0o644)
+        },
+      })
+    },
+  },
+  {
+    name: 'exclusive publication: path appeared during exclusive create',
+    disposition: 'retained',
+    run: (root: string) => {
+      const path = join(root, 'raced.yaml')
+      writeScaffoldFileAtomic({ root, path, content: 'scaffold\n', force: false }, {
+        beforeExclusivePublish: () => {
+          writeFileSync(path, 'racer\n', { flag: 'wx' })
+        },
+      })
+    },
+  },
+  {
+    name: 'atomic replacement: destination vanishes before the rename',
+    disposition: 'retained',
+    run: (root: string) => {
+      const plan = atomicReplacePlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      writeScaffoldFileAtomic(plan, {
+        afterTemporaryModeApply: () => {
+          rmSync(plan.path)
+        },
+      })
+    },
+  },
+  {
+    name: 'post-publication confirmation: creation path',
+    disposition: 'removed',
+    run: (root: string) => {
+      const plan = secretsPlan(root, { force: false, content: 'API_KEY=abc\n' })
+      writeScaffoldFileAtomic(plan, {
+        beforeExclusivePublish: () => {
+          chmodSync(findInitTemporary(root), 0o644)
+        },
+      })
+    },
+  },
+  {
+    name: 'post-publication confirmation: replacement path',
+    disposition: 'removed',
+    run: (root: string) => {
+      const plan = atomicReplacePlan(root)
+      writeFileSync(plan.path, 'USERDATA=important\n', { mode: 0o644 })
+      writeScaffoldFileAtomic(plan, {
+        beforeAtomicReplacePublish: () => {
+          chmodSync(findInitTemporary(root), 0o644)
+        },
+      })
+    },
+  },
+] as const
+
+describe('every refusal writeScaffoldFileAtomic can raise carries exactly one disposition', () => {
+  for (const testCase of REFUSAL_PATH_WALK) {
+    it.skipIf(isWindows)(`${testCase.name} -> ${testCase.disposition}`, () => {
+      const message = capturedRefusalMessage(() => {
+        testCase.run(credentialRoot())
+      })
+
+      // Exactly one — not "at least one". A backstop layered over an inner wrap that
+      // double-appends fails here, and so does a path that escapes bare.
+      expect(dispositionSentenceCount(message)).toBe(1)
+
+      // The mapping is pinned by name, so the walk asserts WHICH disposition each path
+      // carries rather than merely that it carries some disposition.
+      const expected = testCase.disposition === 'removed'
+        ? REMOVED_DISPOSITION_PATTERN
+        : RETAINED_DISPOSITION_PATTERN
+      const opposite = testCase.disposition === 'removed'
+        ? RETAINED_DISPOSITION_PATTERN
+        : REMOVED_DISPOSITION_PATTERN
+      expect(message).toMatch(expected)
+      expect(message).not.toMatch(opposite)
+    })
+  }
+
+  it.skipIf(isWindows)('walks both dispositions rather than only the retained default', () => {
+    // Guards the walk against becoming vacuous: if every case above drifted to the
+    // backstop's default, this named assertion fails rather than the walk silently
+    // degrading into a single-disposition test.
+    const dispositions = new Set(REFUSAL_PATH_WALK.map(entry => entry.disposition))
+    expect([...dispositions].sort()).toEqual(['removed', 'retained'])
+    expect(REFUSAL_PATH_WALK.length).toBeGreaterThanOrEqual(15)
+  })
+})
+
+// Derived from the module's own behaviour rather than from a duplicated `win32` literal:
+// publish a control file that declares a mode and observe whether the module applied it.
+function moduleEnforcesModes(): boolean {
+  const root = tempRoot()
+  const path = join(root, 'mode-enforcement-probe')
+  writeFileSync(path, 'probe\n', { mode: 0o644 })
+  writeScaffoldFileAtomic({
+    root,
+    path,
+    content: '',
+    force: true,
+    preserveOnForce: true,
+    mode: 0o600,
+  })
+  return modeBits(path) === 0o600
+}
+
+describe('platform-qualified mode-enforcement contract', () => {
+  // NOT skipped on any platform. The JSDoc states the mode contract conditionally, so the
+  // test asserts the documented behaviour of whichever platform it is running on — the
+  // win32 no-op is covered here rather than merely disabled by a `skipIf`.
+  it('pins the documented mode-enforcement behaviour of the platform it runs on', () => {
+    const enforces = moduleEnforcesModes()
+
+    const root = tempRoot()
+    const plan = secretsPlan(root)
+    const bytes = 'API_KEY=abc\n'
+    writeFileSync(plan.path, bytes, { mode: 0o644 })
+    const before = modeBits(plan.path)
+
+    let refusal = ''
+    let outcome: ReturnType<typeof writeScaffoldFileAtomic> | undefined
+    try {
+      outcome = writeScaffoldFileAtomic(plan, {
+        afterRetainedModeOpen: () => {
+          chmodSync(plan.path, before)
+        },
+      })
+    } catch (error) {
+      refusal = (error as Error).message
+    }
+
+    if (enforces) {
+      // Documented POSIX contract: the revert is detected and the call fails closed,
+      // leaving the destination in place with its bytes intact.
+      expect(refusal).toMatch(UNAPPLIED_MODE_REASON)
+      expect(refusal).toMatch(RETAINED_DISPOSITION_PATTERN)
+    } else {
+      // Documented win32 no-op: the confirmation hook never fires, nothing is applied and
+      // nothing is confirmed, so no refusal is raised and the host's mode is left alone.
+      expect(refusal).toBe('')
+      expect(outcome).toEqual({ path: plan.path, outcome: 'preserved' })
+      expect(modeBits(plan.path)).toBe(before)
+    }
+
+    // True on both platforms: a retained credential file is never rewritten.
+    expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
   })
 })
