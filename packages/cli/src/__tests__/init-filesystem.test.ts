@@ -1183,13 +1183,46 @@ describe('retained-path settle window', () => {
   )
 })
 
-function capturedRefusalMessage(run: () => void): string {
+function capturedRefusal(run: () => void): unknown {
   try {
     run()
   } catch (error) {
-    return (error as Error).message
+    return error
   }
   throw new Error('expected the invocation to refuse, but it returned without throwing')
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function capturedRefusalMessage(run: () => void): string {
+  return errorMessage(capturedRefusal(run))
+}
+
+// The bytes the MODULE appended, isolated from the reason it appended them to.
+//
+// Every disposition-bearing refusal is built as `${reason} ${disposition}` with the reason
+// error kept as the `cause`, so what this module added is exactly the suffix past the deepest
+// cause's message. Measuring THERE rather than over the whole message is what makes the
+// measurement unforgeable: the destination path is a caller-supplied value embedded in the
+// reason, and the reason is precisely the part sliced away. A message-wide scan cannot tell a
+// disposition this module appended from one a directory name happens to spell — which is the
+// round-7 defect restated as a measurement problem, and the reason the walk below can now be
+// pointed at paths that spell the marker.
+//
+// An error that was never wrapped has no cause and returns '' — a refusal that escaped bare
+// reads as carrying no disposition, which is what it is.
+function moduleAppendedDisposition(error: unknown): string {
+  const message = errorMessage(error)
+  let root: unknown = error
+  while (root instanceof Error && root.cause !== undefined) root = root.cause
+  if (root === error) return ''
+  const reason = errorMessage(root)
+  if (!message.startsWith(reason)) {
+    throw new Error(`refusal message does not extend its root cause: ${message}`)
+  }
+  return message.slice(reason.length)
 }
 
 // The disposition sentences are NOT exported — D-22 forbids new API surface, and a
@@ -1297,6 +1330,33 @@ describe('refusal disposition distinctness', () => {
     },
   )
 
+  // Parameterised over the throw VALUE, not only over the arm. Every fixture in this loop used
+  // to throw an `Error`, which is exactly why the primitive arm went unexercised for two
+  // rounds while `markPassthrough` dropped non-objects on the floor and the retained wrap then
+  // stamped a factual claim about the destination onto the consumer's own throw.
+  const PASSTHROUGH_THROW_VALUES = [
+    {
+      label: 'an Error',
+      make: (): unknown => new Error('caller-side bookkeeping failed'),
+      message: 'caller-side bookkeeping failed',
+    },
+    {
+      label: 'a string',
+      make: (): unknown => 'caller-side bookkeeping failed',
+      message: 'caller-side bookkeeping failed',
+    },
+    {
+      label: 'a number',
+      make: (): unknown => 42,
+      message: '42',
+    },
+    {
+      label: 'a symbol',
+      make: (): unknown => Symbol('caller-side bookkeeping failed'),
+      message: 'Symbol(caller-side bookkeeping failed)',
+    },
+  ] as const
+
   for (const [arm, hooks] of [
     ['retained', (throwing: () => never): InitFilesystemHooks => ({
       beforeRetainedModeOpen: () => throwing(),
@@ -1305,27 +1365,38 @@ describe('refusal disposition distinctness', () => {
       afterTemporaryModeApply: () => throwing(),
     })],
   ] as const) {
-    it.skipIf(isWindows)(
-      `rethrows a caller hook's own error untouched on the ${arm} path`,
-      () => {
-        const root = credentialRoot()
-        const plan = arm === 'retained' ? secretsPlan(root) : atomicReplacePlan(root)
-        writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+    for (const value of PASSTHROUGH_THROW_VALUES) {
+      it.skipIf(isWindows)(
+        `rethrows a caller hook's own ${value.label} untouched on the ${arm} path`,
+        () => {
+          const root = credentialRoot()
+          const plan = arm === 'retained' ? secretsPlan(root) : atomicReplacePlan(root)
+          writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
 
-        const message = capturedRefusalMessage(() => {
-          writeScaffoldFileAtomic(plan, hooks(() => {
-            throw new Error('caller-side bookkeeping failed')
-          }))
-        })
+          const thrown = value.make()
+          const error = capturedRefusal(() => {
+            writeScaffoldFileAtomic(plan, hooks(() => {
+              throw thrown
+            }))
+          })
+          const message = errorMessage(error)
 
-        // The consumer's error is not this module's refusal to restate, and it must not
-        // acquire a factual claim about a destination this module did not act on.
-        expect(message).toBe('caller-side bookkeeping failed')
-        expect(message).not.toContain('Disposition:')
-        expect(message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
-        expect(message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
-      },
-    )
+          // The consumer's error is not this module's refusal to restate, and it must not
+          // acquire a factual claim about a destination this module did not act on.
+          expect(message).toBe(value.message)
+          expect(message).not.toContain('Disposition:')
+          expect(message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
+          expect(message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
+          expect(moduleAppendedDisposition(error)).toBe('')
+
+          // Nothing the consumer threw is lost. An object escapes as ITSELF; a primitive,
+          // which cannot carry an identity mark, escapes as the `cause` of the wrapper that
+          // carries the mark on its behalf.
+          if (typeof thrown === 'object') expect(error).toBe(thrown)
+          else expect((error as Error).cause).toBe(thrown)
+        },
+      )
+    }
   }
 
   it.skipIf(isWindows)('preserves the original refusal as the rethrown error cause', () => {
@@ -1356,12 +1427,88 @@ describe('refusal disposition distinctness', () => {
   })
 })
 
-// Counted over the message bytes rather than tested for presence, so a message that
-// acquired a SECOND disposition — the failure mode a backstop layered over an inner wrap
-// can introduce — fails this walk just as loudly as one carrying none.
-function dispositionSentenceCount(message: string): number {
-  return message.split('Disposition:').length - 1
+// Counted rather than tested for presence, so a region that acquired a SECOND disposition —
+// the failure mode a backstop layered over an inner wrap can introduce — fails this walk just
+// as loudly as one carrying none. Applied to `moduleAppendedDisposition`'s output rather than
+// to a whole message: a destination path is caller-supplied and can spell this token itself.
+function dispositionSentenceCount(appended: string): number {
+  return appended.split('Disposition:').length - 1
 }
+
+// The module's own disposition sentences, read back out of refusals the MODULE produced rather
+// than copied from its source as literals. A fixture that hard-codes the sentence keeps
+// "attacking" a string the module may no longer emit; these are the bytes an adversarial
+// destination path actually has to carry today to defeat a predicate that reads the message.
+let memoizedDispositions: { removed: string, retained: string } | undefined
+
+function observedDispositionSentences(): { removed: string, retained: string } {
+  if (memoizedDispositions === undefined) {
+    const removedRoot = credentialRoot()
+    const removedPlan = atomicReplacePlan(removedRoot)
+    writeFileSync(removedPlan.path, 'USERDATA=important\n', { mode: 0o644 })
+    const removed = dispositionSentence(capturedRefusalMessage(() => {
+      writeScaffoldFileAtomic(removedPlan, {
+        beforeAtomicReplacePublish: () => {
+          chmodSync(findInitTemporary(removedRoot), 0o644)
+        },
+      })
+    }))
+
+    const retainedRoot = credentialRoot()
+    const retainedPlan = secretsPlan(retainedRoot)
+    writeFileSync(retainedPlan.path, 'API_KEY=abc\n', { mode: 0o644 })
+    const retained = dispositionSentence(capturedRefusalMessage(() => {
+      writeScaffoldFileAtomic(retainedPlan, {
+        afterRetainedModeOpen: () => {
+          chmodSync(retainedPlan.path, 0o644)
+        },
+      })
+    }))
+
+    memoizedDispositions = { removed, retained }
+  }
+  return memoizedDispositions
+}
+
+function observedDispositionLead(): string {
+  const removed = observedDispositionSentences().removed
+  return removed.slice(0, removed.indexOf(':') + 1)
+}
+
+// A scaffold root whose own NAME carries the given text. `mkdirSync` is deliberately not
+// wrapped: if a POSIX host refuses the component the fixture fails loudly rather than quietly
+// degrading to a path the host happens to accept. The colon in the lead token is legal in a
+// POSIX path component and illegal on win32, so these variants — like every other cell in the
+// walk — are POSIX-scoped by the `skipIf(isWindows)` guard the walk already carries.
+function markerBearingRoot(component: string): string {
+  const root = join(credentialRoot(), component)
+  mkdirSync(root)
+  return root
+}
+
+// The walk's fixture factory. Round 7's walk drew every path from the two root helpers, so no
+// cell it could build was able to carry the disposition marker — the same defect class as a
+// matrix generated from the vocabulary the implementation already satisfies, one layer up, and
+// the reason fifteen green cells reported a universal that a caller-supplied path falsified in
+// all three of its clauses. Crossing these roots with the entries below is what lets the walk
+// GENERATE the inputs that break its own invariant instead of merely sampling around them.
+const REFUSAL_WALK_ROOTS = [
+  {
+    name: 'ordinary root',
+    carriesMarker: false,
+    make: (): string => credentialRoot(),
+  },
+  {
+    name: 'root directory carrying the disposition lead token',
+    carriesMarker: true,
+    make: (): string => markerBearingRoot(`${observedDispositionLead()} notes`),
+  },
+  {
+    name: 'root directory named after the removal sentence',
+    carriesMarker: true,
+    make: (): string => markerBearingRoot(observedDispositionSentences().removed),
+  },
+] as const
 
 // Every path on which `writeScaffoldFileAtomic` can refuse and that a test can actually
 // reach, with the disposition each one must carry. This is the enumeration the universal
@@ -1563,27 +1710,46 @@ const REFUSAL_PATH_WALK = [
 ] as const
 
 describe('every refusal writeScaffoldFileAtomic can raise carries exactly one disposition', () => {
-  for (const testCase of REFUSAL_PATH_WALK) {
-    it.skipIf(isWindows)(`${testCase.name} -> ${testCase.disposition}`, () => {
-      const message = capturedRefusalMessage(() => {
-        testCase.run(credentialRoot())
-      })
+  for (const rootVariant of REFUSAL_WALK_ROOTS) {
+    for (const testCase of REFUSAL_PATH_WALK) {
+      it.skipIf(isWindows)(
+        `${testCase.name} -> ${testCase.disposition} [${rootVariant.name}]`,
+        () => {
+          const error = capturedRefusal(() => {
+            testCase.run(rootVariant.make())
+          })
+          const appended = moduleAppendedDisposition(error)
 
-      // Exactly one — not "at least one". A backstop layered over an inner wrap that
-      // double-appends fails here, and so does a path that escapes bare.
-      expect(dispositionSentenceCount(message)).toBe(1)
+          // Exactly one — not "at least one". A backstop layered over an inner wrap that
+          // double-appends fails here, and so does a path that escapes bare. Measured on the
+          // region the module appended, so a root whose NAME spells the marker cannot inflate
+          // the count and a correct implementation is not punished for the caller's bytes.
+          expect(dispositionSentenceCount(appended)).toBe(1)
 
-      // The mapping is pinned by name, so the walk asserts WHICH disposition each path
-      // carries rather than merely that it carries some disposition.
-      const expected = testCase.disposition === 'removed'
-        ? REMOVED_DISPOSITION_PATTERN
-        : RETAINED_DISPOSITION_PATTERN
-      const opposite = testCase.disposition === 'removed'
-        ? RETAINED_DISPOSITION_PATTERN
-        : REMOVED_DISPOSITION_PATTERN
-      expect(message).toMatch(expected)
-      expect(message).not.toMatch(opposite)
-    })
+          // The mapping is pinned by name, so the walk asserts WHICH disposition each path
+          // carries rather than merely that it carries some disposition.
+          const expected = testCase.disposition === 'removed'
+            ? REMOVED_DISPOSITION_PATTERN
+            : RETAINED_DISPOSITION_PATTERN
+          const opposite = testCase.disposition === 'removed'
+            ? RETAINED_DISPOSITION_PATTERN
+            : REMOVED_DISPOSITION_PATTERN
+          expect(appended).toMatch(expected)
+          expect(appended).not.toMatch(opposite)
+
+          if (!rootVariant.carriesMarker) {
+            // Under an ordinary root nothing but the module can spell a disposition, so the
+            // whole message carries exactly the claim the module made. This is round 7's
+            // assertion, kept beside the marker-bearing cells rather than replaced by them —
+            // the comparison between the two is what makes the pin mean anything.
+            const message = errorMessage(error)
+            expect(dispositionSentenceCount(message)).toBe(1)
+            expect(message).toMatch(expected)
+            expect(message).not.toMatch(opposite)
+          }
+        },
+      )
+    }
   }
 
   it.skipIf(isWindows)('walks both dispositions rather than only the retained default', () => {
@@ -1593,6 +1759,35 @@ describe('every refusal writeScaffoldFileAtomic can raise carries exactly one di
     const dispositions = new Set(REFUSAL_PATH_WALK.map(entry => entry.disposition))
     expect([...dispositions].sort()).toEqual(['removed', 'retained'])
     expect(REFUSAL_PATH_WALK.length).toBeGreaterThanOrEqual(15)
+  })
+
+  it.skipIf(isWindows)('walks marker-bearing roots as well as ordinary ones', () => {
+    // Dropping a root variant DELETES cells rather than failing any, so the enumeration is
+    // asserted by name — the same style the disposition enumeration above already uses.
+    // Without this, the walk's ability to generate its own defeating inputs could evaporate
+    // in a later edit and every remaining cell would still report green.
+    expect(REFUSAL_WALK_ROOTS.map(variant => variant.name)).toEqual([
+      'ordinary root',
+      'root directory carrying the disposition lead token',
+      'root directory named after the removal sentence',
+    ])
+    expect(REFUSAL_WALK_ROOTS.filter(variant => variant.carriesMarker)).toHaveLength(2)
+  })
+
+  it.skipIf(isWindows)('builds marker-bearing roots that really do spell the marker', () => {
+    // Fixture integrity. A root variant that CLAIMS to carry the marker but does not would
+    // make its whole column vacuous while still counting as coverage.
+    const lead = observedDispositionLead()
+    for (const variant of REFUSAL_WALK_ROOTS) {
+      expect(variant.make().includes(lead)).toBe(variant.carriesMarker)
+    }
+
+    // And the removal-sentence root spells a WHOLE disposition rather than only its lead
+    // token, which is what made the round-7 inversion — a retained refusal reading as a
+    // destroyed destination — possible in the first place.
+    const removalRoot = REFUSAL_WALK_ROOTS[2].make()
+    expect(removalRoot).toMatch(REMOVED_DISPOSITION_PATTERN)
+    expect(removalRoot).not.toMatch(RETAINED_DISPOSITION_PATTERN)
   })
 })
 
