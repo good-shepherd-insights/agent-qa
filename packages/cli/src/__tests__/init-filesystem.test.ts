@@ -797,7 +797,7 @@ function findInitTemporary(directory: string): string {
 
 describe('atomic-replacement publication confirmation', () => {
   it.skipIf(isWindows)(
-    'fires no hook at all for a force-replace invocation carrying a declared mode',
+    'forwards its caller\'s hooks for a force-replace invocation carrying a declared mode',
     () => {
       const root = credentialRoot()
       const plan = atomicReplacePlan(root)
@@ -809,15 +809,12 @@ describe('atomic-replacement publication confirmation', () => {
         outcome: 'updated',
       })
 
-      expect(fired).toEqual([])
-      for (const name of ATOMIC_REPLACE_HOOK_NAMES) {
-        expect(fired).not.toContain(name)
-      }
+      expect(fired).toEqual([...ATOMIC_REPLACE_HOOK_NAMES])
     },
   )
 
   it.skipIf(isWindows)(
-    'publishes a mode-bearing replacement with no seam between confirmation and rename',
+    'publishes a mode-bearing replacement and confirms the destination it renamed',
     () => {
       const root = credentialRoot()
       const plan = atomicReplacePlan(root)
@@ -829,7 +826,7 @@ describe('atomic-replacement publication confirmation', () => {
         outcome: 'updated',
       })
 
-      expect(fired).toEqual([])
+      expect(fired).toEqual([...ATOMIC_REPLACE_HOOK_NAMES])
       expect(readFileSync(plan.path, 'utf8')).toBe('REPLACED=1\n')
       expect(modeBits(plan.path)).toBe(0o600)
       expect(listInitTemporaries(root)).toEqual([])
@@ -838,26 +835,50 @@ describe('atomic-replacement publication confirmation', () => {
 
   for (const revertMode of REPLACEMENT_PUBLISH_REVERT_MODES) {
     it.skipIf(isWindows)(
-      `publishes a replacement unrefused when the temporary is reverted to ${octal(revertMode)} `
-      + 'inside the publication window',
+      `refuses a replacement whose temporary is reverted to ${octal(revertMode)} inside the `
+      + 'publication window',
       () => {
         const root = credentialRoot()
         const plan = atomicReplacePlan(root)
         writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
         const fired: string[] = []
 
-        expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
+        expect(() => writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
           beforeAtomicReplacePublish: () => {
             chmodSync(findInitTemporary(root), revertMode)
           },
-        }))).toEqual({ path: plan.path, outcome: 'updated' })
+        }))).toThrow(UNAPPLIED_MODE_REASON)
 
-        expect(fired).toEqual([])
-        expect(modeBits(plan.path)).toBe(0o600)
+        expect(fired).toEqual([...ATOMIC_REPLACE_HOOK_NAMES])
+        // Fail-closed disposition: the rename already consumed the original bytes, so the
+        // unconfirmed destination is removed rather than left at an unconfirmed mode.
+        expect(existsSync(plan.path)).toBe(false)
         expect(listInitTemporaries(root)).toEqual([])
       },
     )
   }
+
+  it.skipIf(isWindows)(
+    'refuses a replacement destination substituted at exactly the requested mode inside '
+    + 'the publication window',
+    () => {
+      const root = credentialRoot()
+      const plan = atomicReplacePlan(root)
+      writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+      expect(() => writeScaffoldFileAtomic(plan, {
+        beforeAtomicReplacePublish: () => {
+          const temporary = findInitTemporary(root)
+          unlinkSync(temporary)
+          writeFileSync(temporary, 'substitute\n')
+          chmodSync(temporary, 0o600)
+        },
+      })).toThrow(/destination changed at publication/)
+
+      expect(existsSync(plan.path)).toBe(false)
+      expect(listInitTemporaries(root)).toEqual([])
+    },
+  )
 
   it.skipIf(isWindows)('publishes an empty-content replacement at the declared mode', () => {
     const root = credentialRoot()
@@ -904,6 +925,9 @@ describe('atomic-replacement publication confirmation', () => {
           expect(fired).not.toContain(name)
         }
       }
+      // The replacement's pre-publication seam is not confirmation-dependent: it fires
+      // whether or not a mode was declared, and it is the only hook that does here.
+      expect(replacedFired).toEqual(['beforeAtomicReplacePublish'])
       expect(modeBits(retained)).toBe(0o640)
       expect(readFileSync(retained, 'utf8')).toBe('EXISTING=1\n')
       expect(readFileSync(replaced, 'utf8')).toBe('after\n')
@@ -915,8 +939,8 @@ describe('atomic-replacement publication confirmation', () => {
 describe('retained-path settle window', () => {
   for (const revertMode of SETTLE_REVERT_MODES) {
     it.skipIf(isWindows)(
-      `keeps a retained secrets file at 0600 when ${octal(revertMode)} is injected after `
-      + 'the descriptor confirmation',
+      `refuses a retained secrets file reverted to ${octal(revertMode)} after the descriptor `
+      + 'confirmation and before the settle observation',
       () => {
         const root = credentialRoot()
         const plan = secretsPlan(root)
@@ -924,16 +948,22 @@ describe('retained-path settle window', () => {
         writeFileSync(plan.path, bytes, { mode: 0o644 })
         const inode = lstatSync(plan.path).ino
         const fired: string[] = []
+        let message = ''
 
-        expect(writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
-          afterRetainedModeConfirm: () => {
-            chmodSync(plan.path, revertMode)
-          },
-        }))).toEqual({ path: plan.path, outcome: 'preserved' })
+        try {
+          writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
+            afterRetainedModeConfirm: () => {
+              chmodSync(plan.path, revertMode)
+            },
+          }))
+        } catch (error) {
+          message = (error as Error).message
+        }
 
-        expect(fired.at(-1)).toBe('afterRetainedModeOpen')
-        expect(fired).not.toContain('afterRetainedModeConfirm')
-        expect(modeBits(plan.path)).toBe(0o600)
+        expect(message).toMatch(UNSETTLED_MODE_REASON)
+        expect(message).not.toMatch(UNAPPLIED_MODE_REASON)
+        expect(fired.at(-1)).toBe('afterRetainedModeConfirm')
+        expect(modeBits(plan.path)).toBe(revertMode)
         expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
         expect(lstatSync(plan.path).ino).toBe(inode)
       },
@@ -981,6 +1011,7 @@ describe('retained-path settle window', () => {
       expect(lstatSync(plan.path).ino).toBe(before.ino)
       expect(modeBits(plan.path)).toBe(0o600)
       expect(fired).toContain('afterRetainedModeOpen')
+      expect(fired).toContain('afterRetainedModeConfirm')
     },
   )
 
@@ -1001,6 +1032,7 @@ describe('retained-path settle window', () => {
 
       expect(lstatSync(plan.path, { bigint: true }).ctimeNs).toBe(before)
       expect(fired).toContain('afterRetainedModeOpen')
+      expect(fired).toContain('afterRetainedModeConfirm')
       expect(modeBits(plan.path)).toBe(0o600)
 
       // Control: the ctime probe above is sensitive rather than vacuous — a mode that

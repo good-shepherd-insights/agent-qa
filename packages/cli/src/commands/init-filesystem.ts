@@ -41,8 +41,10 @@ export interface InitPreflightResult {
 
 export interface InitFilesystemHooks {
   beforeExclusivePublish?: (path: string) => void
+  beforeAtomicReplacePublish?: (path: string) => void
   beforeRetainedModeOpen?: (path: string) => void
   afterRetainedModeOpen?: (path: string) => void
+  afterRetainedModeConfirm?: (path: string) => void
   afterTemporaryModeApply?: (temporaryPath: string) => void
 }
 
@@ -414,16 +416,25 @@ function publishExclusive(
   }
 }
 
-function replaceRegularAtomic(plan: InitPathPlan): InitFileResult {
+function replaceRegularAtomic(
+  plan: InitPathPlan,
+  hooks: InitFilesystemHooks = {},
+): InitFileResult {
   const path = resolve(plan.path)
   const parent = dirname(path)
-  const { temporary } = writeDurableTemporary(plan)
+  // The confirmed identity is consumed, not discarded: publication must prove it renamed
+  // the inode whose mode was confirmed, exactly as the exclusive path does.
+  const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
   try {
     const classification = classifyInitPath(path, plan.root)
     if (classification !== 'regular') {
       throw new Error(`Refusing atomic replacement of missing init destination ${path}`)
     }
+    hooks.beforeAtomicReplacePublish?.(path)
     renameSync(temporary, path)
+    if (confirmed !== undefined && plan.mode !== undefined) {
+      confirmPublishedDestination(path, plan.mode & PERMISSION_MASK, confirmed)
+    }
     bestEffortFsyncDirectory(parent)
     return { path, outcome: 'updated' }
   } finally {
@@ -460,7 +471,9 @@ function confirmDescriptorMode(fd: number, path: string, requested: number): Sta
  * bound to the inode that classification inspected. Credential bytes are never
  * read, rewritten, or logged, and any identity, link-count, type, or permission
  * change between inspection, open, chmod, and the post-check fails closed — the
- * permission bits are re-read from the descriptor rather than assumed applied.
+ * permission bits are re-read from the descriptor rather than assumed applied and are
+ * compared again on the settle observation, so the composite claim is a single one: the
+ * path resolves to the inspected inode carrying the requested mode.
  */
 function enforceRetainedFileMode(
   path: string,
@@ -521,6 +534,8 @@ function enforceRetainedFileMode(
 
     confirmDescriptorMode(fd, path, requested)
 
+    hooks.afterRetainedModeConfirm?.(path)
+
     const settled = lstatIfPresent(path)
     if (settled === undefined) {
       refuseModeEnforcement(path, 'because the destination disappeared')
@@ -534,6 +549,16 @@ function enforceRetainedFileMode(
       || settled.nlink !== 1
     ) {
       refuseModeEnforcement(path, 'because the destination changed')
+    }
+    // The settle observation already holds the permission bits; comparing them collapses
+    // "the inode had mode M" and "the path resolves to that inode" into one observation.
+    if ((settled.mode & PERMISSION_MASK) !== requested) {
+      refuseModeEnforcement(
+        path,
+        `because the requested mode ${octalMode(requested)} did not settle `
+        + `(observed ${octalMode(settled.mode)}); another process changed the destination's `
+        + `permissions. Run \`chmod 600 ${path}\` and rerun agent-qa init.`,
+      )
     }
   } finally {
     if (fd !== undefined) closeSync(fd)
@@ -560,7 +585,7 @@ export function writeScaffoldFileAtomic(
       return { path: normalizedPlan.path, outcome: 'preserved' }
     }
     ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
-    return replaceRegularAtomic(normalizedPlan)
+    return replaceRegularAtomic(normalizedPlan, hooks)
   }
 
   ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
