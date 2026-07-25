@@ -379,8 +379,12 @@ function confirmPublishedDestination(
       refuseModeEnforcement(path, 'because the destination changed at publication')
     }
   } catch (error) {
+    // D-22: the unlink STAYS. For a credential-bearing publication, leaving a file at a
+    // mode that could not be confirmed is the worse failure, and on the replacement path
+    // the rename has already consumed the original bytes before this runs. What changes
+    // is only that the refusal now SAYS which disposition it took.
     unlinkIfPresent(path)
-    throw error
+    throw withRefusalDisposition(error, REFUSAL_DISPOSITION_REMOVED)
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
@@ -452,6 +456,27 @@ function octalMode(mode: number): string {
   return (mode & PERMISSION_MASK).toString(8).padStart(4, '0')
 }
 
+// The two dispositions a refusal can carry, appended after the existing reason so every
+// reason string still reads verbatim at the head of the message. They are deliberately
+// non-overlapping — neither is a substring of the other — so a caller holding only the
+// thrown message can tell a removed destination from a retained one. Ratified as D-22.
+const REFUSAL_DISPOSITION_REMOVED
+  = 'Disposition: the unconfirmed destination was not left in place — it was unlinked. '
+  + 'If it was published by replacement, the bytes it held beforehand were already '
+  + 'consumed by the rename and are not recoverable.'
+
+// Phrased so it stays true even for the refusal that fires BECAUSE the destination
+// vanished: this code did not remove or rewrite it, and the retention clause is
+// conditioned on the destination still existing.
+const REFUSAL_DISPOSITION_RETAINED
+  = 'Disposition: the destination was not removed or rewritten — if it still exists it '
+  + 'retains its original contents at an unconfirmed mode.'
+
+function withRefusalDisposition(error: unknown, disposition: string): Error {
+  if (!(error instanceof Error)) throw error
+  return new Error(`${error.message} ${disposition}`, { cause: error })
+}
+
 function confirmDescriptorMode(fd: number, path: string, requested: number): Stats {
   const observed = fstatSync(fd)
   if ((observed.mode & PERMISSION_MASK) !== requested) {
@@ -483,88 +508,123 @@ function enforceRetainedFileMode(
 ): void {
   if (!MODE_ENFORCEMENT_SUPPORTED) return
 
-  if (
-    inspection.classification !== 'regular'
-    || inspection.dev === undefined
-    || inspection.ino === undefined
-  ) {
-    refuseModeEnforcement(path, 'on a non-regular destination')
-  }
-  if (inspection.nlink !== 1) {
-    refuseModeEnforcement(path, 'on a file with multiple hard links')
-  }
-
-  const requested = mode & PERMISSION_MASK
-  hooks.beforeRetainedModeOpen?.(path)
-
-  const { O_RDONLY, O_NOFOLLOW = 0 } = fsConstants
-  let fd: number | undefined
+  // The retention disposition wraps the WHOLE body, not a single throw, so the
+  // classification refusals raised before the descriptor is opened carry it too. This
+  // function is the sole site that leaves the destination alone, which is why the
+  // disposition is a property of the path rather than of any one reason (D-22).
   try {
-    try {
-      fd = openSync(path, O_RDONLY | O_NOFOLLOW)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT') {
-        refuseModeEnforcement(path, 'because the destination disappeared')
-      }
-      if (code === 'ELOOP' || code === 'EMLINK') {
-        refuseModeEnforcement(path, 'on a symbolic-link destination')
-      }
-      if (code === 'EACCES' || code === 'EPERM') {
-        throw new Error(
-          `Refusing init destination ${path}: cannot enforce owner-only permissions `
-          + `(permission denied). Run \`chmod 600 ${path}\` and rerun agent-qa init.`,
-        )
-      }
-      throw error
+    if (
+      inspection.classification !== 'regular'
+      || inspection.dev === undefined
+      || inspection.ino === undefined
+    ) {
+      refuseModeEnforcement(path, 'on a non-regular destination')
     }
-
-    const opened = fstatSync(fd)
-    if (!opened.isFile()) refuseModeEnforcement(path, 'on a non-regular destination')
-    if (opened.dev !== inspection.dev || opened.ino !== inspection.ino) {
-      refuseModeEnforcement(path, 'because the destination changed')
-    }
-    if (opened.nlink !== 1) {
+    if (inspection.nlink !== 1) {
       refuseModeEnforcement(path, 'on a file with multiple hard links')
     }
 
-    if ((opened.mode & PERMISSION_MASK) !== requested) fchmodSync(fd, requested)
+    const requested = mode & PERMISSION_MASK
+    hooks.beforeRetainedModeOpen?.(path)
 
-    hooks.afterRetainedModeOpen?.(path)
+    const { O_RDONLY, O_NOFOLLOW = 0 } = fsConstants
+    let fd: number | undefined
+    try {
+      try {
+        fd = openSync(path, O_RDONLY | O_NOFOLLOW)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          refuseModeEnforcement(path, 'because the destination disappeared')
+        }
+        if (code === 'ELOOP' || code === 'EMLINK') {
+          refuseModeEnforcement(path, 'on a symbolic-link destination')
+        }
+        if (code === 'EACCES' || code === 'EPERM') {
+          throw new Error(
+            `Refusing init destination ${path}: cannot enforce owner-only permissions `
+            + `(permission denied). Run \`chmod 600 ${path}\` and rerun agent-qa init.`,
+          )
+        }
+        throw error
+      }
 
-    confirmDescriptorMode(fd, path, requested)
+      const opened = fstatSync(fd)
+      if (!opened.isFile()) refuseModeEnforcement(path, 'on a non-regular destination')
+      if (opened.dev !== inspection.dev || opened.ino !== inspection.ino) {
+        refuseModeEnforcement(path, 'because the destination changed')
+      }
+      if (opened.nlink !== 1) {
+        refuseModeEnforcement(path, 'on a file with multiple hard links')
+      }
 
-    hooks.afterRetainedModeConfirm?.(path)
+      if ((opened.mode & PERMISSION_MASK) !== requested) fchmodSync(fd, requested)
 
-    const settled = lstatIfPresent(path)
-    if (settled === undefined) {
-      refuseModeEnforcement(path, 'because the destination disappeared')
+      hooks.afterRetainedModeOpen?.(path)
+
+      confirmDescriptorMode(fd, path, requested)
+
+      hooks.afterRetainedModeConfirm?.(path)
+
+      const settled = lstatIfPresent(path)
+      if (settled === undefined) {
+        refuseModeEnforcement(path, 'because the destination disappeared')
+      }
+      if (settled.isSymbolicLink() || !settled.isFile()) {
+        refuseModeEnforcement(path, 'on a non-regular destination')
+      }
+      if (
+        settled.dev !== inspection.dev
+        || settled.ino !== inspection.ino
+        || settled.nlink !== 1
+      ) {
+        refuseModeEnforcement(path, 'because the destination changed')
+      }
+      // The settle observation already holds the permission bits; comparing them collapses
+      // "the inode had mode M" and "the path resolves to that inode" into one observation.
+      if ((settled.mode & PERMISSION_MASK) !== requested) {
+        refuseModeEnforcement(
+          path,
+          `because the requested mode ${octalMode(requested)} did not settle `
+          + `(observed ${octalMode(settled.mode)}); another process changed the destination's `
+          + `permissions. Run \`chmod 600 ${path}\` and rerun agent-qa init.`,
+        )
+      }
+    } finally {
+      if (fd !== undefined) closeSync(fd)
     }
-    if (settled.isSymbolicLink() || !settled.isFile()) {
-      refuseModeEnforcement(path, 'on a non-regular destination')
-    }
-    if (
-      settled.dev !== inspection.dev
-      || settled.ino !== inspection.ino
-      || settled.nlink !== 1
-    ) {
-      refuseModeEnforcement(path, 'because the destination changed')
-    }
-    // The settle observation already holds the permission bits; comparing them collapses
-    // "the inode had mode M" and "the path resolves to that inode" into one observation.
-    if ((settled.mode & PERMISSION_MASK) !== requested) {
-      refuseModeEnforcement(
-        path,
-        `because the requested mode ${octalMode(requested)} did not settle `
-        + `(observed ${octalMode(settled.mode)}); another process changed the destination's `
-        + `permissions. Run \`chmod 600 ${path}\` and rerun agent-qa init.`,
-      )
-    }
-  } finally {
-    if (fd !== undefined) closeSync(fd)
+  } catch (error) {
+    throw withRefusalDisposition(error, REFUSAL_DISPOSITION_RETAINED)
   }
 }
 
+/**
+ * Publishes one scaffold destination and returns one of three outcomes:
+ *
+ * - `created` — the destination was absent and was published by the exclusive path
+ *   (`link` from a durable temporary).
+ * - `updated` — the destination existed, `force` was set without `preserveOnForce`, and it
+ *   was published by the atomic-replacement path (`rename` over the existing inode).
+ * - `preserved` — the destination existed and was kept; when the plan declares a mode, its
+ *   permission bits are enforced in place on the retained inode.
+ *
+ * **A refused post-publication confirmation DESTROYS the destination.** On both the
+ * `created` and `updated` paths, if the mode or identity of the published file cannot be
+ * confirmed after publication, the destination is UNLINKED before the refusal is rethrown.
+ * On the `updated` path this is not recoverable: the `rename` has already consumed the
+ * bytes the destination held beforehand, and this function does not retain a copy of them.
+ *
+ * A refused RETENTION behaves oppositely: the destination is neither removed nor
+ * rewritten, so it is left in place at an unconfirmed mode with its contents intact.
+ *
+ * The asymmetry is deliberate, not accidental. For a credential-bearing publication a file
+ * left at a mode that could not be confirmed is the worse failure, and on the replacement
+ * path "leave it alone" was never available — the rename runs before the confirmation. The
+ * two outcomes are told apart from the thrown error alone: every refusal appends a
+ * disposition sentence stating whether the destination was unlinked or left in place.
+ *
+ * Ratified as decision D-22 (phase 383).
+ */
 export function writeScaffoldFileAtomic(
   plan: InitPathPlan,
   hooks: InitFilesystemHooks = {},

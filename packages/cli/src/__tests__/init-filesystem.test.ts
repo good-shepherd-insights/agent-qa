@@ -454,6 +454,12 @@ function octal(mode: number): string {
 
 const UNAPPLIED_MODE_REASON = /requested mode \d{4} was not applied/
 
+// Fragments of the two disposition sentences the module appends after every refusal reason
+// (D-22). Fragments rather than whole sentences, so incidental punctuation does not churn
+// these tests — but chosen so that no single message can ever match both.
+const REMOVED_DISPOSITION_PATTERN = /it was unlinked[\s\S]*are not recoverable/
+const RETAINED_DISPOSITION_PATTERN = /the destination was not removed or rewritten/
+
 const REVERT_MODES = [
   0o644,
   0o666,
@@ -487,12 +493,24 @@ describe('credential-file mode confirmation fails closed', () => {
         writeFileSync(plan.path, bytes, { mode: 0o644 })
         const inode = lstatSync(plan.path).ino
 
-        expect(() => writeScaffoldFileAtomic(plan, {
-          afterRetainedModeOpen: () => {
-            chmodSync(plan.path, revertMode)
-          },
-        })).toThrow(UNAPPLIED_MODE_REASON)
+        let message = ''
+        try {
+          writeScaffoldFileAtomic(plan, {
+            afterRetainedModeOpen: () => {
+              chmodSync(plan.path, revertMode)
+            },
+          })
+        } catch (error) {
+          message = (error as Error).message
+        }
 
+        expect(message).toMatch(UNAPPLIED_MODE_REASON)
+        // The retained path leaves the destination alone and the refusal now says so. The
+        // opposite disposition can never appear here — that pairing is what makes a refused
+        // retention distinguishable from a refused replacement, which throws the same reason.
+        expect(message).toMatch(RETAINED_DISPOSITION_PATTERN)
+        expect(message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
+        expect(existsSync(plan.path)).toBe(true)
         expect(modeBits(plan.path)).toBe(revertMode)
         expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
         expect(lstatSync(plan.path).ino).toBe(inode)
@@ -843,15 +861,25 @@ describe('atomic-replacement publication confirmation', () => {
         writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
         const fired: string[] = []
 
-        expect(() => writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
-          beforeAtomicReplacePublish: () => {
-            chmodSync(findInitTemporary(root), revertMode)
-          },
-        }))).toThrow(UNAPPLIED_MODE_REASON)
+        let message = ''
+        try {
+          writeScaffoldFileAtomic(plan, recordAllHooks(fired, {
+            beforeAtomicReplacePublish: () => {
+              chmodSync(findInitTemporary(root), revertMode)
+            },
+          }))
+        } catch (error) {
+          message = (error as Error).message
+        }
 
+        expect(message).toMatch(UNAPPLIED_MODE_REASON)
+        expect(message).toMatch(REMOVED_DISPOSITION_PATTERN)
+        expect(message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
         expect(fired).toEqual([...ATOMIC_REPLACE_HOOK_NAMES])
         // Fail-closed disposition: the rename already consumed the original bytes, so the
-        // unconfirmed destination is removed rather than left at an unconfirmed mode.
+        // unconfirmed destination is removed rather than left at an unconfirmed mode. That
+        // disposition is now STATED in the thrown message and documented on the exported
+        // entry point (D-22); it is unchanged, only made deliberate and legible.
         expect(existsSync(plan.path)).toBe(false)
         expect(listInitTemporaries(root)).toEqual([])
       },
@@ -962,6 +990,10 @@ describe('retained-path settle window', () => {
 
         expect(message).toMatch(UNSETTLED_MODE_REASON)
         expect(message).not.toMatch(UNAPPLIED_MODE_REASON)
+        // The settle refusal is raised on the retained path, so it carries the retention
+        // disposition alongside its own distinct reason.
+        expect(message).toMatch(RETAINED_DISPOSITION_PATTERN)
+        expect(message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
         expect(fired.at(-1)).toBe('afterRetainedModeConfirm')
         expect(modeBits(plan.path)).toBe(revertMode)
         expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
@@ -1051,4 +1083,109 @@ describe('retained-path settle window', () => {
       expect(modeBits(controlPlan.path)).toBe(0o600)
     },
   )
+})
+
+function capturedRefusalMessage(run: () => void): string {
+  try {
+    run()
+  } catch (error) {
+    return (error as Error).message
+  }
+  throw new Error('expected the invocation to refuse, but it returned without throwing')
+}
+
+// The disposition sentences are NOT exported — D-22 forbids new API surface, and a
+// test-only export is still surface. Distinctness is therefore asserted against the two
+// sentences as they appear in real refusal messages the module itself produced.
+function dispositionSentence(message: string): string {
+  const index = message.indexOf('Disposition:')
+  if (index === -1) {
+    throw new Error(`refusal message carries no disposition sentence: ${message}`)
+  }
+  return message.slice(index)
+}
+
+describe('refusal disposition distinctness', () => {
+  it.skipIf(isWindows)(
+    'never lets a removed destination and a retained one speak the same words',
+    () => {
+      const replacementRoot = credentialRoot()
+      const replacementPlan = atomicReplacePlan(replacementRoot)
+      writeFileSync(replacementPlan.path, 'USERDATA=important\n', { mode: 0o644 })
+      const removedMessage = capturedRefusalMessage(() => {
+        writeScaffoldFileAtomic(replacementPlan, {
+          beforeAtomicReplacePublish: () => {
+            chmodSync(findInitTemporary(replacementRoot), 0o644)
+          },
+        })
+      })
+
+      const retainedRoot = credentialRoot()
+      const retainedPlan = secretsPlan(retainedRoot)
+      writeFileSync(retainedPlan.path, 'API_KEY=abc\n', { mode: 0o644 })
+      const retainedMessage = capturedRefusalMessage(() => {
+        writeScaffoldFileAtomic(retainedPlan, {
+          afterRetainedModeOpen: () => {
+            chmodSync(retainedPlan.path, 0o644)
+          },
+        })
+      })
+
+      // Both refusals carry the SAME reason — that is the condition the verifier
+      // reproduced. Only the disposition tells the two outcomes apart.
+      expect(removedMessage).toMatch(UNAPPLIED_MODE_REASON)
+      expect(retainedMessage).toMatch(UNAPPLIED_MODE_REASON)
+      expect(removedMessage).not.toBe(retainedMessage)
+
+      const removed = dispositionSentence(removedMessage)
+      const retained = dispositionSentence(retainedMessage)
+
+      // Structural, not incidental: neither sentence is a substring of the other, so a
+      // future edit that makes them overlap fails this named test rather than silently
+      // restoring the confusion.
+      expect(removed).not.toBe(retained)
+      expect(removed.includes(retained)).toBe(false)
+      expect(retained.includes(removed)).toBe(false)
+
+      // And a message carrying one disposition does not match the other's pattern.
+      expect(removedMessage).toMatch(REMOVED_DISPOSITION_PATTERN)
+      expect(removedMessage).not.toMatch(RETAINED_DISPOSITION_PATTERN)
+      expect(retainedMessage).toMatch(RETAINED_DISPOSITION_PATTERN)
+      expect(retainedMessage).not.toMatch(REMOVED_DISPOSITION_PATTERN)
+
+      // The post-states the disposition sentences describe, measured on the same pair of
+      // invocations that produced the messages.
+      expect(existsSync(replacementPlan.path)).toBe(false)
+      expect(existsSync(retainedPlan.path)).toBe(true)
+      expect(readFileSync(retainedPlan.path, 'utf8')).toBe('API_KEY=abc\n')
+      expect(modeBits(retainedPlan.path)).toBe(0o644)
+    },
+  )
+
+  it.skipIf(isWindows)('preserves the original refusal as the rethrown error cause', () => {
+    const root = credentialRoot()
+    const plan = secretsPlan(root)
+    writeFileSync(plan.path, 'API_KEY=abc\n', { mode: 0o644 })
+
+    let caught: unknown
+    try {
+      writeScaffoldFileAtomic(plan, {
+        afterRetainedModeOpen: () => {
+          chmodSync(plan.path, 0o644)
+        },
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    const cause = (caught as Error).cause
+    expect(cause).toBeInstanceOf(Error)
+    // The cause holds the reason WITHOUT a disposition, and the rethrown message begins
+    // with it verbatim — which is why every pre-existing reason matcher still matches.
+    expect((cause as Error).message).toMatch(UNAPPLIED_MODE_REASON)
+    expect((cause as Error).message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
+    expect((cause as Error).message).not.toMatch(REMOVED_DISPOSITION_PATTERN)
+    expect((caught as Error).message.startsWith((cause as Error).message)).toBe(true)
+  })
 })
