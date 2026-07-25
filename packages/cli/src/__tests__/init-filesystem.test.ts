@@ -190,6 +190,31 @@ describe('safe init filesystem primitives', () => {
     expect(readFileSync(gitignorePath, 'utf8')).toBe(firstBytes)
   })
 
+  // A bad merge produces this shape: the managed end marker above its start marker. The
+  // marker COUNTS still balance at one and one, so the count-based refusal does not fire —
+  // which is exactly why the ordering has to be checked separately.
+  it('refuses an inverted-marker target .gitignore without changing its bytes', () => {
+    const root = tempRoot()
+    initializeGit(root)
+    const gitignorePath = join(root, '.gitignore')
+    const invertedBytes = [
+      '# agent-qa init:end',
+      'user-rule-one',
+      'user-rule-two',
+      '# agent-qa init:start',
+      'user-rule-three',
+      '',
+    ].join('\n')
+    writeFileSync(gitignorePath, invertedBytes)
+
+    expect(() => upsertManagedGitignoreBlock(gitignorePath)).toThrow(
+      /Refusing malformed target \.gitignore: [\s\S]*end marker precedes its start marker/,
+    )
+    // The whole file, not sampled lines: a splice at an arbitrary byte duplicates the user's
+    // own rules and mangles a line, and only a whole-string comparison catches both.
+    expect(readFileSync(gitignorePath, 'utf8')).toBe(invertedBytes)
+  })
+
   it('rejects an ineffective sovereign knowledge .gitignore without changing bytes', () => {
     const root = tempRoot()
     initializeGit(root)

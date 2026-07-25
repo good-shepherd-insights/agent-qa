@@ -685,6 +685,17 @@ function stripManagedGitignoreBlock(content: string): string {
 
   const start = content.indexOf(MANAGED_GITIGNORE_START)
   const endMarker = content.indexOf(MANAGED_GITIGNORE_END, start)
+  // The counts balance at one and one even when a bad merge inverts the pair, and the
+  // anchored search then reports no match. Splicing at the offset computed from -1 would
+  // cut the file at an arbitrary byte with no relationship to any marker, duplicating the
+  // user's own rules and mangling a line. Refuse instead: this is the ordering property the
+  // count-based refusal above already advertises but does not check.
+  if (endMarker === -1) {
+    throw new Error(
+      'Refusing malformed target .gitignore: the agent-qa init managed '
+      + 'end marker precedes its start marker',
+    )
+  }
   let end = endMarker + MANAGED_GITIGNORE_END.length
   if (content.slice(end, end + 2) === '\r\n') end += 2
   else if (content[end] === '\n') end += 1
