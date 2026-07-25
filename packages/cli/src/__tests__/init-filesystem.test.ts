@@ -151,28 +151,37 @@ describe('safe init filesystem primitives', () => {
       })))
     }
 
-    it('refuses a parent and its child when an unrelated sibling sorts between them', () => {
-      const root = tempRoot()
-      const parent = join(root, 'tests')
-      const child = join(root, 'tests', 'example-pass.yaml')
-      const expected = `Init plan destination ${parent} is a parent of ${child}`
+    // The parent and child are IDENTICAL in the next two tests; only the unrelated sibling
+    // differs. They are separate `it`s rather than two assertions in one so that the control
+    // is independently observable: inside a single test the first failing assertion would stop
+    // the control from ever running, and a control that cannot be seen passing while its
+    // partner fails is not a control.
+    function nestedPair(root: string): string {
+      return `Init plan destination ${join(root, 'tests')} is a parent of `
+        + `${join(root, 'tests', 'example-pass.yaml')}`
+    }
 
+    it('refuses a parent and its child when an unrelated sibling sorts between them', () => {
       // The exact three-path set the round-7 review and verification both drove to NO THROW.
       // `-` (0x2D) sorts below `/` (0x2F), so `tests-extra.md` lands strictly between `tests`
       // and `tests/example-pass.yaml` and an adjacent-pair comparison never sees the overlap.
+      const root = tempRoot()
       expect(() => preflightPaths(root, [
         'tests',
         'tests-extra.md',
         'tests/example-pass.yaml',
-      ])).toThrow(expected)
+      ])).toThrow(nestedPair(root))
+    })
 
-      // The paired control: the SAME parent and child with the sibling removed. Asserting the
-      // identical message is what proves the sibling is not what decides the verdict — without
-      // it, a guard that only ever fires on two-path sets would look the same from here.
+    it('refuses the same parent and child with the sibling removed', () => {
+      // The paired control. The identical message proves the sibling is not what decides the
+      // verdict — without it, a guard that only ever fires on two-path sets would be
+      // indistinguishable from a correct one.
+      const root = tempRoot()
       expect(() => preflightPaths(root, [
         'tests',
         'tests/example-pass.yaml',
-      ])).toThrow(expected)
+      ])).toThrow(nestedPair(root))
     })
 
     it('names the nearest ancestor when several plans nest', () => {
