@@ -1336,7 +1336,7 @@ describe('refusal disposition distinctness', () => {
   // stamped a factual claim about the destination onto the consumer's own throw.
   const PASSTHROUGH_THROW_VALUES = [
     {
-      label: 'an Error',
+      label: 'an Error instance',
       make: (): unknown => new Error('caller-side bookkeeping failed'),
       message: 'caller-side bookkeeping failed',
     },
@@ -1367,7 +1367,7 @@ describe('refusal disposition distinctness', () => {
   ] as const) {
     for (const value of PASSTHROUGH_THROW_VALUES) {
       it.skipIf(isWindows)(
-        `rethrows a caller hook's own ${value.label} untouched on the ${arm} path`,
+        `rethrows a caller hook's own throw of ${value.label} untouched on the ${arm} path`,
         () => {
           const root = credentialRoot()
           const plan = arm === 'retained' ? secretsPlan(root) : atomicReplacePlan(root)
