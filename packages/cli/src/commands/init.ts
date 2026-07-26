@@ -607,6 +607,13 @@ function buildGitignoreEntries(): string[] {
     DEFAULT_LOCAL_CONFIG_FILE,
     DEFAULT_ENV_FILE,
     DEFAULT_SECRETS_FILE,
+    // The namespace `writeDurableTemporary` publishes through. The temporary is a sibling of
+    // its destination carrying that destination's content — for the secrets file, live
+    // credential bytes at 0600 — and it outlives any cleanup that cannot run. Spelled
+    // literally rather than imported because init-filesystem.js is mocked wholesale by the
+    // init suite; `DURABLE_TEMPORARY_GITIGNORE_RULE` is the other copy, and the two are
+    // pinned together by the runtime-versus-defaults agreement test.
+    '.*.agent-qa-init-*.tmp',
   ]
 }
 
@@ -634,7 +641,8 @@ providers:
 }
 
 const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
-// The committed/derived split every knowledge writer relies on (knowledge-store.md §4).
+// The committed/derived split every knowledge writer relies on (knowledge-store.md §4),
+// plus one init-tool operational rule that is NOT part of that split — see below.
 const KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES = [
   'memory/index/',
   'memory/queue/',
@@ -642,10 +650,19 @@ const KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES = [
   '.epoch',
   '**/artifacts/',
   'skills/.staging/',
+  '.*.agent-qa-init-*.tmp',
 ] as const
 
-// Verbatim from spec/v2/knowledge-store.md §4 — do not paraphrase. Future-shelf
-// lines (skills/.staging/) ship now so the split never needs a later edit (D-13).
+// The committed/derived split below is verbatim from spec/v2/knowledge-store.md §4 — do not
+// paraphrase. Future-shelf lines (skills/.staging/) ship now so the split never needs a later
+// edit (D-13).
+//
+// The final rule is a DELIBERATE DIVERGENCE from that spec section and is labelled as such in
+// the emitted file. It is not part of the committed/derived split; it is an operational rule
+// for this tool's own publication temporaries. It has to live here rather than in the project
+// .gitignore because a knowledge tree is routinely its own repository — measured: a nested
+// repository does not inherit its parent's .gitignore — and because `init` verifies the
+// knowledge root BEFORE the project managed block exists.
 function buildKnowledgeGitignore(): string {
   return `# agent-qa-knowledge/.gitignore
 memory/index/
@@ -655,6 +672,10 @@ memory/queue/
 # binary blobs; artifact inventories are committed and live OUTSIDE artifacts/
 **/artifacts/
 skills/.staging/
+# INIT-TOOL OPERATIONAL — outside the committed/derived split above. agent-qa init publishes
+# every file through a temporary sibling that carries the destination's own content; this
+# keeps that temporary out of a commit even when this tree is its own repository.
+.*.agent-qa-init-*.tmp
 `
 }
 
@@ -1136,6 +1157,24 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         hooks.afterWrite?.(result, boundary)
       }
 
+      // The managed block goes down FIRST, before any other write can create a temporary.
+      // Every scaffold write publishes through a sibling temporary carrying the
+      // destination's own content, and until this block exists no rule covers that name —
+      // so ordering it after the scaffold loop left a window in which `.env.secrets.local`'s
+      // 0600 temporary was untracked and `git add .` could pick it up. The single temporary
+      // this cannot cover is its own, whose content is .gitignore bytes and never a
+      // credential. Verifying here also makes the refusal's "no files were changed" true of
+      // the scaffold, which it was not when the check ran after the loop.
+      recordOutcome(upsertManagedGitignoreBlock(
+        targetGitignorePath,
+        buildGitignoreEntries(),
+      ))
+      verifyEffectiveGitignore({
+        cwd: dir,
+        label: 'target .gitignore',
+        probes: TARGET_GITIGNORE_PROBES,
+      })
+
       for (const plan of filePlans) {
         recordOutcome(writeScaffoldFileAtomic(plan, {}))
       }
@@ -1151,16 +1190,6 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       if (subscriptionAuthDependency) {
         recordOutcome(writeScaffoldFileAtomic(subscriptionAuthDependency.plan, {}))
       }
-
-      recordOutcome(upsertManagedGitignoreBlock(
-        targetGitignorePath,
-        buildGitignoreEntries(),
-      ))
-      verifyEffectiveGitignore({
-        cwd: dir,
-        label: 'target .gitignore',
-        probes: TARGET_GITIGNORE_PROBES,
-      })
 
       recordOutcome(writeConfigMarkerLast(configPlan, {}))
       hooks.onComplete?.([...outcomes])

@@ -1242,11 +1242,16 @@ describe('init command', () => {
         expect(written).not.toContain(envPath)
         expect(written).not.toContain(secretsPath)
 
+        // Looked up by name, not by index. The managed .gitignore is now written before the
+        // scaffold loop so no credential temporary can exist under a name no rule covers,
+        // which moves every scaffold entry one position; the property being pinned here is
+        // the credential files' outcome and their relative scaffold order, never their
+        // absolute position in the list.
         const paths = outcomes.map(outcome => outcome.path)
-        expect(paths[0]).toBe(envPath)
-        expect(paths[1]).toBe(secretsPath)
-        expect(outcomes[0]?.outcome).toBe('preserved')
-        expect(outcomes[1]?.outcome).toBe('preserved')
+        expect(paths.indexOf(envPath)).toBeGreaterThanOrEqual(0)
+        expect(paths.indexOf(envPath)).toBeLessThan(paths.indexOf(secretsPath))
+        expect(outcomes.find(outcome => outcome.path === envPath)?.outcome).toBe('preserved')
+        expect(outcomes.find(outcome => outcome.path === secretsPath)?.outcome).toBe('preserved')
 
         const output = consoleOutput()
         expect(output).toContain('Preserved:\n    • .env\n    • .env.secrets.local')
@@ -1258,11 +1263,14 @@ describe('init command', () => {
         ['--dir', projectDir, '--platform', 'web', '--skip-install'],
       )
 
+      // Scaffold order is a RELATIVE property between the two credential files. Their
+      // absolute index moved when the managed .gitignore was hoisted ahead of the scaffold
+      // loop to close the uncovered-temporary window.
       const paths = outcomes.map(outcome => outcome.path)
-      expect(paths[0]).toBe(envPath)
-      expect(paths[1]).toBe(secretsPath)
-      expect(outcomes[0]?.outcome).toBe('created')
-      expect(outcomes[1]?.outcome).toBe('created')
+      expect(paths.indexOf(envPath)).toBeGreaterThanOrEqual(0)
+      expect(paths.indexOf(envPath)).toBeLessThan(paths.indexOf(secretsPath))
+      expect(outcomes.find(outcome => outcome.path === envPath)?.outcome).toBe('created')
+      expect(outcomes.find(outcome => outcome.path === secretsPath)?.outcome).toBe('created')
 
       const envWrite = mockWriteFileSync.mock.calls.find(call => call[0] === envPath)
       const secretsWrite = mockWriteFileSync.mock.calls.find(call => call[0] === secretsPath)
@@ -1380,6 +1388,7 @@ describe('init command', () => {
 
   describe('knowledge root scaffold (KDIR-01)', () => {
     const KNOWLEDGE_ROOT = '/tmp/test-project/agent-qa-knowledge'
+    // The committed/derived split, verbatim from spec/v2/knowledge-store.md §4.
     const FUNCTIONAL_LINES = [
       'memory/index/',
       'memory/queue/',
@@ -1388,6 +1397,13 @@ describe('init command', () => {
       '**/artifacts/',
       'skills/.staging/',
     ]
+
+    // NOT part of that split, and deliberately kept separate here so the divergence is
+    // visible in the test rather than folded into the spec list. agent-qa init publishes
+    // every file through a temporary sibling carrying the destination's own content; a
+    // knowledge tree that is its own repository does not inherit the project .gitignore,
+    // so the rule has to be present in this file to keep that temporary out of a commit.
+    const INIT_TOOL_OPERATIONAL_LINES = ['.*.agent-qa-init-*.tmp']
 
     function knowledgeWritePaths(): string[] {
       return mockWriteFileSync.mock.calls
@@ -1415,7 +1431,7 @@ describe('init command', () => {
       expect(output).toContain('agent-qa-knowledge/policies/global.md')
     })
 
-    it('scaffolded knowledge .gitignore carries all six functional lines', async () => {
+    it('scaffolded knowledge .gitignore carries the six spec lines plus the init-tool rule', async () => {
       await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
       const gitignoreCall = findWriteCallEndingWith('agent-qa-knowledge/.gitignore')
@@ -1428,7 +1444,10 @@ describe('init command', () => {
         .split(/\r?\n/)
         .filter(line => line.length > 0 && !line.startsWith('#'))
         .map(line => line.replace(/[ \t]+$/u, ''))
-      expect(activeLines).toEqual(FUNCTIONAL_LINES)
+      expect(activeLines).toEqual([...FUNCTIONAL_LINES, ...INIT_TOOL_OPERATIONAL_LINES])
+      // The operational rule is labelled for what it is, so a later reader does not mistake
+      // it for part of the spec's committed/derived split.
+      expect(content).toContain('# INIT-TOOL OPERATIONAL')
     })
 
     it('scaffolded knowledge .gitignore enforces committed and derived partitions in real Git', async () => {
@@ -1528,6 +1547,7 @@ memory/queue/
 .lease
 **/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
 skills/.staging/
+.*.agent-qa-init-*.tmp
 `
       mockExistsSync.mockImplementation((p) => String(p).endsWith('agent-qa-knowledge/.gitignore'))
       mockReadFileSync.mockImplementation((p) => {
@@ -1544,6 +1564,10 @@ skills/.staging/
       expect(warning).toContain('".epoch"')
       expect(warning).toContain('"**/artifacts/"')
       expect(warning).toContain('add it manually')
+      // The fixture carries the init-tool rule, so it must NOT be named. This is what keeps
+      // the count of 2 meaningful: it pins that the two warnings are the two lines the
+      // fixture actually degraded, not an arbitrary pair.
+      expect(warning).not.toContain('.agent-qa-init-')
     })
 
     it('target-project .gitignore entries include .agent-qa/ and never the v1 memory directory', async () => {

@@ -57,6 +57,27 @@ export interface GitignoreProbe {
   requiredRule?: string
 }
 
+/**
+ * Covers the namespace `writeDurableTemporary` publishes through. That temporary is a
+ * sibling of its destination carrying the DESTINATION'S content at the destination's mode —
+ * for `.env.secrets.local`, live credential bytes at 0600 — and it survives any cleanup that
+ * cannot run, including a SIGINT between the content write and the unlink. Without this rule
+ * real git reports it untracked, so `git add .` picks it up.
+ *
+ * The spelling is measured, not reasoned: `git check-ignore` decides it, and the leading dot
+ * plus the literal `.agent-qa-init-` infix and `.tmp` suffix keep it inside this module's own
+ * namespace — `notes.agent-qa-init.md` and `.env.secrets.local.tmp` both stay visible.
+ */
+export const DURABLE_TEMPORARY_GITIGNORE_RULE = '.*.agent-qa-init-*.tmp'
+
+// A concrete name of the exact shape the module produces, so the probe asks git about a real
+// temporary rather than about the pattern that is supposed to cover it.
+const DURABLE_TEMPORARY_PROBE_NAME
+  = '..env.secrets.local.agent-qa-init-4242-00000000-0000-4000-8000-000000000000.tmp'
+
+const KNOWLEDGE_DURABLE_TEMPORARY_PROBE_NAME
+  = '..gitignore.agent-qa-init-4242-00000000-0000-4000-8000-000000000000.tmp'
+
 export const TARGET_GITIGNORE_PROBES = [
   { path: '.agent-qa/cache/cache.json', expected: 'ignored', requiredRule: '.agent-qa/' },
   {
@@ -72,6 +93,11 @@ export const TARGET_GITIGNORE_PROBES = [
   },
   { path: '.env', expected: 'ignored', requiredRule: '.env' },
   { path: '.env.secrets.local', expected: 'ignored', requiredRule: '.env.secrets.local' },
+  {
+    path: DURABLE_TEMPORARY_PROBE_NAME,
+    expected: 'ignored',
+    requiredRule: DURABLE_TEMPORARY_GITIGNORE_RULE,
+  },
   { path: 'agent-qa.config.yaml', expected: 'visible' },
   { path: 'tests/example-pass.yaml', expected: 'visible' },
 ] as const satisfies readonly GitignoreProbe[]
@@ -99,6 +125,11 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
     expected: 'ignored',
     requiredRule: 'skills/.staging/',
   },
+  {
+    path: KNOWLEDGE_DURABLE_TEMPORARY_PROBE_NAME,
+    expected: 'ignored',
+    requiredRule: DURABLE_TEMPORARY_GITIGNORE_RULE,
+  },
   { path: 'memory/example/bundles/fact-example/record.md', expected: 'visible' },
   { path: 'memory/example/bundles/fact-example/manifest.json', expected: 'visible' },
   {
@@ -115,6 +146,7 @@ const TARGET_GITIGNORE_ENTRIES = [
   'agent-qa.local.yaml',
   '.env',
   '.env.secrets.local',
+  DURABLE_TEMPORARY_GITIGNORE_RULE,
 ] as const
 
 const MANAGED_GITIGNORE_START = '# agent-qa init:start'
@@ -328,6 +360,28 @@ function unlinkIfPresent(path: string): void {
   }
 }
 
+/**
+ * Removes a publication temporary from a `finally` WITHOUT ever throwing.
+ *
+ * A `finally` that throws discards the exception already in flight, so a cleanup failure
+ * replaces the publication refusal with an unlink error naming a path the operator never
+ * acted on — the reason they needed is gone and the one they get is unactionable. The
+ * failure is still reported, as a warning, rather than swallowed; and a leftover is inert to
+ * a commit because `DURABLE_TEMPORARY_GITIGNORE_RULE` covers the namespace.
+ */
+function cleanUpTemporaryWithoutMasking(temporary: string): void {
+  try {
+    unlinkIfPresent(temporary)
+  } catch (error) {
+    process.emitWarning(
+      `agent-qa init could not remove its temporary ${temporary} `
+      + `(${error instanceof Error ? error.message : String(error)}). `
+      + 'It is covered by the managed .gitignore rule, so it cannot enter a commit; '
+      + 'delete it once the condition that blocked the removal is cleared.',
+    )
+  }
+}
+
 interface DurableTemporary {
   temporary: string
   confirmed?: { dev: number, ino: number }
@@ -426,7 +480,7 @@ function publishExclusive(
     afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'created' }
   } finally {
-    unlinkIfPresent(temporary)
+    cleanUpTemporaryWithoutMasking(temporary)
   }
 }
 
@@ -452,7 +506,7 @@ function replaceRegularAtomic(
     afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'updated' }
   } finally {
-    unlinkIfPresent(temporary)
+    cleanUpTemporaryWithoutMasking(temporary)
   }
 }
 
@@ -923,9 +977,27 @@ export function verifyEffectiveGitignore(options: {
     ['rev-parse', '--is-inside-work-tree'],
     { cwd, encoding: 'utf8', stdio: 'pipe' },
   )
-  if (repositoryProbe.error && isErrno(repositoryProbe.error, 'ENOENT')) {
-    return { checked: false }
+  if (repositoryProbe.error) {
+    // git absent is the ONE spawn failure that may skip this verification. EACCES, EAGAIN
+    // and EMFILE all mean the credential-visibility check did not run, and a safety check
+    // that disables itself on an unexpected error is the wrong default in the module whose
+    // job is keeping credential files out of commits. `checkIgnoreStatus` already throws
+    // here; this now agrees with it.
+    if (isErrno(repositoryProbe.error, 'ENOENT')) return { checked: false }
+    throw new Error(
+      `Unable to verify ${options.label}: git could not be run `
+      + `(${repositoryProbe.error.message}). No files were changed.`,
+    )
   }
+  if (repositoryProbe.status === null) {
+    throw new Error(
+      `Unable to verify ${options.label}: git exited without a status`
+      + `${repositoryProbe.signal ? ` (signal ${repositoryProbe.signal})` : ''}. `
+      + 'No files were changed.',
+    )
+  }
+  // A non-zero status is git's own ANSWER — "not a git repository" — rather than a failure
+  // to ask, so it stays a legitimate skip.
   if (repositoryProbe.status !== 0 || repositoryProbe.stdout.trim() !== 'true') {
     return { checked: false }
   }
