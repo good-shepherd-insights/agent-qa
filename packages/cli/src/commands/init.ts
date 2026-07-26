@@ -873,6 +873,19 @@ function buildScaffoldFilePlans(
       buildLocalConfigTemplate(),
       force,
     ),
+    // The knowledge root's own covering rule goes down BEFORE any other write inside the
+    // knowledge tree, for the same reason the target managed block leads the whole run:
+    // every scaffold write publishes through a sibling temporary, and a knowledge tree that
+    // is its own repository does NOT inherit the parent's .gitignore (measured). Ordered
+    // after README.md and policies/global.md, those two temporaries existed under no rule at
+    // all in that case.
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, '.gitignore'),
+      buildKnowledgeGitignore(),
+      force,
+      true,
+    ),
     scaffoldFilePlan(
       dir,
       join(KNOWLEDGE_ROOT_DIR, 'README.md'),
@@ -884,13 +897,6 @@ function buildScaffoldFilePlans(
       dir,
       join(KNOWLEDGE_ROOT_DIR, 'policies', 'global.md'),
       buildGlobalPolicyTemplate(),
-      force,
-      true,
-    ),
-    scaffoldFilePlan(
-      dir,
-      join(KNOWLEDGE_ROOT_DIR, '.gitignore'),
-      buildKnowledgeGitignore(),
       force,
       true,
     ),
@@ -1163,8 +1169,16 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       // so ordering it after the scaffold loop left a window in which `.env.secrets.local`'s
       // 0600 temporary was untracked and `git add .` could pick it up. The single temporary
       // this cannot cover is its own, whose content is .gitignore bytes and never a
-      // credential. Verifying here also makes the refusal's "no files were changed" true of
-      // the scaffold, which it was not when the check ran after the loop.
+      // credential.
+      //
+      // CORRECTION (round 10): that "single temporary" claim was measured against THIS root
+      // only. A knowledge tree that is its own repository does not inherit this file, so the
+      // knowledge root has its own first-write rule — see `buildScaffoldFilePlans`, where the
+      // knowledge `.gitignore` now leads its group for exactly this reason. One uncovered
+      // temporary per root, each of them a `.gitignore`'s own.
+      //
+      // Verifying here does NOT make "no files were changed" true — this write has already
+      // happened. The refusal states what actually happened instead; see `changed` below.
       recordOutcome(upsertManagedGitignoreBlock(
         targetGitignorePath,
         buildGitignoreEntries(),

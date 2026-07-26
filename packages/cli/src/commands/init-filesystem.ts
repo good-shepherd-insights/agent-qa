@@ -67,6 +67,18 @@ export interface GitignoreProbe {
  * The spelling is measured, not reasoned: `git check-ignore` decides it, and the leading dot
  * plus the literal `.agent-qa-init-` infix and `.tmp` suffix keep it inside this module's own
  * namespace — `notes.agent-qa-init.md` and `.env.secrets.local.tmp` both stay visible.
+ *
+ * **The rule has to be present in EVERY root that can be a repository, and it has to be the
+ * first write into each.** Round 9 established that the target root's block is the first write
+ * of the run, and recorded that its own temporary was therefore "the only uncovered one in the
+ * whole run". CORRECTION (round 10): that was measured against the target root's git alone. A
+ * knowledge tree is routinely its own repository, and a nested repository does not inherit its
+ * parent's `.gitignore` — measured `VISIBLE` with the parent block in place. While the
+ * knowledge `.gitignore` was ordered after `README.md` and `policies/global.md`, those two
+ * temporaries were uncovered at the instant they existed in that case (README and policy
+ * template bytes, never credential bytes). Both roots now write their covering rule first, so
+ * the accurate statement is one uncovered temporary PER ROOT and it is that root's own
+ * `.gitignore`.
  */
 export const DURABLE_TEMPORARY_GITIGNORE_RULE = '.*.agent-qa-init-*.tmp'
 

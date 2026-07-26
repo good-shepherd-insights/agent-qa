@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -2054,26 +2054,69 @@ describe('the durable temporary is invisible to a commit', () => {
     const root = tempRoot()
     initializeGit(root)
     const gitignorePath = join(root, '.gitignore')
-    const written: string[] = []
-    const ruleWasPresent: boolean[] = []
+    // The sovereign case, established BEFORE the run rather than after it: the knowledge tree
+    // is its own repository from the first write onward, so every boundary observation below
+    // is taken from a git that cannot see the parent's managed block.
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+    initializeGit(knowledgeRoot)
+
+    const records: { path: string, targetCovered: boolean, knowledgeCovered: boolean }[] = []
 
     await runRealInit(root, {
       afterWrite: (result) => {
-        written.push(result.path)
         // Boundary N fires after write N, so the temporary for write N+1 is created after
         // this observation. "Covered at every boundary" therefore means every temporary
         // from the second write onward was covered at the moment it existed. The question
         // is put to real git at that moment rather than inferred from the entry text.
-        ruleWasPresent.push(gitIgnores(root, durableTemporaryNameFor('.env.secrets.local')))
+        records.push({
+          path: result.path,
+          targetCovered: gitIgnores(root, durableTemporaryNameFor('.env.secrets.local')),
+          knowledgeCovered: gitIgnores(
+            knowledgeRoot,
+            durableTemporaryNameFor('README.md'),
+          ),
+        })
       },
     })
 
-    // The one write that cannot be covered by a rule it is itself creating is the .gitignore
-    // write. It must therefore come FIRST, so that it is the only uncovered temporary in the
-    // whole run — and its content is .gitignore bytes, never credential bytes.
-    expect(written[0]).toBe(gitignorePath)
-    expect(ruleWasPresent.every(present => present)).toBe(true)
-    expect(ruleWasPresent.length).toBeGreaterThan(1)
+    // TARGET ROOT. The one write that cannot be covered by a rule it is itself creating is
+    // the .gitignore write. It must therefore come FIRST — and its content is .gitignore
+    // bytes, never credential bytes.
+    expect(records[0]!.path).toBe(gitignorePath)
+    expect(records.every(record => record.targetCovered)).toBe(true)
+    expect(records.length).toBeGreaterThan(1)
+
+    // KNOWLEDGE ROOT. Round 9 measured coverage against the target root's git only and
+    // recorded the .gitignore's own temporary as the only uncovered one in the whole run.
+    // That holds per ROOT, not per run: a nested repository does not inherit the parent's
+    // rules (the control below measures it), so the knowledge tree needs the same
+    // first-write property, and the assertion is that PROPERTY rather than any index.
+    const firstKnowledgeWrite = records.findIndex(
+      record => record.path.startsWith(`${knowledgeRoot}${sep}`),
+    )
+    expect(firstKnowledgeWrite).toBeGreaterThanOrEqual(0)
+    // The measured half first: from the first knowledge write onward, real git inside the
+    // nested repository reports a knowledge-tree temporary IGNORED at every boundary.
+    for (const record of records.slice(firstKnowledgeWrite)) {
+      expect(record.knowledgeCovered).toBe(true)
+    }
+    // …and the write that establishes it is the knowledge root's own .gitignore.
+    expect(records[firstKnowledgeWrite]!.path).toBe(join(knowledgeRoot, '.gitignore'))
+    expect(
+      records.filter(record => record.path.startsWith(`${knowledgeRoot}${sep}`)).length,
+    ).toBeGreaterThan(1)
+
+    // The control for the mechanism this arm exists for: a sibling repository nested under
+    // the same parent, with the parent's managed block now fully written, still reports the
+    // temporary VISIBLE. Inheritance is what does NOT happen; that is why the knowledge root
+    // has to carry the rule itself.
+    const nestedControl = join(root, 'nested-control')
+    mkdirSync(nestedControl, { recursive: true })
+    initializeGit(nestedControl)
+    expect(gitIgnores(nestedControl, durableTemporaryNameFor('README.md'))).toBe(false)
+    // And the over-ignoring control: the knowledge rule has not swallowed the tree.
+    expect(gitIgnores(knowledgeRoot, 'policies/global.md')).toBe(false)
   }, 60_000)
 
   it.skipIf(!canWedgeDirectory)(
