@@ -41,6 +41,12 @@ export interface InitPreflightResult {
 
 export interface InitFilesystemHooks {
   beforeExclusivePublish?: (path: string) => void
+  // The only point between the exclusive publication's `link` and the removal of the
+  // temporary it published from. It exists because the behaviour of that removal — on a path
+  // where the destination has ALREADY been created — was reviewable only by reading the
+  // source; with no injection point there, what a failing removal reports to an operator
+  // could be reasoned about but not executed.
+  afterExclusiveLink?: (temporaryPath: string) => void
   beforeAtomicReplacePublish?: (path: string) => void
   beforeRetainedModeOpen?: (path: string) => void
   afterRetainedModeOpen?: (path: string) => void
@@ -485,7 +491,16 @@ function publishExclusive(
       }
       throw error
     }
-    unlinkSync(temporary)
+    invokeHook(hooks.afterExclusiveLink, temporary)
+    // The publication has ALREADY succeeded here — `link` created the destination with this
+    // temporary's content. A removal that fails past that point is housekeeping, not a
+    // refusal: measured, letting it throw produced `EACCES … unlink <temporary>` carrying
+    // the backstop's RETAINED sentence ("the destination was not removed or rewritten — if
+    // it still exists it retains its original contents at an unconfirmed mode") about a
+    // destination that had just been created with new bytes. Reported as a warning through
+    // the same non-masking cleanup the `finally` uses, which that `finally` then repeats as
+    // a no-op.
+    cleanUpTemporaryWithoutMasking(temporary)
     if (confirmed !== undefined && plan.mode !== undefined) {
       confirmPublishedDestination(path, plan.mode & PERMISSION_MASK, confirmed)
     }
@@ -845,12 +860,22 @@ function enforceRetainedFileMode(
  *   for which neither sentence is true — the destination was rewritten, so it was not
  *   retained, and it was not unlinked either.
  *
- * Two limits on the EVIDENCE for this floor, carried forward rather than dropped. The refusal
- * walk asserting it enumerates 15 of the 21 refusal sites reachable beneath this function, so
- * the floor is structural by construction but sampled by test. And the temporary-cleanup
- * `finally` in both publication paths remains a site where neither sentence is true: a throw
- * there after a publication has already succeeded is stamped retained by the backstop, which
- * is false on that one path. Neither is changed here.
+ * Two limits on the EVIDENCE for this floor. The first is carried forward: the refusal walk
+ * asserting it enumerates 15 of the 21 refusal sites reachable beneath this function — the 15
+ * counted from `REFUSAL_PATH_WALK`, and round 10 adds no refusal site to this module — so the
+ * floor is structural by construction but sampled by test.
+ *
+ * The second was the temporary-cleanup `finally` in both publication paths, and it is
+ * RE-MEASURED rather than restated. That `finally` calls `cleanUpTemporaryWithoutMasking`,
+ * which does not throw: measured against a wedged directory it emits a warning and returns, so
+ * nothing escapes from it to be stamped at all. The exclusive path's post-link removal, which
+ * DID escape and was stamped retained over a destination it had just created, now runs through
+ * that same cleanup. What replaces the limit, measured on the same fixture: a temporary that
+ * could not be removed keeps the published destination's link count at 2, so a mode-declaring
+ * plan refuses at the identity confirmation — and if THAT refusal's own D-22 unlink of the
+ * destination also fails, the resulting error reaches the backstop and is stamped retained
+ * about a destination this module had just created with new content. That site is inside the
+ * D-22 region, which round 10 leaves byte-unchanged, so it is disclosed rather than fixed.
  *
  * Ratified as decision D-22 (phase 383).
  */
@@ -978,12 +1003,43 @@ function checkIgnoreStatus(cwd: string, path: string): number {
   )
 }
 
+/**
+ * What the run has ALREADY written at the moment a verification refuses.
+ *
+ * The closing clause of a refusal is a statement of fact about the operator's tree, so it
+ * cannot be a constant. Round 9 made `upsertManagedGitignoreBlock` the FIRST write of the
+ * run, executed immediately before the target-root verification — from which point the
+ * unconditional "no files were changed" was false at that call site, and false of the whole
+ * scaffold at the post-loop knowledge-root one. The information is kept and conditioned
+ * rather than dropped: an operator deciding whether to re-run needs to know what is on disk.
+ */
+export type InitWritesSoFar = 'nothing' | 'managed-gitignore' | 'managed-gitignore-and-scaffold'
+
+const UNCHANGED_CLAUSE: Record<InitWritesSoFar, string> = {
+  nothing: 'no files were changed',
+  'managed-gitignore':
+    'the managed .gitignore block was already written; no scaffold files were changed',
+  'managed-gitignore-and-scaffold':
+    'the managed .gitignore block and the scaffold files were already written; '
+    + 'this refusal changed nothing further',
+}
+
+function unchangedClause(written: InitWritesSoFar | undefined): string {
+  return UNCHANGED_CLAUSE[written ?? 'nothing']
+}
+
+function asSentence(clause: string): string {
+  return `${clause.charAt(0).toUpperCase()}${clause.slice(1)}.`
+}
+
 export function verifyEffectiveGitignore(options: {
   cwd: string
   label: string
   probes: readonly GitignoreProbe[]
+  written?: InitWritesSoFar
 }): { checked: boolean } {
   const cwd = resolve(options.cwd)
+  const unchanged = unchangedClause(options.written)
   const repositoryProbe = spawnSync(
     'git',
     ['rev-parse', '--is-inside-work-tree'],
@@ -998,14 +1054,14 @@ export function verifyEffectiveGitignore(options: {
     if (isErrno(repositoryProbe.error, 'ENOENT')) return { checked: false }
     throw new Error(
       `Unable to verify ${options.label}: git could not be run `
-      + `(${repositoryProbe.error.message}). No files were changed.`,
+      + `(${repositoryProbe.error.message}). ${asSentence(unchanged)}`,
     )
   }
   if (repositoryProbe.status === null) {
     throw new Error(
       `Unable to verify ${options.label}: git exited without a status`
       + `${repositoryProbe.signal ? ` (signal ${repositoryProbe.signal})` : ''}. `
-      + 'No files were changed.',
+      + asSentence(unchanged),
     )
   }
   // A non-zero status is git's own ANSWER — "not a git repository" — rather than a failure
@@ -1021,13 +1077,13 @@ export function verifyEffectiveGitignore(options: {
       throw new Error(
         `${options.label} is unsafe: "${probe.path}" must be ignored. `
         + `Move "${probe.requiredRule}" after any negation, then rerun agent-qa init; `
-        + 'no files were changed.',
+        + `${unchanged}.`,
       )
     }
     if (probe.expected === 'visible' && ignored) {
       throw new Error(
         `${options.label} is unsafe: "${probe.path}" must remain commit-visible. `
-        + 'Remove the rule that ignores it, then rerun agent-qa init; no files were changed.',
+        + `Remove the rule that ignores it, then rerun agent-qa init; ${unchanged}.`,
       )
     }
   }

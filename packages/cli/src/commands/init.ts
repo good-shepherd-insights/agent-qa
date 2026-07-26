@@ -1151,6 +1151,8 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           cwd: join(dir, KNOWLEDGE_ROOT_DIR),
           label: 'existing agent-qa-knowledge/.gitignore',
           probes: KNOWLEDGE_GITIGNORE_PROBES,
+          // Nothing has been written yet at this point in the run.
+          written: 'nothing',
         })
       }
 
@@ -1187,6 +1189,8 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         cwd: dir,
         label: 'target .gitignore',
         probes: TARGET_GITIGNORE_PROBES,
+        // The managed block is on disk by now — the refusal must not say otherwise.
+        written: 'managed-gitignore',
       })
 
       for (const plan of filePlans) {
@@ -1198,6 +1202,8 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           cwd: join(dir, KNOWLEDGE_ROOT_DIR),
           label: 'agent-qa-knowledge/.gitignore',
           probes: KNOWLEDGE_GITIGNORE_PROBES,
+          // This one runs AFTER the scaffold loop: the whole scaffold is published.
+          written: 'managed-gitignore-and-scaffold',
         })
       }
 

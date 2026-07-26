@@ -32,6 +32,7 @@ import {
   upsertManagedGitignoreBlock,
   verifyEffectiveGitignore,
   writeScaffoldFileAtomic,
+  type InitFileResult,
   type InitFilesystemHooks,
   type InitPathPlan,
 } from '../commands/init-filesystem.js'
@@ -329,6 +330,105 @@ describe('safe init filesystem primitives', () => {
       + 'Move "memory/index/" after any negation, then rerun agent-qa init; no files were changed.',
     )
     expect(readFileSync(gitignorePath, 'utf8')).toBe(unsafeBytes)
+  })
+
+  // The closing clause of these refusals is a claim about the operator's tree, and round 9
+  // made it false: `upsertManagedGitignoreBlock` became the FIRST write of the run and
+  // executes immediately before the target-root verification, so "no files were changed" was
+  // untrue there and untrue of the whole scaffold at the post-loop knowledge-root call. The
+  // literals below are hand-copied from the module, one per recorded outcome, so a branch
+  // that silently acquires another's wording reddens rather than reading plausibly.
+  const UNCHANGED_CLAUSES = {
+    nothing: 'no files were changed',
+    'managed-gitignore':
+      'the managed .gitignore block was already written; no scaffold files were changed',
+    'managed-gitignore-and-scaffold':
+      'the managed .gitignore block and the scaffold files were already written; '
+      + 'this refusal changed nothing further',
+  } as const
+
+  const KNOWLEDGE_FUNCTIONAL_RULES = [
+    'memory/index/',
+    'memory/queue/',
+    '.lease',
+    '.epoch',
+    '**/artifacts/',
+    'skills/.staging/',
+    '.*.agent-qa-init-*.tmp',
+  ]
+
+  it('closes each refusal with what the run had actually written by then', () => {
+    for (const [written, clause] of Object.entries(UNCHANGED_CLAUSES)) {
+      // BRANCH 1 — a probe that must be ignored and is not.
+      const ignoredRoot = tempRoot()
+      initializeGit(ignoredRoot)
+      writeFileSync(
+        join(ignoredRoot, '.gitignore'),
+        [...KNOWLEDGE_FUNCTIONAL_RULES, '!memory/index/', '!memory/index/**', ''].join('\n'),
+      )
+      materializeProbePaths(ignoredRoot, KNOWLEDGE_GITIGNORE_PROBES)
+      const ignoredMessage = capturedRefusalMessage(() => {
+        verifyEffectiveGitignore({
+          cwd: ignoredRoot,
+          label: 'existing agent-qa-knowledge/.gitignore',
+          probes: KNOWLEDGE_GITIGNORE_PROBES,
+          written: written as 'nothing',
+        })
+      })
+      expect(ignoredMessage).toBe(
+        'existing agent-qa-knowledge/.gitignore is unsafe: '
+        + '"memory/index/knowledge.sqlite" must be ignored. '
+        + `Move "memory/index/" after any negation, then rerun agent-qa init; ${clause}.`,
+      )
+
+      // BRANCH 2 — a probe that must stay commit-visible and does not.
+      const visibleRoot = tempRoot()
+      initializeGit(visibleRoot)
+      writeFileSync(
+        join(visibleRoot, '.gitignore'),
+        [...KNOWLEDGE_FUNCTIONAL_RULES, 'policies/', ''].join('\n'),
+      )
+      materializeProbePaths(visibleRoot, KNOWLEDGE_GITIGNORE_PROBES)
+      const visibleMessage = capturedRefusalMessage(() => {
+        verifyEffectiveGitignore({
+          cwd: visibleRoot,
+          label: 'agent-qa-knowledge/.gitignore',
+          probes: KNOWLEDGE_GITIGNORE_PROBES,
+          written: written as 'nothing',
+        })
+      })
+      expect(visibleMessage).toBe(
+        'agent-qa-knowledge/.gitignore is unsafe: "policies/global.md" must remain '
+        + `commit-visible. Remove the rule that ignores it, then rerun agent-qa init; ${clause}.`,
+      )
+
+      // No branch may borrow another outcome's clause.
+      for (const [other, otherClause] of Object.entries(UNCHANGED_CLAUSES)) {
+        if (other === written) continue
+        expect(ignoredMessage).not.toContain(otherClause)
+        expect(visibleMessage).not.toContain(otherClause)
+      }
+    }
+  })
+
+  it('defaults to the unqualified clause only when nothing has been written', () => {
+    // The omitted-option path is the pre-write call site's, and it is the ONE case in which
+    // "no files were changed" is a true sentence.
+    const root = tempRoot()
+    initializeGit(root)
+    writeFileSync(
+      join(root, '.gitignore'),
+      [...KNOWLEDGE_FUNCTIONAL_RULES, '!memory/index/', '!memory/index/**', ''].join('\n'),
+    )
+    materializeProbePaths(root, KNOWLEDGE_GITIGNORE_PROBES)
+    const message = capturedRefusalMessage(() => {
+      verifyEffectiveGitignore({
+        cwd: root,
+        label: 'existing agent-qa-knowledge/.gitignore',
+        probes: KNOWLEDGE_GITIGNORE_PROBES,
+      })
+    })
+    expect(message.endsWith(`; ${UNCHANGED_CLAUSES.nothing}.`)).toBe(true)
   })
 })
 
@@ -2141,6 +2241,102 @@ describe('the durable temporary is invisible to a commit', () => {
           expect(gitIgnores(root, join('project', leftover))).toBe(true)
         }
       }
+    },
+  )
+
+  it.skipIf(!canWedgeDirectory)(
+    'reports a failed post-link removal rather than stamping a created destination retained',
+    () => {
+      // `linkSync` has already succeeded when the wedge lands, so the destination EXISTS
+      // with the published content. Measured before this fix, the removal's EACCES escaped
+      // unmarked and the backstop appended "the destination was not removed or rewritten —
+      // if it still exists it retains its original contents at an unconfirmed mode" to it.
+      const wedgeAfterLink = (directory: string): InitFilesystemHooks => ({
+        afterExclusiveLink: () => { chmodSync(directory, 0o500) },
+      })
+
+      // ARM 1 — a plan with no declared mode: the publication stands, and the unremovable
+      // temporary is reported as the warning it is.
+      const root = tempRoot()
+      const directory = join(root, 'project')
+      mkdirSync(directory, { recursive: true })
+      const path = join(directory, 'README.md')
+
+      const emitted: string[] = []
+      const warned = vi.spyOn(process, 'emitWarning').mockImplementation(((
+        warning: string | Error,
+      ) => {
+        emitted.push(typeof warning === 'string' ? warning : warning.message)
+      }) as typeof process.emitWarning)
+
+      let outcome: InitFileResult | undefined
+      try {
+        outcome = writeScaffoldFileAtomic(
+          { root, path, content: 'PUBLISHED-CONTENT\n' },
+          wedgeAfterLink(directory),
+        )
+      } finally {
+        chmodSync(directory, 0o700)
+        warned.mockRestore()
+      }
+
+      expect(outcome).toEqual({ path, outcome: 'created' })
+      expect(readFileSync(path, 'utf8')).toBe('PUBLISHED-CONTENT\n')
+      expect(emitted.some(message => message.includes('could not remove its temporary')))
+        .toBe(true)
+      expect(emitted.some(message => RETAINED_DISPOSITION_PATTERN.test(message))).toBe(false)
+      // The leftover is inert to a commit, which is what makes a warning the right verdict.
+      const leftovers = readdirSync(directory).filter(
+        name => DURABLE_TEMPORARY_PATTERN.test(name),
+      )
+      expect(leftovers).toHaveLength(1)
+
+      // ARM 2 — the bounding control on the same wedge: a plan that DECLARES a mode still
+      // refuses, because the surviving temporary keeps the destination's link count at 2 and
+      // the identity confirmation will not pass a destination it cannot prove exclusive.
+      const modeRoot = tempRoot()
+      const modeDirectory = join(modeRoot, 'project')
+      mkdirSync(modeDirectory, { recursive: true })
+      const modePath = join(modeDirectory, '.env.secrets.local')
+      let modeRefusal: unknown
+      try {
+        modeRefusal = capturedRefusal(() => {
+          writeScaffoldFileAtomic(
+            { root: modeRoot, path: modePath, content: 'API_KEY=live\n', mode: 0o600 },
+            wedgeAfterLink(modeDirectory),
+          )
+        })
+      } finally {
+        chmodSync(modeDirectory, 0o700)
+      }
+      expect(errorMessage(modeRefusal)).toContain(modePath)
+
+      // ARM 3 — the bounding control this fix is scoped by: on a path where the publication
+      // has NOT succeeded, the refusal is still a refusal. The abort's own message survives
+      // the same failing cleanup that ARM 1 now degrades to a warning, so the conversion did
+      // not leak past the one site. (A hook's error is passthrough by design and carries no
+      // disposition — that is the module's contract, not a gap; ARM 4 covers the floor.)
+      const abortedRoot = tempRoot()
+      const { error } = publishWithFailingCleanup(abortedRoot, 'exclusive')
+      expect(error.message).toContain('injected publication abort')
+
+      // ARM 4 — a refusal the MODULE raises before anything is published still carries
+      // exactly one disposition, so the floor is untouched by the conversion above.
+      const refusedRoot = tempRoot()
+      const sentinel = join(refusedRoot, 'sentinel.txt')
+      writeFileSync(sentinel, 'sentinel\n')
+      const symlinked = join(refusedRoot, 'scaffold.yaml')
+      symlinkSync(sentinel, symlinked)
+      const refusal = capturedRefusal(() => {
+        writeScaffoldFileAtomic({
+          root: refusedRoot,
+          path: symlinked,
+          content: 'replacement\n',
+          force: true,
+        })
+      })
+      expect(dispositionSentenceCount(moduleAppendedDisposition(refusal))).toBe(1)
+      expect(errorMessage(refusal)).toMatch(RETAINED_DISPOSITION_PATTERN)
     },
   )
 
