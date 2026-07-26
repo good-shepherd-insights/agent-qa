@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import {
   chmodSync,
   chownSync,
@@ -20,8 +21,10 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { Command } from 'commander'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createInitCommand, type InitCommandHooks } from '../commands/init.js'
 import {
   KNOWLEDGE_GITIGNORE_PROBES,
   TARGET_GITIGNORE_PROBES,
@@ -1861,5 +1864,314 @@ describe('platform-qualified mode-enforcement contract', () => {
 
     // True on both platforms: a retained credential file is never rewritten.
     expect(readFileSync(plan.path, 'utf8')).toBe(bytes)
+  })
+})
+
+// `writeDurableTemporary` writes the destination's planned content — for the secrets file,
+// live credential bytes — into a mode-carrying SIBLING of the destination before publishing
+// it. The round-8 verifier measured that sibling VISIBLE to real git and surviving a failed
+// cleanup permanently. Everything below is measured against real `git check-ignore` and the
+// real module rather than against the entry list, because a rule is an intention and only
+// git's own answer is the fact.
+const DURABLE_TEMPORARY_PATTERN = /^\..+\.agent-qa-init-\d+-[0-9a-f-]{36}\.tmp$/
+
+function durableTemporaryNameFor(destinationBasename: string): string {
+  // The exact shape the module produces: a real pid and a real uuid, not a placeholder.
+  return `.${destinationBasename}.agent-qa-init-${process.pid}-${randomUUID()}.tmp`
+}
+
+function gitIgnores(cwd: string, path: string): boolean {
+  const result = spawnSync(
+    'git',
+    ['check-ignore', '--no-index', '--quiet', '--', path],
+    { cwd, encoding: 'utf8', stdio: 'pipe' },
+  )
+  if (result.status === 0) return true
+  if (result.status === 1) return false
+  throw new Error(
+    `git check-ignore could not decide "${path}": `
+    + `status ${result.status ?? 'null'} ${result.stderr}`,
+  )
+}
+
+async function runRealInit(dir: string, hooks: InitCommandHooks = {}): Promise<void> {
+  const parent = new Command()
+  parent.addCommand(createInitCommand(hooks))
+  await parent.parseAsync([
+    'node',
+    'test',
+    'init',
+    '--dir',
+    dir,
+    '--platform',
+    'web',
+    '--skip-install',
+  ])
+}
+
+function managedGitignoreBlockOf(content: string): string[] {
+  const start = content.indexOf('# agent-qa init:start')
+  const end = content.indexOf('# agent-qa init:end', start)
+  if (start < 0 || end < 0) throw new Error('no managed block in the .gitignore under test')
+  return content
+    .slice(start, end)
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !line.startsWith('#'))
+}
+
+// A directory whose write bit is cleared cannot have entries removed from it, so the
+// temporary survives the cleanup — the artefact the verifier froze with `chflags uchg`,
+// produced by a mechanism that is available wherever this suite runs. Under root the
+// permission is not enforced, so the fixture would silently stop producing the leftover.
+const canWedgeDirectory
+  = !isWindows && !(typeof process.getuid === 'function' && process.getuid() === 0)
+
+interface FailedCleanupOutcome {
+  error: Error
+  leftovers: string[]
+  directory: string
+}
+
+function publishWithFailingCleanup(
+  root: string,
+  arm: 'exclusive' | 'replacement',
+): FailedCleanupOutcome {
+  const directory = join(root, 'project')
+  mkdirSync(directory, { recursive: true })
+  const path = join(directory, '.env.secrets.local')
+  if (arm === 'replacement') writeFileSync(path, 'ORIGINAL=1\n', { mode: 0o600 })
+
+  const abortPublication = (destination: string): never => {
+    // Wedge the directory first, then abort the publication itself. The primary failure is
+    // the abort; the cleanup's unlink is what fails afterwards. That is the exact ordering
+    // the round-8 reproduction had, and the one in which a throwing `finally` discards the
+    // in-flight refusal and hands the operator the unlink error instead.
+    chmodSync(directory, 0o500)
+    throw new Error(`Refusing init destination ${destination}: injected publication abort`)
+  }
+  const hooks: InitFilesystemHooks = arm === 'exclusive'
+    ? { beforeExclusivePublish: abortPublication }
+    : { beforeAtomicReplacePublish: abortPublication }
+
+  let error: Error | undefined
+  try {
+    writeScaffoldFileAtomic(
+      {
+        root,
+        path,
+        content: 'API_KEY=live-credential-bytes\n',
+        force: arm === 'replacement',
+        mode: 0o600,
+      },
+      hooks,
+    )
+  } catch (thrown) {
+    error = thrown as Error
+  } finally {
+    chmodSync(directory, 0o700)
+  }
+
+  if (error === undefined) throw new Error(`the ${arm} fixture published instead of aborting`)
+  const leftovers = readdirSync(directory).filter(name => DURABLE_TEMPORARY_PATTERN.test(name))
+  return { error, leftovers, directory }
+}
+
+describe('the durable temporary is invisible to a commit', () => {
+  it('proves against real git that the target managed block covers the temporary', () => {
+    const root = tempRoot()
+    initializeGit(root)
+    const gitignorePath = join(root, '.gitignore')
+    upsertManagedGitignoreBlock(gitignorePath)
+
+    // A real temporary, of the shape the module produces for the credential file.
+    const temporary = durableTemporaryNameFor('.env.secrets.local')
+    writeFileSync(join(root, temporary), 'API_KEY=live-credential-bytes\n', { mode: 0o600 })
+    expect(gitIgnores(root, temporary)).toBe(true)
+    // The control: the rule is scoped to this module's namespace and does not swallow
+    // neighbouring names, so it cannot be passing by over-ignoring.
+    expect(gitIgnores(root, '.env.secrets.local.tmp')).toBe(false)
+    expect(gitIgnores(root, 'notes.agent-qa-init.md')).toBe(false)
+
+    // And the probe set must PROVE it, driven through the real verifier against real git —
+    // a covering rule with no probe is a string in a list, not a check.
+    materializeProbePaths(root, TARGET_GITIGNORE_PROBES)
+    expect(verifyEffectiveGitignore({
+      cwd: root,
+      label: 'target .gitignore',
+      probes: TARGET_GITIGNORE_PROBES,
+    })).toEqual({ checked: true })
+    expect(TARGET_GITIGNORE_PROBES.filter(
+      probe => DURABLE_TEMPORARY_PATTERN.test(probe.path) && probe.expected === 'ignored',
+    )).toHaveLength(1)
+  })
+
+  it('proves the same on the knowledge root the tool actually writes', async () => {
+    const root = tempRoot()
+    await runRealInit(root)
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+
+    // The sovereign case: the knowledge tree as its own repository. A nested repository does
+    // not inherit the parent's .gitignore, so the target root's rule cannot cover this — and
+    // `init` runs the knowledge verification BEFORE the target managed block exists anyway.
+    initializeGit(knowledgeRoot)
+    const temporary = durableTemporaryNameFor('.gitignore')
+    writeFileSync(join(knowledgeRoot, temporary), 'memory/index/\n')
+    expect(gitIgnores(knowledgeRoot, temporary)).toBe(true)
+    expect(gitIgnores(knowledgeRoot, 'policies/global.md')).toBe(false)
+
+    materializeProbePaths(knowledgeRoot, KNOWLEDGE_GITIGNORE_PROBES)
+    expect(verifyEffectiveGitignore({
+      cwd: knowledgeRoot,
+      label: 'agent-qa-knowledge/.gitignore',
+      probes: KNOWLEDGE_GITIGNORE_PROBES,
+    })).toEqual({ checked: true })
+    expect(KNOWLEDGE_GITIGNORE_PROBES.filter(
+      probe => DURABLE_TEMPORARY_PATTERN.test(probe.path) && probe.expected === 'ignored',
+    )).toHaveLength(1)
+  }, 60_000)
+
+  it('keeps the runtime entry builder and the module defaults in agreement', async () => {
+    // Two hand-maintained copies of a security-relevant list. Compared through the artefacts
+    // each one actually writes rather than through the constants, so the agreement asserted
+    // is the one a user's .gitignore ends up with.
+    const runtimeRoot = tempRoot()
+    await runRealInit(runtimeRoot)
+    const runtimeEntries = managedGitignoreBlockOf(
+      readFileSync(join(runtimeRoot, '.gitignore'), 'utf8'),
+    )
+
+    const defaultRoot = tempRoot()
+    upsertManagedGitignoreBlock(join(defaultRoot, '.gitignore'))
+    const defaultEntries = managedGitignoreBlockOf(
+      readFileSync(join(defaultRoot, '.gitignore'), 'utf8'),
+    )
+
+    expect(runtimeEntries).toEqual(defaultEntries)
+  }, 60_000)
+
+  it('has the covering rule in place before any scaffold temporary is created', async () => {
+    const root = tempRoot()
+    initializeGit(root)
+    const gitignorePath = join(root, '.gitignore')
+    const written: string[] = []
+    const ruleWasPresent: boolean[] = []
+
+    await runRealInit(root, {
+      afterWrite: (result) => {
+        written.push(result.path)
+        // Boundary N fires after write N, so the temporary for write N+1 is created after
+        // this observation. "Covered at every boundary" therefore means every temporary
+        // from the second write onward was covered at the moment it existed. The question
+        // is put to real git at that moment rather than inferred from the entry text.
+        ruleWasPresent.push(gitIgnores(root, durableTemporaryNameFor('.env.secrets.local')))
+      },
+    })
+
+    // The one write that cannot be covered by a rule it is itself creating is the .gitignore
+    // write. It must therefore come FIRST, so that it is the only uncovered temporary in the
+    // whole run — and its content is .gitignore bytes, never credential bytes.
+    expect(written[0]).toBe(gitignorePath)
+    expect(ruleWasPresent.every(present => present)).toBe(true)
+    expect(ruleWasPresent.length).toBeGreaterThan(1)
+  }, 60_000)
+
+  it.skipIf(!canWedgeDirectory)(
+    'leaves only git-ignored leftovers when cleanup fails on either publication arm',
+    () => {
+      for (const arm of ['exclusive', 'replacement'] as const) {
+        const root = tempRoot()
+        initializeGit(root)
+        upsertManagedGitignoreBlock(join(root, '.gitignore'))
+
+        const { leftovers, directory } = publishWithFailingCleanup(root, arm)
+
+        // The fixture is proven to produce the artefact BEFORE anything is asserted about
+        // it. A leftover test that finds no leftover and passes is the fixture blindness
+        // this whole gap is made of.
+        expect(leftovers).toHaveLength(1)
+        expect(permissionBits(join(directory, leftovers[0]!))).toBe(0o600)
+        expect(readFileSync(join(directory, leftovers[0]!), 'utf8'))
+          .toBe('API_KEY=live-credential-bytes\n')
+
+        for (const leftover of leftovers) {
+          expect(gitIgnores(root, join('project', leftover))).toBe(true)
+        }
+      }
+    },
+  )
+
+  it.skipIf(!canWedgeDirectory)(
+    'surfaces the primary publication refusal when cleanup fails on either arm',
+    () => {
+      for (const arm of ['exclusive', 'replacement'] as const) {
+        const root = tempRoot()
+        const { error, directory } = publishWithFailingCleanup(root, arm)
+
+        // The property is that the operator learns why the publication was refused — not
+        // that the cleanup happened to succeed.
+        expect(error.message).toContain('injected publication abort')
+        expect(error.message).toContain(join(directory, '.env.secrets.local'))
+        expect(error.message).not.toContain('EACCES')
+        expect(error.message).not.toMatch(DURABLE_TEMPORARY_PATTERN)
+      }
+    },
+  )
+
+  it('refuses rather than skipping when the repository probe fails for any reason but a missing git', async () => {
+    const root = tempRoot()
+    initializeGit(root)
+    upsertManagedGitignoreBlock(join(root, '.gitignore'))
+    materializeProbePaths(root, TARGET_GITIGNORE_PROBES)
+
+    const loadWithRepositoryProbeError = async (
+      code: string,
+    ): Promise<typeof import('../commands/init-filesystem.js')> => {
+      vi.resetModules()
+      vi.doMock('node:child_process', async () => {
+        const actual
+          = await vi.importActual<typeof import('node:child_process')>('node:child_process')
+        return {
+          ...actual,
+          spawnSync: (command: string, args: readonly string[], options: unknown) => {
+            if (command === 'git' && args[0] === 'rev-parse') {
+              return {
+                error: Object.assign(new Error(`spawnSync git ${code}`), { code }),
+                status: null,
+                signal: null,
+                stdout: '',
+                stderr: '',
+                pid: 0,
+                output: [],
+              }
+            }
+            return (actual.spawnSync as (...rest: unknown[]) => unknown)(command, args, options)
+          },
+        }
+      })
+      return import('../commands/init-filesystem.js')
+    }
+
+    try {
+      // git absent: the one case in which skipping the verification is correct.
+      const absent = await loadWithRepositoryProbeError('ENOENT')
+      expect(absent.verifyEffectiveGitignore({
+        cwd: root,
+        label: 'target .gitignore',
+        probes: absent.TARGET_GITIGNORE_PROBES,
+      })).toEqual({ checked: false })
+
+      // git present but the spawn failed. Returning unchecked here silently disables the
+      // credential-visibility verification, which is the wrong default in this module.
+      const failed = await loadWithRepositoryProbeError('EAGAIN')
+      expect(() => failed.verifyEffectiveGitignore({
+        cwd: root,
+        label: 'target .gitignore',
+        probes: failed.TARGET_GITIGNORE_PROBES,
+      })).toThrow(/EAGAIN/)
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
   })
 })
