@@ -2077,6 +2077,61 @@ function publishWithFailingCleanup(
   return { error, leftovers, directory }
 }
 
+// The same wedge as above, but with the destination sitting DIRECTLY in the directory under
+// test — because the question this fixture exists to ask ("what does git say about the
+// leftover?") has to be asked at the destination's own root, and for the `.gitignore` case the
+// destination IS that root's `.gitignore`. The publication is aborted before it can succeed,
+// so the temporary survives and the cleanup warning is emitted from the `finally`.
+function abortPublicationAndCaptureCleanupWarning(
+  directory: string,
+  destinationName: string,
+  content: string,
+  mode?: number,
+): { warning: string, leftover: string } {
+  const path = join(directory, destinationName)
+  const hooks: InitFilesystemHooks = {
+    beforeExclusivePublish: (destination: string): never => {
+      chmodSync(directory, 0o500)
+      throw new Error(`Refusing init destination ${destination}: injected publication abort`)
+    },
+  }
+
+  const emitted: string[] = []
+  const warned = vi.spyOn(process, 'emitWarning').mockImplementation(((
+    warning: string | Error,
+  ) => {
+    emitted.push(typeof warning === 'string' ? warning : warning.message)
+  }) as typeof process.emitWarning)
+
+  let error: unknown
+  try {
+    writeScaffoldFileAtomic({ root: directory, path, content, mode }, hooks)
+  } catch (thrown) {
+    error = thrown
+  } finally {
+    chmodSync(directory, 0o700)
+    warned.mockRestore()
+  }
+
+  // The fixture is proven to produce the artefact before anything is asserted about it.
+  if (error === undefined) {
+    throw new Error(`the ${destinationName} fixture published instead of aborting`)
+  }
+  const leftovers = readdirSync(directory).filter(name => DURABLE_TEMPORARY_PATTERN.test(name))
+  if (leftovers.length !== 1) {
+    throw new Error(`expected exactly one leftover temporary, found ${leftovers.length}`)
+  }
+  const warnings = emitted.filter(message => message.includes('could not remove its temporary'))
+  if (warnings.length === 0) throw new Error('the failing cleanup emitted no warning')
+  return { warning: warnings[0]!, leftover: leftovers[0]! }
+}
+
+const COVERED_CLAUSE
+  = 'It is covered by the managed .gitignore rule, so it cannot enter a commit'
+const VISIBLE_CLAUSE = 'It is NOT covered by the managed .gitignore rule here'
+const UNDETERMINED_CLAUSE
+  = 'Whether the managed .gitignore rule covers it could not be determined here'
+
 describe('the durable temporary is invisible to a commit', () => {
   it('proves against real git that the target managed block covers the temporary', () => {
     const root = tempRoot()
@@ -2354,6 +2409,94 @@ describe('the durable temporary is invisible to a commit', () => {
         expect(error.message).not.toContain('EACCES')
         expect(error.message).not.toMatch(DURABLE_TEMPORARY_PATTERN)
       }
+    },
+  )
+
+  // WR-03. The cleanup-failure warning used to end with "It is covered by the managed
+  // .gitignore rule, so it cannot enter a commit" UNCONDITIONALLY — false for exactly the
+  // temporaries the module's own correction names as uncovered, because the rule that would
+  // cover a `.gitignore` temporary is the thing that temporary is on its way to writing.
+  //
+  // THE THREE CASES BELOW ARE EACH OTHER'S NON-VACUITY CONTROLS. Case B alone would prove
+  // only that a second sentence exists; case A alone would prove only that the first one
+  // survived. Together, in ONE repository at the two moments of a real run — before its
+  // `.gitignore` is written and after — they prove the predicate DISCRIMINATES, and case C
+  // proves it does not silently fall back to either claim when git cannot be asked. Deleting
+  // any one of the three makes the others vacuous.
+  it.skipIf(!canWedgeDirectory)(
+    'tells the truth about whether a leftover temporary can enter a commit, decided by real git',
+    () => {
+      const root = tempRoot()
+      initializeGit(root)
+
+      // The bytes the real publisher would publish, taken from the real function rather than
+      // hand-written, so case B aborts the publication this module actually performs.
+      const blockRoot = tempRoot()
+      upsertManagedGitignoreBlock(join(blockRoot, '.gitignore'))
+      const managedBytes = readFileSync(join(blockRoot, '.gitignore'), 'utf8')
+
+      // CASE B — UNCOVERED. The FIRST write of a real run: the root's own `.gitignore`. The
+      // rule that would cover this temporary does not exist yet, because publishing it is
+      // what this temporary is for.
+      const uncovered = abortPublicationAndCaptureCleanupWarning(
+        root,
+        '.gitignore',
+        managedBytes,
+      )
+      // Real git decides, not the rule's text.
+      expect(gitIgnores(root, uncovered.leftover)).toBe(false)
+      expect(uncovered.warning).toContain(join(root, uncovered.leftover))
+      expect(uncovered.warning).toContain(VISIBLE_CLAUSE)
+      // The ACTIONABLE content, not merely a different string: what git sees, what would
+      // happen, and what to do about it.
+      expect(uncovered.warning).toContain('git reports it commit-visible')
+      expect(uncovered.warning).toContain('`git add .` would stage it')
+      expect(uncovered.warning).toContain('remove it before staging')
+      expect(uncovered.warning).not.toContain(COVERED_CLAUSE)
+      expect(uncovered.warning).not.toContain(UNDETERMINED_CLAUSE)
+
+      // THE MOMENT OF EMISSION IS THE MOMENT THAT COUNTS, and this proves the predicate is
+      // not keying on the temporary's NAME. Let the run continue — write the managed block
+      // for real — and the VERY SAME leftover, unchanged on disk, becomes covered.
+      upsertManagedGitignoreBlock(join(root, '.gitignore'))
+      expect(gitIgnores(root, uncovered.leftover)).toBe(true)
+      unlinkSync(join(root, uncovered.leftover))
+
+      // CASE A — COVERED. The same repository at the next moment of the same run, differing
+      // only in which destination the temporary belongs to: an ordinary credential file,
+      // whose covering rule is now in force.
+      const covered = abortPublicationAndCaptureCleanupWarning(
+        root,
+        '.env.secrets.local',
+        'API_KEY=live-credential-bytes\n',
+        0o600,
+      )
+      expect(gitIgnores(root, covered.leftover)).toBe(true)
+      expect(covered.warning).toContain(join(root, covered.leftover))
+      expect(covered.warning).toContain(COVERED_CLAUSE)
+      expect(covered.warning).not.toContain(VISIBLE_CLAUSE)
+      expect(covered.warning).not.toContain(UNDETERMINED_CLAUSE)
+      // The leftover really does hold live credential bytes at 0600 — which is what makes
+      // the sentence about it worth being true.
+      expect(permissionBits(join(root, covered.leftover))).toBe(0o600)
+      expect(readFileSync(join(root, covered.leftover), 'utf8'))
+        .toBe('API_KEY=live-credential-bytes\n')
+
+      // CASE C — UNDETERMINED. Outside any repository git cannot answer, and neither claim
+      // may be assumed. Asserting `undetermined` claims nothing about coverage and still
+      // directs the removal.
+      const bare = tempRoot()
+      expect(() => gitIgnores(bare, 'anything')).toThrow()
+      const undetermined = abortPublicationAndCaptureCleanupWarning(
+        bare,
+        '.env.secrets.local',
+        'API_KEY=live-credential-bytes\n',
+        0o600,
+      )
+      expect(undetermined.warning).toContain(UNDETERMINED_CLAUSE)
+      expect(undetermined.warning).toContain('remove it before staging')
+      expect(undetermined.warning).not.toContain(COVERED_CLAUSE)
+      expect(undetermined.warning).not.toContain(VISIBLE_CLAUSE)
     },
   )
 
