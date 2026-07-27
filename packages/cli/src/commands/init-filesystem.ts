@@ -379,23 +379,88 @@ function unlinkIfPresent(path: string): void {
 }
 
 /**
+ * What real git says about a leftover temporary at the moment the operator is told about it.
+ *
+ * `undetermined` is a first-class answer rather than a fallback to `covered`. The whole defect
+ * this replaces was a sentence that claimed coverage it had not established; claiming
+ * commit-visibility that has not been established would be the same defect facing the other
+ * way. When git cannot answer, the message says so and still directs the removal.
+ */
+type TemporaryCoverage = 'covered' | 'commit-visible' | 'undetermined'
+
+// Resolved LAZILY. Built at the call site, where the destination and therefore the root the
+// question has to be put to are in hand, and INVOKED only when a removal has actually failed
+// — so no publication pays for a `git` spawn it does not need, and the answer is the one that
+// holds AT THE MOMENT THE MESSAGE IS EMITTED. That moment is the one that matters: it is when
+// the operator reads the sentence and it is the state of the disk they will act on. It can
+// differ from the instant the temporary was created — on the post-link path the destination
+// has already been published, so a `.gitignore` temporary that was uncovered when it was
+// written may be covered by the very rule it just finished publishing.
+type TemporaryCoverageProbe = () => TemporaryCoverage
+
+function durableTemporaryCoverageProbe(
+  destination: string,
+  temporary: string,
+): TemporaryCoverageProbe {
+  // The question is put at the DESTINATION's own directory, not at the plan root: a knowledge
+  // tree is routinely its own repository and does not inherit its parent's rules (see the
+  // round-10 correction on `DURABLE_TEMPORARY_GITIGNORE_RULE`), so the root that decides is
+  // whichever one git itself resolves from the file's own location.
+  const directory = dirname(resolve(destination))
+  const name = basename(temporary)
+  return () => {
+    // Measured, not reasoned — the same call this module already trusts to decide whether the
+    // rule's spelling works. Reading `DURABLE_TEMPORARY_GITIGNORE_RULE` and concluding would
+    // be the third time this file's coverage story was settled by argument, and twice it was
+    // wrong. Any failure to ASK is `undetermined`, never an assumed answer.
+    try {
+      return checkIgnoreStatus(directory, name) === 0 ? 'covered' : 'commit-visible'
+    } catch {
+      return 'undetermined'
+    }
+  }
+}
+
+const TEMPORARY_COVERAGE_CLAUSE: Record<TemporaryCoverage, string> = {
+  covered:
+    'It is covered by the managed .gitignore rule, so it cannot enter a commit; '
+    + 'delete it once the condition that blocked the removal is cleared.',
+  'commit-visible':
+    'It is NOT covered by the managed .gitignore rule here — git reports it commit-visible, '
+    + 'so `git add .` would stage it; remove it before staging, once the condition that '
+    + 'blocked the removal is cleared.',
+  undetermined:
+    'Whether the managed .gitignore rule covers it could not be determined here, because git '
+    + 'could not be asked; treat it as stageable and remove it before staging, once the '
+    + 'condition that blocked the removal is cleared.',
+}
+
+/**
  * Removes a publication temporary from a `finally` WITHOUT ever throwing.
  *
  * A `finally` that throws discards the exception already in flight, so a cleanup failure
  * replaces the publication refusal with an unlink error naming a path the operator never
  * acted on — the reason they needed is gone and the one they get is unactionable. The
- * failure is still reported, as a warning, rather than swallowed; and a leftover is inert to
- * a commit because `DURABLE_TEMPORARY_GITIGNORE_RULE` covers the namespace.
+ * failure is still reported, as a warning, rather than swallowed.
+ *
+ * Whether the leftover is inert to a commit is a statement of fact about the operator's tree,
+ * so it cannot be a constant. `DURABLE_TEMPORARY_GITIGNORE_RULE` covers the namespace only
+ * where that rule is already in force, and this module's own correction names the temporaries
+ * for which it is not: each root's own `.gitignore`, because the rule that would cover such a
+ * temporary is the thing that temporary is on its way to writing. The claim is therefore
+ * conditioned on `coverage`, which real `git check-ignore` decides.
  */
-function cleanUpTemporaryWithoutMasking(temporary: string): void {
+function cleanUpTemporaryWithoutMasking(
+  temporary: string,
+  coverage: TemporaryCoverageProbe,
+): void {
   try {
     unlinkIfPresent(temporary)
   } catch (error) {
     process.emitWarning(
       `agent-qa init could not remove its temporary ${temporary} `
       + `(${error instanceof Error ? error.message : String(error)}). `
-      + 'It is covered by the managed .gitignore rule, so it cannot enter a commit; '
-      + 'delete it once the condition that blocked the removal is cleared.',
+      + TEMPORARY_COVERAGE_CLAUSE[coverage()],
     )
   }
 }
@@ -479,6 +544,9 @@ function publishExclusive(
   const path = resolve(plan.path)
   const parent = dirname(path)
   const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
+  // Built here, where the destination is known; the answer is taken at emission, so the two
+  // sites below can and do differ — see the comment at each.
+  const coverage = durableTemporaryCoverageProbe(path, temporary)
   try {
     invokeHook(hooks.beforeExclusivePublish, path)
     try {
@@ -500,14 +568,22 @@ function publishExclusive(
     // destination that had just been created with new bytes. Reported as a warning through
     // the same non-masking cleanup the `finally` uses, which that `finally` then repeats as
     // a no-op.
-    cleanUpTemporaryWithoutMasking(temporary)
+    //
+    // COVERAGE AT THIS SITE: the destination EXISTS by now. For a `.gitignore` publication
+    // that is the moment the covering rule comes into force, so this site can answer
+    // `covered` where the `finally` below answers `commit-visible` for the same destination —
+    // which is exactly why the answer is taken at emission rather than once per plan.
+    cleanUpTemporaryWithoutMasking(temporary, coverage)
     if (confirmed !== undefined && plan.mode !== undefined) {
       confirmPublishedDestination(path, plan.mode & PERMISSION_MASK, confirmed)
     }
     afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'created' }
   } finally {
-    cleanUpTemporaryWithoutMasking(temporary)
+    // COVERAGE AT THIS SITE: reached on success (a no-op) and on every failure path,
+    // including one that aborted BEFORE the link. On that path the destination does not
+    // exist, so a `.gitignore` publication's temporary is genuinely commit-visible here.
+    cleanUpTemporaryWithoutMasking(temporary, coverage)
   }
 }
 
@@ -520,6 +596,7 @@ function replaceRegularAtomic(
   // The confirmed identity is consumed, not discarded: publication must prove it renamed
   // the inode whose mode was confirmed, exactly as the exclusive path does.
   const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
+  const coverage = durableTemporaryCoverageProbe(path, temporary)
   try {
     const classification = classifyInitPath(path, plan.root)
     if (classification !== 'regular') {
@@ -533,7 +610,11 @@ function replaceRegularAtomic(
     afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'updated' }
   } finally {
-    cleanUpTemporaryWithoutMasking(temporary)
+    // COVERAGE AT THIS SITE: on success the rename has already consumed the temporary and
+    // the unlink is a no-op. On a failure before the rename the destination still holds its
+    // ORIGINAL bytes, so a `.gitignore` being amended to add the managed block answers by
+    // whatever the pre-existing file already ignored — measured, not assumed.
+    cleanUpTemporaryWithoutMasking(temporary, coverage)
   }
 }
 
