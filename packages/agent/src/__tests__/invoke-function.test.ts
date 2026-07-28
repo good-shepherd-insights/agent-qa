@@ -129,12 +129,38 @@ const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   invoke: () => Promise.resolve({ ok: true as const }),
 }
 
-function registryOptions(overrides: Partial<CreateFunctionRegistryOptions> = {}) {
+/** Discards every row. Cases that ASSERT on rows pass an explicit `capturingSink` instead. */
+function noOpSink(): AuditSink {
+  return {
+    appendExecutionAudit() {},
+    appendGuardrailAudit() {},
+  }
+}
+
+function registryOptions(
+  overrides: Partial<CreateFunctionRegistryOptions> = {},
+): CreateFunctionRegistryOptions {
   return {
     deps: spyDeps().deps,
+    auditSink: noOpSink(),
     resolveExecutionContext: FIXED_CONTEXT,
     ...overrides,
   }
+}
+
+/**
+ * The D-11 compile pin: a composition without an audit sink must not typecheck.
+ *
+ * Never called — its whole job is to be compiled. The `@ts-expect-error` fails if the
+ * omission ever stops being an error, so making `auditSink` optional again breaks this
+ * typecheck rather than silently restoring the unaudited fast path.
+ */
+function _sinklessCompositionIsATypeError(): void {
+  createRegistryFromSpecs(
+    [runsListSpec],
+    // @ts-expect-error auditSink is REQUIRED (D-11) — a sinkless composition cannot exist.
+    { deps: spyDeps().deps, resolveExecutionContext: FIXED_CONTEXT },
+  )
 }
 
 describe('invokeFunction pipeline', () => {

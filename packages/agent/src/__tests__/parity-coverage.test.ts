@@ -24,6 +24,7 @@ import type {
   ExecutionContext,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
+import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -131,9 +132,18 @@ const FULLY_GRANTED: FunctionCaller = {
   safeMode: false,
 }
 
+/** Discards every row: this file asserts on coverage, never on the audit trail. */
+function noOpSink(): AuditSink {
+  return {
+    appendExecutionAudit() {},
+    appendGuardrailAudit() {},
+  }
+}
+
 function registry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
+    auditSink: noOpSink(),
     resolveExecutionContext: FIXED_CONTEXT,
   })
 }

@@ -110,6 +110,14 @@ function capturingSink(): CapturedSink {
   }
 }
 
+/** Discards every row — for the cases that do not assert on the audit trail. */
+function noOpSink(): AuditSink {
+  return {
+    appendExecutionAudit() {},
+    appendGuardrailAudit() {},
+  }
+}
+
 const READ_CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: ['read'],
@@ -222,6 +230,7 @@ describe('runs.events through invokeFunction (D-11 uniform gating)', () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
+      auditSink: noOpSink(),
       resolveExecutionContext: FIXED_CONTEXT,
     })
 
@@ -236,6 +245,7 @@ describe('runs.events through invokeFunction (D-11 uniform gating)', () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
     const registry = createRegistryFromSpecs([runsEventsSpec], {
       deps: spy.deps,
+      auditSink: noOpSink(),
       resolveExecutionContext: FIXED_CONTEXT,
     })
 

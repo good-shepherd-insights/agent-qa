@@ -67,11 +67,19 @@ const RUN_CALLER: FunctionCaller = {
   safeMode: false,
 }
 
+/** Discards every row — for the cases that do not assert on the audit trail. */
+function noOpSink(): AuditSink {
+  return {
+    appendExecutionAudit() {},
+    appendGuardrailAudit() {},
+  }
+}
+
 function registryWithRunsStart(auditSink?: AuditSink) {
   return createRegistryFromSpecs([runsListSpec, runsEventsSpec, runsStartSpec], {
     deps: fakeDeps(),
     resolveExecutionContext: FIXED_CONTEXT,
-    ...(auditSink === undefined ? {} : { auditSink }),
+    auditSink: auditSink ?? noOpSink(),
   })
 }
 

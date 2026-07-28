@@ -47,8 +47,13 @@ export interface CreateFunctionRegistryOptions {
   /**
    * Sink `evaluate()` appends its execution-audit row to. The gate is the single audit
    * author (v48): the function layer passes the sink and never writes a row itself.
+   *
+   * REQUIRED, on the same discipline `FunctionDeps` uses (see spec.ts): a composition that
+   * omits it fails to typecheck rather than quietly arming the whole capability set with no
+   * audit trail. An optional sink made the unaudited composition the EASIEST one to write,
+   * which is the fast path D-11 exists to forbid.
    */
-  auditSink?: AuditSink
+  auditSink: AuditSink
   /** Defaults to safety's ambient resolver; injected in tests for determinism. */
   resolveExecutionContext?: () => ExecutionContext
 }
@@ -65,7 +70,7 @@ export interface FunctionRegistry {
 interface RegistryInternals {
   specs: ReadonlyMap<string, FunctionSpec>
   deps: FunctionDeps
-  auditSink?: AuditSink
+  auditSink: AuditSink
   resolveExecutionContext: () => ExecutionContext
 }
 
@@ -150,7 +155,7 @@ export function createRegistryFromSpecs(
   REGISTRY_INTERNALS.set(registry, {
     specs: byId,
     deps: options.deps,
-    ...(options.auditSink === undefined ? {} : { auditSink: options.auditSink }),
+    auditSink: options.auditSink,
     resolveExecutionContext: options.resolveExecutionContext ?? getActiveExecutionContext,
   })
 

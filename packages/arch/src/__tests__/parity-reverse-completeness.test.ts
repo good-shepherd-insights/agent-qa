@@ -69,6 +69,10 @@ const REGISTRY_IDS = createFunctionRegistry({
   // Listing reads declarations only — no port is touched — so the layer needs nothing real
   // in order to enumerate itself.
   deps: {} as FunctionDeps,
+  // Required at construction (D-11), and inert here: listing never dispatches, so nothing
+  // is ever written to it. Declared inline so this source-only package keeps depending on
+  // nothing.
+  auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
   resolveExecutionContext: () => 'local-interactive',
 })
   .list({

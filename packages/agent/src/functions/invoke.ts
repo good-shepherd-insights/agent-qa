@@ -4,15 +4,24 @@
 // own `createPolicyGateToolCallHook`; and surface CAPABILITIES, gated here. Nothing else
 // may import `evaluate` (the arch pin asserts the exact file set).
 //
-// Uniform gating (D-11): EVERY invocation — reads included — computes a verdict and has
-// an execution-audit row written by `evaluate()` through the injected sink. There is no
-// fast path. A read bypass would turn scope enforcement into a second gate in disguise
-// and would leave read capabilities unauditable.
+// Uniform gating (D-11): every DISPATCHED invocation — reads included — computes a verdict,
+// and `evaluate()` writes its execution-audit row through the injected sink. There is no
+// fast path, in either sense: no op skips the gate, and no composition can skip the sink,
+// which is a required construction field on the registry. A read bypass would turn scope
+// enforcement into a second gate in disguise and would leave read capabilities unauditable.
 //
-// Caller-as-data (FUNC-03): the caller record is read in exactly three places across the
-// layer — the scope subset check below, the registry's safe-mode listing filter, and
-// audit attribution. `if (caller.surface === 'cli')` is the anti-pattern this layer exists
-// to make impossible.
+// What is NOT audited in 384, deliberately: the three refusals raised BEFORE the gate —
+// unknown id, invalid input, and missing scopes — throw without writing a row, and the
+// row `evaluate()` does write carries no caller identity. Both are real gaps, both are
+// scoped work rather than oversights: refusal rows and caller attribution on the audit row
+// are owned by Phases 386 and 396. The order this file implements is pinned by
+// two-caller-parity.test.ts, which asserts a scope-refused caller leaves no audit row —
+// so moving the scope check is a decision those phases make, not a local edit.
+//
+// Caller-as-data (FUNC-03): the caller record is read in exactly two places in this file —
+// the scope subset check below and the credential passthrough into the gate — plus the
+// registry's safe-mode listing filter. `if (caller.surface === 'cli')` is the anti-pattern
+// this layer exists to make impossible.
 
 import { evaluate } from '@vostride/agent-qa-safety'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
@@ -118,7 +127,7 @@ export async function invokeFunction(
     spec.risk,
     internals.resolveExecutionContext(),
     caller.credential === undefined ? {} : { credential: caller.credential },
-    internals.auditSink === undefined ? {} : { auditSink: internals.auditSink },
+    { auditSink: internals.auditSink },
   )
   if (policy.verdict === 'deny') {
     throw new FunctionDeniedError(functionId, policy.reason)
