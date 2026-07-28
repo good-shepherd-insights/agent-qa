@@ -48,7 +48,7 @@ export const SURFACE_PROJECTION_SOURCES: Readonly<
 > = {
   'packages/cli': {
     kind: 'generic-invoker',
-    note: 'The `fn` verb projects the registry directly — it lists what the registry lists and renders what the invocation returns, so it holds no per-capability knowledge that could drift.',
+    note: 'The `fn` verb projects the registry directly — it lists what the registry lists and renders what the invocation returns. That is not the whole CLI, and this entry does not model the remainder: the knowledge command family holds one piece of capability-specific static knowledge, `KNOWLEDGE_BUNDLES_LIST_ID = \'knowledge.bundles.list\'` (declared at commands/knowledge-read.ts:73, invoked at :411), which can drift from the registry. 397 (FUNC-05) turns this entry into a real projection source so the subset comparison below has something to compare.',
   },
   'packages/mcp': {
     kind: 'not-yet-projected',
