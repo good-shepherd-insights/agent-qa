@@ -8,7 +8,11 @@ import type {
   StepEvidence,
   Verdict,
 } from '@vostride/agent-qa-schema'
-import { asRecordId, guardCompletedRunHandoff } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  guardCompletedRunHandoff,
+} from '@vostride/agent-qa-schema'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import type { TestResult } from '../../result.js'
 import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from '../handoff-assembly.js'
@@ -94,7 +98,7 @@ describe('handoff assembly instrumentation parity', () => {
     expect(evidence.toolSchemaDigest).toBe('digest-1')
   })
 
-  it('stamps assembled handoffs with schemaVersion 3 (373-01 rootCause bump)', () => {
+  it('stamps assembled handoffs with the current handoff schema version', () => {
     const config = {
       runId: 'run-1' as RunId,
       scope,
@@ -107,7 +111,7 @@ describe('handoff assembly instrumentation parity', () => {
 
     const handoff = assembleHandoff(config, [], 'passed', { startedAt: 1, endedAt: 2 })
 
-    expect(handoff.schemaVersion).toBe(3)
+    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
   })
 
   it('persists the durable outcome-exclusion marker only when the run config opts in', () => {

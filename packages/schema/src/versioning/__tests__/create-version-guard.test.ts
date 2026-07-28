@@ -8,7 +8,10 @@ import {
   guardCompletedRunHandoff,
   HandoffVersionError,
 } from '../../handoff/load-completed-run-handoff'
-import type { CompletedRunHandoff } from '../../handoff/completed-run-handoff'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  type CompletedRunHandoff,
+} from '../../handoff/completed-run-handoff'
 import type { PerTestOutcome } from '../../handoff/per-test-outcome'
 import type { StepEvidence } from '../../handoff/step-evidence'
 
@@ -31,7 +34,7 @@ class CustomVersionError extends Error {
 
 function makeCompleteHandoff(): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: 'run-complete' as CompletedRunHandoff['runId'],
     scope: { tier: 'product', key: 'shop-web' },
     buildOrdinal: 42,
@@ -392,9 +395,10 @@ describe('createVersionGuard (D-13)', () => {
 
 describe('guardCompletedRunHandoff factory instance compatibility', () => {
   it('preserves the HandoffVersionError name, message, and version fields', () => {
+    const newer = CURRENT_HANDOFF_SCHEMA_VERSION + 1
     let thrown: unknown
     try {
-      guardCompletedRunHandoff({ schemaVersion: 4 })
+      guardCompletedRunHandoff({ schemaVersion: newer })
     } catch (error) {
       thrown = error
     }
@@ -403,25 +407,24 @@ describe('guardCompletedRunHandoff factory instance compatibility', () => {
     expect(thrown).toBeInstanceOf(VersionGuardError)
     expect(thrown).toMatchObject({
       name: 'HandoffVersionError',
-      message:
-        'CompletedRunHandoff schemaVersion 4 is not supported (this build supports 3)',
-      foundVersion: 4,
-      supportedVersion: 3,
+      message: `CompletedRunHandoff schemaVersion ${newer} is not supported (this build supports ${CURRENT_HANDOFF_SCHEMA_VERSION})`,
+      foundVersion: newer,
+      supportedVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     })
   })
 
   const invalidHandoffs: Array<[string, unknown]> = [
-    ['missing every root field after schemaVersion', { schemaVersion: 3 }],
-    ['missing required root fields around an empty tests array', { schemaVersion: 3, tests: [] }],
+    ['missing every root field after schemaVersion', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION }],
+    ['missing required root fields around an empty tests array', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: [] }],
     [
       'missing required root and member fields around an empty steps array',
-      { schemaVersion: 3, tests: [{ steps: [] }] },
+      { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: [{ steps: [] }] },
     ],
-    ['non-array tests', { schemaVersion: 3, tests: {} }],
-    ['null test member', { schemaVersion: 3, tests: [null] }],
-    ['test member missing steps', { schemaVersion: 3, tests: [{}] }],
-    ['non-array steps', { schemaVersion: 3, tests: [{ steps: {} }] }],
-    ['null step member', { schemaVersion: 3, tests: [{ steps: [null] }] }],
+    ['non-array tests', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: {} }],
+    ['null test member', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: [null] }],
+    ['test member missing steps', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: [{}] }],
+    ['non-array steps', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: [{ steps: {} }] }],
+    ['null step member', { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, tests: [{ steps: [null] }] }],
     ['missing runId', omitHandoffField('runId')],
     ['missing scope', omitHandoffField('scope')],
     [
