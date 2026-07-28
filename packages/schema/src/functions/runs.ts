@@ -1,6 +1,8 @@
 import { z } from 'zod'
 
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
+import { RUN_EVENT_TYPES } from '../run/bus-events'
+import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
 import { asRunId } from '../run/run-id'
 import type { RunId } from '../run/run-id'
@@ -240,3 +242,26 @@ export const RunsEventsInputSchema = z.object({
 }).strict()
 
 export type RunsEventsInput = z.infer<typeof RunsEventsInputSchema>
+
+export const RUN_EVENT_ENVELOPE_SCHEMA_VERSION = 1
+
+/**
+ * The `runs.events` stream ELEMENT contract (Phase 384, D-08).
+ *
+ * A stream op's declared output describes ONE element of the async iterable, never the
+ * iterable itself — so this is the frozen v49 bus envelope as the JSONL event log records
+ * it. `seq` is the per-run gap-free total order and doubles as the resume token: a caller
+ * that observed seq N re-invokes with `lastEventId: N`.
+ *
+ * `payload` is projected as an OPEN record rather than the fifteen-member per-type union.
+ * The envelope contract describes the frame; a consumer narrows the payload by `type`
+ * against the exported `RunEvent` union. The `.transform` restoring the union rides the
+ * same idiom as the branded-id schemas here, so JSON-Schema projection uses `io: 'input'`.
+ */
+export const RunEventEnvelopeSchema = z.object({
+  seq: z.number().int().positive(),
+  ts: z.number().int().nonnegative(),
+  runId: z.string(),
+  type: z.enum(RUN_EVENT_TYPES),
+  payload: z.record(z.string(), z.unknown()).transform((value) => value as RunEventPayload),
+}).strict() satisfies z.ZodType<RunEventEnvelope>

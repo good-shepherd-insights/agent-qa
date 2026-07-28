@@ -68,6 +68,10 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
         get: (runId) => Promise.resolve(
           documents.find((document) => document.runId === runId),
         ),
+        // The stream port belongs to runs-events.test.ts; it exists here because
+        // FunctionDeps is a required, non-partial record — which is exactly how an
+        // unbound port becomes a compile error rather than a silent gap (D-09).
+        readEvents: () => Promise.resolve([]),
       },
       knowledge: { listBundles: () => Promise.resolve([]) },
       config: {

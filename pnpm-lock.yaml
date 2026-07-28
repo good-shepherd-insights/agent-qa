@@ -36,6 +36,9 @@ importers:
 
   packages/agent:
     dependencies:
+      '@vostride/agent-qa-runner':
+        specifier: workspace:*
+        version: link:../runner
       '@vostride/agent-qa-safety':
         specifier: workspace:*
         version: link:../safety

@@ -47,6 +47,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-safety": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
     "zod": "4.4.2"

@@ -12,6 +12,7 @@ import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/
 
 import { configGetSpec } from './ops/config-get.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
+import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
@@ -31,6 +32,7 @@ const SAFE_MODE_SCOPES: readonly FunctionScope[] = ['read']
 const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsListSpec as FunctionSpec,
   runsGetSpec as FunctionSpec,
+  runsEventsSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
   configGetSpec as FunctionSpec,
 ]

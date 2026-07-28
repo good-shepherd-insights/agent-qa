@@ -19,6 +19,7 @@ import {
   KnowledgeBundlesListInputSchema,
   MaskedResolvedConfigSchema,
   RunDetailSchema,
+  RunEventEnvelopeSchema,
   RunsEventsInputSchema,
   RunsGetInputSchema,
   RunsListInputSchema,
@@ -36,6 +37,7 @@ const functionSchemas: Record<string, z.ZodType> = {
   RunsGetInputSchema,
   RunsStartInputSchema,
   RunsEventsInputSchema,
+  RunEventEnvelopeSchema,
   KnowledgeBundleSummarySchema,
   KnowledgeBundlesListInputSchema,
   MaskedResolvedConfigSchema,
@@ -149,6 +151,21 @@ describe('runs op inputs (D-08/D-09/D-10)', () => {
   it('requires a runId on runs.get', () => {
     expect(RunsGetInputSchema.parse({ runId: 'run-abc' }).runId).toBe('run-abc')
     expect(RunsGetInputSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('admits a recorded bus envelope as the runs.events stream element (D-08)', () => {
+    const recorded = {
+      seq: 4,
+      ts: 1_700_000_000_004,
+      runId: 'run-abc',
+      type: 'stepFinalized',
+      payload: { testIndex: 0, stepIndex: 1 },
+    }
+
+    expect(RunEventEnvelopeSchema.parse(recorded).seq).toBe(4)
+    // `seq` is the resume token, so it is never zero and never fractional.
+    expect(RunEventEnvelopeSchema.safeParse({ ...recorded, seq: 0 }).success).toBe(false)
+    expect(RunEventEnvelopeSchema.safeParse({ ...recorded, type: 'notAnEvent' }).success).toBe(false)
   })
 
   it('takes an optional non-negative lastEventId resume token on runs.events', () => {

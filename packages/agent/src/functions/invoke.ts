@@ -80,6 +80,9 @@ function issueSummary(issues: readonly { path: PropertyKey[]; message: string }[
  *   4. evaluate()              — verdict + audit row, for every op without exception
  *   5. dispatch                — the only place a spec implementation ever runs
  *   6. validate the output     — unary results honour their declared contract
+ *
+ * Stream ops (D-08) run through the SAME six steps: the gate verdict and its audit row are
+ * therefore computed before a single event can be observed.
  */
 export async function invokeFunction(
   registry: FunctionRegistry,
@@ -117,5 +120,9 @@ export async function invokeFunction(
 
   const result = await spec.invoke(parsed.data, internals.deps)
 
+  // A stream result IS the declared async iterable and passes through untouched: the
+  // spec's `output` describes one ELEMENT, so parsing the iterable against it would be a
+  // category error. Elements carry their own resume token, and the gate verdict above
+  // already landed an audit row before anything could be yielded (D-08 / D-11).
   return spec.resultKind === 'unary' ? spec.output.parse(result) : result
 }

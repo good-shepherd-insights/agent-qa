@@ -16,7 +16,9 @@ import type {
 } from '@vostride/agent-qa-agent'
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
+import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
+  FsEventLog,
   HANDOFF_FILE,
   RUNS_SUBDIR,
   loadCompletedRunHandoff,
@@ -25,6 +27,7 @@ import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
+  RunEventEnvelope,
   RunId,
 } from '@vostride/agent-qa-schema'
 
@@ -81,6 +84,27 @@ export function createRunsReader(agentQaRoot: string): RunsReaderPort {
      */
     get(runId: RunId): Promise<CompletedRunHandoff | undefined> {
       return Promise.resolve(enumerate().find((document) => document.runId === runId))
+    },
+    /**
+     * Deep replay of one run's `events.jsonl` through the SAME concrete store the v49 bus
+     * appends with, so a replayed stream is byte-for-byte what the run emitted.
+     *
+     * Two cases are deliberately distinct. An absent or empty log is an ordinary empty
+     * replay — nothing was recorded, so nothing was lost. A log whose earliest surviving
+     * seq is ABOVE the requested resume point means events the caller asked for existed
+     * and are gone; that is reported with the bus's own `ReplayIncompleteError` carrying
+     * the floor, never papered over by returning the surviving suffix (D-07/D-08).
+     */
+    readEvents(runId: RunId, fromSeq: number): Promise<readonly RunEventEnvelope[]> {
+      const recorded = [...new FsEventLog({ root: agentQaRoot, runId }).read(0)]
+        .sort((left, right) => left.seq - right.seq)
+      if (recorded.length === 0) return Promise.resolve([])
+
+      const earliestAvailableSeq = recorded[0]!.seq
+      if (fromSeq < earliestAvailableSeq) {
+        return Promise.reject(new ReplayIncompleteError(fromSeq, earliestAvailableSeq))
+      }
+      return Promise.resolve(recorded.filter((event) => event.seq >= fromSeq))
     },
   }
 }

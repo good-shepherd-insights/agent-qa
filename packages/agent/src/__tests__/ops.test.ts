@@ -72,6 +72,9 @@ function fakeDeps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
     runs: {
       list: () => Promise.resolve([]),
       get: () => Promise.resolve(undefined),
+      // The stream port is exercised in runs-events.test.ts; here it exists only because
+      // FunctionDeps is a required, non-partial record.
+      readEvents: () => Promise.resolve([]),
     },
     knowledge: { listBundles: () => Promise.resolve([]) },
     config: { getMasked: () => Promise.resolve(maskedConfig) },
@@ -92,6 +95,7 @@ describe('runs.get', () => {
     const deps = fakeDeps({
       runs: {
         list: () => Promise.resolve([]),
+        readEvents: () => Promise.resolve([]),
         get: () => Promise.resolve(handoff({
           gateRun: true,
           tests: [{
@@ -153,6 +157,7 @@ describe('runs.get', () => {
     const deps = fakeDeps({
       runs: {
         list: () => Promise.resolve([]),
+        readEvents: () => Promise.resolve([]),
         get: () => Promise.resolve(handoff({
           tests: [{
             testId: 'test-1',

@@ -7,6 +7,7 @@
 // barrel exports the declaration type only, so no surface can acquire a dispatch path
 // that skips `invokeFunction`'s gate call (T-384-01).
 
+import type { EventLogPort } from '@vostride/agent-qa-runner'
 import type { z } from 'zod'
 
 import type {
@@ -19,10 +20,30 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 /**
- * How an op returns its result (D-08). `stream` is minted here as vocabulary; the
- * async-iterable + `lastEventId` replay implementation lands with the event-stream op.
+ * How an op returns its result (D-08).
+ *
+ * `unary` resolves ONE value, validated against the spec's `output` contract.
+ * `stream` resolves a {@link FunctionStream} whose elements each honour that same
+ * `output` contract — the contract describes one element, never the iterable.
  */
 export type FunctionResultKind = 'unary' | 'stream'
+
+/**
+ * A stream op's result (D-08): a typed async iterable of seq-stamped elements.
+ *
+ * Connection-independent by construction — every element carries its own resume token, so
+ * a caller that observed token N re-invokes with that token and receives N + 1 onward.
+ * Nothing about the iterable is bound to the transport that produced it, which is why
+ * 386's live attach and this phase's completed-run replay are the SAME contract.
+ */
+export type FunctionStream<Element = unknown> = AsyncIterable<Element>
+
+/**
+ * One replayed run event, defined AS the element type the runner's `EventLogPort.read`
+ * yields. Binding it to the runner contract rather than restating the envelope means the
+ * layer cannot drift out of step with the log the runner actually writes.
+ */
+export type ReplayedRunEvent = ReturnType<EventLogPort['read']>[number]
 
 /**
  * Whether the op's implementation is bound in THIS composition (D-09). A declared-but-
@@ -47,7 +68,14 @@ export interface FunctionDeclaration<Input = unknown, Output = unknown> {
   bindingStatus: FunctionBindingStatus
   /** Runtime input contract (D-14); also the JSON-Schema projection source. */
   input: z.ZodType<Input>
-  /** Runtime output contract (D-14); unary results are validated against it. */
+  /**
+   * Runtime output contract (D-14).
+   *
+   * For a `unary` op this is the contract for the whole result, and `invokeFunction`
+   * validates against it. For a `stream` op it is the contract for ONE element: parsing
+   * the iterable itself against it would be a category error, and a catalog projection
+   * reads it as the element schema its transport (SSE frame, MCP notification) carries.
+   */
   output: z.ZodType<Output>
   /** The descriptor this op projects into for the policy gate. */
   risk: RiskActionDescriptor
@@ -61,6 +89,24 @@ export interface FunctionDeclaration<Input = unknown, Output = unknown> {
 export interface FunctionSpec<Input = unknown, Output = unknown>
   extends FunctionDeclaration<Input, Output> {
   invoke(input: Input, deps: FunctionDeps): Promise<Output>
+}
+
+/**
+ * INTERNAL: declaration plus implementation for a `stream` op (D-08).
+ *
+ * `Element` is what the declared `output` contract describes — ONE element, never the
+ * iterable. The stream is ACQUIRED inside `invoke` rather than lazily on first iteration,
+ * so an acquisition refusal (a resume token below the replay floor, say) surfaces as an
+ * invocation failure instead of as a stream that dies half-delivered.
+ *
+ * A stream spec is registered by widening to {@link FunctionSpec}: the registry stores one
+ * spec shape, and `invokeFunction` branches on the DECLARED `resultKind`, never on what
+ * the implementation happens to return.
+ */
+export interface FunctionStreamSpec<Input = unknown, Element = unknown>
+  extends FunctionDeclaration<Input, Element> {
+  resultKind: 'stream'
+  invoke(input: Input, deps: FunctionDeps): Promise<FunctionStream<Element>>
 }
 
 /**
@@ -82,6 +128,18 @@ export interface RunsReaderPort {
    * joining a caller-supplied string onto a filesystem path (T-384-08).
    */
   get(runId: RunId): Promise<CompletedRunHandoff | undefined>
+  /**
+   * Replay one run's recorded event stream, starting at `fromSeq` and in `seq` order.
+   *
+   * The exact `EventLogPort.read(fromSeq)` contract the v49 bus already replays against,
+   * lifted behind a port so this layer needs no host access. A run with no recorded
+   * events replays as an ordinary empty result — nothing was truncated, so nothing is
+   * refused. When events below `fromSeq` existed but are no longer available, the
+   * implementation rejects with the runner's `ReplayIncompleteError` carrying the lowest
+   * seq it can still serve; the op turns that into the layer's typed refusal. Serving a
+   * silently truncated prefix is the one thing an implementation may never do.
+   */
+  readEvents(runId: RunId, fromSeq: number): Promise<readonly ReplayedRunEvent[]>
 }
 
 /**

@@ -24,9 +24,10 @@ interface FnOptions {
   list?: boolean
   json?: boolean
   input?: string
+  from?: string
 }
 
-type FnErrorCode = 'invalid-input-json' | 'missing-function-id'
+type FnErrorCode = 'invalid-input-json' | 'invalid-resume-token' | 'missing-function-id'
 
 class FnCommandError extends Error {
   constructor(
@@ -57,6 +58,77 @@ function parsedInput(raw: string | undefined): unknown {
       'invalid-input-json',
       `--input must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
     )
+  }
+}
+
+/**
+ * Fold `--from <lastEventId>` into the op input.
+ *
+ * The flag is sugar over the `lastEventId` field a stream op already declares, so a
+ * resumed invocation and a hand-written `--input` are the same call. Rejecting a
+ * non-integer here rather than letting the zod contract report it keeps the message about
+ * the flag the operator actually typed.
+ */
+function withResumeToken(input: unknown, from: string | undefined): unknown {
+  if (from === undefined) return input
+
+  const lastEventId = Number(from)
+  if (!Number.isInteger(lastEventId) || lastEventId < 0) {
+    throw new FnCommandError(
+      'invalid-resume-token',
+      `--from must be a non-negative whole event seq, got: ${from}`,
+    )
+  }
+  return { ...(input as Record<string, unknown>), lastEventId }
+}
+
+function isStream(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
+  )
+}
+
+/** The seq-stamped shape every stream element carries; `seq` doubles as the resume token. */
+interface SeqStamped {
+  seq?: number
+  type?: string
+}
+
+/**
+ * Render a stream as it arrives.
+ *
+ * `--json` emits NDJSON — one self-contained JSON document per line — because a stream has
+ * no closing bracket to wait for, and that stays true when 386 attaches to a live run.
+ * Human mode prints one line per event and closes with the last seq observed, which is
+ * exactly the value to hand back as `--from` on the next invocation.
+ */
+async function renderStream(stream: AsyncIterable<unknown>, json: boolean): Promise<void> {
+  const maskingContext = json ? undefined : createMaskingContext()
+  let count = 0
+  let lastSeq: number | undefined
+
+  try {
+    for await (const element of stream) {
+      count += 1
+      const stamped = element as SeqStamped
+      lastSeq = stamped.seq
+      if (json) {
+        console.log(JSON.stringify(element))
+        continue
+      }
+      const label = `${pc.dim(`seq ${stamped.seq ?? '?'}`)}  ${pc.bold(stamped.type ?? 'event')}`
+      console.log(unmaskForHumanOutput(maskingContext!, label))
+    }
+
+    if (!json) {
+      console.log(pc.dim(
+        `${count} event${count === 1 ? '' : 's'} · last seq ${lastSeq ?? 'none'}`,
+      ))
+    }
+  } finally {
+    maskingContext?.dispose()
   }
 }
 
@@ -125,6 +197,7 @@ export function createFnCommand(): Command {
     .option('--list', 'list every registered function instead of invoking one')
     .option('--json', 'emit machine-readable masked JSON')
     .option('--input <json>', 'JSON object passed as the function input (default {})')
+    .option('--from <lastEventId>', 'resume a stream after this event seq')
     .action(async (id: string | undefined, options: FnOptions, command: Command) => {
       try {
         const registry = createFunctionRegistryComposition(compositionInput(command))
@@ -149,9 +222,16 @@ export function createFnCommand(): Command {
         const result = await invokeFunction(
           registry,
           id,
-          parsedInput(options.input),
+          withResumeToken(parsedInput(options.input), options.from),
           CLI_FUNCTION_CALLER,
         )
+
+        // The registry knows which ops stream (D-08); the rendering follows the RESULT so
+        // the invoker needs no per-id knowledge of its own.
+        if (isStream(result)) {
+          await renderStream(result, options.json === true)
+          return
+        }
 
         if (options.json === true) {
           emitJson(result)

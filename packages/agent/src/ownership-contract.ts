@@ -19,10 +19,14 @@ export const AGENT_QA_AGENT_FORBIDDEN_RESPONSIBILITIES = [
 ] as const
 // 384 D-14: zod is the one external dependency — a pure validation library, legal under
 // providerNeutral/storageNeutral, and the source of the JSON-Schema projection the MCP
-// and catalog surfaces consume. `runner` is NOT declared yet: declared-but-unused is an
-// arch offense, so it lands with the first stream-op import.
+// and catalog surfaces consume.
 export const AGENT_QA_AGENT_EXTERNAL_DEPENDENCIES = ['zod'] as const
+// 384 D-08: `runner` arrives with the stream op — the layer consumes the runner-owned
+// event-log replay contract (`EventLogPort.read` / `ReplayIncompleteError`) rather than
+// restating it, so the resume-token semantics cannot fork between the two. Runner is
+// itself providerNeutral + storageNeutral, so the direction rule stays satisfied.
 export const AGENT_QA_AGENT_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-runner',
   '@vostride/agent-qa-safety',
   '@vostride/agent-qa-schema',
 ] as const

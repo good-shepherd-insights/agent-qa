@@ -150,12 +150,7 @@ describe('runs.events replay', () => {
   it('resumes at lastEventId + 1 and yields the remainder in seq order', async () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
 
-    const events = await drain(
-      (await runsEventsSpec.invoke(
-        { runId: RUN_ID, lastEventId: 2 },
-        spy.deps,
-      )) as FunctionStream<RunEventEnvelope>,
-    )
+    const events = await drain(await runsEventsSpec.invoke({ runId: RUN_ID, lastEventId: 2 }, spy.deps))
 
     expect(events.map((event) => event.seq)).toEqual([3, 4, 5])
     // The resume arithmetic is the port's contract, so it is asserted at the seam too.
@@ -165,9 +160,7 @@ describe('runs.events replay', () => {
   it('replays the whole log when no resume token is supplied', async () => {
     const spy = eventsDeps({ events: FIVE_EVENTS })
 
-    const events = await drain(
-      (await runsEventsSpec.invoke({ runId: RUN_ID }, spy.deps)) as FunctionStream<RunEventEnvelope>,
-    )
+    const events = await drain(await runsEventsSpec.invoke({ runId: RUN_ID }, spy.deps))
 
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
     expect(spy.calls()).toEqual([{ runId: RUN_ID, fromSeq: 1 }])
@@ -176,9 +169,7 @@ describe('runs.events replay', () => {
   it('yields a completed EMPTY stream for a run that recorded no events', async () => {
     const spy = eventsDeps({ events: [] })
 
-    const events = await drain(
-      (await runsEventsSpec.invoke({ runId: RUN_ID }, spy.deps)) as FunctionStream<RunEventEnvelope>,
-    )
+    const events = await drain(await runsEventsSpec.invoke({ runId: RUN_ID }, spy.deps))
 
     // An empty log is an ordinary result, never a floor refusal: nothing was truncated.
     expect(events).toEqual([])

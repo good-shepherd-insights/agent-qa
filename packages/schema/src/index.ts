@@ -474,6 +474,8 @@ export {
   RunsGetInputSchema,
   RunsStartInputSchema,
   RunsEventsInputSchema,
+  RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
+  RunEventEnvelopeSchema,
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
   KnowledgeBundleSummarySchema,
   KnowledgeBundlesListInputSchema,
