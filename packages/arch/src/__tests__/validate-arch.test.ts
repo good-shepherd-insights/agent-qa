@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -47,6 +48,20 @@ import {
   SURFACE_FIREWALL_LEDGER,
   type SurfaceLedgerEntry,
 } from '../lint/surface-firewall-ledger.js'
+import {
+  EVALUATE_PIN,
+  findEvaluateAcquisitions,
+  findEvaluatePinOffenders,
+  type EvaluatePinSource,
+} from '../lint/evaluate-pin.js'
+import {
+  AGENT_BARREL_FILE,
+  EXPECTED_AGENT_BARREL_EXPORTS,
+  EXPECTED_AGENT_BARREL_TYPE_EXPORTS,
+  EXPECTED_AGENT_BARREL_VALUE_EXPORTS,
+  findAgentBarrelOffenders,
+  readAgentBarrelExports,
+} from '../lint/agent-barrel.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -64,6 +79,24 @@ function hitsFromFiles(files: readonly string[]): SpecifierHit[] {
 
 function packageSourceHits(contract: OwnershipContract): SpecifierHit[] {
   return hitsFromFiles(sourceFilesFor(contract.packageDir, repoRoot))
+}
+
+/**
+ * Source text for the evaluate() pin, keyed by repo-relative path.
+ *
+ * Routed through `sourceFilesFor` on purpose: it already drops `__tests__`, and FIVE test
+ * files across three packages legitimately exercise the shipped gate. Scanning raw files
+ * instead would turn every one of them into a pin offender.
+ */
+function pinSourcesFor(packageDir: string): EvaluatePinSource[] {
+  return sourceFilesFor(packageDir, repoRoot).map(file => ({
+    file: relative(repoRoot, file).replaceAll('\\', '/'),
+    source: readFileSync(file, 'utf8'),
+  }))
+}
+
+function readRepoFile(repoRelativePath: string): string {
+  return readFileSync(join(repoRoot, repoRelativePath), 'utf8')
 }
 
 function packageAllHits(contract: OwnershipContract): SpecifierHit[] {
@@ -136,8 +169,10 @@ describe('validate:arch (LINT-01..05)', () => {
     const offenders: string[] = []
     const contracts: readonly OwnershipContract[] = ARCH_MANIFEST.packages
     const surfaceScans: SurfaceFirewallScan[] = []
+    const pinSources: EvaluatePinSource[] = []
 
     for (const contract of contracts) {
+      pinSources.push(...pinSourcesFor(contract.packageDir))
       const sourceHits = packageSourceHits(contract)
       const allHits = packageAllHits(contract)
 
@@ -165,6 +200,8 @@ describe('validate:arch (LINT-01..05)', () => {
 
     offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
     offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
+    offenders.push(...findEvaluatePinOffenders(pinSources))
+    offenders.push(...findAgentBarrelOffenders(readRepoFile(AGENT_BARREL_FILE)))
     offenders.push(...findCycleOffenders(contracts))
     offenders.push(...findDirectionOffenders(contracts))
     offenders.push(...findKnowledgeWriteOffenders(contracts))
@@ -561,5 +598,259 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
 
     const keys = SURFACE_FIREWALL_LEDGER.map(entry => `${entry.file} :: ${entry.specifier}`)
     expect(new Set(keys).size).toEqual(keys.length)
+  })
+})
+
+const PIN_GATE_HOOK = 'packages/safety/src/policy/gate-hook.ts'
+const PIN_SAFETY_BARREL = 'packages/safety/src/index.ts'
+const PIN_INVOKE = 'packages/agent/src/functions/invoke.ts'
+
+/**
+ * Synthetic stand-ins for the three pinned files, each carrying the acquisition form the
+ * real file uses. Every fixture scan starts here so the pin's stale direction stays quiet
+ * and the case under test is the only thing that can speak.
+ */
+function pinnedFixtureSources(): EvaluatePinSource[] {
+  return [
+    { file: PIN_GATE_HOOK, source: 'import { evaluate, type GateTrust } from "./gate"' },
+    { file: PIN_SAFETY_BARREL, source: 'export { evaluate } from "./policy/gate"' },
+    { file: PIN_INVOKE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' },
+  ]
+}
+
+function pinScan(...extra: readonly EvaluatePinSource[]): string[] {
+  return findEvaluatePinOffenders([...pinnedFixtureSources(), ...extra])
+}
+
+describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () => {
+  it('pins exactly three production files, each with a dated rationale', () => {
+    expect(Object.keys(EVALUATE_PIN).sort()).toEqual(
+      [PIN_INVOKE, PIN_SAFETY_BARREL, PIN_GATE_HOOK].sort(),
+    )
+    for (const [file, rationale] of Object.entries(EVALUATE_PIN)) {
+      expect(rationale.trim()).not.toEqual('')
+      expect(file).toMatch(/^packages\/[a-z-]+\/src\/.+\.ts$/)
+    }
+  })
+
+  it('fires on all THREE real acquisition forms, one of which is not an import at all', () => {
+    const acquisitions = [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE].flatMap(file =>
+      findEvaluateAcquisitions(readRepoFile(file), file),
+    )
+
+    expect(
+      acquisitions.map(({ file, keyword, specifier, form }) => ({
+        file,
+        keyword,
+        specifier,
+        form,
+      })),
+    ).toEqual([
+      // relative import of the gate module, from inside safety
+      { file: PIN_GATE_HOOK, keyword: 'import', specifier: './gate', form: 'named' },
+      // export-re-export: syntactically NOT an import, and the form a detector keyed on
+      // import statements alone silently misses — reporting this file as a stale pin entry
+      { file: PIN_SAFETY_BARREL, keyword: 'export', specifier: './policy/gate', form: 'named' },
+      // package-specifier named import of the barrel symbol
+      {
+        file: PIN_INVOKE,
+        keyword: 'import',
+        specifier: '@vostride/agent-qa-safety',
+        form: 'named',
+      },
+    ])
+    for (const acquisition of acquisitions) {
+      expect(acquisition.line).toBeGreaterThan(0)
+    }
+
+    expect(
+      findEvaluatePinOffenders(
+        [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE].map(file => ({
+          file,
+          source: readRepoFile(file),
+        })),
+      ),
+    ).toEqual([])
+  })
+
+  it('reports a FOURTH importer, whatever name it binds the symbol to', () => {
+    const fourth = 'packages/runner/src/loop/second-gate.ts'
+
+    expect(
+      pinScan({ file: fourth, source: 'import { evaluate } from "@vostride/agent-qa-safety"' }),
+    ).toEqual([
+      `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    ])
+
+    expect(
+      pinScan({
+        file: fourth,
+        source: 'import { evaluate as runGate } from "@vostride/agent-qa-safety"',
+      }),
+    ).toEqual([
+      `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    ])
+
+    expect(
+      pinScan({
+        file: fourth,
+        source: 'import * as safety from "@vostride/agent-qa-safety"',
+      }),
+    ).toEqual([
+      `evaluate-pin: ${fourth}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    ])
+  })
+
+  it('reports a relative gate-module acquisition from a NEW safety file', () => {
+    const secondHook = 'packages/safety/src/policy/second-hook.ts'
+    expect(
+      pinScan({ file: secondHook, source: 'import { evaluate } from "./gate"' }),
+    ).toEqual([
+      `evaluate-pin: ${secondHook}:1 ⇏ ./gate (un-pinned gate acquisition)`,
+    ])
+
+    // Any VALUE the gate module publishes is gate power, so a factory or helper added
+    // there cannot be used to dodge the pin under a different name.
+    const deepFile = 'packages/safety/src/hooks/second-registrar.ts'
+    expect(
+      pinScan({ file: deepFile, source: 'import { resolveAsk } from "../policy/gate"' }),
+    ).toEqual([
+      `evaluate-pin: ${deepFile}:1 ⇏ ../policy/gate (un-pinned gate acquisition)`,
+    ])
+  })
+
+  it('leaves a TYPE-ONLY gate-module import alone, but not an inline value beside a type', () => {
+    // The shape `hooks/first-party.ts` carries today. A type acquires nothing at runtime,
+    // so treating it as an acquisition would make the pin four entries and would say a
+    // file that cannot call the gate is a gate call-site.
+    expect(
+      pinScan({
+        file: 'packages/safety/src/hooks/first-party.ts',
+        source: 'import type { GateTrust } from "../policy/gate"',
+      }),
+    ).toEqual([])
+
+    expect(
+      pinScan({
+        file: 'packages/safety/src/hooks/first-party.ts',
+        source: 'export type { GateDeps, GateTrust } from "../policy/gate"',
+      }),
+    ).toEqual([])
+
+    const inlineMix = 'packages/safety/src/hooks/mixed.ts'
+    expect(
+      pinScan({
+        file: inlineMix,
+        source: 'import { type GateTrust, evaluate } from "../policy/gate"',
+      }),
+    ).toEqual([
+      `evaluate-pin: ${inlineMix}:1 ⇏ ../policy/gate (un-pinned gate acquisition)`,
+    ])
+  })
+
+  it('keys on import and export STATEMENTS, never on call tokens (Pitfall 3)', () => {
+    const noisy = [
+      'import { Page } from "playwright"',
+      'import { classifyRisk } from "@vostride/agent-qa-safety"',
+      'const text = await page.evaluate(() => document.title)',
+      'const verdict = asserter.evaluate(candidate)',
+      '// evaluate() is called by the gate hook, never here',
+      'export function evaluate(input: string) { return input }',
+    ].join('\n')
+
+    expect(findEvaluateAcquisitions(noisy, 'packages/web/src/probe.ts')).toEqual([])
+    expect(pinScan({ file: 'packages/web/src/probe.ts', source: noisy })).toEqual([])
+  })
+
+  it('reads a multi-line clause and a commented-out acquisition correctly', () => {
+    const continuation = 'packages/mcp/src/server/tools.ts'
+    const source = [
+      'import {',
+      '  classifyRisk,',
+      '  evaluate,',
+      '} from "@vostride/agent-qa-safety"',
+    ].join('\n')
+
+    expect(pinScan({ file: continuation, source })).toEqual([
+      `evaluate-pin: ${continuation}:1 ⇏ @vostride/agent-qa-safety (un-pinned gate acquisition)`,
+    ])
+
+    expect(
+      pinScan({
+        file: continuation,
+        source: '// import { evaluate } from "@vostride/agent-qa-safety"',
+      }),
+    ).toEqual([])
+  })
+
+  it('reports a pin entry that no longer acquires the gate as stale (self-shrinking)', () => {
+    expect(
+      findEvaluatePinOffenders(
+        pinnedFixtureSources().filter(entry => entry.file !== PIN_INVOKE),
+      ),
+    ).toEqual([
+      `evaluate-pin: ${PIN_INVOKE} ⇏ pin entry no longer acquires the gate (stale)`,
+    ])
+  })
+})
+
+describe('validate:arch agent barrel export set (FUNC-01 / SC1) held-out fixtures', () => {
+  it('pins the real barrel export set by exact equality, values and types apart', () => {
+    expect(readAgentBarrelExports(readRepoFile(AGENT_BARREL_FILE))).toEqual({
+      values: [...EXPECTED_AGENT_BARREL_VALUE_EXPORTS],
+      types: [...EXPECTED_AGENT_BARREL_TYPE_EXPORTS],
+    })
+    expect(EXPECTED_AGENT_BARREL_EXPORTS).toEqual(
+      [...EXPECTED_AGENT_BARREL_VALUE_EXPORTS, ...EXPECTED_AGENT_BARREL_TYPE_EXPORTS].sort(),
+    )
+  })
+
+  it('exports no spec-level dispatch symbol — invokeFunction is the only way in', () => {
+    expect(EXPECTED_AGENT_BARREL_VALUE_EXPORTS).toContain('invokeFunction')
+    for (const forbidden of [
+      'FunctionSpec',
+      'FunctionStreamSpec',
+      'invoke',
+      'createRegistryFromSpecs',
+      'registryInternals',
+    ]) {
+      expect(EXPECTED_AGENT_BARREL_EXPORTS).not.toContain(forbidden)
+    }
+    // No `*Spec` value of any name: a spec carries its own implementation, so exporting
+    // one hands a surface a dispatch path that never reaches the gate (T-384-20).
+    expect(EXPECTED_AGENT_BARREL_EXPORTS.filter(name => name.endsWith('Spec'))).toEqual([])
+  })
+
+  it('fires when the barrel gains an export the pin does not carry', () => {
+    const withExtra = [
+      readRepoFile(AGENT_BARREL_FILE),
+      'export { createRegistryFromSpecs } from "./functions/registry.js"',
+    ].join('\n')
+
+    expect(findAgentBarrelOffenders(withExtra)).toEqual([
+      'agent-barrel: unexpected value export createRegistryFromSpecs',
+    ])
+  })
+
+  it('fires when the barrel loses an export the pin carries', () => {
+    const withoutInvoke = readRepoFile(AGENT_BARREL_FILE).replace('  invokeFunction,\n', '')
+
+    expect(findAgentBarrelOffenders(withoutInvoke)).toEqual([
+      'agent-barrel: missing value export invokeFunction',
+    ])
+  })
+
+  it('fires when a pinned TYPE export is promoted to a value export', () => {
+    const promoted = readRepoFile(AGENT_BARREL_FILE).replace(
+      'export type { CreateFunctionRegistryOptions, FunctionRegistry }',
+      'export { CreateFunctionRegistryOptions, FunctionRegistry }',
+    )
+
+    expect(findAgentBarrelOffenders(promoted)).toEqual([
+      'agent-barrel: unexpected value export CreateFunctionRegistryOptions',
+      'agent-barrel: unexpected value export FunctionRegistry',
+      'agent-barrel: missing type export CreateFunctionRegistryOptions',
+      'agent-barrel: missing type export FunctionRegistry',
+    ])
   })
 })
