@@ -14,7 +14,7 @@ import type {
   KnowledgeReaderPort,
   RunsReaderPort,
 } from '@vostride/agent-qa-agent'
-import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
+import { AgentQaConfigSchema, resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
@@ -32,6 +32,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
+import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
 /**
@@ -124,19 +125,26 @@ export function createKnowledgeReader(configPath: string): KnowledgeReaderPort {
 }
 
 /**
- * The `config.get` binding, and the T-384-07 mitigation site.
+ * The `config.get` binding, and the T-384-07 / T-384-17 mitigation site.
  *
  * The resolved configuration is flattened and masked HERE, so the only configuration value
  * that ever crosses into the function layer is already masked. `loadAuthPlugins: false`
  * keeps the read a read: resolving a capability must not load and execute plugin code.
+ *
+ * This is also where the disclosure rule gets its authority. `AgentQaConfigSchema` is walked
+ * ONCE, here at the composition root, into the visibility oracle the masker consults per
+ * entry — so the masker decides what is secret by what the schema declares free-form rather
+ * than by a list of paths it would have to keep correct.
  */
 export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
+  const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
   return {
     async getMasked() {
       const resolved = await resolveConfig({ configPath, loadAuthPlugins: false })
       return buildMaskedResolvedConfig({
         configPath,
         resolved,
+        visibility,
         // Ascending precedence, mirroring `resolveConfig`'s own merge order. `cli-flag` is
         // absent because the `fn` invoker passes no configuration flags; `test-file` never
         // participates in a project-level config read.

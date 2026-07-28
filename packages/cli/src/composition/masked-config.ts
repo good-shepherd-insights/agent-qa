@@ -1,27 +1,40 @@
-// The `config.get` masker (Phase 384, Plan 03 — T-384-07; hardened in Plan 08 — CR-01).
+// The `config.get` masker (Phase 384, Plan 03 — T-384-07; Plan 08 — CR-01; Plan 10 — BL-02).
 //
 // Masking happens HERE, while each entry is constructed, and the secret is dropped rather
 // than carried and redacted later: a `MaskedResolvedConfig` that exists cannot leak a secret
 // regardless of what a surface does with it. Every value is rendered to a string at
 // construction precisely so no value type can bypass the mask.
 //
-// The rule an entry is judged by, in the order it is applied:
-//   1. a named carve-out list, checked first, which is the only way a path stays visible
-//      once a later rule would have matched it;
-//   2. PROVENANCE — a path under either of the two free-form credential records (a provider
-//      config, or a provider-headers map) is masked unconditionally, because the operator
-//      names those keys and so the name carries no information about secrecy;
-//   3. the key NAME — an exact match against a set of whole credential segments, plus a
-//      substring scan for the longer credential terms, over every non-numeric segment.
-// Values that survive all three are still rendered with any URL userinfo stripped, so a
+// The rule, stated positively and completely, with no clause carrying an unlisted
+// exception:
+//
+//   A configuration value is VISIBLE only where the config schema constrains both its key
+//   and its value type. Everywhere else it is masked.
+//
+// That sentence is decided by the injected visibility oracle, which derives the answer by
+// walking the config schema itself (see the sibling config-visibility module). Two classes
+// of path are therefore masked UNCONDITIONALLY, and neither is a list this file maintains:
+//   - a path through an operator-named record with a free-form value — the free-form
+//     credential records the schema declares, whichever ones exist on the day it runs;
+//   - a path the schema does not describe at all, which the walk cannot vouch for.
+//
+// A second, ADDITIVE credential-name census then runs over the schema-constrained
+// remainder, where it is a heuristic over a small closed key space rather than the
+// load-bearing rule. It reads the value-bearing LEAF segment, so a constrained leaf is
+// judged by its own name: `plugins.auth.<n>.package` names in-process code and stays
+// visible, while `services.auth.token` does not. The single named carve-out is applied
+// before it. The census can only ADD masking; it can never make an opaque path visible.
+//
+// Values that survive both are still rendered with any URL userinfo stripped, so a
 // credential smuggled into a visible URL does not ride out on a field no rule masks.
 //
-// Over-masking is the accepted cost, and rule 2 makes that concrete: a provider's `baseURL`
-// is masked even though it is not a secret. An over-masked entry is visibly flagged
-// `masked: true`; an under-masked one is a silent disclosure.
+// Over-masking is the accepted cost, and the schema rule makes it concrete: a provider's
+// `baseURL` is masked because it sits inside a free-form record. An over-masked entry is
+// visibly flagged `masked: true`; an under-masked one is a silent disclosure.
 //
-// This module imports nothing but the schema package, so it is legal under the FUNC-02
-// surface firewall with no ledger entry — new-in-384 code must never need one.
+// This module imports nothing but the shared contract vocabulary package and a sibling
+// type, so it is legal under the FUNC-02 surface firewall with no ledger entry —
+// new-in-384 code must never need one.
 
 import {
   CONFIG_MASK_PLACEHOLDER,
@@ -33,12 +46,12 @@ import type {
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
 
+import type { ConfigVisibilityOracle } from './config-visibility.js'
+
 /**
  * Substrings that make a configuration key secret-shaped.
  *
- * One of the three rules `isSecretConfigKey` applies. It runs over every non-numeric path
- * segment, not just the leaf, so a secret nested under a `credentials` block is masked even
- * when its own key is innocuous. Being a SUBSTRING relation, it only reaches names that
+ * Half of the ADDITIVE census. Being a SUBSTRING relation, it only reaches names that
  * contain a term — a bare `key` segment is caught by the exact-segment set below instead.
  */
 const SECRET_KEY_TERMS = [
@@ -57,8 +70,8 @@ const SECRET_KEY_TERMS = [
 ] as const
 
 /**
- * Named carve-outs from the term scan above — a deliberate, auditable list, never a
- * weakening of the rule.
+ * Named carve-outs from the CENSUS — a deliberate, auditable list, never a weakening of the
+ * schema rule, which no carve-out can reach.
  *
  * `knowledge.contextBudgetTokens` is a token COUNT: it has no relation to a credential and
  * masking it would hide a number an operator needs to read. `workspace.secretsFile` is
@@ -72,10 +85,10 @@ const NON_SECRET_KEYS: ReadonlySet<string> = new Set([
 /**
  * Whole credential segments, matched EXACTLY rather than as substrings.
  *
- * The term scan above is a containment relation, so it never reaches a name shorter than
- * its terms: `'key'.includes('apikey')` is false, and a config leaf literally called `key`,
- * `pwd`, or `pat` therefore rendered in plaintext. These are the short names that carry the
- * whole meaning by themselves.
+ * The other half of the census. The term scan above is a containment relation, so it never
+ * reaches a name shorter than its terms: `'key'.includes('apikey')` is false, and a config
+ * leaf literally called `key`, `pwd`, or `pat` therefore rendered in plaintext. These are
+ * the short names that carry the whole meaning by themselves.
  */
 const SECRET_KEY_SEGMENTS: ReadonlySet<string> = new Set([
   'key',
@@ -89,32 +102,26 @@ const SECRET_KEY_SEGMENTS: ReadonlySet<string> = new Set([
   'creds',
 ])
 
-/**
- * The free-form records whose keys an OPERATOR names, not the schema.
- *
- * Everything beneath one of these is masked unconditionally. Both subtrees exist precisely
- * to carry provider credentials under names the schema cannot anticipate, so the key name
- * is not evidence of anything: a rule that consulted it would be guessing. Judging by
- * PROVENANCE instead is what makes the masker fail closed over them, and it is why a
- * provider's `baseURL` is masked — under an opaque subtree there are no exceptions.
- */
-const PROVIDER_HEADERS_SEGMENT = 'providerheaders'
-const PROVIDER_CONFIG_PATH = ['registry', 'providers'] as const
-
 function normalizeSegment(segment: string): string {
   return segment.toLowerCase().replaceAll(/[^a-z0-9]/gu, '')
 }
 
-/** True when the path lies inside one of the operator-named credential records. */
-function isUnderOpaqueSubtree(segments: readonly string[]): boolean {
-  if (segments.includes(PROVIDER_HEADERS_SEGMENT)) return true
-  return (
-    segments.length > PROVIDER_CONFIG_PATH.length &&
-    PROVIDER_CONFIG_PATH.every((expected, index) => segments[index] === expected)
-  )
-}
-
-/** True when a dot-path names, or lives beneath, a secret-shaped key. */
+/**
+ * The ADDITIVE credential-name census: does this path's own leaf name a credential?
+ *
+ * Scope is deliberate. The census reads the VALUE-BEARING leaf — the last non-numeric
+ * segment — and not its ancestors, because a name census cannot tell a credential from a
+ * package name and an ancestor scan made it guess: `plugins.auth.<n>.package` is the
+ * identity of code that runs in-process with full Node access, and the word `auth` three
+ * segments up was the entire reason it was hidden.
+ *
+ * Nothing is lost by narrowing it. The ancestor property this used to carry — a secret
+ * nested under a credentials block being masked even when its own key is innocuous — is now
+ * carried by the schema rule instead, and carried more strongly: a path the schema does not
+ * describe is masked whatever any of its segments are called, and a path INSIDE a free-form
+ * record is masked whatever its leaf is called. This census only ever adds masking on top
+ * of paths the schema has already vouched for.
+ */
 export function isSecretConfigKey(key: string): boolean {
   if (NON_SECRET_KEYS.has(key)) return false
 
@@ -123,12 +130,27 @@ export function isSecretConfigKey(key: string): boolean {
     .filter((segment) => !/^\d+$/u.test(segment))
     .map(normalizeSegment)
 
-  if (isUnderOpaqueSubtree(segments)) return true
+  const leaf = segments.at(-1)
+  if (leaf === undefined) return false
 
-  return segments.some((segment) => (
-    SECRET_KEY_SEGMENTS.has(segment) ||
-    SECRET_KEY_TERMS.some((term) => segment.includes(term))
-  ))
+  return (
+    SECRET_KEY_SEGMENTS.has(leaf) ||
+    SECRET_KEY_TERMS.some((term) => leaf.includes(term))
+  )
+}
+
+/**
+ * The whole disclosure decision for one dot-path, in the order the header states it.
+ *
+ * The schema verdict comes first and is unconditional; the name census is additive over the
+ * schema-constrained remainder. There is no third clause and no carve-out that can rescue
+ * an opaque path — `NON_SECRET_KEYS` is a carve-out from the CENSUS only.
+ */
+export function isMaskedConfigPath(
+  key: string,
+  visibility: ConfigVisibilityOracle,
+): boolean {
+  return visibility.isOpaque(key) || isSecretConfigKey(key)
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -209,6 +231,11 @@ export interface BuildMaskedResolvedConfigInput {
    * its provenance. A key no layer supplied came from a schema default.
    */
   layers: readonly ConfigLayer[]
+  /**
+   * The schema-derived verdict for every dot-path. REQUIRED, and deliberately so: a
+   * default would be a masker that silently stops applying its own primary rule.
+   */
+  visibility: ConfigVisibilityOracle
 }
 
 export function buildMaskedResolvedConfig(
@@ -222,7 +249,7 @@ export function buildMaskedResolvedConfig(
   const entries: MaskedConfigEntry[] = [...flatten(input.resolved).entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => {
-      const masked = isSecretConfigKey(key)
+      const masked = isMaskedConfigPath(key, input.visibility)
       let source: ConfigValueSource = 'default'
       for (const layer of layers) {
         if (layer.keys.has(key)) source = layer.source
