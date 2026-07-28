@@ -45,6 +45,42 @@ const FIXTURE_HEADER_PWD = 'sk-live-HEADER-PWD-DO-NOT-LEAK-3333'
 const FIXTURE_PROVIDER_KEY = 'sk-live-PROVIDER-KEY-DO-NOT-LEAK-5555'
 const FIXTURE_URL_PASSWORD = 'hunter2-URL-DO-NOT-LEAK'
 
+/**
+ * Ten credentials planted under `registry.devices.<name>.match` (Plan 10 / BL-02).
+ *
+ * The key names are drawn from OUTSIDE the masker's own constant lists — none of the ten
+ * appears anywhere in `masked-config.ts`, and the name census misses every one. They are
+ * masked because the SCHEMA declares this record free-form, which is the only reason that
+ * survives the next credential nobody thought of. A distinct sentinel per key means a
+ * partial fix cannot pass by masking one of them.
+ *
+ * The record is real: with a non-`local` transport the schema leaves the keys unrestricted,
+ * and the device farm forwards every entry verbatim as an `appium:<key>` capability — which
+ * is exactly where a device-farm credential lives.
+ */
+const FIXTURE_DEVICE_MATCH_CREDENTIALS: Record<string, string> = {
+  jwt: 'sk-live-JWT-DO-NOT-LEAK-0001',
+  pem: 'sk-live-PEM-DO-NOT-LEAK-0002',
+  pfx: 'sk-live-PFX-DO-NOT-LEAK-0003',
+  dsn: 'sk-live-DSN-DO-NOT-LEAK-0004',
+  otp: 'sk-live-OTP-DO-NOT-LEAK-0005',
+  mnemonic: 'sk-live-MNEMONIC-DO-NOT-LEAK-0006',
+  seedPhrase: 'sk-live-SEEDPHRASE-DO-NOT-LEAK-0007',
+  connectionString: 'sk-live-CONNSTR-DO-NOT-LEAK-0008',
+  signingKey: 'sk-live-SIGNINGKEY-DO-NOT-LEAK-0009',
+  hmacKey: 'sk-live-HMACKEY-DO-NOT-LEAK-0010',
+}
+
+/**
+ * Two plugin package names, which are the opposite claim (Plan 10 / M-01).
+ *
+ * Both name packages that load in-process with full Node access, so both belong in the
+ * output of the one capability whose purpose is configuration triage. Round 2 hid the first
+ * and showed the second, purely because the word `auth` appeared in one path.
+ */
+const FIXTURE_AUTH_PLUGIN_PACKAGE = '@acme/auth-plugin-SHOW-ME-1234'
+const FIXTURE_PROVIDER_PLUGIN_PACKAGE = '@acme/provider-plugin-SHOW-ME-5678'
+
 interface InvocationResult {
   stdout: string
   stderr: string
@@ -96,6 +132,19 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             baseURL: 'https://acme.test',
           },
         },
+        devices: {
+          pixel: {
+            platform: 'android',
+            // A non-'local' transport is what leaves the `match` keys unrestricted, so
+            // this is the schema-legal shape a device-farm credential arrives in.
+            transport: 'browserstack',
+            match: FIXTURE_DEVICE_MATCH_CREDENTIALS,
+          },
+        },
+      },
+      plugins: {
+        auth: [{ package: FIXTURE_AUTH_PLUGIN_PACKAGE }],
+        providers: [{ package: FIXTURE_PROVIDER_PLUGIN_PACKAGE }],
       },
       // The config schema's superRefine requires this leaf, so a resolvable fixture
       // must carry it before `config.get` can read anything at all.
@@ -573,6 +622,75 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(byKey['registry.llms.0.baseURL']).toEqual({
       key: 'registry.llms.0.baseURL',
       value: 'https://llm.acme.test/v1',
+      source: 'config-file',
+      masked: false,
+    })
+  })
+
+  it('masks a free-form record the masker was never told about (BL-02)', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+
+    // The claim, asserted against the bytes a caller actually sees. Not one of these ten
+    // key names appears in the masker's constant lists — the schema is what covered them.
+    for (const planted of Object.values(FIXTURE_DEVICE_MATCH_CREDENTIALS)) {
+      expect(result.stdout).not.toContain(planted)
+    }
+
+    const config = JSON.parse(result.stdout) as MaskedResolvedConfig
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    for (const name of Object.keys(FIXTURE_DEVICE_MATCH_CREDENTIALS)) {
+      const key = `registry.devices.pixel.match.${name}`
+      expect(byKey[key], key).toEqual({
+        key,
+        value: CONFIG_MASK_PLACEHOLDER,
+        source: 'config-file',
+        masked: true,
+      })
+    }
+
+    // The POSITIVE CONTROL, read from the same stdout: a constrained sibling INSIDE the
+    // same device profile is still visible. Without it, an output that was empty or
+    // wholly masked for the wrong reason would pass every assertion above — which is the
+    // exact failure mode a schema-derived rule can produce if the walk is wrong.
+    expect(result.stdout).toContain('browserstack')
+    expect(byKey['registry.devices.pixel.platform']).toEqual({
+      key: 'registry.devices.pixel.platform',
+      value: 'android',
+      source: 'config-file',
+      masked: false,
+    })
+  })
+
+  it('shows which packages load in-process, for BOTH plugin kinds (M-01)', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+
+    // The round-2 asymmetry: one of these was hidden and the other shown, because the word
+    // `auth` appeared in one path. Both are schema-constrained package names identifying
+    // code that runs with full Node access, and `config.get` exists to show them.
+    expect(result.stdout).toContain(FIXTURE_AUTH_PLUGIN_PACKAGE)
+    expect(result.stdout).toContain(FIXTURE_PROVIDER_PLUGIN_PACKAGE)
+
+    const config = JSON.parse(result.stdout) as MaskedResolvedConfig
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    expect(byKey['plugins.auth.0.package']).toEqual({
+      key: 'plugins.auth.0.package',
+      value: FIXTURE_AUTH_PLUGIN_PACKAGE,
+      source: 'config-file',
+      masked: false,
+    })
+    expect(byKey['plugins.providers.0.package']).toEqual({
+      key: 'plugins.providers.0.package',
+      value: FIXTURE_PROVIDER_PLUGIN_PACKAGE,
       source: 'config-file',
       masked: false,
     })
