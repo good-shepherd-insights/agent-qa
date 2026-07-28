@@ -80,19 +80,38 @@ export function registryInternals(registry: FunctionRegistry): RegistryInternals
   return REGISTRY_INTERNALS.get(registry)
 }
 
+/**
+ * Freeze the parts of a spec enforcement reads (CR-04).
+ *
+ * The specs are module-level singletons, so a write reached through ONE listing used to
+ * change what every registry in the process enforced. Freezing is idempotent and happens
+ * at registration, which closes the escalation by whatever route a caller reaches the spec.
+ * `input`/`output` zod internals are deliberately left alone — freezing the spec object
+ * already makes those PROPERTIES unwritable, and freezing a schema's internals would break
+ * zod's own lazy caching.
+ */
+function freezeSpec(spec: FunctionSpec): FunctionSpec {
+  Object.freeze(spec.requiredScopes)
+  Object.freeze(spec.risk)
+  return Object.freeze(spec)
+}
+
 function declarationView(spec: FunctionSpec): FunctionDeclaration {
   // Constructed field by field rather than spread-minus-invoke so a future spec field
   // can never leak the implementation into a listing by accident.
-  return {
+  //
+  // COPY, then freeze: the view stops aliasing the singleton spec entirely, so a caller
+  // cannot reach enforcement state through a listing even if the spec were somehow thawed.
+  return Object.freeze({
     id: spec.id,
     summary: spec.summary,
-    requiredScopes: spec.requiredScopes,
+    requiredScopes: Object.freeze([...spec.requiredScopes]),
     resultKind: spec.resultKind,
     bindingStatus: spec.bindingStatus,
     input: spec.input,
     output: spec.output,
-    risk: spec.risk,
-  }
+    risk: Object.freeze({ ...spec.risk }),
+  })
 }
 
 /**
@@ -110,7 +129,7 @@ export function createRegistryFromSpecs(
     if (byId.has(spec.id)) {
       throw new DuplicateFunctionIdError(spec.id)
     }
-    byId.set(spec.id, spec)
+    byId.set(spec.id, freezeSpec(spec))
   }
 
   const sorted = [...byId.values()].sort((left, right) => (
