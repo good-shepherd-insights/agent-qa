@@ -15,9 +15,20 @@
 //     value. This is the ONLY class that earns visibility.
 //   - `free-form`   — the walk reached an operator-named record with a free-form value, or
 //     an unknown/any node. Masked unconditionally.
-//   - `undeclared`  — the walk could not resolve the path at all. Masked too: a path the
-//     schema does not describe is a path the schema does not vouch for. Every unrecognised
-//     node shape lands here, so a walker gap over-masks rather than leaks.
+//   - `undeclared`  — the walk could not resolve the path at all, OR it resolved onto a
+//     node kind this walker does not know how to read. Masked too: a path the schema does
+//     not describe is a path the schema does not vouch for.
+//
+// The fail-closed direction is a MECHANISM, not an emergent property, and it is worth
+// naming precisely because the earlier version of this comment claimed the property while
+// the code did the opposite. `constrained` requires landing on a node whose `def.type` is
+// in the positive CONSTRAINED_LEAF_TYPES allowlist below; an unlisted kind classifies
+// `undeclared` and is masked. So the allowlist IS a list — the residual limitation, named
+// rather than denied — but it is closed under zod's node vocabulary rather than open under
+// the operator's naming freedom, and its staleness costs over-masking instead of
+// disclosure. What keeps it honest is the companion test table, whose corpus is
+// `Object.keys(z)` — the LIBRARY's surface, not this file's vocabulary — so a zod upgrade
+// that mints a node kind reddens a test instead of quietly widening what is published.
 //
 // This module reads the schema as DATA. It receives the config schema as a runtime
 // parameter and imports nothing but zod's public types, so it is legal under the FUNC-02
@@ -54,11 +65,48 @@ interface ZodNodeDef {
   valueType?: unknown
   element?: unknown
   options?: unknown
+  left?: unknown
+  right?: unknown
   shape?: unknown
 }
 
 /** Guards against a schema that is cyclic through `z.lazy` or pathologically deep. */
 const MAX_WALK_DEPTH = 64
+
+/**
+ * The zod node kinds a path may LAND on and still earn visibility.
+ *
+ * Positive by construction: a landing on anything not listed here classifies `undeclared`
+ * and is masked. That direction is the whole point — the previous generic default said
+ * `constrained` for every node kind it did not recognise, which published a
+ * `z.intersection`, a `z.custom()` and records of `z.map`/`z.set`/`z.tuple`.
+ *
+ * Membership is arbitrated by the shipped schema's own landing kinds, one reason each:
+ *   - `string`, `number`, `boolean`, `enum`, `literal` — the constrained scalar leaves the
+ *     config is mostly made of; the schema fixes the value's type.
+ *   - `transform` — `DurationString` / `SizeString` leaves are `.transform()`ed, so they
+ *     resolve through their pipe and land on the transform node. Omitting it would mask
+ *     `services.cache.ttl` and five siblings.
+ *   - `object`, `interface`, `array` — an EMPTY container is a leaf to the flattener, so a
+ *     path can land on the container itself (`workspace.testMatch: []`). The non-empty case
+ *     never lands here; it is descended through by the branches below.
+ *
+ * Kinds decided elsewhere are deliberately absent: `unknown`/`any`/`union`/`record` have
+ * their own branches in `classifyFrom`, and the wrappers `unwrap` consumes never survive to
+ * a landing. Everything else — today `intersection`, `custom`, `map`, `set`, `tuple`,
+ * `date`, `bigint`, `promise`, `file`, and whatever zod adds next — is masked.
+ */
+export const CONSTRAINED_LEAF_TYPES: ReadonlySet<string> = new Set([
+  'array',
+  'boolean',
+  'enum',
+  'interface',
+  'literal',
+  'number',
+  'object',
+  'string',
+  'transform',
+])
 
 function defOf(node: unknown): ZodNodeDef | undefined {
   if (typeof node !== 'object' || node === null) return undefined
@@ -107,8 +155,20 @@ function unwrap(node: unknown, depth: number): unknown {
   return current
 }
 
-function optionsOf(def: ZodNodeDef): readonly unknown[] {
-  return Array.isArray(def.options) ? def.options : []
+/**
+ * Every arm of a node that combines other schemas.
+ *
+ * A union publishes its arms as `options`; an INTERSECTION publishes them as `left` and
+ * `right` and has no `options` at all, which is why every rule that read `def.options`
+ * silently saw an intersection as having no arms — and a `.some()` over no arms is false,
+ * the answer that grants visibility.
+ */
+function armsOf(def: ZodNodeDef): readonly unknown[] {
+  if (Array.isArray(def.options)) return def.options
+  if (def.left !== undefined || def.right !== undefined) {
+    return [def.left, def.right].filter((arm) => arm !== undefined)
+  }
+  return []
 }
 
 /**
@@ -123,8 +183,8 @@ function isOperatorNamedKey(node: unknown, depth: number): boolean {
   const def = defOf(unwrap(node, depth))
   if (def === undefined) return true
   if (def.type === 'enum' || def.type === 'literal') return false
-  if (def.type === 'union') {
-    return optionsOf(def).some((option) => isOperatorNamedKey(option, depth + 1))
+  if (def.type === 'union' || def.type === 'intersection') {
+    return armsOf(def).some((arm) => isOperatorNamedKey(arm, depth + 1))
   }
   return true
 }
@@ -154,7 +214,7 @@ function admitsFreeFormValue(node: unknown, depth: number): boolean {
       return false
     case 'union':
     case 'intersection':
-      return optionsOf(def).some((option) => admitsFreeFormValue(option, depth + 1))
+      return armsOf(def).some((arm) => admitsFreeFormValue(arm, depth + 1))
     default:
       return true
   }
@@ -176,13 +236,20 @@ function classifyFrom(
   if (def.type === 'unknown' || def.type === 'any') return 'free-form'
 
   if (def.type === 'union') {
-    // A path is constrained if it is constrained under SOME option — the plugin
-    // declaration union is `{ package } | { path }`, and either arm is a real declaration.
+    // FREE-FORM DOMINATES. An arm the operator can fill freely means the VALUE here may be
+    // anything, so a sibling arm that happens to constrain the same path proves nothing
+    // about what is actually stored. Every arm is evaluated before a verdict is returned —
+    // returning early on the first `constrained` was what let a `z.unknown()` arm be
+    // outvoted by an object arm.
+    //
+    // With no free-form arm, today's behaviour stands: constrained under SOME arm is
+    // constrained, because the plugin declaration union is `{ package } | { path }` and
+    // either arm is a real declaration.
     let verdict: ConfigPathClass = 'undeclared'
-    for (const option of optionsOf(def)) {
-      const optionVerdict = classifyFrom(option, segments, depth + 1)
-      if (optionVerdict === 'constrained') return 'constrained'
-      if (optionVerdict === 'free-form') verdict = 'free-form'
+    for (const arm of armsOf(def)) {
+      const armVerdict = classifyFrom(arm, segments, depth + 1)
+      if (armVerdict === 'free-form') return 'free-form'
+      if (armVerdict === 'constrained') verdict = 'constrained'
     }
     return verdict
   }
@@ -198,11 +265,17 @@ function classifyFrom(
     ) {
       return 'free-form'
     }
-    if (segments.length === 0) return 'constrained'
+    // Landing ON a structured record: its verdict is the verdict of what it holds, so a
+    // record the walker cannot vouch for is not vouched for by being a record.
+    if (segments.length === 0) return classifyFrom(def.valueType, [], depth + 1)
     return classifyFrom(def.valueType, segments.slice(1), depth + 1)
   }
 
-  if (segments.length === 0) return 'constrained'
+  // THE LANDING DECISION, fail-closed. `constrained` is granted only to an allowlisted node
+  // kind; anything else — a kind this walker has no rule for — is `undeclared` and masked.
+  if (segments.length === 0) {
+    return CONSTRAINED_LEAF_TYPES.has(def.type) ? 'constrained' : 'undeclared'
+  }
 
   if (def.type === 'object' || def.type === 'interface') {
     const shape = def.shape

@@ -19,7 +19,7 @@ import { CONFIG_MASK_PLACEHOLDER, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { buildConfigVisibilityOracle } from '../config-visibility.js'
+import { buildConfigVisibilityOracle, CONSTRAINED_LEAF_TYPES } from '../config-visibility.js'
 import {
   buildMaskedResolvedConfig,
   isMaskedConfigPath,
@@ -182,6 +182,224 @@ describe('buildConfigVisibilityOracle (the schema-derived rule)', () => {
     expect(grown.classify('registry.devices.pixel.match.jwt')).toBe('free-form')
     // And the real schema does NOT have that path — the guard is measuring a difference.
     expect(visibility.classify('deployment.capabilities')).toBe('undeclared')
+  })
+})
+
+/**
+ * Extend the REAL config schema through its own piped root, exactly as the staleness guard
+ * above does, so every case below is measured against the shipped tree rather than a
+ * hand-mirrored lookalike.
+ */
+function growRealSchema(extension: Record<string, z.ZodType>): z.ZodType {
+  const inner = AgentQaConfigSchema.def.out as unknown as z.ZodObject
+  return z.any().superRefine(() => {}).pipe(inner.extend(extension))
+}
+
+describe('the walker fails CLOSED (CR-02)', () => {
+  // The four node kinds the round-3 verifier reproduced as PUBLISHED. None of them appears
+  // in today's schema, so none was a live disclosure — but the failure DIRECTION was
+  // disclosure, and the module's header claimed the opposite. Each case carries a
+  // constrained sibling so it cannot pass by masking the whole new subtree.
+
+  it('masks a record whose value type is an intersection', () => {
+    const grown = buildConfigVisibilityOracle(growRealSchema({
+      deployment: z.object({
+        caps: z.record(
+          z.string(),
+          z.intersection(
+            z.object({ browserKey: z.string() }).strict(),
+            z.object({ region: z.string() }).strict(),
+          ),
+        ),
+        region: z.string(),
+      }).strict(),
+    }))
+
+    expect(grown.classify('deployment.caps')).not.toBe('constrained')
+    expect(grown.classify('deployment.caps.browserstack')).not.toBe('constrained')
+    expect(grown.isOpaque('deployment.caps.browserstack')).toBe(true)
+    // The sibling control, in the same grown schema.
+    expect(grown.classify('deployment.region')).toBe('constrained')
+  })
+
+  it('masks a z.custom() node at a fixed key', () => {
+    const grown = buildConfigVisibilityOracle(growRealSchema({
+      deployment: z.object({
+        attestation: z.custom(() => true),
+        region: z.string(),
+      }).strict(),
+    }))
+
+    expect(grown.classify('deployment.attestation')).not.toBe('constrained')
+    expect(grown.isOpaque('deployment.attestation')).toBe(true)
+    expect(grown.classify('deployment.region')).toBe('constrained')
+  })
+
+  it('masks records of z.map and z.tuple, which admitsFreeFormValue calls containers', () => {
+    // The internal contradiction the review found: `admitsFreeFormValue` lists map/set/tuple
+    // among the containers "the walk descends into", and `classifyFrom` has no branch to
+    // descend with — so the walk landed on them and called them constrained.
+    const grown = buildConfigVisibilityOracle(growRealSchema({
+      deployment: z.object({
+        mapped: z.record(z.string(), z.map(z.string(), z.string())),
+        tupled: z.record(z.string(), z.tuple([z.string(), z.string()])),
+        listed: z.record(z.string(), z.set(z.string())),
+        region: z.string(),
+      }).strict(),
+    }))
+
+    for (const key of [
+      'deployment.mapped',
+      'deployment.mapped.anything',
+      'deployment.tupled',
+      'deployment.tupled.anything',
+      'deployment.listed',
+      'deployment.listed.anything',
+    ]) {
+      expect(grown.classify(key), key).not.toBe('constrained')
+      expect(grown.isOpaque(key), key).toBe(true)
+    }
+    expect(grown.classify('deployment.region')).toBe('constrained')
+  })
+
+  it('masks a union carrying a free-form arm, whatever its other arms declare', () => {
+    // The two union rules in one module used to point opposite ways: `admitsFreeFormValue`
+    // called a union free-form if ANY arm was, while `classifyFrom` called it constrained if
+    // ANY arm was. An arm the operator can fill freely means the VALUE may be anything, so
+    // free-form has to dominate.
+    const grown = buildConfigVisibilityOracle(growRealSchema({
+      deployment: z.object({
+        vault: z.union([z.unknown(), z.object({ region: z.string() }).strict()]),
+        region: z.string(),
+      }).strict(),
+    }))
+
+    expect(grown.classify('deployment.vault')).not.toBe('constrained')
+    expect(grown.classify('deployment.vault.region')).not.toBe('constrained')
+    expect(grown.isOpaque('deployment.vault')).toBe(true)
+    expect(grown.classify('deployment.region')).toBe('constrained')
+    // …and a union with NO free-form arm keeps today's behaviour: the plugin declaration
+    // union is `{ package } | { path }`, and either arm is a real declaration.
+    expect(visibility.classify('plugins.auth.0.package')).toBe('constrained')
+    expect(visibility.classify('plugins.auth.0.path')).toBe('constrained')
+  })
+})
+
+/**
+ * The node kinds the walker decides by NAME, in one place.
+ *
+ * `CONSTRAINED_LEAF_TYPES` is imported from the module, so the allowlist and its guard
+ * cannot drift apart. The remainder is local because it names the branches of a function
+ * rather than a shipped constant — and it is kept honest by this table asserting that the
+ * five kinds the round-3 verifier found published were ACTUALLY probed and are masked, so
+ * the corpus provably reaches past the vocabulary it is checking.
+ */
+const WALKER_NAMED_VOCABULARY: ReadonlySet<string> = new Set([
+  ...CONSTRAINED_LEAF_TYPES,
+  // Decided by their own `classifyFrom` branches rather than by the landing allowlist.
+  'unknown',
+  'any',
+  'union',
+  'record',
+  // Consumed by `unwrap` before any verdict is reached, so they never survive to a landing.
+  'optional',
+  'nullable',
+  'nonoptional',
+  'default',
+  'prefault',
+  'catch',
+  'readonly',
+  'lazy',
+  'pipe',
+])
+
+/**
+ * Argument shapes to try against each export, so the corpus does not need a list of factory
+ * NAMES. Anything that does not yield a structural `def.type` under any of them is not a
+ * schema constructor and is discarded.
+ */
+const PROBE_ARGUMENTS: readonly (readonly unknown[])[] = [
+  [],
+  [z.string()],
+  [z.string(), z.string()],
+  [[z.string(), z.string()]],
+  ['probe-literal'],
+  [() => z.string()],
+]
+
+/** One representative schema per zod node kind, derived from zod's own export surface. */
+function probeSchemasByNodeKind(): Map<string, z.ZodType> {
+  const byKind = new Map<string, z.ZodType>()
+  for (const name of Object.keys(z)) {
+    const factory = (z as unknown as Record<string, unknown>)[name]
+    if (typeof factory !== 'function') continue
+    for (const args of PROBE_ARGUMENTS) {
+      let produced: unknown
+      try {
+        produced = (factory as (...callArgs: unknown[]) => unknown)(...args)
+      } catch {
+        continue
+      }
+      // Some exports are parse helpers that hand back a promise; never leave one unhandled.
+      if (
+        typeof produced === 'object' && produced !== null
+        && typeof (produced as { then?: unknown }).then === 'function'
+      ) {
+        void (produced as Promise<unknown>).catch(() => {})
+        continue
+      }
+      const kind = (produced as { def?: { type?: unknown } } | null | undefined)?.def?.type
+      if (typeof kind !== 'string') continue
+      if (!byKind.has(kind)) byKind.set(kind, produced as z.ZodType)
+      break
+    }
+  }
+  return byKind
+}
+
+describe('no node kind outside the walker\'s vocabulary earns visibility (CR-02 companion)', () => {
+  // The class-closing half, and the reason the allowlist is shippable at all. Its corpus is
+  // the LIBRARY's export surface rather than this walker's vocabulary, so a zod upgrade that
+  // mints a node kind reddens this table instead of silently widening what config.get
+  // publishes. Without it, the allowlist would be the enumeration move one layer down.
+
+  const probes = probeSchemasByNodeKind()
+
+  it('probes zod\'s export surface and reaches past the walker\'s own vocabulary', () => {
+    expect(probes.size).toBeGreaterThan(0)
+    // Non-vacuity: the corpus must contain the kinds the walker does NOT name, or the
+    // implication below would be trivially satisfied by a corpus of allowlisted kinds.
+    const unnamed = [...probes.keys()].filter((kind) => !WALKER_NAMED_VOCABULARY.has(kind))
+    expect(unnamed.length).toBeGreaterThan(0)
+  })
+
+  it('classifies constrained only for kinds the walker names', () => {
+    for (const [kind, schema] of probes) {
+      const grown = buildConfigVisibilityOracle(growRealSchema({ probeNode: schema }))
+      if (grown.classify('probeNode') === 'constrained') {
+        expect(WALKER_NAMED_VOCABULARY.has(kind), `${kind} classified constrained`).toBe(true)
+      }
+    }
+  })
+
+  it('masks the five kinds the round-3 report found published', () => {
+    for (const kind of ['intersection', 'custom', 'map', 'set', 'tuple']) {
+      // Asserted PROBED first: a corpus that silently missed these would pass the
+      // implication above without ever exercising it.
+      expect(probes.has(kind), `${kind} probed`).toBe(true)
+      const grown = buildConfigVisibilityOracle(growRealSchema({ probeNode: probes.get(kind)! }))
+      expect(grown.classify('probeNode'), kind).not.toBe('constrained')
+      expect(grown.isOpaque('probeNode'), kind).toBe(true)
+    }
+  })
+
+  it('carries a positive control: the string probe is constrained', () => {
+    // Without this, a walker that masked EVERYTHING would satisfy every assertion above.
+    expect(probes.has('string')).toBe(true)
+    const grown = buildConfigVisibilityOracle(growRealSchema({ probeNode: probes.get('string')! }))
+    expect(grown.classify('probeNode')).toBe('constrained')
+    // …and the real schema's own controls, in the same file, are asserted constrained by the
+    // oracle describe above.
   })
 })
 
