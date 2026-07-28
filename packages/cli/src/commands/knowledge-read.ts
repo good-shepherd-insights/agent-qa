@@ -1,15 +1,28 @@
+// The knowledge read verbs, and the phase-384 exemplar thin client (D-05/D-07).
+//
+// `bundles` is the exemplar: it owns no data access of its own, asks the function layer for
+// `knowledge.bundles.list`, and renders what it is handed. `inspect` and `diff` are still
+// record-level reads over the knowledge-local reader entry; migrating them into the layer
+// belongs to 387, which owns the review verbs, so their data imports stay and are carried
+// by the plan-06 firewall ledger with a clearing milestone.
+//
+// The display boundary already crosses the firewall correctly for ALL THREE verbs: the
+// masking helpers are the agent barrel's re-exports, so this file has no direct dependency
+// on the safety package at all.
+
 import { dirname, resolve } from 'node:path'
 
+import {
+  createMaskingContext,
+  invokeFunction,
+  unmaskForHumanOutput,
+} from '@vostride/agent-qa-agent'
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
   diffSince,
   inspectRecords,
 } from '@vostride/agent-qa-knowledge-local/reader'
 import { resolveBuildTag } from '@vostride/agent-qa-runner-local'
-import {
-  createMaskingContext,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-safety'
 import {
   guardInspectRecordView,
   guardRecordChange,
@@ -18,6 +31,7 @@ import {
 import type {
   InspectFilter,
   InspectRecordView,
+  KnowledgeBundleSummary,
   RecordChange,
 } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
@@ -25,6 +39,10 @@ import pc from 'picocolors'
 import { z } from 'zod'
 
 import { resolveConfig } from '../config.js'
+import {
+  CLI_FUNCTION_CALLER,
+  createFunctionRegistryComposition,
+} from '../composition/function-registry.js'
 
 interface InspectOptions {
   product?: string
@@ -42,6 +60,17 @@ interface DiffOptions {
   product?: string
   json?: boolean
 }
+
+interface BundlesOptions {
+  json?: boolean
+}
+
+/**
+ * The capability the `bundles` verb is a client of. The id is all this file knows: what
+ * enumerates the store, how trust is folded, and which package reads the disk are the
+ * function layer's business, reached only through `invokeFunction`.
+ */
+const KNOWLEDGE_BUNDLES_LIST_ID = 'knowledge.bundles.list'
 
 type KnowledgeReadErrorCode =
   | 'invalid-filter'
@@ -94,6 +123,18 @@ async function resolveKnowledgePaths(command: Command): Promise<{
     knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
     runtimeRoot: resolve(configDir, '.agent-qa'),
   }
+}
+
+/**
+ * Everything the function-layer composition root needs, derived from the one global flag.
+ *
+ * Deliberately path-only and synchronous: a thin client resolves WHERE the project is and
+ * nothing else. Config resolution, the knowledge root, and every host read happen inside
+ * the composition's injected ports, which is why this verb needs no data package.
+ */
+function functionLayerInput(command: Command): { agentQaRoot: string; configPath: string } {
+  const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
+  return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
 }
 
 function validationMessage(issues: readonly { path: PropertyKey[]; message: string }[]): string {
@@ -243,7 +284,45 @@ function renderDiff(changes: readonly RecordChange[], ordinal: number): string {
   return lines.join('\n')
 }
 
-function reportError(action: 'inspect' | 'diff', error: unknown): void {
+function formatBundleSummary(row: KnowledgeBundleSummary): string {
+  const kind = row.subtype === undefined ? row.kind : `${row.kind} / ${row.subtype}`
+  return [
+    pc.bold(row.bundleId),
+    `  product: ${row.product}`,
+    `  kind: ${kind}`,
+    `  scope: ${row.scope.tier}:${row.scope.key}`,
+    `  status: ${row.status}`,
+    `  trust: ${row.trust.toFixed(3)}${row.evidenceIncomplete ? pc.dim(' (evidence incomplete)') : ''}`,
+    `  counters: confirmed=${row.counters.confirmed} contradicted=${row.counters.contradicted}`
+      + ` helpful=${row.counters.helpful} harmful=${row.counters.harmful}`,
+    `  validity: ${row.openedAtOrdinal}..${row.closedAtOrdinal ?? 'open'}`,
+    `  last confirmed: ${row.lastConfirmedOrdinal}`,
+    `  dir: ${row.dir}`,
+    `  summary: ${row.summary}`,
+  ].join('\n')
+}
+
+/**
+ * Rows are rendered in the order the capability returned them. The op owns the total order
+ * (product, then bundle id) so every surface listing the same store agrees — sorting again
+ * here would be a second, surface-local ordering nobody else shares.
+ */
+function renderBundles(rows: readonly KnowledgeBundleSummary[]): string {
+  if (rows.length === 0) {
+    return pc.dim('No committed knowledge bundles.')
+  }
+  return [
+    pc.bold(`Knowledge bundles (${rows.length})`),
+    '',
+    ...rows.flatMap((row, index) => (
+      index === rows.length - 1
+        ? [formatBundleSummary(row)]
+        : [formatBundleSummary(row), '']
+    )),
+  ].join('\n')
+}
+
+function reportError(action: 'inspect' | 'diff' | 'bundles', error: unknown): void {
   if (error instanceof KnowledgeReadCommandError) {
     console.error(pc.red(`Knowledge ${action} error [${error.code}]: ${error.message}`))
   } else {
@@ -311,6 +390,36 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(renderDiff(changes, ordinal))
       } catch (error) {
         reportError('diff', error)
+      }
+    })
+
+  // The exemplar thin client (D-05/D-07). Registered LAST on purpose: the source-shape
+  // assertion in knowledge-bundles-command.test.ts reads this verb's whole registration as
+  // the slice running to the end of the file, and fails loudly if a later verb is appended
+  // after it rather than silently covering less.
+  command
+    .command('bundles')
+    .description('List committed knowledge bundles through the agent function layer')
+    .option('--json', 'output schema-validated masked JSON')
+    .action(async (options: BundlesOptions, bundlesCommand: Command) => {
+      try {
+        // Everything behind this call — enumerating the store, folding trust, ordering the
+        // rows, crossing the policy gate, writing the audit row — belongs to the capability.
+        // This verb supplies a caller record and a project root, and renders the result.
+        const rows = await invokeFunction(
+          createFunctionRegistryComposition(functionLayerInput(bundlesCommand)),
+          KNOWLEDGE_BUNDLES_LIST_ID,
+          {},
+          CLI_FUNCTION_CALLER,
+        ) as readonly KnowledgeBundleSummary[]
+
+        if (options.json === true) {
+          emitJson(rows)
+          return
+        }
+        emitHuman(renderBundles(rows))
+      } catch (error) {
+        reportError('bundles', error)
       }
     })
 }

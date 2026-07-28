@@ -41,6 +41,16 @@ export { RunNotFoundError } from './functions/ops/runs-get.js'
 export { StreamReplayFloorError } from './functions/ops/runs-events.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer
-// results as prose, and prose is the sole unmasking surface. Re-exported here so a
-// surface never needs a direct safety import to unmask what it prints.
+// results as prose, and prose is the sole unmasking surface.
+//
+// These two helpers are re-exported here — research Open Question 1, resolved as Pitfall 4
+// option (a) — because the FUNC-02 surface allow-list is exactly {agent, schema}. A surface
+// that had to reach the safety package directly in order to unmask what it prints would be
+// an unfixable firewall violation raised by the very phase that builds the firewall, and
+// D-01 forbids new code ever joining the legacy ledger.
+//
+// They are safe to publish on this barrel precisely because they are NOT dispatch: neither
+// one can resolve, gate, or run a capability, so re-exporting them opens no path around
+// `invokeFunction` (T-384-01). Both belong to the pinned export set the plan-07 barrel
+// assertion freezes.
 export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-safety'
