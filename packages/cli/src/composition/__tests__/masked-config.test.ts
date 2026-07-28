@@ -1371,14 +1371,20 @@ function probeArmsOf(def: ProbeNodeDef): readonly unknown[] {
 const STRING_BEARING_LEAF_TYPES: ReadonlySet<string> = new Set(['string', 'transform'])
 
 /**
- * Every leaf NAME the schema declares a string-bearing value under.
+ * Every dot-PATH the schema declares a string-bearing value at.
  *
- * Records contribute their own field name (the operator's keys are not names the schema
- * chose); arrays and wrappers pass the name through to what they hold. The visit ledger is
- * keyed by node AND name, so a shared leaf schema reused under several field names is
- * recorded under each of them rather than only the first.
+ * Paths, not names. A name-keyed pin cannot see a NEW field that reuses an already-pinned
+ * name: adding `telemetry.host` to the schema contributes the name `host`, which is pinned
+ * already, so the pin stays green while an unregistered address leaf ships visible. Keying on
+ * the path makes every added leaf a new entry whatever it is called, which is what the pin
+ * claims to guarantee.
+ *
+ * Array elements and record values contribute a `*` segment — the operator chooses those
+ * keys, so they are not structure the schema declares. Wrappers pass the path through. The
+ * visit ledger is keyed by node AND path, so a shared leaf schema reused at several paths is
+ * recorded at each of them rather than only the first.
  */
-function declaredStringLeafNames(schema: unknown): Set<string> {
+function declaredStringLeafPaths(schema: unknown): Set<string> {
   const names = new Set<string>()
   const visited = new Map<unknown, Set<string | undefined>>()
 
@@ -1417,16 +1423,16 @@ function declaredStringLeafNames(schema: unknown): Set<string> {
         const shape = def.shape
         if (typeof shape === 'object' && shape !== null) {
           for (const [key, child] of Object.entries(shape as Record<string, unknown>)) {
-            visit(child, key, depth + 1)
+            visit(child, name === undefined ? key : `${name}.${key}`, depth + 1)
           }
         }
         return
       }
       case 'array':
-        visit(def.element, name, depth + 1)
+        visit(def.element, name === undefined ? '*' : `${name}.*`, depth + 1)
         return
       case 'record':
-        visit(def.valueType, name, depth + 1)
+        visit(def.valueType, name === undefined ? '*' : `${name}.*`, depth + 1)
         return
       case 'union':
       case 'intersection':
@@ -1442,63 +1448,113 @@ function declaredStringLeafNames(schema: unknown): Set<string> {
 }
 
 /**
- * Every string-bearing leaf name the shipped config schema declares — PINNED, not matched.
+ * Every dot-PATH the shipped config schema declares a string-bearing value at — PINNED.
  *
- * An earlier revision of this guard filtered the walk by `/(?:url|uri|endpoint|webhook)$/`
- * and asked whether the survivors were registered. That predicate is drawn from the
- * registered set's OWN vocabulary, so it could only ever catch a field named with an address
- * word the registry already knew: `endpoints`, `webhooks`, `dsn`, `serverAddress`, `apiHost`,
- * `origin`, `href` and `hubAddress` all walked straight past it. It repeated one level up
- * exactly the mistake the render rule stopped making — testing a rule from inside its own
- * assumptions — and it was the sole justification offered for shipping a name list.
+ * Two earlier revisions of this guard were each tested from inside their own assumptions,
+ * which is the mistake the render rule stopped making, repeated one level up:
  *
- * The pin removes the predicate. ANY new string leaf reddens this test whatever it is called,
- * and a human then decides whether the name is address-bearing (register it in
- * `CREDENTIAL_BEARING_URL_LEAVES`) or inert (add it here). Staleness stops being a question
- * of vocabulary and becomes a build failure — the same idiom this phase already applies to
- * the agent barrel's export set and the `evaluate()` call-site count.
+ *   1. A pattern filter, `/(?:url|uri|endpoint|webhook)$/`, applied before the registration
+ *      check. Drawn from the registered set's own vocabulary, it could only catch a name the
+ *      registry already knew — `dsn`, `serverAddress`, `apiHost`, `origin`, `href`,
+ *      `hubAddress`, `endpoints` and `webhooks` all walked past it.
+ *   2. A pin on NAMES. It caught a new name, but not a new FIELD reusing a pinned one:
+ *      adding `telemetry.host` contributes the name `host`, already pinned, so the pin stayed
+ *      green while an unregistered address leaf shipped visible.
  *
- * Names here are the schema's own spelling. Address-bearing names in this list are
- * registered: `url`, `baseURL`. `host` is a bare hostname with no path, userinfo, query or
- * fragment to carry a credential, so it is inert by shape rather than by name.
+ * Keying on the PATH removes both. Every added leaf is a new entry whatever it is called and
+ * wherever it sits, so the pin reddens on any schema growth and a human then registers the
+ * leaf in `CREDENTIAL_BEARING_URL_LEAVES` or records it here as inert. Array elements and
+ * record values are `*` — the operator chooses those keys, so they are not declared structure.
+ *
+ * The residue this pin does NOT close, named rather than denied: a field that exists TODAY
+ * and is not registered can still be handed a credential-bearing URL by an operator.
+ * `services.mcp.host` is the reproducible example — a plain `z.string()` whose name promises a
+ * bare hostname, so registering it would mask the ordinary value `localhost` (which
+ * `new URL()` rejects). It is left visible deliberately, and an operator who writes
+ * `https://u:pw@h/p` into a field called `host` is disclosed. Closing that needs the schema to
+ * say the field is an address, not this test to guess.
  */
-const DECLARED_STRING_LEAF_NAMES: readonly string[] = [
-  'appActivity', 'appPackage', 'artifactsDir', 'attributes', 'baseURL', 'browserstack',
-  'buildTag', 'bundleId', 'contextWindow', 'dbPath', 'dir', 'disableRules', 'envFile',
-  'exclude', 'hooksFile', 'host', 'judge', 'llm', 'model', 'name', 'navigation', 'package',
-  'path', 'product', 'provider', 'providerHeaders', 'regex', 'screenshotSize', 'secretsFile',
-  'step', 'suiteMatch', 'test', 'testMatch', 'testPathIgnore', 'ttl', 'url',
+const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
+  'analytics.passRateScope.attributes.*',
+  'analytics.passRateScope.attributes.*.regex',
+  'eval.judge',
+  'knowledge.dir',
+  'plugins.auth.*.package',
+  'plugins.auth.*.path',
+  'plugins.providers.*.package',
+  'plugins.providers.*.path',
+  'registry.llms.*.baseURL',
+  'registry.llms.*.contextWindow',
+  'registry.llms.*.model',
+  'registry.llms.*.name',
+  'registry.llms.*.provider',
+  'registry.llms.*.providerHeaders.*',
+  'registry.targets.*.app.browserstack',
+  'registry.targets.*.app.path',
+  'registry.targets.*.appActivity',
+  'registry.targets.*.appPackage',
+  'registry.targets.*.bundleId',
+  'registry.targets.*.product',
+  'registry.targets.*.url',
+  'services.accessibility.disableRules.*',
+  'services.accessibility.exclude.*',
+  'services.authState.dir',
+  'services.cache.dir',
+  'services.cache.ttl',
+  'services.dashboard.artifactsDir',
+  'services.dashboard.dbPath',
+  'services.mcp.host',
+  'services.mcp.path',
+  'services.vision.screenshotSize',
+  'use.buildTag',
+  'use.llm',
+  'use.timeout.navigation',
+  'use.timeout.step',
+  'use.timeout.test',
+  'workspace.envFile',
+  'workspace.hooksFile',
+  'workspace.secretsFile',
+  'workspace.suiteMatch.*',
+  'workspace.testMatch.*',
+  'workspace.testPathIgnore.*',
 ]
 
-function unpinnedStringLeafNames(schema: unknown): string[] {
-  const pinned = new Set(DECLARED_STRING_LEAF_NAMES)
-  return [...declaredStringLeafNames(schema)].filter((name) => !pinned.has(name)).sort()
+function unpinnedStringLeafPaths(schema: unknown): string[] {
+  const pinned = new Set(DECLARED_STRING_LEAF_PATHS)
+  return [...declaredStringLeafPaths(schema)].filter((path) => !pinned.has(path)).sort()
 }
 
 describe('the registered URL-name set cannot silently go stale', () => {
   it('reaches the shipped schema\'s real string leaves', () => {
-    // Non-vacuity first: an empty or shallow walk would satisfy the guard below by finding
-    // nothing at all. These are leaves the shipped config schema genuinely declares, at four
+    // Non-vacuity first: an empty or shallow walk would satisfy the pin below by finding
+    // nothing at all. These are paths the shipped config schema genuinely declares, at four
     // different depths and through an array, a record and a union.
-    const declared = declaredStringLeafNames(AgentQaConfigSchema)
-    for (const name of ['url', 'baseURL', 'hooksFile', 'dir', 'model', 'package', 'judge']) {
-      expect(declared.has(name), name).toBe(true)
+    const declared = declaredStringLeafPaths(AgentQaConfigSchema)
+    for (const path of [
+      'registry.targets.*.url',
+      'registry.llms.*.baseURL',
+      'workspace.hooksFile',
+      'knowledge.dir',
+      'registry.llms.*.model',
+      'plugins.auth.*.package',
+      'eval.judge',
+    ]) {
+      expect(declared.has(path), path).toBe(true)
     }
     expect(declared.size).toBeGreaterThan(20)
   })
 
-  it('pins every string leaf the shipped schema declares', () => {
+  it('pins every string-leaf PATH the shipped schema declares', () => {
     // The whole set, both directions — a leaf added to the schema fails here, and a leaf
     // removed from the schema fails here too, so the pin cannot rot in either direction.
-    expect([...declaredStringLeafNames(AgentQaConfigSchema)].sort())
-      .toEqual([...DECLARED_STRING_LEAF_NAMES].sort())
+    expect([...declaredStringLeafPaths(AgentQaConfigSchema)].sort())
+      .toEqual([...DECLARED_STRING_LEAF_PATHS].sort())
   })
 
   it('FAILS for names OUTSIDE the registered vocabulary (negative control)', () => {
-    // The guard's own falsifiability, executed rather than asserted, and deliberately
-    // controlled from outside the vocabulary: not one of these eight names ends in url, uri,
-    // endpoint or webhook, so every one of them defeated the pattern this pin replaced. Each
-    // would ship VISIBLE and publish its value verbatim.
+    // The pin's falsifiability, executed rather than asserted, controlled from outside the
+    // vocabulary: not one of these eight names ends in url, uri, endpoint or webhook, so
+    // every one defeated the pattern filter this pin replaced. Each would ship VISIBLE.
     const grown = growRealSchema({
       deployment: z.object({
         dsn: z.string(),
@@ -1512,19 +1568,42 @@ describe('the registered URL-name set cannot silently go stale', () => {
       }).strict(),
     })
 
-    expect(unpinnedStringLeafNames(grown)).toEqual([
-      'apiHost', 'dsn', 'endpoints', 'href', 'hubAddress', 'origin', 'serverAddress', 'webhooks',
+    expect(unpinnedStringLeafPaths(grown)).toEqual([
+      'deployment.apiHost', 'deployment.dsn', 'deployment.endpoints', 'deployment.href',
+      'deployment.hubAddress', 'deployment.origin', 'deployment.serverAddress',
+      'deployment.webhooks',
     ])
-    // …and the same walk over the same grown schema still returns [] for the shipped subtree,
-    // so the difference the guard measures is the added fields and nothing else.
-    expect(unpinnedStringLeafNames(AgentQaConfigSchema)).toEqual([])
+    expect(unpinnedStringLeafPaths(AgentQaConfigSchema)).toEqual([])
+  })
+
+  it('FAILS for a NEW field reusing an ALREADY-PINNED name (the name-pin\'s blind spot)', () => {
+    // The case a name-keyed pin could not see. `host`, `path`, `dir`, `name`, `provider`,
+    // `test`, `step` and `product` are all names the schema already declares elsewhere, so a
+    // name pin stays green while each of these new fields ships visible and unregistered.
+    const grown = growRealSchema({
+      telemetry: z.object({
+        host: z.string(),
+        path: z.string(),
+        dir: z.string(),
+        name: z.string(),
+        provider: z.string(),
+        test: z.string(),
+        step: z.string(),
+        product: z.string(),
+      }).strict(),
+    })
+
+    expect(unpinnedStringLeafPaths(grown)).toEqual([
+      'telemetry.dir', 'telemetry.host', 'telemetry.name', 'telemetry.path',
+      'telemetry.product', 'telemetry.provider', 'telemetry.step', 'telemetry.test',
+    ])
   })
 
   it('FAILS for a registered-vocabulary name too, so the pin did not narrow the old cover', () => {
     const grown = growRealSchema({
       deployment: z.object({ callbackUrl: z.string(), region: z.string() }).strict(),
     })
-    expect(unpinnedStringLeafNames(grown)).toEqual(['callbackUrl', 'region'])
+    expect(unpinnedStringLeafPaths(grown)).toEqual(['deployment.callbackUrl', 'deployment.region'])
   })
 
   it('registers the four names the corpus above plants credentials on', () => {

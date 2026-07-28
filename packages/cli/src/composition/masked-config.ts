@@ -62,13 +62,21 @@
 // back byte-identical and unflagged, so the reduction is never a silent normalisation.
 //
 // A registered NAME LIST can go stale, and that objection is answered by the build rather
-// than by care: the companion test walks the shipped config schema, collects the string-leaf
-// names it declares, and PINS that whole set. It does not filter the walk by an address-word
-// pattern first — a pattern drawn from this file's own vocabulary can only catch a name the
-// vocabulary already knows, which is the mistake the render rule stopped making, repeated one
-// level up. ANY new string leaf reddens the pin whatever it is called, and a human then
-// registers it below or records it as inert — the same move this phase already made for the
-// agent barrel's export set and for the gate's call-site count.
+// than by care: the companion test walks the shipped config schema and PINS every dot-PATH it
+// declares a string-bearing value at. It does not filter the walk by an address-word pattern
+// first, and it does not key on names — either would be tested from inside this file's own
+// vocabulary, which is the mistake the render rule stopped making, repeated one level up. A
+// pattern catches only a name the vocabulary already knows; a name pin misses a NEW field
+// reusing a pinned name. Keyed on paths, ANY leaf added to the schema reddens the pin whatever
+// it is called and wherever it sits, and a human then registers it below or records it inert —
+// the same move this phase already made for the agent barrel's export set and for the gate's
+// call-site count.
+//
+// What the pin does NOT reach, named rather than denied: a field that exists TODAY and is not
+// registered can still be handed a credential-bearing URL by an operator. `services.mcp.host`
+// is the reproducible example — a plain string whose name promises a bare hostname, so
+// registering it would mask the ordinary value `localhost`. Closing that needs the schema to
+// declare the field an address; it is not something this file can decide.
 //
 // Over-masking remains the accepted direction wherever the SCHEMA decides, and the rule
 // makes it concrete: `registry.providers.<name>.baseURL` is masked ENTIRELY because it sits
