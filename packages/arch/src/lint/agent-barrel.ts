@@ -27,8 +27,12 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  *
  * The registry factory and the one dispatch; the layer's six caller-facing refusals; the
  * two op-level refusals a surface may legitimately catch and report; and the two masking
- * helpers that carry the human display boundary. Neither masking helper can resolve, gate
- * or run anything, so publishing them opens no path around the dispatch.
+ * helpers, which are STAGED for Phase 386's wiring and are a no-op today — every surface
+ * this phase built constructs a fresh, empty masking context, so unmasking is the identity
+ * function and there is no display boundary for them to carry yet. They are pinned here
+ * now so that wiring is a non-breaking change rather than a firewall widening. Neither
+ * helper can resolve, gate or run anything, so publishing them opens no path around the
+ * dispatch.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'DuplicateFunctionIdError',

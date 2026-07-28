@@ -29,20 +29,27 @@ export type ConfigValueSource =
  * SECURITY CONTRACT (T-384-06, masked-at-the-boundary): when `masked` is true, the
  * operator's raw value is ABSENT from this entry, and it was absent from the moment the
  * entry was constructed — never carried in this DTO and redacted downstream. It is absent
- * in one of two ways: `value` is {@link CONFIG_MASK_PLACEHOLDER} because the whole path is
- * masked, or `value` is a structurally reduced render of the real value — today, a URL
- * re-rendered as `scheme://host[:port]/path` with its userinfo, query string and fragment
- * dropped. Either way a reader holding `masked: true` knows not to treat `value` as what
- * the configuration says.
+ * by one of THREE routes:
+ *   - the whole PATH is opaque, and `value` is {@link CONFIG_MASK_PLACEHOLDER};
+ *   - the path is visible but the RENDER could not reduce the value — an address field with
+ *     no absolute rendering — and `value` is {@link CONFIG_MASK_PLACEHOLDER} too;
+ *   - the path is visible and the render REDUCED the value, so `value` is present but is a
+ *     structural remainder of what the operator wrote (today, an address field rendered as
+ *     `scheme://host[:port]`).
+ *
+ * `masked: true` therefore means exactly one thing — "this is not the operator's raw value"
+ * — and carries no information about WHICH rule removed it. In particular the placeholder no
+ * longer implies path opacity: a fully visible, schema-constrained path can render as the
+ * placeholder, so a consumer must not read a cause out of it.
  *
  * What that guarantees, stated as the relation it actually is rather than as a totality:
  * masking is applied while the entry is CONSTRUCTED, under the composition's visibility,
  * census and render rules, so a surface holding a `MaskedResolvedConfig` cannot undo it —
  * there is nothing to undo, the raw value was never placed here. The guarantee is therefore
- * the CONSTRUCTION rule's, and it is exactly as wide as that rule: the masker names its one
- * residual class in its own census note (a credential subtree the config schema fully
- * constrains whose leaf names are innocuous, with a reproducible example), and this DTO
- * inherits that bound rather than overriding it.
+ * the CONSTRUCTION rule's, and it is exactly as wide as that rule: the masker names its own
+ * residual limitations where they live (its census note carries one, with a reproducible
+ * example), and this DTO inherits whatever bound those state rather than asserting a
+ * narrower one of its own. It does not claim the masker has exactly one blind spot.
  *
  * `value` is always a rendered string (numbers, booleans, and nested values are stringified
  * at construction) so masking is total and uniform: there is no value type that bypasses it.
@@ -54,8 +61,8 @@ export interface MaskedConfigEntry {
   value: string
   source: ConfigValueSource
   /**
-   * True iff `value` is NOT the operator's raw value — either the mask placeholder, or a
-   * render that structurally reduced it (a URL stripped of userinfo, query and fragment).
+   * True iff `value` is NOT the operator's raw value — the mask placeholder (by either
+   * route above), or a render that structurally reduced it.
    */
   masked: boolean
 }

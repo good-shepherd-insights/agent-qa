@@ -6,9 +6,12 @@
 // belongs to 387, which owns the review verbs, so their data imports stay and are carried
 // by the plan-06 firewall ledger with a clearing milestone.
 //
-// The display boundary already crosses the firewall correctly for ALL THREE verbs: the
-// masking helpers are the agent barrel's re-exports, so this file has no direct dependency
-// on the safety package at all.
+// The masking helpers this file imports are the agent barrel's re-exports, so the IMPORT
+// ROUTE is firewall-correct for all three verbs and needs no direct dependency on the safety
+// package. What they do today is nothing: each verb builds a fresh masking context and
+// registers nothing in it, and unmasking an empty context is the identity function. The
+// helpers are STAGED for Phase 386, which owns the run-scoped context and the live surfaces;
+// they are wired through here now so that change stays non-breaking.
 
 import { dirname, resolve } from 'node:path'
 
