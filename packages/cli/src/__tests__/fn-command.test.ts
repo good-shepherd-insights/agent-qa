@@ -12,7 +12,7 @@ import { join } from 'node:path'
 // writer to produce a genuinely committed bundle. Test files are excluded from the arch
 // specifier scan, so this never relaxes the reader carve-out the production composition obeys.
 import { publishBundle } from '@vostride/agent-qa-knowledge-local'
-import { RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
+import { EVENTS_FILE, RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
   CONFIG_MASK_PLACEHOLDER,
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -21,6 +21,8 @@ import type {
   CompletedRunHandoff,
   KnowledgeBundleSummary,
   MaskedResolvedConfig,
+  RunEventEnvelope,
+  RunEventType,
 } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -158,6 +160,40 @@ function seedRuns(workspace: FixtureWorkspace, handoffs: readonly CompletedRunHa
   }
 }
 
+function envelope(runId: string, seq: number, type: RunEventType): RunEventEnvelope {
+  return { seq, ts: 1_700_000_000_000 + seq, runId, type, payload: {} }
+}
+
+/**
+ * Write a real `events.jsonl` in the exact layout the v49 `FsEventLog` appends — one JSON
+ * envelope per line, seq-ordered and gap-free at 1. The stream op reads it back through the
+ * same concrete store the runner writes it with, so the CLI leg is a genuine replay.
+ */
+function seedEvents(
+  workspace: FixtureWorkspace,
+  runId: string,
+  events: readonly RunEventEnvelope[],
+): void {
+  const dir = join(workspace.runtimeRoot, RUNS_SUBDIR, runId)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, EVENTS_FILE),
+    events.map((event) => `${JSON.stringify(event)}\n`).join(''),
+    'utf8',
+  )
+}
+
+/** Five gap-free envelopes for `run-alpha`, the shape a completed run leaves behind. */
+function fiveEvents(runId = 'run-alpha'): RunEventEnvelope[] {
+  return [
+    envelope(runId, 1, 'runStarted'),
+    envelope(runId, 2, 'testStarted'),
+    envelope(runId, 3, 'stepStarted'),
+    envelope(runId, 4, 'testFinished'),
+    envelope(runId, 5, 'runFinished'),
+  ]
+}
+
 async function invoke(
   workspace: FixtureWorkspace,
   args: readonly string[],
@@ -247,7 +283,7 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(first).toEqual(second)
   })
 
-  it('lists every registered function id with its scopes and result kind', async () => {
+  it('lists every registered function id with its scopes, result kind and binding', async () => {
     const workspace = fixtureWorkspace(roots)
 
     const result = await invoke(workspace, ['--list', '--json'])
@@ -260,20 +296,28 @@ describe('agent-qa fn (generic function invoker)', () => {
       resultKind: string
       bindingStatus: string
     }[]
-    // The four D-06 seed capabilities, and nothing else, are bound in this composition.
-    expect(declarations.map((declaration) => declaration.id)).toEqual([
-      'config.get',
-      'knowledge.bundles.list',
-      'runs.get',
-      'runs.list',
-    ])
-    for (const declaration of declarations) {
-      expect(declaration, declaration.id).toMatchObject({
+    // The registered capability set verbatim: the four D-06 seed reads plus the D-08
+    // stream op. `resultKind` and `bindingStatus` are part of the published contract, so
+    // the listing is asserted as an exact table rather than a shape check.
+    expect(Object.fromEntries(declarations.map((declaration) => [declaration.id, {
+      requiredScopes: declaration.requiredScopes,
+      resultKind: declaration.resultKind,
+      bindingStatus: declaration.bindingStatus,
+    }]))).toEqual({
+      'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'knowledge.bundles.list': {
         requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',
-      })
-    }
+      },
+      'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
+      'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+    })
+    // Sorted lexicographically by id, so a catalog projection is deterministic.
+    expect(declarations.map((declaration) => declaration.id)).toEqual(
+      [...declarations.map((declaration) => declaration.id)].sort(),
+    )
   })
 
   it('renders a human listing naming each registered function', async () => {
@@ -438,5 +482,126 @@ describe('agent-qa fn (generic function invoker)', () => {
       source: 'default',
       masked: false,
     })
+  })
+})
+
+describe('agent-qa fn runs.events (the D-08 stream kind)', () => {
+  const roots: string[] = []
+  let originalExitCode: typeof process.exitCode
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+  })
+
+  afterEach(() => {
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('emits one NDJSON line per envelope against a real events.jsonl', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedEvents(workspace, 'run-alpha', fiveEvents())
+
+    const result = await invoke(workspace, [
+      'runs.events',
+      '--input',
+      JSON.stringify({ runId: 'run-alpha' }),
+      '--json',
+    ])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+    const lines = result.stdout.split('\n').filter((line) => line.length > 0)
+    expect(lines).toHaveLength(5)
+    // NDJSON, not a JSON array: every line parses on its own, which is what makes the
+    // rendering identical for a live attach that has no end.
+    const envelopes = lines.map((line) => JSON.parse(line) as RunEventEnvelope)
+    expect(envelopes.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(envelopes.map((event) => event.type)).toEqual([
+      'runStarted',
+      'testStarted',
+      'stepStarted',
+      'testFinished',
+      'runFinished',
+    ])
+  })
+
+  it('resumes after --from <lastEventId>, yielding lastEventId + 1 onward', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedEvents(workspace, 'run-alpha', fiveEvents())
+
+    const result = await invoke(workspace, [
+      'runs.events',
+      '--input',
+      JSON.stringify({ runId: 'run-alpha' }),
+      '--from',
+      '2',
+      '--json',
+    ])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+    const envelopes = result.stdout
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as RunEventEnvelope)
+    expect(envelopes.map((event) => event.seq)).toEqual([3, 4, 5])
+  })
+
+  it('ends human output with the final seq so the next --from is readable', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedEvents(workspace, 'run-alpha', fiveEvents())
+
+    const result = await invoke(workspace, [
+      'runs.events',
+      '--input',
+      JSON.stringify({ runId: 'run-alpha' }),
+    ])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+    const lines = result.stdout.split('\n').filter((line) => line.length > 0)
+    // One line per event, then a summary naming the last seq observed.
+    expect(lines).toHaveLength(6)
+    expect(lines[0]).toContain('runStarted')
+    expect(lines[4]).toContain('runFinished')
+    expect(lines[5]).toContain('5 events')
+    expect(lines[5]).toContain('last seq 5')
+  })
+
+  it('rejects a non-numeric --from without touching the event log', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedEvents(workspace, 'run-alpha', fiveEvents())
+
+    const result = await invoke(workspace, [
+      'runs.events',
+      '--input',
+      JSON.stringify({ runId: 'run-alpha' }),
+      '--from',
+      'later',
+      '--json',
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('--from')
+  })
+
+  it('yields an empty stream for a run that recorded no events', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, [
+      'runs.events',
+      '--input',
+      JSON.stringify({ runId: 'run-never-ran' }),
+      '--json',
+    ])
+
+    // An absent log is an ordinary empty replay, never an error (the v49 read contract).
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toBe('')
   })
 })
