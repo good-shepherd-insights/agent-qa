@@ -313,6 +313,9 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // Declared in full and visibly UNBOUND until 386 relocates the composition root
+      // (D-09). A capability the CLI cannot run is still a capability the CLI can see.
+      'runs.start': { requiredScopes: ['run'], resultKind: 'unary', bindingStatus: 'unbound' },
     })
     // Sorted lexicographically by id, so a catalog projection is deterministic.
     expect(declarations.map((declaration) => declaration.id)).toEqual(
@@ -338,6 +341,18 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
     expect(JSON.parse(result.stdout)).toEqual([])
+  })
+
+  it('reports runs.start as declared-but-unbound rather than as missing (D-09)', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['runs.start', '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('FunctionNotBoundError')
+    expect(result.stderr).toContain('runs.start')
+    expect(result.stderr).not.toContain('Unknown function')
   })
 
   it('reports an unknown function id without throwing out of the action', async () => {
