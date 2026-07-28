@@ -3,9 +3,10 @@
 // `FunctionDeclaration` is the public, capability-free VIEW of an op: everything a
 // surface needs to discover, describe, and project the capability (MCP tool listings,
 // the 397 golden snapshot, the `agent-qa fn --list` catalog) and nothing that runs it.
-// `FunctionSpec` adds the implementation and NEVER leaves this directory — the package
-// barrel exports the declaration type only, so no surface can acquire a dispatch path
-// that skips `invokeFunction`'s gate call (T-384-01).
+// `FunctionSpec` adds the LIVE input/output validators and the implementation, and NEVER
+// leaves this directory — the package barrel exports the declaration type only, so no
+// surface can acquire a dispatch path that skips `invokeFunction`'s gate call (T-384-01),
+// nor a handle on the schema objects that dispatch enforces with (T-384-14).
 
 import type { EventLogPort } from '@vostride/agent-qa-runner'
 import type { z } from 'zod'
@@ -73,12 +74,18 @@ export class FunctionNotBoundError extends Error {
 }
 
 /**
- * The public description of one registered capability.
+ * The scalar metadata every capability carries, shared by the public view and the
+ * internal spec.
  *
  * `id` is dot-namespaced `domain.verb` (D-15) over the fixed domain taxonomy
  * (tests · runs · memory · analysis · eval · gates · config · agent).
+ *
+ * The two CONTRACT fields are deliberately NOT here. They are the one place the view and
+ * the spec must differ in kind — a projection on one, a live validator on the other — and
+ * splitting them out is what makes that difference a property of the type system rather
+ * than a rule someone has to remember at the seam (BL-01 / T-384-08).
  */
-export interface FunctionDeclaration<Input = unknown, Output = unknown> {
+export interface FunctionMetadata {
   id: string
   /** One-line human description; rendered by catalogs and `agent-qa fn --list`. */
   summary: string
@@ -86,33 +93,72 @@ export interface FunctionDeclaration<Input = unknown, Output = unknown> {
   requiredScopes: readonly FunctionScope[]
   resultKind: FunctionResultKind
   bindingStatus: FunctionBindingStatus
-  /** Runtime input contract (D-14); also the JSON-Schema projection source. */
+  /** The descriptor this op projects into for the policy gate. */
+  risk: RiskActionDescriptor
+}
+
+/**
+ * An INERT description of one declared contract: a JSON-Schema document, deep-frozen.
+ *
+ * A projection has no `parse` and no `safeParse` — there is nothing on it to run and
+ * nothing on it to replace. That is the whole point. The surface-visible view used to
+ * carry the live `z.ZodType`, and because ops assign the schema package's own exported
+ * validators, a single write reached through a permitted `registry.list()` replaced the
+ * contract vocabulary every firewalled surface imports, for the whole process. Publishing
+ * a projection removes the object that write needed rather than adding a rule about it.
+ *
+ * D-14 already named the input contract "also the JSON-Schema projection source"; on the
+ * declaration that description is now literal, and it is the shape 396's MCP tool listing
+ * consumes.
+ */
+export type FunctionSchemaProjection = Readonly<Record<string, unknown>>
+
+/**
+ * The public, capability-free description of one registered capability.
+ *
+ * Carries no live validator and nothing runnable: every value reachable through a
+ * declaration is data. `invokeFunction` reads the enforcing schema off the {@link
+ * FunctionSpec} instead, which never leaves this directory.
+ */
+export interface FunctionDeclaration extends FunctionMetadata {
+  /** Inert JSON-Schema projection of the runtime input contract (D-14). */
+  input: FunctionSchemaProjection
+  /**
+   * Inert JSON-Schema projection of the runtime output contract (D-14).
+   *
+   * For a `unary` op the underlying contract describes the whole result. For a `stream`
+   * op it describes ONE element, never the iterable, and a catalog reads this projection
+   * as the element schema its transport (SSE frame, MCP notification) carries.
+   */
+  output: FunctionSchemaProjection
+}
+
+/**
+ * INTERNAL: metadata plus the LIVE contracts plus the implementation. Deliberately absent
+ * from the package barrel — exporting this type (or any helper taking one and running it)
+ * would hand a surface a private power, which is precisely what the function layer
+ * abolishes.
+ *
+ * A spec is NOT a declaration: it extends the shared scalar metadata and re-declares the
+ * two contract fields as live `z.ZodType`s. `invokeFunction` is the only reader of those,
+ * and it reaches them through the module-private internals seam.
+ */
+export interface FunctionSpec<Input = unknown, Output = unknown> extends FunctionMetadata {
+  /** Runtime input contract (D-14) — the validator `invokeFunction` enforces with. */
   input: z.ZodType<Input>
   /**
    * Runtime output contract (D-14).
    *
    * For a `unary` op this is the contract for the whole result, and `invokeFunction`
    * validates against it. For a `stream` op it is the contract for ONE element: parsing
-   * the iterable itself against it would be a category error, and a catalog projection
-   * reads it as the element schema its transport (SSE frame, MCP notification) carries.
+   * the iterable itself against it would be a category error.
    */
   output: z.ZodType<Output>
-  /** The descriptor this op projects into for the policy gate. */
-  risk: RiskActionDescriptor
-}
-
-/**
- * INTERNAL: declaration plus implementation. Deliberately absent from the package
- * barrel — exporting this type (or any helper taking one and running it) would hand a
- * surface a private power, which is precisely what the function layer abolishes.
- */
-export interface FunctionSpec<Input = unknown, Output = unknown>
-  extends FunctionDeclaration<Input, Output> {
   invoke(input: Input, deps: FunctionDeps): Promise<Output>
 }
 
 /**
- * INTERNAL: declaration plus implementation for a `stream` op (D-08).
+ * INTERNAL: metadata plus live contracts plus the implementation for a `stream` op (D-08).
  *
  * `Element` is what the declared `output` contract describes — ONE element, never the
  * iterable. The stream is ACQUIRED inside `invoke` rather than lazily on first iteration,
@@ -124,8 +170,10 @@ export interface FunctionSpec<Input = unknown, Output = unknown>
  * the implementation happens to return.
  */
 export interface FunctionStreamSpec<Input = unknown, Element = unknown>
-  extends FunctionDeclaration<Input, Element> {
+  extends FunctionMetadata {
   resultKind: 'stream'
+  input: z.ZodType<Input>
+  output: z.ZodType<Element>
   invoke(input: Input, deps: FunctionDeps): Promise<FunctionStream<Element>>
 }
 

@@ -26,7 +26,6 @@ import type {
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
-import { z } from 'zod'
 
 import { FunctionNotBoundError, invokeFunction } from '../functions/invoke.js'
 import { createFunctionRegistry } from '../functions/registry.js'
@@ -188,20 +187,41 @@ describe('parity leg 1 — registry coverage', () => {
       expect(['bound', 'unbound'], label).toContain(declaration.bindingStatus)
       expect(declaration.risk.name, label).toEqual(`fn:${declaration.id}`)
       expect(declaration.risk.recognized, label).toBe(true)
-      expect(declaration.input, label).toBeInstanceOf(z.ZodType)
-      expect(declaration.output, label).toBeInstanceOf(z.ZodType)
+      // The declared contracts arrive as INERT projections, never as live validators
+      // (BL-01 / D-14): a listing is a description of the contract, not a handle on it.
+      for (const side of ['input', 'output'] as const) {
+        const projection = declaration[side]
+        expect(typeof projection, `${label}.${side}`).toEqual('object')
+        expect(projection, `${label}.${side}`).not.toBeNull()
+        expect((projection as Record<string, unknown>)['safeParse'], `${label}.${side}`)
+          .toBeUndefined()
+        expect((projection as Record<string, unknown>)['parse'], `${label}.${side}`)
+          .toBeUndefined()
+      }
       // A listing view never carries the implementation (T-384-20).
       expect(declaration, label).not.toHaveProperty('invoke')
     }
   })
 
-  it('projects every declared schema to JSON Schema without throwing', () => {
+  it('carries a precomputed JSON-Schema projection for both declared contracts', () => {
     for (const declaration of declarations()) {
-      const label = declaration.id
-      // `io: 'input'` is the wire projection: the branded-RunId schemas carry a transform,
-      // which zod refuses to represent in its default output mode.
-      expect(() => z.toJSONSchema(declaration.input, { io: 'input' }), label).not.toThrow()
-      expect(() => z.toJSONSchema(declaration.output, { io: 'input' }), label).not.toThrow()
+      for (const side of ['input', 'output'] as const) {
+        const projection = declaration[side]
+        const label = `${declaration.id}.${side}`
+
+        // The projection is computed once at listing time by `toSchemaProjection`, so the
+        // catalog surfaces 396 builds read a value rather than running a schema. Asserting
+        // the SHAPE here — a plain object stating its node kind — is what proves the
+        // projection is real rather than an empty object standing in for one.
+        expect(Object.getPrototypeOf(projection), label).toBe(Object.prototype)
+        expect(Object.keys(projection).length, label).toBeGreaterThan(0)
+        expect(
+          Object.keys(projection).some((key) => (
+            key === 'type' || key === 'properties' || key === 'anyOf' || key === 'items'
+          )),
+          label,
+        ).toBe(true)
+      }
     }
   })
 

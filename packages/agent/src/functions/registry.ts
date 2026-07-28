@@ -10,6 +10,7 @@ import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
+import { toSchemaProjection } from './declaration-projection.js'
 import { configGetSpec } from './ops/config-get.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { runsEventsSpec } from './ops/runs-events.js'
@@ -91,9 +92,16 @@ export function registryInternals(registry: FunctionRegistry): RegistryInternals
  * The specs are module-level singletons, so a write reached through ONE listing used to
  * change what every registry in the process enforced. Freezing is idempotent and happens
  * at registration, which closes the escalation by whatever route a caller reaches the spec.
- * `input`/`output` zod internals are deliberately left alone — freezing the spec object
- * already makes those PROPERTIES unwritable, and freezing a schema's internals would break
- * zod's own lazy caching.
+ *
+ * The live `input`/`output` zod objects are deliberately NOT frozen: freezing a schema's
+ * internals would break zod's own lazy caching. That is safe now for a structural reason
+ * rather than a hopeful one — a declaration carries an inert projection, so no surface is
+ * ever handed the schema object in the first place (BL-01). The earlier rationale here,
+ * that freezing the spec made those properties unwritable, was a category error: it sealed
+ * the property SLOT while the object it pointed at stayed wide open.
+ *
+ * WR-03: registration FREEZES the spec objects it is given, permanently and in place. Pass
+ * a fresh object if the caller needs a mutable one afterwards.
  */
 function freezeSpec(spec: FunctionSpec): FunctionSpec {
   Object.freeze(spec.requiredScopes)
@@ -101,20 +109,27 @@ function freezeSpec(spec: FunctionSpec): FunctionSpec {
   return Object.freeze(spec)
 }
 
+/**
+ * Project one spec into the capability-free view a surface receives.
+ *
+ * Constructed field by field rather than spread-minus-invoke, so a future spec field can
+ * never leak the implementation into a listing by accident.
+ *
+ * COPY or PROJECT, then freeze — the view aliases nothing on the spec. The scalars are
+ * copied, the two contracts become inert JSON-Schema projections, and the whole graph is
+ * frozen. What a caller holds after this is data: there is no live validator on it to
+ * replace, so a permitted listing is no longer a write handle onto the contract vocabulary
+ * every firewalled surface shares (T-384-14).
+ */
 function declarationView(spec: FunctionSpec): FunctionDeclaration {
-  // Constructed field by field rather than spread-minus-invoke so a future spec field
-  // can never leak the implementation into a listing by accident.
-  //
-  // COPY, then freeze: the view stops aliasing the singleton spec entirely, so a caller
-  // cannot reach enforcement state through a listing even if the spec were somehow thawed.
   return Object.freeze({
     id: spec.id,
     summary: spec.summary,
     requiredScopes: Object.freeze([...spec.requiredScopes]),
     resultKind: spec.resultKind,
     bindingStatus: spec.bindingStatus,
-    input: spec.input,
-    output: spec.output,
+    input: toSchemaProjection(spec.input),
+    output: toSchemaProjection(spec.output),
     risk: Object.freeze({ ...spec.risk }),
   })
 }

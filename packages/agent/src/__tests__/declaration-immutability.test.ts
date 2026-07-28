@@ -1,10 +1,19 @@
-// The enforcement record is read-only in FACT, not just in type (Phase 384, Plan 08 — CR-04).
+// The enforcement record AND the contract vocabulary are read-only in FACT, not just in
+// type (Phase 384, Plans 08 and 09 — CR-04 / BL-01 / D-14 / T-384-08).
 //
-// `registry.list()` hands a surface the record `invokeFunction` enforces against. Before this
-// file, the view aliased the module-level singleton specs, so a zero-scope caller could delete
-// `config.get`'s scope requirement in one line and then invoke it for real — process-wide, in
-// every registry built after the write. These cases assert that escalation dead: the views and
-// the registered specs are deeply frozen, the repro write THROWS, and enforcement still refuses.
+// `registry.list()` hands a surface the record `invokeFunction` enforces against. Plan 08
+// closed the escalation half: a zero-scope caller could delete `config.get`'s scope
+// requirement in one line and then invoke it for real. Round 2 found the same mechanism
+// alive one field over — `input` and `output` were passed to the view BY REFERENCE, and the
+// object handed out was identity-equal to the schema package's own exported validator, so a
+// single write through a permitted listing dispatched unvalidated input for every consumer
+// in the process.
+//
+// Plan 09 closes that as a CLASS: the view carries an inert, deep-frozen JSON-Schema
+// PROJECTION, and the live validator stays on `FunctionSpec`, which never leaves the
+// functions directory. The sweeps below are written from the SHAPE of the view rather than
+// a list of field names, because a guard generated out of the implementation's own
+// vocabulary is exactly what left the previous round blind to its own open half (WR-05).
 
 import type {
   ExecutionContext,
@@ -13,10 +22,13 @@ import type {
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RunsGetInputSchema,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { FunctionScopeError, invokeFunction } from '../functions/invoke.js'
+import { FunctionInputError, FunctionScopeError, invokeFunction } from '../functions/invoke.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { createFunctionRegistry } from '../functions/registry.js'
 import type { FunctionDeclaration, FunctionDeps } from '../functions/spec.js'
@@ -24,7 +36,7 @@ import type { FunctionDeclaration, FunctionDeps } from '../functions/spec.js'
 const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
 /**
- * Every port resolves, nothing reaches a host API. The scope refusal these cases turn on
+ * Every port resolves, nothing reaches a host API. The scope refusal several cases turn on
  * precedes dispatch, so no port is ever touched — the record exists because `FunctionDeps`
  * is required and non-partial (D-09), not because a case needs it.
  */
@@ -46,7 +58,7 @@ function fakeDeps(): FunctionDeps {
   }
 }
 
-/** The sink is a REQUIRED construction field (D-11); nothing here dispatches, so it stays empty. */
+/** The sink is a REQUIRED construction field (D-11); nothing here asserts on rows. */
 function noOpSink(): AuditSink {
   return {
     appendExecutionAudit() {},
@@ -74,11 +86,138 @@ const FULLY_GRANTED: FunctionCaller = {
   safeMode: false,
 }
 
-function configGet(declarations: readonly FunctionDeclaration[]): FunctionDeclaration {
-  const declaration = declarations.find((candidate) => candidate.id === 'config.get')
-  if (declaration === undefined) throw new Error('config.get is not registered')
+function byId(declarations: readonly FunctionDeclaration[], id: string): FunctionDeclaration {
+  const declaration = declarations.find((candidate) => candidate.id === id)
+  if (declaration === undefined) throw new Error(`${id} is not registered`)
   return declaration
 }
+
+function configGet(declarations: readonly FunctionDeclaration[]): FunctionDeclaration {
+  return byId(declarations, 'config.get')
+}
+
+/**
+ * Visit every node reachable through OWN enumerable properties, deriving the keys from the
+ * value itself.
+ *
+ * This is the whole point of the two sweeps below: no field is ever named, so a seventh
+ * `FunctionDeclaration` field added by a later phase is covered on the day it lands rather
+ * than on the day someone remembers to extend a list. The `seen` set makes the walk safe
+ * against a cyclic graph — which the LIVE zod objects this file used to be handed are.
+ */
+function eachReachableNode(
+  value: unknown,
+  path: string,
+  seen: WeakSet<object>,
+  visit: (node: unknown, nodePath: string) => void,
+): void {
+  visit(value, path)
+  if (typeof value !== 'object' || value === null) return
+
+  const node = value as Record<string, unknown>
+  if (seen.has(node)) return
+  seen.add(node)
+
+  for (const [key, nested] of Object.entries(node)) {
+    eachReachableNode(nested, `${path}.${key}`, seen, visit)
+  }
+}
+
+describe('the listed view is inert (BL-01)', () => {
+  it('freezes the whole reachable graph of every declaration, naming no field', () => {
+    const declarations = buildRegistry().list(FULLY_GRANTED)
+
+    expect(declarations.length).toBeGreaterThan(0)
+    for (const declaration of declarations) {
+      eachReachableNode(declaration, declaration.id, new WeakSet(), (node, nodePath) => {
+        if (typeof node !== 'object' || node === null) return
+        expect(Object.isFrozen(node), nodePath).toBe(true)
+      })
+    }
+  })
+
+  it('exposes nothing runnable: no value reachable through a declaration is a function', () => {
+    const declarations = buildRegistry().list(FULLY_GRANTED)
+
+    expect(declarations.length).toBeGreaterThan(0)
+    for (const declaration of declarations) {
+      eachReachableNode(declaration, declaration.id, new WeakSet(), (node, nodePath) => {
+        expect(typeof node, nodePath).not.toEqual('function')
+      })
+    }
+  })
+
+  it('de-aliases the shared contract vocabulary: a listing is not a schema-package export', () => {
+    const declaration = byId(buildRegistry().list(FULLY_GRANTED), 'runs.get')
+
+    // The round-2 finding, inverted: this identity used to be `true`, which made a permitted
+    // listing a write handle onto the validators every firewalled surface imports.
+    expect(declaration.input as unknown).not.toBe(RunsGetInputSchema as unknown)
+    expect((declaration.input as Record<string, unknown>)['safeParse']).toBeUndefined()
+    expect((declaration.output as Record<string, unknown>)['parse']).toBeUndefined()
+  })
+
+  it('carries a real JSON-Schema projection on both contracts of every declaration', () => {
+    for (const declaration of buildRegistry().list(FULLY_GRANTED)) {
+      for (const side of ['input', 'output'] as const) {
+        const projection = declaration[side]
+        const label = `${declaration.id}.${side}`
+
+        expect(typeof projection, label).toEqual('object')
+        expect(projection, label).not.toBeNull()
+        expect(Object.getPrototypeOf(projection), label).toBe(Object.prototype)
+        expect(Object.keys(projection).length, label).toBeGreaterThan(0)
+        expect(
+          Object.keys(projection).some((key) => (
+            key === 'type' || key === 'properties' || key === 'anyOf' || key === 'items'
+          )),
+          label,
+        ).toBe(true)
+      }
+    }
+  })
+
+  it('kills the input-poisoning repro: dispatch still validates, in two registries', async () => {
+    const attacked = buildRegistry()
+    const declaration = byId(attacked.list(FULLY_GRANTED), 'runs.get')
+
+    // The verifier's exploit verbatim. The projection is deep-frozen and carries no
+    // validator to replace, so in strict-mode ESM the write THROWS.
+    expect(() => {
+      ;(declaration.input as Record<string, unknown>)['safeParse'] = () => ({
+        success: true,
+        data: {},
+      })
+    }).toThrow(TypeError)
+
+    // Both halves. The throw alone would not prove enforcement survived the attempt.
+    await expect(
+      invokeFunction(attacked, 'runs.get', { runId: 42 }, FULLY_GRANTED),
+    ).rejects.toBeInstanceOf(FunctionInputError)
+
+    // A registry built AFTER the attempt, over the same module-level singleton specs.
+    await expect(
+      invokeFunction(buildRegistry(), 'runs.get', { runId: 42 }, FULLY_GRANTED),
+    ).rejects.toBeInstanceOf(FunctionInputError)
+
+    // And the shared vocabulary itself: the schema package's export still refuses.
+    expect(RunsGetInputSchema.safeParse({ runId: 42 }).success).toBe(false)
+  })
+
+  it('kills the output-poisoning repro: a unary result is still the validated value', async () => {
+    const attacked = buildRegistry()
+    const declaration = byId(attacked.list(FULLY_GRANTED), 'runs.list')
+
+    expect(() => {
+      ;(declaration.output as Record<string, unknown>)['parse'] = () => 'ATTACKER-CHOSEN'
+    }).toThrow(TypeError)
+
+    await expect(invokeFunction(attacked, 'runs.list', {}, FULLY_GRANTED)).resolves.toEqual([])
+    await expect(
+      invokeFunction(buildRegistry(), 'runs.list', {}, FULLY_GRANTED),
+    ).resolves.toEqual([])
+  })
+})
 
 describe('declaration views are deeply frozen (CR-04)', () => {
   it('freezes every listed declaration, its requiredScopes, and its risk descriptor', () => {
