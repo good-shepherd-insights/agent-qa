@@ -44,8 +44,13 @@
 //
 // Both failure directions then die structurally instead of by patch. An ordinary
 // configuration string is never looked at, so no character an operator writes can hide it.
-// A registered field keeps nothing but its origin, so no component survives for a secret to
-// ride in, and there is no next component to discover. This file names no example URL
+// A registered field keeps nothing but its origin — path, userinfo, query and fragment all
+// go together, so there is no next component to discover. What the origin itself still
+// carries is the HOST, and that is deliberate: an operator triaging a config has to see
+// which host their LLM or target points at. A host is therefore trusted to be public, and a
+// secret written into a hostname (a credential-bearing tunnel subdomain, say) is disclosed —
+// the residue named at the census note below, bounded and stated rather than denied. This
+// file names no example URL
 // parameter and no example credential value, so a test corpus can be measured against these
 // bytes and shown to come from outside them.
 //
@@ -58,10 +63,12 @@
 //
 // A registered NAME LIST can go stale, and that objection is answered by the build rather
 // than by care: the companion test walks the shipped config schema, collects the string-leaf
-// names it declares, and FAILS when a URL-shaped one is missing from the set below. A URL
-// field added to the schema tomorrow reddens a test until it is registered, instead of
-// quietly opening a disclosure — the same move this phase already made for the agent barrel's
-// export set and for the gate's call-site count.
+// names it declares, and PINS that whole set. It does not filter the walk by an address-word
+// pattern first — a pattern drawn from this file's own vocabulary can only catch a name the
+// vocabulary already knows, which is the mistake the render rule stopped making, repeated one
+// level up. ANY new string leaf reddens the pin whatever it is called, and a human then
+// registers it below or records it as inert — the same move this phase already made for the
+// agent barrel's export set and for the gate's call-site count.
 //
 // Over-masking remains the accepted direction wherever the SCHEMA decides, and the rule
 // makes it concrete: `registry.providers.<name>.baseURL` is masked ENTIRELY because it sits
@@ -273,8 +280,11 @@ export function isCredentialBearingUrlField(key: string): boolean {
  * could not read is the failure this module exists to prevent.
  *
  * `url.host` already carries the port, so it is never appended separately. A value that
- * already IS its origin is returned byte-identical and unaltered: the reduction removes, it
- * never normalises.
+ * already IS its origin is returned byte-identical and unaltered; anything else comes back
+ * through the parser, which normalises as well as removes — it case-folds the host, drops a
+ * default `:443`/`:80`, punycodes an IDN and strips a trailing slash. Those are rewrites of
+ * the operator's bytes, not just deletions, which is why every one of them is flagged
+ * `masked: true` rather than passed off as unchanged.
  */
 function reduceToOrigin(value: string): RenderedValue {
   let url: URL

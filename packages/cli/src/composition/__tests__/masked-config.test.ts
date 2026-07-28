@@ -1442,19 +1442,37 @@ function declaredStringLeafNames(schema: unknown): Set<string> {
 }
 
 /**
- * A name that declares its value is an ADDRESS.
+ * Every string-bearing leaf name the shipped config schema declares — PINNED, not matched.
  *
- * Applied to the normalized name, so casing and punctuation cannot slip a field past it.
- * This is a pattern over NAMES the schema author chose, which is a closed set a human wrote
- * — not a pattern over operator VALUES, which is the undecidable question this plan removed.
+ * An earlier revision of this guard filtered the walk by `/(?:url|uri|endpoint|webhook)$/`
+ * and asked whether the survivors were registered. That predicate is drawn from the
+ * registered set's OWN vocabulary, so it could only ever catch a field named with an address
+ * word the registry already knew: `endpoints`, `webhooks`, `dsn`, `serverAddress`, `apiHost`,
+ * `origin`, `href` and `hubAddress` all walked straight past it. It repeated one level up
+ * exactly the mistake the render rule stopped making — testing a rule from inside its own
+ * assumptions — and it was the sole justification offered for shipping a name list.
+ *
+ * The pin removes the predicate. ANY new string leaf reddens this test whatever it is called,
+ * and a human then decides whether the name is address-bearing (register it in
+ * `CREDENTIAL_BEARING_URL_LEAVES`) or inert (add it here). Staleness stops being a question
+ * of vocabulary and becomes a build failure — the same idiom this phase already applies to
+ * the agent barrel's export set and the `evaluate()` call-site count.
+ *
+ * Names here are the schema's own spelling. Address-bearing names in this list are
+ * registered: `url`, `baseURL`. `host` is a bare hostname with no path, userinfo, query or
+ * fragment to carry a credential, so it is inert by shape rather than by name.
  */
-const URL_SHAPED_LEAF_NAME = /(?:url|uri|endpoint|webhook)$/u
+const DECLARED_STRING_LEAF_NAMES: readonly string[] = [
+  'appActivity', 'appPackage', 'artifactsDir', 'attributes', 'baseURL', 'browserstack',
+  'buildTag', 'bundleId', 'contextWindow', 'dbPath', 'dir', 'disableRules', 'envFile',
+  'exclude', 'hooksFile', 'host', 'judge', 'llm', 'model', 'name', 'navigation', 'package',
+  'path', 'product', 'provider', 'providerHeaders', 'regex', 'screenshotSize', 'secretsFile',
+  'step', 'suiteMatch', 'test', 'testMatch', 'testPathIgnore', 'ttl', 'url',
+]
 
-function urlShapedButUnregistered(schema: unknown): string[] {
-  return [...declaredStringLeafNames(schema)]
-    .filter((name) => URL_SHAPED_LEAF_NAME.test(name.toLowerCase().replaceAll(/[^a-z0-9]/gu, '')))
-    .filter((name) => !isCredentialBearingUrlField(name))
-    .sort()
+function unpinnedStringLeafNames(schema: unknown): string[] {
+  const pinned = new Set(DECLARED_STRING_LEAF_NAMES)
+  return [...declaredStringLeafNames(schema)].filter((name) => !pinned.has(name)).sort()
 }
 
 describe('the registered URL-name set cannot silently go stale', () => {
@@ -1469,25 +1487,44 @@ describe('the registered URL-name set cannot silently go stale', () => {
     expect(declared.size).toBeGreaterThan(20)
   })
 
-  it('registers every URL-shaped leaf name the shipped schema declares', () => {
-    expect(urlShapedButUnregistered(AgentQaConfigSchema)).toEqual([])
+  it('pins every string leaf the shipped schema declares', () => {
+    // The whole set, both directions — a leaf added to the schema fails here, and a leaf
+    // removed from the schema fails here too, so the pin cannot rot in either direction.
+    expect([...declaredStringLeafNames(AgentQaConfigSchema)].sort())
+      .toEqual([...DECLARED_STRING_LEAF_NAMES].sort())
   })
 
-  it('FAILS for a schema declaring an unregistered URL-shaped leaf (negative control)', () => {
-    // The guard's own falsifiability, executed rather than asserted. A guard that has never
-    // failed is not known to work — and this is exactly the event it exists for: someone adds
-    // a URL field to the config schema and does not register it.
+  it('FAILS for names OUTSIDE the registered vocabulary (negative control)', () => {
+    // The guard's own falsifiability, executed rather than asserted, and deliberately
+    // controlled from outside the vocabulary: not one of these eight names ends in url, uri,
+    // endpoint or webhook, so every one of them defeated the pattern this pin replaced. Each
+    // would ship VISIBLE and publish its value verbatim.
     const grown = growRealSchema({
       deployment: z.object({
-        callbackUrl: z.string(),
-        region: z.string(),
+        dsn: z.string(),
+        apiHost: z.string(),
+        serverAddress: z.string(),
+        origin: z.string(),
+        href: z.string(),
+        hubAddress: z.string(),
+        endpoints: z.string(),
+        webhooks: z.string(),
       }).strict(),
     })
 
-    expect(urlShapedButUnregistered(grown)).toEqual(['callbackUrl'])
+    expect(unpinnedStringLeafNames(grown)).toEqual([
+      'apiHost', 'dsn', 'endpoints', 'href', 'hubAddress', 'origin', 'serverAddress', 'webhooks',
+    ])
     // …and the same walk over the same grown schema still returns [] for the shipped subtree,
-    // so the difference the guard measures is the added field and nothing else.
-    expect(urlShapedButUnregistered(AgentQaConfigSchema)).toEqual([])
+    // so the difference the guard measures is the added fields and nothing else.
+    expect(unpinnedStringLeafNames(AgentQaConfigSchema)).toEqual([])
+  })
+
+  it('FAILS for a registered-vocabulary name too, so the pin did not narrow the old cover', () => {
+    const grown = growRealSchema({
+      deployment: z.object({ callbackUrl: z.string(), region: z.string() }).strict(),
+    })
+    expect(unpinnedStringLeafNames(grown)).toEqual(['callbackUrl', 'region'])
   })
 
   it('registers the four names the corpus above plants credentials on', () => {
