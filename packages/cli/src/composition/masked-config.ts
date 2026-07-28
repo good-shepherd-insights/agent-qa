@@ -72,11 +72,15 @@
 // the same move this phase already made for the agent barrel's export set and for the gate's
 // call-site count.
 //
-// What the pin does NOT reach, named rather than denied: a field that exists TODAY and is not
-// registered can still be handed a credential-bearing URL by an operator. `services.mcp.host`
-// is the reproducible example — a plain string whose name promises a bare hostname, so
-// registering it would mask the ordinary value `localhost`. Closing that needs the schema to
-// declare the field an address; it is not something this file can decide.
+// What the pin does NOT reach is the class the census note below already states correctly and
+// with a reproducible example: a schema-constrained leaf whose own name is innocuous. The pin
+// makes a leaf's ARRIVAL visible; it cannot decide that an arrived leaf holds an address. An
+// earlier revision of this comment named `services.mcp.host` as the example and was wrong in
+// both directions — that field is refined to exactly `localhost`, `127.0.0.1` or `::1`, so the
+// schema REFUSES a URL there, and it is the most constrained string leaf in the config rather
+// than a plain one. The fields that would actually publish a credential URL if handed one are
+// the ordinary constrained leaves — a path, a directory, a build tag — which is precisely the
+// census note's class, not a second one.
 //
 // Over-masking remains the accepted direction wherever the SCHEMA decides, and the rule
 // makes it concrete: `registry.providers.<name>.baseURL` is masked ENTIRELY because it sits
@@ -241,8 +245,12 @@ interface RenderedValue {
  *     any of them. A name list costs over-masking when it is early and a disclosure when it
  *     is late, so it is deliberately early.
  *
- * The guard against this set going stale is a test, not a promise: the companion suite walks
- * the shipped schema and fails when a URL-shaped leaf name is missing from here.
+ * The guard against this set going stale is a test, not a promise — and it guards ARRIVAL,
+ * not membership: the companion suite pins every string-leaf PATH the shipped schema declares
+ * and fails when the schema grows one, whatever the new leaf is called. It never consults this
+ * set. So a NEW address leaf cannot land unnoticed, but a leaf already pinned and not
+ * registered here stays visible and publishes what it is given — which is the census note's
+ * residual class above, reached from the other side.
  */
 export const CREDENTIAL_BEARING_URL_LEAVES: ReadonlySet<string> = new Set([
   'appiumurl',

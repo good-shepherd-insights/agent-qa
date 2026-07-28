@@ -1329,11 +1329,12 @@ describe('a registered URL field is reduced to its origin, whatever the credenti
  *
  * A registered-name list is the same object class that failed at the path level three times:
  * whatever it lists, the schema's next field has a different name. What makes this one
- * different is not care — it is that its staleness is a RED BUILD. The walk below reads the
- * shipped config schema as data, collects every string-bearing leaf NAME it declares, and
- * fails when a URL-shaped one is not registered. The corpus is therefore the SCHEMA's own
- * surface, not this file's vocabulary, which is the same discipline the visibility walker's
- * `Object.keys(z)` companion table already uses.
+ * different is not care — it is that a leaf's ARRIVAL is a RED BUILD. The walk below reads the
+ * shipped config schema as data, collects every string-bearing leaf PATH it declares, and pins
+ * that whole set; it never consults the registered names. So schema growth cannot go unnoticed,
+ * while a leaf already pinned and unregistered is the census note's residual class rather than
+ * this guard's. The corpus is therefore the SCHEMA's own surface, not this file's vocabulary,
+ * which is the same discipline the visibility walker's `Object.keys(z)` companion table uses.
  *
  * Failing means over-masking a new field until someone registers it, never disclosure — so
  * the guard's own failure direction is the safe one.
