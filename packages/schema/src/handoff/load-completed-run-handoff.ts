@@ -26,6 +26,8 @@ export class HandoffVersionError extends VersionGuardError {
 export const HANDOFF_MIGRATIONS: MigrationRegistry = {
   /** v2 → v3 (D-01): rootCause is optional-additive; v2 handoffs load unchanged. */
   2: (doc) => doc,
+  /** v3 → v4 (D-10, 2026-07-28): gateRun is optional-additive; v3 handoffs load unchanged. */
+  3: (doc) => doc,
 }
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
@@ -420,6 +422,7 @@ function hasCompleteHandoffShape(value: unknown): boolean {
     scope.key.length > 0 &&
     typeof value.buildOrdinal === 'number' &&
     (!('excludedFromOutcomes' in value) || value.excludedFromOutcomes === true) &&
+    (!('gateRun' in value) || value.gateRun === true) &&
     (value.executionContext === 'local-interactive' ||
       value.executionContext === 'local-headless' ||
       value.executionContext === 'ci' ||

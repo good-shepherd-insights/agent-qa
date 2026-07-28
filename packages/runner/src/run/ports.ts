@@ -280,6 +280,14 @@ export interface RunConfig {
    * true excludes; absence denotes an ordinary counted run and remains absent in JSON.
    */
   excludedFromOutcomes?: true
+  /**
+   * D-10 verify-before-present gate-run marker (Phase 384, 2026-07-28) copied into the
+   * durable completed-run handoff. A DISTINCT axis from `excludedFromOutcomes` above:
+   * C8-ratified, gate runs still feed curation. Only literal true marks a gate run;
+   * absence denotes an ordinary run and remains absent in JSON. 384 threads the carrier
+   * only — the exclusion semantics land in 388/393.
+   */
+  gateRun?: true
   members: readonly RunMemberDescriptor[]
   executor: MemberTestExecutor
   masking?: MaskingContext
