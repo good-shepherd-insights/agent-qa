@@ -1,0 +1,217 @@
+// The invoke pipeline's load-bearing order, typed refusals, and uniform gating
+// (Phase 384, Plan 01 — FUNC-01 / FUNC-03 / D-11).
+//
+// The gate is NOT stubbed: `invokeFunction` calls the real `evaluate` from
+// @vostride/agent-qa-safety, so "read ops classify read-only → allow, and are audited
+// anyway" is proven against the shipped classifier rather than against a fake.
+
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  ExecutionContext,
+  FunctionCaller,
+  FunctionScope,
+  RunSummary,
+} from '@vostride/agent-qa-schema'
+import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
+
+import {
+  FunctionInputError,
+  FunctionScopeError,
+  UnknownFunctionError,
+  invokeFunction,
+} from '../functions/invoke.js'
+import { runsListSpec } from '../functions/ops/runs-list.js'
+import {
+  DuplicateFunctionIdError,
+  createRegistryFromSpecs,
+} from '../functions/registry.js'
+import type { CreateFunctionRegistryOptions } from '../functions/registry.js'
+import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
+
+const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
+
+function handoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: runId as CompletedRunHandoff['runId'],
+    scope: { tier: 'product', key: 'shop' },
+    buildOrdinal,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1_000,
+    endedAt: 2_000,
+    tests: [],
+  }
+}
+
+interface SpyDeps {
+  deps: FunctionDeps
+  listCalls: () => number
+}
+
+function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
+  let listCalls = 0
+  return {
+    deps: {
+      runs: {
+        list: () => {
+          listCalls += 1
+          return Promise.resolve(documents)
+        },
+      },
+    },
+    listCalls: () => listCalls,
+  }
+}
+
+interface CapturedSink {
+  sink: AuditSink
+  executionRows: () => readonly ExecutionAuditRow[]
+}
+
+function capturingSink(): CapturedSink {
+  const executionRows: ExecutionAuditRow[] = []
+  const guardrailRows: GuardrailAuditRow[] = []
+  return {
+    sink: {
+      appendExecutionAudit(row) {
+        executionRows.push(row)
+      },
+      appendGuardrailAudit(row) {
+        guardrailRows.push(row)
+      },
+    },
+    executionRows: () => executionRows,
+  }
+}
+
+function caller(grantedScopes: readonly FunctionScope[], safeMode = false): FunctionCaller {
+  return { surface: 'test', grantedScopes, safeMode }
+}
+
+/** A second synthetic capability so ordering and safe-mode filtering are observable. */
+const configGetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+  id: 'config.get',
+  summary: 'Synthetic non-read capability used to exercise the listing filter.',
+  requiredScopes: ['config-write'],
+  resultKind: 'unary',
+  bindingStatus: 'bound',
+  input: z.object({}).strict(),
+  output: z.object({ ok: z.literal(true) }).strict(),
+  risk: { name: 'fn:config.get', recognized: true },
+  invoke: () => Promise.resolve({ ok: true as const }),
+}
+
+function registryOptions(overrides: Partial<CreateFunctionRegistryOptions> = {}) {
+  return {
+    deps: spyDeps().deps,
+    resolveExecutionContext: FIXED_CONTEXT,
+    ...overrides,
+  }
+}
+
+describe('invokeFunction pipeline', () => {
+  it('rejects an unknown id before any dependency is touched', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(
+      invokeFunction(registry, 'runs.nope', {}, caller(['read'])),
+    ).rejects.toBeInstanceOf(UnknownFunctionError)
+    expect(deps.listCalls()).toBe(0)
+  })
+
+  it('rejects input that violates the declared contract before dispatch', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(
+      invokeFunction(registry, 'runs.list', { unexpected: true }, caller(['read'])),
+    ).rejects.toBeInstanceOf(FunctionInputError)
+    expect(deps.listCalls()).toBe(0)
+  })
+
+  it('refuses a caller whose grants do not cover the required scopes', async () => {
+    const deps = spyDeps()
+    const audit = capturingSink()
+    const registry = createRegistryFromSpecs(
+      [runsListSpec],
+      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
+    )
+
+    const refusal = invokeFunction(registry, 'runs.list', {}, caller([]))
+
+    await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
+    await expect(refusal).rejects.toMatchObject({ missingScopes: ['read'] })
+    // The scope check precedes the gate, so nothing dispatched and nothing was audited.
+    expect(deps.listCalls()).toBe(0)
+    expect(audit.executionRows()).toHaveLength(0)
+  })
+
+  it('audits every successful read invocation exactly once (D-11 uniform gating)', async () => {
+    const deps = spyDeps([handoff('run-beta', 12), handoff('run-alpha', 11)])
+    const audit = capturingSink()
+    const registry = createRegistryFromSpecs(
+      [runsListSpec],
+      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
+    )
+
+    const result = (await invokeFunction(registry, 'runs.list', {}, caller(['read']))) as RunSummary[]
+
+    expect(result.map((summary) => summary.runId)).toEqual(['run-alpha', 'run-beta'])
+    expect(deps.listCalls()).toBe(1)
+    const rows = audit.executionRows()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      action: 'fn:runs.list',
+      riskTier: 'read-only',
+      verdict: 'allow',
+    })
+  })
+
+  it('yields an empty list when the injected reader has no runs', async () => {
+    const deps = spyDeps([])
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(invokeFunction(registry, 'runs.list', {}, caller(['read']))).resolves.toEqual([])
+  })
+})
+
+describe('createRegistryFromSpecs', () => {
+  it('rejects two declarations sharing an id', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec, runsListSpec], registryOptions()))
+      .toThrow(DuplicateFunctionIdError)
+  })
+
+  it('lists declarations sorted by id and never exposes an implementation', () => {
+    const registry = createRegistryFromSpecs([runsListSpec, configGetSpec], registryOptions())
+
+    const declarations = registry.list(caller(['read', 'config-write']))
+
+    expect(declarations.map((declaration) => declaration.id)).toEqual(['config.get', 'runs.list'])
+    for (const declaration of declarations) {
+      expect(declaration).not.toHaveProperty('invoke')
+    }
+  })
+
+  it('hides non-read capabilities from a safe-mode listing without enforcing anything', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs(
+      [runsListSpec, configGetSpec],
+      registryOptions({ deps: deps.deps }),
+    )
+
+    const safeModeCaller = caller(['read', 'config-write'], true)
+    expect(registry.list(safeModeCaller).map((declaration) => declaration.id))
+      .toEqual(['runs.list'])
+
+    // Safe mode is cosmetic: the hidden op still resolves when invoked with the grants
+    // for it, because enforcement lives server-side in invokeFunction, not in the listing.
+    await expect(invokeFunction(registry, 'config.get', {}, safeModeCaller))
+      .resolves.toEqual({ ok: true })
+  })
+})
