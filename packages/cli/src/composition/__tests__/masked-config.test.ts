@@ -41,6 +41,8 @@ describe('isSecretConfigKey', () => {
       'services.dashboard.port',
       'use.browser.headless',
       'plugins.auth.0.package',
+      // A token BUDGET is a count, not a credential — the one named carve-out.
+      'knowledge.contextBudgetTokens',
     ]) {
       expect(isSecretConfigKey(key), key).toBe(false)
     }

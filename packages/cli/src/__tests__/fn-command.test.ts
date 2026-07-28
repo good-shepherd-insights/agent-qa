@@ -62,6 +62,9 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
           acme: { apiKey: FIXTURE_API_KEY, baseURL: 'https://acme.test' },
         },
       },
+      // The config schema's superRefine requires this leaf, so a resolvable fixture
+      // must carry it before `config.get` can read anything at all.
+      use: { mobile: { appState: 'preserve' } },
     }, null, 2)}\n`,
     'utf8',
   )

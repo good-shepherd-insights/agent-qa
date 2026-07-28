@@ -42,9 +42,10 @@ function globalOptions(command: Command): { config?: string } {
   return command.parent?.opts<{ config?: string }>() ?? {}
 }
 
-function agentQaRoot(command: Command): string {
+/** Everything the composition root needs to build the registry, derived from one flag. */
+function compositionInput(command: Command): { agentQaRoot: string; configPath: string } {
   const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
-  return resolve(dirname(configPath), '.agent-qa')
+  return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
 }
 
 function parsedInput(raw: string | undefined): unknown {
@@ -126,9 +127,7 @@ export function createFnCommand(): Command {
     .option('--input <json>', 'JSON object passed as the function input (default {})')
     .action(async (id: string | undefined, options: FnOptions, command: Command) => {
       try {
-        const registry = createFunctionRegistryComposition({
-          agentQaRoot: agentQaRoot(command),
-        })
+        const registry = createFunctionRegistryComposition(compositionInput(command))
 
         if (options.list === true) {
           const declarations = registry.list(CLI_FUNCTION_CALLER)

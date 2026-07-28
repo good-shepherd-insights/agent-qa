@@ -5,7 +5,10 @@
 // @vostride/agent-qa-safety, so "read ops classify read-only → allow, and are audited
 // anyway" is proven against the shipped classifier rather than against a fake.
 
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   ExecutionContext,
@@ -62,6 +65,17 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
           listCalls += 1
           return Promise.resolve(documents)
         },
+        get: (runId) => Promise.resolve(
+          documents.find((document) => document.runId === runId),
+        ),
+      },
+      knowledge: { listBundles: () => Promise.resolve([]) },
+      config: {
+        getMasked: () => Promise.resolve({
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+          configPath: 'agent-qa.config.yaml',
+          entries: [],
+        }),
       },
     },
     listCalls: () => listCalls,
@@ -93,16 +107,21 @@ function caller(grantedScopes: readonly FunctionScope[], safeMode = false): Func
   return { surface: 'test', grantedScopes, safeMode }
 }
 
-/** A second synthetic capability so ordering and safe-mode filtering are observable. */
-const configGetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
-  id: 'config.get',
+/**
+ * A second synthetic capability so ordering and safe-mode filtering are observable.
+ *
+ * Deliberately a NON-REGISTERED id: `config.get` is a real read-only capability now, so
+ * reusing that id here would have this file assert a false thing about a shipped op.
+ */
+const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+  id: 'config.set',
   summary: 'Synthetic non-read capability used to exercise the listing filter.',
   requiredScopes: ['config-write'],
   resultKind: 'unary',
   bindingStatus: 'bound',
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
-  risk: { name: 'fn:config.get', recognized: true },
+  risk: { name: 'fn:config.set', recognized: true },
   invoke: () => Promise.resolve({ ok: true as const }),
 }
 
@@ -188,11 +207,11 @@ describe('createRegistryFromSpecs', () => {
   })
 
   it('lists declarations sorted by id and never exposes an implementation', () => {
-    const registry = createRegistryFromSpecs([runsListSpec, configGetSpec], registryOptions())
+    const registry = createRegistryFromSpecs([runsListSpec, configSetSpec], registryOptions())
 
     const declarations = registry.list(caller(['read', 'config-write']))
 
-    expect(declarations.map((declaration) => declaration.id)).toEqual(['config.get', 'runs.list'])
+    expect(declarations.map((declaration) => declaration.id)).toEqual(['config.set', 'runs.list'])
     for (const declaration of declarations) {
       expect(declaration).not.toHaveProperty('invoke')
     }
@@ -201,7 +220,7 @@ describe('createRegistryFromSpecs', () => {
   it('hides non-read capabilities from a safe-mode listing without enforcing anything', async () => {
     const deps = spyDeps()
     const registry = createRegistryFromSpecs(
-      [runsListSpec, configGetSpec],
+      [runsListSpec, configSetSpec],
       registryOptions({ deps: deps.deps }),
     )
 
@@ -211,7 +230,7 @@ describe('createRegistryFromSpecs', () => {
 
     // Safe mode is cosmetic: the hidden op still resolves when invoked with the grants
     // for it, because enforcement lives server-side in invokeFunction, not in the listing.
-    await expect(invokeFunction(registry, 'config.get', {}, safeModeCaller))
+    await expect(invokeFunction(registry, 'config.set', {}, safeModeCaller))
       .resolves.toEqual({ ok: true })
   })
 })

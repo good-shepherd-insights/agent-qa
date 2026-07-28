@@ -10,6 +10,9 @@ import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
+import { configGetSpec } from './ops/config-get.js'
+import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
+import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
 
@@ -27,6 +30,9 @@ const SAFE_MODE_SCOPES: readonly FunctionScope[] = ['read']
 /** The capabilities every composition of this layer registers. */
 const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsListSpec as FunctionSpec,
+  runsGetSpec as FunctionSpec,
+  knowledgeBundlesListSpec as FunctionSpec,
+  configGetSpec as FunctionSpec,
 ]
 
 export interface CreateFunctionRegistryOptions {

@@ -24,12 +24,17 @@ export {
   UnknownFunctionError,
 } from './functions/invoke.js'
 export type {
+  ConfigReaderPort,
   FunctionBindingStatus,
   FunctionDeclaration,
   FunctionDeps,
   FunctionResultKind,
+  KnowledgeReaderPort,
   RunsReaderPort,
 } from './functions/spec.js'
+// Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
+// with the op that throws them; only the error CLASS crosses the barrel, never the spec.
+export { RunNotFoundError } from './functions/ops/runs-get.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer
 // results as prose, and prose is the sole unmasking surface. Re-exported here so a

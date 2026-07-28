@@ -12,7 +12,10 @@ import type { z } from 'zod'
 import type {
   CompletedRunHandoff,
   FunctionScope,
+  KnowledgeBundleSummary,
+  MaskedResolvedConfig,
   RiskActionDescriptor,
+  RunId,
 } from '@vostride/agent-qa-schema'
 
 /**
@@ -70,12 +73,49 @@ export interface FunctionSpec<Input = unknown, Output = unknown>
 export interface RunsReaderPort {
   /** Every completed run this project can load. Missing run storage yields `[]`. */
   list(): Promise<readonly CompletedRunHandoff[]>
+  /**
+   * One completed run by id, or `undefined` when no such run is recorded.
+   *
+   * Absence is a RESULT, not an error: the typed refusal is the op's to throw, so the
+   * "not found" vocabulary lives in this layer rather than in every composition root.
+   * Implementations resolve the id against the runs they already enumerate — never by
+   * joining a caller-supplied string onto a filesystem path (T-384-08).
+   */
+  get(runId: RunId): Promise<CompletedRunHandoff | undefined>
+}
+
+/**
+ * Injected read port over the committed knowledge store.
+ *
+ * Backed by the knowledge-local `/reader` package entry at the composition root. The
+ * writer-gated main entry is unreachable from this layer by construction.
+ */
+export interface KnowledgeReaderPort {
+  /** Every committed bundle, already projected to the schema-owned listing row. */
+  listBundles(): Promise<readonly KnowledgeBundleSummary[]>
+}
+
+/**
+ * Injected read port over the resolved project configuration.
+ *
+ * The port's name says what its security contract is: it yields a config whose
+ * secret-bearing values were dropped while the DTO was CONSTRUCTED. There is deliberately
+ * no unmasked variant on this port — a capability that could ask for one would make the
+ * masking optional, and optional masking is not masking (T-384-07).
+ */
+export interface ConfigReaderPort {
+  getMasked(): Promise<MaskedResolvedConfig>
 }
 
 /**
  * The injected-dependency record every op implementation receives. Ops are pure
  * functions of (validated input, deps) — they never reach for a host API.
+ *
+ * Required and non-partial on purpose: a composition that omits a port fails to typecheck,
+ * which is how an unbound op becomes visible rather than silently missing (D-09).
  */
 export interface FunctionDeps {
   runs: RunsReaderPort
+  knowledge: KnowledgeReaderPort
+  config: ConfigReaderPort
 }
