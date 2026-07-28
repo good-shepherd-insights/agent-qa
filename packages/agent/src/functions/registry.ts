@@ -27,6 +27,26 @@ export class DuplicateFunctionIdError extends Error {
   }
 }
 
+/**
+ * Thrown at construction when the registry is handed no usable audit sink (D-11).
+ *
+ * The type-level requirement below binds only the callers `tsc` gets to see. This is the
+ * same guarantee stated as a RUNTIME property, so it also holds for an in-workspace cast
+ * and for a plain-JS consumer of the published package. It is deliberately a REFUSAL and
+ * not a default: silently substituting a no-op sink would make the unaudited composition
+ * the one that constructs quietly, which is exactly the fast path D-11 abolishes.
+ */
+export class MissingAuditSinkError extends Error {
+  constructor(readonly detail: string) {
+    super(
+      `createRegistryFromSpecs requires a usable AuditSink (D-11): ${detail}. ` +
+        'The policy gate is the single audit author, so a registry built without one would ' +
+        'arm every registered capability with no execution-audit trail at all.',
+    )
+    this.name = 'MissingAuditSinkError'
+  }
+}
+
 /** The scopes safe mode is willing to list. Cosmetic only — see `FunctionCaller`. */
 const SAFE_MODE_SCOPES: readonly FunctionScope[] = ['read']
 
@@ -53,6 +73,11 @@ export interface CreateFunctionRegistryOptions {
    * omits it fails to typecheck rather than quietly arming the whole capability set with no
    * audit trail. An optional sink made the unaudited composition the EASIEST one to write,
    * which is the fast path D-11 exists to forbid.
+   *
+   * Required at RUNTIME too, and that is the load-bearing half: `createRegistryFromSpecs`
+   * throws {@link MissingAuditSinkError} when the sink is absent or its two append methods
+   * are not callable. A type binds only the callers the compiler sees; the refusal binds a
+   * cast and a plain-JS consumer of the published package as well.
    */
   auditSink: AuditSink
   /** Defaults to safety's ambient resolver; injected in tests for determinism. */
@@ -135,15 +160,46 @@ function declarationView(spec: FunctionSpec): FunctionDeclaration {
 }
 
 /**
+ * Refuse a construction that cannot produce an audit trail (BL-03 / D-11).
+ *
+ * One check at the ONE seam that populates the internals record, covering the three live
+ * routes together: the field omitted or cast past the type, and a hollow object whose
+ * append methods are absent or not callable. The methods are probed rather than the shape
+ * asserted, because what the gate needs at dispatch time is two things it can call.
+ */
+function requireAuditSink(supplied: AuditSink | undefined | null): AuditSink {
+  if (supplied === undefined || supplied === null) {
+    throw new MissingAuditSinkError('no sink was supplied')
+  }
+  if (
+    typeof supplied.appendExecutionAudit !== 'function' ||
+    typeof supplied.appendGuardrailAudit !== 'function'
+  ) {
+    throw new MissingAuditSinkError(
+      'the supplied sink does not implement callable appendExecutionAudit and ' +
+        'appendGuardrailAudit methods',
+    )
+  }
+  return supplied
+}
+
+/**
  * INTERNAL: registry construction over an explicit spec set. Exported for tests and
  * future in-layer compositions, and deliberately absent from the package barrel — a
  * surface that could supply its own specs could mint capabilities the catalog never
  * declared.
+ *
+ * WR-03: every spec handed here is FROZEN in place, permanently. Pass a fresh object if
+ * the caller needs a mutable one afterwards.
  */
 export function createRegistryFromSpecs(
   specs: readonly FunctionSpec[],
   options: CreateFunctionRegistryOptions,
 ): FunctionRegistry {
+  // Before anything is registered: a registry that cannot audit must not come to exist,
+  // rather than come to exist and dispatch silently.
+  const auditSink = requireAuditSink(options.auditSink as AuditSink | undefined | null)
+
   const byId = new Map<string, FunctionSpec>()
   for (const spec of specs) {
     if (byId.has(spec.id)) {
@@ -170,7 +226,7 @@ export function createRegistryFromSpecs(
   REGISTRY_INTERNALS.set(registry, {
     specs: byId,
     deps: options.deps,
-    auditSink: options.auditSink,
+    auditSink,
     resolveExecutionContext: options.resolveExecutionContext ?? getActiveExecutionContext,
   })
 

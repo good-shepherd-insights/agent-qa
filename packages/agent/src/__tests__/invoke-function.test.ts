@@ -29,6 +29,7 @@ import {
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import {
   DuplicateFunctionIdError,
+  MissingAuditSinkError,
   createRegistryFromSpecs,
 } from '../functions/registry.js'
 import type { CreateFunctionRegistryOptions } from '../functions/registry.js'
@@ -245,6 +246,50 @@ describe('createRegistryFromSpecs', () => {
     for (const declaration of declarations) {
       expect(declaration).not.toHaveProperty('invoke')
     }
+  })
+
+  /**
+   * The D-11 audit guarantee as a RUNTIME property, beside the compile pin above (BL-03).
+   *
+   * The pin only binds callers `tsc` gets to see. Round 2 executed both routes it does not
+   * cover — an in-workspace cast, and any plain-JS consumer of the published package — and
+   * found that a sinkless registry CONSTRUCTED, dispatched, and wrote zero rows with no
+   * diagnostic. `packages/safety`'s gate optional-chains the sink for its other callers, so
+   * the refusal belongs at the one seam that populates the internals record instead.
+   */
+  it('refuses a sinkless construction at runtime, not only at the type level', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec], {
+      deps: spyDeps().deps,
+      resolveExecutionContext: FIXED_CONTEXT,
+      auditSink: undefined as unknown as AuditSink,
+    })).toThrow(MissingAuditSinkError)
+  })
+
+  it('refuses a hollow sink: a typed, attributable error rather than an opaque TypeError', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec], {
+      deps: spyDeps().deps,
+      resolveExecutionContext: FIXED_CONTEXT,
+      auditSink: {} as unknown as AuditSink,
+    })).toThrow(MissingAuditSinkError)
+  })
+
+  it('refuses a sink whose append methods are present but not callable', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec], {
+      deps: spyDeps().deps,
+      resolveExecutionContext: FIXED_CONTEXT,
+      auditSink: {
+        appendExecutionAudit: 'not a function',
+        appendGuardrailAudit: 'not a function',
+      } as unknown as AuditSink,
+    })).toThrow(MissingAuditSinkError)
+  })
+
+  it('constructs normally for every compliant composition', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec], registryOptions())).not.toThrow()
+    expect(() => createRegistryFromSpecs(
+      [runsListSpec],
+      registryOptions({ auditSink: capturingSink().sink }),
+    )).not.toThrow()
   })
 
   it('hides non-read capabilities from a safe-mode listing without enforcing anything', async () => {

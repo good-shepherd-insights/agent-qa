@@ -6,8 +6,12 @@
 //
 // Uniform gating (D-11): every DISPATCHED invocation — reads included — computes a verdict,
 // and `evaluate()` writes its execution-audit row through the injected sink. There is no
-// fast path, in either sense: no op skips the gate, and no composition can skip the sink,
-// which is a required construction field on the registry. A read bypass would turn scope
+// fast path, in either sense: no op skips the gate, and no registry that could skip the
+// sink can be constructed. That second clause is a RUNTIME property, not a promise the type
+// checker makes to compiled callers only — `createRegistryFromSpecs` throws
+// `MissingAuditSinkError` when the sink is absent or its two append methods are not
+// callable, so a registry which exists at all has a usable sink, and every invocation this
+// file dispatches therefore lands an execution-audit row. A read bypass would turn scope
 // enforcement into a second gate in disguise and would leave read capabilities unauditable.
 //
 // What is NOT audited in 384, deliberately: the three refusals raised BEFORE the gate —
