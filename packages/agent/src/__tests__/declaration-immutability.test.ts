@@ -32,6 +32,7 @@ import { FunctionInputError, FunctionScopeError, invokeFunction } from '../funct
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { createFunctionRegistry } from '../functions/registry.js'
 import type { FunctionDeclaration, FunctionDeps } from '../functions/spec.js'
+import { CONTRACTS_BY_ID, expectProjectionDerivedFrom } from './projection-relation.js'
 
 const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
 
@@ -157,22 +158,28 @@ describe('the listed view is inert (BL-01)', () => {
     expect((declaration.output as Record<string, unknown>)['parse']).toBeUndefined()
   })
 
-  it('carries a real JSON-Schema projection on both contracts of every declaration', () => {
-    for (const declaration of buildRegistry().list(FULLY_GRANTED)) {
-      for (const side of ['input', 'output'] as const) {
-        const projection = declaration[side]
-        const label = `${declaration.id}.${side}`
+  it('projects each contract FROM the schema it was declared with, naming no field', () => {
+    // The shape-only version of this case was satisfied by a constant: the round-3 verifier
+    // replaced `toSchemaProjection`'s body with a frozen `{$schema, type:'object',
+    // properties:{}}` that discards its argument, and the whole agent suite stayed green.
+    // A criterion a wrong implementation satisfies certifies nothing, so this one is a
+    // RELATION between two artifacts — each projection and the live zod contract it came
+    // from — with every expected key set read off the schema rather than written out.
+    const declarations = buildRegistry().list(FULLY_GRANTED)
 
-        expect(typeof projection, label).toEqual('object')
-        expect(projection, label).not.toBeNull()
-        expect(Object.getPrototypeOf(projection), label).toBe(Object.prototype)
-        expect(Object.keys(projection).length, label).toBeGreaterThan(0)
-        expect(
-          Object.keys(projection).some((key) => (
-            key === 'type' || key === 'properties' || key === 'anyOf' || key === 'items'
-          )),
-          label,
-        ).toBe(true)
+    expect(declarations.length).toBeGreaterThan(0)
+    // The growth seam: a capability with no paired spec reddens here, so a seventh op
+    // cannot land with an unchecked projection.
+    expect(Object.keys(CONTRACTS_BY_ID).sort())
+      .toEqual(declarations.map((declaration) => declaration.id).sort())
+
+    for (const declaration of declarations) {
+      const contracts = CONTRACTS_BY_ID[declaration.id]!
+      for (const side of ['input', 'output'] as const) {
+        const label = `${declaration.id}.${side}`
+        // The inertness clauses the case has always carried, kept beside the relation.
+        expect(Object.getPrototypeOf(declaration[side]), label).toBe(Object.prototype)
+        expectProjectionDerivedFrom(contracts[side], declaration[side], label)
       }
     }
   })

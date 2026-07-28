@@ -30,6 +30,7 @@ import { describe, expect, it } from 'vitest'
 import { FunctionNotBoundError, invokeFunction } from '../functions/invoke.js'
 import { createFunctionRegistry } from '../functions/registry.js'
 import type { FunctionDeclaration, FunctionDeps } from '../functions/spec.js'
+import { CONTRACTS_BY_ID, expectProjectionDerivedFrom } from './projection-relation.js'
 
 /**
  * The fixed id domain taxonomy (D-15), plus `knowledge`.
@@ -203,24 +204,26 @@ describe('parity leg 1 — registry coverage', () => {
     }
   })
 
-  it('carries a precomputed JSON-Schema projection for both declared contracts', () => {
-    for (const declaration of declarations()) {
-      for (const side of ['input', 'output'] as const) {
-        const projection = declaration[side]
-        const label = `${declaration.id}.${side}`
+  it('projects each contract FROM the schema it was declared with, naming no field', () => {
+    // The projection is computed once at listing time by `toSchemaProjection`, so the
+    // catalog surfaces 396 builds read a value rather than running a schema. Asserting its
+    // SHAPE is not enough to know it is the RIGHT value — a frozen constant that discards
+    // the schema passed the shape version of this case across the whole suite. What is
+    // asserted instead is the relation between each projection and the live contract it
+    // came from, with every expected key set read off that contract.
+    const listed = declarations()
 
-        // The projection is computed once at listing time by `toSchemaProjection`, so the
-        // catalog surfaces 396 builds read a value rather than running a schema. Asserting
-        // the SHAPE here — a plain object stating its node kind — is what proves the
-        // projection is real rather than an empty object standing in for one.
-        expect(Object.getPrototypeOf(projection), label).toBe(Object.prototype)
-        expect(Object.keys(projection).length, label).toBeGreaterThan(0)
-        expect(
-          Object.keys(projection).some((key) => (
-            key === 'type' || key === 'properties' || key === 'anyOf' || key === 'items'
-          )),
-          label,
-        ).toBe(true)
+    expect(listed.length).toBeGreaterThan(0)
+    // The same growth seam `INVOCATION_SAMPLES` applies to calling, applied to contracts.
+    expect(Object.keys(CONTRACTS_BY_ID).sort())
+      .toEqual(listed.map((declaration) => declaration.id).sort())
+
+    for (const declaration of listed) {
+      const contracts = CONTRACTS_BY_ID[declaration.id]!
+      for (const side of ['input', 'output'] as const) {
+        const label = `${declaration.id}.${side}`
+        expect(Object.getPrototypeOf(declaration[side]), label).toBe(Object.prototype)
+        expectProjectionDerivedFrom(contracts[side], declaration[side], label)
       }
     }
   })
@@ -238,13 +241,21 @@ describe('parity leg 1 — registry coverage', () => {
       .toEqual(Object.keys(INVOCATION_SAMPLES).sort())
   })
 
-  it('resolves every BOUND capability end-to-end against fully-faked dependencies', async () => {
+  it('resolves every BOUND capability into a value its declared output contract accepts', async () => {
+    // This gate used to assert mere defined-ness, which `null`, `[]`, `{}`, `0` and `''`
+    // all satisfy — in the file that is explicitly this layer's growth seam for 386 and
+    // 387. It is now a relation between the result and the contract the registry already
+    // holds: the declared output schema must PARSE what came back. An id-keyed table of
+    // expected values would be the enumeration move (a seventh capability re-opens the
+    // hole), so nothing is written down per id here either.
     const built = registry()
 
+    let checked = 0
     for (const declaration of built.list(FULLY_GRANTED)) {
       if (declaration.bindingStatus !== 'bound') continue
 
-      const result = await drain(
+      const contract = CONTRACTS_BY_ID[declaration.id]!
+      const drained = await drain(
         await invokeFunction(
           built,
           declaration.id,
@@ -253,8 +264,24 @@ describe('parity leg 1 — registry coverage', () => {
         ),
       )
 
-      expect(result, declaration.id).toBeDefined()
+      if (declaration.resultKind === 'stream') {
+        // A stream spec's output contract describes the ELEMENT, so every drained element is
+        // re-parsed. The array assertion makes an empty drain a visible, deliberate pass
+        // rather than a silently skipped loop.
+        expect(Array.isArray(drained), declaration.id).toBe(true)
+        const elements = drained as readonly unknown[]
+        for (let index = 0; index < elements.length; index++) {
+          expect(contract.output.safeParse(elements[index]).success, `${declaration.id}[${index}]`)
+            .toBe(true)
+        }
+      } else {
+        expect(contract.output.safeParse(drained).success, declaration.id).toBe(true)
+      }
+      checked += 1
     }
+
+    // …and the loop ran: a `bound` set that emptied would otherwise pass every line above.
+    expect(checked).toBeGreaterThan(0)
   })
 
   it('refuses every UNBOUND capability by name — covered, not missing (Pitfall 11)', async () => {
