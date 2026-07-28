@@ -83,6 +83,7 @@
     "@inquirer/input": "5.0.12",
     "@inquirer/password": "5.0.12",
     "@inquirer/select": "5.1.4",
+    "@vostride/agent-qa-agent": "workspace:*",
     "@vostride/agent-qa-android": "workspace:*",
     "@vostride/agent-qa-core": "workspace:*",
     "@vostride/agent-qa-dashboard": "workspace:*",

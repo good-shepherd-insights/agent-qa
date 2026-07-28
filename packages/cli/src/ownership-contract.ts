@@ -22,6 +22,8 @@ export const AGENT_QA_CLI_EXTERNAL_DEPENDENCIES = [
   'zod',
 ] as const
 export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
+  // 384 FUNC-01: the function layer the CLI invokes capabilities through.
+  '@vostride/agent-qa-agent',
   '@vostride/agent-qa-android',
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-dashboard',

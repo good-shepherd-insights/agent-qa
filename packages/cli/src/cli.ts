@@ -11,6 +11,7 @@ import {
   createDevicesCommand,
   createDoctorCommand,
   createEvalCommand,
+  createFnCommand,
   createIdsCommand,
   createInitCommand,
   createInstallBrowsersCommand,
@@ -63,6 +64,7 @@ program.addCommand(createEvalCommand())
 program.addCommand(createCreateTestCommand())
 program.addCommand(createCreateSuiteCommand())
 program.addCommand(createSkillsCommand())
+program.addCommand(createFnCommand())
 
 program.parse()
 

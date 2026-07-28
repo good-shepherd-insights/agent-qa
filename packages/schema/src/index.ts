@@ -461,6 +461,21 @@ export {
   isCredentialValueField,
 } from './action/credential-fields'
 
+// 384 function-layer contract vocabulary (D-13/D-16): capability scopes, the caller
+// record, and the seed op DTOs surfaces type against under the import firewall.
+export {
+  FunctionScopeSchema,
+  RUN_SUMMARY_SCHEMA_VERSION,
+  RunSummarySchema,
+  RunsListInputSchema,
+} from './functions/index'
+export type {
+  FunctionCaller,
+  FunctionScope,
+  RunSummary,
+  RunsListInput,
+} from './functions/index'
+
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
 export type {

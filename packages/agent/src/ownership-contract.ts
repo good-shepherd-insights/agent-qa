@@ -9,6 +9,7 @@ export const AGENT_QA_AGENT_ALLOWED_RESPONSIBILITIES = [
   'provider-neutral and storage-neutral agent persistence-store port contract',
   'provider-neutral and storage-neutral approvals gating port contract',
   'provider-neutral and storage-neutral clock port contract',
+  'typed function layer: FunctionSpec/FunctionRegistry/invokeFunction, the single surface-capability gate call-site',
 ] as const
 export const AGENT_QA_AGENT_FORBIDDEN_RESPONSIBILITIES = [
   'filesystem, database, or process access',
@@ -16,8 +17,15 @@ export const AGENT_QA_AGENT_FORBIDDEN_RESPONSIBILITIES = [
   'local runtime persistence',
   'concrete platform-adapter, knowledge-store, tool-store, or agent-store implementations',
 ] as const
-export const AGENT_QA_AGENT_EXTERNAL_DEPENDENCIES = [] as const
-export const AGENT_QA_AGENT_INTERNAL_DEPENDENCIES = ['@vostride/agent-qa-schema'] as const
+// 384 D-14: zod is the one external dependency — a pure validation library, legal under
+// providerNeutral/storageNeutral, and the source of the JSON-Schema projection the MCP
+// and catalog surfaces consume. `runner` is NOT declared yet: declared-but-unused is an
+// arch offense, so it lands with the first stream-op import.
+export const AGENT_QA_AGENT_EXTERNAL_DEPENDENCIES = ['zod'] as const
+export const AGENT_QA_AGENT_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-safety',
+  '@vostride/agent-qa-schema',
+] as const
 
 export const AGENT_QA_AGENT_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_AGENT_PACKAGE_NAME,
