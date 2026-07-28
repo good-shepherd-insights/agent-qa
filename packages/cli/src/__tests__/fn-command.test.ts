@@ -85,6 +85,37 @@ const FIXTURE_PATH_RELATIVE_SECRET = 'sk-live-LANYARD-DO-NOT-LEAK-7105'
 const FIXTURE_OPAQUE_SCHEME_SECRET = 'sk-live-OPAQUE-DO-NOT-LEAK-7106'
 
 /**
+ * Credentials planted in the URL component every previous round's rule KEPT (round-5 CR-03).
+ *
+ * Rounds 3 and 4 cleared userinfo, query and fragment and re-rendered
+ * `scheme://host[:port]/path`, so a credential written into the PATH survived a rule that ran
+ * and reported success — published verbatim with `masked: false` through the unmodified
+ * production CLI. Slack/Discord webhooks, presigned URLs and `/v1/keys/<token>` bases are all
+ * exactly this shape, on exactly the two fields the whole rule exists for.
+ *
+ * The carrier names (`cartouche`, `trellis`, `obelisk`) each read 0 in `masked-config.ts`'s
+ * bytes, measured with a positive control (`isMaskedConfigPath` >= 1) in the same read.
+ */
+const FIXTURE_PATH_BORNE_TARGET_SECRET = 'sk-live-CARTOUCHE-DO-NOT-LEAK-7201'
+const FIXTURE_PROTOREL_PATH_SECRET = 'sk-live-TRELLIS-DO-NOT-LEAK-7202'
+const FIXTURE_KEY_IN_PATH_SECRET = 'sk-live-OBELISK-DO-NOT-LEAK-7203'
+
+/**
+ * The OVER-MASK corpus (round-5 CR-02), on the real fields whose semantics require them.
+ *
+ * `workspace.testMatch` is `z.array(z.string().min(1)).min(1)` — REQUIRED on every config —
+ * and `?` is the standard single-character glob wildcard. `services.accessibility.exclude`
+ * takes CSS selectors, where `#id` is the commonest form there is. Round 5 rendered all three
+ * as `[masked]` to the one capability whose stated purpose is configuration triage.
+ */
+const FIXTURE_GLOB_WILDCARD = 'tests/**/case-?.yaml'
+const FIXTURE_IGNORE_GLOB = 'tests/legacy#old/**'
+const FIXTURE_CSS_SELECTOR = '#cookie-banner'
+
+/** A registered URL field whose value already IS its origin: the reduction's own floor. */
+const FIXTURE_CLEAN_TARGET_URL = 'https://clean.acme.test'
+
+/**
  * Ten credentials planted under `registry.devices.<name>.match` (Plan 10 / BL-02).
  *
  * The key names are drawn from OUTSIDE the masker's own constant lists — none of the ten
@@ -141,11 +172,18 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
     configPath,
     `${JSON.stringify({
       workspace: {
-        testMatch: ['tests/**/*.yaml'],
+        // A required field whose value carries the standard glob wildcard, and an ignore
+        // glob carrying a '#'. Round 5 masked both (CR-02).
+        testMatch: [FIXTURE_GLOB_WILDCARD],
+        testPathIgnore: [FIXTURE_IGNORE_GLOB],
         suiteMatch: ['suites/**/*.suite.yaml'],
         hooksFile: 'hooks.yaml',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
+      },
+      // A CSS selector on the field that takes CSS selectors — the third CR-02 value.
+      services: {
+        accessibility: { enabled: false, exclude: [FIXTURE_CSS_SELECTOR] },
       },
       registry: {
         llms: [
@@ -183,6 +221,14 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             model: 'claude-fixture',
             baseURL: `ops:${FIXTURE_OPAQUE_SCHEME_SECRET}@llm.acme.test/v1`,
           },
+          {
+            // A key written into the PATH of an absolute base — the component rounds 3 and 4
+            // both KEPT. Appended last so the round-4 indices above stay stable.
+            name: 'key-in-path-judge',
+            provider: 'anthropic-compatible',
+            model: 'claude-fixture',
+            baseURL: `https://ops.acme.test/v1/keys/${FIXTURE_KEY_IN_PATH_SECRET}`,
+          },
         ],
         providers: {
           acme: {
@@ -211,6 +257,19 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             platform: 'web',
             url: `/checkout?lanyard=${FIXTURE_PATH_RELATIVE_SECRET}`,
           },
+          // A webhook token in the PATH of an absolute url, and the same in a
+          // protocol-relative one — the round-5 CR-03 pair.
+          hook: {
+            platform: 'web',
+            url: `https://hooks.acme.test/services/T00/B00/${FIXTURE_PATH_BORNE_TARGET_SECRET}`,
+          },
+          relhook: {
+            platform: 'web',
+            url: `//hooks.acme.test/services/${FIXTURE_PROTOREL_PATH_SECRET}`,
+          },
+          // A registered url that already IS its origin: the positive control for the
+          // reduction, and proof it is not a normalisation.
+          clean: { platform: 'web', url: FIXTURE_CLEAN_TARGET_URL },
         },
         devices: {
           pixel: {
@@ -699,12 +758,14 @@ describe('agent-qa fn (generic function invoker)', () => {
 
     // The schema-constrained baseURL stays visible at PATH level — the schema means it to
     // be readable — but the value a caller reads is the reduced render.
-    // FLIP (round 3): `masked` was `false` here and is now `true`. The value is unchanged;
-    // what changed is that the alteration is now reported, because a render that dropped
-    // part of what the operator wrote is not the operator's raw value.
+    // FLIP (round 3): `masked` was `false` here and is now `true`, because a render that
+    // dropped part of what the operator wrote is not the operator's raw value.
+    // FLIP (round 5): the render is now the ORIGIN — `/v1` goes with the rest. `baseURL` is
+    // a registered address name, and a reduction that keeps a path keeps somewhere for a
+    // credential to ride.
     expect(byKey['registry.llms.0.baseURL']).toEqual({
       key: 'registry.llms.0.baseURL',
-      value: 'https://llm.acme.test/v1',
+      value: 'https://llm.acme.test',
       source: 'config-file',
       masked: true,
     })
@@ -735,9 +796,12 @@ describe('agent-qa fn (generic function invoker)', () => {
 
     const config = JSON.parse(result.stdout) as MaskedResolvedConfig
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    // FLIP (round 5): both expectations lose their path. The property asserted below — no
+    // no-key URL component survives — is unchanged and is now stronger, because the path is
+    // a component too.
     for (const [key, expected] of [
-      ['registry.llms.0.baseURL', 'https://llm.acme.test/v1'],
-      ['registry.targets.web.url', 'https://x.test/checkout'],
+      ['registry.llms.0.baseURL', 'https://llm.acme.test'],
+      ['registry.targets.web.url', 'https://x.test'],
     ] as const) {
       expect(byKey[key], key).toEqual({
         key,
@@ -817,11 +881,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       source: 'config-file',
       masked: false,
     })
-    // The round-3 absolute axis is unchanged by the drop rule: a value the parser DOES
-    // vouch for is still reduced rather than dropped.
+    // The round-3 absolute axis is unchanged by the drop rule: a value that DOES yield an
+    // origin is reduced rather than dropped (FLIP round 5 — to the origin, not to the path).
     expect(byKey['registry.targets.web.url']).toEqual({
       key: 'registry.targets.web.url',
-      value: 'https://x.test/checkout',
+      value: 'https://x.test',
       source: 'config-file',
       masked: true,
     })
@@ -830,6 +894,79 @@ describe('agent-qa fn (generic function invoker)', () => {
     // configuration triage must print it (plan-10 SHOW-ME).
     expect(byKey['plugins.auth.0.package']?.value).toBe(FIXTURE_AUTH_PLUGIN_PACKAGE)
     expect(byKey['plugins.providers.0.package']?.value).toBe(FIXTURE_PROVIDER_PLUGIN_PACKAGE)
+  })
+
+  it('closes BOTH round-5 directions from ONE stdout (CR-02 + CR-03)', async () => {
+    // The single-read leg the verifier's own probe reproduces. Round 5's two failures are
+    // opposite errors of the same mechanism — a rule that inspects values over-masks the
+    // ordinary ones and under-masks the ones whose secret rides in a component it keeps — so
+    // they are asserted TOGETHER, against one production invocation, with positive controls
+    // in the same bytes. A fix that trades one direction for the other reddens here.
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+
+    // DIRECTION A — no under-masking. Every sentinel rides in a component some previous
+    // round's rule KEPT.
+    for (const planted of [
+      FIXTURE_PATH_BORNE_TARGET_SECRET,
+      FIXTURE_PROTOREL_PATH_SECRET,
+      FIXTURE_KEY_IN_PATH_SECRET,
+      FIXTURE_URL_PASSWORD,
+      FIXTURE_OPAQUE_SCHEME_SECRET,
+      FIXTURE_URL_QUERY_SECRET,
+    ]) {
+      expect(result.stdout, planted).not.toContain(planted)
+    }
+
+    // DIRECTION B — no over-masking. Each value is the ordinary content of its own field.
+    for (const visible of [FIXTURE_GLOB_WILDCARD, FIXTURE_IGNORE_GLOB, FIXTURE_CSS_SELECTOR]) {
+      expect(result.stdout, visible).toContain(visible)
+    }
+
+    // POSITIVE CONTROLS, from the SAME stdout: a visible platform leaf, a visible model leaf,
+    // and a clean URL's host. The six absences above are therefore facts about the render.
+    expect(result.stdout).toContain('browserstack')
+    expect(result.stdout).toContain('claude-fixture')
+    expect(result.stdout).toContain('clean.acme.test')
+
+    const config = JSON.parse(result.stdout) as MaskedResolvedConfig
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+
+    // Each carrier shows its ORIGIN or the placeholder, and says so.
+    for (const [key, expected] of [
+      ['registry.targets.hook.url', 'https://hooks.acme.test'],
+      ['registry.targets.relhook.url', CONFIG_MASK_PLACEHOLDER],
+      ['registry.llms.3.baseURL', 'https://ops.acme.test'],
+      ['registry.llms.0.baseURL', 'https://llm.acme.test'],
+    ] as const) {
+      expect(byKey[key], key).toEqual({
+        key,
+        value: expected,
+        source: 'config-file',
+        masked: true,
+      })
+    }
+
+    // The ordinary values come back BYTE-IDENTICAL and unflagged, not merely present.
+    for (const [key, expected] of [
+      ['workspace.testMatch.0', FIXTURE_GLOB_WILDCARD],
+      ['workspace.testPathIgnore.0', FIXTURE_IGNORE_GLOB],
+      ['services.accessibility.exclude.0', FIXTURE_CSS_SELECTOR],
+      // …and a registered field whose value already IS its origin: reduction is not
+      // normalisation, so nothing an operator wrote is silently rewritten.
+      ['registry.targets.clean.url', FIXTURE_CLEAN_TARGET_URL],
+    ] as const) {
+      expect(byKey[key], key).toEqual({
+        key,
+        value: expected,
+        source: 'config-file',
+        masked: false,
+      })
+    }
   })
 
   it('masks a free-form record the masker was never told about (BL-02)', async () => {

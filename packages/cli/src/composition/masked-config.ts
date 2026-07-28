@@ -1,4 +1,5 @@
-// The `config.get` masker (Phase 384, Plan 03 — T-384-07; Plan 08 — CR-01; Plan 10 — BL-02).
+// The `config.get` masker (Phase 384, Plan 03 — T-384-07; Plan 08 — CR-01; Plan 10 — BL-02;
+// Plan 13 — CR-02/CR-03).
 //
 // Masking happens HERE, while each entry is constructed, and the secret is dropped rather
 // than carried and redacted later: a `MaskedResolvedConfig` that exists cannot leak a secret
@@ -25,40 +26,50 @@
 // visible, while `services.auth.token` does not. The single named carve-out is applied
 // before it. The census can only ADD masking; it can never make an opaque path visible.
 //
-// A value that survives both is then RENDERED, and the render is itself a rule — one with
-// a PRECONDITION, stated here rather than assumed away. Userinfo, query string and fragment
-// are the parts of a URL that belong to no key, so nothing that reads key names reaches
-// them; every decision below is taken from the VALUE's own structure instead, which is why
-// none of it depends on recognising the next parameter name. The rule has two branches, and
-// which one runs is decided by whether the URL parser will resolve the value ABSOLUTELY:
+// A value that survives both is then RENDERED, and the render reads exactly one thing: the
+// leaf's SCHEMA-DECLARED NAME. A leaf whose name is registered below as a URL address is
+// reduced to `scheme://host[:port]`. Every other leaf is returned byte-for-byte, uninspected.
 //
-//   - RESOLVES. The value is re-rendered as `scheme://host[:port]/path` when it carries any
-//     of the three parts, and the three are dropped regardless of their names. A value
-//     carrying none of them is returned unchanged, so nothing is normalised behind an
-//     operator's back. One case inside this branch is not what it looks like: a scheme the
-//     parser treats as OPAQUE resolves with an empty host and no userinfo slot, so a
-//     credential written before the first `@` lands in the path where the three-part check
-//     cannot see it. An empty host together with an `@` in the raw value therefore DROPS.
+// That the render reads the NAME and never the value's own characters is the whole design,
+// and it is the correction of a defect this module carried through three rewrites. "Does
+// this string carry a secret" is not decidable from the string, and every attempt to decide
+// it anyway lost on BOTH sides at once: the rule second-guessed values the oracle and the
+// census had already cleared — hiding a glob wildcard and a CSS selector from the one
+// capability whose purpose is configuration triage — while a credential written into a
+// component the reduction KEPT rode out under a rule that ran and reported success. What
+// makes a field credential-bearing is its IDENTITY, which is the same evidence class the
+// census above already uses and trusts; and because a credential can ride in ANY component
+// of a URL, the reduction keeps only the origin and discards path, userinfo, query and
+// fragment together, as one act rather than as a list of parts to keep enumerating.
 //
-//   - DOES NOT RESOLVE. A protocol-relative, host-relative or path-relative value has no
-//     absolute rendering to reduce it to, and it can still carry all three parts. It is
-//     re-probed against a placeholder base; if the probe finds userinfo, a query string or
-//     a fragment, the value is DROPPED to the mask placeholder rather than returned
-//     unchanged. Only if even the based probe throws does a scan for the three characters
-//     that introduce those parts decide it. This is the module's own doctrine applied to
-//     the parser: a value it cannot vouch for is not published.
+// Both failure directions then die structurally instead of by patch. An ordinary
+// configuration string is never looked at, so no character an operator writes can hide it.
+// A registered field keeps nothing but its origin, so no component survives for a secret to
+// ride in, and there is no next component to discover. This file names no example URL
+// parameter and no example credential value, so a test corpus can be measured against these
+// bytes and shown to come from outside them.
 //
 // An entry whose render altered the value is flagged `masked: true`, because the operator's
-// raw value is not what the caller is reading.
+// raw value is not what the caller is reading. The disclosed cost, stated here rather than
+// discovered later: a registered field loses its path even when the path is innocuous, so a
+// base address renders as its bare origin and is flagged. The host — the part an operator
+// actually triages with — is kept, and a registered value that already IS its origin comes
+// back byte-identical and unflagged, so the reduction is never a silent normalisation.
 //
-// Over-masking is the accepted cost, and the schema rule makes it concrete:
-// `registry.providers.<name>.baseURL` is masked because it sits inside a free-form record,
-// while the sibling `registry.llms.<n>.baseURL` is schema-constrained and stays visible
-// under the render rule above. An over-masked entry is visibly flagged `masked: true`; an
-// under-masked one is a silent disclosure. What no part of this file reaches is named where
-// it lives rather than restated here: see the census note below for the one residual class
-// — a credential subtree the schema fully constrains whose leaf names are innocuous — with
-// a reproducible example.
+// A registered NAME LIST can go stale, and that objection is answered by the build rather
+// than by care: the companion test walks the shipped config schema, collects the string-leaf
+// names it declares, and FAILS when a URL-shaped one is missing from the set below. A URL
+// field added to the schema tomorrow reddens a test until it is registered, instead of
+// quietly opening a disclosure — the same move this phase already made for the agent barrel's
+// export set and for the gate's call-site count.
+//
+// Over-masking remains the accepted direction wherever the SCHEMA decides, and the rule
+// makes it concrete: `registry.providers.<name>.baseURL` is masked ENTIRELY because it sits
+// inside a free-form record, while the sibling `registry.llms.<n>.baseURL` is
+// schema-constrained and is reduced to its origin rather than dropped. An over-masked entry
+// is visibly flagged `masked: true`; an under-masked one is a silent disclosure. The
+// census's own blind spot is named where it lives rather than restated here: see the census
+// note below, with a reproducible example.
 //
 // This module imports nothing but the shared contract vocabulary package and a sibling
 // type, so it is legal under the FUNC-02 surface firewall with no ledger entry —
@@ -200,97 +211,99 @@ interface RenderedValue {
 }
 
 /**
- * Does this value carry a part that belongs to no configuration key?
+ * The leaf NAMES whose values are URL addresses, and are therefore reduced to their origin.
  *
- * Asked of values the parser will not resolve absolutely, where there is no host to read
- * and no scheme to trust. Re-probing against a placeholder base gives the platform parser
- * back the one thing it was missing — an origin — and lets it answer from the value's own
- * structure: a protocol-relative value keeps its userinfo, a relative one keeps its query
- * and fragment, and an ordinary string acquires none of them by being resolved. The base is
- * a reserved-TLD name, so nothing here can resolve to a host that exists.
+ * Stored in the same NORMALIZED form the census above uses, so a name is matched however the
+ * schema author cased or punctuated it. Membership is arbitrated by what a name MEANS rather
+ * than by where a credential has been seen — every one of these declares "this value is an
+ * address", and an address can carry a credential in any of its components:
+ *   - `url`, `baseurl` — the two the shipped config schema declares today, on the web
+ *     target and on a model's compatible-provider base.
+ *   - `appiumurl`, `webdriveragenturl` — declared on the platform and remote-device schemas,
+ *     plain strings whose canonical device-farm value carries an access key in its userinfo.
+ *     Registered because a name census is cheap and a disclosure is not.
+ *   - `endpoint`, `uri`, `webhook` — registered PRE-EMPTIVELY, before the schema declares
+ *     any of them. A name list costs over-masking when it is early and a disclosure when it
+ *     is late, so it is deliberately early.
  *
- * The character scan is the last resort, and only for a value even that probe rejects. It
- * over-masks by construction, which is the direction this module accepts.
- *
- * A scoped package name is the collision worth stating: `@scope/name` carries an `@` and is
- * not a URL, but resolved against a base its `@` lands in the PATH and all four parts come
- * back empty, so it stays visible — a package that loads in-process with full Node access is
- * exactly what a configuration triage read must show.
+ * The guard against this set going stale is a test, not a promise: the companion suite walks
+ * the shipped schema and fails when a URL-shaped leaf name is missing from here.
  */
-function carriesSecretBearingParts(value: string): boolean {
-  try {
-    const probe = new URL(value, 'https://placeholder.invalid')
-    return probe.username !== ''
-      || probe.password !== ''
-      || probe.search !== ''
-      || probe.hash !== ''
-  } catch {
-    return value.includes('@') || value.includes('?') || value.includes('#')
-  }
+export const CREDENTIAL_BEARING_URL_LEAVES: ReadonlySet<string> = new Set([
+  'appiumurl',
+  'baseurl',
+  'endpoint',
+  'uri',
+  'url',
+  'webdriveragenturl',
+  'webhook',
+])
+
+/**
+ * Is this path's own leaf one of the registered URL names?
+ *
+ * The traversal is the census's, deliberately: split, drop purely numeric segments, normalize
+ * and read the value-bearing leaf. Reusing it means an array index or an operator-chosen
+ * record key cannot change the answer — `registry.targets.<name>.url` and
+ * `registry.llms.<n>.baseURL` are decided by `url` and `baseURL`, exactly as their schema
+ * declares them.
+ */
+export function isCredentialBearingUrlField(key: string): boolean {
+  const leaf = key
+    .split('.')
+    .filter((segment) => !/^\d+$/u.test(segment))
+    .map(normalizeSegment)
+    .at(-1)
+  if (leaf === undefined) return false
+  return CREDENTIAL_BEARING_URL_LEAVES.has(leaf)
 }
 
 /**
- * Reduce a value the parser vouches for to `scheme://host[:port]/path`; drop one it does not.
+ * Reduce a registered address to `scheme://host[:port]`, or drop it.
  *
- * Userinfo, query string and fragment are dropped from an absolute URL regardless of the
- * names they were given. All three are parts of a URL that belong to no configuration key,
- * so no rule that reads key names can reach them — which is how a password in the userinfo,
- * a credential in a query parameter and a token in a fragment each rode out in turn through
- * schema-constrained, legitimately-visible fields.
+ * The only value parsing this module performs, and it runs ONLY for a field already known
+ * from its name to hold an address — so nothing here is deciding whether a value is secret.
+ * It is deciding which part of a known address is safe to show, and the answer is the origin:
+ * every other component is somewhere a credential has already been found riding.
  *
- * Every decision here reads the VALUE's own structure and never a parameter's name. A
- * vocabulary of credential-ish parameter names is the same object that failed three times at
- * the path level: whatever it lists, an operator's next parameter has a different name. This
- * rule has nothing to be stale about, and it is deliberately written with no example
- * parameter name in it, so a test corpus can be measured against these bytes and shown to
- * come from outside them.
+ * A value with no absolute rendering to reduce TO is dropped to the placeholder rather than
+ * published. That covers the parser's rejections (protocol-relative, host-relative and
+ * path-relative forms) and the case that parses but yields no host (a scheme the parser
+ * treats as opaque, whose whole remainder lands in the path). Publishing what the parser
+ * could not read is the failure this module exists to prevent.
  *
- * The PRECONDITION is the part that was missing, and stating it is the point: the reduce
- * branch only ever ran for values `new URL(value)` accepts with no base. Three ordinary
- * forms it rejects — protocol-relative, host-relative, path-relative — reached the catch and
- * were published unchanged, and a fourth (an opaque scheme, whose credential rides in the
- * path with an empty host) satisfied the all-empty early return. Both now DROP to the mask
- * placeholder: a value with no absolute rendering to reduce to is not returned unaltered,
- * because publishing what the parser could not read is the failure this module exists to
- * prevent. A value carrying no such part is still returned byte-for-byte as written.
+ * `url.host` already carries the port, so it is never appended separately. A value that
+ * already IS its origin is returned byte-identical and unaltered: the reduction removes, it
+ * never normalises.
  */
-function renderUrlWithoutSecrets(value: string): RenderedValue {
+function reduceToOrigin(value: string): RenderedValue {
   let url: URL
   try {
     url = new URL(value)
   } catch {
-    return carriesSecretBearingParts(value)
-      ? { value: CONFIG_MASK_PLACEHOLDER, altered: true }
-      : { value, altered: false }
-  }
-  // An opaque-path URL has no userinfo slot and no host, so anything written before the
-  // first `@` sits in the path where the four-field check below cannot see it.
-  if (url.host === '' && value.includes('@')) {
     return { value: CONFIG_MASK_PLACEHOLDER, altered: true }
   }
-  if (url.username === '' && url.password === '' && url.search === '' && url.hash === '') {
-    return { value, altered: false }
-  }
-  url.username = ''
-  url.password = ''
-  url.search = ''
-  url.hash = ''
-  return { value: url.toString(), altered: true }
+  if (url.host === '') return { value: CONFIG_MASK_PLACEHOLDER, altered: true }
+  const origin = `${url.protocol}//${url.host}`
+  return origin === value ? { value, altered: false } : { value: origin, altered: true }
 }
 
 /**
- * Render one leaf, then apply the URL rule to the RENDERED string.
+ * Render one leaf to a string, then apply the NAME rule to it.
  *
- * The order is the point. An earlier version tested `typeof value === 'string'` before
- * stripping, so a leaf that renders as a URL without being a string skipped the rule
- * entirely. The rule now reads what a caller will actually see, so the input's runtime type
- * decides nothing.
+ * The order is the point, and it is a closed finding rather than an incidental detail. An
+ * earlier version tested `typeof value === 'string'` before applying the rule, so a leaf that
+ * renders as a URL without being a string skipped it entirely. The rule reads what a caller
+ * will actually see, so the input's runtime type decides nothing — and the KEY decides
+ * everything, so the rendered characters decide nothing either.
  */
-function renderValue(value: unknown): RenderedValue {
+function renderValue(key: string, value: unknown): RenderedValue {
   const rendered = typeof value === 'string'
     ? value
     : JSON.stringify(value) ?? String(value)
-  return renderUrlWithoutSecrets(rendered)
+  return isCredentialBearingUrlField(key)
+    ? reduceToOrigin(rendered)
+    : { value: rendered, altered: false }
 }
 
 /**
@@ -359,8 +372,9 @@ export function buildMaskedResolvedConfig(
     .map(([key, value]) => {
       const pathMasked = isMaskedConfigPath(key, input.visibility)
       // The path decision comes first and is unconditional; only a value that survives it is
-      // rendered at all, and the render can still alter it.
-      const rendered = pathMasked ? undefined : renderValue(value)
+      // rendered at all, and the render — which reads the KEY, never the value's characters —
+      // can still reduce it.
+      const rendered = pathMasked ? undefined : renderValue(key, value)
       let source: ConfigValueSource = 'default'
       for (const layer of layers) {
         if (layer.keys.has(key)) source = layer.source

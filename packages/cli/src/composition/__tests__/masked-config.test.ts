@@ -15,13 +15,19 @@
 // from the arch specifier scan, so this proves the walk against the shipped tree without
 // relaxing the firewall the production masker obeys.
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
-import { CONFIG_MASK_PLACEHOLDER, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CONFIG_MASK_PLACEHOLDER,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  remoteDeviceSchema,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { buildConfigVisibilityOracle, CONSTRAINED_LEAF_TYPES } from '../config-visibility.js'
 import {
   buildMaskedResolvedConfig,
+  CREDENTIAL_BEARING_URL_LEAVES,
+  isCredentialBearingUrlField,
   isMaskedConfigPath,
   isSecretConfigKey,
 } from '../masked-config.js'
@@ -78,6 +84,46 @@ const OPAQUE_SCHEME_URL = `ops:${OPAQUE_SCHEME_SECRET}@llm.acme.test/v1`
 
 /** A scoped package name: an '@'-carrying value that is NOT a credential carrier. */
 const SCOPED_PACKAGE_NAME = '@acme/auth-plugin-SHOW-ME-9111'
+
+/**
+ * The OVER-MASK corpus (round-5 CR-02), drawn from FIELD SEMANTICS rather than value shape.
+ *
+ * Round 5's second failure direction: a rule that inspects every value cannot tell "this is a
+ * URL carrying a query" from "this string contains a `?`", so a required glob field, an
+ * ignore glob and a CSS selector each rendered `[masked]` to the one capability whose purpose
+ * is configuration triage. Each value below is chosen because its FIELD means it: `?` is the
+ * standard single-character glob wildcard on `workspace.testMatch` (a required `.min(1)`
+ * array), `#id` is the commonest CSS selector form on `services.accessibility.exclude`, and
+ * `@scope/name` is what a plugin package is called.
+ */
+const GLOB_WILDCARD_VALUE = 'tests/**/case-?.yaml'
+const IGNORE_GLOB_VALUE = 'tests/legacy#old/**'
+const CSS_SELECTOR_VALUE = '#cookie-banner'
+const OVER_MASK_PACKAGE_VALUE = '@acme/plugin-foo-SHOW-ME-9210'
+
+/**
+ * The CREDENTIAL corpus (round-5 CR-03), spread across all FOUR registered URL field names
+ * and all FIVE value forms, with a sentinel in a DIFFERENT URL component per case.
+ *
+ * The round-5 law this obeys: plant a sentinel in every component a reduction KEEPS. Rounds
+ * 3 and 4 cleared userinfo, query and fragment and kept the PATH, so a credential written
+ * into a path survived a rule that ran and reported success. Reduction to `scheme://host` has
+ * no kept component left, and these eight cases prove it by carrying a distinct sentinel in
+ * the path, the userinfo, the query and the fragment in turn.
+ *
+ * The carrier NAMES — `cartouche`, `plinth`, `obelisk`, `quiver`, `trellis`, `bramble`,
+ * `thicket`, `cairn` — each read 0 in `masked-config.ts`'s bytes, measured with a positive
+ * control (`isMaskedConfigPath` >= 1) in the same read, so no name the masker has ever seen
+ * decides any of them.
+ */
+const PATH_BORNE_TARGET_SECRET = 'sk-live-CARTOUCHE-DO-NOT-LEAK-9201'
+const QUERY_BORNE_BASEURL_SECRET = 'sk-live-PLINTH-DO-NOT-LEAK-9202'
+const USERINFO_APPIUM_SECRET = 'sk-live-OBELISK-DO-NOT-LEAK-9203'
+const FRAGMENT_WDA_SECRET = 'sk-live-QUIVER-DO-NOT-LEAK-9204'
+const PROTOREL_PATH_SECRET = 'sk-live-TRELLIS-DO-NOT-LEAK-9205'
+const HOST_RELATIVE_QUERY_SECRET = 'sk-live-BRAMBLE-DO-NOT-LEAK-9206'
+const PATH_RELATIVE_QUERY_SECRET = 'sk-live-THICKET-DO-NOT-LEAK-9207'
+const OPAQUE_PATH_SECRET = 'sk-live-CAIRN-DO-NOT-LEAK-9208'
 
 const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
 
@@ -579,10 +625,9 @@ describe('isMaskedConfigPath (the whole disclosure decision)', () => {
       'registry.llms.0.model',
       // SCHEMA-CONSTRAINED fields, not operator-chosen ones, so PATH-level visibility is
       // correct for both — the schema means them to be readable. What guards them is the
-      // render: a visible value that parses as a URL is rendered as `scheme://host[:port]/
-      // path` only, with userinfo, query and fragment dropped unconditionally and the entry
-      // flagged `masked: true`. That rule reads the value's own structure, so it does not
-      // depend on anyone recognising what a query parameter is called.
+      // render: both leaf NAMES are registered as addresses, so each value is reduced to
+      // `scheme://host[:port]` and the entry is flagged `masked: true`. Nothing about the
+      // value is read, so no parameter name and no character sequence has to be recognised.
       'registry.llms.0.baseURL',
       'services.dashboard.port',
       'use.browser.headless',
@@ -660,7 +705,7 @@ describe('buildMaskedResolvedConfig', () => {
       .toMatchObject({ value: 'android', masked: false })
   })
 
-  it('strips URL userinfo from values that stay visible', () => {
+  it('reduces a registered URL field carrying userinfo to its origin', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       visibility,
@@ -676,10 +721,13 @@ describe('buildMaskedResolvedConfig', () => {
     })
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry.value]))
-    expect(byKey['registry.llms.0.baseURL']).toBe('https://llm.acme.test/v1')
+    // FLIP (round 5): the rendered value drops the PATH too, because `baseURL` is a
+    // registered address name and a reduction that keeps a path keeps somewhere for a
+    // credential to ride. The userinfo property this case was written for is unchanged.
+    expect(byKey['registry.llms.0.baseURL']).toBe('https://llm.acme.test')
     // FLIP (round 3): the entry is now `masked: true`. The value the operator wrote is NOT
     // what the caller reads — the render dropped part of it — and round-2's WR-01 was
-    // exactly that alteration going out reported as unaltered. The value is unchanged.
+    // exactly that alteration going out reported as unaltered.
     expect(config.entries.find((entry) => entry.key === 'registry.llms.0.baseURL')?.masked)
       .toBe(true)
     for (const entry of config.entries) {
@@ -689,10 +737,10 @@ describe('buildMaskedResolvedConfig', () => {
     expect(JSON.stringify(config)).not.toContain(USERINFO_PASSWORD)
   })
 
-  it('reduces a visible URL carrying a query string to scheme://host/path (CR-01)', () => {
-    // The round-3 leak, closed by the shape of the VALUE rather than the name of a
-    // parameter. `ticket` and `sso` read 0 in masked-config.ts, so nothing here can pass
-    // because someone recognised a word.
+  it('reduces a registered URL field carrying a query string to its origin (CR-01)', () => {
+    // The round-3 leak, closed at round 5 by the FIELD's name rather than by the value's
+    // shape. `ticket` and `sso` read 0 in masked-config.ts, so nothing here can pass because
+    // someone recognised a word — and now nothing reads the parameter names at all.
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       visibility,
@@ -710,12 +758,15 @@ describe('buildMaskedResolvedConfig', () => {
     })
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    // FLIP (round 5): the path is gone from both renders. `/v1` and `/checkout` were
+    // innocuous here, and dropping them anyway is the disclosed cost of a rule that never has
+    // to decide whether a particular path segment is a credential.
     expect(byKey['registry.llms.0.baseURL']).toMatchObject({
-      value: 'https://llm.acme.test/v1',
+      value: 'https://llm.acme.test',
       masked: true,
     })
     expect(byKey['registry.targets.web.url']).toMatchObject({
-      value: 'https://x.test/checkout',
+      value: 'https://x.test',
       masked: true,
     })
     const serialized = JSON.stringify(config)
@@ -727,7 +778,7 @@ describe('buildMaskedResolvedConfig', () => {
     expect(serialized).toContain('agent-qa-knowledge')
   })
 
-  it('reduces a visible URL carrying a fragment to scheme://host/path (CR-01)', () => {
+  it('reduces a registered URL field carrying a fragment to its origin (CR-01)', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       visibility,
@@ -741,8 +792,9 @@ describe('buildMaskedResolvedConfig', () => {
     })
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    // FLIP (round 5): origin only — see the query case above for why the path goes too.
     expect(byKey['registry.llms.0.baseURL']).toMatchObject({
-      value: 'https://llm.acme.test/v1',
+      value: 'https://llm.acme.test',
       masked: true,
     })
     const serialized = JSON.stringify(config)
@@ -750,13 +802,16 @@ describe('buildMaskedResolvedConfig', () => {
     expect(serialized).toContain('agent-qa-knowledge')
   })
 
-  it('DROPS a visible carrier the parser cannot resolve absolutely (CR-01, round 4)', () => {
-    // The round-4 leak, and the axis it moved to: not WHICH PARTS of a URL are dropped, but
-    // WHICH VALUES the rule will look at. Each of these four forms is one the bare
-    // `new URL(value)` precondition rejects — three throw, the opaque one parses with an
-    // empty host and carries its credential in `pathname` — so round 3's reduce branch never
-    // saw them and they rode out byte-identical with `masked: false`. A value the parser
-    // cannot vouch for has no absolute rendering to reduce to, so it is DROPPED.
+  it('DROPS a registered carrier that has no absolute rendering (CR-01, round 4)', () => {
+    // The round-4 leak. Each of these four forms is one a bare `new URL(value)` cannot turn
+    // into an origin — three throw, the opaque one parses with an empty host and carries its
+    // credential in `pathname` — so there is nothing to reduce them TO, and a value this
+    // module cannot read is not published.
+    //
+    // KEPT (round 5) with a new reason. Under the deleted rule these dropped because a
+    // placeholder-base probe found secret-bearing parts in them; under the shipped rule they
+    // drop because `baseURL` and `url` are registered address names and `reduceToOrigin`
+    // yields no origin. The assertions are unchanged; only what makes them true is.
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       visibility,
@@ -818,12 +873,11 @@ describe('buildMaskedResolvedConfig', () => {
   })
 
   it('leaves an @-carrying value that is not a credential carrier byte-identical', () => {
-    // The collision the drop rule has to survive: a scoped package name carries an '@' and
-    // is not an absolute URL, so a marker scan alone would hide it. Probed against a
-    // placeholder base the '@' lands in the PATH and all four secret-bearing fields are
-    // empty, so the value stays visible — which is what the plan-10 SHOW-ME assertions
-    // (a package that runs in-process with full Node access belongs in a config triage
-    // read) depend on.
+    // The collision every value-inspecting rule had to survive by luck: a scoped package
+    // name carries an '@' and is not a URL. It stays visible now for a reason that cannot
+    // go wrong — `package` is not a registered address name, so nothing about the value is
+    // read at all. This is what the plan-10 SHOW-ME assertions depend on: a package that
+    // runs in-process with full Node access belongs in a configuration triage read.
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       visibility,
@@ -842,27 +896,42 @@ describe('buildMaskedResolvedConfig', () => {
     })
   })
 
-  it('applies the URL rule to the RENDERED string of a leaf, not only to string inputs', () => {
-    // The round-2 WR-07 residue: the strip used to be gated on `typeof value === 'string'`,
-    // so a leaf that RENDERS as a URL without being one skipped it entirely. The rule reads
-    // the rendered string, so the input's runtime type decides nothing — and the field is
-    // `workspace.hooksFile`, which proves the rule is not scoped to URL-shaped field names.
+  it('applies the rule to the RENDERED string of a leaf, not only to string inputs', () => {
+    // The round-2 WR-07 residue, and a CLOSED finding this plan preserves rather than
+    // reopens: the rule used to be gated on `typeof value === 'string'`, so a leaf that
+    // RENDERS as a URL without being one skipped it entirely. Every leaf is stringified
+    // first, so the input's runtime type still decides nothing.
+    //
+    // REWRITTEN (round 5): the carrier moved from `workspace.hooksFile` to
+    // `registry.targets.<name>.url`. The old case asserted the opposite of what this plan
+    // ships — it proved the rule was NOT scoped to URL-shaped field names, which is exactly
+    // the value-inspection that over-masked ordinary configuration. What the ordering
+    // property needs is a non-string leaf on a REGISTERED field, which is this. The
+    // `hooksFile` half is kept as the control: it is stringified too, and then returned as
+    // written because its name is not registered.
     const urlish = Object.defineProperties({}, {
       toJSON: { value: () => undefined },
-      toString: { value: () => `https://leaf.acme.test/p?ticket=${RENDERED_LEAF_SECRET}` },
+      toString: { value: () => `https://leaf.acme.test/p/${RENDERED_LEAF_SECRET}` },
     })
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       visibility,
-      resolved: { workspace: { hooksFile: urlish }, knowledge: { dir: 'agent-qa-knowledge' } },
+      resolved: {
+        registry: { targets: { web: { platform: 'web', url: urlish } } },
+        workspace: { hooksFile: 4242 },
+        knowledge: { dir: 'agent-qa-knowledge' },
+      },
       layers: [],
     })
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
-    expect(byKey['workspace.hooksFile']).toMatchObject({
-      value: 'https://leaf.acme.test/p',
+    expect(byKey['registry.targets.web.url']).toMatchObject({
+      value: 'https://leaf.acme.test',
       masked: true,
     })
+    // The control: a non-string leaf on a non-registered field is rendered to a string and
+    // then left alone.
+    expect(byKey['workspace.hooksFile']).toMatchObject({ value: '4242', masked: false })
     expect(JSON.stringify(config)).not.toContain(RENDERED_LEAF_SECRET)
     expect(JSON.stringify(config)).toContain('agent-qa-knowledge')
   })
@@ -880,16 +949,15 @@ describe('buildMaskedResolvedConfig', () => {
     })
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry.value]))
-    // No trailing-slash normalisation: a URL carrying no userinfo, query or fragment is not
-    // re-rendered at all, so nothing an operator wrote is silently normalised.
+    // No trailing-slash normalisation: a registered value that already IS its origin is
+    // returned as written, so nothing an operator wrote is silently normalised.
     //
-    // SHARPENED (round 4): what these three values have in common is not "the parser did not
-    // recognise them" — `hooks.yaml` and `agent-qa-knowledge` are not absolute URLs at all —
-    // but that they are SECRET-PART-FREE: probed against a placeholder base, each resolves
-    // with empty username, password, search and hash. That is why they stay byte-identical,
-    // and it is what distinguishes them from a value whose secret-bearing parts the bare
-    // parser could not see (`/checkout?lanyard=…`), which now DROPS. Before round 4 this
-    // case pinned both classes as "unchanged", which is how the second one rode out.
+    // RESTATED (round 5): what these three have in common is no longer a property of their
+    // characters. `baseURL` is registered and reduces to an origin it already equals;
+    // `knowledge.dir` and `workspace.hooksFile` are not registered and are never looked at.
+    // The round-4 phrasing — "each resolves with empty username, password, search and hash"
+    // — described the placeholder-base probe this plan deleted, and that probe is precisely
+    // what made a glob wildcard and a CSS selector render as `[masked]`.
     expect(byKey['registry.llms.0.baseURL']).toBe('https://llm.acme.test')
     expect(byKey['knowledge.dir']).toBe('agent-qa-knowledge')
     expect(byKey['workspace.hooksFile']).toBe('hooks.yaml')
@@ -981,14 +1049,15 @@ describe('buildMaskedResolvedConfig', () => {
   })
 })
 
-describe('the drop corpus comes from OUTSIDE the render rule\'s precondition (round-4 M-05)', () => {
-  // Round 4's finding was not that the corpus was weak — every planted parameter name was
-  // measured at 0 in the implementation's bytes — but that it was drawn from INSIDE the
-  // rule's precondition: every planted value was an absolute `https://` URL, which is
-  // exactly what `new URL(value)` with no base accepts. This block proves the four values
-  // above are on the other side of that precondition, and it proves it against Node's own
-  // `URL` rather than against any branch of `masked-config.ts`, so it stays true no matter
-  // how the fix is written.
+describe('the four drop forms have no origin to reduce to, per Node\'s own parser', () => {
+  // RETAINED and RESTATED (round 5). Round 4 wrote this block to prove its corpus came from
+  // outside the render rule's PRECONDITION — a precondition the shipped rule no longer has,
+  // because the reduction runs for every registered field regardless of what the value looks
+  // like. The characterisation itself survives the redesign intact and is worth more than its
+  // original framing: it establishes, against Node's `URL` rather than against any branch of
+  // `masked-config.ts`, WHY these four forms reach the placeholder instead of an origin.
+  // Three cannot be parsed at all and the fourth parses with no host, so there is no
+  // `scheme://host` to render. That stays true however the fix is written.
 
   it('makes a bare new URL() throw for the three relative forms', () => {
     for (const value of [PROTOCOL_RELATIVE_URL, HOST_RELATIVE_URL, PATH_RELATIVE_URL]) {
@@ -997,9 +1066,9 @@ describe('the drop corpus comes from OUTSIDE the render rule\'s precondition (ro
   })
 
   it('parses the opaque-scheme form with an empty host and the credential in the path', () => {
-    // The form that defeats the four-field early return: it PARSES, so the catch path never
-    // runs, and username/password/search/hash are all empty because an opaque-path URL has
-    // no userinfo slot — the credential rides in `pathname`.
+    // The form that defeated every four-field check: it PARSES, and
+    // username/password/search/hash are all empty because an opaque-path URL has no userinfo
+    // slot — the credential rides in `pathname`. An empty host is why it drops today.
     const url = new URL(OPAQUE_SCHEME_URL)
     expect(url.host).toBe('')
     expect([url.username, url.password, url.search, url.hash]).toEqual(['', '', '', ''])
@@ -1011,5 +1080,436 @@ describe('the drop corpus comes from OUTSIDE the render rule\'s precondition (ro
     // the three throws above are facts about the planted forms rather than about a parser
     // that rejects everything.
     expect(() => new URL('https://llm.acme.test/v1?ticket=x')).not.toThrow()
+  })
+})
+
+describe('a non-registered leaf is never inspected, so it cannot be over-masked (CR-02)', () => {
+  // Round 5's second direction, and the half a security rule is never graded on. Each value
+  // below is the ordinary content of the field it sits on, and each contains a character the
+  // previous rule read as a URL part. The claim is not "these particular strings survive" —
+  // it is that NOTHING about a non-registered value is read at all, so there is no character
+  // a future operator can write that changes the answer.
+
+  it('returns glob, selector and package values byte-identical with masked: false', () => {
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: {
+        workspace: {
+          testMatch: [GLOB_WILDCARD_VALUE],
+          testPathIgnore: [IGNORE_GLOB_VALUE],
+          hooksFile: 'hooks.yaml',
+        },
+        services: { accessibility: { enabled: false, exclude: [CSS_SELECTOR_VALUE] } },
+        plugins: { auth: [{ package: OVER_MASK_PACKAGE_VALUE }] },
+        registry: { providers: { acme: { apiKey: SECRET } } },
+      },
+      layers: [],
+    })
+
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    for (const [key, value] of [
+      ['workspace.testMatch.0', GLOB_WILDCARD_VALUE],
+      ['workspace.testPathIgnore.0', IGNORE_GLOB_VALUE],
+      ['services.accessibility.exclude.0', CSS_SELECTOR_VALUE],
+      ['plugins.auth.0.package', OVER_MASK_PACKAGE_VALUE],
+      ['workspace.hooksFile', 'hooks.yaml'],
+    ] as const) {
+      expect(byKey[key], key).toEqual({ key, value, source: 'default', masked: false })
+    }
+    // The NEGATIVE control, in the same build: masking still bites. Without it, a masker that
+    // had stopped masking entirely would satisfy every assertion above.
+    expect(byKey['registry.providers.acme.apiKey']).toEqual({
+      key: 'registry.providers.acme.apiKey',
+      value: CONFIG_MASK_PLACEHOLDER,
+      source: 'default',
+      masked: true,
+    })
+  })
+
+  it('is decided by the FIELD, not the characters — the same value flips on a registered leaf', () => {
+    // The differential that makes the rule's shape observable rather than asserted. One
+    // value, two fields: on a non-registered leaf it is returned as written; on a registered
+    // one it is reduced. Nothing about the string changed between the two reads.
+    const shared = 'https://x.test/a?q=1#f'
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: {
+        workspace: { hooksFile: shared },
+        registry: { targets: { web: { platform: 'web', url: shared } } },
+      },
+      layers: [],
+    })
+
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    expect(byKey['workspace.hooksFile']).toMatchObject({ value: shared, masked: false })
+    expect(byKey['registry.targets.web.url']).toMatchObject({
+      value: 'https://x.test',
+      masked: true,
+    })
+  })
+})
+
+/**
+ * The real `remoteDeviceSchema`, grafted onto the real config schema.
+ *
+ * `appiumUrl` and `webDriverAgentUrl` are declared as plain `z.string()` in the SHIPPED
+ * schema package (`config/remote-device.ts`), and their canonical values carry a device-farm
+ * access key in the userinfo. Grafting the shipped declaration rather than hand-mirroring it
+ * means this corpus measures the same node the product ships.
+ */
+const grownVisibility = buildConfigVisibilityOracle(growRealSchema({
+  deployment: z.object({
+    remoteDevice: remoteDeviceSchema,
+    region: z.string(),
+  }).strict(),
+}))
+
+/** One credential case: a field, the component its sentinel rides in, and what must come back. */
+interface CredentialCase {
+  key: string
+  component: 'path' | 'userinfo' | 'query' | 'fragment'
+  form: 'absolute' | 'protocol-relative' | 'host-relative' | 'path-relative' | 'opaque-scheme'
+  sentinel: string
+  expected: string
+}
+
+const CREDENTIAL_CASES: readonly CredentialCase[] = [
+  {
+    key: 'registry.targets.hook.url',
+    component: 'path',
+    form: 'absolute',
+    sentinel: PATH_BORNE_TARGET_SECRET,
+    expected: 'https://hooks.acme.test',
+  },
+  {
+    key: 'registry.llms.0.baseURL',
+    component: 'query',
+    form: 'absolute',
+    sentinel: QUERY_BORNE_BASEURL_SECRET,
+    expected: 'https://llm.acme.test',
+  },
+  {
+    key: 'deployment.remoteDevice.appiumUrl',
+    component: 'userinfo',
+    form: 'absolute',
+    sentinel: USERINFO_APPIUM_SECRET,
+    expected: 'https://hub.provider.test',
+  },
+  {
+    key: 'deployment.remoteDevice.webDriverAgentUrl',
+    component: 'fragment',
+    form: 'absolute',
+    sentinel: FRAGMENT_WDA_SECRET,
+    expected: 'https://wda.provider.test',
+  },
+  {
+    key: 'registry.targets.relhook.url',
+    component: 'path',
+    form: 'protocol-relative',
+    sentinel: PROTOREL_PATH_SECRET,
+    expected: CONFIG_MASK_PLACEHOLDER,
+  },
+  {
+    key: 'registry.llms.1.baseURL',
+    component: 'query',
+    form: 'host-relative',
+    sentinel: HOST_RELATIVE_QUERY_SECRET,
+    expected: CONFIG_MASK_PLACEHOLDER,
+  },
+  {
+    key: 'registry.targets.pathrel.url',
+    component: 'query',
+    form: 'path-relative',
+    sentinel: PATH_RELATIVE_QUERY_SECRET,
+    expected: CONFIG_MASK_PLACEHOLDER,
+  },
+  {
+    key: 'registry.llms.2.baseURL',
+    component: 'path',
+    form: 'opaque-scheme',
+    sentinel: OPAQUE_PATH_SECRET,
+    expected: CONFIG_MASK_PLACEHOLDER,
+  },
+]
+
+const CREDENTIAL_CORPUS_CONFIG = {
+  registry: {
+    llms: [
+      { name: 'judge', baseURL: `https://llm.acme.test/v1?plinth=${QUERY_BORNE_BASEURL_SECRET}` },
+      { name: 'host-rel', baseURL: `llm.acme.test/v1?bramble=${HOST_RELATIVE_QUERY_SECRET}` },
+      { name: 'opaque', baseURL: `ops:${OPAQUE_PATH_SECRET}@llm.acme.test/v1` },
+    ],
+    targets: {
+      hook: {
+        platform: 'web',
+        url: `https://hooks.acme.test/services/T00/B00/${PATH_BORNE_TARGET_SECRET}`,
+      },
+      relhook: { platform: 'web', url: `//hooks.acme.test/services/${PROTOREL_PATH_SECRET}` },
+      pathrel: { platform: 'web', url: `/checkout?thicket=${PATH_RELATIVE_QUERY_SECRET}` },
+      // A URL that already IS its own origin: reduced to itself, so it comes back
+      // byte-identical and UNFLAGGED.
+      clean: { platform: 'web', url: 'https://clean.acme.test' },
+    },
+  },
+  deployment: {
+    remoteDevice: {
+      appiumUrl: `https://user:${USERINFO_APPIUM_SECRET}@hub.provider.test/wd/hub`,
+      webDriverAgentUrl: `https://wda.provider.test/session#quiver=${FRAGMENT_WDA_SECRET}`,
+    },
+    region: 'eu-west',
+  },
+  knowledge: { dir: 'agent-qa-knowledge' },
+}
+
+describe('a registered URL field is reduced to its origin, whatever the credential rides in (CR-03)', () => {
+  const config = buildMaskedResolvedConfig({
+    configPath: 'agent-qa.config.yaml',
+    visibility: grownVisibility,
+    resolved: CREDENTIAL_CORPUS_CONFIG,
+    layers: [],
+  })
+  const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+  const serialized = JSON.stringify(config)
+
+  it('covers all four registered names, all five value forms and all four components', () => {
+    // Non-vacuity, asserted before the claims that depend on it: a corpus that quietly lost
+    // a name, a form or a component would satisfy every case below by not containing it.
+    expect(new Set(CREDENTIAL_CASES.map((entry) => entry.key.split('.').at(-1)))).toEqual(
+      new Set(['url', 'baseURL', 'appiumUrl', 'webDriverAgentUrl']),
+    )
+    expect(new Set(CREDENTIAL_CASES.map((entry) => entry.form)).size).toBe(5)
+    expect(new Set(CREDENTIAL_CASES.map((entry) => entry.component)).size).toBe(4)
+    // …and every planted key really is one the oracle CLEARED, so each case exercises the
+    // render rule rather than the path decision.
+    for (const entry of CREDENTIAL_CASES) {
+      expect(grownVisibility.classify(entry.key), entry.key).toBe('constrained')
+      expect(isMaskedConfigPath(entry.key, grownVisibility), entry.key).toBe(false)
+    }
+  })
+
+  it('publishes no sentinel and renders origin-or-placeholder with masked: true', () => {
+    for (const entry of CREDENTIAL_CASES) {
+      expect(byKey[entry.key], `${entry.key} (${entry.form}, ${entry.component})`).toEqual({
+        key: entry.key,
+        value: entry.expected,
+        source: 'default',
+        masked: true,
+      })
+      expect(serialized, `${entry.sentinel} (${entry.component})`).not.toContain(entry.sentinel)
+    }
+  })
+
+  it('keeps the host an operator triages with, and the neighbours the drop cannot swallow', () => {
+    // The POSITIVE CONTROLS, from the SAME serialization: this read can see values, so the
+    // eight absences above are facts about the render and not about an empty output.
+    expect(serialized).toContain('hooks.acme.test')
+    expect(serialized).toContain('agent-qa-knowledge')
+    expect(byKey['deployment.region']).toMatchObject({ value: 'eu-west', masked: false })
+    expect(byKey['registry.llms.0.name']).toMatchObject({ value: 'judge', masked: false })
+    expect(byKey['registry.targets.hook.platform']).toMatchObject({ value: 'web', masked: false })
+  })
+
+  it('leaves a value that already IS its origin byte-identical and unflagged', () => {
+    // The disclosed cost has a floor: reduction is not normalisation. A registered value with
+    // nothing to drop is returned exactly as written, and `masked: false` says so.
+    expect(byKey['registry.targets.clean.url']).toEqual({
+      key: 'registry.targets.clean.url',
+      value: 'https://clean.acme.test',
+      source: 'default',
+      masked: false,
+    })
+  })
+})
+
+/**
+ * The staleness guard for `CREDENTIAL_BEARING_URL_LEAVES`, and the reason a NAME list is
+ * shippable at all.
+ *
+ * A registered-name list is the same object class that failed at the path level three times:
+ * whatever it lists, the schema's next field has a different name. What makes this one
+ * different is not care — it is that its staleness is a RED BUILD. The walk below reads the
+ * shipped config schema as data, collects every string-bearing leaf NAME it declares, and
+ * fails when a URL-shaped one is not registered. The corpus is therefore the SCHEMA's own
+ * surface, not this file's vocabulary, which is the same discipline the visibility walker's
+ * `Object.keys(z)` companion table already uses.
+ *
+ * Failing means over-masking a new field until someone registers it, never disclosure — so
+ * the guard's own failure direction is the safe one.
+ */
+interface ProbeNodeDef {
+  type: string
+  innerType?: unknown
+  getter?: unknown
+  out?: unknown
+  valueType?: unknown
+  element?: unknown
+  options?: unknown
+  left?: unknown
+  right?: unknown
+  shape?: unknown
+}
+
+function probeDefOf(node: unknown): ProbeNodeDef | undefined {
+  if (typeof node !== 'object' || node === null) return undefined
+  const def = (node as { def?: unknown }).def
+  if (typeof def !== 'object' || def === null) return undefined
+  const type = (def as { type?: unknown }).type
+  return typeof type === 'string' ? (def as ProbeNodeDef) : undefined
+}
+
+function probeArmsOf(def: ProbeNodeDef): readonly unknown[] {
+  if (Array.isArray(def.options)) return def.options
+  if (def.left !== undefined || def.right !== undefined) {
+    return [def.left, def.right].filter((arm) => arm !== undefined)
+  }
+  return []
+}
+
+/** The landing kinds that mean "the operator writes text here". */
+const STRING_BEARING_LEAF_TYPES: ReadonlySet<string> = new Set(['string', 'transform'])
+
+/**
+ * Every leaf NAME the schema declares a string-bearing value under.
+ *
+ * Records contribute their own field name (the operator's keys are not names the schema
+ * chose); arrays and wrappers pass the name through to what they hold. The visit ledger is
+ * keyed by node AND name, so a shared leaf schema reused under several field names is
+ * recorded under each of them rather than only the first.
+ */
+function declaredStringLeafNames(schema: unknown): Set<string> {
+  const names = new Set<string>()
+  const visited = new Map<unknown, Set<string | undefined>>()
+
+  const visit = (node: unknown, name: string | undefined, depth: number): void => {
+    if (depth > 40) return
+    const def = probeDefOf(node)
+    if (def === undefined) return
+    let seenNames = visited.get(node)
+    if (seenNames === undefined) {
+      seenNames = new Set()
+      visited.set(node, seenNames)
+    }
+    if (seenNames.has(name)) return
+    seenNames.add(name)
+
+    switch (def.type) {
+      case 'optional':
+      case 'nullable':
+      case 'nonoptional':
+      case 'default':
+      case 'prefault':
+      case 'catch':
+      case 'readonly':
+        visit(def.innerType, name, depth + 1)
+        return
+      case 'lazy':
+        if (typeof def.getter === 'function') {
+          visit((def.getter as () => unknown)(), name, depth + 1)
+        }
+        return
+      case 'pipe':
+        visit(def.out, name, depth + 1)
+        return
+      case 'object':
+      case 'interface': {
+        const shape = def.shape
+        if (typeof shape === 'object' && shape !== null) {
+          for (const [key, child] of Object.entries(shape as Record<string, unknown>)) {
+            visit(child, key, depth + 1)
+          }
+        }
+        return
+      }
+      case 'array':
+        visit(def.element, name, depth + 1)
+        return
+      case 'record':
+        visit(def.valueType, name, depth + 1)
+        return
+      case 'union':
+      case 'intersection':
+        for (const arm of probeArmsOf(def)) visit(arm, name, depth + 1)
+        return
+      default:
+        if (STRING_BEARING_LEAF_TYPES.has(def.type) && name !== undefined) names.add(name)
+    }
+  }
+
+  visit(schema, undefined, 0)
+  return names
+}
+
+/**
+ * A name that declares its value is an ADDRESS.
+ *
+ * Applied to the normalized name, so casing and punctuation cannot slip a field past it.
+ * This is a pattern over NAMES the schema author chose, which is a closed set a human wrote
+ * — not a pattern over operator VALUES, which is the undecidable question this plan removed.
+ */
+const URL_SHAPED_LEAF_NAME = /(?:url|uri|endpoint|webhook)$/u
+
+function urlShapedButUnregistered(schema: unknown): string[] {
+  return [...declaredStringLeafNames(schema)]
+    .filter((name) => URL_SHAPED_LEAF_NAME.test(name.toLowerCase().replaceAll(/[^a-z0-9]/gu, '')))
+    .filter((name) => !isCredentialBearingUrlField(name))
+    .sort()
+}
+
+describe('the registered URL-name set cannot silently go stale', () => {
+  it('reaches the shipped schema\'s real string leaves', () => {
+    // Non-vacuity first: an empty or shallow walk would satisfy the guard below by finding
+    // nothing at all. These are leaves the shipped config schema genuinely declares, at four
+    // different depths and through an array, a record and a union.
+    const declared = declaredStringLeafNames(AgentQaConfigSchema)
+    for (const name of ['url', 'baseURL', 'hooksFile', 'dir', 'model', 'package', 'judge']) {
+      expect(declared.has(name), name).toBe(true)
+    }
+    expect(declared.size).toBeGreaterThan(20)
+  })
+
+  it('registers every URL-shaped leaf name the shipped schema declares', () => {
+    expect(urlShapedButUnregistered(AgentQaConfigSchema)).toEqual([])
+  })
+
+  it('FAILS for a schema declaring an unregistered URL-shaped leaf (negative control)', () => {
+    // The guard's own falsifiability, executed rather than asserted. A guard that has never
+    // failed is not known to work — and this is exactly the event it exists for: someone adds
+    // a URL field to the config schema and does not register it.
+    const grown = growRealSchema({
+      deployment: z.object({
+        callbackUrl: z.string(),
+        region: z.string(),
+      }).strict(),
+    })
+
+    expect(urlShapedButUnregistered(grown)).toEqual(['callbackUrl'])
+    // …and the same walk over the same grown schema still returns [] for the shipped subtree,
+    // so the difference the guard measures is the added field and nothing else.
+    expect(urlShapedButUnregistered(AgentQaConfigSchema)).toEqual([])
+  })
+
+  it('registers the four names the corpus above plants credentials on', () => {
+    for (const name of ['url', 'baseURL', 'appiumUrl', 'webDriverAgentUrl']) {
+      expect(isCredentialBearingUrlField(name), name).toBe(true)
+    }
+    // The traversal is the census's, so an array index or an operator-named record key
+    // cannot change the answer.
+    expect(isCredentialBearingUrlField('registry.llms.0.baseURL')).toBe(true)
+    expect(isCredentialBearingUrlField('registry.targets.web.url')).toBe(true)
+    // …and an ordinary leaf is not registered, which is why it is never inspected.
+    for (const key of [
+      'workspace.testMatch.0',
+      'services.accessibility.exclude.0',
+      'plugins.auth.0.package',
+      'knowledge.dir',
+    ]) {
+      expect(isCredentialBearingUrlField(key), key).toBe(false)
+    }
+    // The set is normalized, which is what makes the case-insensitive match above work.
+    for (const registered of CREDENTIAL_BEARING_URL_LEAVES) {
+      expect(registered, registered).toBe(registered.toLowerCase().replaceAll(/[^a-z0-9]/gu, ''))
+    }
   })
 })
