@@ -1467,13 +1467,16 @@ function declaredStringLeafPaths(schema: unknown): Set<string> {
  * leaf in `CREDENTIAL_BEARING_URL_LEAVES` or records it here as inert. Array elements and
  * record values are `*` — the operator chooses those keys, so they are not declared structure.
  *
- * The residue this pin does NOT close, named rather than denied: a field that exists TODAY
- * and is not registered can still be handed a credential-bearing URL by an operator.
- * `services.mcp.host` is the reproducible example — a plain `z.string()` whose name promises a
- * bare hostname, so registering it would mask the ordinary value `localhost` (which
- * `new URL()` rejects). It is left visible deliberately, and an operator who writes
- * `https://u:pw@h/p` into a field called `host` is disclosed. Closing that needs the schema to
- * say the field is an address, not this test to guess.
+ * The residue this pin does NOT close, named rather than denied: a leaf already pinned and not
+ * registered stays visible and publishes whatever it is given. `workspace.hooksFile`,
+ * `services.cache.dir` and `use.buildTag` are reproducible examples — each schema-ACCEPTS
+ * `https://u:pw@h/p` and renders it verbatim. That is the census note's residual class in
+ * `masked-config.ts`, reached from the other side, not a second one.
+ *
+ * An earlier revision of this comment named `services.mcp.host` instead and was wrong in both
+ * directions: that field is `LoopbackHostSchema`, refined to exactly `localhost`, `127.0.0.1`
+ * or `::1`, so the schema REFUSES a URL there, and it is the most constrained string leaf in
+ * the config rather than a plain one.
  */
 const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
   'analytics.passRateScope.attributes.*',
