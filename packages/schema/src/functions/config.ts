@@ -26,11 +26,16 @@ export type ConfigValueSource =
 /**
  * One resolved configuration key/value pair, already masked (Phase 384, D-06/D-16).
  *
- * SECURITY CONTRACT (T-384-06, masked-at-the-boundary): when `masked` is true, `value` is
- * {@link CONFIG_MASK_PLACEHOLDER} and the secret has ALREADY been dropped — it is never
- * carried in this DTO and then redacted downstream. Masking is applied while the entry is
- * CONSTRUCTED, so a `MaskedResolvedConfig` that exists cannot leak a secret regardless of
- * what a surface does with it.
+ * SECURITY CONTRACT (T-384-06, masked-at-the-boundary): when `masked` is true, the
+ * operator's raw value is ABSENT from this entry, and it was absent from the moment the
+ * entry was constructed — never carried in this DTO and redacted downstream. It is absent
+ * in one of two ways: `value` is {@link CONFIG_MASK_PLACEHOLDER} because the whole path is
+ * masked, or `value` is a structurally reduced render of the real value — today, a URL
+ * re-rendered as `scheme://host[:port]/path` with its userinfo, query string and fragment
+ * dropped. Either way a reader holding `masked: true` knows not to treat `value` as what
+ * the configuration says. Masking is applied while the entry is CONSTRUCTED, so a
+ * `MaskedResolvedConfig` that exists cannot leak a secret regardless of what a surface does
+ * with it.
  *
  * `value` is always a rendered string (numbers, booleans, and nested values are stringified
  * at construction) so masking is total and uniform: there is no value type that bypasses it.
@@ -38,10 +43,13 @@ export type ConfigValueSource =
 export interface MaskedConfigEntry {
   /** Dot-path key into the resolved configuration tree. */
   key: string
-  /** The rendered value, or the mask placeholder when `masked` is true. */
+  /** The rendered value, the mask placeholder, or a reduced render — see `masked`. */
   value: string
   source: ConfigValueSource
-  /** True iff `value` is the mask placeholder rather than the real value. */
+  /**
+   * True iff `value` is NOT the operator's raw value — either the mask placeholder, or a
+   * render that structurally reduced it (a URL stripped of userinfo, query and fragment).
+   */
   masked: boolean
 }
 

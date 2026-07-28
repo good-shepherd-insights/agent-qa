@@ -25,8 +25,15 @@
 // visible, while `services.auth.token` does not. The single named carve-out is applied
 // before it. The census can only ADD masking; it can never make an opaque path visible.
 //
-// Values that survive both are still rendered with any URL userinfo stripped, so a
-// credential smuggled into a visible URL does not ride out on a field no rule masks.
+// A value that survives both is then RENDERED, and the render is itself a rule. Anything
+// whose rendered string parses as a URL is re-rendered as `scheme://host[:port]/path` and
+// nothing else: userinfo, query string and fragment are dropped UNCONDITIONALLY, whatever
+// they are called. Those three are the parts of a URL that belong to no key, so nothing
+// that reads key names reaches them; the decision here reads the VALUE's own structure
+// instead, which is why it does not depend on recognising the next parameter name. An
+// entry whose render altered the value is flagged `masked: true`, because the operator's
+// raw value is not what the caller is reading. A visible URL carrying none of the three is
+// returned byte-identical.
 //
 // Over-masking is the accepted cost, and the schema rule makes it concrete: a provider's
 // `baseURL` is masked because it sits inside a free-form record. An over-masked entry is
@@ -115,12 +122,20 @@ function normalizeSegment(segment: string): string {
  * identity of code that runs in-process with full Node access, and the word `auth` three
  * segments up was the entire reason it was hidden.
  *
- * Nothing is lost by narrowing it. The ancestor property this used to carry — a secret
- * nested under a credentials block being masked even when its own key is innocuous — is now
- * carried by the schema rule instead, and carried more strongly: a path the schema does not
- * describe is masked whatever any of its segments are called, and a path INSIDE a free-form
- * record is masked whatever its leaf is called. This census only ever adds masking on top
- * of paths the schema has already vouched for.
+ * What the narrowing costs, stated rather than denied. The ancestor property this used to
+ * carry — a secret nested under a credentials block masked even when its own key is
+ * innocuous — is carried by the schema rule for the paths the schema does NOT vouch for: an
+ * undeclared path is masked whatever its segments are called, and a path inside a free-form
+ * record is masked whatever its leaf is called. Those two cases are covered more strongly
+ * than before, because they no longer depend on any list of words.
+ *
+ * The case that is NOT covered is the remainder: a credential subtree the schema fully
+ * constrains, whose leaf names are innocuous. Extending the config schema with
+ * `vault: z.object({ region, value, clientId }).strict()` yields `vault.value` and
+ * `vault.clientId` VISIBLE — the schema vouches for the path and the census does not
+ * recognise either leaf. Nothing in this file detects that; it is closed by the schema
+ * describing such a block as free-form, or by the census learning the leaf, and it is named
+ * here so the limitation is read rather than assumed away.
  */
 export function isSecretConfigKey(key: string): boolean {
   if (NON_SECRET_KEYS.has(key)) return false
@@ -157,32 +172,60 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** A rendered value, and whether rendering it altered what the operator wrote. */
+interface RenderedValue {
+  value: string
+  altered: boolean
+}
+
 /**
- * Strip the credential a URL can carry in its userinfo.
+ * Re-render anything that parses as a URL as `scheme://host[:port]/path` and nothing else.
  *
- * A password sitting between the scheme and the host belongs to no key, so no name-based
- * rule can ever see it — which is exactly how one rode out through a schema-constrained,
- * legitimately-visible `baseURL`. Only a URL that actually carries userinfo is re-rendered;
- * everything else is returned byte-identical, so no ordinary value is normalised behind an
- * operator's back.
+ * Userinfo, query string and fragment are dropped UNCONDITIONALLY. All three are parts of a
+ * URL that belong to no configuration key, so no rule that reads key names can reach them —
+ * which is how a password in the userinfo, a credential in a query parameter and a token in
+ * a fragment each rode out in turn through schema-constrained, legitimately-visible fields.
+ *
+ * The decision reads the VALUE's own structure — does it parse as a URL, and does it carry
+ * any of those three parts — and never a parameter's name. A vocabulary of credential-ish
+ * parameter names is the same object that failed three times at the path level: whatever it
+ * lists, an operator's next parameter is called something else. This rule has nothing to be
+ * stale about, and it is deliberately written with no example parameter name in it, so a
+ * test corpus can be measured against these bytes and shown to come from outside them.
+ *
+ * Only a URL that actually carries one of the three is re-rendered; everything else is
+ * returned byte-identical, so no ordinary value is normalised behind an operator's back.
  */
-function stripUrlUserinfo(value: string): string {
+function renderUrlWithoutSecrets(value: string): RenderedValue {
   let url: URL
   try {
     url = new URL(value)
   } catch {
-    return value
+    return { value, altered: false }
   }
-  if (url.username === '' && url.password === '') return value
+  if (url.username === '' && url.password === '' && url.search === '' && url.hash === '') {
+    return { value, altered: false }
+  }
   url.username = ''
   url.password = ''
-  return url.toString()
+  url.search = ''
+  url.hash = ''
+  return { value: url.toString(), altered: true }
 }
 
-function renderValue(value: unknown): string {
-  if (typeof value === 'string') return stripUrlUserinfo(value)
-  const serialized = JSON.stringify(value)
-  return serialized ?? String(value)
+/**
+ * Render one leaf, then apply the URL rule to the RENDERED string.
+ *
+ * The order is the point. An earlier version tested `typeof value === 'string'` before
+ * stripping, so a leaf that renders as a URL without being a string skipped the rule
+ * entirely. The rule now reads what a caller will actually see, so the input's runtime type
+ * decides nothing.
+ */
+function renderValue(value: unknown): RenderedValue {
+  const rendered = typeof value === 'string'
+    ? value
+    : JSON.stringify(value) ?? String(value)
+  return renderUrlWithoutSecrets(rendered)
 }
 
 /**
@@ -249,7 +292,10 @@ export function buildMaskedResolvedConfig(
   const entries: MaskedConfigEntry[] = [...flatten(input.resolved).entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, value]) => {
-      const masked = isMaskedConfigPath(key, input.visibility)
+      const pathMasked = isMaskedConfigPath(key, input.visibility)
+      // The path decision comes first and is unconditional; only a value that survives it is
+      // rendered at all, and the render can still alter it.
+      const rendered = pathMasked ? undefined : renderValue(value)
       let source: ConfigValueSource = 'default'
       for (const layer of layers) {
         if (layer.keys.has(key)) source = layer.source
@@ -257,9 +303,12 @@ export function buildMaskedResolvedConfig(
       return {
         key,
         // The secret is DROPPED here. It is never placed in the DTO and removed downstream.
-        value: masked ? CONFIG_MASK_PLACEHOLDER : renderValue(value),
+        value: rendered?.value ?? CONFIG_MASK_PLACEHOLDER,
         source,
-        masked,
+        // True whenever the operator's raw value is ABSENT — the placeholder, or a URL the
+        // render structurally reduced. An alteration a caller cannot see is a caller
+        // trusting bytes that are not what the config says.
+        masked: rendered === undefined || rendered.altered,
       }
     })
 

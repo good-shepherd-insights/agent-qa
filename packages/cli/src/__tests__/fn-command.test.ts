@@ -46,6 +46,23 @@ const FIXTURE_PROVIDER_KEY = 'sk-live-PROVIDER-KEY-DO-NOT-LEAK-5555'
 const FIXTURE_URL_PASSWORD = 'hunter2-URL-DO-NOT-LEAK'
 
 /**
+ * Credentials planted in the parts of a URL no configuration key reaches (round-3 CR-01).
+ *
+ * `registry.llms.<n>.baseURL` and `registry.targets.<name>.url` are the complete remaining
+ * credential-bearing residue of the schema's visible surface — the round-3 verifier
+ * enumerated all 32 visible string leaves and found exactly these two. They are visible BY
+ * DESIGN, so what has to hold is a property of the RENDER.
+ *
+ * The parameter names are drawn from outside the masker's vocabulary: `ticket`, `assertion`
+ * and `sso` each read 0 in `masked-config.ts` (positive control `SECRET_KEY_TERMS` = 2 in
+ * the same read). A parameter-name regex was falsified by the verifier's own `?session=`
+ * repro; only a rule over the value's structure survives the next name nobody thought of.
+ */
+const FIXTURE_URL_QUERY_SECRET = 'sk-live-TICKET-DO-NOT-LEAK-7001'
+const FIXTURE_URL_FRAGMENT_SECRET = 'sk-live-FRAGMENT-DO-NOT-LEAK-7002'
+const FIXTURE_TARGET_URL_SECRET = 'sk-live-SSO-DO-NOT-LEAK-7003'
+
+/**
  * Ten credentials planted under `registry.devices.<name>.match` (Plan 10 / BL-02).
  *
  * The key names are drawn from OUTSIDE the masker's own constant lists — none of the ten
@@ -117,7 +134,10 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             // the schema-legal shape a real operator credential arrives in.
             provider: 'anthropic-compatible',
             model: 'claude-fixture',
-            baseURL: `https://ops:${FIXTURE_URL_PASSWORD}@llm.acme.test/v1`,
+            // Userinfo, a query string AND a fragment, all on one schema-visible field:
+            // the three parts of a URL that belong to no key, so no name-based rule can
+            // ever reach them.
+            baseURL: `https://ops:${FIXTURE_URL_PASSWORD}@llm.acme.test/v1?ticket=${FIXTURE_URL_QUERY_SECRET}#assertion=${FIXTURE_URL_FRAGMENT_SECRET}`,
             providerHeaders: {
               'x-key': FIXTURE_HEADER_KEY,
               'x-cred': FIXTURE_HEADER_CRED,
@@ -130,6 +150,14 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             apiKey: FIXTURE_API_KEY,
             key: FIXTURE_PROVIDER_KEY,
             baseURL: 'https://acme.test',
+          },
+        },
+        // A web target requires a url, so this is the schema-legal shape the SECOND
+        // credential-bearing visible field arrives in.
+        targets: {
+          web: {
+            platform: 'web',
+            url: `https://x.test/checkout?sso=${FIXTURE_TARGET_URL_SECRET}`,
           },
         },
         devices: {
@@ -617,11 +645,65 @@ describe('agent-qa fn (generic function invoker)', () => {
       })
     }
 
-    // The schema-constrained baseURL stays VISIBLE — its userinfo is stripped instead, so
-    // the mask is not the only thing standing between a caller and this credential.
+    // The schema-constrained baseURL stays visible at PATH level — the schema means it to
+    // be readable — but the value a caller reads is the reduced render.
+    // FLIP (round 3): `masked` was `false` here and is now `true`. The value is unchanged;
+    // what changed is that the alteration is now reported, because a render that dropped
+    // part of what the operator wrote is not the operator's raw value.
     expect(byKey['registry.llms.0.baseURL']).toEqual({
       key: 'registry.llms.0.baseURL',
       value: 'https://llm.acme.test/v1',
+      source: 'config-file',
+      masked: true,
+    })
+  })
+
+  it('drops URL query strings and fragments from every visible value (CR-01, round 3)', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+
+    // The claim, asserted against the bytes a caller actually sees. These three rode out
+    // verbatim through the unmodified production CLI at round 3, on the two fields the
+    // schema's whole visible surface leaves credential-bearing.
+    for (const planted of [
+      FIXTURE_URL_QUERY_SECRET,
+      FIXTURE_URL_FRAGMENT_SECRET,
+      FIXTURE_TARGET_URL_SECRET,
+      FIXTURE_URL_PASSWORD,
+    ]) {
+      expect(result.stdout, planted).not.toContain(planted)
+    }
+    // The POSITIVE CONTROL, from the SAME stdout: this read can see a value, so the four
+    // absences above are facts about the render rather than about an empty output.
+    expect(result.stdout).toContain('browserstack')
+
+    const config = JSON.parse(result.stdout) as MaskedResolvedConfig
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    for (const [key, expected] of [
+      ['registry.llms.0.baseURL', 'https://llm.acme.test/v1'],
+      ['registry.targets.web.url', 'https://x.test/checkout'],
+    ] as const) {
+      expect(byKey[key], key).toEqual({
+        key,
+        value: expected,
+        source: 'config-file',
+        masked: true,
+      })
+      // Stated as a property of the rendered string rather than as a literal, so a future
+      // fixture cannot satisfy this by matching one hardcoded value.
+      expect(byKey[key]?.value, key).not.toContain('?')
+      expect(byKey[key]?.value, key).not.toContain('#')
+      expect(byKey[key]?.value, key).not.toContain('@')
+    }
+    // …and a neighbouring constrained leaf under the same new target is untouched, so the
+    // leg cannot pass by masking the whole subtree.
+    expect(byKey['registry.targets.web.platform']).toEqual({
+      key: 'registry.targets.web.platform',
+      value: 'web',
       source: 'config-file',
       masked: false,
     })

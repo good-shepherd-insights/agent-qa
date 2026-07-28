@@ -30,6 +30,21 @@ const SECRET = 'sk-live-DO-NOT-LEAK-4242'
 /** Planted inside a URL's userinfo, where no key name can mark it as secret. */
 const USERINFO_PASSWORD = 'hunter2-DO-NOT-LEAK'
 
+/**
+ * Credentials planted in the parts of a URL that belong to no configuration key at all
+ * (round-3 CR-01): a query parameter and a fragment on a schema-VISIBLE field.
+ *
+ * The parameter names are the OUT_OF_VOCABULARY discipline applied to the axis that leaked.
+ * `ticket`, `assertion` and `sso` each read 0 in `masked-config.ts`'s bytes — measured with
+ * a positive control (`SECRET_KEY_TERMS` = 2) in the same read — so no name the masker has
+ * ever seen decides these cases. The round-3 verifier falsified a parameter-name regex with
+ * its own `?session=` repro; what closes them is the shape of the VALUE.
+ */
+const URL_QUERY_SECRET = 'sk-live-TICKET-DO-NOT-LEAK-9001'
+const URL_QUERY_SECRET_2 = 'sk-live-SSO-DO-NOT-LEAK-9002'
+const URL_FRAGMENT_SECRET = 'sk-live-FRAGMENT-DO-NOT-LEAK-9003'
+const RENDERED_LEAF_SECRET = 'sk-live-RENDERED-DO-NOT-LEAK-9004'
+
 const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
 
 /**
@@ -310,8 +325,12 @@ describe('isMaskedConfigPath (the whole disclosure decision)', () => {
       'workspace.testMatch.0',
       'knowledge.dir',
       'registry.llms.0.model',
-      // A SCHEMA-CONSTRAINED field, not an operator-chosen one: it stays visible, and its
-      // userinfo is stripped at render instead.
+      // SCHEMA-CONSTRAINED fields, not operator-chosen ones, so PATH-level visibility is
+      // correct for both — the schema means them to be readable. What guards them is the
+      // render: a visible value that parses as a URL is rendered as `scheme://host[:port]/
+      // path` only, with userinfo, query and fragment dropped unconditionally and the entry
+      // flagged `masked: true`. That rule reads the value's own structure, so it does not
+      // depend on anyone recognising what a query parameter is called.
       'registry.llms.0.baseURL',
       'services.dashboard.port',
       'use.browser.headless',
@@ -406,13 +425,102 @@ describe('buildMaskedResolvedConfig', () => {
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry.value]))
     expect(byKey['registry.llms.0.baseURL']).toBe('https://llm.acme.test/v1')
+    // FLIP (round 3): the entry is now `masked: true`. The value the operator wrote is NOT
+    // what the caller reads — the render dropped part of it — and round-2's WR-01 was
+    // exactly that alteration going out reported as unaltered. The value is unchanged.
     expect(config.entries.find((entry) => entry.key === 'registry.llms.0.baseURL')?.masked)
-      .toBe(false)
+      .toBe(true)
     for (const entry of config.entries) {
       expect(entry.value).not.toContain(USERINFO_PASSWORD)
       expect(entry.value).not.toContain('ops:')
     }
     expect(JSON.stringify(config)).not.toContain(USERINFO_PASSWORD)
+  })
+
+  it('reduces a visible URL carrying a query string to scheme://host/path (CR-01)', () => {
+    // The round-3 leak, closed by the shape of the VALUE rather than the name of a
+    // parameter. `ticket` and `sso` read 0 in masked-config.ts, so nothing here can pass
+    // because someone recognised a word.
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: {
+        registry: {
+          llms: [{
+            name: 'judge',
+            baseURL: `https://llm.acme.test/v1?ticket=${URL_QUERY_SECRET}&sso=${URL_QUERY_SECRET_2}`,
+          }],
+          targets: { web: { platform: 'web', url: `https://x.test/checkout?ticket=${URL_QUERY_SECRET}` } },
+        },
+        knowledge: { dir: 'agent-qa-knowledge' },
+      },
+      layers: [],
+    })
+
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    expect(byKey['registry.llms.0.baseURL']).toMatchObject({
+      value: 'https://llm.acme.test/v1',
+      masked: true,
+    })
+    expect(byKey['registry.targets.web.url']).toMatchObject({
+      value: 'https://x.test/checkout',
+      masked: true,
+    })
+    const serialized = JSON.stringify(config)
+    for (const planted of [URL_QUERY_SECRET, URL_QUERY_SECRET_2]) {
+      expect(serialized, planted).not.toContain(planted)
+    }
+    // The positive control, read from the same serialization: this read can see a value, so
+    // "no planted string present" is a fact about the render and not about an empty output.
+    expect(serialized).toContain('agent-qa-knowledge')
+  })
+
+  it('reduces a visible URL carrying a fragment to scheme://host/path (CR-01)', () => {
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: {
+        registry: {
+          llms: [{ name: 'judge', baseURL: `https://llm.acme.test/v1#assertion=${URL_FRAGMENT_SECRET}` }],
+        },
+        knowledge: { dir: 'agent-qa-knowledge' },
+      },
+      layers: [],
+    })
+
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    expect(byKey['registry.llms.0.baseURL']).toMatchObject({
+      value: 'https://llm.acme.test/v1',
+      masked: true,
+    })
+    const serialized = JSON.stringify(config)
+    expect(serialized).not.toContain(URL_FRAGMENT_SECRET)
+    expect(serialized).toContain('agent-qa-knowledge')
+  })
+
+  it('applies the URL rule to the RENDERED string of a leaf, not only to string inputs', () => {
+    // The round-2 WR-07 residue: the strip used to be gated on `typeof value === 'string'`,
+    // so a leaf that RENDERS as a URL without being one skipped it entirely. The rule reads
+    // the rendered string, so the input's runtime type decides nothing — and the field is
+    // `workspace.hooksFile`, which proves the rule is not scoped to URL-shaped field names.
+    const urlish = Object.defineProperties({}, {
+      toJSON: { value: () => undefined },
+      toString: { value: () => `https://leaf.acme.test/p?ticket=${RENDERED_LEAF_SECRET}` },
+    })
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: { workspace: { hooksFile: urlish }, knowledge: { dir: 'agent-qa-knowledge' } },
+      layers: [],
+    })
+
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    expect(byKey['workspace.hooksFile']).toMatchObject({
+      value: 'https://leaf.acme.test/p',
+      masked: true,
+    })
+    expect(JSON.stringify(config)).not.toContain(RENDERED_LEAF_SECRET)
+    expect(JSON.stringify(config)).toContain('agent-qa-knowledge')
   })
 
   it('leaves non-URL and userinfo-free strings byte-identical', () => {
@@ -428,10 +536,16 @@ describe('buildMaskedResolvedConfig', () => {
     })
 
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry.value]))
-    // No trailing-slash normalisation: a value with no userinfo is not re-rendered at all.
+    // No trailing-slash normalisation: a URL carrying no userinfo, query or fragment is not
+    // re-rendered at all, so nothing an operator wrote is silently normalised.
     expect(byKey['registry.llms.0.baseURL']).toBe('https://llm.acme.test')
     expect(byKey['knowledge.dir']).toBe('agent-qa-knowledge')
     expect(byKey['workspace.hooksFile']).toBe('hooks.yaml')
+    // …and the entry says so: an unaltered render is `masked: false`, which is what makes
+    // the flag readable as "the operator's raw value is absent" on the cases above.
+    for (const key of ['registry.llms.0.baseURL', 'knowledge.dir', 'workspace.hooksFile']) {
+      expect(config.entries.find((entry) => entry.key === key)?.masked, key).toBe(false)
+    }
   })
 
   it('renders every value as a string so no value type bypasses masking', () => {
