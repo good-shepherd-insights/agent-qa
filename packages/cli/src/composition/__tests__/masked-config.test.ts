@@ -45,6 +45,40 @@ const URL_QUERY_SECRET_2 = 'sk-live-SSO-DO-NOT-LEAK-9002'
 const URL_FRAGMENT_SECRET = 'sk-live-FRAGMENT-DO-NOT-LEAK-9003'
 const RENDERED_LEAF_SECRET = 'sk-live-RENDERED-DO-NOT-LEAK-9004'
 
+/**
+ * Credentials planted in URL forms the render rule's own PRECONDITION rejects (round-4 CR-01).
+ *
+ * Round 3's corpus was disciplined on one axis and blind on the other: every planted
+ * parameter name was measured outside the implementation's vocabulary, and every planted
+ * VALUE was an absolute `https://` URL — precisely the shape `new URL(value)` with no base
+ * accepts. A rule guarded by a precondition needs corpus cases the precondition REJECTS.
+ *
+ * These four forms are taken from the round-4 verification report, not from the fix: three
+ * of them make a bare `new URL()` throw and the fourth parses with an EMPTY host, which the
+ * characterisation block at the end of this file asserts against the platform parser rather
+ * than against any branch of ours. The parameter names — `waybill`, `hallmark`, `emblem`,
+ * `lanyard` — each read 0 in `masked-config.ts`'s bytes, measured with a positive control
+ * (`SECRET_KEY_TERMS` = 2) in the same read.
+ */
+const PROTOCOL_RELATIVE_USERINFO_SECRET = 'sk-live-USERINFO-DO-NOT-LEAK-9105'
+const PROTOCOL_RELATIVE_QUERY_SECRET = 'sk-live-WAYBILL-DO-NOT-LEAK-9106'
+const PROTOCOL_RELATIVE_FRAGMENT_SECRET = 'sk-live-HALLMARK-DO-NOT-LEAK-9107'
+const HOST_RELATIVE_SECRET = 'sk-live-EMBLEM-DO-NOT-LEAK-9108'
+const PATH_RELATIVE_SECRET = 'sk-live-LANYARD-DO-NOT-LEAK-9109'
+const OPAQUE_SCHEME_SECRET = 'sk-live-OPAQUE-DO-NOT-LEAK-9110'
+
+/** The four precondition-rejected carriers, each on a schema-VISIBLE field. */
+const PROTOCOL_RELATIVE_URL =
+  `//opsx:${PROTOCOL_RELATIVE_USERINFO_SECRET}@x.test/checkout`
+  + `?waybill=${PROTOCOL_RELATIVE_QUERY_SECRET}`
+  + `#hallmark=${PROTOCOL_RELATIVE_FRAGMENT_SECRET}`
+const HOST_RELATIVE_URL = `llm.acme.test/v1?emblem=${HOST_RELATIVE_SECRET}`
+const PATH_RELATIVE_URL = `/checkout?lanyard=${PATH_RELATIVE_SECRET}`
+const OPAQUE_SCHEME_URL = `ops:${OPAQUE_SCHEME_SECRET}@llm.acme.test/v1`
+
+/** A scoped package name: an '@'-carrying value that is NOT a credential carrier. */
+const SCOPED_PACKAGE_NAME = '@acme/auth-plugin-SHOW-ME-9111'
+
 const visibility = buildConfigVisibilityOracle(AgentQaConfigSchema)
 
 /**
@@ -716,6 +750,98 @@ describe('buildMaskedResolvedConfig', () => {
     expect(serialized).toContain('agent-qa-knowledge')
   })
 
+  it('DROPS a visible carrier the parser cannot resolve absolutely (CR-01, round 4)', () => {
+    // The round-4 leak, and the axis it moved to: not WHICH PARTS of a URL are dropped, but
+    // WHICH VALUES the rule will look at. Each of these four forms is one the bare
+    // `new URL(value)` precondition rejects — three throw, the opaque one parses with an
+    // empty host and carries its credential in `pathname` — so round 3's reduce branch never
+    // saw them and they rode out byte-identical with `masked: false`. A value the parser
+    // cannot vouch for has no absolute rendering to reduce to, so it is DROPPED.
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: {
+        registry: {
+          llms: [
+            { name: 'host-relative', baseURL: HOST_RELATIVE_URL },
+            { name: 'opaque-scheme', baseURL: OPAQUE_SCHEME_URL },
+          ],
+          targets: {
+            web: { platform: 'web', url: PROTOCOL_RELATIVE_URL },
+            checkout: { platform: 'web', url: PATH_RELATIVE_URL },
+          },
+        },
+        knowledge: { dir: 'agent-qa-knowledge' },
+      },
+      layers: [],
+    })
+
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    for (const key of [
+      'registry.llms.0.baseURL',
+      'registry.llms.1.baseURL',
+      'registry.targets.web.url',
+      'registry.targets.checkout.url',
+    ]) {
+      expect(byKey[key], key).toEqual({
+        key,
+        value: CONFIG_MASK_PLACEHOLDER,
+        source: 'default',
+        masked: true,
+      })
+    }
+
+    const serialized = JSON.stringify(config)
+    for (const planted of [
+      PROTOCOL_RELATIVE_USERINFO_SECRET,
+      PROTOCOL_RELATIVE_QUERY_SECRET,
+      PROTOCOL_RELATIVE_FRAGMENT_SECRET,
+      HOST_RELATIVE_SECRET,
+      PATH_RELATIVE_SECRET,
+      OPAQUE_SCHEME_SECRET,
+    ]) {
+      expect(serialized, planted).not.toContain(planted)
+    }
+    // The positive control, from the SAME serialization: this read can see a value, so the
+    // six absences above are facts about the render and not about an empty output. A
+    // neighbouring constrained leaf under a dropped entry's own object is visible too, so
+    // the drop cannot pass by masking a subtree.
+    expect(serialized).toContain('agent-qa-knowledge')
+    expect(byKey['registry.targets.web.platform']).toMatchObject({
+      value: 'web',
+      masked: false,
+    })
+    expect(byKey['registry.llms.0.name']).toMatchObject({
+      value: 'host-relative',
+      masked: false,
+    })
+  })
+
+  it('leaves an @-carrying value that is not a credential carrier byte-identical', () => {
+    // The collision the drop rule has to survive: a scoped package name carries an '@' and
+    // is not an absolute URL, so a marker scan alone would hide it. Probed against a
+    // placeholder base the '@' lands in the PATH and all four secret-bearing fields are
+    // empty, so the value stays visible — which is what the plan-10 SHOW-ME assertions
+    // (a package that runs in-process with full Node access belongs in a config triage
+    // read) depend on.
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      visibility,
+      resolved: {
+        plugins: { auth: [{ package: SCOPED_PACKAGE_NAME }] },
+        knowledge: { dir: 'agent-qa-knowledge' },
+      },
+      layers: [],
+    })
+
+    expect(config.entries.find((entry) => entry.key === 'plugins.auth.0.package')).toEqual({
+      key: 'plugins.auth.0.package',
+      value: SCOPED_PACKAGE_NAME,
+      source: 'default',
+      masked: false,
+    })
+  })
+
   it('applies the URL rule to the RENDERED string of a leaf, not only to string inputs', () => {
     // The round-2 WR-07 residue: the strip used to be gated on `typeof value === 'string'`,
     // so a leaf that RENDERS as a URL without being one skipped it entirely. The rule reads
@@ -756,6 +882,14 @@ describe('buildMaskedResolvedConfig', () => {
     const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry.value]))
     // No trailing-slash normalisation: a URL carrying no userinfo, query or fragment is not
     // re-rendered at all, so nothing an operator wrote is silently normalised.
+    //
+    // SHARPENED (round 4): what these three values have in common is not "the parser did not
+    // recognise them" — `hooks.yaml` and `agent-qa-knowledge` are not absolute URLs at all —
+    // but that they are SECRET-PART-FREE: probed against a placeholder base, each resolves
+    // with empty username, password, search and hash. That is why they stay byte-identical,
+    // and it is what distinguishes them from a value whose secret-bearing parts the bare
+    // parser could not see (`/checkout?lanyard=…`), which now DROPS. Before round 4 this
+    // case pinned both classes as "unchanged", which is how the second one rode out.
     expect(byKey['registry.llms.0.baseURL']).toBe('https://llm.acme.test')
     expect(byKey['knowledge.dir']).toBe('agent-qa-knowledge')
     expect(byKey['workspace.hooksFile']).toBe('hooks.yaml')
@@ -844,5 +978,38 @@ describe('buildMaskedResolvedConfig', () => {
     expect(buildMaskedResolvedConfig(input).entries.map((entry) => entry.key))
       .toEqual(['a.m', 'b.a', 'b.z'])
     expect(buildMaskedResolvedConfig(input)).toEqual(buildMaskedResolvedConfig(input))
+  })
+})
+
+describe('the drop corpus comes from OUTSIDE the render rule\'s precondition (round-4 M-05)', () => {
+  // Round 4's finding was not that the corpus was weak — every planted parameter name was
+  // measured at 0 in the implementation's bytes — but that it was drawn from INSIDE the
+  // rule's precondition: every planted value was an absolute `https://` URL, which is
+  // exactly what `new URL(value)` with no base accepts. This block proves the four values
+  // above are on the other side of that precondition, and it proves it against Node's own
+  // `URL` rather than against any branch of `masked-config.ts`, so it stays true no matter
+  // how the fix is written.
+
+  it('makes a bare new URL() throw for the three relative forms', () => {
+    for (const value of [PROTOCOL_RELATIVE_URL, HOST_RELATIVE_URL, PATH_RELATIVE_URL]) {
+      expect(() => new URL(value), value).toThrow()
+    }
+  })
+
+  it('parses the opaque-scheme form with an empty host and the credential in the path', () => {
+    // The form that defeats the four-field early return: it PARSES, so the catch path never
+    // runs, and username/password/search/hash are all empty because an opaque-path URL has
+    // no userinfo slot — the credential rides in `pathname`.
+    const url = new URL(OPAQUE_SCHEME_URL)
+    expect(url.host).toBe('')
+    expect([url.username, url.password, url.search, url.hash]).toEqual(['', '', '', ''])
+    expect(url.pathname).toContain(OPAQUE_SCHEME_SECRET)
+  })
+
+  it('accepts the absolute control, which is what the round-3 corpus was made of', () => {
+    // The positive control for this block: the precondition really does accept something, so
+    // the three throws above are facts about the planted forms rather than about a parser
+    // that rejects everything.
+    expect(() => new URL('https://llm.acme.test/v1?ticket=x')).not.toThrow()
   })
 })

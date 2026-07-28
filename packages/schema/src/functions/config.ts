@@ -33,9 +33,16 @@ export type ConfigValueSource =
  * masked, or `value` is a structurally reduced render of the real value — today, a URL
  * re-rendered as `scheme://host[:port]/path` with its userinfo, query string and fragment
  * dropped. Either way a reader holding `masked: true` knows not to treat `value` as what
- * the configuration says. Masking is applied while the entry is CONSTRUCTED, so a
- * `MaskedResolvedConfig` that exists cannot leak a secret regardless of what a surface does
- * with it.
+ * the configuration says.
+ *
+ * What that guarantees, stated as the relation it actually is rather than as a totality:
+ * masking is applied while the entry is CONSTRUCTED, under the composition's visibility,
+ * census and render rules, so a surface holding a `MaskedResolvedConfig` cannot undo it —
+ * there is nothing to undo, the raw value was never placed here. The guarantee is therefore
+ * the CONSTRUCTION rule's, and it is exactly as wide as that rule: the masker names its one
+ * residual class in its own census note (a credential subtree the config schema fully
+ * constrains whose leaf names are innocuous, with a reproducible example), and this DTO
+ * inherits that bound rather than overriding it.
  *
  * `value` is always a rendered string (numbers, booleans, and nested values are stringified
  * at construction) so masking is total and uniform: there is no value type that bypasses it.

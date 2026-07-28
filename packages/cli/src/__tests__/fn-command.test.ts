@@ -63,6 +63,28 @@ const FIXTURE_URL_FRAGMENT_SECRET = 'sk-live-FRAGMENT-DO-NOT-LEAK-7002'
 const FIXTURE_TARGET_URL_SECRET = 'sk-live-SSO-DO-NOT-LEAK-7003'
 
 /**
+ * Credentials planted in URL forms the render rule's PRECONDITION rejects (round-4 CR-01).
+ *
+ * The round-3 corpus above is disciplined on the parameter-NAME axis and blind on the VALUE
+ * axis: every URL it plants is an absolute `https://` one, which is exactly the shape
+ * `new URL(value)` with no base accepts. Six sentinels rode out verbatim with `masked: false`
+ * through the unmodified production CLI on the forms below — an operator writes all four
+ * without thinking, and both fields are plain `z.string()` with no URL-format validation.
+ *
+ * The forms are taken from 384-VERIFICATION.md's gap entry rather than from the fix, and the
+ * parameter names (`waybill`, `hallmark`, `emblem`, `lanyard`) each read 0 in
+ * `masked-config.ts`'s bytes, measured with a positive control (`SECRET_KEY_TERMS` = 2) in
+ * the same read. `masked-config.test.ts` carries the characterisation proving the four are
+ * precondition-rejected, asserted against Node's `URL` rather than against our own branches.
+ */
+const FIXTURE_PROTOREL_USERINFO_SECRET = 'sk-live-USERINFO-DO-NOT-LEAK-7101'
+const FIXTURE_PROTOREL_QUERY_SECRET = 'sk-live-WAYBILL-DO-NOT-LEAK-7102'
+const FIXTURE_PROTOREL_FRAGMENT_SECRET = 'sk-live-HALLMARK-DO-NOT-LEAK-7103'
+const FIXTURE_HOST_RELATIVE_SECRET = 'sk-live-EMBLEM-DO-NOT-LEAK-7104'
+const FIXTURE_PATH_RELATIVE_SECRET = 'sk-live-LANYARD-DO-NOT-LEAK-7105'
+const FIXTURE_OPAQUE_SCHEME_SECRET = 'sk-live-OPAQUE-DO-NOT-LEAK-7106'
+
+/**
  * Ten credentials planted under `registry.devices.<name>.match` (Plan 10 / BL-02).
  *
  * The key names are drawn from OUTSIDE the masker's own constant lists — none of the ten
@@ -144,6 +166,23 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
               'x-pwd': FIXTURE_HEADER_PWD,
             },
           },
+          // Two more schema-legal entries carrying baseURLs the URL parser will NOT resolve
+          // absolutely (round-4 CR-01). `anthropic-compatible` requires a baseURL and the
+          // schema puts no URL format on it, so these are shapes a real config file holds.
+          {
+            name: 'host-relative-judge',
+            provider: 'anthropic-compatible',
+            model: 'claude-fixture',
+            baseURL: `llm.acme.test/v1?emblem=${FIXTURE_HOST_RELATIVE_SECRET}`,
+          },
+          {
+            // The form that PARSES: scheme `ops:` with an opaque path, so the credential
+            // before the first '@' rides in `pathname` where a userinfo check cannot see it.
+            name: 'opaque-scheme-judge',
+            provider: 'anthropic-compatible',
+            model: 'claude-fixture',
+            baseURL: `ops:${FIXTURE_OPAQUE_SCHEME_SECRET}@llm.acme.test/v1`,
+          },
         ],
         providers: {
           acme: {
@@ -158,6 +197,19 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
           web: {
             platform: 'web',
             url: `https://x.test/checkout?sso=${FIXTURE_TARGET_URL_SECRET}`,
+          },
+          // A protocol-relative url carrying all three no-key parts at once, and a
+          // path-relative one carrying a query — neither resolves without a base, so round
+          // 3's rule never looked at either (round-4 CR-01).
+          'protocol-relative': {
+            platform: 'web',
+            url: `//opsx:${FIXTURE_PROTOREL_USERINFO_SECRET}@x.test/checkout`
+              + `?waybill=${FIXTURE_PROTOREL_QUERY_SECRET}`
+              + `#hallmark=${FIXTURE_PROTOREL_FRAGMENT_SECRET}`,
+          },
+          'path-relative': {
+            platform: 'web',
+            url: `/checkout?lanyard=${FIXTURE_PATH_RELATIVE_SECRET}`,
           },
         },
         devices: {
@@ -707,6 +759,77 @@ describe('agent-qa fn (generic function invoker)', () => {
       source: 'config-file',
       masked: false,
     })
+  })
+
+  it('DROPS visible URL values the parser cannot vouch for (CR-01, round 4)', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+
+    // The claim, asserted against the bytes a caller actually sees. All six of these rode
+    // out verbatim with `masked: false` through the unmodified production CLI at round 4:
+    // the rule was total across URL PARTS and silent about which VALUE FORMS it would look
+    // at, and three of these four forms never reached it at all.
+    for (const planted of [
+      FIXTURE_PROTOREL_USERINFO_SECRET,
+      FIXTURE_PROTOREL_QUERY_SECRET,
+      FIXTURE_PROTOREL_FRAGMENT_SECRET,
+      FIXTURE_HOST_RELATIVE_SECRET,
+      FIXTURE_PATH_RELATIVE_SECRET,
+      FIXTURE_OPAQUE_SCHEME_SECRET,
+    ]) {
+      expect(result.stdout, planted).not.toContain(planted)
+    }
+    // The POSITIVE CONTROL, from the SAME stdout: this read can see a value, so the six
+    // absences above are facts about the render rather than about an empty output.
+    expect(result.stdout).toContain('browserstack')
+
+    const config = JSON.parse(result.stdout) as MaskedResolvedConfig
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    for (const key of [
+      'registry.llms.1.baseURL',
+      'registry.llms.2.baseURL',
+      'registry.targets.protocol-relative.url',
+      'registry.targets.path-relative.url',
+    ]) {
+      expect(byKey[key], key).toEqual({
+        key,
+        value: CONFIG_MASK_PLACEHOLDER,
+        source: 'config-file',
+        masked: true,
+      })
+    }
+
+    // …and neighbouring constrained leaves under the SAME grown entries stay visible, so the
+    // leg cannot pass by masking a subtree.
+    expect(byKey['registry.llms.1.model']).toEqual({
+      key: 'registry.llms.1.model',
+      value: 'claude-fixture',
+      source: 'config-file',
+      masked: false,
+    })
+    expect(byKey['registry.targets.protocol-relative.platform']).toEqual({
+      key: 'registry.targets.protocol-relative.platform',
+      value: 'web',
+      source: 'config-file',
+      masked: false,
+    })
+    // The round-3 absolute axis is unchanged by the drop rule: a value the parser DOES
+    // vouch for is still reduced rather than dropped.
+    expect(byKey['registry.targets.web.url']).toEqual({
+      key: 'registry.targets.web.url',
+      value: 'https://x.test/checkout',
+      source: 'config-file',
+      masked: true,
+    })
+    // …and the '@'-carrying plugin package names stay readable: an in-process package is
+    // the identity of code with full Node access, so the one capability whose purpose is
+    // configuration triage must print it (plan-10 SHOW-ME).
+    expect(byKey['plugins.auth.0.package']?.value).toBe(FIXTURE_AUTH_PLUGIN_PACKAGE)
+    expect(byKey['plugins.providers.0.package']?.value).toBe(FIXTURE_PROVIDER_PLUGIN_PACKAGE)
   })
 
   it('masks a free-form record the masker was never told about (BL-02)', async () => {

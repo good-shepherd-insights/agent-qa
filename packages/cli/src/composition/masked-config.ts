@@ -25,19 +25,40 @@
 // visible, while `services.auth.token` does not. The single named carve-out is applied
 // before it. The census can only ADD masking; it can never make an opaque path visible.
 //
-// A value that survives both is then RENDERED, and the render is itself a rule. Anything
-// whose rendered string parses as a URL is re-rendered as `scheme://host[:port]/path` and
-// nothing else: userinfo, query string and fragment are dropped UNCONDITIONALLY, whatever
-// they are called. Those three are the parts of a URL that belong to no key, so nothing
-// that reads key names reaches them; the decision here reads the VALUE's own structure
-// instead, which is why it does not depend on recognising the next parameter name. An
-// entry whose render altered the value is flagged `masked: true`, because the operator's
-// raw value is not what the caller is reading. A visible URL carrying none of the three is
-// returned byte-identical.
+// A value that survives both is then RENDERED, and the render is itself a rule — one with
+// a PRECONDITION, stated here rather than assumed away. Userinfo, query string and fragment
+// are the parts of a URL that belong to no key, so nothing that reads key names reaches
+// them; every decision below is taken from the VALUE's own structure instead, which is why
+// none of it depends on recognising the next parameter name. The rule has two branches, and
+// which one runs is decided by whether the URL parser will resolve the value ABSOLUTELY:
 //
-// Over-masking is the accepted cost, and the schema rule makes it concrete: a provider's
-// `baseURL` is masked because it sits inside a free-form record. An over-masked entry is
-// visibly flagged `masked: true`; an under-masked one is a silent disclosure.
+//   - RESOLVES. The value is re-rendered as `scheme://host[:port]/path` when it carries any
+//     of the three parts, and the three are dropped regardless of their names. A value
+//     carrying none of them is returned unchanged, so nothing is normalised behind an
+//     operator's back. One case inside this branch is not what it looks like: a scheme the
+//     parser treats as OPAQUE resolves with an empty host and no userinfo slot, so a
+//     credential written before the first `@` lands in the path where the three-part check
+//     cannot see it. An empty host together with an `@` in the raw value therefore DROPS.
+//
+//   - DOES NOT RESOLVE. A protocol-relative, host-relative or path-relative value has no
+//     absolute rendering to reduce it to, and it can still carry all three parts. It is
+//     re-probed against a placeholder base; if the probe finds userinfo, a query string or
+//     a fragment, the value is DROPPED to the mask placeholder rather than returned
+//     unchanged. Only if even the based probe throws does a scan for the three characters
+//     that introduce those parts decide it. This is the module's own doctrine applied to
+//     the parser: a value it cannot vouch for is not published.
+//
+// An entry whose render altered the value is flagged `masked: true`, because the operator's
+// raw value is not what the caller is reading.
+//
+// Over-masking is the accepted cost, and the schema rule makes it concrete:
+// `registry.providers.<name>.baseURL` is masked because it sits inside a free-form record,
+// while the sibling `registry.llms.<n>.baseURL` is schema-constrained and stays visible
+// under the render rule above. An over-masked entry is visibly flagged `masked: true`; an
+// under-masked one is a silent disclosure. What no part of this file reaches is named where
+// it lives rather than restated here: see the census note below for the one residual class
+// — a credential subtree the schema fully constrains whose leaf names are innocuous — with
+// a reproducible example.
 //
 // This module imports nothing but the shared contract vocabulary package and a sibling
 // type, so it is legal under the FUNC-02 surface firewall with no ledger entry —
@@ -179,29 +200,73 @@ interface RenderedValue {
 }
 
 /**
- * Re-render anything that parses as a URL as `scheme://host[:port]/path` and nothing else.
+ * Does this value carry a part that belongs to no configuration key?
  *
- * Userinfo, query string and fragment are dropped UNCONDITIONALLY. All three are parts of a
- * URL that belong to no configuration key, so no rule that reads key names can reach them —
- * which is how a password in the userinfo, a credential in a query parameter and a token in
- * a fragment each rode out in turn through schema-constrained, legitimately-visible fields.
+ * Asked of values the parser will not resolve absolutely, where there is no host to read
+ * and no scheme to trust. Re-probing against a placeholder base gives the platform parser
+ * back the one thing it was missing — an origin — and lets it answer from the value's own
+ * structure: a protocol-relative value keeps its userinfo, a relative one keeps its query
+ * and fragment, and an ordinary string acquires none of them by being resolved. The base is
+ * a reserved-TLD name, so nothing here can resolve to a host that exists.
  *
- * The decision reads the VALUE's own structure — does it parse as a URL, and does it carry
- * any of those three parts — and never a parameter's name. A vocabulary of credential-ish
- * parameter names is the same object that failed three times at the path level: whatever it
- * lists, an operator's next parameter is called something else. This rule has nothing to be
- * stale about, and it is deliberately written with no example parameter name in it, so a
- * test corpus can be measured against these bytes and shown to come from outside them.
+ * The character scan is the last resort, and only for a value even that probe rejects. It
+ * over-masks by construction, which is the direction this module accepts.
  *
- * Only a URL that actually carries one of the three is re-rendered; everything else is
- * returned byte-identical, so no ordinary value is normalised behind an operator's back.
+ * A scoped package name is the collision worth stating: `@scope/name` carries an `@` and is
+ * not a URL, but resolved against a base its `@` lands in the PATH and all four parts come
+ * back empty, so it stays visible — a package that loads in-process with full Node access is
+ * exactly what a configuration triage read must show.
+ */
+function carriesSecretBearingParts(value: string): boolean {
+  try {
+    const probe = new URL(value, 'https://placeholder.invalid')
+    return probe.username !== ''
+      || probe.password !== ''
+      || probe.search !== ''
+      || probe.hash !== ''
+  } catch {
+    return value.includes('@') || value.includes('?') || value.includes('#')
+  }
+}
+
+/**
+ * Reduce a value the parser vouches for to `scheme://host[:port]/path`; drop one it does not.
+ *
+ * Userinfo, query string and fragment are dropped from an absolute URL regardless of the
+ * names they were given. All three are parts of a URL that belong to no configuration key,
+ * so no rule that reads key names can reach them — which is how a password in the userinfo,
+ * a credential in a query parameter and a token in a fragment each rode out in turn through
+ * schema-constrained, legitimately-visible fields.
+ *
+ * Every decision here reads the VALUE's own structure and never a parameter's name. A
+ * vocabulary of credential-ish parameter names is the same object that failed three times at
+ * the path level: whatever it lists, an operator's next parameter has a different name. This
+ * rule has nothing to be stale about, and it is deliberately written with no example
+ * parameter name in it, so a test corpus can be measured against these bytes and shown to
+ * come from outside them.
+ *
+ * The PRECONDITION is the part that was missing, and stating it is the point: the reduce
+ * branch only ever ran for values `new URL(value)` accepts with no base. Three ordinary
+ * forms it rejects — protocol-relative, host-relative, path-relative — reached the catch and
+ * were published unchanged, and a fourth (an opaque scheme, whose credential rides in the
+ * path with an empty host) satisfied the all-empty early return. Both now DROP to the mask
+ * placeholder: a value with no absolute rendering to reduce to is not returned unaltered,
+ * because publishing what the parser could not read is the failure this module exists to
+ * prevent. A value carrying no such part is still returned byte-for-byte as written.
  */
 function renderUrlWithoutSecrets(value: string): RenderedValue {
   let url: URL
   try {
     url = new URL(value)
   } catch {
-    return { value, altered: false }
+    return carriesSecretBearingParts(value)
+      ? { value: CONFIG_MASK_PLACEHOLDER, altered: true }
+      : { value, altered: false }
+  }
+  // An opaque-path URL has no userinfo slot and no host, so anything written before the
+  // first `@` sits in the path where the four-field check below cannot see it.
+  if (url.host === '' && value.includes('@')) {
+    return { value: CONFIG_MASK_PLACEHOLDER, altered: true }
   }
   if (url.username === '' && url.password === '' && url.search === '' && url.hash === '') {
     return { value, altered: false }
