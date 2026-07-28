@@ -15,6 +15,7 @@ import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
+import { runsStartSpec } from './ops/runs-start.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
 
 /** Thrown at construction when two declarations claim the same id — never last-wins. */
@@ -33,6 +34,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsListSpec as FunctionSpec,
   runsGetSpec as FunctionSpec,
   runsEventsSpec as FunctionSpec,
+  // Declared in full, bound by nothing here (D-09) — the registry lists it so the gap is
+  // visible; `invokeFunction` refuses it by name.
+  runsStartSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
   configGetSpec as FunctionSpec,
 ]

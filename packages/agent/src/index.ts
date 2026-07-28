@@ -20,6 +20,7 @@ export {
   invokeFunction,
   FunctionDeniedError,
   FunctionInputError,
+  FunctionNotBoundError,
   FunctionScopeError,
   UnknownFunctionError,
 } from './functions/invoke.js'

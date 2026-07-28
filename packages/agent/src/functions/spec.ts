@@ -53,6 +53,26 @@ export type ReplayedRunEvent = ReturnType<EventLogPort['read']>[number]
 export type FunctionBindingStatus = 'bound' | 'unbound'
 
 /**
+ * The capability is declared, but no implementation is bound in THIS composition (D-09).
+ *
+ * Deliberately distinct from `UnknownFunctionError`: the contract exists, is listed, and
+ * projects into a catalog — what is absent is the binding. A caller (or a coverage check)
+ * that could not tell those two apart would read a staged capability as a hole in the API,
+ * which is the silent gap `bindingStatus` exists to prevent.
+ *
+ * Declared here beside {@link FunctionBindingStatus} rather than beside the pipeline's
+ * other refusals so an unbound op can throw it without an op → invoke → registry → op
+ * import cycle; `invoke.ts` re-exports it, so the layer's refusal vocabulary still reads
+ * as one set at the call site.
+ */
+export class FunctionNotBoundError extends Error {
+  constructor(readonly functionId: string) {
+    super(`${functionId} is declared but not bound in this composition`)
+    this.name = 'FunctionNotBoundError'
+  }
+}
+
+/**
  * The public description of one registered capability.
  *
  * `id` is dot-namespaced `domain.verb` (D-15) over the fixed domain taxonomy

@@ -231,6 +231,40 @@ export const RunsStartInputSchema = z.object({
 
 export type RunsStartInput = z.infer<typeof RunsStartInputSchema>
 
+export const RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION = 1
+
+/**
+ * The `runs.start` result (Phase 384, D-09).
+ *
+ * Starting a run is ASYNCHRONOUS, so the acknowledgment names the run a caller may now
+ * address — `runs.events` for the stream while it happens, `runs.get` for the outcome once
+ * it exists — and deliberately not the outcome itself, which has not happened yet. Both
+ * durable markers are echoed so a caller can confirm the run was accepted as the kind of
+ * run it asked for rather than assuming its request survived resolution.
+ */
+export interface RunStartAcknowledgement {
+  runId: RunId
+  scope: ScopeKey
+  executionContext: ExecutionContext
+  buildOrdinal: number
+  startedAt: number
+  /** Member tests the resolved pattern set admitted. */
+  testCount: number
+  gateRun?: true
+  excludedFromOutcomes?: true
+}
+
+export const RunStartAcknowledgementSchema = z.object({
+  runId: runIdSchema,
+  scope: scopeKeySchema,
+  executionContext: z.enum(executionContextValues),
+  buildOrdinal: z.number().int().nonnegative(),
+  startedAt: z.number().int().nonnegative(),
+  testCount: z.number().int().nonnegative(),
+  gateRun: z.literal(true).optional(),
+  excludedFromOutcomes: z.literal(true).optional(),
+}).strict() satisfies z.ZodType<RunStartAcknowledgement>
+
 /**
  * The `runs.events` stream input (D-08). `lastEventId` is the v49 bus resume token — the
  * gap-free `seq` of the last envelope the caller observed, so the stream resumes at

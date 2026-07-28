@@ -19,6 +19,11 @@ import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { registryInternals } from './registry.js'
 import type { FunctionRegistry } from './registry.js'
+import { FunctionNotBoundError } from './spec.js'
+
+// Declared next to `FunctionBindingStatus` (see spec.ts) and surfaced here so every
+// caller-facing refusal this pipeline can raise is importable as one set.
+export { FunctionNotBoundError }
 
 /** No capability with this id is registered. Thrown before any dependency is touched. */
 export class UnknownFunctionError extends Error {
@@ -78,8 +83,9 @@ function issueSummary(issues: readonly { path: PropertyKey[]; message: string }[
  *   2. validate the input      — malformed input never reaches an implementation
  *   3. scope subset check      — computed here from composition-minted grants
  *   4. evaluate()              — verdict + audit row, for every op without exception
- *   5. dispatch                — the only place a spec implementation ever runs
- *   6. validate the output     — unary results honour their declared contract
+ *   5. binding check           — a declared-but-unbound op refuses AFTER it is audited
+ *   6. dispatch                — the only place a spec implementation ever runs
+ *   7. validate the output     — unary results honour their declared contract
  *
  * Stream ops (D-08) run through the SAME six steps: the gate verdict and its audit row are
  * therefore computed before a single event can be observed.
@@ -116,6 +122,14 @@ export async function invokeFunction(
   )
   if (policy.verdict === 'deny') {
     throw new FunctionDeniedError(functionId, policy.reason)
+  }
+
+  // Binding is checked AFTER the gate on purpose (D-09/D-11): an attempt to run a
+  // capability this composition cannot run is exactly the kind of thing an audit trail
+  // must record. The DECLARATION is authoritative — a spec that says `unbound` never
+  // dispatches, whatever its implementation happens to do.
+  if (spec.bindingStatus === 'unbound') {
+    throw new FunctionNotBoundError(functionId)
   }
 
   const result = await spec.invoke(parsed.data, internals.deps)

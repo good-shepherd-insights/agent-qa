@@ -11,6 +11,8 @@ export {
   RunsGetInputSchema,
   RunsStartInputSchema,
   RunsEventsInputSchema,
+  RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
+  RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
   RunEventEnvelopeSchema,
 } from './runs'
@@ -22,6 +24,7 @@ export type {
   RunsGetInput,
   RunsStartInput,
   RunsEventsInput,
+  RunStartAcknowledgement,
 } from './runs'
 export {
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
