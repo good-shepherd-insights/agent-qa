@@ -13,6 +13,7 @@ import {
   configFilesFor,
   extractSpecifiers,
   sourceFilesFor,
+  specifiersInSource,
   type SpecifierHit,
 } from '../lint/extract-specifiers.js'
 import { applyLedger, transitionalLeaks } from '../lint/apply-ledger.js'
@@ -33,6 +34,19 @@ import {
   findContractlessWorkspaceOffenders,
   workspaceMemberDirs,
 } from '../lint/workspace-members.js'
+import {
+  EXPECTED_SURFACE_CLASS_PACKAGES,
+  FIREWALLED_SURFACE_DIRS,
+  findSurfaceClassGoldenSetOffenders,
+  findSurfaceFirewallOffenders,
+  isFirewalledSurfaceDir,
+  SURFACE_ALLOWED_INTERNAL_PACKAGES,
+  type SurfaceFirewallScan,
+} from '../lint/surface-firewall.js'
+import {
+  SURFACE_FIREWALL_LEDGER,
+  type SurfaceLedgerEntry,
+} from '../lint/surface-firewall-ledger.js'
 import { ARCH_MANIFEST } from '../manifest.js'
 
 const testDir = dirname(fileURLToPath(import.meta.url))
@@ -90,10 +104,38 @@ function fixtureLedgerEntry(target: string) {
   }
 }
 
+const FIXTURE_SURFACE_FILE = 'packages/cli/src/fixture.ts'
+
+function surfaceLedgerFixture(specifier: string, file = FIXTURE_SURFACE_FILE): SurfaceLedgerEntry {
+  return { file, specifier, clearedBy: 'fixture', reason: 'fixture surface ledger entry' }
+}
+
+function surfaceScan(
+  hits: readonly SpecifierHit[],
+  packageDir = 'packages/cli',
+): SurfaceFirewallScan[] {
+  return [{ packageDir, hits }]
+}
+
+function surfaceHit(specifier: string, line = 1, file = FIXTURE_SURFACE_FILE): SpecifierHit {
+  return { specifier, file, line }
+}
+
+function surfaceClassContracts(packageNames: readonly string[]): OwnershipContract[] {
+  return packageNames.map(packageName =>
+    fixtureContract({
+      packageName,
+      packageDir: `packages/${packageName.replace('@vostride/', '')}`,
+      packageClasses: ['surface'],
+    }),
+  )
+}
+
 describe('validate:arch (LINT-01..05)', () => {
   it('every contract-bearing package satisfies its class rules and dep contract', () => {
     const offenders: string[] = []
     const contracts: readonly OwnershipContract[] = ARCH_MANIFEST.packages
+    const surfaceScans: SurfaceFirewallScan[] = []
 
     for (const contract of contracts) {
       const sourceHits = packageSourceHits(contract)
@@ -115,9 +157,14 @@ describe('validate:arch (LINT-01..05)', () => {
       if (contract.packageDir === 'packages/cli') {
         offenders.push(...findReaderCarveoutOffenders(sourceHits))
       }
+      if (isFirewalledSurfaceDir(contract.packageDir)) {
+        surfaceScans.push({ packageDir: contract.packageDir, hits: sourceHits })
+      }
       offenders.push(...findKnowledgeLocalWallOffenders(contract, sourceHits))
     }
 
+    offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
+    offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
     offenders.push(...findCycleOffenders(contracts))
     offenders.push(...findDirectionOffenders(contracts))
     offenders.push(...findKnowledgeWriteOffenders(contracts))
@@ -351,5 +398,168 @@ describe('validate:arch held-out fixtures', () => {
       'packages/core | fixture.ts:1 | node:dgram | unwaived transitional leak',
       'packages/core | fixture.ts:2 | better-sqlite3 | unwaived transitional leak',
     ])
+  })
+})
+
+describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
+  it('held-out firewall reports an un-ledgered internal import and accepts the allow-list', () => {
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([surfaceHit('@vostride/agent-qa-runner-local', 7)]),
+        [],
+      ),
+    ).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:7 | @vostride/agent-qa-runner-local | surface-firewall un-ledgered internal import`,
+    ])
+
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan(SURFACE_ALLOWED_INTERNAL_PACKAGES.map(specifier => surfaceHit(specifier))),
+        [],
+      ),
+    ).toEqual([])
+  })
+
+  it('held-out firewall leaves non-firewalled surfaces alone until M5 admits them', () => {
+    expect(FIREWALLED_SURFACE_DIRS).toEqual(['packages/cli', 'packages/mcp'])
+    expect(EXPECTED_SURFACE_CLASS_PACKAGES).toContain('@vostride/agent-qa-dashboard')
+
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan(
+          [surfaceHit('@vostride/agent-qa-runner-local', 3, 'packages/dashboard-server/src/x.ts')],
+          'packages/dashboard-server',
+        ),
+        [],
+      ),
+    ).toEqual([])
+  })
+
+  it('held-out firewall exempts only the ledgered pair, never the whole file (D-03)', () => {
+    const ledger = [surfaceLedgerFixture('@vostride/agent-qa-runner-local')]
+    const ledgeredHit = surfaceHit('@vostride/agent-qa-runner-local', 7)
+
+    expect(findSurfaceFirewallOffenders(surfaceScan([ledgeredHit]), ledger)).toEqual([])
+
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([ledgeredHit, surfaceHit('@vostride/agent-qa-core', 9)]),
+        ledger,
+      ),
+    ).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:9 | @vostride/agent-qa-core | surface-firewall un-ledgered internal import`,
+    ])
+  })
+
+  it('held-out firewall reports a ledger entry whose leak is gone as stale (self-shrinking)', () => {
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([surfaceHit('@vostride/agent-qa-core', 4)]),
+        [
+          surfaceLedgerFixture('@vostride/agent-qa-core'),
+          surfaceLedgerFixture('@vostride/agent-qa-runner-local'),
+        ],
+      ),
+    ).toEqual([
+      `packages/cli | ledger | ${FIXTURE_SURFACE_FILE} :: @vostride/agent-qa-runner-local | surface-firewall stale ledger entry`,
+    ])
+  })
+
+  it('held-out firewall matches whole specifiers, never substrings', () => {
+    const safetyLocalLedger = [surfaceLedgerFixture('@vostride/agent-qa-safety-local')]
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([
+          surfaceHit('@vostride/agent-qa-safety-local', 5),
+          surfaceHit('@vostride/agent-qa-safety', 6),
+        ]),
+        safetyLocalLedger,
+      ),
+    ).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:6 | @vostride/agent-qa-safety | surface-firewall un-ledgered internal import`,
+    ])
+
+    const readerLedger = [surfaceLedgerFixture('@vostride/agent-qa-knowledge-local/reader')]
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([
+          surfaceHit('@vostride/agent-qa-knowledge-local/reader', 5),
+          surfaceHit('@vostride/agent-qa-knowledge-local', 6),
+        ]),
+        readerLedger,
+      ),
+    ).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:6 | @vostride/agent-qa-knowledge-local | surface-firewall un-ledgered internal import`,
+    ])
+
+    const mainLedger = [surfaceLedgerFixture('@vostride/agent-qa-knowledge-local')]
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([
+          surfaceHit('@vostride/agent-qa-knowledge-local', 5),
+          surfaceHit('@vostride/agent-qa-knowledge-local/reader', 6),
+        ]),
+        mainLedger,
+      ),
+    ).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:6 | @vostride/agent-qa-knowledge-local/reader | surface-firewall un-ledgered internal import`,
+    ])
+  })
+
+  it('held-out firewall counts a type-only import as a violation (D-04)', () => {
+    const source = [
+      'import { Command } from "commander"',
+      'import type { AuditSink } from "@vostride/agent-qa-safety"',
+      '// a comment naming @vostride/agent-qa-runner is not an import',
+    ].join('\n')
+    const hits = specifiersInSource(source, FIXTURE_SURFACE_FILE)
+
+    expect(hits.map(hit => hit.specifier)).toEqual(['commander', '@vostride/agent-qa-safety'])
+    expect(findSurfaceFirewallOffenders(surfaceScan(hits), [])).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:2 | @vostride/agent-qa-safety | surface-firewall un-ledgered internal import`,
+    ])
+  })
+
+  it('held-out golden surface set fails in both drift directions (D-02)', () => {
+    expect(
+      findSurfaceClassGoldenSetOffenders(surfaceClassContracts(EXPECTED_SURFACE_CLASS_PACKAGES)),
+    ).toEqual([])
+
+    expect(
+      findSurfaceClassGoldenSetOffenders(
+        surfaceClassContracts([...EXPECTED_SURFACE_CLASS_PACKAGES, '@vostride/agent-qa-chat']),
+      ),
+    ).toEqual([
+      'surface-class-golden-set: @vostride/agent-qa-chat declares surface but is absent the pinned set',
+    ])
+
+    expect(
+      findSurfaceClassGoldenSetOffenders(
+        surfaceClassContracts(
+          EXPECTED_SURFACE_CLASS_PACKAGES.filter(name => name !== '@vostride/agent-qa-mcp'),
+        ),
+      ),
+    ).toEqual([
+      'surface-class-golden-set: @vostride/agent-qa-mcp is pinned as a surface but no longer declares the class',
+    ])
+  })
+
+  it('the shipped ledger stays exact, dated, and closed to new-in-384 surface code (D-01)', () => {
+    const newInPhase384 = [
+      'packages/cli/src/commands/fn.ts',
+      'packages/cli/src/composition/masked-config.ts',
+    ]
+
+    for (const entry of SURFACE_FIREWALL_LEDGER) {
+      expect(entry.clearedBy.trim()).not.toEqual('')
+      expect(entry.reason.trim()).not.toEqual('')
+      expect(entry.file.endsWith('/')).toBe(false)
+      expect(entry.file).toMatch(/\.(ts|tsx|js|mjs|cjs|css)$/)
+      expect(FIREWALLED_SURFACE_DIRS.some(dir => entry.file.startsWith(`${dir}/`))).toBe(true)
+      expect(newInPhase384).not.toContain(entry.file)
+    }
+
+    const keys = SURFACE_FIREWALL_LEDGER.map(entry => `${entry.file} :: ${entry.specifier}`)
+    expect(new Set(keys).size).toEqual(keys.length)
   })
 })
