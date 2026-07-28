@@ -1,12 +1,27 @@
-// The `config.get` masker (Phase 384, Plan 03 — T-384-07).
+// The `config.get` masker (Phase 384, Plan 03 — T-384-07; hardened in Plan 08 — CR-01).
 //
 // Masking happens HERE, while each entry is constructed, and the secret is dropped rather
 // than carried and redacted later: a `MaskedResolvedConfig` that exists cannot leak a secret
 // regardless of what a surface does with it. Every value is rendered to a string at
 // construction precisely so no value type can bypass the mask.
 //
-// This module imports nothing but `@vostride/agent-qa-schema`, so it is legal under the
-// FUNC-02 surface firewall with no ledger entry — new-in-384 code must never need one.
+// The rule an entry is judged by, in the order it is applied:
+//   1. a named carve-out list, checked first, which is the only way a path stays visible
+//      once a later rule would have matched it;
+//   2. PROVENANCE — a path under either of the two free-form credential records (a provider
+//      config, or a provider-headers map) is masked unconditionally, because the operator
+//      names those keys and so the name carries no information about secrecy;
+//   3. the key NAME — an exact match against a set of whole credential segments, plus a
+//      substring scan for the longer credential terms, over every non-numeric segment.
+// Values that survive all three are still rendered with any URL userinfo stripped, so a
+// credential smuggled into a visible URL does not ride out on a field no rule masks.
+//
+// Over-masking is the accepted cost, and rule 2 makes that concrete: a provider's `baseURL`
+// is masked even though it is not a secret. An over-masked entry is visibly flagged
+// `masked: true`; an under-masked one is a silent disclosure.
+//
+// This module imports nothing but the schema package, so it is legal under the FUNC-02
+// surface firewall with no ledger entry — new-in-384 code must never need one.
 
 import {
   CONFIG_MASK_PLACEHOLDER,
@@ -21,11 +36,10 @@ import type {
 /**
  * Substrings that make a configuration key secret-shaped.
  *
- * The check is FAIL-CLOSED: it runs over every non-numeric path segment, not just the leaf,
- * so a secret nested under a `credentials` block is masked even when its own key is
- * innocuous. Over-masking a path-shaped key such as `workspace.secretsFile` is the accepted
- * cost — an over-masked entry is visibly flagged `masked: true`, while an under-masked one
- * is a silent disclosure.
+ * One of the three rules `isSecretConfigKey` applies. It runs over every non-numeric path
+ * segment, not just the leaf, so a secret nested under a `credentials` block is masked even
+ * when its own key is innocuous. Being a SUBSTRING relation, it only reaches names that
+ * contain a term — a bare `key` segment is caught by the exact-segment set below instead.
  */
 const SECRET_KEY_TERMS = [
   'accesskey',
@@ -55,26 +69,96 @@ const NON_SECRET_KEYS: ReadonlySet<string> = new Set([
   'knowledge.contextBudgetTokens',
 ])
 
+/**
+ * Whole credential segments, matched EXACTLY rather than as substrings.
+ *
+ * The term scan above is a containment relation, so it never reaches a name shorter than
+ * its terms: `'key'.includes('apikey')` is false, and a config leaf literally called `key`,
+ * `pwd`, or `pat` therefore rendered in plaintext. These are the short names that carry the
+ * whole meaning by themselves.
+ */
+const SECRET_KEY_SEGMENTS: ReadonlySet<string> = new Set([
+  'key',
+  'keys',
+  'auth',
+  'pass',
+  'pwd',
+  'pat',
+  'sig',
+  'cred',
+  'creds',
+])
+
+/**
+ * The free-form records whose keys an OPERATOR names, not the schema.
+ *
+ * Everything beneath one of these is masked unconditionally. Both subtrees exist precisely
+ * to carry provider credentials under names the schema cannot anticipate, so the key name
+ * is not evidence of anything: a rule that consulted it would be guessing. Judging by
+ * PROVENANCE instead is what makes the masker fail closed over them, and it is why a
+ * provider's `baseURL` is masked — under an opaque subtree there are no exceptions.
+ */
+const PROVIDER_HEADERS_SEGMENT = 'providerheaders'
+const PROVIDER_CONFIG_PATH = ['registry', 'providers'] as const
+
 function normalizeSegment(segment: string): string {
   return segment.toLowerCase().replaceAll(/[^a-z0-9]/gu, '')
+}
+
+/** True when the path lies inside one of the operator-named credential records. */
+function isUnderOpaqueSubtree(segments: readonly string[]): boolean {
+  if (segments.includes(PROVIDER_HEADERS_SEGMENT)) return true
+  return (
+    segments.length > PROVIDER_CONFIG_PATH.length &&
+    PROVIDER_CONFIG_PATH.every((expected, index) => segments[index] === expected)
+  )
 }
 
 /** True when a dot-path names, or lives beneath, a secret-shaped key. */
 export function isSecretConfigKey(key: string): boolean {
   if (NON_SECRET_KEYS.has(key)) return false
-  return key
+
+  const segments = key
     .split('.')
     .filter((segment) => !/^\d+$/u.test(segment))
     .map(normalizeSegment)
-    .some((segment) => SECRET_KEY_TERMS.some((term) => segment.includes(term)))
+
+  if (isUnderOpaqueSubtree(segments)) return true
+
+  return segments.some((segment) => (
+    SECRET_KEY_SEGMENTS.has(segment) ||
+    SECRET_KEY_TERMS.some((term) => segment.includes(term))
+  ))
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * Strip the credential a URL can carry in its userinfo.
+ *
+ * A password sitting between the scheme and the host belongs to no key, so no name-based
+ * rule can ever see it — which is exactly how one rode out through a schema-constrained,
+ * legitimately-visible `baseURL`. Only a URL that actually carries userinfo is re-rendered;
+ * everything else is returned byte-identical, so no ordinary value is normalised behind an
+ * operator's back.
+ */
+function stripUrlUserinfo(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return value
+  }
+  if (url.username === '' && url.password === '') return value
+  url.username = ''
+  url.password = ''
+  return url.toString()
+}
+
 function renderValue(value: unknown): string {
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') return stripUrlUserinfo(value)
   const serialized = JSON.stringify(value)
   return serialized ?? String(value)
 }

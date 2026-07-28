@@ -32,6 +32,19 @@ import { createFnCommand } from '../commands/fn.js'
 /** A secret-shaped value the fixture config carries so masking has something to hide. */
 const FIXTURE_API_KEY = 'sk-live-DO-NOT-LEAK-4242'
 
+/**
+ * Credentials planted where NO key name marks them as secret (Plan 08 / CR-01).
+ *
+ * `providerHeaders` and `registry.providers.<name>` are free-form records whose keys the
+ * operator chooses, so these four are reached only by the opaque-subtree rule; the fifth
+ * hides inside a URL's userinfo, where there is no key at all.
+ */
+const FIXTURE_HEADER_KEY = 'sk-live-HEADER-KEY-DO-NOT-LEAK-1111'
+const FIXTURE_HEADER_CRED = 'sk-live-HEADER-CRED-DO-NOT-LEAK-2222'
+const FIXTURE_HEADER_PWD = 'sk-live-HEADER-PWD-DO-NOT-LEAK-3333'
+const FIXTURE_PROVIDER_KEY = 'sk-live-PROVIDER-KEY-DO-NOT-LEAK-5555'
+const FIXTURE_URL_PASSWORD = 'hunter2-URL-DO-NOT-LEAK'
+
 interface InvocationResult {
   stdout: string
   stderr: string
@@ -60,8 +73,28 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
         secretsFile: '.env.secrets.local',
       },
       registry: {
+        llms: [
+          {
+            name: 'judge',
+            // `anthropic-compatible` is the one provider family allowed to carry
+            // providerHeaders, and a compatible provider requires a baseURL — so this is
+            // the schema-legal shape a real operator credential arrives in.
+            provider: 'anthropic-compatible',
+            model: 'claude-fixture',
+            baseURL: `https://ops:${FIXTURE_URL_PASSWORD}@llm.acme.test/v1`,
+            providerHeaders: {
+              'x-key': FIXTURE_HEADER_KEY,
+              'x-cred': FIXTURE_HEADER_CRED,
+              'x-pwd': FIXTURE_HEADER_PWD,
+            },
+          },
+        ],
         providers: {
-          acme: { apiKey: FIXTURE_API_KEY, baseURL: 'https://acme.test' },
+          acme: {
+            apiKey: FIXTURE_API_KEY,
+            key: FIXTURE_PROVIDER_KEY,
+            baseURL: 'https://acme.test',
+          },
         },
       },
       // The config schema's superRefine requires this leaf, so a resolvable fixture
@@ -483,18 +516,64 @@ describe('agent-qa fn (generic function invoker)', () => {
       source: 'config-file',
       masked: true,
     })
-    // A neighbouring non-secret leaf keeps its real value and its provenance.
+    // A neighbouring leaf under the SAME opaque subtree is masked too: under a free-form
+    // credential record the key name never decides. Deliberate over-masking, visibly flagged.
     expect(config.entries).toContainEqual({
       key: 'registry.providers.acme.baseURL',
-      value: 'https://acme.test',
+      value: CONFIG_MASK_PLACEHOLDER,
       source: 'config-file',
-      masked: false,
+      masked: true,
     })
     // Schema defaults the file never mentioned are attributed to the default layer.
     expect(config.entries.find((entry) => entry.key === 'knowledge.dir')).toEqual({
       key: 'knowledge.dir',
       value: 'agent-qa-knowledge',
       source: 'default',
+      masked: false,
+    })
+  })
+
+  it('masks operator-named credentials no key name marks as secret (CR-01)', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+
+    // The claim, asserted against the bytes a caller actually sees.
+    for (const planted of [
+      FIXTURE_HEADER_KEY,
+      FIXTURE_HEADER_CRED,
+      FIXTURE_HEADER_PWD,
+      FIXTURE_PROVIDER_KEY,
+      FIXTURE_URL_PASSWORD,
+    ]) {
+      expect(result.stdout).not.toContain(planted)
+    }
+
+    const config = JSON.parse(result.stdout) as MaskedResolvedConfig
+    const byKey = Object.fromEntries(config.entries.map((entry) => [entry.key, entry]))
+    for (const key of [
+      'registry.llms.0.providerHeaders.x-key',
+      'registry.llms.0.providerHeaders.x-cred',
+      'registry.llms.0.providerHeaders.x-pwd',
+      'registry.providers.acme.key',
+    ]) {
+      expect(byKey[key], key).toEqual({
+        key,
+        value: CONFIG_MASK_PLACEHOLDER,
+        source: 'config-file',
+        masked: true,
+      })
+    }
+
+    // The schema-constrained baseURL stays VISIBLE — its userinfo is stripped instead, so
+    // the mask is not the only thing standing between a caller and this credential.
+    expect(byKey['registry.llms.0.baseURL']).toEqual({
+      key: 'registry.llms.0.baseURL',
+      value: 'https://llm.acme.test/v1',
+      source: 'config-file',
       masked: false,
     })
   })
