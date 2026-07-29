@@ -3,8 +3,13 @@ import type { OwnershipContract } from '@vostride/agent-qa-arch'
 export const AGENT_QA_AGENT_LOCAL_PACKAGE_NAME = '@vostride/agent-qa-agent-local'
 export const AGENT_QA_AGENT_LOCAL_PACKAGE_DIR = 'packages/agent-local'
 export const AGENT_QA_AGENT_LOCAL_PACKAGE_CLASSES = ['storageImplementation'] as const
+// 2026-07-29 (Phase 385 plan 02): the conversation responsibility is struck from the line
+// below. D-06 deleted those methods from the neutral port and chat's state of record is the
+// session log, so the claim named a responsibility with no port to reach — and, worse, was
+// the written justification a later refactor would have cited for unifying chat into the
+// agent job queue (JOBQ-04).
 export const AGENT_QA_AGENT_LOCAL_ALLOWED_RESPONSIBILITIES = [
-  'local agent persistence-store implementation for jobs, checkpoints, conversations, approvals, and patches',
+  'local agent persistence-store implementation for jobs, checkpoints, approvals, and patches',
   'filesystem access for local agent persistence stores',
   'sqlite access for local agent persistence stores',
 ] as const
