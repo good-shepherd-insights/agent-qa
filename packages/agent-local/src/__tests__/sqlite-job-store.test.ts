@@ -149,7 +149,9 @@ describe('agent job store: schema version (D-04)', () => {
     expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(
       AGENT_JOB_STORE_USER_VERSION,
     )
-    expect((thrown as Error).message).toContain('clear queue state')
+    // Pinned WITH the qualifier (D-21/JOBQ-07): three queues coexist, so a remedy that says
+    // "clear queue state" tells an operator to clear something without saying which.
+    expect((thrown as Error).message).toContain('clear agent job queue state')
   })
 
   it('leaves a database it refused to open exactly as it found it', () => {

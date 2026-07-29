@@ -386,9 +386,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
     }
   }
 
-  // Persistent job queue — all triggers route through this
+  // The persistent RUN QUEUE — all run triggers route through this. Named per D-21: it is not
+  // the curation queue and not the agent job queue. The `JobQueue` class name is v1 vocabulary
+  // that D-21 leaves unrenamed; only what an operator reads carries the qualifier.
   const jobQueue = new JobQueue({ db, concurrency })
-  console.log(`Job queue started with ${concurrency} concurrency slot(s)`)
+  console.log(`Run queue started with ${concurrency} concurrency slot(s)`)
   console.log('Appium lifecycle manager initialized (auto-start on first mobile test)')
 
   // Wire JobQueue 'execute' event to TestRunner

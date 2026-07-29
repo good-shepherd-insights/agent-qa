@@ -432,7 +432,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           declaration,
           reason:
             `the attempt bound of ${declaration.maxAttempts} is spent (this claim is attempt ` +
-            `${job.attempts}), so this job is given up on without being run again`,
+            `${job.attempts}), so this agent job is given up on without being run again`,
           handlerInvoked: false,
           published,
           fence,

@@ -17,10 +17,12 @@ export { StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
 /**
  * The database on disk was written by a build that does not agree with this one (D-04).
  *
- * There is no migration machinery in this queue and there is not meant to be: the milestone
- * ships nothing between releases, so a version that does not match is a development artifact,
- * not a user's history. The message therefore carries the remedy — clear queue state — since
- * an operator reading it can act on that and cannot act on a version number alone.
+ * There is no migration machinery in the agent job queue and there is not meant to be: the
+ * milestone ships nothing between releases, so a version that does not match is a development
+ * artifact, not a user's history. The message therefore carries the remedy — clear agent job
+ * queue state — since an operator reading it can act on that and cannot act on a version number
+ * alone. The remedy names WHICH queue because three of them coexist (D-21): an operator told to
+ * "clear queue state" could reasonably clear the curation queue instead.
  */
 export class JobStoreSchemaVersionError extends Error {
   override readonly name = 'JobStoreSchemaVersionError'
@@ -33,8 +35,8 @@ export class JobStoreSchemaVersionError extends Error {
     super(
       `The agent job store at ${path} is stamped at schema version ${observedVersion}, but ` +
         `this build reads version ${expectedVersion}. There is no migration machinery by ` +
-        'design — clear queue state (delete the agent job database and its checkpoint ' +
-        'directory) and re-enqueue.',
+        'design — clear agent job queue state (delete the agent job database and its ' +
+        'checkpoint directory) and re-enqueue.',
     )
   }
 }
@@ -79,9 +81,9 @@ export class JobCheckpointSchemaVersionError extends Error {
     readonly observedVersion: unknown,
   ) {
     super(
-      `Checkpoint ${path} was written at schema version ${String(observedVersion)}, but ` +
-        `this build reads version ${JOB_CHECKPOINT_SCHEMA_VERSION}. There is no migration ` +
-        'machinery by design — clear queue state and re-enqueue.',
+      `Agent job checkpoint ${path} was written at schema version ${String(observedVersion)}, ` +
+        `but this build reads version ${JOB_CHECKPOINT_SCHEMA_VERSION}. There is no migration ` +
+        'machinery by design — clear agent job queue state and re-enqueue.',
     )
   }
 }

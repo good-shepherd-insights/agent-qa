@@ -118,8 +118,8 @@ export function composeJobRecovery(input: ComposeJobRecoveryInput): JobRecoveryH
       for (;;) {
         if (outcomes.length >= maxJobs) {
           throw new Error(
-            `agent job recovery ran ${maxJobs} jobs without emptying the queue; the bound exists ` +
-              'so a chain that keeps enqueuing successors cannot turn recovery into an unbounded ' +
+            `agent job recovery ran ${maxJobs} jobs without emptying the agent job queue; the ` +
+              'bound exists so a chain that keeps enqueuing successors cannot turn recovery into an unbounded ' +
               'drain, and stopping early without saying so would report success over work left behind',
           )
         }
