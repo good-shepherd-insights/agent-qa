@@ -40,6 +40,12 @@ import {
   findCompositionCarveoutUnusedAllowances,
 } from '../lint/composition-carveout.js'
 import {
+  RESUME_PATH_ENTRY_FILES,
+  RESUME_PATH_PACKAGE_DIR,
+  findResumePathModelFreeOffenders,
+  resumePathModules,
+} from '../lint/resume-path-model-free.js'
+import {
   contractBearingDirs,
   findContractlessWorkspaceOffenders,
   workspaceMemberDirs,
@@ -209,6 +215,14 @@ describe('validate:arch (LINT-01..05)', () => {
       }
       offenders.push(...findCompositionCarveoutOffenders(contract, sourceHits))
       offenders.push(...findCompositionCarveoutUnusedAllowances(contract, sourceHits))
+      // D-11 layer 3. Handed whole MODULES rather than the flat hit list the rules above take,
+      // because it walks an import closure and a file with no imports at all still has to be
+      // resolvable — derived from hits alone, such a file would look like a hole in the graph.
+      if (contract.packageDir === RESUME_PATH_PACKAGE_DIR) {
+        offenders.push(
+          ...findResumePathModelFreeOffenders(resumePathModules(contract.packageDir, repoRoot)),
+        )
+      }
       if (isFirewalledSurfaceDir(contract.packageDir)) {
         surfaceScans.push({ packageDir: contract.packageDir, hits: sourceHits })
       }
@@ -639,6 +653,9 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     expect(aggregate).toContain('findCompositionCarveoutUnusedAllowances(contract, sourceHits)')
     expect(aggregate).toContain('findReaderCarveoutOffenders(sourceHits)')
     expect(aggregate).toContain('findKnowledgeWriterSingletonOffenders(readerScannedHits)')
+    expect(aggregate).toContain(
+      'findResumePathModelFreeOffenders(resumePathModules(contract.packageDir, repoRoot))',
+    )
   })
 
   it('guards a package that is actually contract-bearing and scanned', () => {
@@ -666,6 +683,31 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
         READER_CARVEOUT_SCANNED_DIRS.some(dir => entry.startsWith(`${dir}/`)),
       ).toBe(true)
     }
+  })
+
+  // D-11 layer 3, and the same relocation hazard one rule over: the resume-path rule is keyed on
+  // an exact file path, so a pin left pointing at a moved file would match nothing, report nothing
+  // and still read like proof. The rule reports that case itself; this asserts the pin is right on
+  // the real tree, and that the package it names is one the aggregate actually walks.
+  it('the resume-path pin points at files that exist inside a contract-bearing package', () => {
+    expect([...RESUME_PATH_ENTRY_FILES]).toEqual([
+      'packages/agent-local/src/composition/compose-job-recovery.ts',
+    ])
+    const walked = ARCH_MANIFEST.packages.find(
+      (contract) => contract.packageDir === RESUME_PATH_PACKAGE_DIR,
+    )
+    expect(walked).toBeDefined()
+    for (const entry of RESUME_PATH_ENTRY_FILES) {
+      expect(existsSync(join(repoRoot, entry))).toBe(true)
+      expect(entry.startsWith(`${RESUME_PATH_PACKAGE_DIR}/`)).toBe(true)
+    }
+    // The scanned set the aggregate hands the rule is non-empty and contains the pinned entry —
+    // the check that separates "no offender" from "nothing was read".
+    const scanned = resumePathModules(RESUME_PATH_PACKAGE_DIR, repoRoot).map(
+      (module) => module.file,
+    )
+    expect(scanned.length).toBeGreaterThan(0)
+    for (const entry of RESUME_PATH_ENTRY_FILES) expect(scanned).toContain(entry)
   })
 
   it('every pinned reader file exists and sits inside a scanned package', () => {

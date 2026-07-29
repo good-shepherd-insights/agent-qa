@@ -1,0 +1,242 @@
+// The resume path reaches no model package (Phase 385 plan 07, D-11 layer 3).
+//
+// D-11 states the JOBQ-03 proof in three layers, and this file is the third and narrowest of them.
+// Layer 1 is the class lint: the engine and the resume driver live in a providerNeutral package, so
+// a provider SDK is unimportable there. Layer 2 is structural: the model reaches a job only as the
+// argument of the author callback, and both context surfaces are pinned for exact equality so there
+// is nowhere to add a second door. Neither of them says anything about the LOCAL host's recovery
+// entry, which is a storageImplementation file — free, as far as every other rule is concerned, to
+// name whatever it likes.
+//
+// The sibling composition carve-out does not close that either, and says so in its own header: it
+// is a LOCATION rule. It answers "where may this package name the model package" with "inside the
+// composition subtree", and the recovery entry lives inside the composition subtree. Living in the
+// room where the permission applies is not the same as not needing the permission.
+//
+// So this rule is a PERMISSION rule about one file and everything that file can reach:
+//
+//   1. It walks the import closure, not the entry alone. A single-file check is defeated by a
+//      one-line helper module beside it, and that is the shape a well-meaning refactor takes.
+//   2. It fails in the other direction too. A pin whose path has moved matches nothing, reports
+//      nothing, and reads like proof — the failure mode plans 08 and 09 each had to close in their
+//      own rules. Here a pinned entry that is not in the scanned set is an offender, a closure that
+//      is the entry alone is an offender, and a relative import the walk cannot follow is an
+//      offender. A rule that cannot fail is worse than no rule, because it converts "unproven" into
+//      "proven".
+//   3. Its message states WHY rather than only what, per the 384 convention that a pin doubles as
+//      documentation. A reader who trips this rule needs to know that recovery re-reads a recorded
+//      checkpoint and never reaches an author callback, and that the capability a legitimately
+//      re-authoring resume needs arrives already built from the host — otherwise the obvious repair
+//      is to add the import and the allowance.
+//
+// What this rule is NOT, and deliberately: a repo-wide pin on who may construct a model. D-11
+// rejected that by name, because the legitimate set churns with every later phase and a pin that is
+// edited every phase is a pin nobody reads. This is three package names, scoped to the closure of
+// one file, and the whole of it moves only when the resume path itself moves.
+
+import { relative } from 'node:path'
+
+import { classifySpecifier, extractSpecifiers, sourceFilesFor } from './extract-specifiers.js'
+import type { SpecifierHit } from './extract-specifiers.js'
+
+/** The package the pinned entries live in, and therefore the package whose sources are walked. */
+export const RESUME_PATH_PACKAGE_DIR = 'packages/agent-local'
+
+/**
+ * The recovery/resume composition entries, by exact repo-relative path.
+ *
+ * One today. A file list rather than a directory prefix on purpose: the claim is about the entry a
+ * host calls to resume work somebody else abandoned, and a prefix would quietly cover — or quietly
+ * stop covering — whatever else moved into the same directory.
+ */
+export const RESUME_PATH_ENTRY_FILES = [
+  // 2026-07-29 (Phase 385 plan 06): the model-free recovery entry every resuming host composes.
+  'packages/agent-local/src/composition/compose-job-recovery.ts',
+] as const
+
+/**
+ * The packages no file in a resume path's closure may name, each with the reason it is listed.
+ *
+ * A rationale per entry, so a reader who disagrees knows exactly which capability the entry is
+ * about rather than having to infer it from a package name.
+ */
+export const RESUME_PATH_FORBIDDEN_PACKAGES: Readonly<Record<string, string>> = {
+  '@vostride/agent-qa-model': 'the first-party model registry, the one place a provider handle is constructed',
+  ai: 'the provider substrate: a path that can name it can build a model without naming any provider',
+}
+
+/** Every provider SDK, as a prefix — the set is open and naming its members would date this file. */
+export const RESUME_PATH_FORBIDDEN_PACKAGE_PREFIX = '@ai-sdk/'
+
+const FORBIDDEN_PREFIX_RATIONALE =
+  'a provider SDK, which is a model constructor under a vendor name'
+
+/** The rationale this rule reports for a specifier, or undefined when the specifier is fine. */
+export function resumePathForbiddenRationale(specifier: string): string | undefined {
+  const classified = classifySpecifier(specifier)
+  if (classified.kind !== 'internal' && classified.kind !== 'external') return undefined
+  if (classified.pkgName.startsWith(RESUME_PATH_FORBIDDEN_PACKAGE_PREFIX)) {
+    return FORBIDDEN_PREFIX_RATIONALE
+  }
+  return RESUME_PATH_FORBIDDEN_PACKAGES[classified.pkgName]
+}
+
+export interface ResumePathModule {
+  /** Repo-relative, forward slashes. */
+  readonly file: string
+  readonly specifiers: readonly SpecifierHit[]
+}
+
+function normalizeRepoPath(file: string): string {
+  return file.replaceAll('\\', '/')
+}
+
+/**
+ * Where a relative specifier could land, most specific first.
+ *
+ * Resolution is done against the scanned set rather than against the filesystem: the rule's input
+ * is the set of files it was handed, so a specifier that resolves to a real file nobody scanned is
+ * a hole and has to be reported as one, not silently resolved behind the rule's back.
+ */
+export function resumePathRelativeCandidates(fromFile: string, specifier: string): string[] {
+  const segments = [...normalizeRepoPath(fromFile).split('/').slice(0, -1), ...specifier.split('/')]
+  const stack: string[] = []
+  for (const segment of segments) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') {
+      stack.pop()
+      continue
+    }
+    stack.push(segment)
+  }
+  const joined = stack.join('/')
+  const stem = joined.replace(/\.js$/, '')
+  return [joined, `${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`]
+}
+
+export interface ResumePathClosure {
+  /** Every file reachable from the entries by relative import, including the entries. */
+  readonly files: readonly string[]
+  /** Which entry each file was first reached from, for the offender messages. */
+  readonly reachedFrom: ReadonlyMap<string, string>
+  /** Pinned entries the scanned set does not contain. */
+  readonly missingEntries: readonly string[]
+  /** Relative specifiers the walk could not resolve inside the scanned set. */
+  readonly unresolved: readonly { readonly from: string; readonly hit: SpecifierHit }[]
+}
+
+export function resumePathClosureOf(
+  modules: readonly ResumePathModule[],
+  entries: readonly string[] = RESUME_PATH_ENTRY_FILES,
+): ResumePathClosure {
+  const byFile = new Map(modules.map((module) => [normalizeRepoPath(module.file), module]))
+  const files: string[] = []
+  const reachedFrom = new Map<string, string>()
+  const missingEntries: string[] = []
+  const unresolved: { from: string; hit: SpecifierHit }[] = []
+
+  for (const rawEntry of entries) {
+    const entry = normalizeRepoPath(rawEntry)
+    if (!byFile.has(entry)) {
+      missingEntries.push(entry)
+      continue
+    }
+    const pending = [entry]
+    while (pending.length > 0) {
+      const file = pending.shift()!
+      if (reachedFrom.has(file)) continue
+      reachedFrom.set(file, entry)
+      files.push(file)
+      for (const hit of byFile.get(file)!.specifiers) {
+        if (classifySpecifier(hit.specifier).kind !== 'relative') continue
+        const resolved = resumePathRelativeCandidates(file, hit.specifier).find((candidate) =>
+          byFile.has(candidate),
+        )
+        if (resolved === undefined) {
+          unresolved.push({ from: file, hit })
+          continue
+        }
+        if (!reachedFrom.has(resolved)) pending.push(resolved)
+      }
+    }
+  }
+
+  return { files: files.sort(), reachedFrom, missingEntries, unresolved }
+}
+
+/**
+ * The rule. Four ways to fail, and three of them are about the rule itself being able to fail.
+ */
+export function findResumePathModelFreeOffenders(
+  modules: readonly ResumePathModule[],
+  entries: readonly string[] = RESUME_PATH_ENTRY_FILES,
+): string[] {
+  const offenders: string[] = []
+  const closure = resumePathClosureOf(modules, entries)
+  const byFile = new Map(modules.map((module) => [normalizeRepoPath(module.file), module]))
+
+  // ANTI-VACUITY 1: a pin that names a file nobody scanned checks nothing at all.
+  for (const entry of closure.missingEntries) {
+    offenders.push(
+      `resume-path-model-free: ${entry} ⇏ the pinned resume entry is not in the scanned set` +
+        ` (it moved, was renamed, or its package left ${RESUME_PATH_PACKAGE_DIR} — repoint the pin,` +
+        ' because a rule whose subject does not exist passes forever and reads like proof)',
+    )
+  }
+
+  // ANTI-VACUITY 2: a closure that is the entry alone means the walk is not walking. The resume
+  // entry composes a store out of sibling modules, so its closure is never one file.
+  for (const rawEntry of entries) {
+    const entry = normalizeRepoPath(rawEntry)
+    if (!byFile.has(entry)) continue
+    const reached = closure.files.filter((file) => closure.reachedFrom.get(file) === entry)
+    if (reached.length > 1) continue
+    offenders.push(
+      `resume-path-model-free: ${entry} ⇏ its import closure is the entry alone` +
+        ' (the entry composes a durable store out of sibling modules, so a closure of one means the' +
+        ' walk stopped following relative imports — and a one-file check is defeated by a one-line' +
+        ' helper module beside the entry, which is exactly the shape this rule exists to catch)',
+    )
+  }
+
+  // ANTI-VACUITY 3: an unfollowable relative import is an unexamined branch of the closure.
+  for (const { from, hit } of closure.unresolved) {
+    offenders.push(
+      `resume-path-model-free: ${from}:${hit.line} ⇏ ${hit.specifier} could not be followed` +
+        ` inside ${RESUME_PATH_PACKAGE_DIR} (an unresolved edge is a part of the resume path this` +
+        ' rule did not read, so it is reported rather than skipped)',
+    )
+  }
+
+  // THE RULE ITSELF. Type-only imports count: the specifier extractor is deliberately type-blind
+  // (384 D-04), and a package named as a type is still a declared dependency of this file.
+  for (const file of closure.files) {
+    for (const hit of byFile.get(file)!.specifiers) {
+      const rationale = resumePathForbiddenRationale(hit.specifier)
+      if (rationale === undefined) continue
+      offenders.push(
+        `resume-path-model-free: ${file}:${hit.line} ⇏ ${hit.specifier} (${rationale};` +
+          ` reached from ${closure.reachedFrom.get(file) ?? file})` +
+          ' — the resume entry and everything it imports stay model-free so crash recovery is' +
+          ' STRUCTURALLY incapable of re-invoking the model: a resumed job re-reads its recorded' +
+          ' checkpoint and control never reaches the author callback, and the capability a' +
+          ' legitimately re-authoring resume needs arrives already built from the host as an' +
+          ' ordinary argument. An import here would put a construction path back on the resume' +
+          ' side, which is the one thing D-11 layer 3 exists to make unrepresentable (JOBQ-03)',
+      )
+    }
+  }
+
+  return offenders
+}
+
+/** Every source file of a package, with its specifiers, repo-relative — the rule's real input. */
+export function resumePathModules(packageDir: string, repoRoot: string): ResumePathModule[] {
+  return sourceFilesFor(packageDir, repoRoot).map((absFile) => ({
+    file: normalizeRepoPath(relative(repoRoot, absFile)),
+    specifiers: extractSpecifiers(absFile).map((hit) => ({
+      ...hit,
+      file: normalizeRepoPath(relative(repoRoot, hit.file)),
+    })),
+  }))
+}
