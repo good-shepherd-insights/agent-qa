@@ -334,7 +334,14 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         // A job that kills its host on every attempt records no failures at all, so a
         // failure-time counter would let it retry forever.
         markClaimed.run(now, now, String(row.id))
-        return { claimed: true, job: rowToJob(requireRow(String(row.id))) }
+        const claimed = requireRow(String(row.id))
+        // The payload travels with the claim, not on the job row's DTO: it is the opaque
+        // input this kind's handler reads, and the handler is the only thing that can.
+        return {
+          claimed: true,
+          job: rowToJob(claimed),
+          payload: JSON.parse(String(claimed.payload)) as unknown,
+        }
       })
     },
 

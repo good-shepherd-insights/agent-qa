@@ -206,6 +206,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
 
       const outcome = await declaration.handler({
         job,
+        payload: claim.payload,
         publishCheckpoint: async (checkpointId, value) => {
           if (!declaration.checkpointed) {
             throw new UndeclaredJobCheckpointError(job.kind, checkpointId)

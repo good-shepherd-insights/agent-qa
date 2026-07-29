@@ -84,10 +84,17 @@ export interface JobEnqueueOutcome {
   readonly deduped: boolean
 }
 
-/** An empty queue is an ordinary outcome, not an exception. */
+/**
+ * An empty queue is an ordinary outcome, not an exception.
+ *
+ * The claim carries the `payload` beside the job because the `Job` DTO does not hold it and
+ * should not: the payload is opaque input only the claiming kind's handler knows how to read,
+ * while `Job` is the row every observer of the queue sees. Without it on the claim a handler
+ * would be a function of its own id and no kind could do real work at all.
+ */
 export type JobClaimOutcome =
   | { readonly claimed: false }
-  | { readonly claimed: true; readonly job: Job }
+  | { readonly claimed: true; readonly job: Job; readonly payload: unknown }
 
 export interface JobCompleteOutcome {
   readonly job: Job

@@ -101,14 +101,25 @@ export type {
 export {
   createJobKindRegistry,
   DuplicateJobKindError,
+  IncompleteJobKindDeclarationError,
+  InconsistentJobKindDeclarationError,
   UnknownJobKindError,
 } from './jobs/kind-registry.js'
 export type {
+  FallbackContinuationInput,
+  FallbackContinuationProducer,
+  JobBackoffPolicy,
   JobHandler,
   JobHandlerContext,
   JobKindDeclaration,
   JobKindRegistry,
+  JobPermanentFailureDisposition,
 } from './jobs/kind-registry.js'
+// 385 plan 04 — the six real kinds. A composition root registers THESE; the declarations are
+// the contract the crash matrix iterates, and the handlers are deterministic stand-ins until
+// the phases that own each kind's semantics replace them.
+export { createRealJobKindRegistry, REAL_JOB_KIND_DECLARATIONS } from './jobs/kinds.js'
+export type { StandInJobScript } from './jobs/kinds.js'
 export {
   createAgentJobQueue,
   MissingIdempotencyKeyError,
