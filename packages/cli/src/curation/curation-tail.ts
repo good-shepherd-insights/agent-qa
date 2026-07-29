@@ -43,11 +43,11 @@ import { exercisedAnchors } from './handoff-anchors.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 /**
- * v2 (381-05): the receipt gained the run-outcome projection component. v1 receipts fail
- * validation, so already-drained runs refold once — safe because every tail fold is
- * idempotent per runId. Never a second marker file (PATTERNS mandate).
+ * v3 (386-02): the receipt gained the final drain disposition, handoff holder, and sorted
+ * candidate ids. v2 receipts fail validation, so already-drained runs refold once — safe
+ * because every tail fold is idempotent per runId. Never a second marker file (PATTERNS mandate).
  */
-export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 2
+export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 3
 
 export interface CurationTailReceipt {
   schemaVersion: typeof CURATION_TAIL_RECEIPT_SCHEMA_VERSION
@@ -55,6 +55,11 @@ export interface CurationTailReceipt {
   handoffDigest: string
   /** Run-outcome projection component: a version bump refolds already-receipted runs. */
   projectionVersion: number
+  drainKind: 'drained' | 'handed-off'
+  /** The standing writer that accepted the handoff; null when this run drained inline. */
+  handoffHolderPid: number | null
+  /** Stable run-side provenance, ordered before the receipt bytes are committed. */
+  candidateIds: string[]
 }
 
 export type CurationTailModelDeps = Pick<
@@ -127,11 +132,19 @@ function listCompletedRunDirs(agentQaRoot: string): string[] {
     .sort()
 }
 
+function isSortedCandidateIds(value: unknown): value is string[] {
+  if (!Array.isArray(value)) return false
+  if (!value.every((candidateId): candidateId is string => typeof candidateId === 'string')) {
+    return false
+  }
+  return value.every((candidateId, index) => index === 0 || value[index - 1]! <= candidateId)
+}
+
 function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
   return Object.keys(record).sort().join(',')
-    === 'handoffDigest,projectionVersion,runId,schemaVersion'
+    === 'candidateIds,drainKind,handoffDigest,handoffHolderPid,projectionVersion,runId,schemaVersion'
     && record.schemaVersion === CURATION_TAIL_RECEIPT_SCHEMA_VERSION
     && typeof record.runId === 'string'
     && record.runId.length > 0
@@ -140,6 +153,17 @@ function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
     && typeof record.projectionVersion === 'number'
     && Number.isInteger(record.projectionVersion)
     && record.projectionVersion > 0
+    && (record.drainKind === 'drained' || record.drainKind === 'handed-off')
+    && (
+      (record.drainKind === 'drained' && record.handoffHolderPid === null)
+      || (
+        record.drainKind === 'handed-off'
+        && typeof record.handoffHolderPid === 'number'
+        && Number.isInteger(record.handoffHolderPid)
+        && record.handoffHolderPid > 0
+      )
+    )
+    && isSortedCandidateIds(record.candidateIds)
 }
 
 function readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined {
@@ -179,7 +203,12 @@ export function curationTailHandoffDigest(handoff: unknown): string {
   return sha256hex(canonicalJson(handoff))
 }
 
-function receiptForHandoff(handoff: { runId: unknown }): CurationTailReceipt {
+type CurationTailReceiptIdentity = Pick<
+  CurationTailReceipt,
+  'schemaVersion' | 'runId' | 'handoffDigest' | 'projectionVersion'
+>
+
+function receiptIdentityForHandoff(handoff: { runId: unknown }): CurationTailReceiptIdentity {
   return {
     schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
     runId: String(handoff.runId),
@@ -190,12 +219,18 @@ function receiptForHandoff(handoff: { runId: unknown }): CurationTailReceipt {
 
 function receiptMatches(
   receipt: CurationTailReceipt | undefined,
-  expected: CurationTailReceipt,
+  expected: CurationTailReceiptIdentity,
 ): boolean {
   return receipt?.schemaVersion === expected.schemaVersion
     && receipt.runId === expected.runId
     && receipt.handoffDigest === expected.handoffDigest
     && receipt.projectionVersion === expected.projectionVersion
+}
+
+function sortedCandidateIds(report: EmitReport): string[] {
+  return report.details
+    .flatMap((detail) => detail.candidateId === undefined ? [] : [detail.candidateId])
+    .sort()
 }
 
 const CANDIDATE_LINE_KINDS = ['fact', 'measurement', 'caution', 'procedure'] as const
@@ -281,12 +316,14 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       continue
     }
 
-    const expectedReceipt = receiptForHandoff(handoff)
+    const receiptIdentity = receiptIdentityForHandoff(handoff)
     try {
-      if (receiptMatches(operations.readCurationTailReceipt(runDir), expectedReceipt)) continue
+      if (receiptMatches(operations.readCurationTailReceipt(runDir), receiptIdentity)) continue
       let complete = false
+      let completedReceipt: CurationTailReceipt | undefined
       let incompleteDetails: string | undefined
       let projectionFailed = false
+      const tailStartedAtMs = Date.now()
       await operations.runSafetyScope(
         {
           maskingContext: opts.maskingContext,
@@ -303,7 +340,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
           })
           // 381-50: visibility never gates — the summary line is additive diagnosis
           // beside (never inside) the noop warn and the complete predicate below.
-          opts.log.info?.(candidateSummaryLine(expectedReceipt.runId, candidates))
+          opts.log.info?.(candidateSummaryLine(receiptIdentity.runId, candidates))
           // D-20: candidate and canary drops share this scope and crash boundary.
           const reader = operations.openKnowledgeReader({ knowledgeRoot })
           const canaries = operations.emitCanaryOutcomes({
@@ -341,6 +378,12 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             policy: opts.policy,
             ...(opts.signal === undefined ? {} : { signal: opts.signal }),
           })
+          if (drain.kind === 'handed-off') {
+            opts.log.info?.(`curation: handed to daemon (pid ${drain.holder.pid})`)
+          } else if (drain.kind === 'drained') {
+            const elapsedSeconds = Math.max(0, Math.floor((Date.now() - tailStartedAtMs) / 1_000))
+            opts.log.info?.(`curation: drained inline (${elapsedSeconds}s)`)
+          }
           // A commit noop is visible but never fatal (G-381-1): legitimate reasons such as
           // evidence-token dedup would otherwise wedge a healthy tail into the retry loop.
           // The complete predicate below is deliberately unchanged.
@@ -348,7 +391,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             // 381-47: the empty-delta cause renders inside the existing parenthetical;
             // the count-anchored prefix stays byte-identical for the ladder extractor.
             opts.log.warn(
-              `Knowledge curation drain produced ${drain.noops} commit noop(s) for ${expectedReceipt.runId}: ${drain.noopDetails
+              `Knowledge curation drain produced ${drain.noops} commit noop(s) for ${receiptIdentity.runId}: ${drain.noopDetails
                 .map((noop) =>
                   `${noop.candidateId} (${noop.reason}${
                     noop.emptyDeltaCause === undefined ? '' : `: ${noop.emptyDeltaCause}`
@@ -361,9 +404,17 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
             && canaries.refused === 0
             && canaries.unresolved === 0
             && !projectionFailed
-            && drain.kind === 'drained'
+            && (drain.kind === 'drained' || drain.kind === 'handed-off')
             && drain.failures === 0
             && drain.requeued === 0
+          if (complete && (drain.kind === 'drained' || drain.kind === 'handed-off')) {
+            completedReceipt = {
+              ...receiptIdentity,
+              drainKind: drain.kind,
+              handoffHolderPid: drain.kind === 'handed-off' ? drain.holder.pid : null,
+              candidateIds: sortedCandidateIds(candidates),
+            }
+          }
           if (!complete) {
             incompleteDetails = [
               `candidate-refused=${candidates.refused}`,
@@ -380,14 +431,14 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         },
       )
 
-      if (!complete) {
-        opts.log.warn(incompleteWarning(expectedReceipt.runId, incompleteDetails))
+      if (!complete || completedReceipt === undefined) {
+        opts.log.warn(incompleteWarning(receiptIdentity.runId, incompleteDetails))
         if (opts.signal?.aborted === true) return
         continue
       }
-      operations.writeCurationTailReceipt(runDir, expectedReceipt)
+      operations.writeCurationTailReceipt(runDir, completedReceipt)
     } catch {
-      opts.log.warn(incompleteWarning(expectedReceipt.runId))
+      opts.log.warn(incompleteWarning(receiptIdentity.runId))
       if (opts.signal?.aborted === true) return
     }
   }

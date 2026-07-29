@@ -499,12 +499,109 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     expect(writeCurationTailReceipt).toHaveBeenCalledWith(
       join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
       expect.objectContaining({
-        schemaVersion: 2,
+        schemaVersion: 3,
         runId,
         handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
         projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+        drainKind: 'drained',
+        handoffHolderPid: null,
+        candidateIds: [],
       }),
     )
+  })
+
+  it('finalizes a handed-off run once with sorted provenance and never re-sweeps it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'curation-tail-handed-off-'))
+    try {
+      const realAgentQaRoot = join(root, '.agent-qa')
+      const runDir = join(realAgentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+      mkdirSync(runDir, { recursive: true })
+      const completed = handoff()
+      const candidateA = 'candidate-a'
+      const candidateZ = 'candidate-z'
+      const info = vi.fn()
+      const emitCurationCandidates = vi.fn(() => ({
+        enqueued: 2,
+        coalesced: 0,
+        capExceeded: 0,
+        refused: 0,
+        details: [
+          {
+            candidateId: candidateZ,
+            kind: 'fact' as const,
+            outcome: { kind: 'enqueued' as const, candidateId: candidateZ },
+          },
+          {
+            candidateId: candidateA,
+            kind: 'caution' as const,
+            outcome: { kind: 'enqueued' as const, candidateId: candidateA },
+          },
+        ],
+      }))
+      const drainQueue = vi.fn(async () => ({
+        kind: 'handed-off' as const,
+        holder: {
+          leaseId: '00000000-0000-4000-8000-000000000001',
+          pid: 4242,
+          epoch: 1,
+          heartbeatAtMs: 0,
+        },
+        jobsProcessed: 0,
+        committed: 0,
+        downgraded: 0,
+        withheld: 0,
+        requeued: 0,
+        failures: 0,
+        failureDetails: [],
+        noops: 0,
+        noopDetails: [],
+        remaining: 2,
+        reconcile: undefined,
+        writerPass: { kind: 'skipped' as const, reason: 'lease-held' as const },
+        gc: { kind: 'skipped' as const, reason: 'lease-held' as const },
+      }))
+      const operations = successfulOperations({
+        loadCompletedRunHandoff: () => completed,
+        listCompletedRunDirs: () => [runDir],
+        emitCurationCandidates,
+        drainQueue,
+      })
+      // Exercise the production validator and durable temp-rename writer.
+      delete operations.readCurationTailReceipt
+      delete operations.writeCurationTailReceipt
+
+      await runCurationTail(baseOptions(operations, {
+        agentQaRoot: realAgentQaRoot,
+        log: { warn: vi.fn(), info },
+      }))
+
+      expect(JSON.parse(
+        readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
+      )).toEqual({
+        schemaVersion: 3,
+        runId,
+        handoffDigest: curationTailHandoffDigest(completed),
+        projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+        drainKind: 'handed-off',
+        handoffHolderPid: 4242,
+        candidateIds: [candidateA, candidateZ],
+      })
+      expect(info).toHaveBeenCalledWith('curation: handed to daemon (pid 4242)')
+
+      await runCurationTail(baseOptions(operations, {
+        agentQaRoot: realAgentQaRoot,
+        log: { warn: vi.fn(), info },
+      }))
+
+      expect(emitCurationCandidates).toHaveBeenCalledOnce()
+      expect(drainQueue).toHaveBeenCalledOnce()
+      expect(info.mock.calls
+        .map(([message]) => String(message))
+        .filter((message) => message.startsWith('curation: ')))
+        .toEqual(['curation: handed to daemon (pid 4242)'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('passes a marker-set sibling handoff unchanged without a caller exclusion flag', async () => {
@@ -962,10 +1059,13 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
   it('skips the projection fold too for an already-receipted handoffDigest — the one extended receipt', async () => {
     const completed = handoff()
     const receipt: CurationTailReceipt = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       runId,
       handoffDigest: curationTailHandoffDigest(completed),
       projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+      drainKind: 'drained',
+      handoffHolderPid: null,
+      candidateIds: [],
     }
     const foldRunOutcomes = vi.fn()
     const emitCurationCandidates = vi.fn()
@@ -1057,9 +1157,12 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
         readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
       ) as Record<string, unknown>
       expect(receipt).toMatchObject({
-        schemaVersion: 2,
+        schemaVersion: 3,
         runId,
         projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+        drainKind: 'drained',
+        handoffHolderPid: null,
+        candidateIds: [],
       })
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -1325,7 +1428,10 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
       + `fact 2 projected (2 enqueued); `
       + `procedure 1 projected (1 coalesced: ${procedureId}).`,
     )
-    expect(info).toHaveBeenCalledTimes(1)
+    expect(info.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.startsWith('Knowledge curation candidates for ')))
+      .toHaveLength(1)
     // Additive beside the ladder extractor: the line matches NEITHER harness regex.
     expect([...String(line).matchAll(/drain produced (\d+) commit noop\(s\)/g)]).toHaveLength(0)
     expect([...String(line).matchAll(/drain-noops=(\d+)/g)]).toHaveLength(0)
@@ -1435,7 +1541,7 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
             && canaries.refused === 0
             && canaries.unresolved === 0
             && !projectionFailed
-            && drain.kind === 'drained'
+            && (drain.kind === 'drained' || drain.kind === 'handed-off')
             && drain.failures === 0
             && drain.requeued === 0`,
     )
