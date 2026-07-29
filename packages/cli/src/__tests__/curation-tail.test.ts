@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -321,6 +328,31 @@ function successfulOperations(
   }
 }
 
+function handedOffDrainReport() {
+  return {
+    kind: 'handed-off' as const,
+    holder: {
+      leaseId: '00000000-0000-4000-8000-000000000001',
+      pid: 4242,
+      epoch: 1,
+      heartbeatAtMs: 0,
+    },
+    jobsProcessed: 0,
+    committed: 0,
+    downgraded: 0,
+    withheld: 0,
+    requeued: 0,
+    failures: 0,
+    failureDetails: [],
+    noops: 0,
+    noopDetails: [],
+    remaining: 0,
+    reconcile: undefined,
+    writerPass: { kind: 'skipped' as const, reason: 'lease-held' as const },
+    gc: { kind: 'skipped' as const, reason: 'lease-held' as const },
+  }
+}
+
 describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
   it('loads the handoff, emits candidates and canary outcomes in one scope, then drains', async () => {
     const order: string[] = []
@@ -599,6 +631,147 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         .map(([message]) => String(message))
         .filter((message) => message.startsWith('curation: ')))
         .toEqual(['curation: handed to daemon (pid 4242)'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'candidate-refused',
+    'candidate-cap-exceeded',
+    'canary-refused',
+    'canary-unresolved',
+    'projection-failed',
+  ] as const)('keeps %s as a receipt blocker when the drain hands off', async (condition) => {
+    const warn = vi.fn()
+    const info = vi.fn()
+    const writeCurationTailReceipt = vi.fn()
+    const operations = successfulOperations({
+      writeCurationTailReceipt,
+      emitCurationCandidates: vi.fn(() => ({
+        enqueued: 0,
+        coalesced: 0,
+        capExceeded: condition === 'candidate-cap-exceeded' ? 1 : 0,
+        refused: condition === 'candidate-refused' ? 1 : 0,
+        details: [],
+      })),
+      emitCanaryOutcomes: vi.fn(() => ({
+        emitted: 0,
+        refused: condition === 'canary-refused' ? 1 : 0,
+        unresolved: condition === 'canary-unresolved' ? 1 : 0,
+        procedure: { emitted: 0, refused: 0, unresolved: 0 },
+        details: [],
+      })),
+      foldRunOutcomes: condition === 'projection-failed'
+        ? vi.fn(() => { throw new Error('projection failed') })
+        : vi.fn(() => ({ kind: 'applied' as const, tests: 0 })),
+      drainQueue: vi.fn(async () => handedOffDrainReport()),
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn, info } }))
+
+    expect(writeCurationTailReceipt).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/curation incomplete/i))
+    expect(info.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.startsWith('curation: ')))
+      .toEqual(['curation: handed to daemon (pid 4242)'])
+  })
+
+  it('writes inline drain provenance and one whole-second disposition hint', async () => {
+    const info = vi.fn()
+    const writeCurationTailReceipt = vi.fn()
+    const operations = successfulOperations({ writeCurationTailReceipt })
+
+    await runCurationTail(baseOptions(operations, {
+      log: { warn: vi.fn(), info },
+    }))
+
+    expect(writeCurationTailReceipt).toHaveBeenCalledWith(
+      join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId)),
+      expect.objectContaining({
+        schemaVersion: 3,
+        drainKind: 'drained',
+        handoffHolderPid: null,
+        candidateIds: [],
+      }),
+    )
+    const dispositionLines = info.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.startsWith('curation: '))
+    expect(dispositionLines).toHaveLength(1)
+    expect(dispositionLines[0]).toMatch(/^curation: drained inline \(\d+s\)$/u)
+  })
+
+  it('receipts a zero-candidate handoff and skips it on the next sweep', async () => {
+    const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+    const receipts = new Map<string, CurationTailReceipt>()
+    const emitCurationCandidates = vi.fn(successfulOperations().emitCurationCandidates)
+    const drainQueue = vi.fn(async () => handedOffDrainReport())
+    const operations = successfulOperations({
+      emitCurationCandidates,
+      drainQueue,
+      readCurationTailReceipt: (seenRunDir) => receipts.get(seenRunDir),
+      writeCurationTailReceipt(seenRunDir, receipt) {
+        receipts.set(seenRunDir, receipt)
+      },
+    })
+
+    await runCurationTail(baseOptions(operations))
+    await runCurationTail(baseOptions(operations))
+
+    expect(receipts.get(runDir)).toMatchObject({
+      drainKind: 'handed-off',
+      handoffHolderPid: 4242,
+      candidateIds: [],
+    })
+    expect(emitCurationCandidates).toHaveBeenCalledOnce()
+    expect(drainQueue).toHaveBeenCalledOnce()
+  })
+
+  it('refolds a v2 receipt exactly once and leaves the v3 bytes unchanged thereafter', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'curation-tail-v2-refold-'))
+    try {
+      const realAgentQaRoot = join(root, '.agent-qa')
+      const runDir = join(realAgentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+      mkdirSync(runDir, { recursive: true })
+      const completed = handoff()
+      writeFileSync(
+        join(runDir, CURATION_TAIL_RECEIPT_FILE),
+        `${JSON.stringify({
+          schemaVersion: 2,
+          runId,
+          handoffDigest: curationTailHandoffDigest(completed),
+          projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+        })}\n`,
+        'utf8',
+      )
+      const emitCurationCandidates = vi.fn(successfulOperations().emitCurationCandidates)
+      const operations = successfulOperations({
+        loadCompletedRunHandoff: () => completed,
+        listCompletedRunDirs: () => [runDir],
+        emitCurationCandidates,
+      })
+      delete operations.readCurationTailReceipt
+      delete operations.writeCurationTailReceipt
+
+      await runCurationTail(baseOptions(operations, { agentQaRoot: realAgentQaRoot }))
+      const firstV3Bytes = readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8')
+      expect(JSON.parse(firstV3Bytes)).toMatchObject({
+        schemaVersion: 3,
+        drainKind: 'drained',
+        handoffHolderPid: null,
+        candidateIds: [],
+      })
+
+      await runCurationTail(baseOptions(operations, { agentQaRoot: realAgentQaRoot }))
+      const secondPassBytes = readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8')
+      await runCurationTail(baseOptions(operations, { agentQaRoot: realAgentQaRoot }))
+
+      expect(readdirSync(runDir)).toEqual([CURATION_TAIL_RECEIPT_FILE])
+      expect(secondPassBytes).toBe(firstV3Bytes)
+      expect(readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8')).toBe(firstV3Bytes)
+      expect(emitCurationCandidates).toHaveBeenCalledOnce()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
