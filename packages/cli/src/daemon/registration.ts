@@ -45,7 +45,7 @@ export type RecoverDaemonRegistrationOutcome =
 
 export type ProcessIsAlive = (pid: number) => boolean
 
-/** Plan 05 binds a listener here; this plan records the deterministic project-local address. */
+/** Legacy project-local default used by status fixtures; live hosts record the server's actual path. */
 export function daemonRegistrationSocketPath(agentQaRoot: string): string {
   return join(agentQaRoot, 'daemon.sock')
 }

@@ -1,3 +1,5 @@
+import { dirname } from 'node:path'
+
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
   composeJobRecovery,
@@ -22,8 +24,13 @@ import { createShutdownController } from '../commands/shutdown-controller.js'
 import { appendDaemonEvent } from './events.js'
 import type { DaemonEvent } from './events.js'
 import {
+  daemonSocketPath,
+  startInvokeServer,
+  type InvokeServerHandle,
+  type StartInvokeServerOptions,
+} from './server.js'
+import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
-  daemonRegistrationSocketPath,
   inspectDaemonRegistration,
   removeDaemonRegistration,
   writeDaemonRegistration,
@@ -75,6 +82,7 @@ export interface DaemonHostOperations {
   appendDaemonEvent(agentQaRoot: string, event: DaemonEvent): void
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
+  startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
   trace?(step: DaemonHostTraceStep): void
 }
 
@@ -119,6 +127,7 @@ function defaultOperations(): DaemonHostOperations {
     appendDaemonEvent,
     writeDaemonRegistration,
     removeDaemonRegistration,
+    startInvokeServer,
   }
 }
 
@@ -191,6 +200,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let localAgent: LocalAgentHost | undefined
   let registrationWritten = false
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  let invokeServer: InvokeServerHandle | undefined
   let graceTimer: ReturnType<typeof setTimeout> | undefined
   let resolveCompletion: ((code: number) => void) | undefined
   let shutdownPromise: Promise<void> | undefined
@@ -224,6 +234,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       if (graceTimer !== undefined) {
         operations.clearTimeout(graceTimer)
         graceTimer = undefined
+      }
+
+      if (invokeServer !== undefined) {
+        await invokeServer.close()
+        invokeServer = undefined
       }
 
       localAgent?.close()
@@ -314,14 +329,29 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     operations.onSignal('SIGTERM', controller.handleSignal)
 
     // Registration advertises a signalable daemon, so publish it only after handlers are live.
+    const socketPath = input.socketPath ?? daemonSocketPath(
+      input.agentQaRoot,
+      dirname(input.agentQaRoot),
+    )
     operations.writeDaemonRegistration(input.agentQaRoot, {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       pid: process.pid,
-      socketPath: input.socketPath ?? daemonRegistrationSocketPath(input.agentQaRoot),
+      socketPath,
       startedAtMs: operations.now(),
     })
     registrationWritten = true
     operations.trace?.('registration-written')
+
+    const startedServer = await operations.startInvokeServer({
+      socketPath,
+      registry: localAgent.registry,
+    })
+    if (shutdownPromise !== undefined) {
+      await startedServer.close()
+      await shutdownPromise
+      return completion
+    }
+    invokeServer = startedServer
 
     heartbeatTimer = operations.setInterval(() => {
       if (shutdownPromise !== undefined) return
