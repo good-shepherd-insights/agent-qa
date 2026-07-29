@@ -46,6 +46,7 @@ import {
   claimNextJob,
   requeueClaimed,
   type ClaimedCurationJob,
+  type ClaimNextJobOutcome,
   type MalformedClaimedCurationJob,
 } from '../queue/curation-queue.js'
 import {
@@ -345,7 +346,10 @@ function recordFailure(
   })
 }
 
-function jobView(payload: CurationCandidatePayload): CurationJobView {
+function jobView(
+  payload: CurationCandidatePayload,
+  fallbackExecutionContext: ExecutionContext,
+): CurationJobView {
   return {
     candidateId: payload.candidateId,
     kind: payload.kind,
@@ -360,7 +364,7 @@ function jobView(payload: CurationCandidatePayload): CurationJobView {
     scope: payload.scope,
     buildOrdinal: payload.buildOrdinal,
     attributingObservationId: payload.attributingObservationId,
-    executionContext: payload.executionContext,
+    executionContext: payload.executionContext ?? fallbackExecutionContext,
     secretFlagged: payload.secretFlagged,
     injectionFlagged: payload.injectionFlagged,
     captureReceipt: payload.captureReceipt,
@@ -509,7 +513,7 @@ async function authorCheckpoint(
   operations: DrainOperations,
   job: ClaimedCurationJob,
 ): Promise<AuthoredCheckpoint> {
-  const view = jobView(job.payload)
+  const view = jobView(job.payload, options.executionContext)
   const neighbors = await searchBeforeCreate(operations, job.payload, options.knowledgeRoot)
   const outcome = await options.author(view, neighbors)
   if (outcome.kind === 'authored') {
@@ -528,6 +532,15 @@ async function authorCheckpoint(
     throw new Error('deterministic fallback omitted its authorship stamp')
   }
   return checkpointFromAuthored(fallback, authorship, neighbors)
+}
+
+function claimedExecutionContext(
+  claimed: ClaimNextJobOutcome,
+  fallback: ExecutionContext,
+): ExecutionContext {
+  return claimed.kind === 'claimed'
+    ? claimed.payload.executionContext ?? fallback
+    : fallback
 }
 
 function persistCheckpoint(
@@ -769,6 +782,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       }
       if (claimed === undefined) break
       result.jobsProcessed += 1
+      const executionContext = claimedExecutionContext(claimed, options.executionContext)
 
       const heartbeat = operations.heartbeatLease({
         knowledgeRoot: options.knowledgeRoot,
@@ -797,7 +811,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           const store = createLocalKnowledgeStore({
             knowledgeRoot: options.knowledgeRoot,
             auditBaseDir: options.auditBaseDir,
-            executionContext: options.executionContext,
+            executionContext,
             epoch: lease.epoch,
             sourceBuildOrdinal: canaryOutcome.buildOrdinal,
             sourceRunId: canaryOutcome.runId,
@@ -874,7 +888,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               knowledgeRoot: options.knowledgeRoot,
               auditBaseDir: options.auditBaseDir,
               epoch: lease.epoch,
-              profile: resolveDispositionProfile(options.executionContext),
+              profile: resolveDispositionProfile(executionContext),
               drainState,
               policy: options.policy,
               ...(!finalDelta || anySliceFailed ? { deferCompletion: true } : {}),
