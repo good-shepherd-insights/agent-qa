@@ -13,12 +13,18 @@ import { pathToFileURL } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
+  acquireWriterLease,
   LEASE_FILE,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
 import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
+import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  createDaemonCommand,
+  type DaemonCommandDeps,
+} from '../commands/daemon.js'
 import {
   LEASE_HEARTBEAT_INTERVAL_MS,
   runDaemonHost,
@@ -29,6 +35,8 @@ import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
 import {
   DAEMON_REGISTRATION_FILE,
   readDaemonRegistration,
+  removeDaemonRegistration,
+  writeDaemonRegistration,
 } from '../daemon/registration.js'
 
 const CHILD_ROOT_ENV = 'AGENT_QA_DAEMON_HOST_ROOT'
@@ -96,6 +104,95 @@ interface HostHarness {
   signals: Map<NodeJS.Signals, () => void>
   fireHeartbeat(): void
   signal(signal: NodeJS.Signals): void
+}
+
+interface PlannedDaemonCommandDeps extends DaemonCommandDeps {
+  resolvePaths(configPath: string): Promise<{
+    agentQaRoot: string
+    knowledgeRoot: string
+  }>
+  readRegistration: typeof readDaemonRegistration
+  processIsAlive(pid: number): boolean
+  readWriterLease(knowledgeRoot: string):
+    | { kind: 'absent' | 'malformed' }
+    | { kind: 'parsed'; lease: WriterLease }
+  countPendingCurationJobs(knowledgeRoot: string): number
+  signalProcess(pid: number, signal: NodeJS.Signals): void
+  now(): number
+}
+
+interface DaemonInvocation {
+  stdout: string
+  stderr: string
+  exitCode: number
+}
+
+async function invokeDaemon(
+  deps: PlannedDaemonCommandDeps,
+  args: readonly string[],
+): Promise<DaemonInvocation> {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    stdout.push(values.join(' '))
+  })
+  const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+    stderr.push(values.join(' '))
+  })
+  const previousExitCode = process.exitCode
+  process.exitCode = undefined
+
+  try {
+    const program = new Command()
+      .name('agent-qa')
+      .option('--config <path>')
+      .exitOverride()
+    const daemon = createDaemonCommand(deps)
+    daemon.exitOverride()
+    program.addCommand(daemon)
+    await program.parseAsync(
+      ['node', 'agent-qa', '--config', '/project/agent-qa.config.yaml', 'daemon', ...args],
+    )
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      exitCode: process.exitCode ?? 0,
+    }
+  } finally {
+    process.exitCode = previousExitCode
+    log.mockRestore()
+    error.mockRestore()
+  }
+}
+
+function daemonCommandDeps(
+  paths: ReturnType<typeof makePaths>,
+  options: {
+    alive?: boolean
+    curationQueueDepth?: number
+    nowMs?: number
+    signalProcess?: PlannedDaemonCommandDeps['signalProcess']
+  } = {},
+): PlannedDaemonCommandDeps {
+  const startedAtMs = 1_700_000_000_000
+  return {
+    runHost: vi.fn(() => Promise.resolve(0)),
+    resolvePaths: () => Promise.resolve(paths),
+    readRegistration: readDaemonRegistration,
+    processIsAlive: () => options.alive ?? true,
+    readWriterLease: () => ({
+      kind: 'parsed',
+      lease: {
+        leaseId: '8d88b667-747f-4129-93f3-20ac5149bf57',
+        pid: 4321,
+        epoch: 7,
+        heartbeatAtMs: startedAtMs + 4_000,
+      },
+    }),
+    countPendingCurationJobs: () => options.curationQueueDepth ?? 3,
+    signalProcess: options.signalProcess ?? vi.fn(),
+    now: () => options.nowMs ?? startedAtMs + 5_000,
+  }
 }
 
 function hostHarness(nowMs = 1_700_000_000_000): HostHarness {
@@ -336,4 +433,167 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     }
   }, 60_000)
+})
+
+describe('daemon status and stop operator controls', () => {
+  it('reports live holder, uptime, and curation depth in human and JSON forms', async () => {
+    const paths = makePaths('status-live')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: 1,
+      pid: 4321,
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const deps = daemonCommandDeps(paths, { curationQueueDepth: 3 })
+
+    const human = await invokeDaemon(deps, ['status'])
+    expect(human).toMatchObject({ exitCode: 0, stderr: '' })
+    expect(human.stdout).toContain('pid 4321')
+    expect(human.stdout).toContain('uptime 5s')
+    expect(human.stdout).toContain('curation queue depth 3')
+
+    const json = await invokeDaemon(deps, ['status', '--json'])
+    expect(json).toMatchObject({ exitCode: 0, stderr: '' })
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      state: 'running',
+      pid: 4321,
+      startedAtMs: 1_700_000_000_000,
+      uptimeMs: 5_000,
+      curationQueueDepth: 3,
+      lease: { pid: 4321, epoch: 7, heartbeatAtMs: 1_700_000_004_000 },
+    })
+  })
+
+  it('reports absent and stale registrations as stopped states without failing status', async () => {
+    const absentPaths = makePaths('status-absent')
+    const absent = await invokeDaemon(daemonCommandDeps(absentPaths), ['status'])
+    expect(absent).toMatchObject({ exitCode: 0, stderr: '' })
+    expect(absent.stdout).toContain('not running')
+
+    const stalePaths = makePaths('status-stale')
+    writeDaemonRegistration(stalePaths.agentQaRoot, {
+      schemaVersion: 1,
+      pid: 8765,
+      socketPath: join(stalePaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const stale = await invokeDaemon(daemonCommandDeps(stalePaths, { alive: false }), ['status'])
+    expect(stale).toMatchObject({ exitCode: 0, stderr: '' })
+    expect(stale.stdout).toContain('stale')
+    expect(stale.stdout).toContain('pid 8765')
+  })
+
+  it('signals only a live registered pid and fails closed for absent or stale registrations', async () => {
+    const livePaths = makePaths('stop-live')
+    writeDaemonRegistration(livePaths.agentQaRoot, {
+      schemaVersion: 1,
+      pid: 5432,
+      socketPath: join(livePaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const signalProcess = vi.fn()
+    const live = await invokeDaemon(daemonCommandDeps(livePaths, { signalProcess }), ['stop'])
+    expect(live).toMatchObject({ exitCode: 0, stderr: '' })
+    expect(signalProcess).toHaveBeenCalledWith(5432, 'SIGTERM')
+
+    const absentPaths = makePaths('stop-absent')
+    const absentSignal = vi.fn()
+    const absent = await invokeDaemon(
+      daemonCommandDeps(absentPaths, { signalProcess: absentSignal }),
+      ['stop'],
+    )
+    expect(absent.exitCode).toBe(1)
+    expect(absent.stdout).toContain('nothing to stop')
+    expect(absentSignal).not.toHaveBeenCalled()
+
+    const stalePaths = makePaths('stop-stale')
+    writeDaemonRegistration(stalePaths.agentQaRoot, {
+      schemaVersion: 1,
+      pid: 6543,
+      socketPath: join(stalePaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const staleSignal = vi.fn()
+    const stale = await invokeDaemon(
+      daemonCommandDeps(stalePaths, { alive: false, signalProcess: staleSignal }),
+      ['stop'],
+    )
+    expect(stale.exitCode).toBe(1)
+    expect(stale.stdout).toContain('nothing to stop')
+    expect(staleSignal).not.toHaveBeenCalled()
+  })
+})
+
+describe('daemon registration recovery at boot', () => {
+  it('removes a dead-pid registration before acquiring and proceeds', async () => {
+    const paths = makePaths('boot-stale')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: 1,
+      pid: 2_147_483_647,
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const harness = hostHarness()
+    let registrationPresentAtAcquire: boolean | undefined
+    const acquire = vi.fn((knowledgeRoot: string) => {
+      registrationPresentAtAcquire = existsSync(
+        join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE),
+      )
+      return acquireWriterLease(knowledgeRoot)
+    })
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        acquireWriterLease: acquire,
+        removeDaemonRegistration,
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'daemon did not replace the stale registration',
+    )
+    expect(acquire).toHaveBeenCalledTimes(1)
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+    expect(registrationPresentAtAcquire).toBe(false)
+  })
+
+  it('fails before lease acquisition when a registration names a live pid', async () => {
+    const paths = makePaths('boot-live')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: 1,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const before = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+    const acquire = vi.fn(() => ({
+      kind: 'held' as const,
+      holder: {
+        leaseId: '8d88b667-747f-4129-93f3-20ac5149bf57',
+        pid: process.pid,
+        epoch: 1,
+        heartbeatAtMs: 1_700_000_000_000,
+      },
+    }))
+    const errors: string[] = []
+
+    await expect(runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: { acquireWriterLease: acquire },
+      logger: { info: vi.fn(), error: (message) => errors.push(message) },
+    })).resolves.toBe(1)
+
+    expect(acquire).not.toHaveBeenCalled()
+    expect(errors[0]).toContain(`pid ${process.pid}`)
+    expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(before)
+  })
 })

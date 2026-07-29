@@ -9,6 +9,7 @@ vi.mock('../../config.js', () => ({
 }))
 
 import { createQueueCommand } from '../queue.js'
+import { createDaemonCommand } from '../daemon.js'
 
 /**
  * The three-queue vocabulary pin (JOBQ-07 / D-21 / D-22).
@@ -29,8 +30,7 @@ const QUALIFIERS = ['run', 'curation', 'agent job'] as const
  * so asserting against `helpInformation()` would silently exempt the disambiguation block this
  * plan exists to ship.
  */
-function helpOutput(): string {
-  const cmd = createQueueCommand()
+function helpOutput(cmd = createQueueCommand()): string {
   let buffer = ''
   cmd.configureOutput({ writeOut: (str) => (buffer += str) })
   cmd.outputHelp()
@@ -110,5 +110,17 @@ describe('agent-qa queue help text — the three-queue vocabulary', () => {
 
     const unqualified = proseOf(helpOutput()).replace('the run queue', 'the queue')
     expect(qualifiersIn(unqualified).some((q) => q.startsWith('UNQUALIFIED:'))).toBe(true)
+  })
+})
+
+describe('agent-qa daemon help text — the same three-queue vocabulary', () => {
+  it('names, qualifies, and orders the same three queues', () => {
+    const help = helpOutput(createDaemonCommand())
+    for (const name of CANONICAL_ORDER) expect(help).toContain(name)
+    expect(qualifiersIn(proseOf(help))).toEqual([...QUALIFIERS].sort())
+
+    const positions = CANONICAL_ORDER.map((name) => help.indexOf(name))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
   })
 })
