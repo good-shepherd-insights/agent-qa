@@ -37,6 +37,7 @@ import { jobSchema } from '@vostride/agent-qa-schema'
 import type { Job, JobId } from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
+import { UnknownJobRowError } from './store-errors.js'
 
 /** Stamped into `PRAGMA user_version` at creation (D-04: stamp now, hard-fail next plan). */
 export const AGENT_JOB_STORE_USER_VERSION = 1
@@ -53,14 +54,6 @@ export const AGENT_JOB_STORE_BUSY_TIMEOUT_MS = 2000
 
 /** The store's own file name under the agent-qa root, per the D-21 naming. */
 export const AGENT_JOB_STORE_DB_FILE = 'agent-jobs.db'
-
-export class UnknownJobRowError extends Error {
-  override readonly name = 'UnknownJobRowError'
-
-  constructor(readonly jobId: string) {
-    super(`No agent job row with id ${jobId}`)
-  }
-}
 
 /**
  * A verb whose CONTRACT is final but whose behaviour belongs to a later plan.

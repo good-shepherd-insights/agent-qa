@@ -11,6 +11,14 @@
 // per-candidate intent journal (knowledge-local, journal/intent-journal.ts). It is not
 // reinvented here: the allowlist below encodes platform quirks already debugged once, and
 // re-deriving it by hand is how a directory fsync silently becomes best-effort everywhere.
+//
+// 385 plan 03 added the OBSERVATION SEAM the ordering proof needs. Killing a process does
+// not drop the pages the kernel already holds, so a publisher missing an fsync passes every
+// crash test run on one machine; the only way to know the sequence is right is to watch the
+// calls. The seam is deliberately shaped so it cannot become a way to skip a sync in
+// production: `CreateJobCheckpointStoreOptions` has no filesystem member, so no production
+// call site has anywhere to put one, and the seam factory is a second exported function that
+// a test names explicitly. A test asserts nothing outside `__tests__` ever calls it.
 
 import { randomUUID } from 'node:crypto'
 import {
@@ -33,56 +41,83 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { JobCheckpointEnvelope } from '@vostride/agent-qa-schema'
 
+import {
+  InvalidJobCheckpointIdError,
+  JobCheckpointSchemaVersionError,
+} from './store-errors.js'
+
 /** Directory segments under the agent-qa root, per the D-21 "agent job queue" naming. */
 export const JOB_CHECKPOINT_SUBDIR = ['agent-jobs', 'checkpoints'] as const
 
 /**
  * Ids that are safe as a single path segment.
  *
- * Validated BEFORE any join, following the v51 candidate-id precedent: a job id and a
- * checkpoint id both become directory and file names, and an id validated after joining has
- * already escaped. Leading dots are excluded, so `..` cannot be an id at all, and the class
- * admits no separator on any platform.
+ * Leading dots are excluded, so `..` cannot be an id at all, and the class admits no
+ * separator on any platform.
  */
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
-export class InvalidJobCheckpointIdError extends Error {
-  override readonly name = 'InvalidJobCheckpointIdError'
+/**
+ * The errno set a parent-directory fsync may legitimately fail with.
+ *
+ * Copied code for code from v51 rather than re-derived. Each entry is a platform or
+ * filesystem on which syncing a directory descriptor is either unsupported or meaningless;
+ * anything else is a real I/O failure and must not be swallowed, or the "best effort" in
+ * `bestEffortFsyncDirectory` quietly becomes "no effort" everywhere.
+ */
+export const DIRECTORY_FSYNC_SWALLOWED_CODES = [
+  'ENOENT',
+  'EINVAL',
+  'EISDIR',
+  'EPERM',
+  'ENOTSUP',
+] as const
 
-  constructor(
-    readonly field: 'jobId' | 'checkpointId',
-    readonly value: string,
-  ) {
-    super(
-      `Unusable ${field} for a checkpoint path: ${JSON.stringify(value)}. A checkpoint id ` +
-        'becomes a path segment, so it is validated before the path is built rather than ' +
-        'after.',
-    )
-  }
+/**
+ * Exactly the filesystem calls this module makes, and nothing else.
+ *
+ * Narrow on purpose. A wide facade invites a test to answer on its own behalf; this one is
+ * small enough that the only reasonable implementation besides the real functions is a
+ * recorder that calls through to them.
+ */
+export interface JobCheckpointFs {
+  mkdirSync(path: string, options: { readonly recursive: true }): void
+  openSync(path: string, flags: 'wx' | 'r'): number
+  writeFileSync(fd: number, data: string, encoding: 'utf8'): void
+  fsyncSync(fd: number): void
+  closeSync(fd: number): void
+  renameSync(from: string, to: string): void
+  rmSync(path: string, options: { readonly force: true }): void
+  readFileSync(path: string, encoding: 'utf8'): string
 }
 
-export class JobCheckpointSchemaVersionError extends Error {
-  override readonly name = 'JobCheckpointSchemaVersionError'
-
-  constructor(
-    readonly path: string,
-    readonly observedVersion: unknown,
-  ) {
-    super(
-      `Checkpoint ${path} was written at schema version ${String(observedVersion)}, but ` +
-        `this build reads version ${JOB_CHECKPOINT_SCHEMA_VERSION}. There is no migration ` +
-        'machinery by design — clear the agent job queue state and re-enqueue.',
-    )
-  }
-}
+/** The production implementation, frozen so it cannot be patched from a distance. */
+export const REAL_JOB_CHECKPOINT_FS: JobCheckpointFs = Object.freeze({
+  mkdirSync,
+  openSync,
+  writeFileSync,
+  fsyncSync,
+  closeSync,
+  renameSync,
+  rmSync,
+  readFileSync,
+})
 
 export interface JobCheckpointStore {
   publish(jobId: string, checkpointId: string, payload: unknown): void
   read(jobId: string, checkpointId: string): { found: false } | { found: true; payload: unknown }
   /** Exposed so a test can assert on the real file, not on a reader that could agree. */
   checkpointPath(jobId: string, checkpointId: string): string
+  /** The directory the deterministic logical dump digests (D-03). */
+  readonly checkpointsRoot: string
 }
 
+/**
+ * What a production caller supplies: a root, and nothing else.
+ *
+ * The absence here is the guarantee. There is no filesystem member, so "publish without the
+ * fsync" is not a one-argument change any composition root could make by accident.
+ */
 export interface CreateJobCheckpointStoreOptions {
   /** Absolute path to the agent-qa runtime root, typically `<project>/.agent-qa`. */
   readonly root: string
@@ -95,44 +130,59 @@ function requireSegment(field: 'jobId' | 'checkpointId', value: string): string 
   return value
 }
 
-function bestEffortFsyncDirectory(dir: string): void {
-  let fd: number | undefined
-  try {
-    fd = openSync(dir, 'r')
-    fsyncSync(fd)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (
-      code !== 'ENOENT' &&
-      code !== 'EINVAL' &&
-      code !== 'EISDIR' &&
-      code !== 'EPERM' &&
-      code !== 'ENOTSUP'
-    ) {
-      throw error
-    }
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
+function isSwallowableDirectoryFsyncError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code
+  return DIRECTORY_FSYNC_SWALLOWED_CODES.some((allowed) => allowed === code)
 }
 
 export function createJobCheckpointStore(
+  options: CreateJobCheckpointStoreOptions,
+): JobCheckpointStore {
+  return createJobCheckpointStoreOn(REAL_JOB_CHECKPOINT_FS, options)
+}
+
+/**
+ * The same store over an injected filesystem. TEST SEAM — production uses the factory above.
+ *
+ * It exists because the syscall ORDER is the durability property and no crash test can
+ * observe it. Keeping it a separate function, rather than an optional field on the
+ * production options, means a production construction cannot reach it by filling in one more
+ * property; a test asserts that no non-test file in the workspace names it.
+ */
+export function createJobCheckpointStoreOn(
+  fs: JobCheckpointFs,
   options: CreateJobCheckpointStoreOptions,
 ): JobCheckpointStore {
   if (!isAbsolute(options.root)) {
     throw new TypeError('agent job checkpoint root must be absolute')
   }
 
+  const checkpointsRoot = join(options.root, ...JOB_CHECKPOINT_SUBDIR)
+
   function pathFor(jobId: string, checkpointId: string): string {
     return join(
-      options.root,
-      ...JOB_CHECKPOINT_SUBDIR,
+      checkpointsRoot,
       requireSegment('jobId', jobId),
       `${requireSegment('checkpointId', checkpointId)}.json`,
     )
   }
 
+  function bestEffortFsyncDirectory(dir: string): void {
+    let fd: number | undefined
+    try {
+      fd = fs.openSync(dir, 'r')
+      fs.fsyncSync(fd)
+    } catch (error) {
+      if (!isSwallowableDirectoryFsyncError(error)) {
+        throw error
+      }
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd)
+    }
+  }
+
   return {
+    checkpointsRoot,
     checkpointPath: pathFor,
 
     publish(jobId, checkpointId, payload) {
@@ -146,25 +196,25 @@ export function createJobCheckpointStore(
         checkpointId,
         payload,
       }
-      mkdirSync(dirname(file), { recursive: true })
+      fs.mkdirSync(dirname(file), { recursive: true })
       const temporary = `${file}.tmp-${randomUUID()}`
       let fd: number | undefined
       try {
         // Exclusive create, so a torn temporary from an earlier crash can never be mistaken
         // for this one's; then fsync the fd BEFORE the rename, so the rename can only
         // publish bytes that are already on the device.
-        fd = openSync(temporary, 'wx')
-        writeFileSync(fd, `${canonicalJson(envelope)}\n`, 'utf8')
-        fsyncSync(fd)
-        closeSync(fd)
+        fd = fs.openSync(temporary, 'wx')
+        fs.writeFileSync(fd, `${canonicalJson(envelope)}\n`, 'utf8')
+        fs.fsyncSync(fd)
+        fs.closeSync(fd)
         fd = undefined
-        renameSync(temporary, file)
+        fs.renameSync(temporary, file)
         // The rename itself is a directory mutation, and a directory entry is not durable
         // until its parent is synced — this is the line JOBQ-05 names.
         bestEffortFsyncDirectory(dirname(file))
       } finally {
-        if (fd !== undefined) closeSync(fd)
-        rmSync(temporary, { force: true })
+        if (fd !== undefined) fs.closeSync(fd)
+        fs.rmSync(temporary, { force: true })
       }
     },
 
@@ -172,7 +222,7 @@ export function createJobCheckpointStore(
       const file = pathFor(jobId, checkpointId)
       let text: string
       try {
-        text = readFileSync(file, 'utf8')
+        text = fs.readFileSync(file, 'utf8')
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { found: false }
         throw error
