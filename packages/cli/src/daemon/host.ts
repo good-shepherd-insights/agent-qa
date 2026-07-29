@@ -344,6 +344,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           return
         }
 
+        operations.appendDaemonEvent(input.agentQaRoot, {
+          kind: 'lease-lost',
+          reason: heartbeat.reason,
+          observedEpoch: heartbeat.observedEpoch ?? heartbeat.holder?.epoch,
+        })
         void beginShutdown(1, false, 'lease-lost')
       } catch (error) {
         operations.appendDaemonEvent(input.agentQaRoot, {

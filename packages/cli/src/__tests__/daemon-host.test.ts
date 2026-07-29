@@ -617,7 +617,9 @@ describe('daemon heartbeat authority and cadence', () => {
     expect(acquire).toHaveBeenCalledTimes(1)
     expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
     expect(readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8')).toBe(replacementBytes)
-    expect(readEvents(paths.agentQaRoot).findLast((event) => event.kind === 'lease-lost')).toMatchObject({
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-lost').at(-1),
+    ).toMatchObject({
       kind: 'lease-lost',
       reason: 'lease-id-mismatch',
       observedEpoch: 2,
