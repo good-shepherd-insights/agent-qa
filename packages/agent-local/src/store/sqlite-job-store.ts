@@ -40,6 +40,8 @@ import { jobSchema } from '@vostride/agent-qa-schema'
 import type { Job, JobId } from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
+import { canonicalLogicalDump, createLogicalDump, selectOrderedRows } from './logical-dump.js'
+import type { LogicalDump } from './logical-dump.js'
 import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.js'
 
 /**
@@ -75,6 +77,22 @@ export interface CreateSqliteJobStoreOptions {
 
 export interface SqliteJobStore extends JobStorePort {
   close(): void
+
+  /**
+   * The D-03 comparison basis, in full: every table this database holds plus a digest per
+   * checkpoint file.
+   *
+   * Kept beside `dumpState()` rather than replacing it, because the two answer different
+   * questions and collapsing them would weaken both. `dumpState()` is the typed, engine-facing
+   * projection of the job rows and it is part of the neutral port. This one is the storage
+   * implementation's own full-state instrument: it knows about the checkpoint directory and
+   * about tables the port has no vocabulary for, and it is the thing a crash comparison holds
+   * up against another run.
+   */
+  logicalDump(): Promise<LogicalDump>
+
+  /** The same dump as one comparable string. Byte equality here is state equality. */
+  dumpLogicalState(): Promise<string>
 }
 
 const SCHEMA_STATEMENTS = [
@@ -173,9 +191,6 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
          last_failure_reason = ?, updated_at = ?
      WHERE id = ?`,
   )
-  // Explicit ORDER BY, never rowid order: an insertion history that differs only in
-  // interruption would otherwise dump in a different order for no semantic reason (D-03).
-  const selectAllJobs = db.prepare('SELECT * FROM jobs ORDER BY id ASC')
   const selectFence = db.prepare('SELECT epoch FROM job_store_fence WHERE id = 1')
   const upsertFence = db.prepare(
     `INSERT INTO job_store_fence (id, epoch) VALUES (1, ?)
@@ -391,8 +406,28 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       return {
         schemaVersion: AGENT_JOB_STORE_USER_VERSION,
         epoch: currentEpoch(),
-        jobs: selectAllJobs.all().map(dumpRow),
+        // The same ordered read the logical dump uses, so the typed projection and the
+        // equality instrument cannot disagree about which rows exist or in what order.
+        jobs: selectOrderedRows(db, 'jobs').rows.map(dumpRow),
       }
+    },
+
+    async logicalDump(): Promise<LogicalDump> {
+      return createLogicalDump({
+        db,
+        schemaVersion: AGENT_JOB_STORE_USER_VERSION,
+        checkpointsRoot: checkpoints.checkpointsRoot,
+      })
+    },
+
+    async dumpLogicalState(): Promise<string> {
+      return canonicalLogicalDump(
+        createLogicalDump({
+          db,
+          schemaVersion: AGENT_JOB_STORE_USER_VERSION,
+          checkpointsRoot: checkpoints.checkpointsRoot,
+        }),
+      )
     },
   }
 }

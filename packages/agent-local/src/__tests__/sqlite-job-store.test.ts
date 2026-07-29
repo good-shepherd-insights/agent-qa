@@ -21,6 +21,7 @@ import { asJobId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
+import { orderedSelectSql } from '../store/logical-dump.js'
 import {
   AGENT_JOB_STORE_DB_FILE,
   AGENT_JOB_STORE_USER_VERSION,
@@ -412,6 +413,170 @@ describe('agent job store: recordFailure (ledger 1)', () => {
       last_failure_kind: 'permanent',
       last_failure_reason: 'model refused the request',
     })
+  })
+})
+
+describe('agent job store: the deterministic logical dump (D-03)', () => {
+  const roots: string[] = []
+
+  function scratchRoot(): string {
+    const created = mkdtempSync(join(tmpdir(), 'agent-qa-job-dump-'))
+    roots.push(created)
+    return created
+  }
+
+  afterEach(() => {
+    while (roots.length > 0) rmSync(roots.pop() as string, { recursive: true, force: true })
+  })
+
+  /** One history rich enough that every table and the checkpoint directory are non-empty. */
+  async function drive(
+    root: string,
+    keys: readonly string[] = ['key-a', 'key-b', 'key-c'],
+  ): Promise<void> {
+    const store = openStore(root, frozenClock())
+    try {
+      const fence = await store.adoptEpoch(4)
+      for (const key of keys) await store.enqueue(insert(`job_${key.slice(-1)}`, key))
+      const claim = await store.claimNext(fence)
+      if (!claim.claimed) throw new Error('nothing to claim')
+      await store.publishCheckpoint(claim.job.id, 'analysis', { verdict: 'ok' }, fence)
+      await store.completeAndChain(claim.job.id, [], fence)
+      const second = await store.claimNext(fence)
+      if (!second.claimed) throw new Error('nothing to claim')
+      await store.recordFailure(second.job.id, { kind: 'permanent', reason: 'nope' }, fence)
+    } finally {
+      store.close()
+    }
+  }
+
+  async function dumpOf(root: string): Promise<string> {
+    const store = openStore(root, frozenClock())
+    try {
+      return await store.dumpLogicalState()
+    } finally {
+      store.close()
+    }
+  }
+
+  it('is byte-identical for two stores driven through the same history', async () => {
+    const left = scratchRoot()
+    const right = scratchRoot()
+    await drive(left)
+    await drive(right)
+
+    expect(await dumpOf(left)).toBe(await dumpOf(right))
+  })
+
+  it('is byte-identical across a close and reopen', async () => {
+    const root = scratchRoot()
+    await drive(root)
+
+    expect(await dumpOf(root)).toBe(await dumpOf(root))
+  })
+
+  // THE control that matters most. A dump that discarded its input and returned a frozen
+  // constant satisfies every equality assertion above perfectly — that exact defect passed a
+  // full suite in phase 384. Two different states must produce two different dumps.
+  it('changes when the state changes', async () => {
+    const root = scratchRoot()
+    await drive(root)
+    const before = await dumpOf(root)
+
+    const store = openStore(root, frozenClock())
+    try {
+      await store.enqueue(insert('job_d', 'key-d'))
+    } finally {
+      store.close()
+    }
+
+    expect(await dumpOf(root)).not.toBe(before)
+  })
+
+  it('changes when a checkpoint file changes and nothing else does', async () => {
+    const left = scratchRoot()
+    const right = scratchRoot()
+    await drive(left)
+    await drive(right)
+
+    const store = openStore(right, frozenClock())
+    try {
+      const fence = await store.adoptEpoch(4)
+      await store.publishCheckpoint(asJobId('job_b'), 'analysis', { verdict: 'other' }, fence)
+    } finally {
+      store.close()
+    }
+
+    // The rows still match; only the bytes under the checkpoint root moved. A dump that
+    // covered the database alone would call these two states equal.
+    expect(await dumpOf(left)).not.toBe(await dumpOf(right))
+  })
+
+  it('is insensitive to the order the same rows were inserted in', async () => {
+    const forwards = scratchRoot()
+    const backwards = scratchRoot()
+
+    const store = openStore(forwards, frozenClock())
+    try {
+      for (const key of ['key-a', 'key-b', 'key-c']) {
+        await store.enqueue(insert(`job_${key.slice(-1)}`, key))
+      }
+    } finally {
+      store.close()
+    }
+
+    const reversed = openStore(backwards, frozenClock())
+    try {
+      for (const key of ['key-c', 'key-b', 'key-a']) {
+        await reversed.enqueue(insert(`job_${key.slice(-1)}`, key))
+      }
+    } finally {
+      reversed.close()
+    }
+
+    expect(rowIdOrder(forwards)).not.toEqual(rowIdOrder(backwards))
+    expect(await dumpOf(forwards)).toBe(await dumpOf(backwards))
+  })
+
+  it('states an explicit order for every table it reads', async () => {
+    const root = scratchRoot()
+    await drive(root)
+
+    const store = openStore(root, frozenClock())
+    try {
+      const dump = await store.logicalDump()
+      // Enumerated from the catalogue, so a table added later is covered without an edit.
+      expect(dump.tables.map((table) => table.table)).toEqual(['job_store_fence', 'jobs'])
+      for (const table of dump.tables) {
+        expect(table.orderBy.length).toBeGreaterThan(0)
+        expect(orderedSelectSql(table.table, table.orderBy)).toContain('ORDER BY')
+      }
+      expect(dump.checkpoints.map((entry) => entry.path)).toEqual(['job_a/analysis.json'])
+      expect(dump.checkpoints[0]?.digest).toMatch(/^[0-9a-f]{64}$/)
+    } finally {
+      store.close()
+    }
+  })
+
+  it('agrees with the typed dump about which rows exist and in what order', async () => {
+    const root = scratchRoot()
+    await drive(root)
+
+    const store = openStore(root, frozenClock())
+    try {
+      const logical = await store.logicalDump()
+      const jobs = logical.tables.find((table) => table.table === 'jobs')
+      expect(jobs?.rows.map((row) => String(row.id))).toEqual(
+        (await store.dumpState()).jobs.map((job) => job.id),
+      )
+    } finally {
+      store.close()
+    }
+  })
+
+  it('refuses to build a SELECT around an identifier it cannot quote safely', () => {
+    expect(() => orderedSelectSql('jobs; DROP TABLE jobs', ['id'])).toThrow(TypeError)
+    expect(() => orderedSelectSql('jobs', ['id"'])).toThrow(TypeError)
   })
 })
 
