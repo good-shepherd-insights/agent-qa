@@ -32,12 +32,16 @@ export type {
   FunctionResultKind,
   FunctionStream,
   KnowledgeReaderPort,
+  OptionalFunctionDepKey,
   ReplayedRunEvent,
+  RunInvocationPort,
   RunsReaderPort,
+  StartedRun,
 } from './functions/spec.js'
 // Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
 // with the op that throws them; only the error CLASS crosses the barrel, never the spec.
 export { RunNotFoundError } from './functions/ops/runs-get.js'
+export { RunNotRecordedError } from './functions/ops/runs-start.js'
 export { StreamReplayFloorError } from './functions/ops/runs-events.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer

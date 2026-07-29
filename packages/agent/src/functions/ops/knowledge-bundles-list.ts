@@ -24,7 +24,6 @@ export const knowledgeBundlesListSpec: FunctionSpec<
   summary: 'List the committed knowledge bundles with their derived trust state.',
   requiredScopes: ['read'],
   resultKind: 'unary',
-  bindingStatus: 'bound',
   input: KnowledgeBundlesListInputSchema,
   output: z.array(KnowledgeBundleSummarySchema),
   risk: { name: `fn:${KNOWLEDGE_BUNDLES_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },

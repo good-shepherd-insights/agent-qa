@@ -138,7 +138,8 @@ describe('runs.events declaration', () => {
     expect(runsEventsSpec.id).toBe('runs.events')
     expect(runsEventsSpec.requiredScopes).toEqual(['read'])
     expect(runsEventsSpec.resultKind).toBe('stream')
-    expect(runsEventsSpec.bindingStatus).toBe('bound')
+    // Bound in EVERY composition — it names no optional dep to be withheld (D-16).
+    expect(runsEventsSpec.boundThrough).toBeUndefined()
     expect(runsEventsSpec.risk).toEqual({
       name: 'fn:runs.events',
       recognized: true,

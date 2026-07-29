@@ -12,6 +12,7 @@ import {
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
+import type { RunExecutionPort } from '@vostride/agent-qa-agent-local'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
@@ -190,7 +191,19 @@ function reportError(error: unknown): void {
   process.exitCode = 1
 }
 
-export function createFnCommand(): Command {
+/**
+ * The one seam this command takes from outside itself.
+ *
+ * Only the run-execution port, and only because executing a run means a browser and a provider.
+ * Everything else the `fn` path touches — the registry, the gate, the readers, the audit sink —
+ * is built by the real composition in every invocation including the tested ones, so a test
+ * substituting this seam still crosses every boundary the command owns.
+ */
+export interface FnCommandDeps {
+  runExecution?: RunExecutionPort
+}
+
+export function createFnCommand(deps: FnCommandDeps = {}): Command {
   return new Command('fn')
     .description('Invoke a registered agent function by id, or list the registry')
     .argument('[id]', 'dot-namespaced function id, e.g. runs.list')
@@ -200,7 +213,10 @@ export function createFnCommand(): Command {
     .option('--from <lastEventId>', 'resume a stream after this event seq')
     .action(async (id: string | undefined, options: FnOptions, command: Command) => {
       try {
-        const registry = composeCliLocalAgent(compositionInput(command)).registry
+        const registry = composeCliLocalAgent({
+          ...compositionInput(command),
+          ...(deps.runExecution === undefined ? {} : { runExecution: deps.runExecution }),
+        }).registry
 
         if (options.list === true) {
           const declarations = registry.list(CLI_FUNCTION_CALLER)

@@ -77,7 +77,6 @@ export const runsGetSpec: FunctionSpec<RunsGetInput, RunDetail> = {
   summary: 'Read one completed run in full, including its member-test outcomes.',
   requiredScopes: ['read'],
   resultKind: 'unary',
-  bindingStatus: 'bound',
   input: RunsGetInputSchema,
   output: RunDetailSchema,
   risk: { name: `fn:${RUNS_GET_FUNCTION_ID}`, recognized: true, readOnly: true },

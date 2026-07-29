@@ -534,9 +534,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
-      // Declared in full and visibly UNBOUND until 386 relocates the composition root
-      // (D-09). A capability the CLI cannot run is still a capability the CLI can see.
-      'runs.start': { requiredScopes: ['run'], resultKind: 'unary', bindingStatus: 'unbound' },
+      // BOUND since 385 plan 10 (D-16). Not because a literal was flipped — because this
+      // composition supplies a run executor, and `bindingStatus` reports what THIS host can
+      // do. The same capability still lists `unbound` from a composition without one, which
+      // is what compose-local-agent.test.ts and the agent-layer suites assert.
+      'runs.start': { requiredScopes: ['run'], resultKind: 'unary', bindingStatus: 'bound' },
     })
     // Sorted lexicographically by id, so a catalog projection is deterministic.
     expect(declarations.map((declaration) => declaration.id)).toEqual(
@@ -564,15 +566,26 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(JSON.parse(result.stdout)).toEqual([])
   })
 
-  it('reports runs.start as declared-but-unbound rather than as missing (D-09)', async () => {
+  it('no longer refuses runs.start by binding — the refusal is now the HOST executor speaking', async () => {
+    // The 384 version of this case asserted `FunctionNotBoundError` from this exact command.
+    // It cannot be asserted here any more, and its replacement has to prove the same two
+    // things it did: that the refusal is distinguishable from an unknown id, and that the
+    // capability is reached rather than short-circuited.
+    //
+    // `gateRun` is a field the run command has no way to carry, so the host's executor
+    // refuses it BEFORE launching anything — which makes this a zero-child-process proof
+    // that the invocation crossed the gate, cleared the binding check, and reached the port
+    // the composition bound. A composition that still refused by binding would report
+    // `FunctionNotBoundError` here instead, and it is asserted absent.
     const workspace = fixtureWorkspace(roots)
 
-    const result = await invoke(workspace, ['runs.start', '--json'])
+    const result = await invoke(workspace, ['runs.start', '--input', '{"gateRun":true}', '--json'])
 
     expect(result.exitCode).toBe(1)
     expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('FunctionNotBoundError')
-    expect(result.stderr).toContain('runs.start')
+    expect(result.stderr).toContain('UnsupportedRunRequestError')
+    expect(result.stderr).toContain('gateRun')
+    expect(result.stderr).not.toContain('FunctionNotBoundError')
     expect(result.stderr).not.toContain('Unknown function')
   })
 

@@ -30,7 +30,6 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   summary: 'List the completed runs recorded for this project.',
   requiredScopes: ['read'],
   resultKind: 'unary',
-  bindingStatus: 'bound',
   input: RunsListInputSchema,
   output: z.array(RunSummarySchema),
   // Read ops declare `readOnly` so the static classifier lands them on the read-only

@@ -1,12 +1,19 @@
-// `runs.start` — declared in full, deliberately unbound (Phase 384, Plan 04 — D-09/D-10).
+// `runs.start` in a composition that cannot run it (Phase 384, Plan 04 — D-09/D-10; repinned
+// by 385 plan 10 — D-16).
 //
-// The point of this suite is that "declared but not bound in THIS composition" is a
-// first-class, observable state. It must be distinguishable from a capability that does
-// not exist (`UnknownFunctionError`) and from one that silently does nothing, and the
-// attempt must still be gated and audited like every other invocation (D-11).
+// The point of this suite is unchanged and every case in it still holds: "declared but not
+// bound in THIS composition" is a first-class, observable state. It must be distinguishable
+// from a capability that does not exist (`UnknownFunctionError`) and from one that silently
+// does nothing, and the attempt must still be gated and audited like every other invocation
+// (D-11).
 //
-// 386 binds this op when `composeLocalAgent()` becomes the composition root. Nothing about
-// its declared contract changes then — only `bindingStatus`.
+// What changed in 385 is WHY the registry below reports `unbound`, and it is the reason this
+// file needed almost no edit. `runs.start` now has an implementation; what it needs is a
+// `runInvocation` port, and `fakeDeps()` supplies none. So the unbound state proven here is
+// no longer a literal on a spec — it is a fact about a composition, which is what the
+// vocabulary always claimed to describe. The capability is bound elsewhere in the same
+// process (`composeLocalAgent()` with a run executor) and refused here, at the same time,
+// from the same spec.
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
@@ -84,12 +91,24 @@ function registryWithRunsStart(auditSink?: AuditSink) {
 }
 
 describe('runs.start declaration', () => {
-  it('declares its FULL contract while binding to nothing in this composition', () => {
+  it('declares its FULL contract and states what a composition must supply to run it', () => {
     expect(runsStartSpec.id).toBe(RUNS_START_FUNCTION_ID)
     expect(runsStartSpec.id).toBe('runs.start')
     expect(runsStartSpec.requiredScopes).toEqual(['run'])
     expect(runsStartSpec.resultKind).toBe('unary')
-    expect(runsStartSpec.bindingStatus).toBe('unbound')
+    // The spec's entire say in whether it is bound. It names a NEED; the composition's
+    // answer to that need is what a declaration reports (D-16).
+    expect(runsStartSpec.boundThrough).toBe('runInvocation')
+  })
+
+  it('carries no static binding claim at all — a spec cannot answer for a composition', () => {
+    // The lazy version of the 385 flip was to write `bindingStatus: 'bound'` here. Every
+    // registry built without a run executor would then have listed a capability it cannot
+    // run as runnable, and `FunctionNotBoundError` would have become unreachable by
+    // declaration rather than unreachable by fact. There is no literal to flip.
+    expect(Object.keys(runsStartSpec)).not.toContain('bindingStatus')
+    expect((runsStartSpec as unknown as Record<string, unknown>)['bindingStatus'])
+      .toBeUndefined()
   })
 
   it('carries the D-10 gateRun marker on its declared input', () => {

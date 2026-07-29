@@ -17,7 +17,6 @@ export const configGetSpec: FunctionSpec<ConfigGetInput, MaskedResolvedConfig> =
   summary: 'Read the resolved project configuration with secret-bearing values masked.',
   requiredScopes: ['read'],
   resultKind: 'unary',
-  bindingStatus: 'bound',
   input: ConfigGetInputSchema,
   output: MaskedResolvedConfigSchema,
   risk: { name: `fn:${CONFIG_GET_FUNCTION_ID}`, recognized: true, readOnly: true },

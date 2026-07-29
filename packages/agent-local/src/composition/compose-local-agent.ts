@@ -14,7 +14,7 @@
 // arch rule named composition-carveout enforces that, so the job store proper stays lean.
 
 import { existsSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   createAgentJobQueue,
@@ -30,7 +30,9 @@ import type {
   JobKindRegistry,
   JobModelCapability,
   KnowledgeReaderPort,
+  RunInvocationPort,
   RunsReaderPort,
+  StartedRun,
 } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
@@ -65,8 +67,10 @@ import type {
   CompletedRunHandoff,
   RunEventEnvelope,
   RunId,
+  RunsStartInput,
 } from '@vostride/agent-qa-schema'
 
+import { buildRunPorts } from './run-composition.js'
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
 import { AGENT_JOB_STORE_DB_FILE, createSqliteJobStore } from '../store/sqlite-job-store.js'
 import type { SqliteJobStore } from '../store/sqlite-job-store.js'
@@ -244,6 +248,73 @@ export function createKnowledgeReader(
   }
 }
 
+// ---- runs.start: the composition's binding (D-16) ---------------------------------------------
+
+/**
+ * The host's run-execution capability: run this request to completion, and say which run it was.
+ *
+ * A PORT rather than shared code, by the plan-08 dissection rule. Would a headless drainer
+ * execute a suite the way a terminal host does? It would substitute — the process model
+ * (in-process, a child, a worker pool), the signal handling, the reporters and the exit
+ * discipline are all decisions the host owns and answers differently. What crosses into the
+ * composition is the type; what stays with the host is the orchestration.
+ *
+ * The verb resolves the IDENTITY of the run and nothing else. Anything richer would be the
+ * host telling the composition what happened, and the whole point of the binding below is
+ * that the composition does not take the host's word for it.
+ */
+export interface RunExecutionPort {
+  execute(request: RunsStartInput): Promise<StartedRun>
+}
+
+/**
+ * The run this host reported did not leave a durable event log behind.
+ *
+ * The composition's evidence check, and the reason `runs.start` cannot be satisfied by a host
+ * that returns a plausible run id without running anything. The v49 bus writes `runStarted`
+ * before anything else can happen, so a run that began at all has a non-empty log; an empty
+ * one means no run took place under that id. Read through {@link buildRunPorts} — the same
+ * `FsEventLog` family the runner appends with — so what is inspected is the run's own record
+ * rather than a path this file re-derives.
+ */
+export class RunProducedNoEventsError extends Error {
+  constructor(readonly runId: string) {
+    super(
+      `The host reported run ${runId}, but no run events were recorded for it. ` +
+        'A run that started at all writes runStarted before anything else, so an empty ' +
+        'event log means no run took place under that id.',
+    )
+    this.name = 'RunProducedNoEventsError'
+  }
+}
+
+/**
+ * Bind `runs.start` over a host's run execution.
+ *
+ * The composition contributes the half a host must not be trusted with: after the host says a
+ * run happened, the run's own durable event log is read back and an empty one is refused. The
+ * op then builds its acknowledgment from the completed-run record through the SAME reader
+ * `runs.get` answers from, so "the run is real" and "the run is addressable" are one fact.
+ */
+export function createLocalRunInvocation(input: {
+  readonly agentQaRoot: string
+  readonly execution: RunExecutionPort
+}): RunInvocationPort {
+  return {
+    async start(request: RunsStartInput): Promise<StartedRun> {
+      const started = await input.execution.execute(request)
+      const { eventLog } = buildRunPorts({
+        configDir: dirname(input.agentQaRoot),
+        runId: String(started.runId),
+      })
+      if (eventLog.read(0).length === 0) {
+        throw new RunProducedNoEventsError(String(started.runId))
+      }
+      return started
+    },
+  }
+}
+
 /** Wall-clock in the one format every store column and dump row is written in. */
 export const SYSTEM_CLOCK: ClockPort = Object.freeze({
   now: (): string => new Date().toISOString(),
@@ -322,6 +393,15 @@ export interface ComposeLocalAgentInput {
    * provider name is named here.
    */
   readonly model: () => JobModelCapability | Promise<JobModelCapability>
+  /**
+   * How this host executes a run (D-16). OPTIONAL, and the optionality is the reporting
+   * mechanism rather than a convenience: a host that supplies it lists `runs.start` as
+   * `bound` and can run it; a host that does not lists the same capability as `unbound` and
+   * refuses it by name. Not every composition can start a run — a listing, a read-only
+   * surface, 386's daemon before it wires an executor — and D-09 requires that to be a
+   * visible state rather than a call that fails somewhere far from the composition.
+   */
+  readonly runExecution?: RunExecutionPort
   readonly clock?: ClockPort
   readonly idSource?: JobIdSource
   /** The kind registry the queue dispatches through. Defaults to the six real declarations. */
@@ -344,6 +424,15 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       runs: createRunsReader(input.agentQaRoot),
       knowledge: createKnowledgeReader(input.knowledgeRoot),
       config: input.config,
+      // Present iff this host can execute a run. The registry reads the SAME record to
+      // decide what `runs.start` lists as, so the declaration and the dispatch cannot
+      // disagree about whether this composition can run it (D-16).
+      ...(input.runExecution === undefined ? {} : {
+        runInvocation: createLocalRunInvocation({
+          agentQaRoot: input.agentQaRoot,
+          execution: input.runExecution,
+        }),
+      }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
   })

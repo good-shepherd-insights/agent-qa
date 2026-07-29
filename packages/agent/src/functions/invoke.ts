@@ -30,7 +30,7 @@
 import { evaluate } from '@vostride/agent-qa-safety'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
-import { registryInternals } from './registry.js'
+import { registryInternals, resolveBindingStatus } from './registry.js'
 import type { FunctionRegistry } from './registry.js'
 import { FunctionNotBoundError } from './spec.js'
 
@@ -139,9 +139,11 @@ export async function invokeFunction(
 
   // Binding is checked AFTER the gate on purpose (D-09/D-11): an attempt to run a
   // capability this composition cannot run is exactly the kind of thing an audit trail
-  // must record. The DECLARATION is authoritative — a spec that says `unbound` never
-  // dispatches, whatever its implementation happens to do.
-  if (spec.bindingStatus === 'unbound') {
+  // must record. The DECLARATION is authoritative — an op this composition reports as
+  // `unbound` never dispatches, whatever its implementation happens to do — and it is the
+  // SAME `resolveBindingStatus` a listing renders, so what a caller was shown and what the
+  // gate enforces cannot disagree (D-16).
+  if (resolveBindingStatus(spec, internals.deps) === 'unbound') {
     throw new FunctionNotBoundError(functionId)
   }
 

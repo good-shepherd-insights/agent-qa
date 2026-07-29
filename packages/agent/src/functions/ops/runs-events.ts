@@ -58,7 +58,6 @@ export const runsEventsSpec: FunctionStreamSpec<RunsEventsInput, RunEventEnvelop
   summary: "Stream one run's recorded events in seq order, resuming after lastEventId.",
   requiredScopes: ['read'],
   resultKind: 'stream',
-  bindingStatus: 'bound',
   input: RunsEventsInputSchema,
   output: RunEventEnvelopeSchema,
   risk: { name: `fn:${RUNS_EVENTS_FUNCTION_ID}`, recognized: true, readOnly: true },

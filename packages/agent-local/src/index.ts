@@ -97,9 +97,11 @@ export type { ConstructKnowledgeReaderInput } from './composition/knowledge-read
 export {
   composeLocalAgent,
   createKnowledgeReader,
+  createLocalRunInvocation,
   createRunsReader,
   DIGEST_JOB_ID_SOURCE,
   LOCAL_CURATION_CAPABILITIES,
+  RunProducedNoEventsError,
   SYSTEM_CLOCK,
 } from './composition/compose-local-agent.js'
 export type {
@@ -108,6 +110,7 @@ export type {
   LocalAgentJobs,
   LocalCurationCapabilities,
   LocalKnowledgeMaintenanceCapabilities,
+  RunExecutionPort,
 } from './composition/compose-local-agent.js'
 // The knowledge vocabulary the curation surfaces are typed against, re-exported through the one
 // edge that names the writer entry (D-14). Types are erased, so this hands a caller no power it

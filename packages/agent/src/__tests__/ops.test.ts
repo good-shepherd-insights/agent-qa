@@ -87,7 +87,9 @@ describe('runs.get', () => {
     expect(runsGetSpec.id).toBe('runs.get')
     expect(runsGetSpec.requiredScopes).toEqual(['read'])
     expect(runsGetSpec.resultKind).toBe('unary')
-    expect(runsGetSpec.bindingStatus).toBe('bound')
+    // Bound in EVERY composition: the implementation names no optional dep, so there is
+    // nothing a host could withhold that would leave it unbound (D-16).
+    expect(runsGetSpec.boundThrough).toBeUndefined()
     expect(runsGetSpec.risk).toEqual({ name: 'fn:runs.get', recognized: true, readOnly: true })
   })
 
@@ -199,7 +201,7 @@ describe('knowledge.bundles.list', () => {
     expect(knowledgeBundlesListSpec.id).toBe('knowledge.bundles.list')
     expect(knowledgeBundlesListSpec.requiredScopes).toEqual(['read'])
     expect(knowledgeBundlesListSpec.resultKind).toBe('unary')
-    expect(knowledgeBundlesListSpec.bindingStatus).toBe('bound')
+    expect(knowledgeBundlesListSpec.boundThrough).toBeUndefined()
     expect(knowledgeBundlesListSpec.risk).toEqual({
       name: 'fn:knowledge.bundles.list',
       recognized: true,
@@ -237,7 +239,7 @@ describe('config.get', () => {
     expect(configGetSpec.id).toBe('config.get')
     expect(configGetSpec.requiredScopes).toEqual(['read'])
     expect(configGetSpec.resultKind).toBe('unary')
-    expect(configGetSpec.bindingStatus).toBe('bound')
+    expect(configGetSpec.boundThrough).toBeUndefined()
     expect(configGetSpec.risk).toEqual({
       name: 'fn:config.get',
       recognized: true,

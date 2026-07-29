@@ -11,6 +11,7 @@ import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { toSchemaProjection } from './declaration-projection.js'
+import type { FunctionBindingStatus } from './spec.js'
 import { configGetSpec } from './ops/config-get.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { runsEventsSpec } from './ops/runs-events.js'
@@ -55,8 +56,10 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsListSpec as FunctionSpec,
   runsGetSpec as FunctionSpec,
   runsEventsSpec as FunctionSpec,
-  // Declared in full, bound by nothing here (D-09) — the registry lists it so the gap is
-  // visible; `invokeFunction` refuses it by name.
+  // Bound exactly in the compositions that supply a `runInvocation` port (D-16); listed
+  // either way, so a host that cannot start a run reports a visible `unbound` rather than a
+  // hole in the catalog, and `invokeFunction` refuses it by name. `composeLocalAgent()` in
+  // `@vostride/agent-qa-agent-local` is the binding site.
   runsStartSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
   configGetSpec as FunctionSpec,
@@ -135,6 +138,28 @@ function freezeSpec(spec: FunctionSpec): FunctionSpec {
 }
 
 /**
+ * Whether THIS composition can run the op (D-09/D-16) — the one place the answer is decided.
+ *
+ * A spec with no `boundThrough` needs only the required deps, which the type system already
+ * guarantees, so it is bound wherever it is registered. A spec that names an optional dep is
+ * bound iff this composition supplied one. Nothing is read off a static field, because there
+ * is none to read: the alternative — a literal on the spec — is a claim a module-level
+ * singleton makes about every composition in the process, and it would report `bound` from
+ * the first host that omitted the implementation.
+ *
+ * Exported for `invokeFunction`, which refuses on the SAME answer a listing renders. Two
+ * computations of "is it bound" would be two chances to disagree, and the disagreement a
+ * caller would see is a capability that lists bound and refuses.
+ */
+export function resolveBindingStatus(
+  spec: FunctionSpec,
+  deps: FunctionDeps,
+): FunctionBindingStatus {
+  if (spec.boundThrough === undefined) return 'bound'
+  return deps[spec.boundThrough] === undefined ? 'unbound' : 'bound'
+}
+
+/**
  * Project one spec into the capability-free view a surface receives.
  *
  * Constructed field by field rather than spread-minus-invoke, so a future spec field can
@@ -146,13 +171,13 @@ function freezeSpec(spec: FunctionSpec): FunctionSpec {
  * replace, so a permitted listing is no longer a write handle onto the contract vocabulary
  * every firewalled surface shares (T-384-14).
  */
-function declarationView(spec: FunctionSpec): FunctionDeclaration {
+function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclaration {
   return Object.freeze({
     id: spec.id,
     summary: spec.summary,
     requiredScopes: Object.freeze([...spec.requiredScopes]),
     resultKind: spec.resultKind,
-    bindingStatus: spec.bindingStatus,
+    bindingStatus: resolveBindingStatus(spec, deps),
     input: toSchemaProjection(spec.input),
     output: toSchemaProjection(spec.output),
     risk: Object.freeze({ ...spec.risk }),
@@ -219,7 +244,7 @@ export function createRegistryFromSpecs(
           !caller.safeMode ||
           spec.requiredScopes.every((scope) => SAFE_MODE_SCOPES.includes(scope))
         ))
-        .map(declarationView)
+        .map((spec) => declarationView(spec, options.deps))
     },
   }
 

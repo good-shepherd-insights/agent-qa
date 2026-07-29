@@ -123,7 +123,6 @@ const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   summary: 'Synthetic non-read capability used to exercise the listing filter.',
   requiredScopes: ['config-write'],
   resultKind: 'unary',
-  bindingStatus: 'bound',
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
   risk: { name: 'fn:config.set', recognized: true },

@@ -18,6 +18,7 @@ import type {
   MaskedResolvedConfig,
   RiskActionDescriptor,
   RunId,
+  RunsStartInput,
 } from '@vostride/agent-qa-schema'
 
 /**
@@ -50,8 +51,24 @@ export type ReplayedRunEvent = ReturnType<EventLogPort['read']>[number]
  * Whether the op's implementation is bound in THIS composition (D-09). A declared-but-
  * unbound op is a visible state, never a silent gap: coverage checks must treat
  * `unbound` as covered-but-unbound rather than as an absent capability.
+ *
+ * It is a property of a COMPOSITION, not of a spec, and since 385 (D-16) it is computed
+ * that way: the field lives on {@link FunctionDeclaration} — which a registry mints from
+ * the deps it was handed — and on no spec. A spec that carried a static `'bound'` would be
+ * making a claim about compositions it is not part of, and the first composition that
+ * omitted the implementation would report `bound` and lie. There is no literal to flip.
  */
 export type FunctionBindingStatus = 'bound' | 'unbound'
+
+/**
+ * The OPTIONAL members of {@link FunctionDeps} — the deps whose presence varies by host.
+ *
+ * A spec naming one of these in {@link FunctionSpec.boundThrough} is bound exactly in the
+ * compositions that supplied it. This union is the whole vocabulary: a capability cannot
+ * become conditionally bound on something the deps record does not declare, so "which
+ * compositions can run this op" is answerable by reading two lines.
+ */
+export type OptionalFunctionDepKey = 'runInvocation'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -92,7 +109,6 @@ export interface FunctionMetadata {
   /** Capability scopes a caller's grants must cover. Enforced in `invokeFunction`. */
   requiredScopes: readonly FunctionScope[]
   resultKind: FunctionResultKind
-  bindingStatus: FunctionBindingStatus
   /** The descriptor this op projects into for the policy gate. */
   risk: RiskActionDescriptor
 }
@@ -121,6 +137,15 @@ export type FunctionSchemaProjection = Readonly<Record<string, unknown>>
  * FunctionSpec} instead, which never leaves this directory.
  */
 export interface FunctionDeclaration extends FunctionMetadata {
+  /**
+   * Whether THIS composition can run the op (D-09/D-16).
+   *
+   * Computed by the registry from the deps it was constructed with, never copied off a
+   * spec. A listing is therefore a fact about the host a caller is talking to: the same
+   * capability reads `bound` from a composition that supplied its implementation and
+   * `unbound` from one that did not, and `invokeFunction` refuses on exactly that answer.
+   */
+  bindingStatus: FunctionBindingStatus
   /** Inert JSON-Schema projection of the runtime input contract (D-14). */
   input: FunctionSchemaProjection
   /**
@@ -144,6 +169,17 @@ export interface FunctionDeclaration extends FunctionMetadata {
  * and it reaches them through the module-private internals seam.
  */
 export interface FunctionSpec<Input = unknown, Output = unknown> extends FunctionMetadata {
+  /**
+   * The OPTIONAL dep this implementation dispatches through, when it has one (D-16).
+   *
+   * Absent — the ordinary case — means the implementation needs only the required deps,
+   * which every composition supplies by type, so the op is bound wherever it is registered.
+   * Present means the op is bound exactly in the compositions that supplied that dep, and
+   * `unbound` everywhere else. This field is the whole of a spec's say in the matter: a
+   * spec states what its implementation NEEDS, and the composition's answer to that need is
+   * what the declaration reports.
+   */
+  boundThrough?: OptionalFunctionDepKey
   /** Runtime input contract (D-14) — the validator `invokeFunction` enforces with. */
   input: z.ZodType<Input>
   /**
@@ -171,6 +207,7 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
  */
 export interface FunctionStreamSpec<Input = unknown, Element = unknown>
   extends FunctionMetadata {
+  boundThrough?: OptionalFunctionDepKey
   resultKind: 'stream'
   input: z.ZodType<Input>
   output: z.ZodType<Element>
@@ -234,14 +271,50 @@ export interface ConfigReaderPort {
 }
 
 /**
+ * Injected capability that STARTS a run (D-16, Phase 385).
+ *
+ * Its one verb resolves the identity of the run it started and nothing else. That narrowness
+ * is the point: the acknowledgment a caller receives is not assembled from what this port
+ * SAYS happened, it is read back off the run's own durable record through
+ * {@link RunsReaderPort} — the same port `runs.get` answers from. A host that returned an id
+ * without running anything therefore fails at the join rather than at a promise nobody can
+ * check.
+ *
+ * Owning the process model is what makes this a port rather than shared code (the plan-08
+ * dissection rule): a terminal host runs a suite one way, a daemon another, and neither
+ * would call the other's orchestration as written.
+ */
+export interface RunInvocationPort {
+  /**
+   * Start a run for this request and resolve when the run has been recorded.
+   *
+   * Rejects if the run could not be started or did not complete. An implementation that
+   * cannot honour the request must throw, never resolve a run id it did not produce.
+   */
+  start(request: RunsStartInput): Promise<StartedRun>
+}
+
+/** What {@link RunInvocationPort.start} reports: the identity of the run it started. */
+export interface StartedRun {
+  readonly runId: RunId
+}
+
+/**
  * The injected-dependency record every op implementation receives. Ops are pure
  * functions of (validated input, deps) — they never reach for a host API.
  *
- * Required and non-partial on purpose: a composition that omits a port fails to typecheck,
- * which is how an unbound op becomes visible rather than silently missing (D-09).
+ * The three READ ports are required and non-partial on purpose: a composition that omits one
+ * fails to typecheck. `runInvocation` is the single OPTIONAL member, and its optionality is
+ * not a relaxation of that discipline but the mechanism behind it. Not every host can start
+ * a run — a read-only surface, a registry built for a listing, 386's daemon before it wires
+ * its own executor — and D-09 requires that state to be VISIBLE rather than a call that
+ * fails somewhere far away. Omitting it makes `runs.start` list as `unbound` and refuse by
+ * name; supplying it makes the same capability bound. Any further optional member must join
+ * {@link OptionalFunctionDepKey} so the same reporting applies to it.
  */
 export interface FunctionDeps {
   runs: RunsReaderPort
   knowledge: KnowledgeReaderPort
   config: ConfigReaderPort
+  runInvocation?: RunInvocationPort
 }

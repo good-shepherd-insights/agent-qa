@@ -72,6 +72,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'MissingIdempotencyKeyError',
   'REAL_JOB_KIND_DECLARATIONS',
   'RunNotFoundError',
+  'RunNotRecordedError',
   'StaleJobStoreEpochError',
   'StreamReplayFloorError',
   'UndeclaredJobCheckpointError',
@@ -113,6 +114,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  * how this package stays provider-neutral while its jobs still author. A type is erased, so
  * its presence here hands nobody a model; what would be a violation is a VALUE that could
  * produce one, and the list above still has none.
+ *
+ * 385 plan 10 adds `RunInvocationPort`, `StartedRun` and `OptionalFunctionDepKey` — the
+ * vocabulary a composition root implements to make `runs.start` bound in its host (D-16),
+ * and the union naming which deps that conditional binding may hang on. All three are types,
+ * so none of them hands a surface a way to start a run: the only value that could is the
+ * port a COMPOSITION constructs and injects, and `invokeFunction` is still the one dispatch.
  *
  * It also adds the cancellation vocabulary. The engine verb and the two refusals are here
  * while NO surface exposes cancel in this phase, and that is deliberate: the semantics are
@@ -166,15 +173,18 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'JobStorePort',
   'KnowledgePort',
   'KnowledgeReaderPort',
+  'OptionalFunctionDepKey',
   'PersistencePort',
   'RanJobOutcomeBase',
   'RecoverAbandonedClaimsInput',
   'RecoverAbandonedClaimsOutcome',
   'ReplayedRunEvent',
+  'RunInvocationPort',
   'RunNextJobInput',
   'RunNextJobOutcome',
   'RunsReaderPort',
   'StandInJobScript',
+  'StartedRun',
   'ToolsPort',
 ]
 

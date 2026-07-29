@@ -351,7 +351,6 @@ const askTierSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   summary: 'Synthetic ask-tier capability that makes the credential axis observable.',
   requiredScopes: ['read'],
   resultKind: 'unary',
-  bindingStatus: 'bound',
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
   risk: {
