@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,10 +22,12 @@ import {
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
+import * as knowledgeLocal from '../../index.js'
 import {
   acquireWriterLease,
   LEASE_FILE,
   releaseLease,
+  WriterAuthorityLostError,
 } from '../../lease/writer-lease.js'
 import * as curationQueue from '../../queue/curation-queue.js'
 import {
@@ -28,6 +36,7 @@ import {
   type ClaimedCurationJob,
 } from '../../queue/curation-queue.js'
 import { readJobState } from '../../queue/job-state.js'
+import { requestRebuild } from '../../rebuild-marker.js'
 import type { CuratorAuthor } from '../author-contract.js'
 import { drainQueue, type DrainOperations } from '../drain.js'
 
@@ -151,6 +160,25 @@ describe('drainQueue daemon substrate', () => {
 
   function reportRemaining(report: unknown): unknown {
     return (report as { remaining?: unknown }).remaining
+  }
+
+  function maintenanceTail() {
+    const runMaintenanceTail = (
+      knowledgeLocal as unknown as {
+        runMaintenanceTail?: (options: {
+          knowledgeRoot: string
+          lease: { leaseId: string; epoch: number }
+          operations?: Partial<DrainOperations>
+        }) => Promise<{
+          writerPass: unknown
+          gc: unknown
+          failures: readonly unknown[]
+        }>
+      }
+    ).runMaintenanceTail
+    expect(runMaintenanceTail).toBeTypeOf('function')
+    if (runMaintenanceTail === undefined) throw new Error('runMaintenanceTail is not exported')
+    return runMaintenanceTail
   }
 
   it('uses each claimed payload context inside one mixed-context drain', async () => {
@@ -321,5 +349,140 @@ describe('drainQueue daemon substrate', () => {
     enqueue('pending-count-one', 'ci')
     enqueue('pending-count-two', 'ci')
     expect(countPendingCurationJobs?.(knowledgeRoot)).toBe(2)
+  })
+
+  it('omits every maintenance mutation when the daemon cadence owns the tail', async () => {
+    const writerMutation = join(root, 'writer-pass-mutated')
+    const gcMutation = join(root, 'gc-mutated')
+    const rebuild = vi.fn(async () => {
+      writeFileSync(writerMutation, 'unexpected')
+      return {
+        projected: 0,
+        skippedIncomplete: 0,
+        scanIssues: [],
+        removed: 0,
+        backfilled: 0,
+        vec: 'vec0' as const,
+        pendingEmbeddings: 0,
+        maintenanceRemaining: false,
+      }
+    })
+    const gc = vi.fn(() => {
+      writeFileSync(gcMutation, 'unexpected')
+      return {
+        trimmedRecordIds: [],
+        skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
+      }
+    })
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'local-headless',
+      policy,
+      maintenance: 'skip',
+      operations: {
+        readRebuildRequest: () => ({ present: false }),
+        readIndexMaintenanceState: () => ({
+          ...NO_INDEX_MAINTENANCE,
+          pendingEmbeddings: 1,
+        }),
+        acquireEmbedder: async () => ({ kind: 'lexical-only' }),
+        rebuildIndex: rebuild,
+        runKnowledgeGc: gc,
+      },
+    } as Parameters<typeof drainQueue>[0] & { maintenance: 'skip' })
+
+    expect(report.writerPass).toEqual({ kind: 'skipped', reason: 'daemon-cadence' })
+    expect(report.gc).toEqual({ kind: 'skipped', reason: 'daemon-cadence' })
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(gc).not.toHaveBeenCalled()
+    expect(existsSync(writerMutation)).toBe(false)
+    expect(existsSync(gcMutation)).toBe(false)
+    expect(enumerateBundleDirs(knowledgeRoot)).toEqual([])
+  })
+
+  it('runs the exported maintenance tail with the inline writer and GC result shapes', async () => {
+    const runMaintenanceTail = maintenanceTail()
+    const request = {
+      reason: 'locked' as const,
+      detail: 'daemon substrate direct tail',
+      requestedAt: '2026-07-30T00:00:00.000Z',
+    }
+    const rebuild = {
+      projected: 0,
+      skippedIncomplete: 0,
+      scanIssues: [],
+      removed: 0,
+      backfilled: 0,
+      vec: 'vec0' as const,
+      pendingEmbeddings: 0,
+      maintenanceRemaining: false,
+    }
+    const summary = {
+      trimmedRecordIds: [],
+      skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
+    }
+
+    const result = await runMaintenanceTail({
+      knowledgeRoot,
+      lease: { leaseId: 'direct-tail-lease', epoch: 7 },
+      operations: {
+        readRebuildRequest: () => ({ present: true, request }),
+        readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
+        acquireEmbedder: async () => ({ kind: 'lexical-only' }),
+        rebuildIndex: vi.fn(async () => rebuild),
+        runKnowledgeGc: vi.fn(() => summary),
+      },
+    })
+
+    expect(result).toEqual({
+      writerPass: { kind: 'rebuilt', request, rebuild },
+      gc: { kind: 'completed', summary },
+      failures: [],
+    })
+  })
+
+  it('surfaces the same WriterAuthorityLostError from a stale direct tail', async () => {
+    const runMaintenanceTail = maintenanceTail()
+    const stale = acquireWriterLease(knowledgeRoot)
+    if (stale.kind !== 'acquired') throw new Error('expected stale lease seed')
+    expect(releaseLease({ knowledgeRoot, leaseId: stale.leaseId })).toEqual({
+      kind: 'released',
+    })
+    const current = acquireWriterLease(knowledgeRoot)
+    if (current.kind !== 'acquired') throw new Error('expected replacement lease')
+    requestRebuild({
+      knowledgeRoot,
+      reason: 'locked',
+      detail: 'force the direct writer pass through its fresh epoch fence',
+    })
+
+    await expect(
+      runMaintenanceTail({
+        knowledgeRoot,
+        lease: { leaseId: stale.leaseId, epoch: stale.epoch },
+        operations: {
+          acquireEmbedder: async () => ({ kind: 'lexical-only' }),
+        },
+      }),
+    ).rejects.toMatchObject({
+      name: 'WriterAuthorityLostError',
+      reason: 'epoch-mismatch-before-heartbeat',
+      observedEpoch: current.epoch,
+    })
+    await expect(
+      runMaintenanceTail({
+        knowledgeRoot,
+        lease: { leaseId: stale.leaseId, epoch: stale.epoch },
+        operations: {
+          acquireEmbedder: async () => ({ kind: 'lexical-only' }),
+        },
+      }),
+    ).rejects.toBeInstanceOf(WriterAuthorityLostError)
+    expect(releaseLease({ knowledgeRoot, leaseId: current.leaseId })).toEqual({
+      kind: 'released',
+    })
   })
 })
