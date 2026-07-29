@@ -1,8 +1,10 @@
 import { dirname, resolve as resolvePath } from 'node:path'
-import { getProviderOptions } from '@vostride/agent-qa-model'
+import { createModel, createTokenAccounting, getProviderOptions, resolveCapabilities } from '@vostride/agent-qa-model'
+import { generateText } from 'ai'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
 
+import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import type { ModelAuthDeclaration, ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 
 export { loadProviderPluginsForRawConfig }
@@ -213,6 +215,69 @@ function toAuthDeclaration(resolved: ResolvedLLMAuth): ModelAuthDeclaration {
     case 'missing':
       return { mode: 'none' }
   }
+}
+
+/** Focused test seam for `buildJobModelCapability`. Production callers omit it. */
+export interface JobModelCapabilityDeps {
+  createModelImpl?: typeof createModel
+  createTokenAccountingImpl?: typeof createTokenAccounting
+  resolveCapabilitiesImpl?: typeof resolveCapabilities
+  generateTextImpl?: typeof generateText
+}
+
+/**
+ * Bind an already-resolved model profile as the job queue's authorship capability (385 plan 05,
+ * D-10/D-11).
+ *
+ * `JobModelCapability` is three structural fields, so no provider name crosses into
+ * `@vostride/agent-qa-agent` and the queue stays provider-neutral. What crosses instead is this
+ * closure, and the provider call inside it is the SAME `createModel` → `generateText` chain a run
+ * and the curation author use — the accountant's own ceiling for the output cap, zero temperature,
+ * no retries, so an authored checkpoint records a deterministic answer rather than one that
+ * depended on which attempt produced it.
+ */
+export function buildJobModelCapability(
+  profile: ModelProfile,
+  auth: ResolvedModelAuth,
+  deps: JobModelCapabilityDeps = {},
+): JobModelCapability {
+  const model = (deps.createModelImpl ?? createModel)(profile, auth)
+  const accounting = (deps.createTokenAccountingImpl ?? createTokenAccounting)({
+    getCapabilities: () => (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile),
+  })
+  const generate = deps.generateTextImpl ?? generateText
+
+  return {
+    modelId: `${profile.provider}:${profile.model}`,
+    async generate(request) {
+      const result = await generate({
+        model,
+        maxRetries: 0,
+        temperature: 0,
+        maxOutputTokens: accounting.getCeilings().maxOutput,
+        ...(request.system === undefined ? {} : { system: request.system }),
+        prompt: request.prompt,
+      })
+      return { text: result.text }
+    },
+  }
+}
+
+/**
+ * The CLI's job-authorship capability, resolved from the project's configured default LLM.
+ *
+ * Called at most once per process, and only when a host actually opens the job queue — the
+ * composition root takes it as a factory precisely so `agent-qa fn --list` never pays for an auth
+ * resolution or brings a provider handle into existence.
+ */
+export async function resolveCliJobModel(
+  configPath: string,
+  deps: JobModelCapabilityDeps = {},
+): Promise<JobModelCapability> {
+  const { config } = await resolveNamedConfig(undefined, configPath)
+  const resolved = await resolveModelAuth(config.name, config)
+  const { profile, auth } = toModelProfileAndAuth(config, resolved)
+  return buildJobModelCapability(profile, auth, deps)
 }
 
 export async function resolveCredentials(

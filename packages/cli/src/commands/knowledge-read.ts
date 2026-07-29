@@ -44,8 +44,8 @@ import { z } from 'zod'
 import { resolveConfig } from '../config.js'
 import {
   CLI_FUNCTION_CALLER,
-  createFunctionRegistryComposition,
-} from '../composition/function-registry.js'
+  composeCliLocalAgent,
+} from '../composition/local-agent-host.js'
 
 interface InspectOptions {
   product?: string
@@ -410,7 +410,7 @@ export function registerKnowledgeReadCommands(command: Command): void {
         // rows, crossing the policy gate, writing the audit row — belongs to the capability.
         // This verb supplies a caller record and a project root, and renders the result.
         const rows = await invokeFunction(
-          createFunctionRegistryComposition(functionLayerInput(bundlesCommand)),
+          composeCliLocalAgent(functionLayerInput(bundlesCommand)).registry,
           KNOWLEDGE_BUNDLES_LIST_ID,
           {},
           CLI_FUNCTION_CALLER,

@@ -86,3 +86,23 @@ export {
   createFrozenKnowledgeReader,
 } from './composition/knowledge-reader.js'
 export type { ConstructKnowledgeReaderInput } from './composition/knowledge-reader.js'
+
+// 2026-07-29 (Phase 385 plan 09, D-15): the one local composition root. `composeLocalAgent` is
+// what a host calls instead of wiring a registry of its own, so it is published for the same
+// reason the run composition is: a host that cannot reach it re-derives it.
+//
+// The store rule above is unchanged and this does not bend it. No store CONSTRUCTOR joins the
+// barrel; `host.jobs()` hands back the store the host itself opened, which is the one arbitrated
+// opening rather than a second one.
+export {
+  composeLocalAgent,
+  createKnowledgeReader,
+  createRunsReader,
+  DIGEST_JOB_ID_SOURCE,
+  SYSTEM_CLOCK,
+} from './composition/compose-local-agent.js'
+export type {
+  ComposeLocalAgentInput,
+  LocalAgentHost,
+  LocalAgentJobs,
+} from './composition/compose-local-agent.js'

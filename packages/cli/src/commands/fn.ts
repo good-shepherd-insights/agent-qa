@@ -17,8 +17,8 @@ import pc from 'picocolors'
 
 import {
   CLI_FUNCTION_CALLER,
-  createFunctionRegistryComposition,
-} from '../composition/function-registry.js'
+  composeCliLocalAgent,
+} from '../composition/local-agent-host.js'
 
 interface FnOptions {
   list?: boolean
@@ -200,7 +200,7 @@ export function createFnCommand(): Command {
     .option('--from <lastEventId>', 'resume a stream after this event seq')
     .action(async (id: string | undefined, options: FnOptions, command: Command) => {
       try {
-        const registry = createFunctionRegistryComposition(compositionInput(command))
+        const registry = composeCliLocalAgent(compositionInput(command)).registry
 
         if (options.list === true) {
           const declarations = registry.list(CLI_FUNCTION_CALLER)

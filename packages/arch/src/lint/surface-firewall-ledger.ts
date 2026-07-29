@@ -275,34 +275,15 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'config and suite validation reads resolved config directly; joins the config action class',
   },
   {
-    file: 'packages/cli/src/composition/function-registry.ts',
+    // 2026-07-29 (Phase 385 plan 09, D-15): four of this file's five entries are GONE, not moved.
+    // The reader, runner, runner-local and safety-local leaks left with the registry assembly that
+    // caused them, which now lives in composeLocalAgent(). What survives is config resolution — a
+    // different debt from the one 386 clears, so the clearing phase is restated as the typed config
+    // action class rather than left pointing at a phase that no longer touches this line.
+    file: 'packages/cli/src/composition/local-agent-host.ts',
     specifier: '@vostride/agent-qa-core',
-    clearedBy: '386',
-    reason: 'the 384 CLI-side composition root binding local implementations into the registry; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/composition/function-registry.ts',
-    specifier: '@vostride/agent-qa-knowledge-local/reader',
-    clearedBy: '386',
-    reason: 'the 384 CLI-side composition root binding local implementations into the registry; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/composition/function-registry.ts',
-    specifier: '@vostride/agent-qa-runner',
-    clearedBy: '386',
-    reason: 'the 384 CLI-side composition root binding local implementations into the registry; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/composition/function-registry.ts',
-    specifier: '@vostride/agent-qa-runner-local',
-    clearedBy: '386',
-    reason: 'the 384 CLI-side composition root binding local implementations into the registry; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/composition/function-registry.ts',
-    specifier: '@vostride/agent-qa-safety-local',
-    clearedBy: '386',
-    reason: 'the 384 CLI-side composition root binding local implementations into the registry; superseded by composeLocalAgent()',
+    clearedBy: '395',
+    reason: 'the CLI half of the local host resolves and masks configuration directly; joins the typed config action class',
   },
   {
     file: 'packages/cli/src/config.ts',
