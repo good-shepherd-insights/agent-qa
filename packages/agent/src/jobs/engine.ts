@@ -1,4 +1,4 @@
-// The agent job queue engine (Phase 385, D-05 / D-08 / D-17).
+// The agent job queue engine (Phase 385, D-05 / D-08 / D-17 / D-18 / D-20).
 //
 // Pure semantics. This package is storageNeutral, so nothing here touches a host API: every
 // byte the engine causes to exist crosses `JobStorePort`. The driver is a PUMPABLE function
@@ -20,7 +20,11 @@ import type {
   JobStoreFence,
   JobStorePort,
 } from '../ports/job-store.js'
-import type { JobKindDeclaration, JobKindRegistry } from './kind-registry.js'
+import type {
+  JobBackoffPolicy,
+  JobKindDeclaration,
+  JobKindRegistry,
+} from './kind-registry.js'
 
 /**
  * Where job ids come from.
@@ -80,31 +84,6 @@ export class UndeclaredJobSuccessorError extends Error {
   }
 }
 
-/**
- * Thrown when a handler reports an outcome this build's driver does not yet dispatch.
- *
- * The handler contract is complete as of 385 plan 02 — a handler may already report
- * `retryable` or `permanent` — but what the driver DOES with such a report is bounded retry,
- * and that is the retry plan's to build. Refusing loudly here follows the same rule the store
- * follows for its declared-but-unimplemented verb: a driver that quietly treated a failure
- * report as a completion would mark the job `done`, and a job wrongly marked done is worse
- * than one that stops with a name attached.
- */
-export class UndispatchedJobOutcomeError extends Error {
-  override readonly name = 'UndispatchedJobOutcomeError'
-
-  constructor(
-    readonly jobKind: JobKind,
-    readonly outcomeStatus: string,
-  ) {
-    super(
-      `Agent job kind ${jobKind} reported outcome '${outcomeStatus}', which the phase-385 ` +
-        'driver does not dispatch yet; the retry plan owns bounded retry and permanent ' +
-        'failure. The report is legal — only its handling is unbuilt.',
-    )
-  }
-}
-
 /** Thrown when a handler publishes a checkpoint its kind never declared. */
 export class UndeclaredJobCheckpointError extends Error {
   override readonly name = 'UndeclaredJobCheckpointError'
@@ -132,13 +111,55 @@ export interface RunNextJobInput {
   readonly fence: JobStoreFence
 }
 
+/** Facts every ran outcome carries, whatever the job's disposition turned out to be. */
+export interface RanJobOutcomeBase {
+  readonly ran: true
+  /** The job AS CLAIMED. The store owns what its row says afterwards. */
+  readonly job: Job
+  readonly checkpointsPublished: readonly string[]
+  /**
+   * `false` in exactly one case: the attempt bound was already spent when the job was
+   * claimed, so the driver failed it without handing it to its handler (D-18).
+   */
+  readonly handlerInvoked: boolean
+}
+
 export type RunNextJobOutcome =
   | { readonly ran: false; readonly reason: 'no-job' }
-  | {
-      readonly ran: true
-      readonly job: Job
-      readonly checkpointsPublished: readonly string[]
-    }
+  | (RanJobOutcomeBase & {
+      readonly disposition: 'completed'
+      readonly chained: readonly JobEnqueueOutcome[]
+    })
+  | (RanJobOutcomeBase & {
+      readonly disposition: 'retry-scheduled'
+      readonly reason: string
+      /**
+       * How long a host should wait before pumping this job again, computed from the kind's
+       * declared backoff policy and the attempt just spent.
+       *
+       * Returned rather than applied: 385 ships no dispatcher, and a driver that slept on its
+       * own would be the timer loop this engine deliberately is not. It is also why no
+       * not-before TIMESTAMP is computed — that would mean doing arithmetic on the injected
+       * clock's string and storing a scheduling column no store has, and a value nothing
+       * reads is a value nothing keeps honest.
+       */
+      readonly retryDelayMs: number
+      readonly attemptsRemaining: number
+    })
+  | (RanJobOutcomeBase & {
+      readonly disposition: 'failed'
+      readonly reason: string
+      /** What the kind's declared disposition enqueued — empty for a halt-chain kind. */
+      readonly continuation: readonly JobEnqueueOutcome[]
+    })
+
+export interface RecoverAbandonedClaimsInput {
+  readonly fence: JobStoreFence
+}
+
+export interface RecoverAbandonedClaimsOutcome {
+  readonly released: readonly JobId[]
+}
 
 export interface AgentJobQueue {
   /**
@@ -148,8 +169,37 @@ export interface AgentJobQueue {
    */
   enqueue(kind: JobKind, payload: unknown, idempotencyKey: string): Promise<JobEnqueueOutcome>
 
-  /** Claim, run, checkpoint and complete exactly one job. Returns when that job is done. */
+  /** Claim, run, checkpoint and dispose of exactly one job. Returns when that job is done. */
   runNextJob(input: RunNextJobInput): Promise<RunNextJobOutcome>
+
+  /**
+   * Return every outstanding claim to the queue, keeping the attempt each one spent.
+   *
+   * A host that dies while holding a job leaves its row claimed and nothing reaps it, so
+   * without this the bound above is unreachable for exactly the job it exists to stop: a
+   * poison job would sit claimed forever instead of exhausting its attempts and failing. The
+   * attempt is deliberately NOT refunded — that is what makes the bound survive a crash.
+   *
+   * Call it after adopting authority and BEFORE pumping. Only one process may drain under a
+   * given fence, so at that moment every outstanding claim belongs to a host that is gone;
+   * calling it beside a live pump would take a job away from the handler still running it.
+   */
+  recoverAbandonedClaims(
+    input: RecoverAbandonedClaimsInput,
+  ): Promise<RecoverAbandonedClaimsOutcome>
+}
+
+/**
+ * The delay a host should wait after spending `attempt`, per the kind's declared policy.
+ *
+ * A pure function of the policy and the attempt number — no clock is read here and none can
+ * be, which is what keeps a kind's retry behaviour describable without running it.
+ */
+function retryDelayMs(policy: JobBackoffPolicy, attempt: number): number {
+  if (policy.kind === 'none') return 0
+  if (policy.kind === 'fixed') return policy.delayMs
+  const grown = policy.initialDelayMs * policy.factor ** Math.max(0, attempt - 1)
+  return Math.min(grown, policy.maxDelayMs)
 }
 
 /** The summary a job carries when its caller supplied none. Deterministic on purpose. */
@@ -189,9 +239,71 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
     })
   }
 
+  /**
+   * Land one job permanently, running whatever continuation its kind declared (D-20).
+   *
+   * ORDER MATTERS, and it is continuation-then-record on purpose. A host that dies between
+   * the two leaves the job claimed rather than failed, so a later attempt re-runs the
+   * disposition — and the second run of the producer enqueues the same instances under the
+   * same keys, which the store merges into the rows already there. Recording the failure
+   * first would make the job terminal with its continuation half-written and nothing left to
+   * finish it, which is precisely the dead head this disposition exists to prevent.
+   */
+  async function failPermanently(input: {
+    readonly job: Job
+    readonly payload: unknown
+    readonly declaration: JobKindDeclaration
+    readonly reason: string
+    readonly handlerInvoked: boolean
+    readonly published: readonly string[]
+    readonly fence: JobStoreFence
+  }): Promise<RunNextJobOutcome> {
+    const { job, declaration, reason, fence } = input
+    const requests =
+      declaration.onPermanentFailure === 'halt-chain'
+        ? []
+        : declaration.onPermanentFailure({ job, payload: input.payload, reason })
+
+    // Validated before a single store call: an undeclared continuation is a wrong
+    // declaration, and half of one already enqueued is worse than none.
+    const inserts = successorRequests(declaration, requests)
+
+    const continuation: JobEnqueueOutcome[] = []
+    for (const insert of inserts) {
+      continuation.push(await store.enqueue(insert))
+    }
+    await store.recordFailure(job.id, { kind: 'permanent', reason }, fence)
+
+    return {
+      ran: true,
+      disposition: 'failed',
+      job,
+      checkpointsPublished: input.published,
+      handlerInvoked: input.handlerInvoked,
+      reason,
+      continuation,
+    }
+  }
+
   return {
     async enqueue(kind, payload, idempotencyKey) {
       return store.enqueue(requestFor(kind, payload, idempotencyKey))
+    },
+
+    async recoverAbandonedClaims({ fence }) {
+      const dump = await store.dumpState()
+      const released: JobId[] = []
+      for (const row of dump.jobs) {
+        if (!row.claimed) continue
+        const jobId = row.id as JobId
+        await store.recordFailure(
+          jobId,
+          { kind: 'retry', reason: 'the claim was abandoned by a host that did not finish it' },
+          fence,
+        )
+        released.push(jobId)
+      }
+      return { released }
     },
 
     async runNextJob({ fence }) {
@@ -203,6 +315,25 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       const job = claim.job
       const declaration = registry.require(job.kind)
       const published: string[] = []
+
+      // D-18's bound, enforced HERE — on the claim, which is the one point a job that kills
+      // its host cannot skip. Checked only when recording a failure it would never fire for a
+      // handler that never returns, and that handler is exactly the one the bound is for. The
+      // attempt was already spent by the claim, so a job arriving with more attempts than its
+      // kind permits has had every attempt it was owed.
+      if (job.attempts > declaration.maxAttempts) {
+        return failPermanently({
+          job,
+          payload: claim.payload,
+          declaration,
+          reason:
+            `the attempt bound of ${declaration.maxAttempts} is spent (this claim is attempt ` +
+            `${job.attempts}), so this job is given up on without being run again`,
+          handlerInvoked: false,
+          published,
+          fence,
+        })
+      }
 
       const outcome = await declaration.handler({
         job,
@@ -229,17 +360,52 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       // The discriminant is READ, not merely accepted. A driver that ignored it and reached
       // for `next` would complete a job whose handler had just said it failed, and the row
       // would read `done` forever after with nothing recording that anything went wrong.
-      if (outcome.status !== 'complete') {
-        throw new UndispatchedJobOutcomeError(job.kind, outcome.status)
+      if (outcome.status === 'complete') {
+        const completed = await store.completeAndChain(
+          job.id,
+          successorRequests(declaration, outcome.next),
+          fence,
+        )
+        return {
+          ran: true,
+          disposition: 'completed',
+          job: completed.job,
+          checkpointsPublished: published,
+          handlerInvoked: true,
+          chained: completed.chained,
+        }
       }
 
-      const completed = await store.completeAndChain(
-        job.id,
-        successorRequests(declaration, outcome.next),
-        fence,
-      )
+      // A retryable REPORT on the last permitted attempt becomes a permanent DECISION: the
+      // handler says the thing that went wrong could go right next time, and only the engine
+      // knows there is no next time. That asymmetry is why the report and the decision are
+      // two types rather than one.
+      if (outcome.status === 'retryable' && job.attempts < declaration.maxAttempts) {
+        await store.recordFailure(job.id, { kind: 'retry', reason: outcome.reason }, fence)
+        return {
+          ran: true,
+          disposition: 'retry-scheduled',
+          job,
+          checkpointsPublished: published,
+          handlerInvoked: true,
+          reason: outcome.reason,
+          retryDelayMs: retryDelayMs(declaration.backoff, job.attempts),
+          attemptsRemaining: declaration.maxAttempts - job.attempts,
+        }
+      }
 
-      return { ran: true, job: completed.job, checkpointsPublished: published }
+      // Either the handler said the failure is permanent — which skips every remaining
+      // attempt, because retrying something that cannot succeed only spends the bound — or it
+      // said retryable on the attempt that used the bound up.
+      return failPermanently({
+        job,
+        payload: claim.payload,
+        declaration,
+        reason: outcome.reason,
+        handlerInvoked: true,
+        published,
+        fence,
+      })
     },
   }
 }

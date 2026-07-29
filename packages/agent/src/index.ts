@@ -125,13 +125,15 @@ export {
   MissingIdempotencyKeyError,
   UndeclaredJobCheckpointError,
   UndeclaredJobSuccessorError,
-  UndispatchedJobOutcomeError,
 } from './jobs/engine.js'
 export type {
   AgentJobQueue,
   CreateAgentJobQueueOptions,
   JobCheckpointRecord,
   JobIdSource,
+  RanJobOutcomeBase,
+  RecoverAbandonedClaimsInput,
+  RecoverAbandonedClaimsOutcome,
   RunNextJobInput,
   RunNextJobOutcome,
 } from './jobs/engine.js'

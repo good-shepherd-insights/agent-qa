@@ -42,11 +42,13 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * helper, or any model accessor — `agent` is storageNeutral and providerNeutral, and an
  * arrival of that kind is precisely the drift this exact-equality pin exists to catch.
  *
- * 385 plan 02 adds one more refusal, for a handler outcome the driver does not dispatch yet.
- * A declared-but-unbuilt path that refuses by name is on this list deliberately: a caller
- * has to be able to tell "the queue has not built this" apart from "the queue rejected your
- * work", and the day the retry plan builds it, its departure from this list is the visible
- * edit that says so.
+ * 385 plan 04 REMOVES that refusal and adds the six real kinds. The driver now dispatches
+ * every handler outcome — a retryable report is retried until the declared bound is spent and
+ * a permanent one is terminal — so the class that stood in for the unbuilt path has nothing
+ * left to throw, and an error nobody throws is decorative. Its departure from this list is
+ * the visible edit plan 02 said it would be. The two declaration refusals that arrive in its
+ * place are construction-time: a kind whose declaration is incomplete, and one whose
+ * declaration is complete and still cannot be true of any kind.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'DuplicateFunctionIdError',
@@ -64,7 +66,6 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'StreamReplayFloorError',
   'UndeclaredJobCheckpointError',
   'UndeclaredJobSuccessorError',
-  'UndispatchedJobOutcomeError',
   'UnknownFunctionError',
   'UnknownJobKindError',
   'createAgentJobQueue',
@@ -133,6 +134,9 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgePort',
   'KnowledgeReaderPort',
   'PersistencePort',
+  'RanJobOutcomeBase',
+  'RecoverAbandonedClaimsInput',
+  'RecoverAbandonedClaimsOutcome',
   'ReplayedRunEvent',
   'RunNextJobInput',
   'RunNextJobOutcome',
