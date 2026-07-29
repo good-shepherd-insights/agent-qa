@@ -60,6 +60,41 @@ export const KILL_MATRIX_ENV = Object.freeze({
   kind: 'AGENT_QA_JOB_KILL_KIND',
   /** `kind:checkpointId:phase` — the crash role only. */
   point: 'AGENT_QA_JOB_KILL_POINT',
+  /**
+   * `verb:side[:jobId]` — the crash role's second point vocabulary (plan 07).
+   *
+   * Mutually exclusive with `point`: a run that named both would have two hooks racing for the
+   * same process and a marker naming whichever won.
+   */
+  verbPoint: 'AGENT_QA_JOB_KILL_VERB_POINT',
+  /**
+   * `1` = release abandoned claims before pumping.
+   *
+   * The crash and control roles do not recover by default, because the twelve derived legs kill
+   * the FIRST host of a job and there is nothing to release. A poison job needs the opposite: each
+   * successive host must reclaim the row its predecessor died holding, since `claimNext` never
+   * re-offers a claimed row and an unrecovered poison job is stuck rather than looping.
+   */
+  recover: 'AGENT_QA_JOB_KILL_RECOVER',
+  /**
+   * `1` = the named crash point is expected to be UNREACHABLE in this run.
+   *
+   * The inverse of the crash role's own guard. A crash host that completes is normally a vacuous
+   * leg, but the terminal attempt of a poison job is exactly the run where the point must not be
+   * reached — the bound is spent, so the handler is never invoked and the hook never fires. The
+   * child asserts the marker is absent rather than present, so "it stopped crashing" is a claim
+   * made from inside the host that was still configured to crash.
+   */
+  unreached: 'AGENT_QA_JOB_KILL_UNREACHED',
+  /**
+   * `0` = do not adopt the epoch; drive every verb with the fence the env names anyway.
+   *
+   * This is the stale-FENCE half of D-07. A host that re-adopts is refused by `adoptEpoch` before
+   * it touches a row; a host that already holds a fence and only discovers it lost authority at
+   * its next mutation is refused at the commit boundary, which is the refusal 386's split-brain
+   * test lands on. They are two different guards and only one of them is exercised by adopting.
+   */
+  adopt: 'AGENT_QA_JOB_KILL_ADOPT',
   /** Where the counting model appends its invocations. */
   invocations: 'AGENT_QA_JOB_KILL_INVOCATIONS',
   /** Where the authoring handler appends the checkpoints it entered, in order. */
@@ -101,6 +136,26 @@ export function jobIdFor(kind: JobKind): JobId {
 
 export function fenceFor(epoch: number = KILL_MATRIX_EPOCH): JobStoreFence {
   return { epoch }
+}
+
+/**
+ * The FAKE lease the fencing legs take their token from (D-07).
+ *
+ * Deliberately fake, and deliberately named as such. 385 proves the store refuses a stale epoch;
+ * 386 binds v51's real writer lease as the source of that epoch. Reaching for the real lease here
+ * would bind the two phases together at the point the whole 385→386 ordering exists to keep apart,
+ * and would make this suite fail for lease reasons rather than store reasons.
+ *
+ * It is a handle rather than a bare number so a leg reads as "this host holds THIS lease" — the
+ * shape 386 replaces, with the same one-method surface the store cares about.
+ */
+export interface FakeWriterLease {
+  readonly epoch: number
+  fence(): JobStoreFence
+}
+
+export function fakeWriterLease(epoch: number): FakeWriterLease {
+  return { epoch, fence: (): JobStoreFence => ({ epoch }) }
 }
 
 // ---- the authoring kinds -------------------------------------------------------------------------

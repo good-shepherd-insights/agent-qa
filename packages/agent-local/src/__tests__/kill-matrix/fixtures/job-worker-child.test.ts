@@ -1,4 +1,4 @@
-// The kill-matrix worker child (Phase 385 plan 06, D-12).
+// The kill-matrix worker child (Phase 385 plan 06, D-12; extended by plan 07).
 //
 // A `.test.ts` that doubles as a child entry point, in v51's `sigkill-drain-child` idiom and plan
 // 03's generalization of it: gated by an env flag, every input a required environment variable,
@@ -17,9 +17,12 @@
 // `resume` is the only role that composes through `composeJobRecovery`, which is the point: the
 // resume path in this proof is the same entry a host would use, not an assembly the test improvised.
 //
-// Plan 07 adds legs here by adding a SELECTOR and, where its crash point is not a checkpoint
-// publish, a hook factory beside `checkpointCrashHook` — the store decorator already stands beside
-// every verb. Nothing in the parent's spawn plumbing has to change for that.
+// PLAN 07 ADDED NO ROLE. Its adversarial legs are the same three processes with four switches, and
+// each switch exists because a leg needs a host that differs from the twelve derived legs' host in
+// exactly one way: it crashes beside a VERB rather than a checkpoint publish; it RECLAIMS the row
+// its predecessor died holding; it is armed at a point that must prove UNREACHABLE; or it carries a
+// lease token it no longer holds. A fourth role would have buried those four differences inside one
+// blob of role-specific code.
 
 import { existsSync, renameSync, writeFileSync } from 'node:fs'
 
@@ -34,6 +37,8 @@ import {
   crashPointsForRegistry,
   instrumentJobStore,
   parseCrashPoint,
+  parseVerbCrashPoint,
+  verbCrashHook,
 } from '../crash-points.js'
 import type { JobStoreCall, JobStoreCrashHook } from '../crash-points.js'
 import { createCountingModel } from '../counting-model.js'
@@ -42,7 +47,7 @@ import {
   KILL_MATRIX_ENV,
   KILL_MATRIX_ID_SOURCE,
   authoringDeclarations,
-  fenceFor,
+  fakeWriterLease,
   openKillMatrixStore,
 } from '../harness.js'
 
@@ -59,6 +64,12 @@ function requiredEnv(name: string): string {
   const value = process.env[name]
   if (value === undefined || value === '') throw new Error(`${name} is required`)
   return value
+}
+
+function flagEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name]
+  if (value === undefined || value === '') return fallback
+  return value === '1'
 }
 
 /** Publish in one step a poller can never observe half of. */
@@ -82,15 +93,48 @@ function markerAndBlock(path: string, details: Record<string, unknown>): never {
   throw new Error('kill-matrix child resumed from its crash point, which cannot happen')
 }
 
+/**
+ * One outcome, flattened for a parent in another process.
+ *
+ * The disposition-specific fields travel too, because they are the ones the adversarial legs are
+ * about: WHERE a cancel was honoured, and WHAT a permanent failure's declared disposition enqueued.
+ * Reporting only the shared base would leave a leg asserting "it was cancelled" with no way to say
+ * at which boundary — and "cancelled somewhere" is satisfied by a cancel honoured too late.
+ *
+ * `continuationDeduped` is the store's own answer to whether each continuation instance merged into
+ * a row that already existed. That is the difference between a replay that was merely harmless and
+ * one that COMPLETED a disposition its predecessor left half-written, and it cannot be recovered
+ * from the rows afterwards — by then the two look identical.
+ */
 function outcomeReport(outcome: RunNextJobOutcome): Record<string, unknown> {
   if (!outcome.ran) return { ran: false, reason: outcome.reason }
-  return {
+  const base = {
     ran: true,
     disposition: outcome.disposition,
     jobId: String(outcome.job.id),
     attempts: outcome.job.attempts,
     checkpointsPublished: outcome.checkpointsPublished,
     handlerInvoked: outcome.handlerInvoked,
+  }
+  if (outcome.disposition === 'cancelled') {
+    return { ...base, honoredAtCheckpoint: outcome.honoredAtCheckpoint }
+  }
+  if (outcome.disposition === 'failed') {
+    return {
+      ...base,
+      reason: outcome.reason,
+      continuation: outcome.continuation.map((enqueued) => String(enqueued.job.id)),
+      continuationDeduped: outcome.continuation.map((enqueued) => enqueued.deduped),
+    }
+  }
+  if (outcome.disposition === 'completed') {
+    return { ...base, chained: outcome.chained.map((enqueued) => String(enqueued.job.id)) }
+  }
+  return {
+    ...base,
+    reason: outcome.reason,
+    retryDelayMs: outcome.retryDelayMs,
+    attemptsRemaining: outcome.attemptsRemaining,
   }
 }
 
@@ -106,25 +150,51 @@ async function runWorkerRole(role: 'crash' | 'control'): Promise<Record<string, 
   )
 
   let hook: JobStoreCrashHook = () => undefined
+  // Reported back to the parent, because "this host was still armed at the same point and did not
+  // reach it" is the poison leg's whole claim — and an absent marker is equally consistent with a
+  // host that was quietly never armed at all.
+  let armedAt: string | undefined
   if (role === 'crash') {
     const markerPath = requiredEnv(KILL_MATRIX_ENV.marker)
-    const point = parseCrashPoint(
-      process.env[KILL_MATRIX_ENV.point],
-      crashPointsForRegistry(registry),
-    )
-    if (point.kind !== kind) {
-      throw new Error(`crash point ${point.selector} does not belong to kind ${kind}`)
+    const checkpointSelector = process.env[KILL_MATRIX_ENV.point]
+    const verbSelector = process.env[KILL_MATRIX_ENV.verbPoint]
+    // Refused rather than resolved by precedence: two hooks racing in one process would publish a
+    // marker naming whichever fired first, and the leg would report the point it did not test.
+    if ((checkpointSelector ?? '') !== '' && (verbSelector ?? '') !== '') {
+      throw new Error(
+        `${KILL_MATRIX_ENV.point} and ${KILL_MATRIX_ENV.verbPoint} are mutually exclusive`,
+      )
     }
-    hook = checkpointCrashHook(point, (call: JobStoreCall): never =>
-      markerAndBlock(markerPath, {
-        selector: point.selector,
-        kind: point.kind,
-        checkpointId: point.checkpointId,
-        phase: point.phase,
-        jobId: call.jobId,
-        pid: process.pid,
-      }),
-    )
+    if ((verbSelector ?? '') !== '') {
+      const point = parseVerbCrashPoint(verbSelector)
+      armedAt = point.selector
+      hook = verbCrashHook(point, (call: JobStoreCall): never =>
+        markerAndBlock(markerPath, {
+          selector: point.selector,
+          verb: point.verb,
+          side: point.side,
+          jobId: call.jobId,
+          checkpointId: call.checkpointId,
+          pid: process.pid,
+        }),
+      )
+    } else {
+      const point = parseCrashPoint(checkpointSelector, crashPointsForRegistry(registry))
+      if (point.kind !== kind) {
+        throw new Error(`crash point ${point.selector} does not belong to kind ${kind}`)
+      }
+      armedAt = point.selector
+      hook = checkpointCrashHook(point, (call: JobStoreCall): never =>
+        markerAndBlock(markerPath, {
+          selector: point.selector,
+          kind: point.kind,
+          checkpointId: point.checkpointId,
+          phase: point.phase,
+          jobId: call.jobId,
+          pid: process.pid,
+        }),
+      )
+    }
   }
 
   const store = openKillMatrixStore(root)
@@ -137,15 +207,34 @@ async function runWorkerRole(role: 'crash' | 'control'): Promise<Record<string, 
       idSource: KILL_MATRIX_ID_SOURCE,
       model: createCountingModel(invocationsPath),
     })
-    await store.adoptEpoch(epoch)
+    const lease = fakeWriterLease(epoch)
+    await store.adoptEpoch(lease.epoch)
+
+    // Only when asked. The twelve derived legs kill a job's FIRST host, so there is nothing to
+    // release and recovering by default would be plumbing nobody exercises. A poison job needs the
+    // opposite: `claimNext` never re-offers a claimed row, so each successive host must reclaim the
+    // row its predecessor died holding or the job is STUCK rather than looping.
+    const released = flagEnv(KILL_MATRIX_ENV.recover, false)
+      ? (await queue.recoverAbandonedClaims({ fence: lease.fence() })).released.map((jobId: JobId) =>
+          String(jobId),
+        )
+      : []
 
     const outcomes: Record<string, unknown>[] = []
     for (let pumped = 0; pumped < 8; pumped += 1) {
-      const outcome = await queue.runNextJob({ fence: fenceFor(epoch) })
+      const outcome = await queue.runNextJob({ fence: lease.fence() })
       outcomes.push(outcomeReport(outcome))
       if (!outcome.ran) break
     }
-    return { role, pid: process.pid, kind, outcomes, failed: false }
+    return {
+      role,
+      pid: process.pid,
+      kind,
+      armedAt: armedAt ?? null,
+      released,
+      outcomes,
+      failed: false,
+    }
   } finally {
     store.close()
   }
@@ -165,8 +254,15 @@ async function runResumeRole(): Promise<Record<string, unknown>> {
     jobKinds: createJobKindRegistry(authoringDeclarations({ invocationsPath, consumptionPath })),
   })
   try {
-    await host.store.adoptEpoch(epoch)
-    const fence = fenceFor(epoch)
+    const lease = fakeWriterLease(epoch)
+    // Skipping the adoption is the stale-FENCE case: this host still believes it holds the lease
+    // and only finds out otherwise when a verb refuses its token at the commit boundary. A host
+    // that re-adopts is refused earlier and by a different guard, which is why both are drivable
+    // from here rather than one standing in for the other.
+    if (flagEnv(KILL_MATRIX_ENV.adopt, true)) {
+      await host.store.adoptEpoch(lease.epoch)
+    }
+    const fence = lease.fence()
     // Recovery FIRST. `claimNext` never re-offers a row whose claim is still set, so a resume that
     // pumped before releasing would report an empty queue over a job nobody is running.
     const recovered = await host.recoverAbandonedClaims(fence)
@@ -211,19 +307,39 @@ describe.skipIf(!childMode)('kill-matrix worker child', () => {
     } catch (error) {
       // Reported on the failure path too, so a child that threw is visible to the parent as a
       // report rather than as a bare non-zero exit with its stack buried in captured output.
+      // The error's NAME travels separately from its text: a leg asserting a named refusal should
+      // assert the class, not a substring of a message somebody may later reword.
       if (reportPath !== undefined && reportPath !== '') {
         publishAtomically(
           reportPath,
-          `${JSON.stringify({ role, pid: process.pid, failed: true, message: String(error) })}\n`,
+          `${JSON.stringify({
+            role,
+            pid: process.pid,
+            failed: true,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            message: String(error),
+          })}\n`,
         )
       }
       throw error
     }
     // The crash role never reaches here: it parks at its crash point and is killed. If a run ever
     // does, the point was not reached and every downstream assertion would be vacuous.
+    //
+    // Unless the leg said so in advance. A poison job's TERMINAL attempt is armed at exactly the
+    // point its predecessors died at and must NOT reach it: the bound is spent, so the handler is
+    // never invoked and the hook never fires. Asserting the marker's ABSENCE from inside that host
+    // is what makes "it stopped crashing" a measured fact rather than the parent inferring
+    // termination from silence.
     if (role === 'crash') {
-      expect(existsSync(requiredEnv(KILL_MATRIX_ENV.marker))).toBe(true)
-      throw new Error('the crash role completed without being killed at its crash point')
+      const markerPath = requiredEnv(KILL_MATRIX_ENV.marker)
+      if (flagEnv(KILL_MATRIX_ENV.unreached, false)) {
+        expect(existsSync(markerPath)).toBe(false)
+      } else {
+        expect(existsSync(markerPath)).toBe(true)
+        throw new Error('the crash role completed without being killed at its crash point')
+      }
     }
   }, 120_000)
 })

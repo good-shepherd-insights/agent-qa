@@ -146,17 +146,27 @@ export function pendingCheckpointsAtCrash(
 
 // ---- the interception seam ---------------------------------------------------------------------
 
-export type JobStoreVerb =
-  | 'adoptEpoch'
-  | 'enqueue'
-  | 'claimNext'
-  | 'completeAndChain'
-  | 'recordFailure'
-  | 'requestCancel'
-  | 'recordCancellation'
-  | 'publishCheckpoint'
-  | 'readCheckpoint'
-  | 'dumpState'
+/**
+ * Every verb the decorator stands beside, as a VALUE.
+ *
+ * A list rather than a bare union because plan 07's adversarial points are selected by verb name
+ * from an environment variable, and a name that no verb answers to has to be refused rather than
+ * silently never firing — a leg whose hook can never fire is a leg that proves nothing.
+ */
+export const JOB_STORE_VERBS = [
+  'adoptEpoch',
+  'enqueue',
+  'claimNext',
+  'completeAndChain',
+  'recordFailure',
+  'requestCancel',
+  'recordCancellation',
+  'publishCheckpoint',
+  'readCheckpoint',
+  'dumpState',
+] as const
+
+export type JobStoreVerb = (typeof JOB_STORE_VERBS)[number]
 
 export interface JobStoreCall {
   readonly verb: JobStoreVerb
@@ -183,6 +193,85 @@ export function checkpointCrashHook(
     if (call.verb !== 'publishCheckpoint') return
     if (call.checkpointId !== point.checkpointId) return
     if (side !== wanted) return
+    onReached(call)
+  }
+}
+
+// ---- crash points that are NOT a checkpoint publish (plan 07's adversarial legs) ----------------
+//
+// The derived points above straddle a checkpoint publish, which is the whole of JOBQ-03's happy
+// path. The adversarial guarantees live beside OTHER verbs: the failure disposition writes through
+// `enqueue` and `recordFailure`, a cancellation lands through `recordCancellation`, and a kind that
+// declares no checkpoint at all (chat) reaches durability only through `completeAndChain`. So the
+// second point vocabulary is "a side of a named verb, optionally narrowed to one row" — the same
+// decorator, a different predicate, and no second harness.
+
+export const JOB_CRASH_SIDES = ['before', 'after'] as const
+
+export type JobCrashSide = (typeof JOB_CRASH_SIDES)[number]
+
+export interface JobStoreVerbCrashPoint {
+  readonly verb: JobStoreVerb
+  readonly side: JobCrashSide
+  /**
+   * The row the call must concern, when the leg needs to name one.
+   *
+   * Load-bearing for the failure-disposition legs: that path enqueues its continuations and then
+   * records the failure, so `enqueue` fires for rows the leg did not seed and a hook that ignored
+   * the id would die at whichever call happened to come first.
+   */
+  readonly jobId?: string
+  /** `verb:side` or `verb:side:jobId`. The whole of what crosses into the child as an env var. */
+  readonly selector: string
+}
+
+export function verbCrashSelector(
+  verb: JobStoreVerb,
+  side: JobCrashSide,
+  jobId?: string,
+): string {
+  return jobId === undefined ? `${verb}:${side}` : `${verb}:${side}:${jobId}`
+}
+
+/**
+ * Resolve a verb selector. No default, and every component refused by name.
+ *
+ * A selector naming a verb the decorator does not intercept, or a side that does not exist, would
+ * produce a hook that never fires — and a child that ran to completion instead of parking makes
+ * every assertion downstream of the kill vacuous. The refusal happens before any store is opened.
+ */
+export function parseVerbCrashPoint(value: string | undefined): JobStoreVerbCrashPoint {
+  if (value === undefined || value === '') {
+    throw new Error(`unsupported AGENT_QA_JOB_KILL_VERB_POINT: ${String(value)}`)
+  }
+  const [verb, side, ...rest] = value.split(':')
+  if (!JOB_STORE_VERBS.some((known) => known === verb)) {
+    throw new Error(`unsupported AGENT_QA_JOB_KILL_VERB_POINT verb: ${String(verb)}`)
+  }
+  if (!JOB_CRASH_SIDES.some((known) => known === side)) {
+    throw new Error(`unsupported AGENT_QA_JOB_KILL_VERB_POINT side: ${String(side)}`)
+  }
+  if (rest.length > 1) {
+    throw new Error(`unsupported AGENT_QA_JOB_KILL_VERB_POINT: ${value}`)
+  }
+  const jobId = rest[0]
+  return {
+    verb: verb as JobStoreVerb,
+    side: side as JobCrashSide,
+    ...(jobId === undefined || jobId === '' ? {} : { jobId }),
+    selector: value,
+  }
+}
+
+/** The hook a verb crash point fires through. Same shape as `checkpointCrashHook`, other predicate. */
+export function verbCrashHook(
+  point: JobStoreVerbCrashPoint,
+  onReached: (call: JobStoreCall) => never,
+): JobStoreCrashHook {
+  return (side, call) => {
+    if (call.verb !== point.verb) return
+    if (side !== point.side) return
+    if (point.jobId !== undefined && call.jobId !== point.jobId) return
     onReached(call)
   }
 }
