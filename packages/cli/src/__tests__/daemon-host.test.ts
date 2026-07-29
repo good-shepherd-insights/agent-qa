@@ -15,6 +15,7 @@ import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-ag
 import {
   acquireWriterLease,
   LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
 import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
@@ -580,5 +581,90 @@ describe('daemon registration recovery at boot', () => {
     expect(acquire).not.toHaveBeenCalled()
     expect(errors[0]).toContain(`pid ${process.pid}`)
     expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(before)
+  })
+})
+
+describe('daemon heartbeat authority and cadence', () => {
+  it('logs authority loss and exits without reacquiring or disturbing the replacement holder', async () => {
+    const paths = makePaths('heartbeat-refusal')
+    const harness = hostHarness()
+    const acquire = vi.fn((knowledgeRoot: string) => acquireWriterLease(knowledgeRoot))
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: { ...harness.operations, acquireWriterLease: acquire },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'daemon did not finish heartbeat startup',
+    )
+
+    const replacement: WriterLease = {
+      leaseId: '551a9f42-7862-43ac-a6bf-236b53c51b24',
+      pid: process.pid + 1,
+      epoch: 2,
+      heartbeatAtMs: 1_700_000_010_000,
+    }
+    const replacementBytes = `${JSON.stringify(replacement)}\n`
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), replacementBytes, 'utf8')
+
+    harness.fireHeartbeat()
+    await expect(running).resolves.toBe(1)
+
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+    expect(readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8')).toBe(replacementBytes)
+    expect(readEvents(paths.agentQaRoot).findLast((event) => event.kind === 'lease-lost')).toMatchObject({
+      kind: 'lease-lost',
+      reason: 'lease-id-mismatch',
+      observedEpoch: 2,
+    })
+  })
+
+  it('keeps three scheduled opportunities inside the writer-lease TTL', () => {
+    expect(LEASE_HEARTBEAT_INTERVAL_MS * 3).toBeLessThanOrEqual(
+      LEASE_HEARTBEAT_TTL_MS,
+    )
+  })
+
+  it('continues heartbeats while a synthetic long job remains unsettled', async () => {
+    const paths = makePaths('heartbeat-long-job')
+    const harness = hostHarness()
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: harness.operations,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'daemon did not finish heartbeat startup',
+    )
+
+    let settleLongJob: (() => void) | undefined
+    let jobSettled = false
+    const longJob = new Promise<void>((resolve) => {
+      settleLongJob = resolve
+    }).then(() => {
+      jobSettled = true
+    })
+
+    for (let tick = 0; tick < 4; tick += 1) {
+      harness.fireHeartbeat()
+      expect(jobSettled).toBe(false)
+    }
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-heartbeated'),
+    ).toHaveLength(4)
+
+    settleLongJob?.()
+    await longJob
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
   })
 })
