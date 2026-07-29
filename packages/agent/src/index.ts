@@ -64,3 +64,62 @@ export { StreamReplayFloorError } from './functions/ops/runs-events.js'
 // `invokeFunction` (T-384-01). Both belong to the pinned export set the plan-07 barrel
 // assertion freezes.
 export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-safety'
+
+// 385 JOBQ-01/JOBQ-02 — the agent job queue: its store port, its per-kind registry, and the
+// pumpable engine over both.
+//
+// What is published is the CONTRACT and the two constructors a composition root calls. What
+// is absent is any way to reach storage without the port: no store implementation, no
+// checkpoint reader, no path helper. `agent` is storageNeutral, so a host capability
+// arriving on this barrel would be a class violation with no legal repair — the store lives
+// in `agent-local` and is handed in as a port at composition time.
+//
+// The refusals are exported as CLASSES because a caller legitimately distinguishes them:
+// losing store authority means "another writer is ahead of you, stand down", while an
+// undeclared successor or checkpoint means "this handler's declaration is wrong". A single
+// opaque error would collapse an operational condition and a programming error together.
+//
+// No model accessor is exported here and none may ever be (D-11 layer 1): a job's only path
+// to a model is the authorship primitive's callback argument, so a handler cannot reach one
+// on its own, and the resume path therefore cannot re-invoke one by any route at all.
+export { StaleJobStoreEpochError } from './ports/index.js'
+export type {
+  ChainedJobEnqueue,
+  JobCheckpointReadOutcome,
+  JobClaimOutcome,
+  JobCompleteOutcome,
+  JobEnqueueOutcome,
+  JobEnqueueRequest,
+  JobFailureDisposition,
+  JobStoreDump,
+  JobStoreDumpRow,
+  JobStoreFence,
+  JobStorePort,
+} from './ports/index.js'
+export {
+  createJobKindRegistry,
+  DuplicateJobKindError,
+  UnknownJobKindError,
+} from './jobs/kind-registry.js'
+export type {
+  JobHandler,
+  JobHandlerContext,
+  JobHandlerOutcome,
+  JobKindDeclaration,
+  JobKindRegistry,
+  JobSuccessorRequest,
+} from './jobs/kind-registry.js'
+export {
+  createAgentJobQueue,
+  MissingIdempotencyKeyError,
+  UndeclaredJobCheckpointError,
+  UndeclaredJobSuccessorError,
+} from './jobs/engine.js'
+export type {
+  AgentJobQueue,
+  CreateAgentJobQueueOptions,
+  JobCheckpointRecord,
+  JobIdSource,
+  RunNextJobInput,
+  RunNextJobOutcome,
+} from './jobs/engine.js'

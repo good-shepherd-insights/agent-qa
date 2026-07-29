@@ -70,6 +70,9 @@ importers:
       '@vostride/agent-qa-agent':
         specifier: workspace:*
         version: link:../agent
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
     devDependencies:
       '@types/node':
         specifier: ~24.12.2

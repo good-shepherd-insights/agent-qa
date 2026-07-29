@@ -23,43 +23,68 @@ import { parseModuleStatements, stripCodeComments } from './evaluate-pin.js'
 export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
 
 /**
- * The exact VALUE exports, as finalized by plan 05.
+ * The exact VALUE exports, as finalized by plan 05 and extended by Phase 385 plan 01.
  *
  * The registry factory and the one dispatch; the layer's six caller-facing refusals; the
  * two op-level refusals a surface may legitimately catch and report; and the two masking
  * helpers, which are STAGED for Phase 386's wiring and are a no-op today — every surface
- * this phase built constructs a fresh, empty masking context, so unmasking is the identity
+ * that phase built constructs a fresh, empty masking context, so unmasking is the identity
  * function and there is no display boundary for them to carry yet. They are pinned here
  * now so that wiring is a non-breaking change rather than a firewall widening. Neither
  * helper can resolve, gate or run anything, so publishing them opens no path around the
  * dispatch.
+ *
+ * 385 adds the agent job queue's two constructors and its five named refusals. They are
+ * safe here for the same structural reason the masking helpers are: none of them is
+ * dispatch, and none of them is a host capability. The queue reaches storage only through
+ * an injected `JobStorePort`, so nothing on this list can read or write a byte on its own.
+ * The list deliberately does NOT carry a store implementation, a checkpoint reader, a path
+ * helper, or any model accessor — `agent` is storageNeutral and providerNeutral, and an
+ * arrival of that kind is precisely the drift this exact-equality pin exists to catch.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'DuplicateFunctionIdError',
+  'DuplicateJobKindError',
   'FunctionDeniedError',
   'FunctionInputError',
   'FunctionNotBoundError',
   'FunctionScopeError',
+  'MissingIdempotencyKeyError',
   'RunNotFoundError',
+  'StaleJobStoreEpochError',
   'StreamReplayFloorError',
+  'UndeclaredJobCheckpointError',
+  'UndeclaredJobSuccessorError',
   'UnknownFunctionError',
+  'UnknownJobKindError',
+  'createAgentJobQueue',
   'createFunctionRegistry',
+  'createJobKindRegistry',
   'createMaskingContext',
   'invokeFunction',
   'unmaskForHumanOutput',
 ]
 
 /**
- * The exact TYPE exports: the six agent ports, the registry's options and handle, the
+ * The exact TYPE exports: the agent ports, the registry's options and handle, the
  * function-layer contract vocabulary, and the three injected read ports a composition
  * root implements. `FunctionDeclaration` is the capability-free VIEW of an op; the spec
  * types that carry an implementation are deliberately not here.
+ *
+ * 385 adds the agent job queue's contract vocabulary: the store port and its verb outcomes,
+ * the per-kind declaration surface, and the engine's handle. Types are erased, so none of
+ * these can carry behaviour across the barrel — what they carry is the SHAPE later phases
+ * bind, and pinning them here is what makes a widening of that shape a visible edit rather
+ * than an incidental one.
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
+  'AgentJobQueue',
   'ApprovalsPort',
   'AuthoringReadPort',
+  'ChainedJobEnqueue',
   'ClockPort',
   'ConfigReaderPort',
+  'CreateAgentJobQueueOptions',
   'CreateFunctionRegistryOptions',
   'FunctionBindingStatus',
   'FunctionDeclaration',
@@ -67,10 +92,30 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'FunctionRegistry',
   'FunctionResultKind',
   'FunctionStream',
+  'JobCheckpointReadOutcome',
+  'JobCheckpointRecord',
+  'JobClaimOutcome',
+  'JobCompleteOutcome',
+  'JobEnqueueOutcome',
+  'JobEnqueueRequest',
+  'JobFailureDisposition',
+  'JobHandler',
+  'JobHandlerContext',
+  'JobHandlerOutcome',
+  'JobIdSource',
+  'JobKindDeclaration',
+  'JobKindRegistry',
+  'JobStoreDump',
+  'JobStoreDumpRow',
+  'JobStoreFence',
+  'JobStorePort',
+  'JobSuccessorRequest',
   'KnowledgePort',
   'KnowledgeReaderPort',
   'PersistencePort',
   'ReplayedRunEvent',
+  'RunNextJobInput',
+  'RunNextJobOutcome',
   'RunsReaderPort',
   'ToolsPort',
 ]
