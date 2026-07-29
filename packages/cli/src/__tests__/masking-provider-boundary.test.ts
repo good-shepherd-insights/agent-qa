@@ -22,11 +22,8 @@ import type { ResolvedModelAuth } from '@vostride/agent-qa-model'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { describe, expect, it } from 'vitest'
 
-import {
-  buildRunAuditSink,
-  buildRunMaskingContext,
-  buildRunSafetyHooks,
-} from '../run-session-composition.js'
+import { buildRunAuditSink, buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
+import { buildRunSafetyHooks } from '../run-session-composition.js'
 
 // Derive the AI-SDK shapes from `createModel` itself — the CLI package declares neither
 // @ai-sdk/provider nor @vostride/agent-qa-schema, and this proof needs neither.

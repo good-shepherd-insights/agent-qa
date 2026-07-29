@@ -8,7 +8,7 @@ import { createRunCommand } from '../commands/run.js'
 import {
   resolveBuildTagSetting,
   resolveRunBuildOrdinal,
-} from '../run-session-composition.js'
+} from '@vostride/agent-qa-agent-local'
 
 const tempDirs: string[] = []
 

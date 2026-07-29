@@ -5,10 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { asRecordId, type ModelCapabilities } from '@vostride/agent-qa-schema'
 import { LLMPlanner } from '@vostride/agent-qa-runner'
 import type { KnowledgeHintReader, NonActionToolMap } from '@vostride/agent-qa-runner'
-import {
-  createFrozenKnowledgeReader,
-  openRunKnowledgeComposition,
-} from '../../run-session-composition.js'
+import { createFrozenKnowledgeReader } from '../knowledge-reader.js'
+import { openRunKnowledgeComposition } from '../run-composition.js'
 import {
   BRIEF_CEILING,
   BRIEF_FRACTION,

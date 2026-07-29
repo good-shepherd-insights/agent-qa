@@ -1,3 +1,7 @@
+// Relocated out of the CLI by Phase 385 plan 08 (D-13) unchanged. The budget arithmetic never
+// touched a terminal, so it is host-neutral by the dissection rule and belongs beside the reader
+// binding it sizes rather than in whichever surface happened to call it first.
+
 import type { ModelCapabilities } from '@vostride/agent-qa-schema'
 
 /** Provisional share of usable model context reserved for the frozen Channel-1 brief. */

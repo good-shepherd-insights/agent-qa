@@ -20,29 +20,31 @@ import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
 import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, BaselineProbeResult } from '@vostride/agent-qa-runner'
 import { runBaselineProbe } from './baseline-probe.js'
 import {
-  computeRunConfigDigests,
-  resolveRunExecutionContext,
+  buildMemberRunConfig,
+  buildRunAuditSink,
+  buildRunMaskingContext,
   buildRunPorts,
   buildScreenshotCompressor,
+  buildSuiteMemberExecutor,
+  computeRunConfigDigests,
+  createSuiteLifecycle,
+  extractAuthStateSensitiveStrings,
+  memoryToolGate,
+  openRunKnowledgeComposition,
   resolveBuildTagSetting,
   resolveRunBuildOrdinal,
-  createSuiteLifecycle,
-  buildSuiteMemberExecutor,
-  buildMemberRunConfig,
+  resolveRunExecutionContext,
   toMemberTest,
-  buildRunMaskingContext,
-  buildRunAuditSink,
-  buildRunSafetyHooks,
-  extractAuthStateSensitiveStrings,
-  openRunKnowledgeComposition,
-  attachRunSubscribers,
-  createLivePauseController,
+  type RunKnowledgeComposition,
+  type RunMaskingContext,
   type RunSubscriberHandle,
   type SuiteMemberBinding,
-  type RunMaskingContext,
-  type RunKnowledgeComposition,
+} from '@vostride/agent-qa-agent-local'
+import {
+  attachRunSubscribers,
+  buildRunSafetyHooks,
+  createLivePauseController,
 } from '../run-session-composition.js'
-import { memoryToolGate } from '../composition/knowledge-budgets.js'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   defaultGuardrailPolicyInput,

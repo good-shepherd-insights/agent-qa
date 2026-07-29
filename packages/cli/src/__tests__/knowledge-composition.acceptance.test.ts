@@ -47,9 +47,8 @@ import {
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { constructKnowledgeReader } from '../composition/knowledge-reader.js'
+import { buildMemberRunConfig, constructKnowledgeReader } from '@vostride/agent-qa-agent-local'
 import { CURATION_TAIL_RECEIPT_FILE, runCurationTail } from '../curation/curation-tail.js'
-import { buildMemberRunConfig } from '../run-session-composition.js'
 
 const PRODUCT = 'composition-storefront'
 const BUILD_ORDINAL = 52

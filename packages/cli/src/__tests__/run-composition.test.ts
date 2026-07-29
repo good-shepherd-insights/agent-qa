@@ -1,14 +1,17 @@
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi } from 'vitest'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
+import type { RunSubscriberHandle } from '@vostride/agent-qa-agent-local'
 import {
   attachRunSubscribers,
+  buildRunSafetyHooks,
   buildUnmaskingConfirm,
   createLivePauseController,
-  type RunSubscriberHandle,
 } from '../run-session-composition.js'
 
 // 363-09 Task 2 / Task 1 — the composition swap seam: the D-11 unmasking confirm decorator and the
@@ -142,5 +145,82 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
     // every subscriber's flush still ran despite the rejection (allSettled).
     expect(rejecting.flush).toHaveBeenCalledTimes(1)
     expect(settling.flush).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---- 385-08 (D-13): the dissection's two load-bearing controls ------------------------------
+
+// Control 1 — the anti-shim pin. The dissection is only real if the moved symbols stopped being
+// reachable through this path. A module that re-published them would leave every call site
+// spelled exactly as before, which reads like a completed move and is not one: the subtree
+// carve-out would then be scoping a file whose contents had gone somewhere else. So the export
+// set of the CLI-side module is pinned by exact equality, and any re-export statement at all is
+// an offender regardless of what it names.
+describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)', () => {
+  const moduleSource = readFileSync(
+    fileURLToPath(new URL('../run-session-composition.ts', import.meta.url)),
+    'utf8',
+  )
+
+  it('exports exactly the four presentation symbols and nothing else', () => {
+    const declared = [...moduleSource.matchAll(/^export (?:async )?(?:function|const|interface|type|class)\s+(\w+)/gm)]
+      .map(match => match[1])
+      .sort()
+
+    expect(declared).toEqual([
+      'AttachRunSubscribersInput',
+      'attachRunSubscribers',
+      'buildRunSafetyHooks',
+      'buildUnmaskingConfirm',
+      'createLivePauseController',
+    ].sort())
+  })
+
+  it('carries no re-export of any kind — a compatibility shim would defeat the move', () => {
+    expect(moduleSource).not.toMatch(/^export\s+\*/m)
+    expect(moduleSource).not.toMatch(/^export\s*(?:type\s*)?\{[^}]*\}\s*from/m)
+  })
+})
+
+// Control 2 — the confirm nesting the dissection had to re-plumb. Before the move, the human
+// unmasking decorator wrapped the timing decorator, so the interval `confirmPausedMs()` reports is
+// the person's deliberation and not the host's rendering of the question. The composition now owns
+// the timing and the host hands its decoration in, which is precisely the seam where that order can
+// invert without anything failing to compile. Pinned observably: the live seam burns wall-clock in
+// `pauseLive`, so if the decoration ever ends up INSIDE the timing, that burn lands in the total.
+describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-11)', () => {
+  it('does not count the host prompt rendering against the measured human pause', async () => {
+    const PAUSE_BURN_MS = 60
+    const ctx = createMaskingContext()
+    ctx.register('sk-live-NESTING-0987654321')
+
+    const live = createLivePauseController()
+    live.bind({
+      pauseLive() {
+        const until = Date.now() + PAUSE_BURN_MS
+        while (Date.now() < until) { /* deliberate synchronous burn inside the host decoration */ }
+      },
+      resumeLive() { /* no-op */ },
+    })
+
+    const auditSink = {
+      appendExecutionAudit() { /* no-op */ },
+      appendGuardrailAudit() { /* no-op */ },
+    }
+
+    const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
+      auditSink,
+      executionContext: 'local-interactive',
+      trustMode: false,
+      confirm: async () => true,
+      maskingContext: ctx,
+      live,
+    })
+
+    const result = await safetyHooks.runToolCallAsync({ name: 'delete_record', recognized: true })
+    expect(result.action).toBe('allow')
+
+    // The burn happened — the decoration really did run — but it is not in the measured total.
+    expect(confirmPausedMs()).toBeLessThan(PAUSE_BURN_MS / 2)
   })
 })

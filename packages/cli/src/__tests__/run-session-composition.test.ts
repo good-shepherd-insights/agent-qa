@@ -17,8 +17,13 @@ import {
   buildRunMaskingContext,
   stampAuditSink,
   buildRunAuditSink,
-  buildRunSafetyHooks,
-} from '../run-session-composition.js'
+} from '@vostride/agent-qa-agent-local'
+// 385-08 (D-13): every assertion below is unchanged. The only edit this dissection made to this
+// suite is the path each symbol is named through — which is itself the evidence that the move was
+// a move, since the same expectations still hold over the relocated code. `buildRunSafetyHooks`
+// alone still resolves here: it is the CLI's assembly of the readline default and the human-output
+// decorator over the relocated registrar.
+import { buildRunSafetyHooks } from '../run-session-composition.js'
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
 // the handoff header (run-level) draw from a single call, so run identity and handoff identity

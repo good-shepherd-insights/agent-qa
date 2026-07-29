@@ -1,5 +1,6 @@
 // The CLI composition-root sibling for the eval verbs (Phase 372, Plan 04 — the D-05 sibling of
-// run-session-composition.ts). It discharges at ONE site what every eval verb (replay / score /
+// the run session composition, which as of 385-08/D-13 is the local agent package's composition
+// subtree rather than a module beside this one). It discharges at ONE site what every eval verb (replay / score /
 // report / seed; plans 372-05/06/07) stands on: D-06 run-parity seeded masking — the factory
 // seeds from the SAME three sources as run (the workspace secrets file's SecretStore, the
 // name-based sensitive env slice, and auth-state sensitive strings) via the IMPORTED
@@ -76,8 +77,8 @@ import { renderEvalReportMarkdown } from './eval-report-render.js'
 import {
   buildRunMaskingContext,
   resolveRunExecutionContext,
-} from './run-session-composition.js'
-import type { RunExecutionContext, RunMaskingContext } from './run-session-composition.js'
+} from '@vostride/agent-qa-agent-local'
+import type { RunExecutionContext, RunMaskingContext } from '@vostride/agent-qa-agent-local'
 
 // The @vostride/agent-qa-eval-local workspace edge (G5) is anchored by the real store/loader
 // value imports above (372-05/06); this type re-export stays for the report verb plan (372-07)

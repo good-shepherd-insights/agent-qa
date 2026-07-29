@@ -2,7 +2,7 @@ import { openKnowledgeReader } from '@vostride/agent-qa-knowledge-local/reader'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
 
-/** Inputs owned by the CLI composition root when opening the run-scoped knowledge reader. */
+/** Inputs the composition root resolves when opening the run-scoped knowledge reader. */
 export interface ConstructKnowledgeReaderInput {
   knowledgeRoot: string
   product?: string
