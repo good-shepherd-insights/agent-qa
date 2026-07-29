@@ -1,0 +1,500 @@
+// The store's own guarantees, asserted against real sqlite (Phase 385 plan 03).
+//
+// Everything here drives `JobStorePort` directly rather than through the engine. That is
+// deliberate: D-02 says any process may open this database and write to it, so the store is
+// the boundary where dedupe, claim order, version drift and authority are guaranteed — and a
+// guarantee that only holds when the engine is the caller is not a store guarantee at all.
+//
+// Each refusal is paired with a control that must still SUCCEED. "A stale epoch throws" is
+// satisfied perfectly by a verb that throws unconditionally, and "a mismatched version
+// throws" by a store that refuses every open; the paired success is the only thing that
+// separates the two.
+
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+
+import { MissingIdempotencyKeyError, StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
+import type { ClockPort, JobInsert, JobStoreFence } from '@vostride/agent-qa-agent'
+import { asJobId } from '@vostride/agent-qa-schema'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
+import {
+  AGENT_JOB_STORE_DB_FILE,
+  AGENT_JOB_STORE_USER_VERSION,
+  createSqliteJobStore,
+} from '../store/sqlite-job-store.js'
+import type { SqliteJobStore } from '../store/sqlite-job-store.js'
+import { JobStoreSchemaVersionError } from '../store/store-errors.js'
+
+const KIND = 'analyze-run' as const
+
+function steppingClock(): ClockPort {
+  let tick = 0
+  return {
+    now() {
+      const stamp = `2026-01-01T00:00:${String(tick).padStart(2, '0')}.000Z`
+      tick += 1
+      return stamp
+    },
+  }
+}
+
+function frozenClock(): ClockPort {
+  return { now: () => '2026-01-01T00:00:00.000Z' }
+}
+
+function insert(id: string, idempotencyKey: string, payload: unknown = { n: 1 }): JobInsert {
+  return {
+    id: asJobId(id),
+    kind: KIND,
+    idempotencyKey,
+    summary: `agent job ${KIND} (${idempotencyKey})`,
+    payload,
+  }
+}
+
+function openStore(root: string, clock: ClockPort = steppingClock()): SqliteJobStore {
+  return createSqliteJobStore({
+    path: join(root, AGENT_JOB_STORE_DB_FILE),
+    clock,
+    checkpoints: createJobCheckpointStore({ root }),
+  })
+}
+
+/** Read the physical insertion order, which no port verb exposes and none should. */
+function rowIdOrder(root: string): string[] {
+  const db = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
+  try {
+    return db
+      .prepare('SELECT id FROM jobs ORDER BY rowid ASC')
+      .all()
+      .map((row) => String(row.id))
+  } finally {
+    db.close()
+  }
+}
+
+function rawRow(root: string, id: string): Record<string, unknown> | undefined {
+  const db = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
+  try {
+    return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id)
+  } finally {
+    db.close()
+  }
+}
+
+describe('agent job store: schema version (D-04)', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-version-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('opens a database it created itself', () => {
+    const store = openStore(root)
+    try {
+      expect(AGENT_JOB_STORE_USER_VERSION).toBe(1)
+    } finally {
+      store.close()
+    }
+  })
+
+  // NEGATIVE CONTROL for the refusal below: a store that threw on every open would satisfy
+  // "a mismatched version throws" and nothing else here would notice.
+  it('reopens a database stamped at the version this build reads, with its rows intact', async () => {
+    const first = openStore(root)
+    await first.enqueue(insert('job_a', 'key-a'))
+    first.close()
+
+    const second = openStore(root)
+    try {
+      expect((await second.dumpState()).jobs).toHaveLength(1)
+    } finally {
+      second.close()
+    }
+  })
+
+  it('refuses a database stamped at a version this build does not read, naming the remedy', async () => {
+    const first = openStore(root)
+    await first.enqueue(insert('job_a', 'key-a'))
+    first.close()
+
+    const raw = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
+    raw.exec('PRAGMA user_version=7')
+    raw.close()
+
+    let thrown: unknown
+    try {
+      openStore(root)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(JobStoreSchemaVersionError)
+    expect((thrown as JobStoreSchemaVersionError).observedVersion).toBe(7)
+    expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(
+      AGENT_JOB_STORE_USER_VERSION,
+    )
+    expect((thrown as Error).message).toContain('clear queue state')
+  })
+
+  it('leaves a database it refused to open exactly as it found it', () => {
+    const first = openStore(root)
+    first.close()
+
+    const before = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
+    before.exec('PRAGMA user_version=7')
+    before.exec("INSERT INTO jobs VALUES ('job_x','analyze-run','k','queued','s','{}',0,NULL,'t','t',NULL,NULL)")
+    before.close()
+
+    expect(() => openStore(root)).toThrow(JobStoreSchemaVersionError)
+
+    const after = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
+    try {
+      // The refused open neither re-stamped the header nor touched a row: a "hard fail" that
+      // repaired the version on the way out would be a migration with no author.
+      expect(Number(after.prepare('PRAGMA user_version').get()?.user_version)).toBe(7)
+      expect(after.prepare('SELECT count(*) AS n FROM jobs').get()?.n).toBe(1)
+    } finally {
+      after.close()
+    }
+  })
+})
+
+describe('agent job store: dedupe (D-08)', () => {
+  let root: string
+  let store: SqliteJobStore
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-dedupe-'))
+    store = openStore(root)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('merges a second enqueue of the same (kind, key) into the first row', async () => {
+    const first = await store.enqueue(insert('job_a', 'key-a'))
+    const second = await store.enqueue(insert('job_a', 'key-a', { n: 2 }))
+
+    expect(second.deduped).toBe(true)
+    expect(String(second.job.id)).toBe(String(first.job.id))
+    expect((await store.dumpState()).jobs).toHaveLength(1)
+    // The pre-existing row is what comes back, payload and all — a dedupe that overwrote the
+    // first payload would make "running the tail twice" quietly change the queued work.
+    expect((await store.dumpState()).jobs[0]?.payload).toEqual({ n: 1 })
+  })
+
+  // NEGATIVE CONTROL: "a duplicate yields one row" is satisfied by an enqueue that drops
+  // every second call regardless of key. This is the case that separates them.
+  it('keeps two enqueues with different keys as two rows', async () => {
+    await store.enqueue(insert('job_a', 'key-a'))
+    const second = await store.enqueue(insert('job_b', 'key-b'))
+
+    expect(second.deduped).toBe(false)
+    expect((await store.dumpState()).jobs).toHaveLength(2)
+  })
+
+  it('refuses an empty idempotency key at the store boundary, writing nothing', async () => {
+    await expect(store.enqueue(insert('job_a', ''))).rejects.toBeInstanceOf(
+      MissingIdempotencyKeyError,
+    )
+    await expect(store.enqueue(insert('job_a', '   '))).rejects.toBeInstanceOf(
+      MissingIdempotencyKeyError,
+    )
+
+    expect((await store.dumpState()).jobs).toHaveLength(0)
+  })
+})
+
+describe('agent job store: claim order (D-03 / Pitfall 4)', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-claim-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('claims jobs sharing a timestamp in ascending id order, not insertion order', async () => {
+    const store = openStore(root, frozenClock())
+    try {
+      const fence = await store.adoptEpoch(1)
+      // Inserted deliberately out of id order, so an implementation that leaned on the
+      // physical row order would hand back `job_ccc` first.
+      for (const id of ['job_ccc', 'job_aaa', 'job_bbb']) {
+        await store.enqueue(insert(id, id))
+      }
+      expect(rowIdOrder(root)).toEqual(['job_ccc', 'job_aaa', 'job_bbb'])
+
+      const claimed: string[] = []
+      for (let i = 0; i < 3; i += 1) {
+        const outcome = await store.claimNext(fence)
+        if (!outcome.claimed) throw new Error('queue drained early')
+        claimed.push(String(outcome.job.id))
+      }
+
+      expect(claimed).toEqual(['job_aaa', 'job_bbb', 'job_ccc'])
+    } finally {
+      store.close()
+    }
+  })
+
+  // The companion control: id is the TIEBREAK, not the ordering. A store ordered by id alone
+  // would pass the case above and fail this one, and would then claim a job enqueued an hour
+  // later ahead of one that has been waiting.
+  it('claims the older job first even when its id sorts last', async () => {
+    const store = openStore(root)
+    try {
+      const fence = await store.adoptEpoch(1)
+      await store.enqueue(insert('job_zzz', 'key-z'))
+      await store.enqueue(insert('job_aaa', 'key-a'))
+
+      const first = await store.claimNext(fence)
+      expect(first.claimed && String(first.job.id)).toBe('job_zzz')
+    } finally {
+      store.close()
+    }
+  })
+})
+
+describe('agent job store: completeAndChain (JOBQ-05 ordering)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-chain-'))
+    store = openStore(root)
+    fence = await store.adoptEpoch(1)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('inserts successors in the order the handler returned them', async () => {
+    const root_ = await store.enqueue(insert('job_root', 'key-root'))
+    await store.claimNext(fence)
+
+    const outcome = await store.completeAndChain(
+      root_.job.id,
+      [insert('job_first', 'key-first'), insert('job_second', 'key-second')],
+      fence,
+    )
+
+    expect(outcome.job.status).toBe('done')
+    expect(outcome.chained.map((entry) => String(entry.job.id))).toEqual([
+      'job_first',
+      'job_second',
+    ])
+    // Physical order, read outside the store: the returned array could be in handler order
+    // while the writes went out reversed, and only the rows can tell.
+    expect(rowIdOrder(root)).toEqual(['job_root', 'job_first', 'job_second'])
+  })
+
+  it('rolls the whole chain back when one successor insert fails', async () => {
+    const root_ = await store.enqueue(insert('job_root', 'key-root'))
+    await store.enqueue(insert('job_taken', 'key-taken'))
+    await store.claimNext(fence)
+
+    await expect(
+      store.completeAndChain(
+        root_.job.id,
+        // The second successor collides on the primary key while presenting a fresh
+        // (kind, key) pair, so the dedupe clause cannot absorb it and the statement raises.
+        [insert('job_ok', 'key-ok'), insert('job_taken', 'key-other')],
+        fence,
+      ),
+    ).rejects.toThrow()
+
+    const dump = await store.dumpState()
+    expect(dump.jobs.map((job) => job.id).sort()).toEqual(['job_root', 'job_taken'])
+    // The predecessor did not complete either — a partial chain with a completed root is the
+    // state nothing downstream would ever notice was wrong.
+    expect(dump.jobs.find((job) => job.id === 'job_root')?.status).toBe('queued')
+  })
+})
+
+describe('agent job store: recordFailure (ledger 1)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-failure-'))
+    store = openStore(root)
+    fence = await store.adoptEpoch(1)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  async function claimOne(): Promise<string> {
+    const enqueued = await store.enqueue(insert('job_a', 'key-a'))
+    const claim = await store.claimNext(fence)
+    expect(claim.claimed).toBe(true)
+    return String(enqueued.job.id)
+  }
+
+  it('returns a retryable job to the queue with its claim released', async () => {
+    const id = await claimOne()
+
+    await store.recordFailure(asJobId(id), { kind: 'retry', reason: 'provider timed out' }, fence)
+
+    const dump = await store.dumpState()
+    expect(dump.jobs[0]).toMatchObject({ status: 'queued', claimed: false, attempts: 1 })
+
+    // Claimable again, and the attempt counter moves again — D-18's bound is spent at the
+    // claim, so a job that keeps failing keeps consuming it.
+    const reclaim = await store.claimNext(fence)
+    expect(reclaim.claimed).toBe(true)
+    expect(reclaim.claimed && reclaim.job.attempts).toBe(2)
+  })
+
+  it('lands a permanent failure in the terminal failed status, unclaimable', async () => {
+    const id = await claimOne()
+
+    await store.recordFailure(asJobId(id), { kind: 'permanent', reason: 'bad payload' }, fence)
+
+    const dump = await store.dumpState()
+    expect(dump.jobs[0]).toMatchObject({ status: 'failed', claimed: false })
+    expect(await store.claimNext(fence)).toEqual({ claimed: false })
+  })
+
+  // NEGATIVE CONTROL for both cases above. A `recordFailure` that ignored its disposition
+  // argument entirely — releasing the claim and nothing else — passes the retry case on its
+  // own. Two stores driven through the IDENTICAL history except for the disposition must end
+  // in different states, and the comparison is made from the same starting point so that a
+  // difference cannot come from anywhere but the argument.
+  it('reaches a different state for each disposition, from identical histories', async () => {
+    async function stateAfter(kind: 'retry' | 'permanent'): Promise<string> {
+      const isolated = mkdtempSync(join(tmpdir(), 'agent-qa-job-disposition-'))
+      const other = openStore(isolated)
+      try {
+        const otherFence = await other.adoptEpoch(1)
+        const enqueued = await other.enqueue(insert('job_a', 'key-a'))
+        await other.claimNext(otherFence)
+        await other.recordFailure(enqueued.job.id, { kind, reason: 'same reason' }, otherFence)
+        return JSON.stringify(await other.dumpState())
+      } finally {
+        other.close()
+        rmSync(isolated, { recursive: true, force: true })
+      }
+    }
+
+    expect(await stateAfter('retry')).not.toBe(await stateAfter('permanent'))
+  })
+
+  it('records the reason the caller gave, not a placeholder', async () => {
+    const id = await claimOne()
+    await store.recordFailure(
+      asJobId(id),
+      { kind: 'permanent', reason: 'model refused the request' },
+      fence,
+    )
+
+    expect(rawRow(root, id)).toMatchObject({
+      last_failure_kind: 'permanent',
+      last_failure_reason: 'model refused the request',
+    })
+  })
+})
+
+describe('agent job store: the stale-epoch refusal matrix (D-07)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let stale: JobStoreFence
+  let current: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-fence-'))
+    store = openStore(root)
+    stale = await store.adoptEpoch(1)
+    await store.enqueue(insert('job_a', 'key-a'))
+    current = await store.adoptEpoch(2)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('refuses claimNext, and the current holder can still claim', async () => {
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(store.claimNext(stale)).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+
+    const claim = await store.claimNext(current)
+    expect(claim.claimed).toBe(true)
+  })
+
+  it('refuses completeAndChain, and the current holder can still complete', async () => {
+    await store.claimNext(current)
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(
+      store.completeAndChain(asJobId('job_a'), [insert('job_b', 'key-b')], stale),
+    ).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+
+    const completed = await store.completeAndChain(
+      asJobId('job_a'),
+      [insert('job_b', 'key-b')],
+      current,
+    )
+    expect(completed.job.status).toBe('done')
+  })
+
+  it('refuses recordFailure, and the current holder can still record one', async () => {
+    await store.claimNext(current)
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(
+      store.recordFailure(asJobId('job_a'), { kind: 'permanent', reason: 'x' }, stale),
+    ).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+
+    await store.recordFailure(asJobId('job_a'), { kind: 'permanent', reason: 'x' }, current)
+    expect((await store.dumpState()).jobs[0]?.status).toBe('failed')
+  })
+
+  it('refuses publishCheckpoint, writing no file, and the current holder can still publish', async () => {
+    await store.claimNext(current)
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(
+      store.publishCheckpoint(asJobId('job_a'), 'analysis', { v: 1 }, stale),
+    ).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+    // The refusal is inside the transaction that precedes the file, so no bytes escaped
+    // either — a fence checked after the durable side effect would refuse too late.
+    expect(readdirSync(root)).not.toContain('agent-jobs')
+
+    await store.publishCheckpoint(asJobId('job_a'), 'analysis', { v: 1 }, current)
+    expect(await store.readCheckpoint(asJobId('job_a'), 'analysis')).toEqual({
+      found: true,
+      payload: { v: 1 },
+    })
+  })
+
+  it('refuses to adopt an epoch behind the recorded one', async () => {
+    await expect(store.adoptEpoch(1)).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+    expect((await store.dumpState()).epoch).toBe(2)
+  })
+})

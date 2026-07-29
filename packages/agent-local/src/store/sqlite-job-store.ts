@@ -19,7 +19,10 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
+import {
+  MissingIdempotencyKeyError,
+  StaleJobStoreEpochError,
+} from '@vostride/agent-qa-agent'
 import type {
   ClockPort,
   JobCheckpointReadOutcome,
@@ -37,9 +40,16 @@ import { jobSchema } from '@vostride/agent-qa-schema'
 import type { Job, JobId } from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
-import { UnknownJobRowError } from './store-errors.js'
+import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.js'
 
-/** Stamped into `PRAGMA user_version` at creation (D-04: stamp now, hard-fail next plan). */
+/**
+ * Stamped into `PRAGMA user_version` at creation and checked on every open (D-04).
+ *
+ * Stamp and hard-fail, never migrate. The milestone ships nothing between its releases, so a
+ * database written by another build is a development artifact rather than a user's history,
+ * and migration machinery for it would be code with no user that everything afterwards has
+ * to keep working.
+ */
 export const AGENT_JOB_STORE_USER_VERSION = 1
 
 /**
@@ -54,27 +64,6 @@ export const AGENT_JOB_STORE_BUSY_TIMEOUT_MS = 2000
 
 /** The store's own file name under the agent-qa root, per the D-21 naming. */
 export const AGENT_JOB_STORE_DB_FILE = 'agent-jobs.db'
-
-/**
- * A verb whose CONTRACT is final but whose behaviour belongs to a later plan.
- *
- * It refuses loudly rather than returning a plausible nothing: a silent no-op here would
- * let a caller believe a failure had been recorded, and a queue that thinks it recorded a
- * failure it did not record is worse than one that cannot record failures at all.
- */
-export class JobStoreVerbNotImplementedError extends Error {
-  override readonly name = 'JobStoreVerbNotImplementedError'
-
-  constructor(
-    readonly verb: string,
-    readonly owner: string,
-  ) {
-    super(
-      `The agent job store verb ${verb} is declared but not implemented in the phase-385 ` +
-        `tracer; ${owner} owns its behaviour.`,
-    )
-  }
-}
 
 export interface CreateSqliteJobStoreOptions {
   /** Absolute path to the database file, typically `<root>/agent-jobs.db`. */
@@ -99,7 +88,11 @@ const SCHEMA_STATEMENTS = [
      attempts        INTEGER NOT NULL,
      claimed_at      TEXT,
      created_at      TEXT NOT NULL,
-     updated_at      TEXT NOT NULL
+     updated_at      TEXT NOT NULL,
+     -- The disposition the engine DECIDED, recorded so a failed job says why it failed.
+     -- Nullable because most rows never fail; written only by recordFailure.
+     last_failure_kind   TEXT,
+     last_failure_reason TEXT
    )`,
   // D-08's dedupe is THIS line. Making it a store-level constraint rather than a check the
   // caller performs is what turns "two enqueues of the same work produce one job" from a
@@ -124,8 +117,20 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     timeout: options.timeoutMs ?? AGENT_JOB_STORE_BUSY_TIMEOUT_MS,
   })
   db.exec('PRAGMA journal_mode=WAL')
-  for (const statement of SCHEMA_STATEMENTS) db.exec(statement)
+
+  // The version is read BEFORE a single schema statement runs, so a database this build
+  // cannot read is not touched on the way to being refused. A hard fail that had already
+  // created a table, or re-stamped the header, would be a migration nobody wrote.
   const stampedVersion = toNumber(db.prepare('PRAGMA user_version').get()?.user_version)
+  if (stampedVersion !== 0 && stampedVersion !== AGENT_JOB_STORE_USER_VERSION) {
+    db.close()
+    throw new JobStoreSchemaVersionError(
+      options.path,
+      AGENT_JOB_STORE_USER_VERSION,
+      stampedVersion,
+    )
+  }
+  for (const statement of SCHEMA_STATEMENTS) db.exec(statement)
   if (stampedVersion === 0) {
     db.exec(`PRAGMA user_version=${AGENT_JOB_STORE_USER_VERSION}`)
   }
@@ -133,8 +138,8 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   const insertJob = db.prepare(
     `INSERT INTO jobs
        (id, kind, idempotency_key, status, summary, payload, attempts, claimed_at,
-        created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?)
+        created_at, updated_at, last_failure_kind, last_failure_reason)
+     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL)
      ON CONFLICT (kind, idempotency_key) DO NOTHING`,
   )
   const selectByKey = db.prepare('SELECT * FROM jobs WHERE kind = ? AND idempotency_key = ?')
@@ -152,6 +157,22 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     "UPDATE jobs SET status = 'done', claimed_at = NULL, updated_at = ? WHERE id = ?",
   )
   const touchJob = db.prepare('UPDATE jobs SET updated_at = ? WHERE id = ?')
+  // Two statements, because the two dispositions are two different outcomes: a retryable
+  // failure releases the claim and leaves the row queued for the next attempt, while a
+  // permanent one is terminal. Whether a retryable REPORT becomes a retry disposition at all
+  // is the engine's call under D-18's bound — the store records the decision, never makes it.
+  const markRetryable = db.prepare(
+    `UPDATE jobs
+     SET claimed_at = NULL, last_failure_kind = 'retry', last_failure_reason = ?,
+         updated_at = ?
+     WHERE id = ?`,
+  )
+  const markFailed = db.prepare(
+    `UPDATE jobs
+     SET status = 'failed', claimed_at = NULL, last_failure_kind = 'permanent',
+         last_failure_reason = ?, updated_at = ?
+     WHERE id = ?`,
+  )
   // Explicit ORDER BY, never rowid order: an insertion history that differs only in
   // interruption would otherwise dump in a different order for no semantic reason (D-03).
   const selectAllJobs = db.prepare('SELECT * FROM jobs ORDER BY id ASC')
@@ -226,6 +247,13 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   }
 
   function insertOrGet(request: JobInsert, now: string): JobEnqueueOutcome {
+    // Checked HERE and not only in the engine. D-02 lets any process open this database, so
+    // the store is where dedupe is guaranteed, and an empty key satisfies the unique index
+    // while collapsing every job of a kind onto one slot — the failure the guarantee exists
+    // to prevent. The engine's error is reused rather than reprinted: one condition, one name.
+    if (request.idempotencyKey.trim() === '') {
+      throw new MissingIdempotencyKeyError(request.kind)
+    }
     const changes = insertJob.run(
       String(request.id),
       request.kind,
@@ -314,11 +342,24 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     },
 
     async recordFailure(
-      _jobId: JobId,
-      _disposition: JobFailureDisposition,
-      _fence: JobStoreFence,
+      jobId: JobId,
+      disposition: JobFailureDisposition,
+      fence: JobStoreFence,
     ): Promise<void> {
-      throw new JobStoreVerbNotImplementedError('recordFailure', 'Phase 385 plan 03')
+      const now = clock.now()
+      inTransaction(() => {
+        requireFence(fence)
+        requireRow(String(jobId))
+        // The attempt count is NOT touched here. D-18 spends it at the claim, so a job that
+        // kills its host before it can report anything still exhausts its bound; incrementing
+        // again on the way out would charge a reported failure twice and an unreported one
+        // never.
+        if (disposition.kind === 'retry') {
+          markRetryable.run(disposition.reason, now, String(jobId))
+        } else {
+          markFailed.run(disposition.reason, now, String(jobId))
+        }
+      })
     },
 
     async publishCheckpoint(
