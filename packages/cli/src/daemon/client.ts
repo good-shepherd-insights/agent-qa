@@ -1,4 +1,14 @@
-import { request } from 'node:http'
+import { request, type IncomingMessage } from 'node:http'
+
+import {
+  FunctionDeniedError,
+  FunctionInputError,
+  FunctionNotBoundError,
+  FunctionScopeError,
+  StreamReplayFloorError,
+  UnknownFunctionError,
+} from '@vostride/agent-qa-agent'
+import type { FunctionScope } from '@vostride/agent-qa-schema'
 
 import {
   inspectDaemonRegistration,
@@ -28,6 +38,25 @@ interface InvokeViaDaemonOptions {
 interface WireError {
   readonly name?: unknown
   readonly message?: unknown
+  readonly functionId?: unknown
+  readonly issues?: unknown
+  readonly missingScopes?: unknown
+  readonly reason?: unknown
+  readonly runId?: unknown
+  readonly requestedSeq?: unknown
+  readonly earliestAvailableSeq?: unknown
+}
+
+interface SseElement {
+  readonly id: number
+  readonly value: unknown
+}
+
+class DaemonStreamDisconnectedError extends Error {
+  constructor(cause?: unknown) {
+    super('agent-qa daemon stream disconnected before its terminating response', { cause })
+    this.name = 'DaemonStreamDisconnectedError'
+  }
 }
 
 function requireLiveRegistration(agentQaRoot: string): DaemonRegistration {
@@ -46,8 +75,52 @@ function parseJson(text: string, context: string): unknown {
   }
 }
 
-function remoteError(value: unknown, statusCode: number): Error {
+/** Restore public agent refusal identity and fields after the daemon JSON boundary. */
+export function rehydrateFunctionError(value: unknown, statusCode: number): Error {
   const wire = value as WireError
+  const functionId = typeof wire?.functionId === 'string' ? wire.functionId : undefined
+
+  if (wire?.name === 'UnknownFunctionError' && functionId !== undefined) {
+    return new UnknownFunctionError(functionId)
+  }
+  if (
+    wire?.name === 'FunctionInputError' &&
+    functionId !== undefined &&
+    typeof wire.issues === 'string'
+  ) {
+    return new FunctionInputError(functionId, wire.issues)
+  }
+  if (
+    wire?.name === 'FunctionScopeError' &&
+    functionId !== undefined &&
+    Array.isArray(wire.missingScopes) &&
+    wire.missingScopes.every((scope) => typeof scope === 'string')
+  ) {
+    return new FunctionScopeError(functionId, wire.missingScopes as FunctionScope[])
+  }
+  if (
+    wire?.name === 'FunctionDeniedError' &&
+    functionId !== undefined &&
+    typeof wire.reason === 'string'
+  ) {
+    return new FunctionDeniedError(functionId, wire.reason)
+  }
+  if (wire?.name === 'FunctionNotBoundError' && functionId !== undefined) {
+    return new FunctionNotBoundError(functionId)
+  }
+  if (
+    wire?.name === 'StreamReplayFloorError' &&
+    typeof wire.runId === 'string' &&
+    typeof wire.requestedSeq === 'number' &&
+    typeof wire.earliestAvailableSeq === 'number'
+  ) {
+    return new StreamReplayFloorError(
+      wire.runId,
+      wire.requestedSeq,
+      wire.earliestAvailableSeq,
+    )
+  }
+
   const error = new Error(
     typeof wire?.message === 'string' ? wire.message : `Daemon invocation failed (${statusCode})`,
   )
@@ -55,16 +128,18 @@ function remoteError(value: unknown, statusCode: number): Error {
   return error
 }
 
-/** Invoke through the socket path recorded by the live registration; never recompute discovery. */
-export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<unknown> {
-  const registration = requireLiveRegistration(options.agentQaRoot)
+function openInvokeResponse(
+  registration: DaemonRegistration,
+  functionId: string,
+  input: unknown,
+): Promise<IncomingMessage> {
   const body = JSON.stringify({
     schemaVersion: INVOKE_ENVELOPE_SCHEMA_VERSION,
-    functionId: options.functionId,
-    input: options.input,
+    functionId,
+    input,
   })
 
-  return new Promise<unknown>((resolveInvoke, rejectInvoke) => {
+  return new Promise((resolveResponse, rejectResponse) => {
     const outgoing = request(
       {
         socketPath: registration.socketPath,
@@ -76,31 +151,162 @@ export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<
           connection: 'close',
         },
       },
-      (response) => {
-        response.setEncoding('utf8')
-        let text = ''
-        response.on('data', (chunk: string) => {
-          text += chunk
-        })
-        response.once('error', rejectInvoke)
-        response.once('end', () => {
-          const statusCode = response.statusCode ?? 500
-          try {
-            const parsed = parseJson(text, 'agent-qa daemon')
-            if (statusCode < 200 || statusCode >= 300) {
-              rejectInvoke(remoteError(parsed, statusCode))
-              return
-            }
-            resolveInvoke(parsed)
-          } catch (error) {
-            rejectInvoke(error)
-          }
-        })
-      },
+      resolveResponse,
     )
     outgoing.once('error', (error) => {
-      rejectInvoke(new DaemonNotRunningError('unreachable', error.message))
+      rejectResponse(new DaemonNotRunningError('unreachable', error.message))
     })
     outgoing.end(body)
   })
+}
+
+async function readResponseText(response: IncomingMessage): Promise<string> {
+  response.setEncoding('utf8')
+  let text = ''
+  for await (const chunk of response) text += String(chunk)
+  return text
+}
+
+async function readUnaryResponse(response: IncomingMessage): Promise<unknown> {
+  const statusCode = response.statusCode ?? 500
+  const parsed = parseJson(await readResponseText(response), 'agent-qa daemon')
+  if (statusCode < 200 || statusCode >= 300) {
+    throw rehydrateFunctionError(parsed, statusCode)
+  }
+  return parsed
+}
+
+function isEventStream(response: IncomingMessage): boolean {
+  const contentType = String(response.headers['content-type'] ?? '')
+  return contentType.toLowerCase().startsWith('text/event-stream')
+}
+
+function parseEventFrame(frame: string): SseElement {
+  const dataLines: string[] = []
+  let id: number | undefined
+
+  for (const line of frame.split('\n')) {
+    if (line.length === 0 || line.startsWith(':')) continue
+    const separator = line.indexOf(':')
+    const field = separator === -1 ? line : line.slice(0, separator)
+    const rawValue = separator === -1 ? '' : line.slice(separator + 1)
+    const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue
+    if (field === 'id') {
+      const parsedId = Number(value)
+      if (!Number.isSafeInteger(parsedId) || parsedId < 0) {
+        throw new Error(`Daemon stream returned an invalid SSE id: ${value}`)
+      }
+      id = parsedId
+    } else if (field === 'data') {
+      dataLines.push(value)
+    }
+  }
+
+  if (id === undefined) throw new Error('Daemon stream event is missing its SSE id')
+  if (dataLines.length === 0) throw new Error(`Daemon stream event ${id} is missing data`)
+  return {
+    id,
+    value: parseJson(dataLines.join('\n'), `agent-qa daemon stream event ${id}`),
+  }
+}
+
+async function* readEventStream(response: IncomingMessage): AsyncIterable<SseElement> {
+  response.setEncoding('utf8')
+  const iterator = response[Symbol.asyncIterator]()
+  let buffer = ''
+
+  while (true) {
+    let next: IteratorResult<unknown>
+    try {
+      next = await iterator.next()
+    } catch (error) {
+      throw new DaemonStreamDisconnectedError(error)
+    }
+    if (next.done) break
+
+    buffer = `${buffer}${String(next.value)}`.replaceAll('\r\n', '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const frame = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      if (frame.length > 0) yield parseEventFrame(frame)
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
+
+  if (!response.complete || buffer.length > 0) {
+    throw new DaemonStreamDisconnectedError()
+  }
+}
+
+function resumeInput(input: unknown, lastEventId: number): Record<string, unknown> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('Daemon stream input must be an object to resume with lastEventId')
+  }
+  return { ...(input as Record<string, unknown>), lastEventId }
+}
+
+async function requireEventStream(response: IncomingMessage): Promise<void> {
+  const statusCode = response.statusCode ?? 500
+  if (statusCode < 200 || statusCode >= 300) {
+    const parsed = parseJson(await readResponseText(response), 'agent-qa daemon')
+    throw rehydrateFunctionError(parsed, statusCode)
+  }
+  if (!isEventStream(response)) {
+    throw new Error('Daemon stream resume returned a non-SSE response')
+  }
+}
+
+async function* resumeEventStream(
+  firstResponse: IncomingMessage,
+  registration: DaemonRegistration,
+  functionId: string,
+  input: unknown,
+): AsyncIterable<unknown> {
+  let response = firstResponse
+  let lastEventId: number | undefined
+  let reconnects = 0
+
+  while (true) {
+    try {
+      for await (const element of readEventStream(response)) {
+        lastEventId = element.id
+        yield element.value
+      }
+      return
+    } catch (error) {
+      if (
+        !(error instanceof DaemonStreamDisconnectedError) ||
+        reconnects >= 1 ||
+        lastEventId === undefined
+      ) {
+        throw error
+      }
+    }
+
+    reconnects += 1
+    response = await openInvokeResponse(
+      registration,
+      functionId,
+      resumeInput(input, lastEventId),
+    )
+    await requireEventStream(response)
+  }
+}
+
+/** Invoke through the socket path recorded by the live registration; never recompute discovery. */
+export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<unknown> {
+  const registration = requireLiveRegistration(options.agentQaRoot)
+  const response = await openInvokeResponse(registration, options.functionId, options.input)
+  const statusCode = response.statusCode ?? 500
+  if (statusCode < 200 || statusCode >= 300) return readUnaryResponse(response)
+  if (isEventStream(response)) {
+    return resumeEventStream(
+      response,
+      registration,
+      options.functionId,
+      options.input,
+    )
+  }
+  return readUnaryResponse(response)
 }

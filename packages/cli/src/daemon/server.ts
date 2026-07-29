@@ -83,6 +83,7 @@ export interface StartInvokeServerOptions {
 }
 
 interface WireError {
+  readonly [field: string]: unknown
   readonly name: string
   readonly message: string
 }
@@ -213,9 +214,16 @@ function writeJson(response: ServerResponse, statusCode: number, value: unknown)
 }
 
 function wireError(error: unknown): WireError {
-  return error instanceof Error
-    ? { name: error.name, message: error.message }
-    : { name: 'Error', message: String(error) }
+  if (!(error instanceof Error)) return { name: 'Error', message: String(error) }
+
+  // Error's own message/name fields are not enumerable, while the agent refusal classes expose
+  // their structured context as enumerable readonly properties. Preserve those fields so the
+  // client can reconstruct the exact public refusal class instead of flattening it to Error.
+  return {
+    ...Object.fromEntries(Object.entries(error)),
+    name: error.name,
+    message: error.message,
+  }
 }
 
 function errorStatus(error: unknown): number {
@@ -230,6 +238,37 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
     value !== null &&
     typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] === 'function'
   )
+}
+
+function streamElementSeq(element: unknown): number {
+  if (
+    typeof element !== 'object' ||
+    element === null ||
+    !('seq' in element) ||
+    typeof element.seq !== 'number' ||
+    !Number.isSafeInteger(element.seq) ||
+    element.seq < 0
+  ) {
+    throw new Error('Stream elements must carry a non-negative integer seq resume token')
+  }
+  return element.seq
+}
+
+async function writeEventStream(
+  response: ServerResponse,
+  result: AsyncIterable<unknown>,
+): Promise<void> {
+  response.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-cache',
+    connection: 'close',
+  })
+  response.flushHeaders()
+
+  for await (const element of result) {
+    response.write(`id: ${streamElementSeq(element)}\ndata: ${JSON.stringify(element)}\n\n`)
+  }
+  response.end()
 }
 
 async function handleInvoke(
@@ -255,10 +294,15 @@ async function handleInvoke(
       DAEMON_FUNCTION_CALLER,
     )
     if (isAsyncIterable(result)) {
-      throw new Error('Stream transport is not available until the SSE expansion is installed')
+      await writeEventStream(response, result)
+      return
     }
     writeJson(response, 200, result)
   } catch (error) {
+    if (response.headersSent) {
+      response.destroy(error instanceof Error ? error : new Error(String(error)))
+      return
+    }
     writeJson(response, errorStatus(error), wireError(error))
   }
 }
