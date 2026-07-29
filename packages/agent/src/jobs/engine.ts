@@ -281,28 +281,6 @@ function defaultSummary(kind: JobKind, idempotencyKey: string): string {
   return `agent job ${kind} (${idempotencyKey})`
 }
 
-/**
- * The VALUE inside a checkpoint the engine wrote, or the payload itself if something else
- * wrote it.
- *
- * The engine wraps every checkpoint in its own envelope, so the authorship primitive would
- * otherwise return an envelope on resume and a bare value on the first pass — the same call
- * answering two different shapes depending on whether the process had crashed. The envelope is
- * recognised by carrying both of the fields only the engine puts there, so an authored value
- * that happens to have a `value` key of its own is not mistaken for one.
- */
-function recordedValueOf(payload: unknown): unknown {
-  if (
-    typeof payload === 'object' &&
-    payload !== null &&
-    'checkpointId' in payload &&
-    'value' in payload
-  ) {
-    return (payload as JobCheckpointRecord).value
-  }
-  return payload
-}
-
 export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJobQueue {
   const { store, registry, clock, idSource, model } = options
 
@@ -512,8 +490,22 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           // rather than after it, and the answer nobody will use is never paid for.
           await enterCheckpointBoundary(checkpointId)
           const recorded = await store.readCheckpoint(job.id, checkpointId)
+          // The envelope is peeled UNCONDITIONALLY, and that is a fact about the writer rather
+          // than a guess about the bytes: `publish` just above is the only thing that ever
+          // writes a checkpoint payload, and it always wraps the authored value in a
+          // `JobCheckpointRecord`. Testing the payload's shape first would be re-deriving from
+          // the bytes something the engine already knows — and it cannot even do that
+          // faithfully, because canonical JSON has no member for a `value` of `undefined`, so
+          // the envelope of an authored `undefined` reads back one key short of the one that
+          // was written and is indistinguishable from a payload nothing wrapped. The primitive
+          // would then answer a bare value on the first pass and an envelope on the resume:
+          // two functions wearing one name, which is the failure its own contract forswears.
+          //
+          // Exactly one level is peeled, so an authored object carrying a `value` key of its
+          // own comes back whole. `recorded` remains the discriminant — `{recorded: true,
+          // value: undefined}` is a checkpoint that holds `undefined`, never an absent one.
           return recorded.found
-            ? { recorded: true, value: recordedValueOf(recorded.payload) }
+            ? { recorded: true, value: (recorded.payload as JobCheckpointRecord).value }
             : { recorded: false }
         },
         publishCheckpoint: publish,
