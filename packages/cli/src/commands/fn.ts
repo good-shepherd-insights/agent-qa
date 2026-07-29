@@ -20,12 +20,14 @@ import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
 } from '../composition/local-agent-host.js'
+import { invokeViaDaemon } from '../daemon/client.js'
 
 interface FnOptions {
   list?: boolean
   json?: boolean
   input?: string
   from?: string
+  viaDaemon?: boolean
 }
 
 type FnErrorCode = 'invalid-input-json' | 'invalid-resume-token' | 'missing-function-id'
@@ -211,14 +213,26 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
     .option('--json', 'emit machine-readable masked JSON')
     .option('--input <json>', 'JSON object passed as the function input (default {})')
     .option('--from <lastEventId>', 'resume a stream after this event seq')
+    .option('--via-daemon', 'dispatch through the project daemon instead of in-process')
     .action(async (id: string | undefined, options: FnOptions, command: Command) => {
       try {
-        const registry = composeCliLocalAgent({
-          ...compositionInput(command),
-          ...(deps.runExecution === undefined ? {} : { runExecution: deps.runExecution }),
-        }).registry
+        const composition = compositionInput(command)
+        const viaDaemon =
+          options.viaDaemon === true || process.env.AGENT_QA_VIA_DAEMON === '1'
+        // D-07: daemon routing is explicit. A live registration never changes the default,
+        // while the explicit route does not compose a second local host before going over wire.
+        const localRegistry = viaDaemon
+          ? undefined
+          : composeCliLocalAgent({
+              ...composition,
+              ...(deps.runExecution === undefined ? {} : { runExecution: deps.runExecution }),
+            }).registry
 
         if (options.list === true) {
+          const registry = localRegistry ?? composeCliLocalAgent({
+            ...composition,
+            ...(deps.runExecution === undefined ? {} : { runExecution: deps.runExecution }),
+          }).registry
           const declarations = registry.list(CLI_FUNCTION_CALLER)
           if (options.json === true) {
             emitJson(declarations.map(declarationRow))
@@ -235,12 +249,10 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
           )
         }
 
-        const result = await invokeFunction(
-          registry,
-          id,
-          withResumeToken(parsedInput(options.input), options.from),
-          CLI_FUNCTION_CALLER,
-        )
+        const input = withResumeToken(parsedInput(options.input), options.from)
+        const result = viaDaemon
+          ? await invokeViaDaemon({ agentQaRoot: composition.agentQaRoot, functionId: id, input })
+          : await invokeFunction(localRegistry!, id, input, CLI_FUNCTION_CALLER)
 
         // The registry knows which ops stream (D-08); the rendering follows the RESULT so
         // the invoker needs no per-id knowledge of its own.
