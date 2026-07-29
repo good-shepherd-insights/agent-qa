@@ -162,12 +162,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   },
   {
     file: 'packages/cli/src/commands/knowledge-maintain.ts',
-    specifier: '@vostride/agent-qa-knowledge-local',
-    clearedBy: '387',
-    reason: 'record-level knowledge maintenance; migrates into the layer with the knowledge review verb family',
-  },
-  {
-    file: 'packages/cli/src/commands/knowledge-maintain.ts',
     specifier: '@vostride/agent-qa-runner-local',
     clearedBy: '387',
     reason: 'record-level knowledge maintenance; migrates into the layer with the knowledge review verb family',
@@ -298,20 +292,8 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'authoring-side test discovery in the curation pipeline; moves behind the analyze-run job chain',
   },
   {
-    file: 'packages/cli/src/curation/authoring-test-discovery.ts',
-    specifier: '@vostride/agent-qa-knowledge-local',
-    clearedBy: '388',
-    reason: 'authoring-side test discovery in the curation pipeline; moves behind the analyze-run job chain',
-  },
-  {
     file: 'packages/cli/src/curation/curation-tail.ts',
     specifier: '@vostride/agent-qa-core',
-    clearedBy: '388',
-    reason: 'the post-run curation tail runs in-process today; moves behind the analyze-run job chain',
-  },
-  {
-    file: 'packages/cli/src/curation/curation-tail.ts',
-    specifier: '@vostride/agent-qa-knowledge-local',
     clearedBy: '388',
     reason: 'the post-run curation tail runs in-process today; moves behind the analyze-run job chain',
   },
@@ -341,27 +323,9 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   },
   {
     file: 'packages/cli/src/curation/curator-author.ts',
-    specifier: '@vostride/agent-qa-knowledge-local',
-    clearedBy: '388',
-    reason: 'curator authoring pass over the knowledge store; moves behind the curate-memory job',
-  },
-  {
-    file: 'packages/cli/src/curation/curator-author.ts',
     specifier: '@vostride/agent-qa-model',
     clearedBy: '388',
     reason: 'curator authoring pass over the knowledge store; moves behind the curate-memory job',
-  },
-  {
-    file: 'packages/cli/src/curation/emit-canary-outcomes.ts',
-    specifier: '@vostride/agent-qa-knowledge-local',
-    clearedBy: '388',
-    reason: 'canary outcome emission writes knowledge directly; moves behind the curate-memory job',
-  },
-  {
-    file: 'packages/cli/src/curation/emit-candidates.ts',
-    specifier: '@vostride/agent-qa-knowledge-local',
-    clearedBy: '388',
-    reason: 'candidate emission writes knowledge directly; moves behind the curate-memory job',
   },
   {
     file: 'packages/cli/src/curation/emit-candidates.ts',

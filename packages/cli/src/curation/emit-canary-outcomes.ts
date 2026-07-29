@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path'
 
-import { readCanonicalBundleAnchors } from '@vostride/agent-qa-knowledge-local'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import {
   canonicalJson,
   normalizeAnchor,
@@ -341,7 +341,7 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
 
   const projected = projectCanaryAttributions({
     handoff: opts.handoff,
-    resolveCandidateAnchors: (id) => readCanonicalBundleAnchors({
+    resolveCandidateAnchors: (id) => LOCAL_CURATION_CAPABILITIES.readCanonicalBundleAnchors({
       knowledgeRoot: opts.knowledgeRoot,
       bundleId: id,
     }),

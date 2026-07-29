@@ -14,12 +14,10 @@ import { join } from 'node:path'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
-  drainQueue,
-  foldRunOutcomes,
-  openKnowledgeReader,
-  RUN_OUTCOMES_PROJECTION_VERSION,
+  LOCAL_CURATION_CAPABILITIES,
+  type LocalCurationCapabilities,
   type OpenServingKnowledgeReaderConfig,
-} from '@vostride/agent-qa-knowledge-local'
+} from '@vostride/agent-qa-agent-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import {
   HANDOFF_FILE,
@@ -77,9 +75,9 @@ export interface CurationTailOperations {
   emitCurationCandidates: typeof emitCurationCandidates
   openKnowledgeReader(config: OpenServingKnowledgeReaderConfig): KnowledgeHintReader
   emitCanaryOutcomes: typeof emitCanaryOutcomes
-  foldRunOutcomes: typeof foldRunOutcomes
+  foldRunOutcomes: LocalCurationCapabilities['foldRunOutcomes']
   buildCuratorAuthor: typeof buildCuratorAuthor
-  drainQueue: typeof drainQueue
+  drainQueue: LocalCurationCapabilities['drainQueue']
   listCompletedRunDirs(agentQaRoot: string): string[]
   readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined
   writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void
@@ -108,11 +106,11 @@ function defaultOperations(): CurationTailOperations {
     resolveKnowledgeRoot,
     runSafetyScope,
     emitCurationCandidates,
-    openKnowledgeReader,
+    openKnowledgeReader: LOCAL_CURATION_CAPABILITIES.openKnowledgeReader,
     emitCanaryOutcomes,
-    foldRunOutcomes,
+    foldRunOutcomes: LOCAL_CURATION_CAPABILITIES.foldRunOutcomes,
     buildCuratorAuthor,
-    drainQueue,
+    drainQueue: LOCAL_CURATION_CAPABILITIES.drainQueue,
     listCompletedRunDirs,
     readCurationTailReceipt,
     writeCurationTailReceipt,
@@ -186,7 +184,7 @@ function receiptForHandoff(handoff: { runId: unknown }): CurationTailReceipt {
     schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
     runId: String(handoff.runId),
     handoffDigest: curationTailHandoffDigest(handoff),
-    projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+    projectionVersion: LOCAL_CURATION_CAPABILITIES.runOutcomesProjectionVersion,
   }
 }
 

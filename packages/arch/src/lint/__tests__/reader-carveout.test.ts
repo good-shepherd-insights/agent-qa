@@ -4,6 +4,7 @@ import type { OwnershipContract } from '../../contract-types.js'
 import type { SpecifierHit } from '../extract-specifiers.js'
 import {
   findKnowledgeLocalWallOffenders,
+  findKnowledgeWriterSingletonOffenders,
   findReaderCarveoutOffenders,
   KNOWLEDGE_READER_FILES,
   KNOWLEDGE_WRITER_ALLOWLIST,
@@ -12,6 +13,8 @@ import {
 const MAIN_ENTRY = '@vostride/agent-qa-knowledge-local'
 const READER_ENTRY = `${MAIN_ENTRY}/reader`
 const RELOCATED_READER_FILE = KNOWLEDGE_READER_FILES[0]
+/** The one file the allowance is for. Spelled through the shipped prefix, not repeated. */
+const COMPOSITION_ROOT = `${KNOWLEDGE_WRITER_ALLOWLIST[0]}compose-local-agent.ts`
 
 function fixtureHit(
   specifier: string,
@@ -35,14 +38,14 @@ function fixtureContract(packageDir: string): OwnershipContract {
 
 describe('reader carve-out', () => {
   it('rejects the write-capable main entry outside the pinned writer allowlist', () => {
-    expect(KNOWLEDGE_WRITER_ALLOWLIST).toEqual([
-      'packages/cli/src/curation/',
-      'packages/cli/src/commands/knowledge-maintain.ts',
-    ])
+    // 2026-07-29 (Phase 385 plan 09, D-14): one entry, and it is the composition subtree. The two
+    // CLI entries are gone because every writer power the curation surfaces used now arrives on
+    // the local host's capabilities.
+    expect(KNOWLEDGE_WRITER_ALLOWLIST).toEqual(['packages/agent-local/src/composition/'])
     expect(findReaderCarveoutOffenders([
-      fixtureHit(MAIN_ENTRY, 'packages/cli/src/commands/run.ts', 17),
+      fixtureHit(MAIN_ENTRY, 'packages/cli/src/curation/curation-tail.ts', 17),
     ])).toEqual([
-      `reader-carveout: packages/cli/src/commands/run.ts:17 ⇏ ${MAIN_ENTRY} (main entry requires writer allowlist)`,
+      `reader-carveout: packages/cli/src/curation/curation-tail.ts:17 ⇏ ${MAIN_ENTRY} (main entry requires writer allowlist)`,
     ])
   })
 
@@ -60,14 +63,77 @@ describe('reader carve-out', () => {
     ])
   })
 
-  it('accepts the pinned writer files and read-only reader imports', () => {
+  it('accepts the pinned writer file and read-only reader imports', () => {
     expect(findReaderCarveoutOffenders([
-      fixtureHit(MAIN_ENTRY, 'packages/cli/src/curation/curation-tail.ts'),
-      fixtureHit(MAIN_ENTRY, 'packages/cli/src/curation/emit-candidates.ts'),
-      fixtureHit(MAIN_ENTRY, 'packages/cli/src/commands/knowledge-maintain.ts'),
+      fixtureHit(MAIN_ENTRY, COMPOSITION_ROOT),
       fixtureHit(READER_ENTRY, RELOCATED_READER_FILE),
       fixtureHit(READER_ENTRY, 'packages/cli/src/commands/knowledge-read.ts'),
     ])).toEqual([])
+  })
+})
+
+/**
+ * SC5's "the single place". The allow-list entry is a directory PREFIX, so `findReaderCarveoutOffenders`
+ * alone is satisfied by any number of importers inside the subtree — which is exactly the shape of
+ * gate that passes while the claim it stands for has stopped being true. These cases are the ones
+ * that can fail for that reason.
+ */
+describe('the knowledge writer has exactly one importer (D-14 / SC5)', () => {
+  it('accepts the one composition root, alongside any number of reader-entry imports', () => {
+    expect(findKnowledgeWriterSingletonOffenders([
+      fixtureHit(MAIN_ENTRY, COMPOSITION_ROOT, 40),
+      fixtureHit(READER_ENTRY, COMPOSITION_ROOT, 41),
+      fixtureHit(READER_ENTRY, 'packages/cli/src/commands/knowledge-read.ts', 7),
+      fixtureHit(`${MAIN_ENTRY}/index-reader`, 'packages/agent-local/src/store/logical-dump.ts', 3),
+    ])).toEqual([])
+  })
+
+  it('accepts many statements in the SAME file — the claim is about files, not lines', () => {
+    expect(findKnowledgeWriterSingletonOffenders([
+      fixtureHit(MAIN_ENTRY, COMPOSITION_ROOT, 40),
+      fixtureHit(MAIN_ENTRY, COMPOSITION_ROOT, 93),
+    ])).toEqual([])
+  })
+
+  it('rejects a SECOND importer inside the allowed subtree, naming both', () => {
+    const sibling = `${KNOWLEDGE_WRITER_ALLOWLIST[0]}compose-job-recovery.ts`
+    const offenders = findKnowledgeWriterSingletonOffenders([
+      fixtureHit(MAIN_ENTRY, COMPOSITION_ROOT, 40),
+      fixtureHit(MAIN_ENTRY, sibling, 12),
+    ])
+
+    // Sorted, so the report is stable whichever order the scan walked the files in.
+    expect(offenders).toEqual([
+      `reader-carveout: ${sibling} ⇏ ${MAIN_ENTRY}`
+      + ' (2 importers; SC5 requires exactly one — the local composition root)',
+      `reader-carveout: ${COMPOSITION_ROOT} ⇏ ${MAIN_ENTRY}`
+      + ' (2 importers; SC5 requires exactly one — the local composition root)',
+    ])
+  })
+
+  it('rejects an allowance no file uses — a shrink that matches nothing cannot fail', () => {
+    // The anti-vacuity direction. A rule whose scope is empty passes every build forever and reads
+    // like proof, and that is the failure mode a one-entry allow-list is most exposed to.
+    expect(findKnowledgeWriterSingletonOffenders([
+      fixtureHit(READER_ENTRY, 'packages/cli/src/commands/knowledge-read.ts', 7),
+    ])).toEqual([
+      'reader-carveout: the knowledge writer allowance [packages/agent-local/src/composition/]'
+      + ' is used by no file — either the prefix is wrong or the last importer left, and an'
+      + ' allowance nothing uses is a rule that cannot fail',
+    ])
+  })
+
+  it('does NOT count an importer outside the allowance towards the one it permits', () => {
+    // Otherwise a leak in the CLI would satisfy the singleton rule and the whole allowance could be
+    // pointing nowhere. `findReaderCarveoutOffenders` reports that file separately; here it must
+    // leave the allowance unused.
+    expect(findKnowledgeWriterSingletonOffenders([
+      fixtureHit(MAIN_ENTRY, 'packages/cli/src/curation/curation-tail.ts', 17),
+    ])).toEqual([
+      'reader-carveout: the knowledge writer allowance [packages/agent-local/src/composition/]'
+      + ' is used by no file — either the prefix is wrong or the last importer left, and an'
+      + ' allowance nothing uses is a rule that cannot fail',
+    ])
   })
 })
 

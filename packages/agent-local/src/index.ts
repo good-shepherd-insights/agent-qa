@@ -99,10 +99,35 @@ export {
   createKnowledgeReader,
   createRunsReader,
   DIGEST_JOB_ID_SOURCE,
+  LOCAL_CURATION_CAPABILITIES,
   SYSTEM_CLOCK,
 } from './composition/compose-local-agent.js'
 export type {
   ComposeLocalAgentInput,
   LocalAgentHost,
   LocalAgentJobs,
+  LocalCurationCapabilities,
+  LocalKnowledgeMaintenanceCapabilities,
+} from './composition/compose-local-agent.js'
+// The knowledge vocabulary the curation surfaces are typed against, re-exported through the one
+// edge that names the writer entry (D-14). Types are erased, so this hands a caller no power it
+// could not already ask the capabilities above for.
+export type {
+  AuthoringTestRef,
+  AuthorOutcome,
+  CurationCandidateProjection,
+  CurationJobView,
+  CurationProjectionArtifactSource,
+  CuratorAuthor,
+  EnqueueCurationCandidateProjectionOutcome,
+  NeighborRecord,
+  OpenServingKnowledgeReaderConfig,
+  PurgeAffectedSet,
+  PurgeReceipt,
+  RebuildReport,
+  RollbackAffectedSet,
+  RollbackCampaignInput,
+  RollbackCurationJobInput,
+  RollbackReport,
+  WriterLeaseAuthority,
 } from './composition/compose-local-agent.js'

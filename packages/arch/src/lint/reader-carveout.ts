@@ -4,9 +4,21 @@ import type { SpecifierHit } from './extract-specifiers.js'
 const KNOWLEDGE_LOCAL_MAIN_ENTRY = '@vostride/agent-qa-knowledge-local'
 const KNOWLEDGE_LOCAL_READER_ENTRY = `${KNOWLEDGE_LOCAL_MAIN_ENTRY}/reader`
 
+/**
+ * Where the knowledge package's writer-gated main entry may be named at all.
+ *
+ * 2026-07-29 (Phase 385 plan 09, D-14/SC5): shrunk from two CLI entries to one. Every writer power
+ * the curation surfaces used is now taken off the local host's capabilities, so the surface names
+ * the composition root and the composition root names the writer.
+ *
+ * A trailing slash makes an entry a directory PREFIX, and that is what this one is — it says where
+ * the naming may live, matching the location shape of the sibling composition carve-out. It does
+ * NOT say how many files may do it, so on its own it would pass with five importers in the subtree
+ * while SC5's "the single place" was false. `findKnowledgeWriterSingletonOffenders` below is what
+ * makes the claim the phase actually asserts enforceable, at file granularity.
+ */
 export const KNOWLEDGE_WRITER_ALLOWLIST = [
-  'packages/cli/src/curation/',
-  'packages/cli/src/commands/knowledge-maintain.ts',
+  'packages/agent-local/src/composition/',
 ] as const
 
 /**
@@ -78,6 +90,49 @@ export function findReaderCarveoutOffenders(hits: readonly SpecifierHit[]): stri
   }
 
   return offenders
+}
+
+/**
+ * SC5, as a rule rather than as a sentence: the writer entry has EXACTLY ONE importer.
+ *
+ * Two directions, and both of them fail.
+ *
+ *   1. More than one allow-listed file names the main entry. The allow-list is a directory prefix,
+ *      so without this the subtree could accumulate importers indefinitely and every gate would
+ *      stay green while "the single place `composeLocalAgent()` imports it" quietly stopped being
+ *      true. This is the direction the phase's own success criterion rests on.
+ *   2. NO file names it. A shrunken allow-list that matches nothing is the way this kind of rule
+ *      usually dies: it passes forever, checks nothing, and reads like proof. An allowance nobody
+ *      uses is therefore an offender, exactly as in the composition carve-out — and it doubles as
+ *      the guard against a mistyped prefix, because a wrong prefix leaves the real importer
+ *      unallowed (direction "main entry requires writer allowlist" above) AND the allowance unused.
+ *
+ * Takes the union of hits across every scanned package rather than one package's, because "exactly
+ * one in the workspace" cannot be decided from a slice of it.
+ */
+export function findKnowledgeWriterSingletonOffenders(hits: readonly SpecifierHit[]): string[] {
+  const importers = new Set<string>()
+
+  for (const hit of hits) {
+    if (hit.specifier !== KNOWLEDGE_LOCAL_MAIN_ENTRY) continue
+    const file = normalizeRepoPath(hit.file)
+    if (isWriterFile(file)) importers.add(file)
+  }
+
+  if (importers.size === 0) {
+    return [
+      `reader-carveout: the knowledge writer allowance [${KNOWLEDGE_WRITER_ALLOWLIST.join(', ')}]`
+      + ` is used by no file — either the prefix is wrong or the last importer left, and an`
+      + ' allowance nothing uses is a rule that cannot fail',
+    ]
+  }
+
+  if (importers.size === 1) return []
+
+  return [...importers].sort().map((file) => (
+    `reader-carveout: ${file} ⇏ ${KNOWLEDGE_LOCAL_MAIN_ENTRY}`
+    + ` (${String(importers.size)} importers; SC5 requires exactly one — the local composition root)`
+  ))
 }
 
 export function findKnowledgeLocalWallOffenders(

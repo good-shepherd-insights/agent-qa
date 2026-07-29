@@ -28,8 +28,10 @@ import {
 } from '../lint/knowledge-write.js'
 import {
   findKnowledgeLocalWallOffenders,
+  findKnowledgeWriterSingletonOffenders,
   findReaderCarveoutOffenders,
   KNOWLEDGE_READER_FILES,
+  KNOWLEDGE_WRITER_ALLOWLIST,
   READER_CARVEOUT_SCANNED_DIRS,
 } from '../lint/reader-carveout.js'
 import {
@@ -177,6 +179,9 @@ describe('validate:arch (LINT-01..05)', () => {
     const contracts: readonly OwnershipContract[] = ARCH_MANIFEST.packages
     const surfaceScans: SurfaceFirewallScan[] = []
     const pinSources: EvaluatePinSource[] = []
+    // "Exactly one importer" is a property of the workspace, not of any one package, so the
+    // reader-scanned hits are accumulated and judged once after the loop.
+    const readerScannedHits: SpecifierHit[] = []
 
     for (const contract of contracts) {
       pinSources.push(...pinSourcesFor(contract.packageDir))
@@ -200,6 +205,7 @@ describe('validate:arch (LINT-01..05)', () => {
         contract.packageDir as (typeof READER_CARVEOUT_SCANNED_DIRS)[number],
       )) {
         offenders.push(...findReaderCarveoutOffenders(sourceHits))
+        readerScannedHits.push(...sourceHits)
       }
       offenders.push(...findCompositionCarveoutOffenders(contract, sourceHits))
       offenders.push(...findCompositionCarveoutUnusedAllowances(contract, sourceHits))
@@ -209,6 +215,7 @@ describe('validate:arch (LINT-01..05)', () => {
       offenders.push(...findKnowledgeLocalWallOffenders(contract, sourceHits))
     }
 
+    offenders.push(...findKnowledgeWriterSingletonOffenders(readerScannedHits))
     offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
     offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
     offenders.push(...findEvaluatePinOffenders(pinSources))
@@ -631,6 +638,7 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     expect(aggregate).toContain('findCompositionCarveoutOffenders(contract, sourceHits)')
     expect(aggregate).toContain('findCompositionCarveoutUnusedAllowances(contract, sourceHits)')
     expect(aggregate).toContain('findReaderCarveoutOffenders(sourceHits)')
+    expect(aggregate).toContain('findKnowledgeWriterSingletonOffenders(readerScannedHits)')
   })
 
   it('guards a package that is actually contract-bearing and scanned', () => {
@@ -644,6 +652,22 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
   // A path-keyed pin whose path has moved matches nothing and reports nothing. Both reader files
   // must exist, and the scanned-dirs list must actually contain the package each one lives in, or
   // the reader carve-out is silently covering fewer files than it claims.
+  // D-14/SC5. The allow-list is a directory PREFIX, so the shipped value alone permits any number
+  // of importers under it; what makes "the single place" true is the singleton rule, and what makes
+  // the singleton rule reach the right subtree is that the prefix names a directory that exists
+  // inside a scanned package. Both halves are asserted, because either one alone is satisfiable by
+  // a wrong implementation.
+  it('the writer allowance is one entry, and it points inside a scanned package that exists', () => {
+    expect([...KNOWLEDGE_WRITER_ALLOWLIST]).toEqual(['packages/agent-local/src/composition/'])
+
+    for (const entry of KNOWLEDGE_WRITER_ALLOWLIST) {
+      expect(existsSync(join(repoRoot, entry))).toBe(true)
+      expect(
+        READER_CARVEOUT_SCANNED_DIRS.some(dir => entry.startsWith(`${dir}/`)),
+      ).toBe(true)
+    }
+  })
+
   it('every pinned reader file exists and sits inside a scanned package', () => {
     for (const file of KNOWLEDGE_READER_FILES) {
       expect(existsSync(join(repoRoot, file))).toBe(true)

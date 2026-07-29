@@ -32,6 +32,25 @@ import type {
   KnowledgeReaderPort,
   RunsReaderPort,
 } from '@vostride/agent-qa-agent'
+import {
+  acquireWriterLease,
+  drainQueue,
+  enqueueCurationCandidateProjection,
+  foldRunOutcomes,
+  openKnowledgeReader,
+  purgeAffectedSetFingerprint,
+  purgeRecord,
+  readCanonicalBundleAnchors,
+  rebuildIndex,
+  refreshWriterLeaseAuthority,
+  releaseLease,
+  resolvePurgeAffectedSet,
+  resolveRollbackAffectedSet,
+  rollbackAffectedSetFingerprint,
+  rollbackCampaign,
+  rollbackCurationJob,
+  RUN_OUTCOMES_PROJECTION_VERSION,
+} from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
@@ -51,6 +70,98 @@ import type {
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
 import { AGENT_JOB_STORE_DB_FILE, createSqliteJobStore } from '../store/sqlite-job-store.js'
 import type { SqliteJobStore } from '../store/sqlite-job-store.js'
+
+// ---- the knowledge-writer capabilities (D-14, SC5) --------------------------------------------
+//
+// This file is the ONE place the knowledge package's writer-gated main entry is named, and the arch
+// rule named reader-carveout enforces both halves of that: a second file naming it fails, and zero
+// files naming it fails too — an allowance nothing uses is a rule that passes forever while
+// checking nothing.
+//
+// What this is NOT: a per-host binding. Every function below takes the roots and options it works
+// against as arguments, so there is nothing for a composition to close over and every host would
+// bind the identical object. Saying that plainly matters, because the value of gathering them here
+// is not parameterisation — it is that "which writer powers does the local host grant?" has one
+// answer, in one type, reachable through one edge, instead of being the union of whatever six
+// surface files happened to import.
+//
+// Consequence for a caller: a module that needs one of these at MODULE scope takes it from
+// `LOCAL_CURATION_CAPABILITIES` directly; a host that has a handle takes it from `host.curation`,
+// which is the same frozen object. Threading a handle through the curation tail's call graph would
+// have been a signature change to code D-14 requires this phase to leave semantically untouched.
+
+export type {
+  AuthorOutcome,
+  AuthoringTestRef,
+  CurationCandidateProjection,
+  CurationJobView,
+  CurationProjectionArtifactSource,
+  CuratorAuthor,
+  EnqueueCurationCandidateProjectionOutcome,
+  NeighborRecord,
+  OpenServingKnowledgeReaderConfig,
+  PurgeAffectedSet,
+  PurgeReceipt,
+  RebuildReport,
+  RollbackAffectedSet,
+  RollbackCampaignInput,
+  RollbackCurationJobInput,
+  RollbackReport,
+  WriterLeaseAuthority,
+} from '@vostride/agent-qa-knowledge-local'
+
+/**
+ * Index maintenance and the campaign/job rollback verbs, plus the lease every one of them is only
+ * legal to hold under. Grouped rather than flattened because they share that precondition: a host
+ * reaching for `purgeRecord` without a lease is the mistake the grouping makes visible.
+ */
+export interface LocalKnowledgeMaintenanceCapabilities {
+  readonly acquireWriterLease: typeof acquireWriterLease
+  readonly refreshWriterLeaseAuthority: typeof refreshWriterLeaseAuthority
+  readonly releaseLease: typeof releaseLease
+  readonly rebuildIndex: typeof rebuildIndex
+  readonly purgeRecord: typeof purgeRecord
+  readonly resolvePurgeAffectedSet: typeof resolvePurgeAffectedSet
+  readonly purgeAffectedSetFingerprint: typeof purgeAffectedSetFingerprint
+  readonly rollbackCampaign: typeof rollbackCampaign
+  readonly rollbackCurationJob: typeof rollbackCurationJob
+  readonly resolveRollbackAffectedSet: typeof resolveRollbackAffectedSet
+  readonly rollbackAffectedSetFingerprint: typeof rollbackAffectedSetFingerprint
+}
+
+export interface LocalCurationCapabilities {
+  /** Serving-side reader the tail folds against; read-only despite arriving on the writer edge. */
+  readonly openKnowledgeReader: typeof openKnowledgeReader
+  readonly drainQueue: typeof drainQueue
+  readonly foldRunOutcomes: typeof foldRunOutcomes
+  readonly enqueueCurationCandidateProjection: typeof enqueueCurationCandidateProjection
+  readonly readCanonicalBundleAnchors: typeof readCanonicalBundleAnchors
+  /** Component of the tail's receipt: a bump refolds runs already receipted at the old version. */
+  readonly runOutcomesProjectionVersion: typeof RUN_OUTCOMES_PROJECTION_VERSION
+  readonly maintenance: LocalKnowledgeMaintenanceCapabilities
+}
+
+export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.freeze({
+  openKnowledgeReader,
+  drainQueue,
+  foldRunOutcomes,
+  enqueueCurationCandidateProjection,
+  readCanonicalBundleAnchors,
+  runOutcomesProjectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
+  maintenance: Object.freeze({
+    acquireWriterLease,
+    refreshWriterLeaseAuthority,
+    releaseLease,
+    rebuildIndex,
+    purgeRecord,
+    resolvePurgeAffectedSet,
+    purgeAffectedSetFingerprint,
+    rollbackCampaign,
+    rollbackCurationJob,
+    resolveRollbackAffectedSet,
+    rollbackAffectedSetFingerprint,
+  }),
+})
 
 /**
  * Enumerate `<agentQaRoot>/runs/<slug>/handoff.json`. A project with no runs directory is an
@@ -167,6 +278,8 @@ export interface LocalAgentJobs {
 export interface LocalAgentHost {
   /** The 384 function registry with every seed capability bound over local storage. */
   readonly registry: FunctionRegistry
+  /** The knowledge-writer powers this host grants — the same frozen object for every host. */
+  readonly curation: LocalCurationCapabilities
   /** The clock every store column, dump row and audit stamp in this host is written against. */
   readonly clock: ClockPort
   /**
@@ -264,6 +377,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
 
   return {
     registry,
+    curation: LOCAL_CURATION_CAPABILITIES,
     clock,
     jobs(): Promise<LocalAgentJobs> {
       // Memoized on the PROMISE, not on the resolved value: two concurrent callers awaiting a

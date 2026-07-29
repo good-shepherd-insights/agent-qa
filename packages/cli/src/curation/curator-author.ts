@@ -7,7 +7,7 @@ import type {
   CurationJobView,
   CuratorAuthor,
   NeighborRecord,
-} from '@vostride/agent-qa-knowledge-local'
+} from '@vostride/agent-qa-agent-local'
 import {
   createModel,
   createTokenAccounting,

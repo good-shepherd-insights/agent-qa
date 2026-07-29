@@ -3,19 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
-import {
-  acquireWriterLease,
-  purgeAffectedSetFingerprint,
-  purgeRecord,
-  rebuildIndex,
-  refreshWriterLeaseAuthority,
-  releaseLease,
-  resolvePurgeAffectedSet,
-  resolveRollbackAffectedSet,
-  rollbackAffectedSetFingerprint,
-  rollbackCampaign,
-  rollbackCurationJob,
-} from '@vostride/agent-qa-knowledge-local'
+import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type {
   PurgeAffectedSet,
   PurgeReceipt,
@@ -25,7 +13,7 @@ import type {
   RollbackCurationJobInput,
   RollbackReport,
   WriterLeaseAuthority,
-} from '@vostride/agent-qa-knowledge-local'
+} from '@vostride/agent-qa-agent-local'
 import {
   BuildOrdinalReservationError,
   reserveBuildOrdinalForProducts,
@@ -40,6 +28,24 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { resolveConfig } from '../config.js'
+
+// The eleven maintenance verbs, taken off the local host's curation capabilities rather than
+// imported from the knowledge package directly (D-14). Bound once here so every call site below is
+// the line it always was: this phase moves where the verbs come FROM and changes nothing about what
+// the command does with them.
+const {
+  acquireWriterLease,
+  purgeAffectedSetFingerprint,
+  purgeRecord,
+  rebuildIndex,
+  refreshWriterLeaseAuthority,
+  releaseLease,
+  resolvePurgeAffectedSet,
+  resolveRollbackAffectedSet,
+  rollbackAffectedSetFingerprint,
+  rollbackCampaign,
+  rollbackCurationJob,
+} = LOCAL_CURATION_CAPABILITIES.maintenance
 
 interface RebuildOptions {
   json?: boolean

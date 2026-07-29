@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import { parseTestFile } from '@vostride/agent-qa-core'
-import type { AuthoringTestRef } from '@vostride/agent-qa-knowledge-local'
+import type { AuthoringTestRef } from '@vostride/agent-qa-agent-local'
 
 /**
  * Discover the consumer repository's authored test universe without crossing D-16's content wall.

@@ -3,11 +3,11 @@ import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 
 import {
-  enqueueCurationCandidateProjection,
+  LOCAL_CURATION_CAPABILITIES,
   type CurationCandidateProjection,
   type CurationProjectionArtifactSource,
   type EnqueueCurationCandidateProjectionOutcome,
-} from '@vostride/agent-qa-knowledge-local'
+} from '@vostride/agent-qa-agent-local'
 import { RUN_EVIDENCE_BLOBS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
   canonicalJson,
@@ -1077,7 +1077,7 @@ export function emitCurationCandidates(opts: EmitCurationCandidatesOptions): Emi
     const artifactSources = bindArtifactSources(projected, opts.runDir)
     let outcome: EmitCandidateOutcome
     try {
-      outcome = enqueueCurationCandidateProjection({
+      outcome = LOCAL_CURATION_CAPABILITIES.enqueueCurationCandidateProjection({
         knowledgeRoot: opts.knowledgeRoot,
         projection: projected,
         artifactSources,
