@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,6 +16,12 @@ import {
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
+import {
+  acquireWriterLease,
+  LEASE_FILE,
+  releaseLease,
+} from '../../lease/writer-lease.js'
+import * as curationQueue from '../../queue/curation-queue.js'
 import {
   claimNextJob,
   listQueuedCandidates,
@@ -143,6 +149,10 @@ describe('drainQueue daemon substrate', () => {
     )
   }
 
+  function reportRemaining(report: unknown): unknown {
+    return (report as { remaining?: unknown }).remaining
+  }
+
   it('uses each claimed payload context inside one mixed-context drain', async () => {
     enqueue('ci-checkout', 'ci')
     enqueue('interactive-checkout', 'local-interactive')
@@ -162,6 +172,7 @@ describe('drainQueue daemon substrate', () => {
       committed: 2,
       failures: 0,
     })
+    expect(reportRemaining(report)).toBe(0)
     expect(statusesBySummary()).toEqual({
       'ci-checkout selector': 'candidate',
       'interactive-checkout selector': 'active',
@@ -179,6 +190,7 @@ describe('drainQueue daemon substrate', () => {
     })
 
     expect(second).toMatchObject({ kind: 'drained', jobsProcessed: 0, committed: 0 })
+    expect(reportRemaining(second)).toBe(0)
     expect(statusesBySummary()).toEqual(beforeSecondDrain)
   })
 
@@ -220,5 +232,94 @@ describe('drainQueue daemon substrate', () => {
     expect(statusesBySummary()).toEqual({ 'legacy-checkout selector': 'candidate' })
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
     expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
+  })
+
+  it('drains under a caller-owned lease without touching its lease bytes', async () => {
+    enqueue('caller-owned-lease', 'local-interactive')
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected caller lease')
+    const leasePath = join(knowledgeRoot, LEASE_FILE)
+    const before = readFileSync(leasePath)
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
+      operations: maintenanceFreeOperations(),
+    } as Parameters<typeof drainQueue>[0] & {
+      lease: { leaseId: string; epoch: number }
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 1,
+      failures: 0,
+    })
+    expect(reportRemaining(report)).toBe(0)
+    expect(readFileSync(leasePath)).toEqual(before)
+    expect(statusesBySummary()).toEqual({ 'caller-owned-lease selector': 'active' })
+    expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
+      kind: 'released',
+    })
+  })
+
+  it('reports the exact pending remainder on budget cut and handed off exits', async () => {
+    enqueue('budget-first', 'local-interactive')
+    enqueue('budget-second', 'local-interactive')
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValue(60_000)
+
+    const budgetCut = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      now,
+      operations: maintenanceFreeOperations(),
+    })
+
+    expect(budgetCut).toMatchObject({ kind: 'drained', jobsProcessed: 1, committed: 1 })
+    expect(listQueuedCandidates(knowledgeRoot)).toHaveLength(1)
+    expect(reportRemaining(budgetCut)).toBe(1)
+
+    const holder = acquireWriterLease(knowledgeRoot)
+    if (holder.kind !== 'acquired') throw new Error('expected holder lease')
+    const handedOff = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'local-interactive',
+      policy,
+      operations: maintenanceFreeOperations(),
+    })
+
+    expect(handedOff).toMatchObject({ kind: 'handed-off' })
+    expect(reportRemaining(handedOff)).toBe(1)
+    expect(releaseLease({ knowledgeRoot, leaseId: holder.leaseId })).toEqual({
+      kind: 'released',
+    })
+  })
+
+  it('counts pending jobs and treats absent or empty queues as zero', () => {
+    const countPendingCurationJobs = (
+      curationQueue as unknown as {
+        countPendingCurationJobs?: (knowledgeRoot: string) => number
+      }
+    ).countPendingCurationJobs
+
+    expect(countPendingCurationJobs).toBeTypeOf('function')
+    expect(countPendingCurationJobs?.(join(root, 'absent-knowledge-root'))).toBe(0)
+    expect(countPendingCurationJobs?.(knowledgeRoot)).toBe(0)
+    enqueue('pending-count-one', 'ci')
+    enqueue('pending-count-two', 'ci')
+    expect(countPendingCurationJobs?.(knowledgeRoot)).toBe(2)
   })
 })
