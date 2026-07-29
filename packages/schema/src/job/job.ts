@@ -52,7 +52,12 @@ export interface Job {
   updatedAt: string
 }
 
-const jobKindValues = [
+// Exported for the sibling job DTO modules only (385 plan 02). They enumerate the same kind
+// set, and a second hand-written literal list is how one of them ends up admitting a kind the
+// other refuses. It is not on the package barrel: the kind vocabulary consumers need is the
+// `JobKind` type, and publishing the array as well would invite a caller to iterate it and
+// build a parallel registry beside the declared one.
+export const jobKindValues = [
   'chat',
   'analyze-run',
   'curate-memory',

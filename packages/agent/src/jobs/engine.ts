@@ -11,13 +11,12 @@
 // nothing to do with correctness (D-03), and the usual repair for a flaky equality
 // assertion is to loosen it — which would quietly retire the proof.
 
-import type { Job, JobId, JobKind } from '@vostride/agent-qa-schema'
+import type { ChainedJobRequest, Job, JobId, JobKind } from '@vostride/agent-qa-schema'
 
 import type { ClockPort } from '../ports/clock.js'
 import type {
-  ChainedJobEnqueue,
   JobEnqueueOutcome,
-  JobEnqueueRequest,
+  JobInsert,
   JobStoreFence,
   JobStorePort,
 } from '../ports/job-store.js'
@@ -81,6 +80,31 @@ export class UndeclaredJobSuccessorError extends Error {
   }
 }
 
+/**
+ * Thrown when a handler reports an outcome this build's driver does not yet dispatch.
+ *
+ * The handler contract is complete as of 385 plan 02 — a handler may already report
+ * `retryable` or `permanent` — but what the driver DOES with such a report is bounded retry,
+ * and that is the retry plan's to build. Refusing loudly here follows the same rule the store
+ * follows for its declared-but-unimplemented verb: a driver that quietly treated a failure
+ * report as a completion would mark the job `done`, and a job wrongly marked done is worse
+ * than one that stops with a name attached.
+ */
+export class UndispatchedJobOutcomeError extends Error {
+  override readonly name = 'UndispatchedJobOutcomeError'
+
+  constructor(
+    readonly jobKind: JobKind,
+    readonly outcomeStatus: string,
+  ) {
+    super(
+      `Agent job kind ${jobKind} reported outcome '${outcomeStatus}', which the phase-385 ` +
+        'driver does not dispatch yet; the retry plan owns bounded retry and permanent ' +
+        'failure. The report is legal — only its handling is unbuilt.',
+    )
+  }
+}
+
 /** Thrown when a handler publishes a checkpoint its kind never declared. */
 export class UndeclaredJobCheckpointError extends Error {
   override readonly name = 'UndeclaredJobCheckpointError'
@@ -136,11 +160,7 @@ function defaultSummary(kind: JobKind, idempotencyKey: string): string {
 export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJobQueue {
   const { store, registry, clock, idSource } = options
 
-  function requestFor(
-    kind: JobKind,
-    payload: unknown,
-    idempotencyKey: string,
-  ): JobEnqueueRequest {
+  function requestFor(kind: JobKind, payload: unknown, idempotencyKey: string): JobInsert {
     // An undeclared kind is refused before anything is written: the store would happily
     // hold a row no handler can ever pick up, and that row is indistinguishable from a
     // stuck job forever after.
@@ -159,9 +179,9 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
 
   function successorRequests(
     declaration: JobKindDeclaration,
-    outcome: { readonly next?: readonly { kind: JobKind; payload: unknown; idempotencyKey: string }[] },
-  ): ChainedJobEnqueue[] {
-    return (outcome.next ?? []).map((successor) => {
+    next: readonly ChainedJobRequest[],
+  ): JobInsert[] {
+    return next.map((successor) => {
       if (!declaration.allowedSuccessors.includes(successor.kind)) {
         throw new UndeclaredJobSuccessorError(declaration.kind, successor.kind)
       }
@@ -205,9 +225,16 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         },
       })
 
+      // The discriminant is READ, not merely accepted. A driver that ignored it and reached
+      // for `next` would complete a job whose handler had just said it failed, and the row
+      // would read `done` forever after with nothing recording that anything went wrong.
+      if (outcome.status !== 'complete') {
+        throw new UndispatchedJobOutcomeError(job.kind, outcome.status)
+      }
+
       const completed = await store.completeAndChain(
         job.id,
-        successorRequests(declaration, outcome),
+        successorRequests(declaration, outcome.next),
         fence,
       )
 

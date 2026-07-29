@@ -34,13 +34,19 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * helper can resolve, gate or run anything, so publishing them opens no path around the
  * dispatch.
  *
- * 385 adds the agent job queue's two constructors and its five named refusals. They are
+ * 385 adds the agent job queue's two constructors and its named refusals. They are
  * safe here for the same structural reason the masking helpers are: none of them is
  * dispatch, and none of them is a host capability. The queue reaches storage only through
  * an injected `JobStorePort`, so nothing on this list can read or write a byte on its own.
  * The list deliberately does NOT carry a store implementation, a checkpoint reader, a path
  * helper, or any model accessor — `agent` is storageNeutral and providerNeutral, and an
  * arrival of that kind is precisely the drift this exact-equality pin exists to catch.
+ *
+ * 385 plan 02 adds one more refusal, for a handler outcome the driver does not dispatch yet.
+ * A declared-but-unbuilt path that refuses by name is on this list deliberately: a caller
+ * has to be able to tell "the queue has not built this" apart from "the queue rejected your
+ * work", and the day the retry plan builds it, its departure from this list is the visible
+ * edit that says so.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'DuplicateFunctionIdError',
@@ -55,6 +61,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'StreamReplayFloorError',
   'UndeclaredJobCheckpointError',
   'UndeclaredJobSuccessorError',
+  'UndispatchedJobOutcomeError',
   'UnknownFunctionError',
   'UnknownJobKindError',
   'createAgentJobQueue',
@@ -76,12 +83,19 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  * these can carry behaviour across the barrel — what they carry is the SHAPE later phases
  * bind, and pinning them here is what makes a widening of that shape a visible edit rather
  * than an incidental one.
+ *
+ * 385 plan 02 REMOVES four names from this list and adds one. The enqueue request, the
+ * chained request and the handler outcome now live in the schema package, because each one
+ * crosses a boundary where a type is not enough — a caller in another process, bytes an
+ * earlier build wrote, data a handler returned — and each therefore needs a runtime schema
+ * beside it. Republishing them here would give every consumer two names for one contract and
+ * no way to tell which one a later edit widened. What stays is `JobInsert`: the row the
+ * engine hands the store, which never crosses a boundary and is nobody's public vocabulary.
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
   'ApprovalsPort',
   'AuthoringReadPort',
-  'ChainedJobEnqueue',
   'ClockPort',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
@@ -97,19 +111,17 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'JobClaimOutcome',
   'JobCompleteOutcome',
   'JobEnqueueOutcome',
-  'JobEnqueueRequest',
   'JobFailureDisposition',
   'JobHandler',
   'JobHandlerContext',
-  'JobHandlerOutcome',
   'JobIdSource',
+  'JobInsert',
   'JobKindDeclaration',
   'JobKindRegistry',
   'JobStoreDump',
   'JobStoreDumpRow',
   'JobStoreFence',
   'JobStorePort',
-  'JobSuccessorRequest',
   'KnowledgePort',
   'KnowledgeReaderPort',
   'PersistencePort',

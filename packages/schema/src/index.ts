@@ -267,6 +267,20 @@ export type {
 } from './run/index'
 export type { Job, JobKind, JobStatus, JobConclusionKind, JobId } from './job/index'
 export { asJobId, jobSchema } from './job/index'
+// 385 plan 02 (JOBQ-01/JOBQ-02/JOBQ-05): the agent job queue's DTO vocabulary.
+export type {
+  ChainedJobRequest,
+  JobCheckpointEnvelope,
+  JobEnqueueRequest,
+  JobHandlerOutcome,
+} from './job/index'
+export {
+  JOB_CHECKPOINT_SCHEMA_VERSION,
+  chainedJobRequestSchema,
+  jobCheckpointEnvelopeSchema,
+  jobEnqueueRequestSchema,
+  jobHandlerOutcomeSchema,
+} from './job/index'
 export type {
   Approval,
   ActionProposal,

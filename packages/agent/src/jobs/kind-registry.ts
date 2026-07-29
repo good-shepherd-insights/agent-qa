@@ -11,7 +11,7 @@
 // Phase-385 plan 01 registers exactly one fixture kind. Full declaration validation and
 // the six real kinds arrive with the registry plan.
 
-import type { Job, JobKind } from '@vostride/agent-qa-schema'
+import type { Job, JobHandlerOutcome, JobKind } from '@vostride/agent-qa-schema'
 
 /** What a handler is handed. Checkpoint publication is a capability, never an import. */
 export interface JobHandlerContext {
@@ -20,22 +20,15 @@ export interface JobHandlerContext {
 }
 
 /**
- * A successor the handler's deterministic tail asks for (D-17).
+ * What a handler reports (D-17/D-18).
  *
- * The TOPOLOGY is declared once, on the kind; the INSTANCES are returned by the handler.
- * That split is what makes an outcome-dependent chain ordinary data rather than a special
- * case, while still keeping the whole graph auditable in one place.
+ * 385 plan 02 replaced this module's own outcome shape with the schema DTO. The two were the
+ * same concept described twice, and the local one could not say a handler had FAILED at all —
+ * a bare optional successor list makes "finished, chaining nothing" and "gave up" identical.
+ * The TOPOLOGY of what may chain to what is still declared here, on the kind; only the
+ * INSTANCES come back from the handler, which is what keeps an outcome-dependent chain
+ * ordinary data while leaving the whole graph auditable in one place.
  */
-export interface JobSuccessorRequest {
-  readonly kind: JobKind
-  readonly payload: unknown
-  readonly idempotencyKey: string
-}
-
-export interface JobHandlerOutcome {
-  readonly next?: readonly JobSuccessorRequest[]
-}
-
 export type JobHandler = (context: JobHandlerContext) => Promise<JobHandlerOutcome>
 
 export interface JobKindDeclaration {

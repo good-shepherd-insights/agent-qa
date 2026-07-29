@@ -21,7 +21,7 @@
 // concurrent enqueue a dedupe, not a conflict (D-08). Authority is only ever needed to
 // CLAIM or ADVANCE work, which is exactly the set of verbs that carries the fence.
 
-import type { Job, JobId, JobKind } from '@vostride/agent-qa-schema'
+import type { Job, JobEnqueueRequest, JobId } from '@vostride/agent-qa-schema'
 
 /**
  * The authority token a drain-side verb must present.
@@ -52,24 +52,24 @@ export class StaleJobStoreEpochError extends Error {
 }
 
 /**
- * One job to insert.
+ * One job row to insert: a caller's `JobEnqueueRequest` plus what the engine resolved for it.
  *
- * The id is supplied by the CALLER, not minted by the store: the engine derives it from
- * `(kind, idempotencyKey)` through an injected id source so the same logical job has the
- * same id in every process and in every replay (D-03 corollary). Timestamps are absent on
- * purpose — the store stamps them from ITS injected clock, so no SQL-side default can leak
- * host time into a dump.
+ * 385 plan 02 split this from the request DTO rather than duplicating it. The request is the
+ * three facts a CALLER knows; the two fields added here are derived at the engine boundary
+ * and belong to nobody else. The id is derived from `(kind, idempotencyKey)` through an
+ * injected id source, so the same logical job carries the same id in every process and in
+ * every replay (D-03 corollary) — a store that minted its own would break that, and a caller
+ * that supplied its own could break it twice. Timestamps are absent on purpose: the store
+ * stamps them from ITS injected clock, so no SQL-side default can leak host time into a dump.
+ *
+ * There is no separate "chained enqueue" type. A successor differs from a root job in who
+ * asked for it, not in what it is, and the difference that does matter — a successor is
+ * inserted inside its predecessor's transaction — is expressed by the verb it arrives at.
  */
-export interface JobEnqueueRequest {
+export interface JobInsert extends JobEnqueueRequest {
   readonly id: JobId
-  readonly kind: JobKind
-  readonly idempotencyKey: string
   readonly summary: string
-  readonly payload: unknown
 }
-
-/** A successor enqueued in the same transaction that completes its predecessor (D-17). */
-export type ChainedJobEnqueue = JobEnqueueRequest
 
 /**
  * The result of an enqueue.
@@ -94,7 +94,16 @@ export interface JobCompleteOutcome {
   readonly chained: readonly JobEnqueueOutcome[]
 }
 
-/** How a failed attempt should be disposed of. Behaviour lands with the retry plan. */
+/**
+ * How a failed attempt should be disposed of. Behaviour lands with the retry plan.
+ *
+ * This is NOT a second spelling of the handler's `JobHandlerOutcome`, and the two are kept
+ * apart deliberately (385 plan 02). The handler REPORTS whether the thing that went wrong
+ * could go right next time; the engine DECIDES what to record, and only the engine knows how
+ * many attempts remain. A retryable report on the last permitted attempt becomes a permanent
+ * disposition here — which is exactly the bound D-18 puts on retries, and it would have
+ * nowhere to live if the report and the decision were one type.
+ */
 export type JobFailureDisposition =
   | { readonly kind: 'retry'; readonly reason: string }
   | { readonly kind: 'permanent'; readonly reason: string }
@@ -136,7 +145,7 @@ export interface JobStorePort {
   adoptEpoch(epoch: number): Promise<JobStoreFence>
 
   /** Fence-free by design — see the D-02/D-07 note at the top of this module. */
-  enqueue(request: JobEnqueueRequest): Promise<JobEnqueueOutcome>
+  enqueue(request: JobInsert): Promise<JobEnqueueOutcome>
 
   claimNext(fence: JobStoreFence): Promise<JobClaimOutcome>
 
@@ -146,7 +155,7 @@ export interface JobStorePort {
    */
   completeAndChain(
     jobId: JobId,
-    next: readonly ChainedJobEnqueue[],
+    next: readonly JobInsert[],
     fence: JobStoreFence,
   ): Promise<JobCompleteOutcome>
 

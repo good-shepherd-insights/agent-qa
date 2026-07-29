@@ -25,9 +25,13 @@ import {
 } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 
-import { canonicalJson } from '@vostride/agent-qa-schema'
-
-export const JOB_CHECKPOINT_SCHEMA_VERSION = 1
+import {
+  canonicalJson,
+  asJobId,
+  JOB_CHECKPOINT_SCHEMA_VERSION,
+  jobCheckpointEnvelopeSchema,
+} from '@vostride/agent-qa-schema'
+import type { JobCheckpointEnvelope } from '@vostride/agent-qa-schema'
 
 /** Directory segments under the agent-qa root, per the D-21 "agent job queue" naming. */
 export const JOB_CHECKPOINT_SUBDIR = ['agent-jobs', 'checkpoints'] as const
@@ -133,9 +137,12 @@ export function createJobCheckpointStore(
 
     publish(jobId, checkpointId, payload) {
       const file = pathFor(jobId, checkpointId)
-      const envelope = {
+      // Typed as the shipped envelope contract rather than as an ad-hoc literal (385 plan
+      // 02): the bytes this writes are the bytes the contract describes, so a field added on
+      // one side and forgotten on the other stops compiling instead of shipping.
+      const envelope: JobCheckpointEnvelope = {
         schemaVersion: JOB_CHECKPOINT_SCHEMA_VERSION,
-        jobId,
+        jobId: asJobId(jobId),
         checkpointId,
         payload,
       }
@@ -170,11 +177,15 @@ export function createJobCheckpointStore(
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { found: false }
         throw error
       }
-      const envelope = JSON.parse(text) as { schemaVersion?: unknown; payload?: unknown }
-      if (envelope.schemaVersion !== JOB_CHECKPOINT_SCHEMA_VERSION) {
-        throw new JobCheckpointSchemaVersionError(file, envelope.schemaVersion)
+      const raw = JSON.parse(text) as { schemaVersion?: unknown }
+      // The version is checked BEFORE the schema parse, and the order is deliberate. D-04
+      // asks for a named refusal that tells the operator what to do, and a generic parse
+      // failure on a literal mismatch is not that — it reports a field, not a remedy. Once
+      // the version is right, the parse covers everything else the contract requires.
+      if (raw.schemaVersion !== JOB_CHECKPOINT_SCHEMA_VERSION) {
+        throw new JobCheckpointSchemaVersionError(file, raw.schemaVersion)
       }
-      return { found: true, payload: envelope.payload }
+      return { found: true, payload: jobCheckpointEnvelopeSchema.parse(raw).payload }
     },
   }
 }

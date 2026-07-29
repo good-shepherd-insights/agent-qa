@@ -82,15 +82,17 @@ export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-s
 // No model accessor is exported here and none may ever be (D-11 layer 1): a job's only path
 // to a model is the authorship primitive's callback argument, so a handler cannot reach one
 // on its own, and the resume path therefore cannot re-invoke one by any route at all.
+// The DTO vocabulary itself is NOT republished here (385 plan 02). The request, checkpoint
+// envelope and handler outcome are schema's, and a consumer reaches them there — a second
+// route to the same names is how two spellings of one contract start to drift.
 export { StaleJobStoreEpochError } from './ports/index.js'
 export type {
-  ChainedJobEnqueue,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
   JobEnqueueOutcome,
-  JobEnqueueRequest,
   JobFailureDisposition,
+  JobInsert,
   JobStoreDump,
   JobStoreDumpRow,
   JobStoreFence,
@@ -104,16 +106,15 @@ export {
 export type {
   JobHandler,
   JobHandlerContext,
-  JobHandlerOutcome,
   JobKindDeclaration,
   JobKindRegistry,
-  JobSuccessorRequest,
 } from './jobs/kind-registry.js'
 export {
   createAgentJobQueue,
   MissingIdempotencyKeyError,
   UndeclaredJobCheckpointError,
   UndeclaredJobSuccessorError,
+  UndispatchedJobOutcomeError,
 } from './jobs/engine.js'
 export type {
   AgentJobQueue,

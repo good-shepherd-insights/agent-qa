@@ -21,14 +21,13 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
 import type {
-  ChainedJobEnqueue,
   ClockPort,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
   JobEnqueueOutcome,
-  JobEnqueueRequest,
   JobFailureDisposition,
+  JobInsert,
   JobStoreDump,
   JobStoreDumpRow,
   JobStoreFence,
@@ -233,7 +232,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     return row
   }
 
-  function insertOrGet(request: JobEnqueueRequest, now: string): JobEnqueueOutcome {
+  function insertOrGet(request: JobInsert, now: string): JobEnqueueOutcome {
     const changes = insertJob.run(
       String(request.id),
       request.kind,
@@ -282,7 +281,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       })
     },
 
-    async enqueue(request: JobEnqueueRequest): Promise<JobEnqueueOutcome> {
+    async enqueue(request: JobInsert): Promise<JobEnqueueOutcome> {
       const now = clock.now()
       return inTransaction(() => insertOrGet(request, now))
     },
@@ -305,7 +304,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
 
     async completeAndChain(
       jobId: JobId,
-      next: readonly ChainedJobEnqueue[],
+      next: readonly JobInsert[],
       fence: JobStoreFence,
     ): Promise<JobCompleteOutcome> {
       const now = clock.now()

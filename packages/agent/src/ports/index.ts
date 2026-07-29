@@ -6,13 +6,12 @@ export type { ApprovalsPort } from './approvals.js'
 export type { ClockPort } from './clock.js'
 export { StaleJobStoreEpochError } from './job-store.js'
 export type {
-  ChainedJobEnqueue,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
   JobEnqueueOutcome,
-  JobEnqueueRequest,
   JobFailureDisposition,
+  JobInsert,
   JobStoreDump,
   JobStoreDumpRow,
   JobStoreFence,
