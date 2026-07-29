@@ -8,14 +8,28 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { invokeFunction } from '@vostride/agent-qa-agent'
-import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import {
+  FunctionDeniedError,
+  FunctionInputError,
+  FunctionNotBoundError,
+  FunctionScopeError,
+  StreamReplayFloorError,
+  UnknownFunctionError,
+  invokeFunction,
+} from '@vostride/agent-qa-agent'
+import type {
+  ConfigReaderPort,
+  FunctionRegistry,
+  JobModelCapability,
+} from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 
 import { invokeViaDaemon } from '../daemon/client.js'
 import {
@@ -81,6 +95,165 @@ function register(agentQaRoot: string, socketPath: string): void {
     socketPath,
     startedAtMs: Date.now(),
   })
+}
+
+interface TestAuditRow extends Record<string, unknown> {
+  readonly action?: string
+  readonly verdict?: string
+}
+
+interface TestRegistryFixture {
+  readonly registry: FunctionRegistry
+  readonly auditRows: TestAuditRow[]
+}
+
+interface SemanticEndpointModules {
+  readonly FunctionDeniedError: typeof FunctionDeniedError
+  readonly FunctionInputError: typeof FunctionInputError
+  readonly FunctionNotBoundError: typeof FunctionNotBoundError
+  readonly FunctionScopeError: typeof FunctionScopeError
+  readonly StreamReplayFloorError: typeof StreamReplayFloorError
+  readonly UnknownFunctionError: typeof UnknownFunctionError
+  readonly invokeFunction: typeof invokeFunction
+  readonly invokeViaDaemon: typeof invokeViaDaemon
+  readonly startInvokeServer: typeof startInvokeServer
+}
+
+let semanticEndpointModules: Promise<SemanticEndpointModules> | undefined
+
+/** Load a second server instance whose agent imports share the source registry test seam. */
+function semanticModules(): Promise<SemanticEndpointModules> {
+  semanticEndpointModules ??= (async () => {
+    const agentPackage = '@vostride/agent-qa-agent'
+    const invokeModuleUrl = new URL('../../../agent/src/functions/invoke.ts', import.meta.url)
+    const streamModuleUrl = new URL(
+      '../../../agent/src/functions/ops/runs-events.ts',
+      import.meta.url,
+    )
+    const actual = await vi.importActual<Record<string, unknown>>(agentPackage)
+    const invokeModule = (await import(invokeModuleUrl.href)) as Record<string, unknown>
+    const streamModule = (await import(streamModuleUrl.href)) as Record<string, unknown>
+    vi.doMock(agentPackage, () => ({ ...actual, ...invokeModule, ...streamModule }))
+
+    const serverModulePath = '../daemon/server.js?semantic-endpoint'
+    const clientModulePath = '../daemon/client.js?semantic-endpoint'
+    const serverModule = (await import(serverModulePath)) as Record<string, unknown>
+    const clientModule = (await import(clientModulePath)) as Record<string, unknown>
+
+    return {
+      FunctionDeniedError: invokeModule.FunctionDeniedError,
+      FunctionInputError: invokeModule.FunctionInputError,
+      FunctionNotBoundError: invokeModule.FunctionNotBoundError,
+      FunctionScopeError: invokeModule.FunctionScopeError,
+      StreamReplayFloorError: streamModule.StreamReplayFloorError,
+      UnknownFunctionError: invokeModule.UnknownFunctionError,
+      invokeFunction: invokeModule.invokeFunction,
+      invokeViaDaemon: clientModule.invokeViaDaemon,
+      startInvokeServer: serverModule.startInvokeServer,
+    } as SemanticEndpointModules
+  })()
+  return semanticEndpointModules
+}
+
+/**
+ * Endpoint conformance needs ask-tier and deliberately interrupted stream declarations that do
+ * not belong in the production catalog. The spec constructor stays absent from the public agent
+ * barrel; this test-only dynamic load exercises the real registry and gate without widening the
+ * surface firewall or admitting a second production dispatch path.
+ */
+async function registryFixture(
+  specs: readonly Record<string, unknown>[],
+): Promise<TestRegistryFixture> {
+  const registryModuleUrl = new URL('../../../agent/src/functions/registry.js', import.meta.url)
+  const registryModule = (await import(registryModuleUrl.href)) as {
+    createRegistryFromSpecs(
+      specs: readonly Record<string, unknown>[],
+      options: Record<string, unknown>,
+    ): FunctionRegistry
+  }
+  const auditRows: TestAuditRow[] = []
+  const registry = registryModule.createRegistryFromSpecs(specs, {
+    deps: {
+      runs: {
+        list: () => Promise.resolve([]),
+        get: () => Promise.resolve(undefined),
+        readEvents: () => Promise.resolve([]),
+      },
+      knowledge: { listBundles: () => Promise.resolve([]) },
+      config: TEST_CONFIG,
+    },
+    auditSink: {
+      appendExecutionAudit(row: TestAuditRow) {
+        auditRows.push(row)
+      },
+      appendGuardrailAudit() {},
+    },
+    resolveExecutionContext: () => 'local-headless',
+  })
+  return { registry, auditRows }
+}
+
+async function startRegistryServer(
+  label: string,
+  registry: FunctionRegistry,
+  startServer: typeof startInvokeServer = startInvokeServer,
+): Promise<{ agentQaRoot: string; socketPath: string }> {
+  const root = temporaryRoot(label)
+  const agentQaRoot = join(root, '.agent-qa')
+  const socketPath = join(agentQaRoot, 'daemon.sock')
+  register(agentQaRoot, socketPath)
+  const server = await startServer({ socketPath, registry })
+  servers.push(server)
+  return { agentQaRoot, socketPath }
+}
+
+async function rawInvoke(
+  socketPath: string,
+  functionId: string,
+  input: unknown,
+): Promise<{ contentType: string; statusCode: number; text: string }> {
+  const body = JSON.stringify({ schemaVersion: 1, functionId, input })
+  return new Promise((resolveInvoke, rejectInvoke) => {
+    const outgoing = request(
+      {
+        socketPath,
+        path: '/invoke',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body),
+          connection: 'close',
+        },
+      },
+      (response) => {
+        response.setEncoding('utf8')
+        let text = ''
+        response.on('data', (chunk: string) => {
+          text += chunk
+        })
+        response.once('error', rejectInvoke)
+        response.once('end', () => {
+          resolveInvoke({
+            contentType: String(response.headers['content-type'] ?? ''),
+            statusCode: response.statusCode ?? 500,
+            text,
+          })
+        })
+      },
+    )
+    outgoing.once('error', rejectInvoke)
+    outgoing.end(body)
+  })
+}
+
+async function capturedRejection(operation: Promise<unknown>): Promise<Error> {
+  try {
+    await operation
+  } catch (error) {
+    if (error instanceof Error) return error
+    throw new Error(`Expected an Error rejection, received ${String(error)}`)
+  }
+  throw new Error('Expected invocation to reject')
 }
 
 async function waitFor<T>(
@@ -239,5 +412,239 @@ describe('daemon /invoke endpoint tracer', () => {
     await expect(startInvokeServer({ socketPath, registry: host.registry }))
       .rejects.toBeInstanceOf(DaemonSocketInUseError)
     expect(existsSync(socketPath)).toBe(true)
+  })
+})
+
+describe('daemon /invoke endpoint semantic parity', () => {
+  it('frames element seq values as SSE ids and resumes exactly once after a dropped stream', async () => {
+    const semantic = await semanticModules()
+    const elements = [
+      { seq: 1, value: 'one' },
+      { seq: 2, value: 'two' },
+      { seq: 3, value: 'three' },
+    ]
+    const resumeInputs: Array<number | undefined> = []
+    let shouldDrop = true
+    const streamInput = z.object({ lastEventId: z.number().int().optional() }).strict()
+    const streamOutput = z.object({ seq: z.number().int(), value: z.string() }).strict()
+    const { registry } = await registryFixture([
+      {
+        id: 'synthetic.frames',
+        summary: 'Stable stream for exact SSE framing.',
+        requiredScopes: ['read'],
+        resultKind: 'stream',
+        input: streamInput,
+        output: streamOutput,
+        risk: { name: 'fn:synthetic.frames', recognized: true, readOnly: true },
+        async invoke(input: { lastEventId?: number }) {
+          return (async function* () {
+            for (const element of elements.filter(({ seq }) => seq > (input.lastEventId ?? 0))) {
+              yield element
+            }
+          })()
+        },
+      },
+      {
+        id: 'synthetic.resume',
+        summary: 'Interrupted stream for one reconnect with lastEventId.',
+        requiredScopes: ['read'],
+        resultKind: 'stream',
+        input: streamInput,
+        output: streamOutput,
+        risk: { name: 'fn:synthetic.resume', recognized: true, readOnly: true },
+        async invoke(input: { lastEventId?: number }) {
+          resumeInputs.push(input.lastEventId)
+          return (async function* () {
+            for (const element of elements.filter(({ seq }) => seq > (input.lastEventId ?? 0))) {
+              yield element
+              if (shouldDrop) {
+                shouldDrop = false
+                await new Promise((resolveDrop) => setTimeout(resolveDrop, 10))
+                throw new Error('simulated stream transport drop')
+              }
+            }
+          })()
+        },
+      },
+    ])
+    const { agentQaRoot, socketPath } = await startRegistryServer(
+      'sse',
+      registry,
+      semantic.startInvokeServer,
+    )
+
+    const framed = await rawInvoke(socketPath, 'synthetic.frames', {})
+    expect(framed.statusCode).toBe(200)
+    expect(framed.contentType).toContain('text/event-stream')
+    expect(framed.text).toBe(
+      'id: 1\ndata: {"seq":1,"value":"one"}\n\n' +
+        'id: 2\ndata: {"seq":2,"value":"two"}\n\n' +
+        'id: 3\ndata: {"seq":3,"value":"three"}\n\n',
+    )
+
+    const result = await semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.resume',
+      input: {},
+    })
+    const observed: unknown[] = []
+    for await (const element of result as AsyncIterable<unknown>) observed.push(element)
+
+    expect(observed).toEqual(elements)
+    expect(resumeInputs).toEqual([undefined, 1])
+  })
+
+  it('rehydrates every named refusal class with its structured fields intact', async () => {
+    const semantic = await semanticModules()
+    const emptyInput = z.object({}).strict()
+    const output = z.object({ ok: z.literal(true) }).strict()
+    const { registry } = await registryFixture([
+      {
+        id: 'synthetic.input',
+        summary: 'Input refusal fixture.',
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        input: z.object({ value: z.string() }).strict(),
+        output,
+        risk: { name: 'fn:synthetic.input', recognized: true, readOnly: true },
+        invoke: () => Promise.resolve({ ok: true }),
+      },
+      {
+        id: 'synthetic.scope',
+        summary: 'Scope refusal fixture.',
+        requiredScopes: ['fixture-scope'],
+        resultKind: 'unary',
+        input: emptyInput,
+        output,
+        risk: { name: 'fn:synthetic.scope', recognized: true, readOnly: true },
+        invoke: () => Promise.resolve({ ok: true }),
+      },
+      {
+        id: 'synthetic.unbound',
+        summary: 'Binding refusal fixture.',
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        boundThrough: 'runInvocation',
+        input: emptyInput,
+        output,
+        risk: { name: 'fn:synthetic.unbound', recognized: true, readOnly: true },
+        invoke: () => Promise.resolve({ ok: true }),
+      },
+      {
+        id: 'synthetic.floor',
+        summary: 'Replay-floor refusal fixture.',
+        requiredScopes: ['read'],
+        resultKind: 'stream',
+        input: emptyInput,
+        output,
+        risk: { name: 'fn:synthetic.floor', recognized: true, readOnly: true },
+        invoke: () => Promise.reject(
+          new semantic.StreamReplayFloorError('run-fixture', 2, 7),
+        ),
+      },
+    ])
+    const { agentQaRoot } = await startRegistryServer(
+      'refusals',
+      registry,
+      semantic.startInvokeServer,
+    )
+
+    const unknown = await capturedRejection(semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.missing',
+      input: {},
+    }))
+    expect(unknown).toBeInstanceOf(semantic.UnknownFunctionError)
+    expect(unknown).toMatchObject({ functionId: 'synthetic.missing' })
+
+    const invalid = await capturedRejection(semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.input',
+      input: { value: 1 },
+    }))
+    expect(invalid).toBeInstanceOf(semantic.FunctionInputError)
+    expect(invalid).toMatchObject({
+      functionId: 'synthetic.input',
+      issues: expect.stringContaining('value'),
+    })
+
+    const scope = await capturedRejection(semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.scope',
+      input: {},
+    }))
+    expect(scope).toBeInstanceOf(semantic.FunctionScopeError)
+    expect(scope).toMatchObject({
+      functionId: 'synthetic.scope',
+      missingScopes: ['fixture-scope'],
+    })
+
+    const unbound = await capturedRejection(semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.unbound',
+      input: {},
+    }))
+    expect(unbound).toBeInstanceOf(semantic.FunctionNotBoundError)
+    expect(unbound).toMatchObject({ functionId: 'synthetic.unbound' })
+
+    const floor = await capturedRejection(semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.floor',
+      input: {},
+    }))
+    expect(floor).toBeInstanceOf(semantic.StreamReplayFloorError)
+    expect(floor).toMatchObject({
+      runId: 'run-fixture',
+      requestedSeq: 2,
+      earliestAvailableSeq: 7,
+    })
+  })
+
+  it('surfaces the real fail-closed ask denial with exactly the gate audit row', async () => {
+    const semantic = await semanticModules()
+    const { registry, auditRows } = await registryFixture([
+      {
+        id: 'synthetic.ask',
+        summary: 'Ask-tier fixture for the daemon local-headless posture.',
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        input: z.object({}).strict(),
+        output: z.object({ ok: z.literal(true) }).strict(),
+        risk: {
+          name: 'fn:synthetic.ask',
+          recognized: true,
+          declaredTier: 'mutating-shared',
+        },
+        invoke: () => Promise.resolve({ ok: true }),
+      },
+    ])
+
+    const inProcess = await capturedRejection(
+      semantic.invokeFunction(registry, 'synthetic.ask', {}, DAEMON_FUNCTION_CALLER),
+    )
+    expect(inProcess).toBeInstanceOf(semantic.FunctionDeniedError)
+    const inProcessRows = auditRows.splice(0)
+    expect(inProcessRows).toHaveLength(1)
+
+    const { agentQaRoot } = await startRegistryServer(
+      'ask-deny',
+      registry,
+      semantic.startInvokeServer,
+    )
+    const overWire = await capturedRejection(semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.ask',
+      input: {},
+    }))
+    expect(overWire).toBeInstanceOf(semantic.FunctionDeniedError)
+    expect(overWire).toMatchObject({
+      functionId: 'synthetic.ask',
+      reason: expect.stringContaining('mutating-shared'),
+    })
+    expect(overWire.message).toContain('re-run locally')
+
+    const wireRows = auditRows.splice(0)
+    expect(wireRows).toHaveLength(1)
+    expect(wireRows).toEqual(inProcessRows)
   })
 })
