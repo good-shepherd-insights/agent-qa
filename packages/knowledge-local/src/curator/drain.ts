@@ -16,19 +16,11 @@ import {
   indexDbPath,
   openIndexReaderConnection,
   readIndexMaintenanceState,
-  type IndexMaintenanceState,
 } from '../index-open.js'
-import {
-  rebuildIndex,
-  removeBundleProjectionRows,
-  type RebuildReport,
-} from '../index-rebuild.js'
+import { rebuildIndex, removeBundleProjectionRows } from '../index-rebuild.js'
 import { acquireEmbedder } from '../embedder-acquire.js'
-import { runKnowledgeGc, type GcSummary } from '../gc.js'
-import {
-  readRebuildRequest,
-  type RebuildRequest,
-} from '../rebuild-marker.js'
+import { runKnowledgeGc } from '../gc.js'
+import { readRebuildRequest } from '../rebuild-marker.js'
 import { buildRetrievalQuery, type RetrievalQueryInput } from '../query-helper.js'
 import { retrieve } from '../retrieve.js'
 import {
@@ -80,6 +72,14 @@ import {
 import type { DispositionDrainState } from './disposition.js'
 import { constructFallbackDeltas } from './fallback.js'
 import { createLocalKnowledgeStore } from './knowledge-store.js'
+import {
+  runMaintenanceTail,
+  type GcPassReport,
+  type MaintenanceOperations,
+  type WriterPassReport,
+} from './maintenance.js'
+
+export type { GcPassReport, WriterPassReport } from './maintenance.js'
 
 /** Ratified M2 one-shot budget. It gates job starts only, never an in-flight author request. */
 export const DRAIN_BUDGET_MS = 60_000
@@ -113,27 +113,6 @@ export interface DrainFailure {
   message: string
   candidateId?: string
 }
-
-export type WriterPassReport =
-  | { kind: 'not-requested' }
-  | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
-  | {
-      kind: 'rebuilt'
-      request?: RebuildRequest
-      rebuild: RebuildReport
-    }
-  | { kind: 'failed'; message: string }
-
-export type GcPassReport =
-  | { kind: 'not-run' }
-  | { kind: 'skipped'; reason: 'lease-held' | 'budget-exhausted' | 'aborted' }
-  | {
-      kind: 'completed'
-      summary: GcSummary
-      /** WR-01: projection rows removed by the same-drain scoped cleanup; absent on zero-trim. */
-      projectionRowsRemoved?: number
-    }
-  | { kind: 'failed'; message: string }
 
 /**
  * A commit that decided there was nothing to apply. Legitimate reasons exist (evidence-token
@@ -178,7 +157,7 @@ export type DrainReport = DrainReportBase &
  * every default delegates directly to the shipped queue, lease, retrieval, commit, and rebuild
  * authorities.
  */
-export interface DrainOperations {
+export interface DrainOperations extends MaintenanceOperations {
   acquireWriterLease: typeof acquireWriterLease
   heartbeatLease: typeof heartbeatLease
   releaseLease: typeof releaseLease
@@ -194,12 +173,6 @@ export interface DrainOperations {
   commitCurationDelta: typeof commitCurationDelta
   /** The canonical commit already projects dense work as pending; the breaker selects this seam. */
   commitCurationDeltaVectorless: typeof commitCurationDelta
-  readRebuildRequest: typeof readRebuildRequest
-  readIndexMaintenanceState: typeof readIndexMaintenanceState
-  acquireEmbedder: typeof acquireEmbedder
-  rebuildIndex: typeof rebuildIndex
-  runKnowledgeGc: typeof runKnowledgeGc
-  removeBundleProjectionRows: typeof removeBundleProjectionRows
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
   applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
   deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
@@ -214,6 +187,8 @@ export interface DrainOptions {
   author: CuratorAuthor
   executionContext: ExecutionContext
   policy: GuardrailPolicy
+  /** Default inline preserves one-shot behavior; daemon sessions skip for their own cadence. */
+  maintenance?: 'inline' | 'skip'
   signal?: AbortSignal
   /** D-06 test seam. Production uses the one wall clock only at drain boundaries. */
   now?: () => number
@@ -623,35 +598,6 @@ function incrementEmbedCrashAndRequeue(
   )
 }
 
-async function runWriterPass(
-  operations: DrainOperations,
-  knowledgeRoot: string,
-): Promise<WriterPassReport> {
-  const marker = operations.readRebuildRequest(knowledgeRoot)
-  const maintenance = operations.readIndexMaintenanceState(knowledgeRoot)
-  if (!marker.present && !hasIndexMaintenanceDebt(maintenance)) {
-    return { kind: 'not-requested' }
-  }
-
-  const capability = await operations.acquireEmbedder({ allowDownload: false })
-  const rebuild = await operations.rebuildIndex({
-    knowledgeRoot,
-    ...(capability.kind === 'ready' ? { embedder: capability.embedder } : {}),
-  })
-  return {
-    kind: 'rebuilt',
-    ...(marker.present && marker.request !== undefined ? { request: marker.request } : {}),
-    rebuild,
-  }
-}
-
-function hasIndexMaintenanceDebt(state: IndexMaintenanceState): boolean {
-  return state.indexAbsent
-    || state.pendingEmbeddings > 0
-    || state.renderingEpochStale
-    || state.vectorReconciliationOutstanding
-}
-
 function mapCommitOutcome(
   report: DrainReportBase,
   outcome: CommitCurationOutcome,
@@ -979,47 +925,21 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     } else if (now() - startedAt >= limit) {
       result.writerPass = { kind: 'skipped', reason: 'budget-exhausted' }
       result.gc = { kind: 'skipped', reason: 'budget-exhausted' }
+    } else if (options.maintenance === 'skip') {
+      result.writerPass = { kind: 'skipped', reason: 'daemon-cadence' }
+      result.gc = { kind: 'skipped', reason: 'daemon-cadence' }
     } else {
-      try {
-        result.writerPass = await runWriterPass(operations, options.knowledgeRoot)
-      } catch (error) {
-        recordFailure(result, 'writer-pass', error)
-        result.writerPass = { kind: 'failed', message: errorMessage(error) }
-      }
-      if (now() - startedAt >= limit) {
-        result.gc = { kind: 'skipped', reason: 'budget-exhausted' }
-      } else {
-        try {
-          /**
-           * D-13 M2 has no gate receipts. Phase 380 adds live canary-reference
-           * exclusions; M3 supplies the real ordinal horizon through this seam.
-           * Budget gates the start only and never interrupts whole-dir trims.
-           */
-          const summary = operations.runKnowledgeGc({
-            knowledgeRoot: options.knowledgeRoot,
-            horizon: { kind: 'none' },
-          })
-          const completed: Extract<GcPassReport, { kind: 'completed' }> = {
-            kind: 'completed',
-            summary,
-          }
-          result.gc = completed
-          if (summary.trimmedRecordIds.length > 0) {
-            // WR-01: the trim summary drives scoped projection cleanup in the same drain.
-            try {
-              completed.projectionRowsRemoved = operations.removeBundleProjectionRows(
-                options.knowledgeRoot,
-                summary.trimmedRecordIds,
-              )
-            } catch (error) {
-              // Canonical truth was already trimmed; the failure names the projection debt.
-              recordFailure(result, 'gc', error)
-            }
-          }
-        } catch (error) {
-          recordFailure(result, 'gc', error)
-          result.gc = { kind: 'failed', message: errorMessage(error) }
-        }
+      const maintenance = await runMaintenanceTail({
+        knowledgeRoot: options.knowledgeRoot,
+        lease,
+        operations,
+        budget: { now, startedAtMs: startedAt, limitMs: limit },
+        surfaceAuthorityLoss: false,
+      })
+      result.writerPass = maintenance.writerPass
+      result.gc = maintenance.gc
+      for (const failure of maintenance.failures) {
+        recordFailure(result, failure.stage, failure.error)
       }
     }
     return result

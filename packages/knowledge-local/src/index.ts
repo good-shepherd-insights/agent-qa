@@ -351,6 +351,15 @@ export type {
   GcPassReport,
   WriterPassReport,
 } from './curator/drain.js'
+export { runMaintenanceTail } from './curator/maintenance.js'
+export type {
+  MaintenanceBudget,
+  MaintenanceOperations,
+  MaintenanceSkipReason,
+  MaintenanceTailFailure,
+  MaintenanceTailResult,
+  RunMaintenanceTailOptions,
+} from './curator/maintenance.js'
 export {
   acquireWriterLease,
   refreshWriterLeaseAuthority,
