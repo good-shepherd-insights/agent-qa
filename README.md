@@ -80,5 +80,6 @@ npx agent-qa run tests/hacker-news-top-story.yaml
 - [CLI reference](https://vostride.com/docs/agent-qa/cli)
 - [Dashboard](https://vostride.com/docs/agent-qa/dashboard)
 - [Configuration](https://vostride.com/docs/agent-qa/configuration)
+- [The three queues](docs/queues.md) — run queue, curation queue, agent job queue
 - [License](LICENSE.md)
 - [Notice](NOTICE.md)
