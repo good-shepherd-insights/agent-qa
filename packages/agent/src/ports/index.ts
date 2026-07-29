@@ -4,8 +4,9 @@ export type { ToolsPort } from './tools.js'
 export type { PersistencePort } from './persistence.js'
 export type { ApprovalsPort } from './approvals.js'
 export type { ClockPort } from './clock.js'
-export { StaleJobStoreEpochError } from './job-store.js'
+export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './job-store.js'
 export type {
+  JobCancelOutcome,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,

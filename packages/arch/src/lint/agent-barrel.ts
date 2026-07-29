@@ -67,6 +67,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'FunctionScopeError',
   'IncompleteJobKindDeclarationError',
   'InconsistentJobKindDeclarationError',
+  'JobCancellationNotRequestedError',
+  'JobCancelledError',
   'MissingIdempotencyKeyError',
   'REAL_JOB_KIND_DECLARATIONS',
   'RunNotFoundError',
@@ -111,12 +113,20 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  * how this package stays provider-neutral while its jobs still author. A type is erased, so
  * its presence here hands nobody a model; what would be a violation is a VALUE that could
  * produce one, and the list above still has none.
+ *
+ * It also adds the cancellation vocabulary. The engine verb and the two refusals are here
+ * while NO surface exposes cancel in this phase, and that is deliberate: the semantics are
+ * complete now because the seam a cooperative cancel is honoured at is inside the driver, and
+ * a driver that shipped without it would have to be reopened with handlers already written
+ * against it. Publishing the contract without a UI is the cheap half; retrofitting the check
+ * is the expensive one.
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
   'ApprovalsPort',
   'AuthoringReadPort',
   'BoundRecordLlmAuthorship',
+  'CancelJobInput',
   'ClockPort',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
@@ -131,6 +141,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'FunctionStream',
   'JobAuthorCallback',
   'JobBackoffPolicy',
+  'JobCancelOutcome',
   'JobCheckpointContext',
   'JobCheckpointReadOutcome',
   'JobCheckpointRecord',

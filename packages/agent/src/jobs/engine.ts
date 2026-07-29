@@ -11,10 +11,17 @@
 // nothing to do with correctness (D-03), and the usual repair for a flaky equality
 // assertion is to loosen it — which would quietly retire the proof.
 
-import type { ChainedJobRequest, Job, JobId, JobKind } from '@vostride/agent-qa-schema'
+import type {
+  ChainedJobRequest,
+  Job,
+  JobHandlerOutcome,
+  JobId,
+  JobKind,
+} from '@vostride/agent-qa-schema'
 
 import type { ClockPort } from '../ports/clock.js'
 import type {
+  JobCancelOutcome,
   JobEnqueueOutcome,
   JobInsert,
   JobStoreFence,
@@ -106,6 +113,30 @@ export class UndeclaredJobCheckpointError extends Error {
   }
 }
 
+/**
+ * Raised at a checkpoint boundary when the job being run has been asked to stop (D-19).
+ *
+ * A thrown sentinel rather than a return value, because the boundary is inside a capability
+ * the handler awaits and there is no other way to unwind a handler from underneath. A handler
+ * MAY catch it — cooperative cancellation is cooperative — but catching it buys nothing: the
+ * next boundary raises it again, and a kind whose handler swallowed every one of them would
+ * simply run to the end, which is the same thing that happens to a kind with no boundary at
+ * all. The driver catches it, records the cancellation and reports the boundary it stopped at.
+ */
+export class JobCancelledError extends Error {
+  override readonly name = 'JobCancelledError'
+
+  constructor(
+    readonly jobId: JobId,
+    readonly checkpointId: string,
+  ) {
+    super(
+      `agent job ${String(jobId)} was asked to stop and is being cancelled at checkpoint ` +
+        `${checkpointId}; work already checkpointed stays recorded and this step never ran`,
+    )
+  }
+}
+
 export interface CreateAgentJobQueueOptions {
   readonly store: JobStorePort
   readonly registry: JobKindRegistry
@@ -164,11 +195,27 @@ export type RunNextJobOutcome =
       readonly attemptsRemaining: number
     })
   | (RanJobOutcomeBase & {
+      readonly disposition: 'cancelled'
+      /**
+       * The checkpoint the driver refused to publish, i.e. WHERE the request was honoured.
+       *
+       * Named rather than implied, because "cancelled" alone cannot say how much of the job
+       * had already happened, and `checkpointsPublished` beside it says exactly that: the
+       * steps in that list are done and durable, this one never started.
+       */
+      readonly honoredAtCheckpoint: string
+    })
+  | (RanJobOutcomeBase & {
       readonly disposition: 'failed'
       readonly reason: string
       /** What the kind's declared disposition enqueued — empty for a halt-chain kind. */
       readonly continuation: readonly JobEnqueueOutcome[]
     })
+
+export interface CancelJobInput {
+  readonly jobId: JobId
+  readonly fence: JobStoreFence
+}
 
 export interface RecoverAbandonedClaimsInput {
   readonly fence: JobStoreFence
@@ -188,6 +235,16 @@ export interface AgentJobQueue {
 
   /** Claim, run, checkpoint and dispose of exactly one job. Returns when that job is done. */
   runNextJob(input: RunNextJobInput): Promise<RunNextJobOutcome>
+
+  /**
+   * Ask for one job to stop (D-19).
+   *
+   * Built with the driver rather than after it. The place a cooperative cancel is honoured is
+   * the seam between declared checkpoints, and that seam only exists inside `runNextJob` —
+   * adding the check later would mean reopening engine core with handlers already written
+   * against it. 385 exposes this on no surface at all; the phases that own job UX do that.
+   */
+  cancel(input: CancelJobInput): Promise<JobCancelOutcome>
 
   /**
    * Return every outstanding claim to the queue, keeping the attempt each one spent.
@@ -329,6 +386,14 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       return store.enqueue(requestFor(kind, payload, idempotencyKey))
     },
 
+    async cancel({ jobId, fence }) {
+      // Pure delegation on purpose: which of the three things a cancel means depends on the
+      // row's state at the instant of the write, and only the store can read and write that
+      // in one transaction. An engine that decided here would be deciding from a read it had
+      // already let go of.
+      return store.requestCancel(jobId, fence)
+    },
+
     async recoverAbandonedClaims({ fence }) {
       const dump = await store.dumpState()
       const released: JobId[] = []
@@ -383,8 +448,47 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         }
       }
 
-      const publish = async (checkpointId: string, value: unknown): Promise<void> => {
+      /**
+       * THE checkpoint boundary (D-19). Both ways into a checkpoint pass through here.
+       *
+       * The cancellation state is re-read every time rather than read once at the claim: a
+       * cancel that arrived while the job was running is precisely the case this exists for,
+       * and a value cached before the handler started could never see it. Reading it at the
+       * boundary is also what makes the boundary the boundary — the step in flight completes
+       * and is published, and the NEXT one never begins.
+       *
+       * A declaration error is decided first: a handler naming a checkpoint its kind never
+       * declared is wrong whether or not anyone asked the job to stop.
+       */
+      let honoredAtCheckpoint: string | undefined
+      const enterCheckpointBoundary = async (checkpointId: string): Promise<void> => {
         requireDeclaredCheckpoint(checkpointId)
+        const dump = await store.dumpState()
+        const row = dump.jobs.find((candidate) => candidate.id === String(job.id))
+        if (row?.cancelRequested === true) {
+          // Remembered as well as thrown, and the FIRST boundary wins. A refusal at a boundary
+          // IS the cancellation being honoured, so a handler that catches the sentinel and
+          // carries on cannot take that back — its later boundaries refuse too, and the job
+          // lands cancelled whatever it eventually reports.
+          honoredAtCheckpoint ??= checkpointId
+          throw new JobCancelledError(job.id, checkpointId)
+        }
+      }
+
+      const landCancelled = async (boundary: string): Promise<RunNextJobOutcome> => {
+        await store.recordCancellation(job.id, fence)
+        return {
+          ran: true,
+          disposition: 'cancelled',
+          job,
+          checkpointsPublished: published,
+          handlerInvoked: true,
+          honoredAtCheckpoint: boundary,
+        }
+      }
+
+      const publish = async (checkpointId: string, value: unknown): Promise<void> => {
+        await enterCheckpointBoundary(checkpointId)
         const record: JobCheckpointRecord = {
           checkpointId,
           jobId: job.id,
@@ -403,7 +507,10 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         jobId: job.id,
         model,
         async readRecordedValue(checkpointId) {
-          requireDeclaredCheckpoint(checkpointId)
+          // The same boundary. An authorship that is about to consult a model is exactly where
+          // a pending cancel is worth the most, so the request is honoured BEFORE the call
+          // rather than after it, and the answer nobody will use is never paid for.
+          await enterCheckpointBoundary(checkpointId)
           const recorded = await store.readCheckpoint(job.id, checkpointId)
           return recorded.found
             ? { recorded: true, value: recordedValueOf(recorded.payload) }
@@ -412,15 +519,33 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         publishCheckpoint: publish,
       }
 
-      const outcome = await declaration.handler({
-        job,
-        payload: claim.payload,
-        publishCheckpoint: publish,
-        recordLlmAuthorship: async <T>(
-          checkpointId: string,
-          author: JobAuthorCallback<T>,
-        ): Promise<T> => recordLlmAuthorship(checkpointContext, checkpointId, author),
-      })
+      let outcome: JobHandlerOutcome
+      try {
+        outcome = await declaration.handler({
+          job,
+          payload: claim.payload,
+          publishCheckpoint: publish,
+          recordLlmAuthorship: async <T>(
+            checkpointId: string,
+            author: JobAuthorCallback<T>,
+          ): Promise<T> => recordLlmAuthorship(checkpointContext, checkpointId, author),
+        })
+      } catch (error) {
+        // Only THIS job's sentinel is a cancellation. A handler that ran a nested job and let
+        // its refusal escape would otherwise land the wrong row cancelled.
+        if (error instanceof JobCancelledError && String(error.jobId) === String(job.id)) {
+          return landCancelled(honoredAtCheckpoint ?? error.checkpointId)
+        }
+        throw error
+      }
+
+      // The handler returned normally — but if a boundary refused along the way it swallowed
+      // the refusal, and a swallowed cancel is still a cancel. Reached only in that case: a
+      // job whose boundaries all passed leaves this undefined, which is what keeps a cancel
+      // arriving after the last checkpoint from retroactively discarding finished work.
+      if (honoredAtCheckpoint !== undefined) {
+        return landCancelled(honoredAtCheckpoint)
+      }
 
       // The discriminant is READ, not merely accepted. A driver that ignored it and reached
       // for `next` would complete a job whose handler had just said it failed, and the row

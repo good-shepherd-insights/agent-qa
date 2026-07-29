@@ -21,7 +21,7 @@
 // concurrent enqueue a dedupe, not a conflict (D-08). Authority is only ever needed to
 // CLAIM or ADVANCE work, which is exactly the set of verbs that carries the fence.
 
-import type { Job, JobEnqueueRequest, JobId } from '@vostride/agent-qa-schema'
+import type { Job, JobEnqueueRequest, JobId, JobStatus } from '@vostride/agent-qa-schema'
 
 /**
  * The authority token a drain-side verb must present.
@@ -119,6 +119,42 @@ export type JobCheckpointReadOutcome =
   | { readonly found: false }
   | { readonly found: true; readonly payload: unknown }
 
+/**
+ * What asking to cancel a job actually did (D-19).
+ *
+ * Three outcomes, because cancellation genuinely has three cases and collapsing any two of
+ * them loses a guarantee. A job nobody is running stops at once — there is nothing to be
+ * cooperative about. A job in flight only records the REQUEST: terminating its row out from
+ * under a running handler would abandon a half-finished step and leave whatever it was part
+ * way through with no owner, so the driver honours the request at its next checkpoint boundary
+ * instead. A job that has already finished, failed or been cancelled reports what it is and
+ * nothing moves — a cancel is not an eraser.
+ */
+export type JobCancelOutcome =
+  | { readonly outcome: 'cancelled' }
+  | { readonly outcome: 'cancel-requested' }
+  | { readonly outcome: 'already-terminal'; readonly status: JobStatus }
+
+/**
+ * Refusal when a driver tries to land a job cancelled that nobody asked to cancel.
+ *
+ * `cancelled` is reachable through exactly one path — a request, then either an immediate
+ * transition or a boundary the driver honoured — and this refusal is what makes that a store
+ * invariant instead of a property of the current driver. A future host that decided to
+ * "clean up" a stuck job by cancelling it directly gets told which step it skipped.
+ */
+export class JobCancellationNotRequestedError extends Error {
+  override readonly name = 'JobCancellationNotRequestedError'
+
+  constructor(readonly jobId: JobId) {
+    super(
+      `agent job ${String(jobId)} cannot be recorded as cancelled: no cancellation was ever ` +
+        'requested for it. A job reaches the cancelled state only by being asked to, so a ' +
+        'driver landing one here has skipped the request the operator never made.',
+    )
+  }
+}
+
 /** One row of the deterministic logical dump (D-03). Column names, not the DTO shape. */
 export interface JobStoreDumpRow {
   readonly id: string
@@ -129,6 +165,17 @@ export interface JobStoreDumpRow {
   readonly payload: unknown
   readonly attempts: number
   readonly claimed: boolean
+  /**
+   * Someone has asked for this job to stop (D-19).
+   *
+   * Store-owned state, exactly like `claimed`, and for the same reason: `JobStatus` is a
+   * shipped kernel vocabulary whose C6 break added the two TERMINAL members the queue needed,
+   * and "a running job that has been asked to stop" is not a terminal state — it is a fact
+   * about what has been asked of a job that is still queued. Adding a status member for it
+   * would be a second contract break to describe something no observer of the row needs to
+   * treat as a lifecycle stage.
+   */
+  readonly cancelRequested: boolean
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -183,6 +230,26 @@ export interface JobStorePort {
     payload: unknown,
     fence: JobStoreFence,
   ): Promise<void>
+
+  /**
+   * Ask for a job to stop, and report what that meant for the job it found (D-19).
+   *
+   * Fenced like every other verb that moves a job, and for the sharper reason: a writer that
+   * has lost its lease could otherwise cancel work the current writer is actively running.
+   * One transaction, so the decision between "stop it now" and "ask it to stop" is made
+   * against the same row state it is then written to.
+   */
+  requestCancel(jobId: JobId, fence: JobStoreFence): Promise<JobCancelOutcome>
+
+  /**
+   * Land a job that was asked to stop, releasing its claim. THE DRIVER'S verb, not a caller's.
+   *
+   * Separate from `requestCancel` because they are opposite ends of the protocol: one records
+   * an intention against a job somebody else is running, the other completes it from inside
+   * the run. Refuses with `JobCancellationNotRequestedError` when no request exists, which is
+   * what keeps `cancelled` unreachable except through the two-step path.
+   */
+  recordCancellation(jobId: JobId, fence: JobStoreFence): Promise<void>
 
   /** Read-side: no fence, because reading claims no authority. */
   readCheckpoint(jobId: JobId, checkpointId: string): Promise<JobCheckpointReadOutcome>

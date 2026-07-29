@@ -15,7 +15,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { MissingIdempotencyKeyError, StaleJobStoreEpochError } from '@vostride/agent-qa-agent'
+import {
+  JobCancellationNotRequestedError,
+  MissingIdempotencyKeyError,
+  StaleJobStoreEpochError,
+} from '@vostride/agent-qa-agent'
 import type { ClockPort, JobInsert, JobStoreFence } from '@vostride/agent-qa-agent'
 import { asJobId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -101,7 +105,9 @@ describe('agent job store: schema version (D-04)', () => {
   it('opens a database it created itself', () => {
     const store = openStore(root)
     try {
-      expect(AGENT_JOB_STORE_USER_VERSION).toBe(1)
+      // 2 since 385 plan 05 added the cancel-request column. The number moving is the point:
+      // a database written before that column existed is refused rather than widened.
+      expect(AGENT_JOB_STORE_USER_VERSION).toBe(2)
     } finally {
       store.close()
     }
@@ -152,7 +158,10 @@ describe('agent job store: schema version (D-04)', () => {
 
     const before = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
     before.exec('PRAGMA user_version=7')
-    before.exec("INSERT INTO jobs VALUES ('job_x','analyze-run','k','queued','s','{}',0,NULL,'t','t',NULL,NULL)")
+    before.exec(
+      "INSERT INTO jobs VALUES ('job_x','analyze-run','k','queued','s','{}',0,NULL,'t','t'," +
+        'NULL,NULL,NULL)',
+    )
     before.close()
 
     expect(() => openStore(root)).toThrow(JobStoreSchemaVersionError)
@@ -661,5 +670,120 @@ describe('agent job store: the stale-epoch refusal matrix (D-07)', () => {
   it('refuses to adopt an epoch behind the recorded one', async () => {
     await expect(store.adoptEpoch(1)).rejects.toBeInstanceOf(StaleJobStoreEpochError)
     expect((await store.dumpState()).epoch).toBe(2)
+  })
+})
+
+// Phase 385 plan 05 — cancellation as a STORE guarantee (D-19). Driven through the port
+// directly, because D-02 lets any process open this database: a three-way outcome that only
+// held when the engine was the caller would not be a store guarantee at all.
+describe('agent job store: cancellation (D-19)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-cancel-'))
+    store = openStore(root)
+    fence = await store.adoptEpoch(1)
+    await store.enqueue(insert('job_a', 'key-a'))
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('cancels a job nobody is running, at once', async () => {
+    expect(await store.requestCancel(asJobId('job_a'), fence)).toEqual({ outcome: 'cancelled' })
+
+    const row = rawRow(root, 'job_a')
+    expect(row?.status).toBe('cancelled')
+    expect(row?.cancel_requested_at).not.toBeNull()
+    // Terminal in the store's own terms: the claim query never offers it again.
+    expect(await store.claimNext(fence)).toEqual({ claimed: false })
+  })
+
+  // The control that separates the two paths. A store that cancelled everything outright
+  // would satisfy the case above and destroy this one.
+  it('only RECORDS the request for a job that is claimed, leaving it claimable state and all', async () => {
+    await store.claimNext(fence)
+
+    expect(await store.requestCancel(asJobId('job_a'), fence)).toEqual({
+      outcome: 'cancel-requested',
+    })
+
+    const row = rawRow(root, 'job_a')
+    expect(row?.status).toBe('queued')
+    expect(row?.claimed_at).not.toBeNull()
+    expect(row?.cancel_requested_at).not.toBeNull()
+    expect((await store.dumpState()).jobs[0]).toMatchObject({
+      status: 'queued',
+      claimed: true,
+      cancelRequested: true,
+    })
+  })
+
+  it.each([
+    { label: 'done', settle: 'done' },
+    { label: 'failed', settle: 'failed' },
+    { label: 'cancelled', settle: 'cancelled' },
+  ])('reports already-terminal for a $label job and mutates nothing', async ({ settle }) => {
+    if (settle === 'done') {
+      await store.claimNext(fence)
+      await store.completeAndChain(asJobId('job_a'), [], fence)
+    } else if (settle === 'failed') {
+      await store.claimNext(fence)
+      await store.recordFailure(asJobId('job_a'), { kind: 'permanent', reason: 'gave up' }, fence)
+    } else {
+      await store.requestCancel(asJobId('job_a'), fence)
+    }
+    const before = JSON.stringify(await store.dumpState())
+
+    expect(await store.requestCancel(asJobId('job_a'), fence)).toEqual({
+      outcome: 'already-terminal',
+      status: settle,
+    })
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+  })
+
+  it('refuses a stale epoch, mutates nothing, and the current holder still cancels', async () => {
+    const current = await store.adoptEpoch(2)
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(store.requestCancel(asJobId('job_a'), fence)).rejects.toBeInstanceOf(
+      StaleJobStoreEpochError,
+    )
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+
+    expect(await store.requestCancel(asJobId('job_a'), current)).toEqual({
+      outcome: 'cancelled',
+    })
+  })
+
+  it('refuses to record a cancellation nobody requested, and records one that was', async () => {
+    await store.claimNext(fence)
+    const before = JSON.stringify(await store.dumpState())
+
+    await expect(
+      store.recordCancellation(asJobId('job_a'), fence),
+    ).rejects.toBeInstanceOf(JobCancellationNotRequestedError)
+    expect(JSON.stringify(await store.dumpState())).toBe(before)
+
+    // The paired success: the verb works, it just will not invent the request.
+    await store.requestCancel(asJobId('job_a'), fence)
+    await store.recordCancellation(asJobId('job_a'), fence)
+    expect(rawRow(root, 'job_a')).toMatchObject({ status: 'cancelled', claimed_at: null })
+  })
+
+  it('shows the request in the deterministic dump, and only when there is one', async () => {
+    await store.enqueue(insert('job_b', 'key-b'))
+    await store.requestCancel(asJobId('job_a'), fence)
+
+    const dump = await store.dumpState()
+
+    expect(dump.jobs.map((row) => [row.id, row.cancelRequested])).toEqual([
+      ['job_a', true],
+      ['job_b', false],
+    ])
   })
 })

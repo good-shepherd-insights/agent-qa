@@ -12,6 +12,7 @@ import type { Job, JobId, JobKind } from '@vostride/agent-qa-schema'
 
 import type { ClockPort } from '../../ports/clock.js'
 import type {
+  JobCancelOutcome,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -22,7 +23,10 @@ import type {
   JobStoreFence,
   JobStorePort,
 } from '../../ports/job-store.js'
-import { StaleJobStoreEpochError } from '../../ports/job-store.js'
+import {
+  JobCancellationNotRequestedError,
+  StaleJobStoreEpochError,
+} from '../../ports/job-store.js'
 
 interface Row {
   id: string
@@ -33,6 +37,7 @@ interface Row {
   payload: unknown
   attempts: number
   claimed: boolean
+  cancelRequested: boolean
   createdAt: string
   updatedAt: string
   lastFailureKind?: string
@@ -43,6 +48,9 @@ export interface FakeJobStore extends JobStorePort {
   rows(): readonly Row[]
   checkpoints(): readonly { jobId: string; checkpointId: string; payload: unknown }[]
 }
+
+/** The three statuses a job never leaves. A cancel arriving at one of them changes nothing. */
+const TERMINAL_STATUSES: readonly Job['status'][] = ['done', 'failed', 'cancelled']
 
 export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   const rows = new Map<string, Row>()
@@ -86,6 +94,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       payload: request.payload,
       attempts: 0,
       claimed: false,
+      cancelRequested: false,
       createdAt: now,
       updatedAt: now,
     }
@@ -149,6 +158,33 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       if (disposition.kind === 'permanent') row.status = 'failed'
     },
 
+    async requestCancel(jobId: JobId, fence: JobStoreFence): Promise<JobCancelOutcome> {
+      requireFence(fence)
+      const row = requireRow(jobId)
+      if (TERMINAL_STATUSES.includes(row.status)) {
+        return { outcome: 'already-terminal', status: row.status }
+      }
+      row.cancelRequested = true
+      row.updatedAt = clock.now()
+      // The two paths of D-19, decided by whether anybody is holding the job right now.
+      if (row.claimed) {
+        return { outcome: 'cancel-requested' }
+      }
+      row.status = 'cancelled'
+      return { outcome: 'cancelled' }
+    },
+
+    async recordCancellation(jobId: JobId, fence: JobStoreFence): Promise<void> {
+      requireFence(fence)
+      const row = requireRow(jobId)
+      if (!row.cancelRequested) {
+        throw new JobCancellationNotRequestedError(jobId)
+      }
+      row.status = 'cancelled'
+      row.claimed = false
+      row.updatedAt = clock.now()
+    },
+
     async publishCheckpoint(
       jobId: JobId,
       checkpointId: string,
@@ -188,6 +224,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
             payload: row.payload,
             attempts: row.attempts,
             claimed: row.claimed,
+            cancelRequested: row.cancelRequested,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
           })),

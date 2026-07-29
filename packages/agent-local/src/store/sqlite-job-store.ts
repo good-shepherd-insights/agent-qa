@@ -20,11 +20,13 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  JobCancellationNotRequestedError,
   MissingIdempotencyKeyError,
   StaleJobStoreEpochError,
 } from '@vostride/agent-qa-agent'
 import type {
   ClockPort,
+  JobCancelOutcome,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -37,7 +39,7 @@ import type {
   JobStorePort,
 } from '@vostride/agent-qa-agent'
 import { jobSchema } from '@vostride/agent-qa-schema'
-import type { Job, JobId } from '@vostride/agent-qa-schema'
+import type { Job, JobId, JobStatus } from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
 import { canonicalLogicalDump, createLogicalDump, selectOrderedRows } from './logical-dump.js'
@@ -51,8 +53,12 @@ import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.j
  * database written by another build is a development artifact rather than a user's history,
  * and migration machinery for it would be code with no user that everything afterwards has
  * to keep working.
+ *
+ * 2 (385 plan 05): the jobs table gained `cancel_requested_at`. This is the mechanism doing
+ * exactly what D-04 designed it for — a v1 database has no such column, so rather than being
+ * silently widened on open it is refused by name with the remedy in the message.
  */
-export const AGENT_JOB_STORE_USER_VERSION = 1
+export const AGENT_JOB_STORE_USER_VERSION = 2
 
 /**
  * Busy timeout for every connection to the job database.
@@ -110,7 +116,13 @@ const SCHEMA_STATEMENTS = [
      -- The disposition the engine DECIDED, recorded so a failed job says why it failed.
      -- Nullable because most rows never fail; written only by recordFailure.
      last_failure_kind   TEXT,
-     last_failure_reason TEXT
+     last_failure_reason TEXT,
+     -- When somebody asked this job to stop (D-19). A column rather than a status, for the
+     -- same reason the claim is one: the job status vocabulary describes lifecycle stages,
+     -- and "still queued, but asked to stop" is a fact about a request, not a stage.
+     -- Appended LAST deliberately - a column inserted in the middle would move every
+     -- positional read of this table for no gain.
+     cancel_requested_at TEXT
    )`,
   // D-08's dedupe is THIS line. Making it a store-level constraint rather than a check the
   // caller performs is what turns "two enqueues of the same work produce one job" from a
@@ -122,6 +134,9 @@ const SCHEMA_STATEMENTS = [
      epoch INTEGER NOT NULL
    )`,
 ] as const
+
+/** The statuses a job never leaves. A cancel arriving at one of them moves nothing. */
+const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['done', 'failed', 'cancelled']
 
 function toNumber(value: unknown): number {
   return typeof value === 'bigint' ? Number(value) : Number(value)
@@ -156,8 +171,9 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   const insertJob = db.prepare(
     `INSERT INTO jobs
        (id, kind, idempotency_key, status, summary, payload, attempts, claimed_at,
-        created_at, updated_at, last_failure_kind, last_failure_reason)
-     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL)
+        created_at, updated_at, last_failure_kind, last_failure_reason,
+        cancel_requested_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL, NULL)
      ON CONFLICT (kind, idempotency_key) DO NOTHING`,
   )
   const selectByKey = db.prepare('SELECT * FROM jobs WHERE kind = ? AND idempotency_key = ?')
@@ -189,6 +205,22 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     `UPDATE jobs
      SET status = 'failed', claimed_at = NULL, last_failure_kind = 'permanent',
          last_failure_reason = ?, updated_at = ?
+     WHERE id = ?`,
+  )
+  // The two halves of D-19, as two statements, because they are two different transitions.
+  // One stops a job nobody is running; the other only records that somebody asked, and leaves
+  // the row exactly as claimable as it was so the driver can finish its step.
+  const markCancelledNow = db.prepare(
+    `UPDATE jobs
+     SET status = 'cancelled', claimed_at = NULL, cancel_requested_at = ?, updated_at = ?
+     WHERE id = ?`,
+  )
+  const markCancelRequested = db.prepare(
+    'UPDATE jobs SET cancel_requested_at = ?, updated_at = ? WHERE id = ?',
+  )
+  const markCancelHonoured = db.prepare(
+    `UPDATE jobs
+     SET status = 'cancelled', claimed_at = NULL, updated_at = ?
      WHERE id = ?`,
   )
   const selectFence = db.prepare('SELECT epoch FROM job_store_fence WHERE id = 1')
@@ -294,6 +326,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       payload: JSON.parse(String(row.payload)) as unknown,
       attempts: toNumber(row.attempts),
       claimed: row.claimed_at !== null,
+      cancelRequested: row.cancel_requested_at !== null,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     }
@@ -381,6 +414,45 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         } else {
           markFailed.run(disposition.reason, now, String(jobId))
         }
+      })
+    },
+
+    async requestCancel(jobId: JobId, fence: JobStoreFence): Promise<JobCancelOutcome> {
+      const now = clock.now()
+      return inTransaction(() => {
+        requireFence(fence)
+        const row = requireRow(String(jobId))
+        const status = String(row.status) as JobStatus
+        // Read and written inside ONE transaction: which of the three things a cancel means
+        // depends on whether the row is claimed at this instant, and deciding that from a
+        // read taken outside the transaction would let a claim land in between.
+        if (TERMINAL_JOB_STATUSES.includes(status)) {
+          return { outcome: 'already-terminal', status }
+        }
+        if (row.claimed_at !== null) {
+          // In flight. The request is recorded and the row stays exactly as it was, so the
+          // step the handler is part way through finishes and is checkpointed; the driver
+          // stops it at the next boundary.
+          markCancelRequested.run(now, now, String(jobId))
+          return { outcome: 'cancel-requested' }
+        }
+        // Nobody is running it, so there is no step to protect and no boundary to wait for.
+        // The request is stamped as well as the status, so `cancelled` never appears without
+        // the record of the ask that produced it.
+        markCancelledNow.run(now, now, String(jobId))
+        return { outcome: 'cancelled' }
+      })
+    },
+
+    async recordCancellation(jobId: JobId, fence: JobStoreFence): Promise<void> {
+      const now = clock.now()
+      inTransaction(() => {
+        requireFence(fence)
+        const row = requireRow(String(jobId))
+        if (row.cancel_requested_at === null) {
+          throw new JobCancellationNotRequestedError(jobId)
+        }
+        markCancelHonoured.run(now, String(jobId))
       })
     },
 

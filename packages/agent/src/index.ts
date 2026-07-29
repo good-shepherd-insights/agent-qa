@@ -85,8 +85,9 @@ export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-s
 // The DTO vocabulary itself is NOT republished here (385 plan 02). The request, checkpoint
 // envelope and handler outcome are schema's, and a consumer reaches them there — a second
 // route to the same names is how two spellings of one contract start to drift.
-export { StaleJobStoreEpochError } from './ports/index.js'
+export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './ports/index.js'
 export type {
+  JobCancelOutcome,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -122,12 +123,14 @@ export { createRealJobKindRegistry, REAL_JOB_KIND_DECLARATIONS } from './jobs/ki
 export type { StandInJobScript } from './jobs/kinds.js'
 export {
   createAgentJobQueue,
+  JobCancelledError,
   MissingIdempotencyKeyError,
   UndeclaredJobCheckpointError,
   UndeclaredJobSuccessorError,
 } from './jobs/engine.js'
 export type {
   AgentJobQueue,
+  CancelJobInput,
   CreateAgentJobQueueOptions,
   JobCheckpointRecord,
   JobIdSource,
