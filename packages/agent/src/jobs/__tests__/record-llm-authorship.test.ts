@@ -20,6 +20,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { JobId } from '@vostride/agent-qa-schema'
 
 import type { ClockPort } from '../../ports/clock.js'
+import type { JobCheckpointRecord } from '../../ports/job-store.js'
 import { createAgentJobQueue, UndeclaredJobCheckpointError } from '../engine.js'
 import type { JobIdSource } from '../engine.js'
 import { createJobKindRegistry } from '../kind-registry.js'
@@ -353,18 +354,14 @@ describe('recordLlmAuthorship through the engine (D-10 across a host boundary)',
     )
     const enqueued = await queue.enqueue('analyze-run', {}, 'run-1')
 
-    await store.publishCheckpoint(
-      enqueued.job.id,
-      AUTHORSHIP_CHECKPOINT,
-      {
-        checkpointId: AUTHORSHIP_CHECKPOINT,
-        jobId: enqueued.job.id,
-        attempt: 1,
-        recordedAt: '2026-01-01T00:00:00.000Z',
-        value: 'authored by a host that is gone',
-      },
-      fence,
-    )
+    const recorded: JobCheckpointRecord = {
+      checkpointId: AUTHORSHIP_CHECKPOINT,
+      jobId: enqueued.job.id,
+      attempt: 1,
+      recordedAt: '2026-01-01T00:00:00.000Z',
+      value: 'authored by a host that is gone',
+    }
+    await store.publishCheckpoint(enqueued.job.id, AUTHORSHIP_CHECKPOINT, recorded, fence)
 
     const outcome = await queue.runNextJob({ fence })
 

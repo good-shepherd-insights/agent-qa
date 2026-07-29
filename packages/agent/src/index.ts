@@ -92,6 +92,7 @@ export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-s
 export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './ports/index.js'
 export type {
   JobCancelOutcome,
+  JobCheckpointRecord,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -136,7 +137,6 @@ export type {
   AgentJobQueue,
   CancelJobInput,
   CreateAgentJobQueueOptions,
-  JobCheckpointRecord,
   JobIdSource,
   RanJobOutcomeBase,
   RecoverAbandonedClaimsInput,

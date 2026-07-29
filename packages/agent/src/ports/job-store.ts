@@ -34,6 +34,21 @@ export interface JobStoreFence {
 }
 
 /**
+ * The semantic unit accepted by the checkpoint persistence boundary.
+ *
+ * The engine constructs this record and the store owns its durable bytes. Keeping the
+ * envelope beside the port makes a foreign raw payload unrepresentable without making the
+ * storage-neutral port depend on the engine that consumes it.
+ */
+export interface JobCheckpointRecord {
+  readonly checkpointId: string
+  readonly jobId: JobId
+  readonly attempt: number
+  readonly recordedAt: string
+  readonly value: unknown
+}
+
+/**
  * Refusal at the mutation boundary, mirroring v51's `WriterAuthorityLostError` shape: a
  * named class carrying both the epoch the caller held and the epoch the store observed, so
  * a log line says which writer was behind and by how much.
@@ -227,7 +242,7 @@ export interface JobStorePort {
   publishCheckpoint(
     jobId: JobId,
     checkpointId: string,
-    payload: unknown,
+    payload: JobCheckpointRecord,
     fence: JobStoreFence,
   ): Promise<void>
 

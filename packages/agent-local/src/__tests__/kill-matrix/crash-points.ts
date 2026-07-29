@@ -21,6 +21,7 @@
 
 import type {
   JobCancelOutcome,
+  JobCheckpointRecord,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -332,7 +333,7 @@ export function instrumentJobStore(store: JobStorePort, hook: JobStoreCrashHook)
     publishCheckpoint: (
       jobId: JobId,
       checkpointId: string,
-      payload: unknown,
+      payload: JobCheckpointRecord,
       fence: JobStoreFence,
     ): Promise<void> =>
       around({ verb: 'publishCheckpoint', jobId: String(jobId), checkpointId }, () =>

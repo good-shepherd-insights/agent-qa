@@ -13,6 +13,7 @@ import type { Job, JobId, JobKind } from '@vostride/agent-qa-schema'
 import type { ClockPort } from '../../ports/clock.js'
 import type {
   JobCancelOutcome,
+  JobCheckpointRecord,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -46,7 +47,7 @@ interface Row {
 
 export interface FakeJobStore extends JobStorePort {
   rows(): readonly Row[]
-  checkpoints(): readonly { jobId: string; checkpointId: string; payload: unknown }[]
+  checkpoints(): readonly { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[]
 }
 
 /** The three statuses a job never leaves. A cancel arriving at one of them changes nothing. */
@@ -54,7 +55,7 @@ const TERMINAL_STATUSES: readonly Job['status'][] = ['done', 'failed', 'cancelle
 
 export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   const rows = new Map<string, Row>()
-  const published: { jobId: string; checkpointId: string; payload: unknown }[] = []
+  const published: { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[] = []
   let epoch = 0
 
   function requireFence(fence: JobStoreFence): void {
@@ -188,7 +189,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
     async publishCheckpoint(
       jobId: JobId,
       checkpointId: string,
-      payload: unknown,
+      payload: JobCheckpointRecord,
       fence: JobStoreFence,
     ): Promise<void> {
       requireFence(fence)

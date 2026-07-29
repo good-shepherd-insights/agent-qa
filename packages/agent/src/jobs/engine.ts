@@ -22,6 +22,7 @@ import type {
 import type { ClockPort } from '../ports/clock.js'
 import type {
   JobCancelOutcome,
+  JobCheckpointRecord,
   JobEnqueueOutcome,
   JobInsert,
   JobStoreFence,
@@ -48,19 +49,6 @@ import type {
  */
 export interface JobIdSource {
   jobIdFor(kind: JobKind, idempotencyKey: string): JobId
-}
-
-/**
- * The semantic unit a checkpoint records. The engine owns THIS; the store owns the bytes
- * and their durability envelope. Splitting the two is what keeps "what a checkpoint means"
- * out of the storage implementation and "how it survives a crash" out of the engine.
- */
-export interface JobCheckpointRecord {
-  readonly checkpointId: string
-  readonly jobId: JobId
-  readonly attempt: number
-  readonly recordedAt: string
-  readonly value: unknown
 }
 
 /**

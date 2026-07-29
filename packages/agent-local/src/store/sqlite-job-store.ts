@@ -27,6 +27,7 @@ import {
 import type {
   ClockPort,
   JobCancelOutcome,
+  JobCheckpointRecord,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,
@@ -459,7 +460,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     async publishCheckpoint(
       jobId: JobId,
       checkpointId: string,
-      payload: unknown,
+      payload: JobCheckpointRecord,
       fence: JobStoreFence,
     ): Promise<void> {
       const now = clock.now()

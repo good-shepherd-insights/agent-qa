@@ -7,6 +7,7 @@ export type { ClockPort } from './clock.js'
 export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './job-store.js'
 export type {
   JobCancelOutcome,
+  JobCheckpointRecord,
   JobCheckpointReadOutcome,
   JobClaimOutcome,
   JobCompleteOutcome,

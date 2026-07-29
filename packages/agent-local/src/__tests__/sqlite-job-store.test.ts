@@ -20,7 +20,12 @@ import {
   MissingIdempotencyKeyError,
   StaleJobStoreEpochError,
 } from '@vostride/agent-qa-agent'
-import type { ClockPort, JobInsert, JobStoreFence } from '@vostride/agent-qa-agent'
+import type {
+  ClockPort,
+  JobCheckpointRecord,
+  JobInsert,
+  JobStoreFence,
+} from '@vostride/agent-qa-agent'
 import { asJobId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -58,6 +63,20 @@ function insert(id: string, idempotencyKey: string, payload: unknown = { n: 1 })
     idempotencyKey,
     summary: `agent job ${KIND} (${idempotencyKey})`,
     payload,
+  }
+}
+
+function checkpointRecord(
+  jobId: JobCheckpointRecord['jobId'],
+  checkpointId: string,
+  value: unknown,
+): JobCheckpointRecord {
+  return {
+    checkpointId,
+    jobId,
+    attempt: 1,
+    recordedAt: '2026-01-01T00:00:00.000Z',
+    value,
   }
 }
 
@@ -451,7 +470,12 @@ describe('agent job store: the deterministic logical dump (D-03)', () => {
       for (const key of keys) await store.enqueue(insert(`job_${key.slice(-1)}`, key))
       const claim = await store.claimNext(fence)
       if (!claim.claimed) throw new Error('nothing to claim')
-      await store.publishCheckpoint(claim.job.id, 'analysis', { verdict: 'ok' }, fence)
+      await store.publishCheckpoint(
+        claim.job.id,
+        'analysis',
+        checkpointRecord(claim.job.id, 'analysis', { verdict: 'ok' }),
+        fence,
+      )
       await store.completeAndChain(claim.job.id, [], fence)
       const second = await store.claimNext(fence)
       if (!second.claimed) throw new Error('nothing to claim')
@@ -513,7 +537,12 @@ describe('agent job store: the deterministic logical dump (D-03)', () => {
     const store = openStore(right, frozenClock())
     try {
       const fence = await store.adoptEpoch(4)
-      await store.publishCheckpoint(asJobId('job_b'), 'analysis', { verdict: 'other' }, fence)
+      await store.publishCheckpoint(
+        asJobId('job_b'),
+        'analysis',
+        checkpointRecord(asJobId('job_b'), 'analysis', { verdict: 'other' }),
+        fence,
+      )
     } finally {
       store.close()
     }
@@ -653,19 +682,20 @@ describe('agent job store: the stale-epoch refusal matrix (D-07)', () => {
   it('refuses publishCheckpoint, writing no file, and the current holder can still publish', async () => {
     await store.claimNext(current)
     const before = JSON.stringify(await store.dumpState())
+    const record = checkpointRecord(asJobId('job_a'), 'analysis', { v: 1 })
 
     await expect(
-      store.publishCheckpoint(asJobId('job_a'), 'analysis', { v: 1 }, stale),
+      store.publishCheckpoint(asJobId('job_a'), 'analysis', record, stale),
     ).rejects.toBeInstanceOf(StaleJobStoreEpochError)
     expect(JSON.stringify(await store.dumpState())).toBe(before)
     // The refusal is inside the transaction that precedes the file, so no bytes escaped
     // either — a fence checked after the durable side effect would refuse too late.
     expect(readdirSync(root)).not.toContain('agent-jobs')
 
-    await store.publishCheckpoint(asJobId('job_a'), 'analysis', { v: 1 }, current)
+    await store.publishCheckpoint(asJobId('job_a'), 'analysis', record, current)
     expect(await store.readCheckpoint(asJobId('job_a'), 'analysis')).toEqual({
       found: true,
-      payload: { v: 1 },
+      payload: record,
     })
   })
 
