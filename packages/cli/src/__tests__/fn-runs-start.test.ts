@@ -28,6 +28,7 @@ import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createFnCommand } from '../commands/fn.js'
+import { createRunCommand } from '../commands/run.js'
 import { createCliRunExecution } from '../composition/local-agent-host.js'
 import type { RunChildLauncher } from '../composition/local-agent-host.js'
 
@@ -234,8 +235,55 @@ describe('agent-qa fn runs.start', () => {
       '--config',
       workspace.configPath,
       'run',
+      // Every pattern travels past the operand separator, benign ones included: the token is
+      // unconditional, so there is no shape of pattern for which it is absent.
+      '--',
       'tests/checkout.yaml',
     ])
+  })
+
+  // The hostile input the argv pin above structurally cannot produce. `patterns` is an
+  // unconstrained `z.array(z.string())`, so a caller can put a FLAG there — and a flag spliced
+  // into a variadic operand position is parsed as a flag, not carried as an operand. The one
+  // that matters is `--trust-session`: it treats every ask-tier policy decision in the session
+  // as trusted (execution-safety §2.3, an explicit opt-in by design), and `runs.start` is
+  // deliberately tiered `mutating-local` so it is permitted in every execution context
+  // including a fail-closed CI.
+  //
+  // The oracle is commander's own parse of the recorded child argv against the SHIPPED `run`
+  // option set, never a string assertion about the argv's shape. A pin phrased in the fix's own
+  // vocabulary ("the array contains '--'") agrees with the fix by construction and would keep
+  // agreeing if commander's operand handling ever changed; what is actually claimed here is
+  // that the CHILD'S PARSER cannot reach a flag from a caller's pattern, and only the child's
+  // parser can answer that.
+  it('cannot let a caller-supplied pattern reach a run flag the request never declared', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const child = launcher(workspace, 'events-and-handoff')
+
+    await invoke(
+      workspace,
+      [
+        'runs.start',
+        '--input',
+        '{"patterns":["--trust-session","tests/checkout.yaml"]}',
+        '--json',
+      ],
+      { launch: child.launch, newRunId: () => 'run-hostile-pattern' },
+    )
+
+    const argv = child.launches()[0]?.argv ?? []
+    const tail = argv.slice(argv.indexOf('run') + 1)
+
+    const parsed = createRunCommand()
+    const result = parsed.parseOptions([...tail])
+
+    // Both strings arrive where a test pattern belongs.
+    expect(result.operands).toEqual(['--trust-session', 'tests/checkout.yaml'])
+    expect(result.unknown).toEqual([])
+    // And nothing the caller sent set an option. Compared against an unparsed command rather
+    // than against `{}`, so a run flag gaining a default later cannot quietly weaken this.
+    expect(parsed.opts()).toEqual(createRunCommand().opts())
+    expect(parsed.opts().trustSession).toBeUndefined()
   })
 
   it('crosses the gate: a real mutating-local audit row lands on disk for the invocation', async () => {

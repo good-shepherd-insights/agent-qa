@@ -195,6 +195,17 @@ export function createCliRunExecution(input: CreateCliRunExecutionInput): RunExe
           '--config',
           request.configPath ?? input.configPath,
           'run',
+          // The operand separator, and it is load-bearing. `patterns` is caller-controlled and
+          // unconstrained, and `run` takes its patterns in a VARIADIC OPERAND position — so
+          // without this token a pattern that begins with a dash is parsed as one of `run`'s own
+          // options rather than carried as a pattern. That is the inverse of the refusal the
+          // field check above exists to make: a field this host cannot honour is a typed
+          // refusal, and a field the request never declared at all must not be reachable.
+          // `--trust-session` is the one that decides it — it treats every ask-tier policy
+          // decision in the session as trusted — but the separator closes the whole class
+          // (`--junit-output`, `--screenshot-dir`, `--var`, `--dry-run`, `--detach`) at once,
+          // and closes it without reshaping the request the caller sent.
+          '--',
           ...(request.patterns ?? []),
         ],
         env: { ...process.env, AGENT_QA_RUN_ID: runId },
