@@ -134,3 +134,15 @@ export type {
   RollbackReport,
   WriterLeaseAuthority,
 } from './composition/compose-local-agent.js'
+
+// A standing host adopts the durable queue through this recovery entry before it opens the
+// ordinary local-agent composition. Publishing the entry keeps that ordering shared instead of
+// making each surface reach into agent-local's private source tree and re-create the recovery law.
+export {
+  composeJobRecovery,
+  JOB_RECOVERY_MAX_RESUMED_JOBS,
+} from './composition/compose-job-recovery.js'
+export type {
+  ComposeJobRecoveryInput,
+  JobRecoveryHost,
+} from './composition/compose-job-recovery.js'

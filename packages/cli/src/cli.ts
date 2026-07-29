@@ -8,6 +8,7 @@ import {
   createCreateSuiteCommand,
   createCreateTestCommand,
   createDashboardCommand,
+  createDaemonCommand,
   createDevicesCommand,
   createDoctorCommand,
   createEvalCommand,
@@ -65,6 +66,7 @@ program.addCommand(createCreateTestCommand())
 program.addCommand(createCreateSuiteCommand())
 program.addCommand(createSkillsCommand())
 program.addCommand(createFnCommand())
+program.addCommand(createDaemonCommand())
 
 program.parse()
 

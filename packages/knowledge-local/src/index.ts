@@ -362,13 +362,19 @@ export type {
 } from './curator/maintenance.js'
 export {
   acquireWriterLease,
+  heartbeatLease,
+  LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
   refreshWriterLeaseAuthority,
   releaseLease,
   WriterAuthorityLostError,
 } from './lease/writer-lease.js'
 export type {
   AcquireWriterLeaseOutcome,
+  HeartbeatLeaseOutcome,
+  LeaseOperationOptions,
   ReleaseLeaseOutcome,
+  WriterLease,
   WriterAuthorityLostReason,
   WriterLeaseAuthority,
 } from './lease/writer-lease.js'
