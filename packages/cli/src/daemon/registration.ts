@@ -33,6 +33,18 @@ export type ReadDaemonRegistrationOutcome =
   | { kind: 'malformed' }
   | { kind: 'parsed'; registration: DaemonRegistration }
 
+export type InspectDaemonRegistrationOutcome =
+  | { kind: 'absent' }
+  | { kind: 'malformed' }
+  | { kind: 'live'; registration: DaemonRegistration }
+  | { kind: 'stale'; registration: DaemonRegistration }
+
+export type RecoverDaemonRegistrationOutcome =
+  | Exclude<InspectDaemonRegistrationOutcome, { kind: 'stale' }>
+  | { kind: 'recovered'; registration: DaemonRegistration }
+
+export type ProcessIsAlive = (pid: number) => boolean
+
 /** Plan 05 binds a listener here; this plan records the deterministic project-local address. */
 export function daemonRegistrationSocketPath(agentQaRoot: string): string {
   return join(agentQaRoot, 'daemon.sock')
@@ -108,9 +120,44 @@ export function readDaemonRegistration(agentQaRoot: string): ReadDaemonRegistrat
   }
 }
 
+/** Signal-zero liveness probe: EPERM proves existence; only ESRCH proves a stale pid. */
+export function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    if (code === 'EPERM') return true
+    throw error
+  }
+}
+
+export function inspectDaemonRegistration(
+  agentQaRoot: string,
+  isAlive: ProcessIsAlive = processIsAlive,
+): InspectDaemonRegistrationOutcome {
+  const outcome = readDaemonRegistration(agentQaRoot)
+  if (outcome.kind !== 'parsed') return outcome
+  return isAlive(outcome.registration.pid)
+    ? { kind: 'live', registration: outcome.registration }
+    : { kind: 'stale', registration: outcome.registration }
+}
+
 export function removeDaemonRegistration(agentQaRoot: string): void {
   const file = daemonRegistrationPath(agentQaRoot)
   const existed = existsSync(file)
   rmSync(file, { force: true })
   if (existed) bestEffortFsyncDirectory(dirname(file))
+}
+
+/** Remove only a schema-valid registration whose pid has been proven dead. */
+export function recoverStaleDaemonRegistration(
+  agentQaRoot: string,
+  isAlive: ProcessIsAlive = processIsAlive,
+): RecoverDaemonRegistrationOutcome {
+  const outcome = inspectDaemonRegistration(agentQaRoot, isAlive)
+  if (outcome.kind !== 'stale') return outcome
+  removeDaemonRegistration(agentQaRoot)
+  return { kind: 'recovered', registration: outcome.registration }
 }

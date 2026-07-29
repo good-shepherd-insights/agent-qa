@@ -109,7 +109,7 @@ export class WriterAuthorityLostError extends Error {
   }
 }
 
-type ReadLeaseOutcome =
+export type ReadWriterLeaseOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
   | { kind: 'parsed'; lease: WriterLease }
@@ -274,7 +274,8 @@ function atomicRewrite(file: string, text: string): void {
   }
 }
 
-function readLease(knowledgeRoot: string): ReadLeaseOutcome {
+/** Read and strictly validate current writer authority without acquiring or refreshing it. */
+export function readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome {
   const file = leasePath(knowledgeRoot)
   let raw: string
   try {
@@ -345,7 +346,7 @@ export function acquireWriterLease(
 ): AcquireWriterLeaseOutcome {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
   return withMutationLock(knowledgeRoot, () => {
-    const current = readLease(knowledgeRoot)
+    const current = readWriterLease(knowledgeRoot)
     const nowMs = Date.now()
     if (current.kind === 'parsed' && !isLeaseStale(current.lease, nowMs)) {
       return { kind: 'held', holder: current.lease }
@@ -368,7 +369,7 @@ export function acquireWriterLease(
 export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutcome {
   assertAbsoluteKnowledgeRoot(opts.knowledgeRoot)
   return withMutationLock(opts.knowledgeRoot, () => {
-    const current = readLease(opts.knowledgeRoot)
+    const current = readWriterLease(opts.knowledgeRoot)
     if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
     if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
     if (current.lease.leaseId !== opts.leaseId) {
@@ -437,7 +438,7 @@ export function refreshWriterLeaseAuthority(
 export function releaseLease(opts: LeaseOperationOptions): ReleaseLeaseOutcome {
   assertAbsoluteKnowledgeRoot(opts.knowledgeRoot)
   return withMutationLock(opts.knowledgeRoot, () => {
-    const current = readLease(opts.knowledgeRoot)
+    const current = readWriterLease(opts.knowledgeRoot)
     if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
     if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
     if (current.lease.leaseId !== opts.leaseId) {

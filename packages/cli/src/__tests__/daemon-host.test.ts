@@ -106,21 +106,6 @@ interface HostHarness {
   signal(signal: NodeJS.Signals): void
 }
 
-interface PlannedDaemonCommandDeps extends DaemonCommandDeps {
-  resolvePaths(configPath: string): Promise<{
-    agentQaRoot: string
-    knowledgeRoot: string
-  }>
-  readRegistration: typeof readDaemonRegistration
-  processIsAlive(pid: number): boolean
-  readWriterLease(knowledgeRoot: string):
-    | { kind: 'absent' | 'malformed' }
-    | { kind: 'parsed'; lease: WriterLease }
-  countPendingCurationJobs(knowledgeRoot: string): number
-  signalProcess(pid: number, signal: NodeJS.Signals): void
-  now(): number
-}
-
 interface DaemonInvocation {
   stdout: string
   stderr: string
@@ -128,7 +113,7 @@ interface DaemonInvocation {
 }
 
 async function invokeDaemon(
-  deps: PlannedDaemonCommandDeps,
+  deps: DaemonCommandDeps,
   args: readonly string[],
 ): Promise<DaemonInvocation> {
   const stdout: string[] = []
@@ -171,9 +156,9 @@ function daemonCommandDeps(
     alive?: boolean
     curationQueueDepth?: number
     nowMs?: number
-    signalProcess?: PlannedDaemonCommandDeps['signalProcess']
+    signalProcess?: DaemonCommandDeps['signalProcess']
   } = {},
-): PlannedDaemonCommandDeps {
+): DaemonCommandDeps {
   const startedAtMs = 1_700_000_000_000
   return {
     runHost: vi.fn(() => Promise.resolve(0)),
@@ -377,7 +362,7 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
     expect(secondModel).not.toHaveBeenCalled()
     expect(errors).toHaveLength(1)
     expect(errors[0]).toContain(`pid ${process.pid}`)
-    expect(errors[0]).toContain('lease heartbeat since ')
+    expect(errors[0]).toContain('daemon registration since ')
     expect(readFileSync(leasePath)).toEqual(before.lease)
     expect(readFileSync(registrationPath)).toEqual(before.registration)
     expect(readFileSync(storePath)).toEqual(before.store)

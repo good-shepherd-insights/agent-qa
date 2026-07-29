@@ -31,6 +31,7 @@ import type { DaemonEvent } from './events.js'
 import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   daemonRegistrationSocketPath,
+  inspectDaemonRegistration,
   removeDaemonRegistration,
   writeDaemonRegistration,
 } from './registration.js'
@@ -137,6 +138,13 @@ function heldMessage(
   )
 }
 
+function liveRegistrationMessage(registration: DaemonRegistration): string {
+  return (
+    `agent-qa daemon is already running (pid ${registration.pid}; ` +
+    `daemon registration since ${new Date(registration.startedAtMs).toISOString()})`
+  )
+}
+
 /**
  * Run the foreground daemon until a signal or lease-heartbeat refusal closes it.
  *
@@ -150,6 +158,19 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER
   operations.trace?.('posture-pinned')
+
+  const registration = inspectDaemonRegistration(input.agentQaRoot)
+  if (registration.kind === 'live') {
+    logger.error(liveRegistrationMessage(registration.registration))
+    return 1
+  }
+  if (registration.kind === 'malformed') {
+    logger.error('agent-qa daemon registration is malformed; refusing to overwrite it')
+    return 1
+  }
+  if (registration.kind === 'stale') {
+    operations.removeDaemonRegistration(input.agentQaRoot)
+  }
 
   const acquired = operations.acquireWriterLease(input.knowledgeRoot)
   if (acquired.kind === 'held') {

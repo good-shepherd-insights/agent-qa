@@ -5,24 +5,132 @@
 import { dirname, resolve } from 'node:path'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
+import {
+  countPendingCurationJobs,
+  readWriterLease,
+} from '@vostride/agent-qa-knowledge-local'
+import type {
+  ReadWriterLeaseOutcome,
+  WriterLease,
+} from '@vostride/agent-qa-knowledge-local'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { createMaskedConfigReader } from '../composition/local-agent-host.js'
 import { resolveConfig } from '../config.js'
-import { resolveCliJobModel } from '../llm-utils.js'
 import { runDaemonHost } from '../daemon/host.js'
 import type { DaemonHostOptions } from '../daemon/host.js'
+import {
+  processIsAlive,
+  readDaemonRegistration,
+} from '../daemon/registration.js'
+import type {
+  DaemonRegistration,
+  ReadDaemonRegistrationOutcome,
+} from '../daemon/registration.js'
+import { resolveCliJobModel } from '../llm-utils.js'
+
+export interface DaemonProjectPaths {
+  agentQaRoot: string
+  knowledgeRoot: string
+}
 
 export interface DaemonCommandDeps {
   runHost(options: DaemonHostOptions): Promise<number>
+  resolvePaths(configPath: string): Promise<DaemonProjectPaths>
+  readRegistration(agentQaRoot: string): ReadDaemonRegistrationOutcome
+  processIsAlive(pid: number): boolean
+  readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome
+  countPendingCurationJobs(knowledgeRoot: string): number
+  signalProcess(pid: number, signal: NodeJS.Signals): void
+  now(): number
 }
 
-const DEFAULT_DEPS: DaemonCommandDeps = { runHost: runDaemonHost }
+export type DaemonStatusDto =
+  | { state: 'stopped' }
+  | { state: 'malformed' }
+  | { state: 'stale'; pid: number; startedAtMs: number }
+  | {
+      state: 'running'
+      pid: number
+      startedAtMs: number
+      uptimeMs: number
+      curationQueueDepth: number
+      lease: WriterLease | null
+    }
+
+async function resolveDaemonPaths(configPath: string): Promise<DaemonProjectPaths> {
+  const configDir = dirname(configPath)
+  const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+  return {
+    agentQaRoot: resolve(configDir, '.agent-qa'),
+    knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+  }
+}
+
+const DEFAULT_DEPS: DaemonCommandDeps = {
+  runHost: runDaemonHost,
+  resolvePaths: resolveDaemonPaths,
+  readRegistration: readDaemonRegistration,
+  processIsAlive,
+  readWriterLease,
+  countPendingCurationJobs,
+  signalProcess: (pid, signal) => process.kill(pid, signal),
+  now: () => Date.now(),
+}
+
+function configPathFor(command: Command): string {
+  let root = command
+  while (root.parent !== null) root = root.parent
+  const globalOpts = root.opts<{ config?: string }>()
+  return resolve(globalOpts.config ?? 'agent-qa.config.yaml')
+}
+
+function inspectRegistration(
+  deps: DaemonCommandDeps,
+  agentQaRoot: string,
+):
+  | { kind: 'absent' }
+  | { kind: 'malformed' }
+  | { kind: 'live'; registration: DaemonRegistration }
+  | { kind: 'stale'; registration: DaemonRegistration } {
+  const outcome = deps.readRegistration(agentQaRoot)
+  if (outcome.kind !== 'parsed') return outcome
+  return deps.processIsAlive(outcome.registration.pid)
+    ? { kind: 'live', registration: outcome.registration }
+    : { kind: 'stale', registration: outcome.registration }
+}
+
+function formatUptime(uptimeMs: number): string {
+  const seconds = Math.floor(uptimeMs / 1_000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h`
+}
+
+function renderStatusHuman(status: DaemonStatusDto): void {
+  if (status.state === 'stopped') {
+    console.log('agent-qa daemon is not running')
+    return
+  }
+  if (status.state === 'malformed') {
+    console.error(pc.red('agent-qa daemon registration is malformed'))
+    return
+  }
+  if (status.state === 'stale') {
+    console.log(`agent-qa daemon has a stale registration (pid ${status.pid})`)
+    return
+  }
+  console.log(
+    `agent-qa daemon running: pid ${status.pid}, uptime ${formatUptime(status.uptimeMs)}, ` +
+      `curation queue depth ${status.curationQueueDepth}`,
+  )
+}
 
 export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Command {
   const cmd = new Command('daemon')
-    .description('Run the foreground curation queue and agent job queue host')
+    .description('Run and inspect the foreground daemon host')
     .addHelpText(
       'after',
       '\nagent-qa runs three separate queues; this command hosts the latter two only:\n' +
@@ -33,8 +141,7 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
     )
     .action(async (_opts: unknown, command: Command) => {
       try {
-        const globalOpts = command.parent?.opts<{ config?: string }>() ?? {}
-        const configPath = resolve(globalOpts.config ?? 'agent-qa.config.yaml')
+        const configPath = configPathFor(command)
         const configDir = dirname(configPath)
         const config = await resolveConfig({ configPath, loadAuthPlugins: false })
         const exitCode = await deps.runHost({
@@ -46,6 +153,70 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         process.exitCode = exitCode
       } catch (error) {
         console.error(pc.red(`Daemon error: ${error instanceof Error ? error.message : String(error)}`))
+        process.exitCode = 1
+      }
+    })
+
+  cmd
+    .command('status')
+    .description('Report daemon liveness and pending work depth')
+    .option('--json', 'output the raw status object')
+    .action(async (opts: { json?: boolean }, command: Command) => {
+      try {
+        const paths = await deps.resolvePaths(configPathFor(command))
+        const inspected = inspectRegistration(deps, paths.agentQaRoot)
+        let status: DaemonStatusDto
+        if (inspected.kind === 'absent') {
+          status = { state: 'stopped' }
+        } else if (inspected.kind === 'malformed') {
+          status = { state: 'malformed' }
+          process.exitCode = 1
+        } else if (inspected.kind === 'stale') {
+          status = {
+            state: 'stale',
+            pid: inspected.registration.pid,
+            startedAtMs: inspected.registration.startedAtMs,
+          }
+        } else {
+          const lease = deps.readWriterLease(paths.knowledgeRoot)
+          status = {
+            state: 'running',
+            pid: inspected.registration.pid,
+            startedAtMs: inspected.registration.startedAtMs,
+            uptimeMs: Math.max(0, deps.now() - inspected.registration.startedAtMs),
+            curationQueueDepth: deps.countPendingCurationJobs(paths.knowledgeRoot),
+            lease: lease.kind === 'parsed' ? lease.lease : null,
+          }
+        }
+
+        if (opts.json) console.log(JSON.stringify(status))
+        else renderStatusHuman(status)
+      } catch (error) {
+        console.error(
+          pc.red(`Daemon status error: ${error instanceof Error ? error.message : String(error)}`),
+        )
+        process.exitCode = 1
+      }
+    })
+
+  cmd
+    .command('stop')
+    .description('Gracefully stop the registered live daemon')
+    .action(async (_opts: unknown, command: Command) => {
+      try {
+        const paths = await deps.resolvePaths(configPathFor(command))
+        const inspected = inspectRegistration(deps, paths.agentQaRoot)
+        if (inspected.kind !== 'live') {
+          console.log('agent-qa daemon has nothing to stop')
+          process.exitCode = 1
+          return
+        }
+        deps.signalProcess(inspected.registration.pid, 'SIGTERM')
+        console.log(`sent SIGTERM to agent-qa daemon pid ${inspected.registration.pid}`)
+      } catch (error) {
+        console.error(
+          pc.red(`Daemon stop error: ${error instanceof Error ? error.message : String(error)}`),
+        )
         process.exitCode = 1
       }
     })
