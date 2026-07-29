@@ -49,6 +49,14 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * the visible edit plan 02 said it would be. The two declaration refusals that arrive in its
  * place are construction-time: a kind whose declaration is incomplete, and one whose
  * declaration is complete and still cannot be true of any kind.
+ *
+ * 385 plan 05 adds `recordLlmAuthorship` — and this is the one addition on this list whose
+ * ABSENCE would have been the drift. It is the single audited path from a job to a model, so
+ * publishing it is what lets every later handler bind one contract instead of re-deriving a
+ * "author only if there is no checkpoint" conditional six times. What is still not here, and
+ * must never be, is anything that could HAND someone a model: the capability crosses this
+ * barrel as a type, and the only value that ever holds one is the argument the primitive gives
+ * its author callback (D-11 layer 1).
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'DuplicateFunctionIdError',
@@ -74,6 +82,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createMaskingContext',
   'createRealJobKindRegistry',
   'invokeFunction',
+  'recordLlmAuthorship',
   'unmaskForHumanOutput',
 ]
 
@@ -96,11 +105,18 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  * beside it. Republishing them here would give every consumer two names for one contract and
  * no way to tell which one a later edit widened. What stays is `JobInsert`: the row the
  * engine hands the store, which never crosses a boundary and is nobody's public vocabulary.
+ *
+ * 385 plan 05 adds the authorship vocabulary. `JobModelCapability` is the interesting one: it
+ * describes a model STRUCTURALLY so a composition root can adapt a real one onto it, which is
+ * how this package stays provider-neutral while its jobs still author. A type is erased, so
+ * its presence here hands nobody a model; what would be a violation is a VALUE that could
+ * produce one, and the list above still has none.
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
   'ApprovalsPort',
   'AuthoringReadPort',
+  'BoundRecordLlmAuthorship',
   'ClockPort',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
@@ -113,7 +129,9 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'FunctionRegistry',
   'FunctionResultKind',
   'FunctionStream',
+  'JobAuthorCallback',
   'JobBackoffPolicy',
+  'JobCheckpointContext',
   'JobCheckpointReadOutcome',
   'JobCheckpointRecord',
   'JobClaimOutcome',
@@ -126,7 +144,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'JobInsert',
   'JobKindDeclaration',
   'JobKindRegistry',
+  'JobModelCapability',
+  'JobModelOutput',
+  'JobModelRequest',
   'JobPermanentFailureDisposition',
+  'JobRecordedValueOutcome',
   'JobStoreDump',
   'JobStoreDumpRow',
   'JobStoreFence',

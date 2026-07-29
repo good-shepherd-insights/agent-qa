@@ -12,6 +12,7 @@ import type { AgentJobQueue, JobIdSource, RunNextJobOutcome } from '../engine.js
 import { createJobKindRegistry } from '../kind-registry.js'
 import type { JobKindDeclaration, JobKindRegistry } from '../kind-registry.js'
 import { createRealJobKindRegistry } from '../kinds.js'
+import type { JobModelCapability } from '../record-llm-authorship.js'
 import { createFakeJobStore } from './fake-job-store.js'
 import type { FakeJobStore } from './fake-job-store.js'
 
@@ -28,6 +29,18 @@ function createSteppingClock(): ClockPort {
 
 const idSource: JobIdSource = {
   jobIdFor: (kind, idempotencyKey) => `job_${kind}_${idempotencyKey}` as JobId,
+}
+
+/**
+ * The queue needs a model bound (385 plan 05, D-10) and nothing in this file authors, so this
+ * one refuses. A capability that answered would let a test in here start depending on model
+ * output by accident; a capability that throws keeps the authorship proofs where they belong.
+ */
+const unusedModel: JobModelCapability = {
+  modelId: 'test:unused',
+  generate: async () => {
+    throw new Error('engine-semantics tests never author; see record-llm-authorship.test.ts')
+  },
 }
 
 function declaration(overrides: Partial<JobKindDeclaration> = {}): JobKindDeclaration {
@@ -59,7 +72,7 @@ async function harnessFor(
   const registry = Array.isArray(declarations)
     ? createJobKindRegistry(declarations)
     : (declarations as JobKindRegistry)
-  const queue = createAgentJobQueue({ store, registry, clock, idSource })
+  const queue = createAgentJobQueue({ store, registry, clock, idSource, model: unusedModel })
   const fence = await store.adoptEpoch(1)
   return { store, queue, fence, registry }
 }
@@ -447,7 +460,13 @@ describe('the permanent-failure disposition (D-20)', () => {
       }),
       declaration({ kind: 'curate-memory', checkpointSchedule: ['candidates-authored'] }),
     ])
-    const queue = createAgentJobQueue({ store: crashing, registry, clock, idSource })
+    const queue = createAgentJobQueue({
+      store: crashing,
+      registry,
+      clock,
+      idSource,
+      model: unusedModel,
+    })
     const fence = await store.adoptEpoch(1)
     await queue.enqueue('analyze-run', {}, 'key')
 

@@ -137,3 +137,17 @@ export type {
   RunNextJobInput,
   RunNextJobOutcome,
 } from './jobs/engine.js'
+// 385 plan 05 — the one memoizing checkpointed effect (D-10). The primitive is published so
+// every later handler binds THIS contract rather than a private copy of its conditional; the
+// capability beside it is a TYPE a composition root implements, and there is still no accessor
+// on this barrel that could hand anyone one (D-11 layer 1).
+export { recordLlmAuthorship } from './jobs/record-llm-authorship.js'
+export type {
+  BoundRecordLlmAuthorship,
+  JobAuthorCallback,
+  JobCheckpointContext,
+  JobModelCapability,
+  JobModelOutput,
+  JobModelRequest,
+  JobRecordedValueOutcome,
+} from './jobs/record-llm-authorship.js'

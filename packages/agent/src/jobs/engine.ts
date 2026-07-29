@@ -25,6 +25,12 @@ import type {
   JobKindDeclaration,
   JobKindRegistry,
 } from './kind-registry.js'
+import { recordLlmAuthorship } from './record-llm-authorship.js'
+import type {
+  JobAuthorCallback,
+  JobCheckpointContext,
+  JobModelCapability,
+} from './record-llm-authorship.js'
 
 /**
  * Where job ids come from.
@@ -105,6 +111,17 @@ export interface CreateAgentJobQueueOptions {
   readonly registry: JobKindRegistry
   readonly clock: ClockPort
   readonly idSource: JobIdSource
+  /**
+   * The model a job may author with, bound by the composition root (D-10).
+   *
+   * REQUIRED, and deliberately not defaultable. An optional capability would mean a queue
+   * could be built with none, and the only sensible behaviour for an author callback that
+   * cannot reach a model is to fail somewhere far from the composition that forgot it. Making
+   * it an argument of construction puts that decision where the binding is made. The engine
+   * never calls it: the only thing that happens to this value is that the authorship
+   * primitive hands it to an author callback.
+   */
+  readonly model: JobModelCapability
 }
 
 export interface RunNextJobInput {
@@ -207,8 +224,30 @@ function defaultSummary(kind: JobKind, idempotencyKey: string): string {
   return `agent job ${kind} (${idempotencyKey})`
 }
 
+/**
+ * The VALUE inside a checkpoint the engine wrote, or the payload itself if something else
+ * wrote it.
+ *
+ * The engine wraps every checkpoint in its own envelope, so the authorship primitive would
+ * otherwise return an envelope on resume and a bare value on the first pass — the same call
+ * answering two different shapes depending on whether the process had crashed. The envelope is
+ * recognised by carrying both of the fields only the engine puts there, so an authored value
+ * that happens to have a `value` key of its own is not mistaken for one.
+ */
+function recordedValueOf(payload: unknown): unknown {
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'checkpointId' in payload &&
+    'value' in payload
+  ) {
+    return (payload as JobCheckpointRecord).value
+  }
+  return payload
+}
+
 export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJobQueue {
-  const { store, registry, clock, idSource } = options
+  const { store, registry, clock, idSource, model } = options
 
   function requestFor(kind: JobKind, payload: unknown, idempotencyKey: string): JobInsert {
     // An undeclared kind is refused before anything is written: the store would happily
@@ -335,26 +374,52 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         })
       }
 
+      // One gate for both directions. Recovery is planned from the declared schedule, so an
+      // id outside it is state nothing would ever resume from — whether a handler is writing
+      // it or an authorship primitive is looking for it.
+      const requireDeclaredCheckpoint = (checkpointId: string): void => {
+        if (!declaration.checkpointed || !declaration.checkpointSchedule.includes(checkpointId)) {
+          throw new UndeclaredJobCheckpointError(job.kind, checkpointId)
+        }
+      }
+
+      const publish = async (checkpointId: string, value: unknown): Promise<void> => {
+        requireDeclaredCheckpoint(checkpointId)
+        const record: JobCheckpointRecord = {
+          checkpointId,
+          jobId: job.id,
+          attempt: job.attempts,
+          recordedAt: clock.now(),
+          value,
+        }
+        await store.publishCheckpoint(job.id, checkpointId, record, fence)
+        published.push(checkpointId)
+      }
+
+      // The context that carries the model. It is built here and handed to the authorship
+      // primitive; it is NOT part of what the handler receives, which is the structural half
+      // of "a job has no ambient model accessor" (D-11 layer 2).
+      const checkpointContext: JobCheckpointContext = {
+        jobId: job.id,
+        model,
+        async readRecordedValue(checkpointId) {
+          requireDeclaredCheckpoint(checkpointId)
+          const recorded = await store.readCheckpoint(job.id, checkpointId)
+          return recorded.found
+            ? { recorded: true, value: recordedValueOf(recorded.payload) }
+            : { recorded: false }
+        },
+        publishCheckpoint: publish,
+      }
+
       const outcome = await declaration.handler({
         job,
         payload: claim.payload,
-        publishCheckpoint: async (checkpointId, value) => {
-          if (!declaration.checkpointed) {
-            throw new UndeclaredJobCheckpointError(job.kind, checkpointId)
-          }
-          if (!declaration.checkpointSchedule.includes(checkpointId)) {
-            throw new UndeclaredJobCheckpointError(job.kind, checkpointId)
-          }
-          const record: JobCheckpointRecord = {
-            checkpointId,
-            jobId: job.id,
-            attempt: job.attempts,
-            recordedAt: clock.now(),
-            value,
-          }
-          await store.publishCheckpoint(job.id, checkpointId, record, fence)
-          published.push(checkpointId)
-        },
+        publishCheckpoint: publish,
+        recordLlmAuthorship: async <T>(
+          checkpointId: string,
+          author: JobAuthorCallback<T>,
+        ): Promise<T> => recordLlmAuthorship(checkpointContext, checkpointId, author),
       })
 
       // The discriminant is READ, not merely accepted. A driver that ignored it and reached

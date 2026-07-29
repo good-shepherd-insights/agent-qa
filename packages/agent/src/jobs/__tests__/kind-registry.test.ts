@@ -79,6 +79,12 @@ function recordingContext(
       publishCheckpoint: async (checkpointId, value) => {
         published.push({ checkpointId, value })
       },
+      // 385 plan 05: the stand-ins never author, and this file drives them without an engine.
+      // A refusal rather than a stub answer, so a handler that quietly started authoring would
+      // fail here loudly instead of being handed a plausible-looking value.
+      recordLlmAuthorship: async () => {
+        throw new Error('the stand-in handlers do not author; see record-llm-authorship.test.ts')
+      },
     },
   }
 }

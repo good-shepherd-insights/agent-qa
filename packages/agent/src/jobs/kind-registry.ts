@@ -22,6 +22,8 @@
 
 import type { ChainedJobRequest, Job, JobHandlerOutcome, JobKind } from '@vostride/agent-qa-schema'
 
+import type { BoundRecordLlmAuthorship } from './record-llm-authorship.js'
+
 /** What a handler is handed. Checkpoint publication is a capability, never an import. */
 export interface JobHandlerContext {
   readonly job: Job
@@ -35,6 +37,17 @@ export interface JobHandlerContext {
    */
   readonly payload: unknown
   publishCheckpoint(checkpointId: string, value: unknown): Promise<void>
+  /**
+   * The ONE path from a job to a model (D-10 / D-11 layer 2).
+   *
+   * What is absent from this interface is the contract: there is no model member here, and
+   * this member's own signature is the only place a capability appears. A handler therefore
+   * cannot reach a model except by asking this primitive to record the asking — which is what
+   * makes a resumed job's re-invocation impossible by control flow rather than by discipline.
+   * The member set of this interface is pinned for exact equality by a test, so an ambient
+   * accessor cannot be added quietly beside it.
+   */
+  readonly recordLlmAuthorship: BoundRecordLlmAuthorship
 }
 
 /**
