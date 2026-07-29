@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -7,6 +7,7 @@ import {
   RESUME_PATH_FORBIDDEN_PACKAGES,
   RESUME_PATH_FORBIDDEN_PACKAGE_PREFIX,
   RESUME_PATH_PACKAGE_DIR,
+  RESUME_PATH_SELF_PACKAGE_NAME,
   findResumePathModelFreeOffenders,
   resumePathClosureOf,
   resumePathForbiddenRationale,
@@ -206,6 +207,95 @@ describe('resume-path-model-free — the ANTI-VACUITY controls (it must not pass
     ])
     expect(offenders).toHaveLength(1)
     expect(offenders[0]).toContain('is not in the scanned set')
+  })
+})
+
+// The edge class the walk used to drop (385 plan 12, closing the WR-08 gate hole).
+//
+// The three controls above all hand the walk a RELATIVE specifier, which is the interior of the
+// assumption its author was writing against. A package that declares an `exports` map can import
+// itself by name, so `@vostride/agent-qa-agent-local/…` inside `packages/agent-local` resolves at
+// runtime to a sibling file — an ordinary edge of the resume path, wearing a package name. Every
+// fixture below produced ZERO offenders while the walk followed only relative specifiers, which
+// is the "one-line helper module beside the entry" defeat this rule's own header claims to close.
+describe('resume-path-model-free — the SELF-PACKAGE edge class (D-11 layer 3)', () => {
+  const SELF_HELPER = `${RESUME_PATH_SELF_PACKAGE_NAME}/composition/recovery-helper.js`
+  const BARREL = 'packages/agent-local/src/index.ts'
+  const RUN_COMPOSITION = 'packages/agent-local/src/composition/run-composition.ts'
+
+  it('pins the self-package name to the manifest of the package it walks', () => {
+    // Read from disk, not restated: a second literal would be a second thing to keep in step, and
+    // the failure mode of it drifting is the rule going quiet rather than going red.
+    const manifest = JSON.parse(
+      readFileSync(join(repoRoot, RESUME_PATH_PACKAGE_DIR, 'package.json'), 'utf8'),
+    ) as { name: string }
+    expect(RESUME_PATH_SELF_PACKAGE_NAME).toBe(manifest.name)
+  })
+
+  // THE HELD-OUT FIXTURE. The verifier's probe C, verbatim: a helper reachable from the entry ONLY
+  // through a self-package specifier, naming the model registry.
+  it('rejects a model import in a helper reached only by a self-package specifier', () => {
+    const modules = cleanModules()
+    modules[0] = module_(ENTRY, [...modules[0]!.specifiers, hit(SELF_HELPER, ENTRY, 6)])
+    modules.push(module_(HELPER, [hit(MODEL_PACKAGE, HELPER, 3)]))
+
+    const offenders = findResumePathModelFreeOffenders(modules)
+    expect(offenders).toHaveLength(1)
+    expect(offenders[0]).toContain(`${HELPER}:3`)
+    expect(offenders[0]).toContain(MODEL_PACKAGE)
+    expect(offenders[0]).toContain(`reached from ${ENTRY}`)
+    expect(resumePathClosureOf(modules).files).toContain(HELPER)
+  })
+
+  // The route the verifier showed is CONSTRUCTIBLE in this repo today: the barrel re-exports the
+  // run composition, and the run composition legitimately names the model package under the
+  // carve-out. A bare self-reference is the shortest path from the resume entry to it.
+  it('follows a BARE self-package specifier into the barrel and onward', () => {
+    const modules = cleanModules()
+    modules[0] = module_(ENTRY, [
+      ...modules[0]!.specifiers,
+      hit(RESUME_PATH_SELF_PACKAGE_NAME, ENTRY, 8),
+    ])
+    modules.push(module_(BARREL, [hit('./composition/run-composition.js', BARREL, 1)]))
+
+    const offenders = findResumePathModelFreeOffenders(modules)
+    expect(offenders).toHaveLength(1)
+    expect(offenders[0]).toContain(`${RUN_COMPOSITION}:9`)
+    expect(offenders[0]).toContain(MODEL_PACKAGE)
+    expect(offenders[0]).toContain(`reached from ${ENTRY}`)
+  })
+
+  // FAIL-CLOSED, the symmetric case to the unfollowable relative import above. An edge the walk
+  // cannot resolve is a part of the resume path the rule did not read, and reporting it is the
+  // only answer that does not convert "unproven" into "proven".
+  it('reports a self-package edge it cannot resolve rather than skipping it', () => {
+    const modules = cleanModules()
+    modules[0] = module_(ENTRY, [
+      ...modules[0]!.specifiers,
+      hit(`${RESUME_PATH_SELF_PACKAGE_NAME}/composition/not-scanned.js`, ENTRY, 11),
+    ])
+
+    const offenders = findResumePathModelFreeOffenders(modules)
+    expect(offenders).toHaveLength(1)
+    expect(offenders[0]).toContain(`${ENTRY}:11`)
+    expect(offenders[0]).toContain('could not be followed')
+    // The message says why this edge class is examined at all, per the pin-doubles-as-
+    // documentation convention: a reader who trips it will otherwise conclude the rule has
+    // confused a package boundary for a sibling import and "fix" it by skipping the edge again.
+    expect(offenders[0]).toContain('exports map')
+    expect(offenders[0]).toContain(RESUME_PATH_SELF_PACKAGE_NAME)
+  })
+
+  // The BOUND. Another package's specifier is still layer 1's business, not this rule's, and a
+  // walk that started following those would report the whole workspace and mean nothing.
+  it('still leaves a specifier naming a DIFFERENT package to layer 1', () => {
+    const modules = cleanModules()
+    modules[0] = module_(ENTRY, [
+      ...modules[0]!.specifiers,
+      hit('@vostride/agent-qa-knowledge-local/composition/x.js', ENTRY, 13),
+    ])
+
+    expect(findResumePathModelFreeOffenders(modules)).toEqual([])
   })
 })
 

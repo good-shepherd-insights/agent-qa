@@ -16,11 +16,15 @@
 // So this rule is a PERMISSION rule about one file and everything that file can reach:
 //
 //   1. It walks the import closure, not the entry alone. A single-file check is defeated by a
-//      one-line helper module beside it, and that is the shape a well-meaning refactor takes.
+//      one-line helper module beside it, and that is the shape a well-meaning refactor takes. The
+//      walk has no silently skipped edge class: an in-package edge is either followed or reported,
+//      and a self-referencing specifier is an in-package edge however much it looks like a package
+//      boundary (`exports` resolves it to a sibling file). An edge class nobody walks is the same
+//      defeat as a helper nobody reads, arriving by a different import style.
 //   2. It fails in the other direction too. A pin whose path has moved matches nothing, reports
 //      nothing, and reads like proof — the failure mode plans 08 and 09 each had to close in their
 //      own rules. Here a pinned entry that is not in the scanned set is an offender, a closure that
-//      is the entry alone is an offender, and a relative import the walk cannot follow is an
+//      is the entry alone is an offender, and an in-package import the walk cannot follow is an
 //      offender. A rule that cannot fail is worse than no rule, because it converts "unproven" into
 //      "proven".
 //   3. Its message states WHY rather than only what, per the 384 convention that a pin doubles as
@@ -41,6 +45,19 @@ import type { SpecifierHit } from './extract-specifiers.js'
 
 /** The package the pinned entries live in, and therefore the package whose sources are walked. */
 export const RESUME_PATH_PACKAGE_DIR = 'packages/agent-local'
+
+/**
+ * The walked package's OWN name, as its manifest declares it.
+ *
+ * A package that ships an `exports` map can import itself by name, and Node resolves it — so
+ * `@vostride/agent-qa-agent-local/composition/x.js` from a file inside `packages/agent-local` is
+ * an ordinary runtime edge wearing a package name. Classified naively it looks like a boundary
+ * crossing for layer 1 to worry about, which is why the walk used to drop it; followed, it is a
+ * sibling import and the walk owes it the same treatment it gives `./x.js`. A test pins this
+ * literal against the manifest, because a rename that moved the name here without moving it there
+ * would turn every self-reference back into a silently unwalked edge.
+ */
+export const RESUME_PATH_SELF_PACKAGE_NAME = '@vostride/agent-qa-agent-local'
 
 /**
  * The recovery/resume composition entries, by exact repo-relative path.
@@ -114,15 +131,62 @@ export function resumePathRelativeCandidates(fromFile: string, specifier: string
   return [joined, `${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`]
 }
 
+/**
+ * Where a self-package specifier could land, most specific first.
+ *
+ * `@vostride/agent-qa-agent-local` is the barrel; a subpath is the same file the equivalent
+ * relative specifier would have named, so the candidate list is built the same way and resolved
+ * against the scanned set for the same reason.
+ */
+export function resumePathSelfPackageCandidates(specifier: string): string[] {
+  const subpath = specifier.slice(RESUME_PATH_SELF_PACKAGE_NAME.length).replace(/^\//, '')
+  if (subpath === '') return [`${RESUME_PATH_PACKAGE_DIR}/src/index.ts`]
+  const joined = `${RESUME_PATH_PACKAGE_DIR}/src/${subpath}`
+  const stem = joined.replace(/\.js$/, '')
+  return [joined, `${stem}.ts`, `${stem}.tsx`, `${stem}/index.ts`]
+}
+
+/** Which edge class an unfollowable specifier belonged to, so its report can say why it counts. */
+export type ResumePathUnresolvedEdge = 'relative' | 'self-package'
+
 export interface ResumePathClosure {
-  /** Every file reachable from the entries by relative import, including the entries. */
+  /** Every file reachable from the entries by an in-package import, including the entries. */
   readonly files: readonly string[]
   /** Which entry each file was first reached from, for the offender messages. */
   readonly reachedFrom: ReadonlyMap<string, string>
   /** Pinned entries the scanned set does not contain. */
   readonly missingEntries: readonly string[]
-  /** Relative specifiers the walk could not resolve inside the scanned set. */
-  readonly unresolved: readonly { readonly from: string; readonly hit: SpecifierHit }[]
+  /** In-package specifiers the walk could not resolve inside the scanned set. */
+  readonly unresolved: readonly {
+    readonly from: string
+    readonly hit: SpecifierHit
+    readonly edge: ResumePathUnresolvedEdge
+  }[]
+}
+
+/**
+ * How the walk treats one specifier: follow it into the package, or leave it to another rule.
+ *
+ * Exactly two classes are followed, and the second is why this function exists as a named step
+ * rather than a condition inside the loop. A specifier naming ANOTHER package is a boundary
+ * crossing, which is layer 1's subject and not this rule's — a walk that followed those would
+ * report the whole workspace and mean nothing. A specifier naming THIS package is not a boundary
+ * crossing at all: `exports` makes it resolve to a sibling file, so it is a real edge of the
+ * resume path, and there is no third answer available. Following it or reporting it are the only
+ * options, because skipping it is what let a model import hide behind an import style.
+ */
+function resumePathWalkCandidates(
+  fromFile: string,
+  specifier: string,
+): { readonly edge: ResumePathUnresolvedEdge; readonly candidates: string[] } | undefined {
+  const classified = classifySpecifier(specifier)
+  if (classified.kind === 'relative') {
+    return { edge: 'relative', candidates: resumePathRelativeCandidates(fromFile, specifier) }
+  }
+  if (classified.kind === 'internal' && classified.pkgName === RESUME_PATH_SELF_PACKAGE_NAME) {
+    return { edge: 'self-package', candidates: resumePathSelfPackageCandidates(specifier) }
+  }
+  return undefined
 }
 
 export function resumePathClosureOf(
@@ -133,7 +197,7 @@ export function resumePathClosureOf(
   const files: string[] = []
   const reachedFrom = new Map<string, string>()
   const missingEntries: string[] = []
-  const unresolved: { from: string; hit: SpecifierHit }[] = []
+  const unresolved: { from: string; hit: SpecifierHit; edge: ResumePathUnresolvedEdge }[] = []
 
   for (const rawEntry of entries) {
     const entry = normalizeRepoPath(rawEntry)
@@ -148,12 +212,11 @@ export function resumePathClosureOf(
       reachedFrom.set(file, entry)
       files.push(file)
       for (const hit of byFile.get(file)!.specifiers) {
-        if (classifySpecifier(hit.specifier).kind !== 'relative') continue
-        const resolved = resumePathRelativeCandidates(file, hit.specifier).find((candidate) =>
-          byFile.has(candidate),
-        )
+        const walk = resumePathWalkCandidates(file, hit.specifier)
+        if (walk === undefined) continue
+        const resolved = walk.candidates.find((candidate) => byFile.has(candidate))
         if (resolved === undefined) {
-          unresolved.push({ from: file, hit })
+          unresolved.push({ from: file, hit, edge: walk.edge })
           continue
         }
         if (!reachedFrom.has(resolved)) pending.push(resolved)
@@ -199,12 +262,19 @@ export function findResumePathModelFreeOffenders(
     )
   }
 
-  // ANTI-VACUITY 3: an unfollowable relative import is an unexamined branch of the closure.
-  for (const { from, hit } of closure.unresolved) {
+  // ANTI-VACUITY 3: an unfollowable in-package import is an unexamined branch of the closure.
+  for (const { from, hit, edge } of closure.unresolved) {
     offenders.push(
       `resume-path-model-free: ${from}:${hit.line} ⇏ ${hit.specifier} could not be followed` +
         ` inside ${RESUME_PATH_PACKAGE_DIR} (an unresolved edge is a part of the resume path this` +
-        ' rule did not read, so it is reported rather than skipped)',
+        ' rule did not read, so it is reported rather than skipped)' +
+        (edge === 'self-package'
+          ? ` — and this one names ${RESUME_PATH_SELF_PACKAGE_NAME}, the package being walked.` +
+            ' A self-reference resolves through the package\'s own exports map to a sibling file,' +
+            ' so it is an ordinary runtime edge of the resume path rather than the boundary' +
+            ' crossing layer 1 owns. Leaving it unexamined is precisely the "one-line helper' +
+            ' module beside the entry" defeat this rule exists to close, wearing a package name'
+          : ''),
     )
   }
 
