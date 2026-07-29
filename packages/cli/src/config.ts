@@ -2,7 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import pc from 'picocolors'
-import { AgentQaConfigSchema, loadLLMAuthPlugins } from '@vostride/agent-qa-core'
+import {
+  AgentQaConfigSchema,
+  loadLLMAuthPlugins,
+  resolveKnowledgeRoot,
+} from '@vostride/agent-qa-core'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 
 const ENV_MAPPING: Record<string, string> = {
@@ -244,4 +248,12 @@ export async function resolveConfig(options: {
     await loadProviderPluginsForRawConfig(result.data, configPath)
   }
   return result.data
+}
+
+/** Resolve the writer-gated knowledge root without making each CLI surface import core directly. */
+export function resolveConfiguredKnowledgeRoot(
+  config: AgentQaConfig,
+  configDir: string,
+): string {
+  return resolveKnowledgeRoot(config.knowledge, configDir)
 }

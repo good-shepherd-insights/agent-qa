@@ -101,6 +101,7 @@ export {
   createRunsReader,
   DIGEST_JOB_ID_SOURCE,
   LOCAL_CURATION_CAPABILITIES,
+  LOCAL_DAEMON_CAPABILITIES,
   RunProducedNoEventsError,
   SYSTEM_CLOCK,
 } from './composition/compose-local-agent.js'
@@ -109,6 +110,7 @@ export type {
   LocalAgentHost,
   LocalAgentJobs,
   LocalCurationCapabilities,
+  LocalDaemonCapabilities,
   LocalKnowledgeMaintenanceCapabilities,
   RunExecutionPort,
 } from './composition/compose-local-agent.js'
@@ -133,6 +135,12 @@ export type {
   RollbackCurationJobInput,
   RollbackReport,
   WriterLeaseAuthority,
+  AcquireWriterLeaseOutcome,
+  HeartbeatLeaseOutcome,
+  LeaseOperationOptions,
+  ReadWriterLeaseOutcome,
+  ReleaseLeaseOutcome,
+  WriterLease,
 } from './composition/compose-local-agent.js'
 
 // A standing host adopts the durable queue through this recovery entry before it opens the

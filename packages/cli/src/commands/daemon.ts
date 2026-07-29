@@ -4,20 +4,18 @@
 
 import { dirname, resolve } from 'node:path'
 
-import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
-  countPendingCurationJobs,
-  readWriterLease,
-} from '@vostride/agent-qa-knowledge-local'
+  LOCAL_DAEMON_CAPABILITIES,
+} from '@vostride/agent-qa-agent-local'
 import type {
   ReadWriterLeaseOutcome,
   WriterLease,
-} from '@vostride/agent-qa-knowledge-local'
+} from '@vostride/agent-qa-agent-local'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { createMaskedConfigReader } from '../composition/local-agent-host.js'
-import { resolveConfig } from '../config.js'
+import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { runDaemonHost } from '../daemon/host.js'
 import type { DaemonHostOptions } from '../daemon/host.js'
 import {
@@ -64,7 +62,7 @@ async function resolveDaemonPaths(configPath: string): Promise<DaemonProjectPath
   const config = await resolveConfig({ configPath, loadAuthPlugins: false })
   return {
     agentQaRoot: resolve(configDir, '.agent-qa'),
-    knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+    knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
   }
 }
 
@@ -73,8 +71,8 @@ const DEFAULT_DEPS: DaemonCommandDeps = {
   resolvePaths: resolveDaemonPaths,
   readRegistration: readDaemonRegistration,
   processIsAlive,
-  readWriterLease,
-  countPendingCurationJobs,
+  readWriterLease: LOCAL_DAEMON_CAPABILITIES.readWriterLease,
+  countPendingCurationJobs: LOCAL_DAEMON_CAPABILITIES.countPendingCurationJobs,
   signalProcess: (pid, signal) => process.kill(pid, signal),
   now: () => Date.now(),
 }
@@ -146,7 +144,7 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         const config = await resolveConfig({ configPath, loadAuthPlugins: false })
         const exitCode = await deps.runHost({
           agentQaRoot: resolve(configDir, '.agent-qa'),
-          knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+          knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
           config: createMaskedConfigReader(configPath),
           model: () => resolveCliJobModel(configPath),
         })

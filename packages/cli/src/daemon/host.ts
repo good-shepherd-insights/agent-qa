@@ -3,6 +3,7 @@ import {
   composeJobRecovery,
   composeLocalAgent,
   DIGEST_JOB_ID_SOURCE,
+  LOCAL_DAEMON_CAPABILITIES,
   SYSTEM_CLOCK,
 } from '@vostride/agent-qa-agent-local'
 import type {
@@ -11,19 +12,11 @@ import type {
   JobRecoveryHost,
   LocalAgentHost,
   RunExecutionPort,
-} from '@vostride/agent-qa-agent-local'
-import {
-  acquireWriterLease,
-  heartbeatLease,
-  releaseLease,
-} from '@vostride/agent-qa-knowledge-local'
-import type {
   AcquireWriterLeaseOutcome,
   HeartbeatLeaseOutcome,
   LeaseOperationOptions,
   ReleaseLeaseOutcome,
-} from '@vostride/agent-qa-knowledge-local'
-import { setActiveExecutionContextResolver } from '@vostride/agent-qa-safety'
+} from '@vostride/agent-qa-agent-local'
 
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import { appendDaemonEvent } from './events.js'
@@ -118,9 +111,9 @@ function defaultOperations(): DaemonHostOperations {
     onSignal: (signal, listener) => process.on(signal, listener),
     offSignal: (signal, listener) => process.off(signal, listener),
     hardExit: (code) => process.exit(code),
-    acquireWriterLease,
-    heartbeatLease,
-    releaseLease,
+    acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
+    heartbeatLease: LOCAL_DAEMON_CAPABILITIES.heartbeatLease,
+    releaseLease: LOCAL_DAEMON_CAPABILITIES.releaseLease,
     composeJobRecovery,
     composeLocalAgent,
     appendDaemonEvent,
@@ -153,7 +146,7 @@ function liveRegistrationMessage(registration: DaemonRegistration): string {
  */
 export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   // D-09: this is deliberately the first effect and is never injectable or TTY-dependent.
-  setActiveExecutionContextResolver(() => 'local-headless')
+  LOCAL_DAEMON_CAPABILITIES.pinLocalHeadlessExecutionContext()
 
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER

@@ -36,13 +36,16 @@ import type {
 } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
+  countPendingCurationJobs,
   drainQueue,
   enqueueCurationCandidateProjection,
   foldRunOutcomes,
+  heartbeatLease,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
   purgeRecord,
   readCanonicalBundleAnchors,
+  readWriterLease,
   rebuildIndex,
   refreshWriterLeaseAuthority,
   releaseLease,
@@ -55,6 +58,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
+import { setActiveExecutionContextResolver } from '@vostride/agent-qa-safety'
 import {
   FsEventLog,
   HANDOFF_FILE,
@@ -95,6 +99,7 @@ import type { SqliteJobStore } from '../store/sqlite-job-store.js'
 // have been a signature change to code D-14 requires this phase to leave semantically untouched.
 
 export type {
+  AcquireWriterLeaseOutcome,
   AuthorOutcome,
   AuthoringTestRef,
   CurationCandidateProjection,
@@ -102,17 +107,49 @@ export type {
   CurationProjectionArtifactSource,
   CuratorAuthor,
   EnqueueCurationCandidateProjectionOutcome,
+  HeartbeatLeaseOutcome,
+  LeaseOperationOptions,
   NeighborRecord,
   OpenServingKnowledgeReaderConfig,
   PurgeAffectedSet,
   PurgeReceipt,
   RebuildReport,
+  ReadWriterLeaseOutcome,
+  ReleaseLeaseOutcome,
   RollbackAffectedSet,
   RollbackCampaignInput,
   RollbackCurationJobInput,
   RollbackReport,
+  WriterLease,
   WriterLeaseAuthority,
 } from '@vostride/agent-qa-knowledge-local'
+
+/**
+ * The standing daemon's writer-authority substrate, published through the same one composition
+ * edge as every other local writer capability. Surface packages may import agent-local, but the
+ * architecture firewall deliberately forbids them from naming knowledge-local or safety
+ * directly; keeping this frozen table here preserves that boundary without duplicating lease
+ * behavior in the CLI host.
+ */
+export interface LocalDaemonCapabilities {
+  readonly acquireWriterLease: typeof acquireWriterLease
+  readonly heartbeatLease: typeof heartbeatLease
+  readonly releaseLease: typeof releaseLease
+  readonly readWriterLease: typeof readWriterLease
+  readonly countPendingCurationJobs: typeof countPendingCurationJobs
+  readonly pinLocalHeadlessExecutionContext: () => void
+}
+
+export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze({
+  acquireWriterLease,
+  heartbeatLease,
+  releaseLease,
+  readWriterLease,
+  countPendingCurationJobs,
+  pinLocalHeadlessExecutionContext: () => {
+    setActiveExecutionContextResolver(() => 'local-headless')
+  },
+})
 
 /**
  * Index maintenance and the campaign/job rollback verbs, plus the lease every one of them is only
