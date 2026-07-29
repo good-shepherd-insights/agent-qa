@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -29,7 +29,14 @@ import {
 import {
   findKnowledgeLocalWallOffenders,
   findReaderCarveoutOffenders,
+  KNOWLEDGE_READER_FILES,
+  READER_CARVEOUT_SCANNED_DIRS,
 } from '../lint/reader-carveout.js'
+import {
+  COMPOSITION_CARVEOUT_PACKAGE_DIR,
+  findCompositionCarveoutOffenders,
+  findCompositionCarveoutUnusedAllowances,
+} from '../lint/composition-carveout.js'
 import {
   contractBearingDirs,
   findContractlessWorkspaceOffenders,
@@ -189,9 +196,13 @@ describe('validate:arch (LINT-01..05)', () => {
       }
 
       offenders.push(...findDepReconciliationOffenders(contract, sourceHits, repoRoot))
-      if (contract.packageDir === 'packages/cli') {
+      if (READER_CARVEOUT_SCANNED_DIRS.includes(
+        contract.packageDir as (typeof READER_CARVEOUT_SCANNED_DIRS)[number],
+      )) {
         offenders.push(...findReaderCarveoutOffenders(sourceHits))
       }
+      offenders.push(...findCompositionCarveoutOffenders(contract, sourceHits))
+      offenders.push(...findCompositionCarveoutUnusedAllowances(contract, sourceHits))
       if (isFirewalledSurfaceDir(contract.packageDir)) {
         surfaceScans.push({ packageDir: contract.packageDir, hits: sourceHits })
       }
@@ -602,6 +613,54 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
 
     const keys = SURFACE_FIREWALL_LEDGER.map(entry => `${entry.file} :: ${entry.specifier}`)
     expect(new Set(keys).size).toEqual(keys.length)
+  })
+})
+
+describe('validate:arch composition carve-out (385-08 / D-13) registration and scope', () => {
+  // The carve-out's own behaviour is unit-tested beside the rule. What can only be checked here is
+  // that the aggregate actually CALLS it: a rule nobody invokes passes every build, and its unit
+  // tests keep passing too, so nothing anywhere goes red. Source-anchored on this file, the
+  // wm-flush delegate-anchor convention.
+  it('the aggregate invokes both directions of the carve-out', () => {
+    const aggregateSource = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+    const aggregate = aggregateSource.slice(
+      aggregateSource.indexOf('every contract-bearing package satisfies'),
+      aggregateSource.indexOf('expect(offenders).toEqual([])'),
+    )
+
+    expect(aggregate).toContain('findCompositionCarveoutOffenders(contract, sourceHits)')
+    expect(aggregate).toContain('findCompositionCarveoutUnusedAllowances(contract, sourceHits)')
+    expect(aggregate).toContain('findReaderCarveoutOffenders(sourceHits)')
+  })
+
+  it('guards a package that is actually contract-bearing and scanned', () => {
+    const guarded = ARCH_MANIFEST.packages.find(
+      contract => contract.packageDir === COMPOSITION_CARVEOUT_PACKAGE_DIR,
+    )
+    expect(guarded).toBeDefined()
+    expect(sourceFilesFor(COMPOSITION_CARVEOUT_PACKAGE_DIR, repoRoot).length).toBeGreaterThan(0)
+  })
+
+  // A path-keyed pin whose path has moved matches nothing and reports nothing. Both reader files
+  // must exist, and the scanned-dirs list must actually contain the package each one lives in, or
+  // the reader carve-out is silently covering fewer files than it claims.
+  it('every pinned reader file exists and sits inside a scanned package', () => {
+    for (const file of KNOWLEDGE_READER_FILES) {
+      expect(existsSync(join(repoRoot, file))).toBe(true)
+      expect(
+        READER_CARVEOUT_SCANNED_DIRS.some(dir => file.startsWith(`${dir}/`)),
+      ).toBe(true)
+    }
+  })
+
+  // D-13/D-15 widened the firewall allow-list by exactly one entry. Pinned by equality so a fourth
+  // private power cannot join by looking like it belongs.
+  it('the surface allow-list is exactly the function layer, the vocabulary and the composition root', () => {
+    expect([...SURFACE_ALLOWED_INTERNAL_PACKAGES]).toEqual([
+      '@vostride/agent-qa-agent',
+      '@vostride/agent-qa-agent-local',
+      '@vostride/agent-qa-schema',
+    ])
   })
 })
 

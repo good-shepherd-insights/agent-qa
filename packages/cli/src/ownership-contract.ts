@@ -24,6 +24,9 @@ export const AGENT_QA_CLI_EXTERNAL_DEPENDENCIES = [
 export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   // 384 FUNC-01: the function layer the CLI invokes capabilities through.
   '@vostride/agent-qa-agent',
+  // 2026-07-29 (Phase 385 plan 08, D-13): the local composition root. The CLI no longer builds a
+  // run session itself; it supplies presentation ports and delegates.
+  '@vostride/agent-qa-agent-local',
   '@vostride/agent-qa-android',
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-dashboard',

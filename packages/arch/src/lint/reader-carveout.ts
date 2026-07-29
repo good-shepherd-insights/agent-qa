@@ -9,8 +9,21 @@ export const KNOWLEDGE_WRITER_ALLOWLIST = [
   'packages/cli/src/commands/knowledge-maintain.ts',
 ] as const
 
-const KNOWLEDGE_READER_FILES = [
-  'packages/cli/src/composition/knowledge-reader.ts',
+/**
+ * The packages whose sources this carve-out is scanned over. 2026-07-29 (Phase 385 plan 08, D-13):
+ * the local agent package joins the CLI, because the reader binding moved there with the run
+ * composition. A path-keyed rule that is only ever handed one package's files silently stops
+ * covering a file the moment that file moves — the rule would still pass, and would still read
+ * like proof.
+ */
+export const READER_CARVEOUT_SCANNED_DIRS = [
+  'packages/cli',
+  'packages/agent-local',
+] as const
+
+export const KNOWLEDGE_READER_FILES = [
+  // 2026-07-29 (Phase 385 plan 08, D-13): relocated out of the CLI with the run composition.
+  'packages/agent-local/src/composition/knowledge-reader.ts',
   'packages/cli/src/commands/knowledge-read.ts',
 ] as const
 

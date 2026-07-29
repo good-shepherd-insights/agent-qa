@@ -19,11 +19,22 @@ export const FIREWALLED_SURFACE_DIRS = ['packages/cli', 'packages/mcp'] as const
 
 /**
  * The only internal packages a firewalled surface may name without a ledger entry:
- * the typed function layer it invokes capabilities through, and the shared contract
- * vocabulary its DTOs are typed against. Everything else is a private power (SC2).
+ * the typed function layer it invokes capabilities through, the shared contract
+ * vocabulary its DTOs are typed against, and the local composition root it obtains a
+ * composed host from. Everything else is a private power (SC2).
+ *
+ * 2026-07-29 (Phase 385, D-13/D-15): the third entry is new and is NOT a relaxation.
+ * Before it, a surface that wanted a run session had to build one, which is why the
+ * ledger below carries a whole file's worth of waivers for exactly that. The
+ * composition root is the sanctioned way a host acquires powers rather than a way
+ * around the sanction, so it belongs in this set and not in the ledger: a ledger entry
+ * means "debt, to be cleared", and this edge is the end state every host converges on.
+ * The reach it grants is bounded by what the composition package publishes — its store
+ * is deliberately not on that barrel.
  */
 export const SURFACE_ALLOWED_INTERNAL_PACKAGES = [
   '@vostride/agent-qa-agent',
+  '@vostride/agent-qa-agent-local',
   '@vostride/agent-qa-schema',
 ] as const
 

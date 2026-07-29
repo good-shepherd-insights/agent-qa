@@ -305,18 +305,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'the 384 CLI-side composition root binding local implementations into the registry; superseded by composeLocalAgent()',
   },
   {
-    file: 'packages/cli/src/composition/knowledge-reader.ts',
-    specifier: '@vostride/agent-qa-knowledge-local/reader',
-    clearedBy: '386',
-    reason: 'CLI-side knowledge reader construction; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/composition/knowledge-reader.ts',
-    specifier: '@vostride/agent-qa-runner',
-    clearedBy: '386',
-    reason: 'CLI-side knowledge reader construction; superseded by composeLocalAgent()',
-  },
-  {
     file: 'packages/cli/src/config.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -498,24 +486,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   },
   {
     file: 'packages/cli/src/run-session-composition.ts',
-    specifier: '@vostride/agent-qa-model',
-    clearedBy: '386',
-    reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/run-session-composition.ts',
-    specifier: '@vostride/agent-qa-runner',
-    clearedBy: '386',
-    reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/run-session-composition.ts',
-    specifier: '@vostride/agent-qa-runner-local',
-    clearedBy: '386',
-    reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/run-session-composition.ts',
     specifier: '@vostride/agent-qa-safety',
     clearedBy: '386',
     reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
@@ -523,12 +493,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   {
     file: 'packages/cli/src/run-session-composition.ts',
     specifier: '@vostride/agent-qa-safety-local',
-    clearedBy: '386',
-    reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
-  },
-  {
-    file: 'packages/cli/src/run-session-composition.ts',
-    specifier: '@vostride/agent-qa-web',
     clearedBy: '386',
     reason: 'the 1035-line in-CLI run session composition; superseded by composeLocalAgent()',
   },

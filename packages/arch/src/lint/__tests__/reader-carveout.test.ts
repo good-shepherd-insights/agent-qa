@@ -5,11 +5,13 @@ import type { SpecifierHit } from '../extract-specifiers.js'
 import {
   findKnowledgeLocalWallOffenders,
   findReaderCarveoutOffenders,
+  KNOWLEDGE_READER_FILES,
   KNOWLEDGE_WRITER_ALLOWLIST,
 } from '../reader-carveout.js'
 
 const MAIN_ENTRY = '@vostride/agent-qa-knowledge-local'
 const READER_ENTRY = `${MAIN_ENTRY}/reader`
+const RELOCATED_READER_FILE = KNOWLEDGE_READER_FILES[0]
 
 function fixtureHit(
   specifier: string,
@@ -45,11 +47,15 @@ describe('reader carve-out', () => {
   })
 
   it('rejects non-reader knowledge-local imports from either pinned reader file', () => {
+    // 2026-07-29 (Phase 385 plan 08, D-13): the first pinned reader file relocated with the run
+    // composition. The path is spelled through the shipped pin rather than repeated here, so the
+    // next relocation updates one place and this case cannot quietly start asserting about a file
+    // the rule no longer knows.
     expect(findReaderCarveoutOffenders([
-      fixtureHit(MAIN_ENTRY, 'packages/cli/src/composition/knowledge-reader.ts', 1),
+      fixtureHit(MAIN_ENTRY, RELOCATED_READER_FILE, 1),
       fixtureHit(`${MAIN_ENTRY}/index-reader`, 'packages/cli/src/commands/knowledge-read.ts', 7),
     ])).toEqual([
-      `reader-carveout: packages/cli/src/composition/knowledge-reader.ts:1 ⇏ ${MAIN_ENTRY} (reader file requires /reader)`,
+      `reader-carveout: ${RELOCATED_READER_FILE}:1 ⇏ ${MAIN_ENTRY} (reader file requires /reader)`,
       `reader-carveout: packages/cli/src/commands/knowledge-read.ts:7 ⇏ ${MAIN_ENTRY}/index-reader (reader file requires /reader)`,
     ])
   })
@@ -59,7 +65,7 @@ describe('reader carve-out', () => {
       fixtureHit(MAIN_ENTRY, 'packages/cli/src/curation/curation-tail.ts'),
       fixtureHit(MAIN_ENTRY, 'packages/cli/src/curation/emit-candidates.ts'),
       fixtureHit(MAIN_ENTRY, 'packages/cli/src/commands/knowledge-maintain.ts'),
-      fixtureHit(READER_ENTRY, 'packages/cli/src/composition/knowledge-reader.ts'),
+      fixtureHit(READER_ENTRY, RELOCATED_READER_FILE),
       fixtureHit(READER_ENTRY, 'packages/cli/src/commands/knowledge-read.ts'),
     ])).toEqual([])
   })
