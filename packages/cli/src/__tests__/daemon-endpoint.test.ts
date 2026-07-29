@@ -28,9 +28,11 @@ import type {
 } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
+import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
+import { createFnCommand } from '../commands/fn.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import {
   DAEMON_SOCKET_PATH_BUDGET_BYTES,
@@ -105,6 +107,12 @@ interface TestAuditRow extends Record<string, unknown> {
 interface TestRegistryFixture {
   readonly registry: FunctionRegistry
   readonly auditRows: TestAuditRow[]
+}
+
+interface FnInvocationResult {
+  readonly stdout: string
+  readonly stderr: string
+  readonly exitCode: typeof process.exitCode
 }
 
 interface SemanticEndpointModules {
@@ -254,6 +262,88 @@ async function capturedRejection(operation: Promise<unknown>): Promise<Error> {
     throw new Error(`Expected an Error rejection, received ${String(error)}`)
   }
   throw new Error('Expected invocation to reject')
+}
+
+function fnFixture(label: string): {
+  readonly root: string
+  readonly agentQaRoot: string
+  readonly configPath: string
+  readonly socketPath: string
+} {
+  const root = temporaryRoot(label)
+  const agentQaRoot = join(root, '.agent-qa')
+  const configPath = join(root, 'agent-qa.config.yaml')
+  const socketPath = join(agentQaRoot, 'daemon.sock')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'preserve' } },
+    })}\n`,
+    'utf8',
+  )
+  return { root, agentQaRoot, configPath, socketPath }
+}
+
+async function invokeFn(
+  configPath: string,
+  args: readonly string[],
+  viaDaemonEnv?: string,
+): Promise<FnInvocationResult> {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const previousExitCode = process.exitCode
+  const previousViaDaemonEnv = process.env.AGENT_QA_VIA_DAEMON
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    stdout.push(values.map(String).join(' '))
+  })
+  const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+    stderr.push(values.map(String).join(' '))
+  })
+  process.exitCode = undefined
+  if (viaDaemonEnv === undefined) delete process.env.AGENT_QA_VIA_DAEMON
+  else process.env.AGENT_QA_VIA_DAEMON = viaDaemonEnv
+
+  try {
+    const program = new Command()
+      .option('--config <path>', 'config file path')
+      .addCommand(createFnCommand())
+    program.exitOverride()
+    await program.parseAsync([
+      'node',
+      'agent-qa',
+      '--config',
+      configPath,
+      'fn',
+      ...args,
+    ])
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      exitCode: process.exitCode,
+    }
+  } finally {
+    process.exitCode = previousExitCode
+    if (previousViaDaemonEnv === undefined) delete process.env.AGENT_QA_VIA_DAEMON
+    else process.env.AGENT_QA_VIA_DAEMON = previousViaDaemonEnv
+    log.mockRestore()
+    error.mockRestore()
+  }
+}
+
+async function startFnServer(
+  fixture: ReturnType<typeof fnFixture>,
+  registry: FunctionRegistry,
+): Promise<void> {
+  register(fixture.agentQaRoot, fixture.socketPath)
+  const server = await startInvokeServer({ socketPath: fixture.socketPath, registry })
+  servers.push(server)
 }
 
 async function waitFor<T>(
@@ -646,5 +736,65 @@ describe('daemon /invoke endpoint semantic parity', () => {
     const wireRows = auditRows.splice(0)
     expect(wireRows).toHaveLength(1)
     expect(wireRows).toEqual(inProcessRows)
+  })
+})
+
+describe('agent-qa fn explicit daemon routing', () => {
+  it('keeps the default invocation local even while a divergent daemon is live', async () => {
+    const fixture = fnFixture('fn-default-local')
+    const daemonHost = localHost(
+      join(fixture.root, 'daemon-runtime'),
+      join(fixture.root, 'daemon-knowledge'),
+    )
+    await startFnServer(fixture, daemonHost.registry)
+
+    const result = await invokeFn(fixture.configPath, ['config.get', '--json'])
+
+    expect(result.stderr).toBe('')
+    expect(result.exitCode).toBeUndefined()
+    expect(JSON.parse(result.stdout)).not.toEqual(MASKED_CONFIG)
+  })
+
+  it('routes the flag and env switch through the same daemon with in-process parity', async () => {
+    const fixture = fnFixture('fn-via-daemon')
+    const daemonHost = localHost(
+      join(fixture.root, 'daemon-runtime'),
+      join(fixture.root, 'daemon-knowledge'),
+    )
+    await startFnServer(fixture, daemonHost.registry)
+    const expected = await invokeFunction(
+      daemonHost.registry,
+      'config.get',
+      {},
+      DAEMON_FUNCTION_CALLER,
+    )
+
+    const viaFlag = await invokeFn(fixture.configPath, [
+      'config.get',
+      '--via-daemon',
+      '--json',
+    ])
+    const viaEnv = await invokeFn(fixture.configPath, ['config.get', '--json'], '1')
+
+    expect(viaFlag).toEqual(viaEnv)
+    expect(viaFlag.stderr).toBe('')
+    expect(viaFlag.exitCode).toBeUndefined()
+    expect(JSON.parse(viaFlag.stdout)).toEqual(expected)
+  })
+
+  it('fails clearly without a live daemon and never falls back to local dispatch', async () => {
+    const fixture = fnFixture('fn-no-daemon')
+
+    const result = await invokeFn(fixture.configPath, [
+      'runs.list',
+      '--via-daemon',
+      '--json',
+    ])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('DaemonNotRunningError')
+    expect(result.stderr).toContain('Start `agent-qa daemon`')
+    expect(result.stderr).toContain('omit --via-daemon')
   })
 })
