@@ -149,6 +149,11 @@ export function listQueuedCandidates(knowledgeRoot: string): string[] {
   return directoryNames(queuedRoot(knowledgeRoot)).filter((name) => CANDIDATE_ID.test(name))
 }
 
+/** Visibility-only count over the same durable pending layout consumed by claimNextJob. */
+export function countPendingCurationJobs(knowledgeRoot: string): number {
+  return listQueuedCandidates(knowledgeRoot).length
+}
+
 /** Return deterministic active/recoverable lease directory order. */
 export function listClaimedLeases(knowledgeRoot: string): string[] {
   return directoryNames(claimedRoot(knowledgeRoot)).filter((name) => SAFE_LEASE_ID.test(name))

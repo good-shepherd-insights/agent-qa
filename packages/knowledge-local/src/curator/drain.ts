@@ -44,6 +44,7 @@ import {
 } from '../lease/writer-lease.js'
 import {
   claimNextJob,
+  countPendingCurationJobs,
   requeueClaimed,
   type ClaimedCurationJob,
   type ClaimNextJobOutcome,
@@ -162,6 +163,8 @@ interface DrainReportBase {
   reconcile: ReconcileReport | undefined
   writerPass: WriterPassReport
   gc: GcPassReport
+  /** Visibility only: durable jobs still present in the pending queue at drain exit. */
+  remaining: number
 }
 
 export type DrainReport = DrainReportBase &
@@ -206,6 +209,8 @@ export interface DrainOptions {
   knowledgeRoot: string
   auditBaseDir: string
   budgetMs?: number
+  /** Standing writer authority owned by the caller; drainQueue never mutates its lifecycle. */
+  lease?: { leaseId: string; epoch: number }
   author: CuratorAuthor
   executionContext: ExecutionContext
   policy: GuardrailPolicy
@@ -329,6 +334,7 @@ function emptyReport(): DrainReportBase {
     reconcile: undefined,
     writerPass: { kind: 'not-requested' },
     gc: { kind: 'not-run' },
+    remaining: 0,
   }
 }
 
@@ -741,11 +747,19 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   const startedAt = now()
   const limit = budgetMs(options)
   const report = emptyReport()
-  const lease = operations.acquireWriterLease(options.knowledgeRoot)
-  if (lease.kind === 'held') {
-    report.writerPass = { kind: 'skipped', reason: 'lease-held' }
-    report.gc = { kind: 'skipped', reason: 'lease-held' }
-    return { ...report, kind: 'handed-off', holder: lease.holder }
+  const drainOwnsLease = options.lease === undefined
+  let lease: { leaseId: string; epoch: number }
+  if (options.lease !== undefined) {
+    lease = options.lease
+  } else {
+    const acquired = operations.acquireWriterLease(options.knowledgeRoot)
+    if (acquired.kind === 'held') {
+      report.writerPass = { kind: 'skipped', reason: 'lease-held' }
+      report.gc = { kind: 'skipped', reason: 'lease-held' }
+      report.remaining = countPendingCurationJobs(options.knowledgeRoot)
+      return { ...report, kind: 'handed-off', holder: acquired.holder }
+    }
+    lease = acquired
   }
 
   const result: DrainReportBase & { kind: 'drained' | 'aborted' } = {
@@ -784,13 +798,15 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       result.jobsProcessed += 1
       const executionContext = claimedExecutionContext(claimed, options.executionContext)
 
-      const heartbeat = operations.heartbeatLease({
-        knowledgeRoot: options.knowledgeRoot,
-        leaseId: lease.leaseId,
-      })
-      if (heartbeat.kind === 'refused') {
-        recordFailure(result, 'heartbeat', heartbeat.reason, claimed.candidateId)
-        break
+      if (drainOwnsLease) {
+        const heartbeat = operations.heartbeatLease({
+          knowledgeRoot: options.knowledgeRoot,
+          leaseId: lease.leaseId,
+        })
+        if (heartbeat.kind === 'refused') {
+          recordFailure(result, 'heartbeat', heartbeat.reason, claimed.candidateId)
+          break
+        }
       }
 
       if (claimed.kind === 'malformed') {
@@ -1008,14 +1024,17 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     }
     return result
   } finally {
-    try {
-      const released = operations.releaseLease({
-        knowledgeRoot: options.knowledgeRoot,
-        leaseId: lease.leaseId,
-      })
-      if (released.kind === 'refused') recordFailure(result, 'release', released.reason)
-    } catch (error) {
-      recordFailure(result, 'release', error)
+    if (drainOwnsLease) {
+      try {
+        const released = operations.releaseLease({
+          knowledgeRoot: options.knowledgeRoot,
+          leaseId: lease.leaseId,
+        })
+        if (released.kind === 'refused') recordFailure(result, 'release', released.reason)
+      } catch (error) {
+        recordFailure(result, 'release', error)
+      }
     }
+    result.remaining = countPendingCurationJobs(options.knowledgeRoot)
   }
 }

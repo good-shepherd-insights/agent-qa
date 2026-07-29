@@ -259,6 +259,7 @@ export {
 } from './queue/queue-layout.js'
 export {
   claimNextJob,
+  countPendingCurationJobs,
   enqueueCurationCandidate,
   enqueueCurationCandidateProjection,
   listClaimedLeases,
