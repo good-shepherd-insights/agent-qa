@@ -39,7 +39,7 @@ import type {
   JobStoreFence,
   JobStorePort,
 } from '@vostride/agent-qa-agent'
-import { jobSchema } from '@vostride/agent-qa-schema'
+import { canonicalJson, jobSchema, sha256hex } from '@vostride/agent-qa-schema'
 import type { Job, JobId, JobStatus } from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
@@ -80,6 +80,13 @@ export interface CreateSqliteJobStoreOptions {
   readonly clock: ClockPort
   readonly checkpoints: JobCheckpointStore
   readonly timeoutMs?: number
+  readonly hooks?: SqliteJobStoreHooks
+}
+
+/** Test-only observation points around cross-media publication. Production omits them. */
+export interface SqliteJobStoreHooks {
+  /** Runs after the fenced row commits and immediately before the checkpoint file is replaced. */
+  readonly beforeCheckpointFilePublish?: () => void | Promise<void>
 }
 
 export interface SqliteJobStore extends JobStorePort {
@@ -134,6 +141,19 @@ const SCHEMA_STATEMENTS = [
      id    INTEGER PRIMARY KEY CHECK (id = 1),
      epoch INTEGER NOT NULL
    )`,
+  // The row is the authoritative checkpoint. The file remains a durable projection for
+  // cross-process observability, but recovery accepts its bytes only when their digest agrees
+  // with the latest fenced row for this job/checkpoint. Attempt stays in the key so retries
+  // preserve their recorded history while a same-attempt takeover replaces only that attempt.
+  `CREATE TABLE IF NOT EXISTS job_checkpoints (
+     job_id         TEXT NOT NULL,
+     checkpoint_id  TEXT NOT NULL,
+     attempt        INTEGER NOT NULL,
+     payload_json   TEXT NOT NULL,
+     payload_digest TEXT NOT NULL,
+     epoch          INTEGER NOT NULL,
+     PRIMARY KEY (job_id, attempt, checkpoint_id)
+   )`,
 ] as const
 
 /** The statuses a job never leaves. A cancel arriving at one of them moves nothing. */
@@ -144,7 +164,7 @@ function toNumber(value: unknown): number {
 }
 
 export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): SqliteJobStore {
-  const { clock, checkpoints } = options
+  const { clock, checkpoints, hooks } = options
 
   mkdirSync(dirname(options.path), { recursive: true })
   const db = new DatabaseSync(options.path, {
@@ -228,6 +248,22 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   const upsertFence = db.prepare(
     `INSERT INTO job_store_fence (id, epoch) VALUES (1, ?)
      ON CONFLICT (id) DO UPDATE SET epoch = excluded.epoch`,
+  )
+  const upsertCheckpoint = db.prepare(
+    `INSERT INTO job_checkpoints
+       (job_id, checkpoint_id, attempt, payload_json, payload_digest, epoch)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (job_id, attempt, checkpoint_id) DO UPDATE SET
+       payload_json = excluded.payload_json,
+       payload_digest = excluded.payload_digest,
+       epoch = excluded.epoch`,
+  )
+  const selectLatestCheckpoint = db.prepare(
+    `SELECT payload_json, payload_digest, attempt, epoch
+     FROM job_checkpoints
+     WHERE job_id = ? AND checkpoint_id = ?
+     ORDER BY attempt DESC
+     LIMIT 1`,
   )
 
   function inTransaction<T>(body: () => T): T {
@@ -464,14 +500,30 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       fence: JobStoreFence,
     ): Promise<void> {
       const now = clock.now()
+      const payloadJson = canonicalJson(payload)
+      const payloadDigest = sha256hex(payloadJson)
       inTransaction(() => {
         requireFence(fence)
         requireRow(String(jobId))
         touchJob.run(now, String(jobId))
+        // This INSERT belongs to the SAME transaction as both requireFence and the job touch.
+        // Once it commits, this row decides what recovery believes; a later file writer cannot
+        // change checkpoint authorship without first winning another fenced transaction.
+        upsertCheckpoint.run(
+          String(jobId),
+          checkpointId,
+          payload.attempt,
+          payloadJson,
+          payloadDigest,
+          fence.epoch,
+        )
       })
-      // File AFTER the row transaction commits: the checkpoint records that the guarded
-      // work is durable, so publishing it first would let a crash leave a checkpoint
-      // asserting progress the store never made.
+      // File AFTER the authoritative row commits: it remains the fsync'd cross-process
+      // projection, but the read path digest-checks it against the row before trusting it.
+      // A takeover here may let the stale host replace the file; it cannot replace the row.
+      if (hooks?.beforeCheckpointFilePublish !== undefined) {
+        await hooks.beforeCheckpointFilePublish()
+      }
       checkpoints.publish(String(jobId), checkpointId, payload)
     },
 
@@ -479,7 +531,23 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       jobId: JobId,
       checkpointId: string,
     ): Promise<JobCheckpointReadOutcome> {
-      return checkpoints.read(String(jobId), checkpointId)
+      const row = selectLatestCheckpoint.get(String(jobId), checkpointId)
+      if (row === undefined) return { found: false }
+
+      const authoritative = {
+        found: true as const,
+        payload: JSON.parse(String(row.payload_json)) as unknown,
+      }
+      try {
+        const projection = checkpoints.read(String(jobId), checkpointId)
+        if (!projection.found) return authoritative
+        const projectionDigest = sha256hex(canonicalJson(projection.payload))
+        return projectionDigest === String(row.payload_digest) ? projection : authoritative
+      } catch {
+        // The file is a cache now. Missing, malformed, unreadable, or otherwise untrustworthy
+        // projection bytes cannot block recovery from the fenced SQLite record.
+        return authoritative
+      }
     },
 
     async dumpState(): Promise<JobStoreDump> {

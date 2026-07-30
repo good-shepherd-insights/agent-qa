@@ -235,9 +235,9 @@ export interface JobStorePort {
   ): Promise<void>
 
   /**
-   * Durably publish one checkpoint. Under the hybrid split (D-01) the lifecycle row lives
-   * in sqlite and the checkpoint body is a file, so this verb is the seam where the two
-   * media meet and the only place their ordering is decided.
+   * Durably publish one checkpoint. The store records the canonical payload and digest in
+   * the same fenced transaction that touches the job. A file may be written afterward as a
+   * cross-process projection, but that projection never becomes the source of authority.
    */
   publishCheckpoint(
     jobId: JobId,
@@ -266,7 +266,13 @@ export interface JobStorePort {
    */
   recordCancellation(jobId: JobId, fence: JobStoreFence): Promise<void>
 
-  /** Read-side: no fence, because reading claims no authority. */
+  /**
+   * Read-side: no fence, because reading claims no authority.
+   *
+   * Returns the authoritative payload recorded under the fence. A concrete store may serve
+   * a file projection only after validating its digest against that record; a missing or
+   * mismatched projection falls back to the authoritative record, never to bare file bytes.
+   */
   readCheckpoint(jobId: JobId, checkpointId: string): Promise<JobCheckpointReadOutcome>
 
   dumpState(): Promise<JobStoreDump>

@@ -22,9 +22,9 @@
 // 3. The COMPARISON BASIS. `dumpLogicalState()` is the D-03 instrument and it is exact — which
 //    means it also carries the three facts that MUST differ between an interrupted history and an
 //    uninterrupted one: the attempt count, the abandoned-claim failure record, and the attempt
-//    stamped into a re-authored checkpoint's envelope. Those are the history of how the state was
-//    reached, not the state. So the comparison splits them out by name into a separate structure
-//    that the matrix asserts EXACT VALUES on, rather than dropping them — a projection whose
+//    stamped into a re-authored checkpoint's envelope and authoritative row. Those are the history
+//    of how the state was reached, not the state. So the comparison splits them into a separate
+//    structure that the matrix asserts EXACT VALUES on, rather than dropping them — a projection whose
 //    exclusions are unasserted is a loosened assertion wearing a projection's clothes. The split is
 //    also checked for completeness against the database's own catalogue, so a column added later
 //    must be classified as outcome or history instead of silently vanishing from both.
@@ -258,6 +258,23 @@ export const CRASH_HISTORY_JOB_COLUMNS = [
 /** The same idea inside a checkpoint envelope: the attempt that authored it (plan 01's shape). */
 export const CRASH_HISTORY_CHECKPOINT_FIELDS = ['attempt'] as const
 
+/**
+ * Every source column in the authoritative checkpoint table.
+ *
+ * `payload_json` is deliberately mixed: its identity/time/value fields describe the outcome while
+ * its attempt describes history. `payload_digest` is verified before that payload is split, rather
+ * than copied into either half. The matrix compares this list with SQLite's catalogue so a future
+ * column cannot disappear from the projection unnoticed.
+ */
+export const CHECKPOINT_ROW_SOURCE_COLUMNS = [
+  'job_id',
+  'checkpoint_id',
+  'attempt',
+  'payload_json',
+  'payload_digest',
+  'epoch',
+] as const
+
 export interface OutcomeTable {
   readonly table: string
   readonly orderBy: readonly string[]
@@ -282,6 +299,7 @@ export interface KillMatrixOutcomeState {
 export interface KillMatrixHistory {
   readonly jobs: readonly Record<string, unknown>[]
   readonly checkpoints: readonly Record<string, unknown>[]
+  readonly checkpointRows: readonly Record<string, unknown>[]
 }
 
 export interface KillMatrixSnapshot {
@@ -295,6 +313,7 @@ export interface KillMatrixSnapshot {
   readonly checkpointBytes: Readonly<Record<string, string>>
   readonly tableNames: readonly string[]
   readonly jobColumns: readonly string[]
+  readonly checkpointColumns: readonly string[]
 }
 
 export function checkpointsRootOf(agentQaRoot: string): string {
@@ -355,6 +374,46 @@ function splitCheckpointBytes(
   }
 }
 
+function splitCheckpointRow(
+  row: Record<string, unknown>,
+): { outcome: Record<string, unknown>; history: Record<string, unknown> } {
+  const payloadJson = String(row.payload_json)
+  const expectedDigest = sha256hex(payloadJson)
+  if (String(row.payload_digest) !== expectedDigest) {
+    throw new Error(
+      `checkpoint row digest mismatch for ${String(row.job_id)}/${String(row.checkpoint_id)}`,
+    )
+  }
+
+  const record = JSON.parse(payloadJson) as Record<string, unknown>
+  if (
+    String(record.jobId) !== String(row.job_id) ||
+    String(record.checkpointId) !== String(row.checkpoint_id) ||
+    record.attempt !== row.attempt
+  ) {
+    throw new Error(
+      `checkpoint row identity mismatch for ${String(row.job_id)}/${String(row.checkpoint_id)}`,
+    )
+  }
+
+  const identity = {
+    jobId: row.job_id,
+    checkpointId: row.checkpoint_id,
+  }
+  return {
+    outcome: {
+      ...identity,
+      recordedAt: record.recordedAt,
+      valueDigest: sha256hex(canonicalJson(record.value)),
+    },
+    history: {
+      ...identity,
+      attempt: row.attempt,
+      epoch: row.epoch,
+    },
+  }
+}
+
 /**
  * The state of one store root, split into the outcome and the crash history.
  *
@@ -368,7 +427,9 @@ export async function readStoreSnapshot(agentQaRoot: string): Promise<KillMatrix
   let tables: readonly OutcomeTable[]
   let tableNames: readonly string[]
   let jobColumns: readonly string[]
+  let checkpointColumns: readonly string[]
   let historyJobs: readonly Record<string, unknown>[]
+  let historyCheckpointRows: readonly Record<string, unknown>[]
   let schemaVersion: number
   try {
     logicalDump = await store.dumpLogicalState()
@@ -376,27 +437,32 @@ export async function readStoreSnapshot(agentQaRoot: string): Promise<KillMatrix
     schemaVersion = dump.schemaVersion
     tableNames = dump.tables.map((table) => table.table)
     jobColumns = dump.tables.find((table) => table.table === 'jobs')?.orderBy ?? []
-    tables = dump.tables.map((table) => ({
-      table: table.table,
-      orderBy: table.orderBy,
-      rows:
-        table.table === 'jobs'
-          ? table.rows.map((row) => {
-              const projected: Record<string, unknown> = {}
-              for (const [column, value] of Object.entries(row)) {
-                if (!CRASH_HISTORY_JOB_COLUMNS.some((history) => history === column)) {
-                  projected[column] = value
-                }
-              }
-              return projected
-            })
-          : table.rows,
-    }))
+    const checkpointTable = dump.tables.find((table) => table.table === 'job_checkpoints')
+    checkpointColumns = checkpointTable?.orderBy ?? []
+    const checkpointRows = (checkpointTable?.rows ?? []).map(splitCheckpointRow)
+    tables = dump.tables.map((table) => {
+      let rows = table.rows
+      if (table.table === 'jobs') {
+        rows = table.rows.map((row) => {
+          const projected: Record<string, unknown> = {}
+          for (const [column, value] of Object.entries(row)) {
+            if (!CRASH_HISTORY_JOB_COLUMNS.some((history) => history === column)) {
+              projected[column] = value
+            }
+          }
+          return projected
+        })
+      } else if (table.table === 'job_checkpoints') {
+        rows = checkpointRows.map((entry) => entry.outcome)
+      }
+      return { table: table.table, orderBy: table.orderBy, rows }
+    })
     historyJobs = (dump.tables.find((table) => table.table === 'jobs')?.rows ?? []).map((row) => {
       const history: Record<string, unknown> = { id: row.id }
       for (const column of CRASH_HISTORY_JOB_COLUMNS) history[column] = row[column]
       return history
     })
+    historyCheckpointRows = checkpointRows.map((entry) => entry.history)
   } finally {
     store.close()
   }
@@ -416,10 +482,15 @@ export async function readStoreSnapshot(agentQaRoot: string): Promise<KillMatrix
     logicalDump,
     outcome,
     canonicalOutcome: canonicalJson(outcome),
-    history: { jobs: historyJobs, checkpoints: split.map((entry) => entry.history) },
+    history: {
+      jobs: historyJobs,
+      checkpoints: split.map((entry) => entry.history),
+      checkpointRows: historyCheckpointRows,
+    },
     checkpointBytes,
     tableNames,
     jobColumns,
+    checkpointColumns,
   }
 }
 

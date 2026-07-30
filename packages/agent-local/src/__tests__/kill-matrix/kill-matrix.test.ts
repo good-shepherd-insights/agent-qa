@@ -37,6 +37,7 @@ import type { JobKind } from '@vostride/agent-qa-schema'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import {
+  CHECKPOINT_ROW_SOURCE_COLUMNS,
   KILL_MATRIX_EPOCH,
   KILL_MATRIX_ENV,
   KILL_MATRIX_INSTANT,
@@ -101,6 +102,12 @@ function checkpointPaths(jobId: string, checkpointIds: readonly string[]): reado
 
 function byPath<T extends { path: string }>(entries: readonly T[]): readonly T[] {
   return [...entries].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+}
+
+function byCheckpointId<T extends { checkpointId: unknown }>(entries: readonly T[]): readonly T[] {
+  return [...entries].sort((left, right) =>
+    String(left.checkpointId) < String(right.checkpointId) ? -1 : 1,
+  )
 }
 
 function authoredCheckpointIds(invocationsPath: string, from = 0): readonly string[] {
@@ -421,6 +428,26 @@ describe('kill matrix: every registered kind x declared checkpoint x before/afte
             })),
           ),
         )
+        expect(resumed.history.checkpointRows).toEqual(
+          byCheckpointId(
+            schedule.map((checkpointId) => ({
+              jobId,
+              checkpointId,
+              attempt: recorded.includes(checkpointId) ? 1 : 2,
+              epoch: KILL_MATRIX_EPOCH,
+            })),
+          ),
+        )
+        expect(control.snapshot.history.checkpointRows).toEqual(
+          byCheckpointId(
+            schedule.map((checkpointId) => ({
+              jobId,
+              checkpointId,
+              attempt: 1,
+              epoch: KILL_MATRIX_EPOCH,
+            })),
+          ),
+        )
         expect(jobRow(resumed)).toMatchObject({
           status: 'done',
           claimed_at: null,
@@ -433,7 +460,8 @@ describe('kill matrix: every registered kind x declared checkpoint x before/afte
         expect([...Object.keys(jobRow(resumed)), ...Object.keys(jobHistory(resumed))].sort()).toEqual(
           [...resumed.jobColumns, 'id'].sort(),
         )
-        expect(resumed.tableNames).toEqual(['job_store_fence', 'jobs'])
+        expect(resumed.checkpointColumns).toEqual(CHECKPOINT_ROW_SOURCE_COLUMNS)
+        expect(resumed.tableNames).toEqual(['job_checkpoints', 'job_store_fence', 'jobs'])
       } finally {
         await killIfRunning(running.child)
       }
