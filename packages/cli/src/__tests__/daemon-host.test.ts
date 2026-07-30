@@ -14,8 +14,10 @@ import { pathToFileURL } from 'node:url'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
+  heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  releaseLease,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
 import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
@@ -584,6 +586,163 @@ describe('daemon registration recovery at boot', () => {
 })
 
 describe('daemon heartbeat authority and cadence', () => {
+  it('protects the same lease throughout startup work that outlives the heartbeat TTL', async () => {
+    const paths = makePaths('heartbeat-slow-startup')
+    const harness = hostHarness()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    const heartbeats = vi.fn(heartbeatLease)
+    let resolveModel: ((model: JobModelCapability) => void) | undefined
+    const model = vi.fn(() => new Promise<JobModelCapability>((resolve) => {
+      resolveModel = resolve
+    }))
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model,
+      operations: { ...harness.operations, heartbeatLease: heartbeats },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+
+    const acquiredLease = JSON.parse(
+      readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8'),
+    ) as WriterLease
+    now.mockReturnValue(1_700_000_000_000 + LEASE_HEARTBEAT_TTL_MS + 1)
+    let heartbeatError: unknown
+    try {
+      harness.fireHeartbeat()
+    } catch (error) {
+      heartbeatError = error
+    }
+    const contender = acquireWriterLease(paths.knowledgeRoot)
+
+    resolveModel?.(TEST_MODEL)
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'daemon did not finish slow startup',
+    )
+    const readyLease = JSON.parse(
+      readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8'),
+    ) as WriterLease
+    harness.signal('SIGTERM')
+    const exitCode = await running
+
+    expect(model).toHaveBeenCalledTimes(1)
+    expect(heartbeatError).toBeUndefined()
+    expect(heartbeats).toHaveBeenCalledTimes(2)
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: acquiredLease.leaseId, epoch: acquiredLease.epoch },
+    })
+    expect(readyLease).toMatchObject({
+      leaseId: acquiredLease.leaseId,
+      epoch: acquiredLease.epoch,
+      heartbeatAtMs: 1_700_000_000_000 + LEASE_HEARTBEAT_TTL_MS + 1,
+    })
+    expect(exitCode).toBe(0)
+  })
+
+  it('aborts an initially refused heartbeat before publishing any service state', async () => {
+    const paths = makePaths('heartbeat-startup-refusal')
+    const harness = hostHarness()
+    const replacement: WriterLease = {
+      leaseId: '551a9f42-7862-43ac-a6bf-236b53c51b24',
+      pid: process.pid + 1,
+      epoch: 2,
+      heartbeatAtMs: 1_700_000_010_000,
+    }
+    const replacementBytes = `${JSON.stringify(replacement)}\n`
+    const refusedHeartbeat = vi.fn(() => {
+      writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), replacementBytes, 'utf8')
+      return {
+        kind: 'refused' as const,
+        reason: 'lease-id-mismatch' as const,
+        holder: replacement,
+      }
+    })
+    const release = vi.fn(releaseLease)
+    const model = vi.fn(() => TEST_MODEL)
+    const writeRegistration = vi.fn(writeDaemonRegistration)
+    const startServer = vi.fn(() => Promise.resolve({
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      close: () => Promise.resolve(),
+    }))
+
+    const exitCode = await runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model,
+      operations: {
+        ...harness.operations,
+        heartbeatLease: refusedHeartbeat,
+        releaseLease: release,
+        writeDaemonRegistration: writeRegistration,
+        startInvokeServer: startServer,
+        setInterval: (callback, intervalMs) => {
+          if (intervalMs === LEASE_HEARTBEAT_INTERVAL_MS) queueMicrotask(callback)
+          return intervalMs as unknown as ReturnType<typeof setInterval>
+        },
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+
+    expect(exitCode).toBe(1)
+    expect(refusedHeartbeat).toHaveBeenCalledTimes(1)
+    expect(model).not.toHaveBeenCalled()
+    expect(startServer).not.toHaveBeenCalled()
+    expect(writeRegistration).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+    expect(existsSync(join(paths.agentQaRoot, 'daemon.sock'))).toBe(false)
+    expect(readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8')).toBe(replacementBytes)
+  })
+
+  it('settles and releases authority when lifecycle event appends throw', async () => {
+    const paths = makePaths('event-append-failure')
+    const harness = hostHarness()
+    const errors: string[] = []
+    const appendEvent = vi.fn(() => {
+      throw new Error('event sink unavailable')
+    })
+    const startServer = vi.fn(() => Promise.resolve({
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      close: () => Promise.resolve(),
+    }))
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        appendDaemonEvent: appendEvent,
+        startInvokeServer: startServer,
+      },
+      logger: { info: vi.fn(), error: (message) => errors.push(message) },
+    })
+    const outcome = running.then(
+      (code) => ({ kind: 'resolved' as const, code }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
+    )
+    const first = await Promise.race([
+      waitUntil(
+        () => harness.signals.has('SIGTERM'),
+        'daemon did not reach its signalable state',
+      ).then(() => 'ready' as const),
+      outcome.then(() => 'settled' as const),
+    ])
+    if (first === 'ready') harness.signal('SIGTERM')
+    const settled = await outcome
+
+    expect(settled).toEqual({ kind: 'resolved', code: 0 })
+    expect(appendEvent).toHaveBeenCalled()
+    expect(errors.some((message) => message.includes('event sink unavailable'))).toBe(true)
+    expect(existsSync(join(paths.knowledgeRoot, LEASE_FILE))).toBe(false)
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+  })
+
   it('logs authority loss and exits without reacquiring or disturbing the replacement holder', async () => {
     const paths = makePaths('heartbeat-refusal')
     const harness = hostHarness()
