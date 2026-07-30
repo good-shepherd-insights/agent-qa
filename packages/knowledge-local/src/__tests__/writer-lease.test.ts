@@ -18,6 +18,7 @@ import type { WriterLeaseAuthority as PublicWriterLeaseAuthority } from '../inde
 import {
   acquireWriterLease,
   assertEpochCurrent,
+  CorruptEpochStateError,
   EPOCH_FILE,
   heartbeatLease,
   isLeaseStale,
@@ -221,13 +222,13 @@ describe('writer lease acquire, heartbeat, release, and stale self-heal (CUR-03/
     )
   })
 
-  it('reads missing or malformed epoch bytes as the pre-acquire epoch zero', () => {
+  it('reads only missing epoch state as zero and fails closed on malformed bytes', () => {
     expect(readCurrentEpoch(knowledgeRoot)).toBe(0)
 
     mkdirSync(knowledgeRoot, { recursive: true })
     writeFileSync(join(knowledgeRoot, EPOCH_FILE), 'not-an-integer\n', 'utf8')
 
-    expect(readCurrentEpoch(knowledgeRoot)).toBe(0)
+    expect(() => readCurrentEpoch(knowledgeRoot)).toThrow(CorruptEpochStateError)
   })
 
   it('accepts the current holder epoch at the mutation boundary', () => {

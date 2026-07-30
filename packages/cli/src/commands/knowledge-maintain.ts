@@ -397,6 +397,14 @@ async function withWriterLease<T>(
     process.exitCode = 1
     return { kind: 'refused' }
   }
+  if (lease.kind === 'refused') {
+    emitHuman(
+      pc.red(`knowledge ${verb}: refusal [${lease.reason}]: ${lease.error.message}`),
+      'stderr',
+    )
+    process.exitCode = 1
+    return { kind: 'refused' }
+  }
 
   const writerAuthority: WriterLeaseAuthority = {
     knowledgeRoot,

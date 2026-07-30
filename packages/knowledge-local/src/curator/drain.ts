@@ -731,6 +731,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       report.remaining = countPendingCurationJobs(options.knowledgeRoot)
       return { ...report, kind: 'handed-off', holder: acquired.holder }
     }
+    if (acquired.kind === 'refused') throw acquired.error
     lease = acquired
   }
 

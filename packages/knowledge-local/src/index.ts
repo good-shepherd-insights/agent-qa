@@ -378,6 +378,7 @@ export type {
 } from './curator/maintenance.js'
 export {
   acquireWriterLease,
+  CorruptEpochStateError,
   heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
@@ -390,6 +391,7 @@ export {
 } from './lease/writer-lease.js'
 export type {
   AcquireWriterLeaseOutcome,
+  CorruptEpochStateReason,
   CurrentWriterAuthority,
   CurrentWriterAuthorityHooks,
   HeartbeatLeaseOutcome,

@@ -337,6 +337,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     logger.error(heldMessage(acquired.holder))
     return 1
   }
+  if (acquired.kind === 'refused') {
+    logger.error(
+      `agent-qa daemon writer lease acquisition refused [${acquired.reason}]: `
+      + acquired.error.message,
+    )
+    return 1
+  }
   operations.trace?.('lease-acquired')
 
   const authority: LeaseOperationOptions = {

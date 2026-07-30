@@ -52,6 +52,11 @@ export type WriterLease = z.infer<typeof writerLeaseSchema>
 export type AcquireWriterLeaseOutcome =
   | { kind: 'held'; holder: WriterLease }
   | { kind: 'acquired'; leaseId: string; epoch: number }
+  | {
+      kind: 'refused'
+      reason: 'corrupt-epoch-state'
+      error: CorruptEpochStateError
+    }
 
 export interface LeaseOperationOptions {
   knowledgeRoot: string
@@ -62,9 +67,15 @@ export type HeartbeatLeaseOutcome =
   | { kind: 'heartbeated'; holder: WriterLease }
   | {
       kind: 'refused'
-      reason: 'lease-missing' | 'lease-malformed' | 'lease-id-mismatch' | 'stale-epoch'
+      reason:
+        | 'lease-missing'
+        | 'lease-malformed'
+        | 'lease-id-mismatch'
+        | 'stale-epoch'
+        | 'corrupt-epoch-state'
       holder?: WriterLease
       observedEpoch?: number
+      error?: CorruptEpochStateError
     }
 
 export type ReleaseLeaseOutcome =
@@ -113,6 +124,23 @@ export class WriterAuthorityLostError extends Error {
     this.authority = authority
     this.reason = reason
     this.observedEpoch = observedEpoch
+  }
+}
+
+export type CorruptEpochStateReason = 'unreadable' | 'malformed' | 'overflow'
+
+/** Fail-closed authority-state error; callers must never substitute epoch zero for this state. */
+export class CorruptEpochStateError extends Error {
+  override readonly name = 'CorruptEpochStateError'
+  readonly path: string
+  readonly reason: CorruptEpochStateReason
+  readonly rawPreview: string
+
+  constructor(path: string, reason: CorruptEpochStateReason, rawPreview: string) {
+    super(`writer epoch state is corrupt (${reason}) at ${path}`)
+    this.path = path
+    this.reason = reason
+    this.rawPreview = rawPreview
   }
 }
 
@@ -406,19 +434,33 @@ export function readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome {
   }
 }
 
-function readEpoch(knowledgeRoot: string): number {
-  let raw: string
-  try {
-    raw = readFileSync(epochPath(knowledgeRoot), 'utf8').trim()
-  } catch {
-    return 0
-  }
-  if (!/^(0|[1-9][0-9]*)$/.test(raw)) return 0
-  const epoch = Number(raw)
-  return Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : 0
+function previewEpochState(raw: string): string {
+  const preview = raw.slice(0, 64).replaceAll('\r', '\\r').replaceAll('\n', '\\n')
+  return preview === '' ? '<empty>' : preview
 }
 
-/** Fresh-read the monotonic disk epoch; absent or malformed bytes are the pre-acquire epoch zero. */
+function readEpoch(knowledgeRoot: string): number {
+  const file = epochPath(knowledgeRoot)
+  let raw: string
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return 0
+    throw new CorruptEpochStateError(file, 'unreadable', code ?? 'unknown-read-error')
+  }
+  const canonical = raw.endsWith('\n') ? raw.slice(0, -1) : raw
+  if (!/^(0|[1-9][0-9]*)$/.test(canonical)) {
+    throw new CorruptEpochStateError(file, 'malformed', previewEpochState(raw))
+  }
+  const epoch = Number(canonical)
+  if (!Number.isSafeInteger(epoch)) {
+    throw new CorruptEpochStateError(file, 'overflow', previewEpochState(raw))
+  }
+  return epoch
+}
+
+/** Fresh-read the monotonic disk epoch; only an absent file is pre-acquire epoch zero. */
 export function readCurrentEpoch(knowledgeRoot: string): number {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
   return readEpoch(knowledgeRoot)
@@ -438,8 +480,7 @@ export function assertEpochCurrent(
     : { current: false, observedEpoch }
 }
 
-function nextEpoch(knowledgeRoot: string): number {
-  const current = readEpoch(knowledgeRoot)
+function nextEpoch(current: number): number {
   if (current === Number.MAX_SAFE_INTEGER) {
     throw new RangeError('writer lease epoch exhausted')
   }
@@ -460,13 +501,22 @@ export function acquireWriterLease(
 ): AcquireWriterLeaseOutcome {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
   return withMutationLock(knowledgeRoot, () => {
+    let observedEpoch: number
+    try {
+      observedEpoch = readEpoch(knowledgeRoot)
+    } catch (error) {
+      if (error instanceof CorruptEpochStateError) {
+        return { kind: 'refused' as const, reason: 'corrupt-epoch-state' as const, error }
+      }
+      throw error
+    }
     const current = readWriterLease(knowledgeRoot)
     const nowMs = Date.now()
     if (current.kind === 'parsed' && !isLeaseStale(current.lease, nowMs)) {
       return { kind: 'held', holder: current.lease }
     }
 
-    const epoch = nextEpoch(knowledgeRoot)
+    const epoch = nextEpoch(observedEpoch)
     const holder = writerLeaseSchema.parse({
       leaseId: randomUUID(),
       pid: process.pid,
@@ -529,7 +579,20 @@ export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutco
     if (current.lease.leaseId !== opts.leaseId) {
       return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
     }
-    const observedEpoch = readEpoch(opts.knowledgeRoot)
+    let observedEpoch: number
+    try {
+      observedEpoch = readEpoch(opts.knowledgeRoot)
+    } catch (error) {
+      if (error instanceof CorruptEpochStateError) {
+        return {
+          kind: 'refused',
+          reason: 'corrupt-epoch-state',
+          holder: current.lease,
+          error,
+        }
+      }
+      throw error
+    }
     if (current.lease.epoch !== observedEpoch) {
       return {
         kind: 'refused',
@@ -569,6 +632,9 @@ export function refreshWriterLeaseAuthority(
 
   const heartbeat = heartbeatLease(authority)
   if (heartbeat.kind === 'refused') {
+    if (heartbeat.reason === 'corrupt-epoch-state' && heartbeat.error !== undefined) {
+      throw heartbeat.error
+    }
     throw new WriterAuthorityLostError(
       authority,
       heartbeat.reason,
