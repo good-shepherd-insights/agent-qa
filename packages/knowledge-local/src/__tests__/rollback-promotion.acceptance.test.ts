@@ -23,11 +23,11 @@ import {
   deriveBundleTrust,
   loadBundle,
   openIndexReaderConnection,
-  publishBundle,
   rollbackCurationJob,
   type CommitCurationDependencies,
   type CommitCurationJob,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import { derivePromotedEvidenceToken } from '../curator/commit.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
 import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'

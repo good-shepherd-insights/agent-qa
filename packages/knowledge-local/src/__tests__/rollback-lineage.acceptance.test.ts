@@ -30,7 +30,6 @@ import {
   disposeDelta,
   enumerateBundleDirs,
   loadBundle,
-  publishBundle,
   rollbackCurationJob,
   runKnowledgeGc,
   type AuthoredDeltaCheckpoint,
@@ -39,6 +38,7 @@ import {
   type LoadedBundle,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
 import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
 import {

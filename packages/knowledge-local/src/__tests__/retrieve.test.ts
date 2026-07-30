@@ -16,12 +16,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   appendOutcomeEvent,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   retrieve,
   type BundleStoreConfig,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,

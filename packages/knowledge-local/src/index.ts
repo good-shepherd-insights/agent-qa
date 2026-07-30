@@ -20,12 +20,13 @@ export type {
   RenderBundlePartsInput,
   RenderedBundlePart,
 } from './bundle-parts.js'
-export { publishBundle } from './bundle-publish.js'
 export type {
   BundleStoreConfig,
   PublishBundleInput,
   PublishBundleOutcome,
 } from './bundle-publish.js'
+/** @internal Test-fixture seeding only; production mutation paths must use fenced commit APIs. */
+export { publishBundle as publishBundleForTest } from './bundle-publish.test-helper.js'
 export {
   MEASUREMENTS_REL_PATH,
   appendMeasurementObservation,

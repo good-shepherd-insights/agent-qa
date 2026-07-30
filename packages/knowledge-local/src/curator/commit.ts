@@ -45,7 +45,6 @@ import type { RenderBundlePartsInput } from '../bundle-parts.js'
 import {
   discardStagedBundle,
   finalizeStagedBundle,
-  publishBundle,
   stageBundle,
 } from '../bundle-publish.js'
 import type {
@@ -111,6 +110,8 @@ export interface CommitCurationDependencies {
     beforePublishRename?: () => void
     /** Test/chaos seam after lock-held authority comparison and before finalize. */
     afterFinalAuthorityCompare?: () => void
+    /** Test-only bounded-takeover override; production uses the pinned lock deadline. */
+    mutationLockTakeoverMs?: number
     /** Test/chaos seam after each durable mutable-file replacement. */
     afterMutableReplacement?: (targetRelPath: string) => void
     /** Test/chaos seam after a fresh bundle publish and before its index projection. */
@@ -120,7 +121,10 @@ export interface CommitCurationDependencies {
   }
   operations?: {
     /** Test/chaos seam; production always uses the canonical publisher. */
-    publishBundle?: typeof publishBundle
+    publishBundle?: (
+      config: BundleStoreConfig,
+      input: PublishBundleInput,
+    ) => PublishBundleOutcome
   }
 }
 
@@ -529,9 +533,14 @@ function publishWithCurrentAuthority(
   { kind: 'abandoned-stale-epoch' }
 > {
   const authority = { leaseId: writerLeaseId, epoch: deps.epoch }
-  const hooks = deps.hooks?.afterFinalAuthorityCompare === undefined
-    ? undefined
-    : { afterFinalAuthorityCompare: deps.hooks.afterFinalAuthorityCompare }
+  const hooks = {
+    ...(deps.hooks?.afterFinalAuthorityCompare === undefined
+      ? {}
+      : { afterFinalAuthorityCompare: deps.hooks.afterFinalAuthorityCompare }),
+    ...(deps.hooks?.mutationLockTakeoverMs === undefined
+      ? {}
+      : { mutationLockTakeoverMs: deps.hooks.mutationLockTakeoverMs }),
+  }
 
   const publishOverride = deps.operations?.publishBundle
   if (publishOverride !== undefined) {
@@ -668,7 +677,7 @@ function commitUnknownMintIntent(
   }
   const draft = unknownDraft(intent, evidenceRecordIds, job)
   const config = storeConfig(deps, intent.scope.key, job.leaseId)
-  const published = publishBundle(config, {
+  const published = publishWithCurrentAuthority(deps, job.leaseId, config, {
     draft,
     discriminant: discriminant(draft, delta, []),
     originClass: originClass(delta),
@@ -694,6 +703,7 @@ function commitUnknownMintIntent(
     distilledObservations: [],
     artifacts: [],
   })
+  if (published.kind === 'abandoned-stale-epoch') return published
   if (published.kind === 'egress-blocked') {
     return { kind: 'withheld', reason: 'egress-blocked', detections: published.detections }
   }

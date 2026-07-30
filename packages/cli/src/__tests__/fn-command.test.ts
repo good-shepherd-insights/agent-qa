@@ -8,10 +8,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// `publishBundle` reaches the knowledge-local MAIN entry on purpose: a fixture needs the
-// writer to produce a genuinely committed bundle. Test files are excluded from the arch
-// specifier scan, so this never relaxes the reader carve-out the production composition obeys.
-import { publishBundle } from '@vostride/agent-qa-knowledge-local'
+// The unfenced compatibility composition is test-only and intentionally absent from the
+// knowledge-local package barrel. This fixture imports its internal test seam directly.
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import { EVENTS_FILE, RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
   CONFIG_MASK_PLACEHOLDER,

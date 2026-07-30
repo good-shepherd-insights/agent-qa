@@ -23,11 +23,11 @@ import {
   drainQueue,
   enumerateBundleDirs,
   loadBundle,
-  publishBundle,
   type BundleStoreConfig,
   type CuratorAuthor,
   type LoadedBundle,
 } from '../../index.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import {
   enqueueArtifactFreeCandidateProjection,
   type ArtifactFreeCandidateProjectionInput,

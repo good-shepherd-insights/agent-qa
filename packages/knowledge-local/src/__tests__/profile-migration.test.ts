@@ -13,6 +13,7 @@ import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import type {
   BundleStoreConfig,
   EmbedderPort,
@@ -133,7 +134,7 @@ describe('D-19 active embedding profile migration', () => {
   }
 
   function publishNamed(label: string): PublishedBundle {
-    const outcome = knowledgeLocal.publishBundle(config('Migration Product'), input(label))
+    const outcome = publishBundle(config('Migration Product'), input(label))
     expect(outcome.kind).toBe('published')
     if (outcome.kind !== 'published') {
       throw new Error(`expected publication, got ${outcome.kind}`)

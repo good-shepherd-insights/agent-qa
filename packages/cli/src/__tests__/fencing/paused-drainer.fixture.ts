@@ -5,7 +5,6 @@ import {
   commitCurationDelta,
   drainQueue,
   openIndexWriter,
-  publishBundle,
   readJobState,
   type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
@@ -13,6 +12,7 @@ import {
   type CommitCurationOutcome,
   type CuratorAuthor,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,

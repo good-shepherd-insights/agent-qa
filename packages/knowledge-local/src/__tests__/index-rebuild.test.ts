@@ -35,7 +35,7 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
-} from '../bundle-publish.js'
+} from '../bundle-publish.test-helper.js'
 import {
   EMBED_STATUS_SCRUBBED,
   EMBED_STATUS_SUPPRESSED,

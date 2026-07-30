@@ -23,7 +23,7 @@ import {
   publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
-} from '../../bundle-publish.js'
+} from '../../bundle-publish.test-helper.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { openIndexReaderConnection } from '../../index-open.js'
 import { KnowledgeUnsupportedDeltaError } from '../../index.js'

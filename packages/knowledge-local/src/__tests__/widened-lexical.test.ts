@@ -9,13 +9,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   indexDbPath,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   scanBundles,
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,

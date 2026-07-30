@@ -16,6 +16,7 @@ import type {
   PublishBundleInput,
   PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,
@@ -99,7 +100,7 @@ describe('automatic embedding degradation ladder', () => {
       },
       artifacts: [],
     }
-    const outcome = knowledgeLocal.publishBundle(config(productKey), input)
+    const outcome = publishBundle(config(productKey), input)
     expect(outcome.kind).toBe('published')
     if (outcome.kind !== 'published') {
       throw new Error(`expected publication, got ${outcome.kind}`)

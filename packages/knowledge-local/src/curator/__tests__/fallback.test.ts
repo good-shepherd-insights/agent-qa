@@ -13,7 +13,8 @@ import {
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest'
 
-import { publishBundle, type PublishBundleInput } from '../../index.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
+import type { PublishBundleInput } from '../../index.js'
 import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, NeighborRecord } from '../author-contract.js'
 import {

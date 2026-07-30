@@ -20,13 +20,13 @@ import {
   appendOutcomeEvent,
   drainQueue,
   openIndexReaderConnection,
-  publishBundle,
   rebuildIndex,
   runKnowledgeGc,
   type CuratorAuthor,
   type GcSummary,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import { indexDbPath } from '../index-open.js'
 import { removeBundleProjectionRows } from '../index-rebuild.js'
 import { makeBundleDraftFixture } from './fixtures/bundle-fixture.js'

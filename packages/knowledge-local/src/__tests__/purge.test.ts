@@ -25,6 +25,7 @@ import type { Anchor, CanaryOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import type {
   BundleStoreConfig,
   LoadedBundle,
@@ -286,7 +287,7 @@ describe('DCAY-05 sovereign purge', () => {
     anchors: readonly Anchor[],
     overrides: Partial<PublishBundleInput> = {},
   ): PublishedBundle {
-    const outcome = knowledgeLocal.publishBundle(
+    const outcome = publishBundle(
       config(productKey),
       input(identity, anchors, overrides),
     )

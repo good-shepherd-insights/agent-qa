@@ -33,12 +33,12 @@ import {
   drainQueue,
   enumerateBundleDirs,
   loadBundle,
-  publishBundle,
   readMeasurements,
   writeMeasurementBaseline,
   type CuratorAuthor,
   type LoadedBundle,
 } from '../../index.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import {
   enqueueArtifactFreeCandidateProjection,
   type ArtifactFreeCandidateProjectionInput,

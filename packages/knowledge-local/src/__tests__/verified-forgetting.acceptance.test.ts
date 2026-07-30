@@ -77,7 +77,6 @@ import {
   openIndexReaderConnection,
   openIndexWriter,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   resolveActiveProfile,
   retrieve,
@@ -91,6 +90,7 @@ import {
   type RetrieveOptions,
   type RetrievalQueryInput,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,

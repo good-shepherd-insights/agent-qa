@@ -16,12 +16,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   appendRelation,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import { retrieve } from '../retrieve.js'
 import { EXPANSION_FRACTION_F } from '../retrieval/constants.js'
 import {

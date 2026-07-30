@@ -23,7 +23,6 @@ import {
   deriveBundleTrust,
   loadBundle,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   retrieve,
   type AuthoredDeltaCheckpoint,
@@ -32,6 +31,7 @@ import {
   type CommitCurationJob,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,

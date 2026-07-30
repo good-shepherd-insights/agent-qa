@@ -25,6 +25,7 @@ vi.mock('../sqlite-vec-loadable.js', async (importOriginal) => {
 })
 
 import * as knowledgeLocal from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import * as indexOpen from '../index-open.js'
 import { projectBundleIndexRow } from '../index-rebuild.js'
 import type {
@@ -141,7 +142,7 @@ describe('multi-profile vector forgetting acceptance', () => {
   }
 
   function publish(label: string): PublishedBundle {
-    const outcome = knowledgeLocal.publishBundle(config(), input(label))
+    const outcome = publishBundle(config(), input(label))
     expect(outcome.kind).toBe('published')
     if (outcome.kind !== 'published') {
       throw new Error(`expected publication, got ${outcome.kind}`)
@@ -150,7 +151,7 @@ describe('multi-profile vector forgetting acceptance', () => {
   }
 
   function publishGcGeneration(generation: number): PublishedBundle {
-    const outcome = knowledgeLocal.publishBundle(config(), {
+    const outcome = publishBundle(config(), {
       draft: makeBundleDraftFixture({
         subtype: 'measurement',
         anchors: [

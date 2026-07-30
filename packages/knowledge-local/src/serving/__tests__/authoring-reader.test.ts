@@ -24,11 +24,11 @@ import {
   applyRunOutcomes,
   openIndexWriter,
   projectRunOutcomes,
-  publishBundle,
   rebuildIndex,
   type BundleStoreConfig,
   type EmbedderPort,
 } from '../../index.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { makeBundleDraftFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 
 const PRODUCT = 'dense-authoring-storefront'

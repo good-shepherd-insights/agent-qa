@@ -29,7 +29,7 @@ import {
   publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
-} from '../../bundle-publish.js'
+} from '../../bundle-publish.test-helper.js'
 import { buildRetrievalQuery } from '../../query-helper.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
 import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'

@@ -4,10 +4,10 @@ import { join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 
 import {
-  publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import { recordBuildTag } from '@vostride/agent-qa-runner-local'
 import {
   BundleOutcomeEventSchema,

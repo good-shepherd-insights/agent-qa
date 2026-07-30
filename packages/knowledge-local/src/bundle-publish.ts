@@ -358,18 +358,3 @@ export function finalizeStagedBundle(
     evidenceIncomplete: staged.evidenceIncomplete,
   }
 }
-
-/** Compatibility composition for callers that do not need a separately fenced finalize. */
-export function publishBundle(
-  config: BundleStoreConfig,
-  input: PublishBundleInput,
-): PublishBundleOutcome {
-  const staged = stageBundle(config, input)
-  if (staged.kind !== 'staged') return staged
-  try {
-    return finalizeStagedBundle(staged)
-  } catch (error) {
-    discardStagedBundle(staged)
-    throw error
-  }
-}

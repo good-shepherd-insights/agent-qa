@@ -9,7 +9,7 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
-} from '../../bundle-publish.js'
+} from '../../bundle-publish.test-helper.js'
 
 export type PublishedObservationFixture = Extract<
   PublishBundleOutcome,

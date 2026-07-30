@@ -50,7 +50,7 @@ import {
   publishBundle,
   type PublishBundleInput,
   type PublishBundleOutcome,
-} from '../bundle-publish.js'
+} from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,

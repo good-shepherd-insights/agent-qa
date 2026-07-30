@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
 import { verifyBundleIntegrity } from '../bundle-read.js'
-import type { BundleStoreConfig, PublishBundleInput } from '../bundle-publish.js'
+import type { BundleStoreConfig, PublishBundleInput } from '../bundle-publish.test-helper.js'
 import {
   deriveEquivalentToBridges,
   deriveLocatesViaEdges,

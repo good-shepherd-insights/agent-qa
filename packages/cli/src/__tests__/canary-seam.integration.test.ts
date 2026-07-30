@@ -10,13 +10,13 @@ import {
   listQueuedCandidates,
   loadBundle,
   openKnowledgeReader,
-  publishBundle,
   readCanonicalBundleAnchors,
   rebuildIndex,
   type BundleStoreConfig,
   type CuratorAuthor,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
   asEvidenceToken,
   asRecordId,

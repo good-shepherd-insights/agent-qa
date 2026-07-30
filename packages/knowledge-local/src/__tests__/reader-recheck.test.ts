@@ -16,7 +16,6 @@ import {
   appendOutcomeEvent,
   appendRelation,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   scanBundleById,
   type BundleStoreConfig,
@@ -24,6 +23,7 @@ import {
   type PublishBundleInput,
   type PublishBundleOutcome,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,

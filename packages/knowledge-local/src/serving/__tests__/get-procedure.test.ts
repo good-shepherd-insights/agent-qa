@@ -25,7 +25,7 @@ import {
   makeProcedureBundleDraftFixture,
   makeScreenStateFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
-import { publishBundle } from '../../bundle-publish.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import {
   admitsProcedure,

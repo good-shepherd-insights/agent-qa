@@ -16,10 +16,10 @@ import {
   appendOutcomeEvent,
   guardPurgeReceipt,
   loadBundle,
-  publishBundle,
   purgeRecord,
   queuedCandidateDir,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import type {
   BundleStoreConfig,
   PublishBundleInput,

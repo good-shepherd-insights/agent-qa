@@ -19,6 +19,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import type {
   BundleStoreConfig,
   PublishBundleOutcome,
@@ -177,7 +178,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
       { t: 'el', role: 'button', name: `${input.identity} control` },
       { t: 'page', route: `/rollback/${input.identity}` },
     ]
-    const outcome = knowledgeLocal.publishBundle(config(input.product), {
+    const outcome = publishBundle(config(input.product), {
       draft: makeBundleDraftFixture({
         kind,
         anchors: [...anchors],

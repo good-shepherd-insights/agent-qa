@@ -20,11 +20,11 @@ import {
   applyRunOutcomes,
   createAuthoringReader,
   openIndexWriter,
-  publishBundle,
   rebuildIndex,
   type BundleStoreConfig,
   type RunOutcomesProjection,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeProcedureBundleDraftFixture,

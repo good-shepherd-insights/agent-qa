@@ -19,7 +19,6 @@ import {
   appendRelation,
   indexDbPath,
   openKnowledgeReader,
-  publishBundle,
   readRebuildRequest,
   rebuildIndex,
   type BundleStoreConfig,
@@ -28,6 +27,7 @@ import {
   type PublishBundleOutcome,
   type RebuildReason,
 } from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,

@@ -42,7 +42,7 @@ import {
   publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
-} from '../../bundle-publish.js'
+} from '../../bundle-publish.test-helper.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
 import { openKnowledgeReader } from '../reader.js'

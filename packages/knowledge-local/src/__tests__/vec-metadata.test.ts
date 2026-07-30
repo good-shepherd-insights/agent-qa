@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import type {
   BundleStoreConfig,
   PublishBundleOutcome,
@@ -48,7 +49,7 @@ describe('vec0 metadata lifecycle', () => {
   }
 
   function publishFixture(): PublishedBundle {
-    const outcome = knowledgeLocal.publishBundle(config(), {
+    const outcome = publishBundle(config(), {
       draft: makeBundleDraftFixture({
         scope: { tier: 'product', key: 'vec-metadata-scope' },
         summary: 'Vec metadata projection fixture',

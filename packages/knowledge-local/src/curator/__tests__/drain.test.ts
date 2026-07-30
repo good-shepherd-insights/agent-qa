@@ -25,7 +25,7 @@ import {
   type ArtifactFreeCandidateProjectionInput,
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
-import { publishBundle } from '../../bundle-publish.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { readIndexMaintenanceState } from '../../index-open.js'
 import { projectBundleIndexRow } from '../../index-rebuild.js'
 import * as knowledgeLocal from '../../index.js'

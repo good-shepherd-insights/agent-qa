@@ -18,8 +18,8 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { publishBundle } from '../bundle-publish.js'
-import type { BundleStoreConfig } from '../bundle-publish.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
+import type { BundleStoreConfig } from '../bundle-publish.test-helper.js'
 import * as knowledgeLocal from '../index.js'
 import {
   makeBundleDraftFixture,

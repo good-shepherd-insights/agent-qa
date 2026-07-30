@@ -23,11 +23,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 
-// The knowledge-local MAIN entry is reached to WRITE the fixture: a listing test is only
-// worth anything against bundles a real writer committed. Test files are excluded from the
-// arch specifier scan, so this never relaxes the reader carve-out production code obeys.
+// The unfenced compatibility composition is test-only and intentionally absent from the
+// knowledge-local package barrel. This listing fixture imports its internal test seam directly.
 import {
-  publishBundle,
+  publishBundleForTest as publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'

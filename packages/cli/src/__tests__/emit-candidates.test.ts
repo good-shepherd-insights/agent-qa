@@ -15,13 +15,13 @@ import {
   candidateContentAddress,
   curationCandidatePayloadSchema,
   openKnowledgeReader,
-  publishBundle,
   rebuildIndex,
   queuedCandidateDir,
   type CurationCandidatePayload,
   type EnqueueCurationCandidateProjectionOptions,
   type EnqueueCurationCandidateProjectionOutcome,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
   asEvidenceToken,
   asRef,

@@ -9,12 +9,12 @@ import {
   enumerateBundleDirs,
   listQueuedCandidates,
   loadBundle,
-  publishBundle,
   rebuildIndex,
   type BundleStoreConfig,
   type CurationCandidateProjection,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
   runMemberTest,
   type LoopPorts,

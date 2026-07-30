@@ -36,7 +36,6 @@ import {
   enumerateBundleDirs,
   loadBundle,
   openIndexReaderConnection,
-  publishBundle,
   type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
@@ -44,8 +43,9 @@ import {
 } from '../../index.js'
 import {
   finalizeStagedBundle,
+  publishBundle,
   stageBundle,
-} from '../../bundle-publish.js'
+} from '../../bundle-publish.test-helper.js'
 import {
   acquireWriterLease,
   LEASE_FILE,

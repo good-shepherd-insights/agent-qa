@@ -24,7 +24,6 @@ import {
   disposeDelta,
   loadBundle,
   parseAuthoredCheckpoint,
-  publishBundle,
   resolveDispositionProfile,
   sliceAuthoredCheckpoint,
   writeMeasurementBaseline,
@@ -34,6 +33,7 @@ import {
   type CuratorAuthor,
   type NeighborRecord,
 } from '../../index.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import {
   makeBundleDraftFixture,
   makeDiscriminantFixture,

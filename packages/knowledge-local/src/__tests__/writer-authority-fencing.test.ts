@@ -20,7 +20,7 @@ import {
   stageBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
-} from '../bundle-publish.js'
+} from '../bundle-publish.test-helper.js'
 import {
   acquireWriterLease,
   EPOCH_FILE,
@@ -282,7 +282,9 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const source = readFileSync(new URL('../curator/commit.ts', import.meta.url), 'utf8')
 
     expect(publicSurface).not.toHaveProperty('publishBundle')
+    expect(publicSurface.publishBundleForTest).toBeTypeOf('function')
     expect(source).not.toMatch(/import\s*\{[^}]*\bpublishBundle\b[^}]*\}/s)
     expect(source).not.toMatch(/\bpublishBundle\s*\(\s*config\s*,/)
+    expect(source).not.toContain('publishBundleForTest')
   })
 })

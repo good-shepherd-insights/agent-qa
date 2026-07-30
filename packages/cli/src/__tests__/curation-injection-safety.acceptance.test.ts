@@ -17,12 +17,12 @@ import {
   listQueuedCandidates,
   loadBundle,
   openIndexReaderConnection,
-  publishBundle,
   queuedCandidateDir,
   readJobState,
   verifyBundleIntegrity,
   type CurationCandidatePayload,
 } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
 import {

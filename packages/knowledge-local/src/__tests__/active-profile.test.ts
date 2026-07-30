@@ -10,6 +10,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import type {
   BundleStoreConfig,
   PublishBundleInput,
@@ -62,7 +63,7 @@ describe('active embedding profile resolution', () => {
       },
       artifacts: [],
     }
-    const outcome = knowledgeLocal.publishBundle(config, input)
+    const outcome = publishBundle(config, input)
     expect(outcome.kind).toBe('published')
     if (outcome.kind !== 'published') {
       throw new Error(`expected publication, got ${outcome.kind}`)

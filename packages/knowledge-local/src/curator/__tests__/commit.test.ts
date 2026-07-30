@@ -42,7 +42,7 @@ import type {
   BundleStoreConfig,
   PublishBundleInput,
   PublishBundleOutcome,
-} from '../../bundle-publish.js'
+} from '../../bundle-publish.test-helper.js'
 import { openIndexReaderConnection } from '../../index-open.js'
 import { listCommitIntents } from '../../journal/intent-journal.js'
 import { recoverExpiredBundleMutations } from '../../journal/bundle-mutation.js'

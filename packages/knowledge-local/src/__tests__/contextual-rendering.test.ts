@@ -25,7 +25,7 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
   type PublishBundleOutcome,
-} from '../bundle-publish.js'
+} from '../bundle-publish.test-helper.js'
 import { SITUATING_LINE_MAX_CHARS } from '../retrieval/constants.js'
 import {
   makeBundleDraftFixture,

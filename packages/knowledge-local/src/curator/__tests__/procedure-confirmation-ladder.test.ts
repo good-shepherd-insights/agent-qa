@@ -23,7 +23,7 @@ import {
   scaffoldKnowledgeRoot,
 } from '../../__tests__/fixtures/bundle-fixture.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
-import { publishBundle } from '../../bundle-publish.js'
+import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { enqueueCanaryOutcome } from '../../queue/canary-queue.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
