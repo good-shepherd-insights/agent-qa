@@ -297,13 +297,16 @@ async function invokeFn(
   configPath: string,
   args: readonly string[],
   viaDaemonEnv?: string,
+  onStdout?: (line: string) => void,
 ): Promise<FnInvocationResult> {
   const stdout: string[] = []
   const stderr: string[] = []
   const previousExitCode = process.exitCode
   const previousViaDaemonEnv = process.env.AGENT_QA_VIA_DAEMON
   const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
-    stdout.push(values.map(String).join(' '))
+    const line = values.map(String).join(' ')
+    stdout.push(line)
+    onStdout?.(line)
   })
   const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
     stderr.push(values.map(String).join(' '))
@@ -994,5 +997,67 @@ describe('agent-qa fn explicit daemon routing', () => {
     expect(result.stderr).toContain('DaemonNotRunningError')
     expect(result.stderr).toContain('Start `agent-qa daemon`')
     expect(result.stderr).toContain('omit --via-daemon')
+  })
+
+  it('exits non-zero with the named interruption when a streamed CLI result is truncated', async () => {
+    const semantic = await semanticModules()
+    const fixture = fnFixture('fn-interrupted-stream')
+    let firstElementRendered!: () => void
+    const firstElement = new Promise<void>((resolveElement) => {
+      firstElementRendered = resolveElement
+    })
+    let releaseStream!: () => void
+    const streamBlocked = new Promise<void>((resolveBlocked) => {
+      releaseStream = resolveBlocked
+    })
+    const { registry } = await registryFixture([
+      {
+        id: 'synthetic.cli-interrupted',
+        summary: 'CLI stream interrupted after its first element.',
+        requiredScopes: ['read'],
+        resultKind: 'stream',
+        input: z.object({ lastEventId: z.number().int().optional() }).strict(),
+        output: z.object({ seq: z.number().int(), type: z.string() }).strict(),
+        risk: { name: 'fn:synthetic.cli-interrupted', recognized: true, readOnly: true },
+        async invoke(input: { lastEventId?: number }) {
+          return (async function* () {
+            if ((input.lastEventId ?? 0) < 1) {
+              yield { seq: 1, type: 'before-shutdown' }
+              await streamBlocked
+            }
+            if ((input.lastEventId ?? 0) < 2) {
+              yield { seq: 2, type: 'after-shutdown' }
+            }
+          })()
+        },
+      },
+    ])
+    register(fixture.agentQaRoot, fixture.socketPath)
+    const server = await semantic.startInvokeServer({
+      socketPath: fixture.socketPath,
+      registry,
+    })
+    servers.push(server)
+
+    const invocation = invokeFn(fixture.configPath, [
+      'synthetic.cli-interrupted',
+      '--via-daemon',
+    ], undefined, (line) => {
+      if (line.includes('seq 1')) firstElementRendered()
+    })
+    await firstElement
+    const activeServer = servers.at(-1)
+    if (activeServer === undefined) throw new Error('Expected an active daemon server')
+
+    const closing = activeServer.close()
+    releaseStream()
+    await closing
+    const result = await invocation
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('DaemonStreamInterruptedError')
+    expect(result.stderr).toContain('after event 1')
+    expect(result.stdout).toContain('seq 1')
+    expect(result.stdout).not.toContain('1 event · last seq 1')
   })
 })
