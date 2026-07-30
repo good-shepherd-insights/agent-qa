@@ -19,6 +19,10 @@ import type { ExecutionContext } from '@vostride/agent-qa-schema'
 export const FIXTURE_RUN_ID = 'run-dual-host-byte-proof'
 export const FIXTURE_PRODUCT = 'dual-host-storefront'
 export const OVER_TTL_SLACK_MS = 1_500
+export const PERMITTED_RUN_RECEIPT_DIFF_FIELDS = [
+  'drainKind',
+  'handoffHolderPid',
+] as const
 
 export type FixtureVariant = 'mixed' | 'over-ttl' | 'empty'
 
@@ -33,6 +37,28 @@ export interface DualHostFixture {
   readonly variant: FixtureVariant
   readonly candidates: readonly SerializedCandidate[]
   readonly delayedCandidateId: string | null
+}
+
+/**
+ * Compare every receipt field while closing the only two host-provenance differences.
+ * New, missing, or mutated fields are named in the failure instead of being hidden by a projection.
+ */
+export function compareRunReceipts(
+  oneShot: Record<string, unknown>,
+  daemon: Record<string, unknown>,
+): void {
+  const permitted = new Set<string>(PERMITTED_RUN_RECEIPT_DIFF_FIELDS)
+  const fields = [...new Set([...Object.keys(oneShot), ...Object.keys(daemon)])].sort()
+  const unexpected = fields.filter((field) => {
+    if (permitted.has(field)) return false
+    const oneShotHasField = Object.hasOwn(oneShot, field)
+    const daemonHasField = Object.hasOwn(daemon, field)
+    if (oneShotHasField !== daemonHasField) return true
+    return canonicalJson(oneShot[field]) !== canonicalJson(daemon[field])
+  })
+  if (unexpected.length > 0) {
+    throw new Error(`unexpected run receipt difference: ${unexpected.join(', ')}`)
+  }
 }
 
 function candidate(
