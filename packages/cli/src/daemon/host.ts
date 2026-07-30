@@ -277,8 +277,8 @@ function captureWorkerOutput(stream: Readable): CapturedWorkerOutput {
 /**
  * Run the foreground daemon until a signal or lease-heartbeat refusal closes it.
  *
- * Startup order is part of the safety contract: pin posture, acquire authority, recover under the
- * acquired epoch, compose the local agent once, register, then start the independent heartbeat.
+ * Startup order is part of the safety contract: pin posture, acquire authority, heartbeat once,
+ * install the independent heartbeat, then recover and compose under the protected epoch.
  */
 export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   // D-09: this is deliberately the first effect and is never injectable or TTY-dependent.
@@ -286,6 +286,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER
+  const recordDaemonEvent = (event: DaemonEvent): void => {
+    try {
+      operations.appendDaemonEvent(input.agentQaRoot, event)
+    } catch (error) {
+      logger.error(
+        `Daemon event append failed (${event.kind}): ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
   let runExecution = input.runExecution
   if (runExecution === undefined && input.configPath !== undefined) {
     // Keep legacy/test hosts that omit configPath independent of the CLI-only composition graph.
@@ -305,7 +314,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           writeFile(join(runDir, RUN_CHILD_STDOUT_FILE), closed.stdout, 'utf8'),
           writeFile(join(runDir, RUN_CHILD_STDERR_FILE), closed.stderr, 'utf8'),
         ])
-        operations.appendDaemonEvent(input.agentQaRoot, {
+        recordDaemonEvent({
           kind: 'run-child-exit',
           runId: closed.runId,
           exitCode: closed.exitCode,
@@ -350,16 +359,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     knowledgeRoot: input.knowledgeRoot,
     leaseId: acquired.leaseId,
   }
-  operations.appendDaemonEvent(input.agentQaRoot, {
-    kind: 'lease-acquired',
-    pid: process.pid,
-    leaseId: acquired.leaseId,
-    epoch: acquired.epoch,
-  })
-  operations.appendDaemonEvent(input.agentQaRoot, {
-    kind: 'epoch-bump',
-    epoch: acquired.epoch,
-  })
 
   let recovery: JobRecoveryHost | undefined
   let localAgent: LocalAgentHost | undefined
@@ -429,7 +428,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     }
 
     try {
-      operations.appendDaemonEvent(input.agentQaRoot, {
+      recordDaemonEvent({
         kind: 'embedder-worker-exit',
         sessionId: runtime.sessionId,
         pid: runtime.child.pid,
@@ -493,7 +492,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     child.once('close', (code, signal) => finishEmbedderWorkerExit(runtime, code, signal))
 
     try {
-      operations.appendDaemonEvent(input.agentQaRoot, {
+      recordDaemonEvent({
         kind: 'embedder-worker-start',
         sessionId,
         pid: child.pid,
@@ -563,7 +562,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const seenCandidateIds = new Set(initialCandidates)
     let jobsProcessed = 0
     let remainingAfter = initialCandidates.length
-    operations.appendDaemonEvent(input.agentQaRoot, {
+    recordDaemonEvent({
       kind: 'drain-session-start',
       sessionId,
       holderPid: process.pid,
@@ -605,7 +604,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           maintenance: 'skip',
           onJobLifecycle: (event) => {
             seenCandidateIds.add(event.candidateId)
-            operations.appendDaemonEvent(input.agentQaRoot, {
+            recordDaemonEvent({
               kind: event.kind,
               sessionId,
               candidateId: event.candidateId,
@@ -634,7 +633,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         remainingAfter,
       })
     }
-    operations.appendDaemonEvent(input.agentQaRoot, {
+    recordDaemonEvent({
       kind: 'drain-session-end',
       sessionId,
       holderPid: process.pid,
@@ -722,7 +721,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           operations.trace?.('lease-released')
         } else {
           exitCode = 1
-          operations.appendDaemonEvent(input.agentQaRoot, {
+          recordDaemonEvent({
             kind: 'lease-lost',
             reason: released.reason,
             observedEpoch: released.holder?.epoch,
@@ -735,7 +734,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         registrationWritten = false
         operations.trace?.('registration-removed')
       }
-      operations.appendDaemonEvent(input.agentQaRoot, {
+      recordDaemonEvent({
         kind: 'daemon-stopped',
         exitCode,
         reason,
@@ -747,7 +746,67 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     return shutdownPromise
   }
 
+  const heartbeatOnce = (): boolean => {
+    if (shutdownPromise !== undefined) return false
+    try {
+      const heartbeat = operations.heartbeatLease(authority)
+      if (heartbeat.kind === 'heartbeated') {
+        recordDaemonEvent({
+          kind: 'lease-heartbeated',
+          pid: heartbeat.holder.pid,
+          epoch: heartbeat.holder.epoch,
+          heartbeatAtMs: heartbeat.holder.heartbeatAtMs,
+        })
+        return true
+      }
+
+      recordDaemonEvent({
+        kind: 'lease-lost',
+        reason: heartbeat.reason,
+        observedEpoch: heartbeat.observedEpoch ?? heartbeat.holder?.epoch,
+      })
+    } catch (error) {
+      recordDaemonEvent({
+        kind: 'lease-lost',
+        reason: 'heartbeat-error',
+        detail: error instanceof Error ? error.message : String(error),
+      })
+    }
+    void beginShutdown(1, false, 'lease-lost')
+    return false
+  }
+
   try {
+    const initialHeartbeat = operations.heartbeatLease(authority)
+    if (initialHeartbeat.kind === 'refused') {
+      recordDaemonEvent({
+        kind: 'lease-lost',
+        reason: initialHeartbeat.reason,
+        observedEpoch: initialHeartbeat.observedEpoch ?? initialHeartbeat.holder?.epoch,
+      })
+      await beginShutdown(1, false, 'lease-lost')
+      return await completion
+    }
+
+    heartbeatTimer = operations.setInterval(heartbeatOnce, LEASE_HEARTBEAT_INTERVAL_MS)
+    operations.trace?.('heartbeat-started')
+    recordDaemonEvent({
+      kind: 'lease-acquired',
+      pid: process.pid,
+      leaseId: acquired.leaseId,
+      epoch: acquired.epoch,
+    })
+    recordDaemonEvent({
+      kind: 'epoch-bump',
+      epoch: acquired.epoch,
+    })
+    recordDaemonEvent({
+      kind: 'lease-heartbeated',
+      pid: initialHeartbeat.holder.pid,
+      epoch: initialHeartbeat.holder.epoch,
+      heartbeatAtMs: initialHeartbeat.holder.heartbeatAtMs,
+    })
+
     const model = await input.model()
     recovery = operations.composeJobRecovery({
       agentQaRoot: input.agentQaRoot,
@@ -819,7 +878,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     if (shutdownPromise !== undefined) {
       await startedServer.close()
       await shutdownPromise
-      return completion
+      return await completion
     }
     invokeServer = startedServer
 
@@ -832,7 +891,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       })
         .then(() => undefined)
         .catch((error) => {
-          operations.appendDaemonEvent(input.agentQaRoot, {
+          recordDaemonEvent({
             kind: 'lease-lost',
             reason:
               typeof error === 'object'
@@ -857,41 +916,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         })
     }, MAINTENANCE_CADENCE_MS)
 
-    heartbeatTimer = operations.setInterval(() => {
-      if (shutdownPromise !== undefined) return
-      try {
-        const heartbeat = operations.heartbeatLease(authority)
-        if (heartbeat.kind === 'heartbeated') {
-          operations.appendDaemonEvent(input.agentQaRoot, {
-            kind: 'lease-heartbeated',
-            pid: heartbeat.holder.pid,
-            epoch: heartbeat.holder.epoch,
-            heartbeatAtMs: heartbeat.holder.heartbeatAtMs,
-          })
-          return
-        }
-
-        operations.appendDaemonEvent(input.agentQaRoot, {
-          kind: 'lease-lost',
-          reason: heartbeat.reason,
-          observedEpoch: heartbeat.observedEpoch ?? heartbeat.holder?.epoch,
-        })
-        void beginShutdown(1, false, 'lease-lost')
-      } catch (error) {
-        operations.appendDaemonEvent(input.agentQaRoot, {
-          kind: 'lease-lost',
-          reason: 'heartbeat-error',
-          detail: error instanceof Error ? error.message : String(error),
-        })
-        void beginShutdown(1, false, 'lease-lost')
-      }
-    }, LEASE_HEARTBEAT_INTERVAL_MS)
-    operations.trace?.('heartbeat-started')
     logger.info(`agent-qa daemon started (pid ${process.pid}, epoch ${acquired.epoch})`)
 
-    return completion
+    return await completion
   } catch (error) {
     await beginShutdown(1, true, 'startup-error')
     throw error
+  } finally {
+    if (!shutdownCompleted) await beginShutdown(1, true, 'startup-error')
   }
 }

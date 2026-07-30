@@ -274,6 +274,7 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
     expect(harness.traces.slice(0, 10)).toEqual([
       'posture-pinned',
       'lease-acquired',
+      'heartbeat-started',
       'recovery-composed',
       'epoch-adopted',
       'claims-recovered',
@@ -281,7 +282,6 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
       'local-agent-composed',
       'jobs-opened',
       'registration-written',
-      'heartbeat-started',
     ])
 
     const registration = readDaemonRegistration(paths.agentQaRoot)
@@ -312,6 +312,7 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
     expect(readEvents(paths.agentQaRoot).map((event) => event.kind)).toEqual([
       'lease-acquired',
       'epoch-bump',
+      'lease-heartbeated',
       'lease-heartbeated',
     ])
 
@@ -820,7 +821,7 @@ describe('daemon heartbeat authority and cadence', () => {
     }
     expect(
       readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-heartbeated'),
-    ).toHaveLength(4)
+    ).toHaveLength(5)
 
     settleLongJob?.()
     await longJob
