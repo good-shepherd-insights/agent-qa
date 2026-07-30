@@ -22,7 +22,11 @@ import {
 } from '../embedder-acquire.js'
 import { createFloorEmbedder } from '../embedder-floor.js'
 import {
+  EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
+  EMBEDDER_WORKER_START_TIMEOUT_MS,
+  EMBEDDER_WORKER_TERM_GRACE_MS,
   EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
+  EmbedderWorkerTimeoutError,
   embedderWorkerAgentQaRoot,
   embedderWorkerRegistrationPath,
   embedderWorkerSocketPath,
@@ -144,6 +148,14 @@ afterAll(() => {
 })
 
 describe.sequential('embedder worker discovery', () => {
+  it('pins every worker wait deadline in code rather than configuration', () => {
+    expect({
+      request: EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
+      start: EMBEDDER_WORKER_START_TIMEOUT_MS,
+      terminate: EMBEDDER_WORKER_TERM_GRACE_MS,
+    }).toEqual({ request: 30_000, start: 15_000, terminate: 5_000 })
+  })
+
   it('returns no-worker when registration is absent', async () => {
     const projectRoot = temporaryProject('absent')
     const agentQaRoot = join(projectRoot, '.agent-qa')
@@ -257,4 +269,61 @@ describe.sequential('embedder worker discovery', () => {
       () => `worker registration remained after SIGTERM; stderr: ${stderr}`,
     )
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a SIGSTOPped worker request by deadline and invalidates it to typed deferral',
+    async () => {
+      const projectRoot = temporaryProject('request-timeout')
+      const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+      const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
+      process.chdir(projectRoot)
+
+      const child = spawn(
+        process.execPath,
+        [workerEntryPath, projectRoot, JSON.stringify(STATIC_FLOOR_EMBEDDING_PROFILE)],
+        { cwd: projectRoot, stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+      children.push(child)
+      let stderr = ''
+      child.stderr?.setEncoding('utf8')
+      child.stderr?.on('data', (chunk: string) => {
+        stderr += chunk
+      })
+      await eventually(
+        () => existsSync(registrationPath),
+        () => `worker did not register (exit=${child.exitCode}); stderr: ${stderr}`,
+      )
+
+      const requestTimeoutMs = 100
+      const discovered = await discoverEmbedderWorker(agentQaRoot, { requestTimeoutMs })
+      expect(discovered.kind).toBe('worker')
+      if (discovered.kind !== 'worker' || !('embedder' in discovered)) {
+        throw new Error('Expected a worker-backed embedder')
+      }
+
+      child.kill('SIGSTOP')
+      const startedAtMs = Date.now()
+      let refusal: unknown
+      try {
+        await discovered.embedder.embedQuery('a stopped worker must not wedge curation')
+      } catch (error) {
+        refusal = error
+      }
+
+      expect(refusal).toBeInstanceOf(EmbedderWorkerTimeoutError)
+      expect((refusal as EmbedderWorkerTimeoutError).phase).toBe('request')
+      expect(Date.now() - startedAtMs).toBeLessThan(requestTimeoutMs + 2_000)
+      expect(existsSync(registrationPath)).toBe(false)
+      await expect(resolveEmbedderCapability({
+        preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
+        allowDownload: false,
+        workerPolicy: 'required',
+        agentQaRoot,
+      })).resolves.toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
+
+      child.kill('SIGCONT')
+      child.kill('SIGTERM')
+      await once(child, 'exit')
+    },
+  )
 })

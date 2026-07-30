@@ -27,6 +27,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CURATION_QUEUE_POLL_MS, MAINTENANCE_CADENCE_MS } from '../daemon/host.js'
 import {
   EMBEDDER_WORKER_IDLE_MS,
+  EMBEDDER_WORKER_START_TIMEOUT_MS,
+  EMBEDDER_WORKER_TERM_GRACE_MS,
   runDaemonHost,
   type DaemonHostOperations,
   type EmbedderWorkerSpawnOptions,
@@ -97,11 +99,12 @@ class StubWorker extends EventEmitter {
   exitCode: number | null = null
   signalCode: NodeJS.Signals | null = null
   readonly kill = vi.fn((signal: NodeJS.Signals = 'SIGTERM') => {
+    if (signal === 'SIGTERM' && this.ignoreTerm) return true
     this.finish(0, signal)
     return true
   })
 
-  constructor(pid: number) {
+  constructor(pid: number, private readonly ignoreTerm = false) {
     super()
     this.pid = pid
   }
@@ -133,6 +136,7 @@ interface LifecycleHarness {
   readonly spawnRequests: EmbedderWorkerSpawnOptions[]
   readonly resetCapability: ReturnType<typeof vi.fn>
   readonly events: Array<Record<string, unknown>>
+  readonly errors: string[]
   readonly order: string[]
   readonly drainQueue: ReturnType<typeof vi.fn>
   readonly acquireEmbedder: ReturnType<typeof vi.fn>
@@ -150,7 +154,12 @@ function startHarness(
   label: string,
   initialReports: Array<ReturnType<typeof drainReport>>,
   overrides: Partial<{
-    waitForEmbedderWorkerReady: () => Promise<void>
+    waitForEmbedderWorkerReady: (
+      agentQaRoot: string,
+      pid: number | undefined,
+      signal: AbortSignal,
+    ) => Promise<void>
+    workerIgnoresTerm: boolean
   }> = {},
 ): LifecycleHarness {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-daemon-embedder-${label}-`))
@@ -166,6 +175,7 @@ function startHarness(
   const workers: StubWorker[] = []
   const spawnRequests: EmbedderWorkerSpawnOptions[] = []
   const events: Array<Record<string, unknown>> = []
+  const errors: string[] = []
   const order: string[] = []
   const resetCapability = vi.fn()
   let nextTimerId = 1
@@ -248,7 +258,7 @@ function startHarness(
     resolveEmbedderWorkerEntryPath: () => '/fixture/dist/embedder-worker/worker-entry.js',
     spawnEmbedderWorker: (request: EmbedderWorkerSpawnOptions) => {
       spawnRequests.push(request)
-      const worker = new StubWorker(7_100 + workers.length)
+      const worker = new StubWorker(7_100 + workers.length, overrides.workerIgnoresTerm)
       workers.push(worker)
       mkdirSync(agentQaRoot, { recursive: true })
       writeFileSync(workerRegistrationPath, '{}\n')
@@ -270,7 +280,7 @@ function startHarness(
     author: () => async () => ({ kind: 'fallback-required', reason: 'no-model' }),
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations,
-    logger: { info: vi.fn(), error: vi.fn() },
+    logger: { info: vi.fn(), error: (message) => errors.push(message) },
   })
 
   return {
@@ -279,6 +289,7 @@ function startHarness(
     spawnRequests,
     resetCapability,
     events,
+    errors,
     order,
     drainQueue,
     acquireEmbedder,
@@ -335,6 +346,45 @@ afterEach(() => {
 })
 
 describe('daemon embedder-worker lifecycle', () => {
+  it('types a missed worker registration deadline and defers the required capability', async () => {
+    let observedStartRefusal: unknown
+    const harness = startHarness(
+      'start-timeout',
+      [drainReport(1, 0)],
+      {
+        waitForEmbedderWorkerReady: (_agentQaRoot, _pid, signal) => new Promise(
+          (_resolve, reject) => signal.addEventListener('abort', () => {
+            observedStartRefusal = signal.reason
+            reject(signal.reason)
+          }, { once: true }),
+        ),
+      },
+    )
+    await waitUntil(() => harness.isStarted(), 'daemon did not start')
+
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.workers.length === 1, 'worker did not spawn')
+    const [startDeadline] = harness.timeoutIds(EMBEDDER_WORKER_START_TIMEOUT_MS)
+    expect(startDeadline).toBeDefined()
+    expect(harness.fireTimeout(startDeadline!)).toBe(true)
+    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'drain did not defer')
+
+    expect(observedStartRefusal).toMatchObject({
+      name: 'EmbedderWorkerTimeoutError',
+      phase: 'start',
+    })
+    expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: { kind: 'deferred', reason: 'worker-unavailable' },
+    }))
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      kind: 'embedder-worker-exit',
+      reason: 'start-error',
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+  })
+
   it('defers a drain when worker startup fails without regaining in-process embedding', async () => {
     const harness = startHarness(
       'worker-required-start-failure',
@@ -480,5 +530,39 @@ describe('daemon embedder-worker lifecycle', () => {
         .filter((event) => event.kind === 'embedder-worker-exit')
         .map((event) => event.reason),
     ).toEqual(['crash', 'daemon-stop'])
+  })
+
+  it('bounds wedged-worker shutdown with TERM then KILL and reaps before lease release', async () => {
+    const harness = startHarness(
+      'wedged-shutdown',
+      [drainReport(1, 0)],
+      { workerIgnoresTerm: true },
+    )
+    await waitUntil(() => harness.isStarted(), 'daemon did not start')
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'drain did not finish')
+    const worker = harness.workers[0]!
+    worker.once('close', () => harness.order.push('worker-close'))
+
+    harness.signal('SIGTERM')
+    await waitUntil(
+      () => worker.kill.mock.calls.some(([signal]) => signal === 'SIGTERM'),
+      'worker did not receive SIGTERM',
+    )
+    const [termDeadline] = harness.timeoutIds(EMBEDDER_WORKER_TERM_GRACE_MS)
+    expect(termDeadline).toBeDefined()
+    expect(harness.fireTimeout(termDeadline!)).toBe(true)
+    await expect(harness.running).resolves.toBe(0)
+
+    expect(worker.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(worker.signalCode).toBe('SIGKILL')
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      kind: 'embedder-worker-terminate-escalated',
+      signal: 'SIGKILL',
+    }))
+    expect(harness.order.indexOf('worker-close')).toBeLessThan(
+      harness.order.indexOf('lease-release'),
+    )
+    expect(existsSync(harness.workerRegistrationPath)).toBe(false)
   })
 })
