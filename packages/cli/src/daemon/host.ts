@@ -52,6 +52,10 @@ import {
   writeDaemonRegistration,
 } from './registration.js'
 import type { DaemonRegistration } from './registration.js'
+import {
+  createJobDispatcher,
+  type JobDispatcher,
+} from './job-dispatcher.js'
 
 /** Provisional daemon heartbeat interval; retune from operational evidence without adding config. */
 export const LEASE_HEARTBEAT_INTERVAL_MS = 10_000
@@ -87,7 +91,6 @@ export type DaemonHostTraceStep =
   | 'recovery-composed'
   | 'epoch-adopted'
   | 'claims-recovered'
-  | 'pending-resumed'
   | 'local-agent-composed'
   | 'jobs-opened'
   | 'registration-written'
@@ -367,6 +370,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
   let recovery: JobRecoveryHost | undefined
   let localAgent: LocalAgentHost | undefined
+  let jobDispatcher: JobDispatcher | undefined
   let registrationWritten = false
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
   let curationPollTimer: ReturnType<typeof setInterval> | undefined
@@ -709,6 +713,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       clearEmbedderWorkerIdleTimer()
       await stopEmbedderWorker('daemon-stop')
 
+      await jobDispatcher?.stop()
+      jobDispatcher = undefined
       localAgent?.close()
       localAgent = undefined
       recovery?.close()
@@ -832,8 +838,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     operations.trace?.('epoch-adopted')
     await recovery.recoverAbandonedClaims(fence)
     operations.trace?.('claims-recovered')
-    await recovery.resumePending(fence)
-    operations.trace?.('pending-resumed')
     recovery.close()
     recovery = undefined
 
@@ -847,8 +851,21 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       idSource: DIGEST_JOB_ID_SOURCE,
     })
     operations.trace?.('local-agent-composed')
-    await localAgent.jobs()
+    const jobs = await localAgent.jobs()
     operations.trace?.('jobs-opened')
+    jobDispatcher = createJobDispatcher({
+      queue: jobs.queue,
+      fence,
+      scheduler: {
+        now: operations.now,
+        setTimeout: operations.setTimeout,
+        clearTimeout: operations.clearTimeout,
+      },
+      recordEvent: recordDaemonEvent,
+      reportError: (error) => logger.error(
+        `Daemon agent-job dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    })
 
     const armShutdownGrace = (): void => {
       if (shutdownCompleted || graceTimer !== undefined) return
@@ -884,7 +901,10 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         instanceId,
         pid: process.pid,
       },
-      onNudge: requestDrain,
+      onNudge: () => {
+        requestDrain()
+        jobDispatcher?.wake()
+      },
     })
     if (shutdownPromise !== undefined) {
       await startedServer.close()

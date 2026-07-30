@@ -290,7 +290,6 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
       'recovery-composed',
       'epoch-adopted',
       'claims-recovered',
-      'pending-resumed',
       'local-agent-composed',
       'jobs-opened',
       'registration-written',
