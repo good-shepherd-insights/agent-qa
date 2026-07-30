@@ -161,13 +161,14 @@ describe('publishBundle staged committed publish (D-11/D-12/D-15)', () => {
     const outcome = publishBundle(
       config({
         writerLeaseId: 'lease-alpha',
+        writerEpoch: 7,
         hooks: {
           beforePublishRename: () => {
             const stagingRoot = join(bundlesDir(), '.staging')
             const entries = readdirSync(stagingRoot)
             expect(entries).toHaveLength(1)
             stagedBasename = entries[0]!
-            expect(stagedBasename).toMatch(/^lease-alpha-/)
+            expect(stagedBasename).toMatch(/^\.staged-epoch-7-[0-9a-f-]+$/)
             expect(readdirSync(bundlesDir())).toEqual(['.staging'])
 
             const stagedDir = join(stagingRoot, stagedBasename)

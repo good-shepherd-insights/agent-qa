@@ -584,7 +584,7 @@ async function provePublishStagingSigkill(): Promise<void> {
       '.staging',
       marker.stagingBasename!,
     )
-    expect(marker.stagingBasename).toMatch(new RegExp(`^${marker.leaseId}-`))
+    expect(marker.stagingBasename).toMatch(/^\.staged-epoch-\d+-[0-9a-f-]+$/)
     expect(existsSync(stagingDir)).toBe(true)
     expect(enumerateBundleDirs(knowledgeRoot)).toEqual([])
     expect(verifyBundleIntegrity(stagingDir)).toEqual({ ok: true, violations: [] })
@@ -597,14 +597,15 @@ async function provePublishStagingSigkill(): Promise<void> {
     expireKilledLease(knowledgeRoot, marker.leaseId)
     expect(listClaimedLeases(knowledgeRoot)).toContain(marker.leaseId)
     expect(existsSync(stagingDir)).toBe(true)
-    expect(marker.stagingBasename).toContain(marker.leaseId)
+    expect(marker.stagingBasename).toContain('.staged-epoch-')
 
     const recoveryAuthor = scriptedAuthor()
     const recovery = await drainQueue(options(knowledgeRoot, auditBaseDir, recoveryAuthor))
     expect(recovery).toMatchObject({
       kind: 'drained',
       failures: 0,
-      reconcile: { orphansRemoved: 1, mutationsRecovered: 0 },
+      // Epoch acquisition now revokes the stale publication stage before reconciliation.
+      reconcile: { orphansRemoved: 0, mutationsRecovered: 0 },
     })
     const consistent = assertConsistent(knowledgeRoot, candidate.candidateId)
     expect(consistent.bundleId).toBe(marker.bundleId)

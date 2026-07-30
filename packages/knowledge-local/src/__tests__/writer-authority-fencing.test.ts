@@ -15,7 +15,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as publicSurface from '../index.js'
 import {
+  finalizeStagedBundle,
   publishBundle,
+  stageBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../bundle-publish.js'
@@ -152,14 +154,17 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
   it('refuses a generation reclaimed after the final authority comparison', () => {
     const authority = acquireAuthority()
-    let mutations = 0
     let successorEpoch = 0
+    let successorId = ''
+    const staleStage = stageBundle(config(authority), input('stale-drainer'))
+    expect(staleStage.kind).toBe('staged')
+    if (staleStage.kind !== 'staged') throw new Error('expected stale staged bundle')
 
     expect(() =>
       expectedSurface.withCurrentWriterAuthority(
         knowledgeRoot,
         authority,
-        () => ++mutations,
+        () => finalizeStagedBundle(staleStage),
         {
           mutationLockTakeoverMs: 0,
           afterFinalAuthorityCompare: () => {
@@ -170,14 +175,58 @@ describe('writer authority and bundle publication are one indivisible protocol (
             expect(successor.kind).toBe('acquired')
             if (successor.kind !== 'acquired') throw new Error('expected successor takeover')
             successorEpoch = successor.epoch
+            const successorAuthority = {
+              leaseId: successor.leaseId,
+              epoch: successor.epoch,
+            }
+            const successorStage = stageBundle(
+              config(successorAuthority),
+              input('successor-daemon'),
+            )
+            expect(successorStage.kind).toBe('staged')
+            if (successorStage.kind !== 'staged') {
+              throw new Error('expected successor staged bundle')
+            }
+            const published = expectedSurface.withCurrentWriterAuthority(
+              knowledgeRoot,
+              successorAuthority,
+              () => finalizeStagedBundle(successorStage),
+              { mutationLockTakeoverMs: 0 },
+            )
+            expect(published.kind).toBe('published')
+            if (published.kind !== 'published') {
+              throw new Error('expected successor publication')
+            }
+            successorId = published.id
+            publicSurface.applyIndexDeltaForBundle({
+              knowledgeRoot,
+              product: PRODUCT,
+              bundleId: published.id,
+            })
           },
         },
       ),
     ).toThrow(WriterAuthorityLostError)
 
     expect(successorEpoch).toBe(2)
-    expect(mutations).toBe(0)
     expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('2\n')
+    const bundlesDir = join(
+      knowledgeRoot,
+      'memory',
+      slugBranch(PRODUCT),
+      'bundles',
+    )
+    expect(readdirSync(bundlesDir).filter((entry) => entry !== '.staging')).toEqual([
+      successorId,
+    ])
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(
+        reader.db.prepare('SELECT bundle_id FROM records').all(),
+      ).toEqual([{ bundle_id: successorId }])
+    } finally {
+      reader.db.close()
+    }
   })
 
   it('stages bundle bytes under an epoch-keyed reader-invisible directory', () => {

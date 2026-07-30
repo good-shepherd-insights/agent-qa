@@ -101,7 +101,7 @@ function markerAndBlock(
 function publishStagingDetails(
   knowledgeRoot: string,
   productKey: string,
-  leaseId: string,
+  epoch: number,
 ): { bundleId: string; stagingBasename: string } {
   const bundlesDir = join(
     knowledgeRoot,
@@ -113,12 +113,11 @@ function publishStagingDetails(
   const stagingEntries = readdirSync(stagingRoot, { withFileTypes: true }).filter(
     (entry) =>
       entry.isDirectory()
-      && entry.name.startsWith(`${leaseId}-`)
-      && !entry.name.startsWith(`${leaseId}-mutation-`),
+      && entry.name.startsWith(`.staged-epoch-${epoch}-`),
   )
   if (stagingEntries.length !== 1) {
     throw new Error(
-      `publish boundary expected one ${leaseId}-owned staging tree, found ${stagingEntries.length}`,
+      `publish boundary expected one epoch-${epoch} staging tree, found ${stagingEntries.length}`,
     )
   }
 
@@ -218,7 +217,7 @@ describe.skipIf(!childMode)('SIGKILL drain child fixture', () => {
                         const staged = publishStagingDetails(
                           knowledgeRoot,
                           job.payload.scope.key,
-                          job.leaseId,
+                          deps.epoch,
                         )
                         markerAndBlock(marker, {
                           point,

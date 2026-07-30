@@ -47,6 +47,8 @@ export interface BundleStoreConfig {
   commitArtifacts: 'none' | 'thumbnails'
   /** Active writer identity used to attribute crash-left staging trees. */
   writerLeaseId?: string
+  /** Fencing epoch embedded in reader-invisible staging names. */
+  writerEpoch?: number
   policy?: GuardrailPolicy
   hooks?: {
     /** Test/chaos seam after all staged bytes exist but before the visibility rename. */
@@ -80,6 +82,22 @@ export type PublishBundleOutcome =
       expectedIdentityHash: string
       existingIdentityHash: string | null
     }
+
+export interface StagedBundlePublication {
+  kind: 'staged'
+  id: RecordId
+  finalDir: string
+  stagingDir: string
+  stagingRoot: string
+  bundlesDir: string
+  evidenceIncomplete: boolean
+  expected: ExpectedBundleIdentity
+  beforePublishRename?: () => void
+}
+
+export type StageBundleOutcome =
+  | StagedBundlePublication
+  | Exclude<PublishBundleOutcome, { kind: 'published' }>
 
 const EMPTY_ARTIFACT_COPY: ArtifactCopyResult = {
   copied: [],
@@ -191,10 +209,10 @@ function writePart(stagingDir: string, part: { relPath: string; text: string }):
   writeFileSync(target, part.text, 'utf8')
 }
 
-export function publishBundle(
+export function stageBundle(
   config: BundleStoreConfig,
   input: PublishBundleInput,
-): PublishBundleOutcome {
+): StageBundleOutcome {
   if (config.commitArtifacts === 'thumbnails') {
     throw new Error(
       "commitArtifacts 'thumbnails' is not implemented; Phase 380 visual review owns it",
@@ -208,6 +226,12 @@ export function publishBundle(
     && !SAFE_WRITER_LEASE_ID.test(config.writerLeaseId)
   ) {
     throw new TypeError('BundleStoreConfig.writerLeaseId must be a non-empty path-safe token')
+  }
+  if (
+    config.writerEpoch !== undefined
+    && (!Number.isSafeInteger(config.writerEpoch) || config.writerEpoch < 0)
+  ) {
+    throw new TypeError('BundleStoreConfig.writerEpoch must be a nonnegative safe integer')
   }
 
   const { artifacts, preSkippedArtifacts, ...renderInput } = input
@@ -232,9 +256,7 @@ export function publishBundle(
   }
 
   const stagingRoot = join(bundlesDir, '.staging')
-  const stagingBasename = config.writerLeaseId === undefined
-    ? `${identity.id}-${randomUUID()}`
-    : `${config.writerLeaseId}-${identity.id}-${randomUUID()}`
+  const stagingBasename = `.staged-epoch-${config.writerEpoch ?? 0}-${randomUUID()}`
   const stagingDir = join(stagingRoot, stagingBasename)
   mkdirSync(stagingDir, { recursive: true })
 
@@ -272,31 +294,82 @@ export function publishBundle(
     writePart(stagingDir, manifest)
     fsyncTree(stagingDir)
     fsyncDirectory(stagingRoot)
-    config.hooks?.beforePublishRename?.()
-
-    try {
-      durableRename(stagingDir, finalDir)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(finalDir)) {
-        const existing = classifyExistingBundleTarget(finalDir, rendered)
-        removeStaging(stagingDir, stagingRoot, bundlesDir)
-        return existing.kind === 'same-identity'
-          ? { kind: 'already-exists', id: rendered.id }
-          : identityCollisionOutcome(finalDir, rendered, existing)
-      }
-      throw error
-    }
-    removeEmptyStagingRoot(stagingRoot, bundlesDir)
-
     return {
-      kind: 'published',
+      kind: 'staged',
       id: rendered.id,
-      dir: finalDir,
+      finalDir,
+      stagingDir,
+      stagingRoot,
+      bundlesDir,
       evidenceIncomplete: copiedArtifacts.evidenceIncomplete,
+      expected: rendered,
+      ...(config.hooks?.beforePublishRename === undefined
+        ? {}
+        : { beforePublishRename: config.hooks.beforePublishRename }),
     }
   } catch (error) {
     removeStaging(stagingDir, stagingRoot, bundlesDir)
+    throw error
+  }
+}
+
+/** Remove one reader-invisible staged tree after a fenced refusal or failed finalize. */
+export function discardStagedBundle(
+  staged: StagedBundlePublication,
+  removeEmptyBundlesDir = false,
+): void {
+  removeStaging(staged.stagingDir, staged.stagingRoot, staged.bundlesDir)
+  if (!removeEmptyBundlesDir) return
+  try {
+    rmdirSync(staged.bundlesDir)
+    fsyncDirectory(dirname(staged.bundlesDir))
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw error
+  }
+}
+
+/** Make a complete staged tree visible. Callers that hold writer authority own this boundary. */
+export function finalizeStagedBundle(
+  staged: StagedBundlePublication,
+): PublishBundleOutcome {
+  staged.beforePublishRename?.()
+  try {
+    durableRename(staged.stagingDir, staged.finalDir)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (
+      (code === 'EEXIST' || code === 'ENOTEMPTY')
+      && existsSync(staged.finalDir)
+    ) {
+      const existing = classifyExistingBundleTarget(staged.finalDir, staged.expected)
+      discardStagedBundle(staged)
+      return existing.kind === 'same-identity'
+        ? { kind: 'already-exists', id: staged.id }
+        : identityCollisionOutcome(staged.finalDir, staged.expected, existing)
+    }
+    throw error
+  }
+  removeEmptyStagingRoot(staged.stagingRoot, staged.bundlesDir)
+  return {
+    kind: 'published',
+    id: staged.id,
+    dir: staged.finalDir,
+    evidenceIncomplete: staged.evidenceIncomplete,
+  }
+}
+
+/** Compatibility composition for callers that do not need a separately fenced finalize. */
+export function publishBundle(
+  config: BundleStoreConfig,
+  input: PublishBundleInput,
+): PublishBundleOutcome {
+  const staged = stageBundle(config, input)
+  if (staged.kind !== 'staged') return staged
+  try {
+    return finalizeStagedBundle(staged)
+  } catch (error) {
+    discardStagedBundle(staged)
     throw error
   }
 }

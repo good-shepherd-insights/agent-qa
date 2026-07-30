@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -42,7 +42,12 @@ import { loadBundle, readMeasurements } from '../bundle-read.js'
 import type { LoadedBundle } from '../bundle-read.js'
 import { renderBundleParts } from '../bundle-parts.js'
 import type { RenderBundlePartsInput } from '../bundle-parts.js'
-import { publishBundle } from '../bundle-publish.js'
+import {
+  discardStagedBundle,
+  finalizeStagedBundle,
+  publishBundle,
+  stageBundle,
+} from '../bundle-publish.js'
 import type {
   BundleStoreConfig,
   PublishBundleInput,
@@ -54,7 +59,12 @@ import {
 } from '../bundle-scan.js'
 import { projectBundleIndexRow } from '../index-rebuild.js'
 import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.js'
-import { assertEpochCurrent } from '../lease/writer-lease.js'
+import {
+  assertEpochCurrent,
+  readCurrentEpoch,
+  withCurrentWriterAuthority,
+  WriterAuthorityLostError,
+} from '../lease/writer-lease.js'
 import { assemblePromotionGateInput } from '../promotion-gate-input.js'
 import type { ClaimedCurationJob } from '../queue/curation-queue.js'
 import { writeJobState } from '../queue/job-state.js'
@@ -99,6 +109,8 @@ export interface CommitCurationDependencies {
     afterIntentWritten?: () => void
     /** Test/chaos seam while the complete bundle is staged but still reader-invisible. */
     beforePublishRename?: () => void
+    /** Test/chaos seam after lock-held authority comparison and before finalize. */
+    afterFinalAuthorityCompare?: () => void
     /** Test/chaos seam after each durable mutable-file replacement. */
     afterMutableReplacement?: (targetRelPath: string) => void
     /** Test/chaos seam after a fresh bundle publish and before its index projection. */
@@ -501,8 +513,74 @@ function storeConfig(
     auditBaseDir: deps.auditBaseDir,
     commitArtifacts: 'none',
     writerLeaseId,
+    writerEpoch: deps.epoch,
     policy: deps.policy,
     ...(Object.keys(hooks).length === 0 ? {} : { hooks }),
+  }
+}
+
+function publishWithCurrentAuthority(
+  deps: CommitCurationDependencies,
+  writerLeaseId: string,
+  config: BundleStoreConfig,
+  input: PublishBundleInput,
+): PublishBundleOutcome | Extract<
+  CommitCurationOutcome,
+  { kind: 'abandoned-stale-epoch' }
+> {
+  const authority = { leaseId: writerLeaseId, epoch: deps.epoch }
+  const hooks = deps.hooks?.afterFinalAuthorityCompare === undefined
+    ? undefined
+    : { afterFinalAuthorityCompare: deps.hooks.afterFinalAuthorityCompare }
+
+  const publishOverride = deps.operations?.publishBundle
+  if (publishOverride !== undefined) {
+    try {
+      return withCurrentWriterAuthority(
+        deps.knowledgeRoot,
+        authority,
+        () => publishOverride(config, input),
+        hooks,
+      )
+    } catch (error) {
+      if (error instanceof WriterAuthorityLostError) {
+        return { kind: 'abandoned-stale-epoch', observedEpoch: error.observedEpoch }
+      }
+      throw error
+    }
+  }
+
+  const staged = stageBundle(config, input)
+  try {
+    return withCurrentWriterAuthority(
+      deps.knowledgeRoot,
+      authority,
+      () => {
+        if (staged.kind !== 'staged') return staged
+        try {
+          return finalizeStagedBundle(staged)
+        } catch (error) {
+          if (
+            (error as NodeJS.ErrnoException).code === 'ENOENT'
+            && !existsSync(staged.stagingDir)
+          ) {
+            throw new WriterAuthorityLostError(
+              { knowledgeRoot: deps.knowledgeRoot, ...authority },
+              'mutation-lock-generation-lost',
+              readCurrentEpoch(deps.knowledgeRoot),
+            )
+          }
+          throw error
+        }
+      },
+      hooks,
+    )
+  } catch (error) {
+    if (staged.kind === 'staged') discardStagedBundle(staged, true)
+    if (error instanceof WriterAuthorityLostError) {
+      return { kind: 'abandoned-stale-epoch', observedEpoch: error.observedEpoch }
+    }
+    throw error
   }
 }
 
@@ -996,9 +1074,6 @@ export function commitCurationDelta(
       epoch: deps.epoch,
     })
     deps.hooks?.afterIntentWritten?.()
-    const beforePublish = staleEpoch(deps)
-    if (beforePublish !== undefined) return beforePublish
-
     let convertedConfirm = false
     let confirmedEventDuplicate = false
     let measurementAppendDuplicate = false
@@ -1007,7 +1082,13 @@ export function commitCurationDelta(
     let promotionHoldReason: PromotionGateHoldReason | undefined
     const config = storeConfig(deps, productKey, job.leaseId)
     if (publishInput !== undefined) {
-      const published = (deps.operations?.publishBundle ?? publishBundle)(config, publishInput)
+      const published = publishWithCurrentAuthority(
+        deps,
+        job.leaseId,
+        config,
+        publishInput,
+      )
+      if (published.kind === 'abandoned-stale-epoch') return published
       if (published.kind === 'egress-blocked') {
         clearCommitIntent(deps.knowledgeRoot, job.candidateId)
         markDone(deps, job)

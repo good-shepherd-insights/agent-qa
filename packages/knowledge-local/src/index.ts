@@ -380,13 +380,17 @@ export {
   heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_TAKEOVER_MS,
   readWriterLease,
   refreshWriterLeaseAuthority,
   releaseLease,
+  withCurrentWriterAuthority,
   WriterAuthorityLostError,
 } from './lease/writer-lease.js'
 export type {
   AcquireWriterLeaseOutcome,
+  CurrentWriterAuthority,
+  CurrentWriterAuthorityHooks,
   HeartbeatLeaseOutcome,
   LeaseOperationOptions,
   ReadWriterLeaseOutcome,
