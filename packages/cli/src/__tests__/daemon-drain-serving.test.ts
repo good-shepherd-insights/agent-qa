@@ -18,9 +18,17 @@ import type {
   JobRecoveryHost,
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
+import * as knowledgeLocal from '@vostride/agent-qa-knowledge-local'
 import {
   acquireWriterLease,
+  claimNextJob,
+  enqueueCurationCandidateProjection,
   LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
+  listQueuedCandidates,
+  readJobState,
+  readWriterLease,
+  releaseLease,
   WriterAuthorityLostError,
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
@@ -30,7 +38,12 @@ import {
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  CurationAuthorship,
+  Delta,
+  ExecutionContext,
+} from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -75,6 +88,82 @@ function makeRoot(): { root: string; agentQaRoot: string; knowledgeRoot: string;
     agentQaRoot,
     knowledgeRoot: join(root, 'agent-qa-knowledge'),
     runDir,
+  }
+}
+
+function enqueueRealCandidate(
+  knowledgeRoot: string,
+  seed: string,
+  executionContext: ExecutionContext = 'local-headless',
+): string {
+  const outcome = enqueueCurationCandidateProjection({
+    knowledgeRoot,
+    projection: {
+      sourceRunId: `run-${seed}`,
+      scope: { tier: 'product', key: 'storefront' },
+      buildOrdinal: 42,
+      executionContext,
+      secretFlagged: false,
+      injectionFlagged: false,
+      kind: 'fact',
+      subtype: 'selector',
+      anchors: [
+        { t: 'el', role: 'button', name: seed, ordinal: 0 },
+        { t: 'page', route: `/${seed}` },
+        { t: 'selector', literal: `[data-testid="${seed}"]` },
+      ],
+      summarySeed: `${seed} selector`,
+      bodySeed: `${seed} was resolved and verified.`,
+      distilledObservations: [{
+        schemaVersion: 1,
+        step: { naturalKey: `${seed}-click`, ordinal: 0 },
+        platform: 'web',
+        element: { naturalKey: `button:${seed}:0` },
+        locator: { selector: `[data-testid="${seed}"]` },
+        observedAtOrdinal: 42,
+      }],
+      evidenceToken: `evidence-${seed}`,
+      attributingObservationId: `observation-${seed}`,
+      artifactDescriptors: [],
+      captureEvidence: { elements: [] },
+      stepInteractions: [],
+      emittedAt: '2026-07-30T00:00:00.000Z',
+    },
+    artifactSources: [],
+  })
+  expect(outcome.kind).toBe('enqueued')
+  if (outcome.kind !== 'enqueued') throw new Error('expected enqueued candidate')
+  return outcome.candidateId
+}
+
+function deterministicAuthor(): CuratorAuthor {
+  return async (job) => {
+    const authorship: CurationAuthorship = {
+      path: 'llm',
+      model: { id: 'daemon-drain-serving-fixture' },
+      executionContext: job.executionContext,
+    }
+    const delta: Delta = {
+      kind: 'Add',
+      origin: 'agent',
+      scope: job.scope,
+      citedIds: [],
+      authorship,
+      bundle: {
+        kind: job.kind,
+        ...(job.subtype === undefined ? {} : { subtype: job.subtype }),
+        anchors: job.anchors,
+        scope: job.scope,
+        summary: job.summarySeed,
+        body: job.bodySeed,
+        distilledEvidenceRef: {
+          id: `curation-candidate-${job.candidateId}`,
+          sha: job.candidateId,
+        },
+        originStage: 'run-curation',
+      },
+    }
+    return { kind: 'authored', deltas: [delta], authorship }
   }
 }
 
@@ -136,6 +225,82 @@ interface ScheduledHostHarness {
   running: Promise<number>
   fire(intervalMs: number): void
   signal(signal: NodeJS.Signals): void
+}
+
+interface ProductionDrainCall {
+  options: Parameters<DaemonHostOperations['drainQueue']>[0]
+  report: Awaited<ReturnType<DaemonHostOperations['drainQueue']>>
+}
+
+interface ProductionDrainHarness extends ScheduledHostHarness {
+  drainCalls: ProductionDrainCall[]
+}
+
+function startProductionDrainHost(options: {
+  paths: ReturnType<typeof makeRoot>
+  author: () => CuratorAuthor | Promise<CuratorAuthor>
+}): ProductionDrainHarness {
+  const signals = new Map<NodeJS.Signals, () => void>()
+  const intervals = new Map<number, { callback: () => void; intervalMs: number }>()
+  const drainCalls: ProductionDrainCall[] = []
+  let nextTimerId = 1
+  const drainQueue = vi.fn<DaemonHostOperations['drainQueue']>(async (drainOptions) => {
+    const report = await knowledgeLocal.drainQueue(drainOptions)
+    drainCalls.push({ options: drainOptions, report })
+    return report
+  })
+  const operations = {
+    composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
+    composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
+    // Keep the production drainer while disabling the unrelated embedder-child lifecycle.
+    drainQueue,
+    setInterval: (callback: () => void, intervalMs: number) => {
+      const timerId = nextTimerId++
+      intervals.set(timerId, { callback, intervalMs })
+      return timerId as unknown as ReturnType<typeof setInterval>
+    },
+    clearInterval: (timer: ReturnType<typeof setInterval>) => {
+      intervals.delete(timer as unknown as number)
+    },
+    setTimeout: () => 99 as unknown as ReturnType<typeof setTimeout>,
+    clearTimeout: vi.fn(),
+    onSignal: (signal: NodeJS.Signals, listener: () => void) => signals.set(signal, listener),
+    offSignal: (signal: NodeJS.Signals, listener: () => void) => {
+      if (signals.get(signal) === listener) signals.delete(signal)
+    },
+    hardExit: vi.fn(),
+    startInvokeServer: async ({ socketPath }: { socketPath: string }) => ({
+      socketPath,
+      close: () => Promise.resolve(),
+    }),
+    randomUUID: () => SESSION_ID,
+  } as unknown as Partial<DaemonHostOperations>
+  const running = runDaemonHost({
+    agentQaRoot: options.paths.agentQaRoot,
+    knowledgeRoot: options.paths.knowledgeRoot,
+    config: CONFIG,
+    model: () => MODEL,
+    author: options.author,
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    operations,
+    logger: { info: vi.fn(), error: vi.fn() },
+  })
+  return {
+    running,
+    drainCalls,
+    fire(intervalMs) {
+      const callbacks = [...intervals.values()]
+        .filter((scheduled) => scheduled.intervalMs === intervalMs)
+        .map((scheduled) => scheduled.callback)
+      if (callbacks.length === 0) throw new Error(`interval ${intervalMs} was not scheduled`)
+      for (const callback of callbacks) callback()
+    },
+    signal(signal) {
+      const listener = signals.get(signal)
+      if (listener === undefined) throw new Error(`${signal} listener was not installed`)
+      listener()
+    },
+  }
 }
 
 function drainReport(jobsProcessed: number, remaining: number) {
@@ -432,6 +597,206 @@ describe('daemon curation serving tracer', () => {
     const paths = makeRoot()
     await expect(nudgeDaemon(paths.agentQaRoot)).resolves.toBeUndefined()
     expect(existsSync(join(paths.agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE))).toBe(false)
+  })
+})
+
+describe('daemon stale-claim drain admission', () => {
+  it('inventories queued and non-current claims without mutating absent or current roots', () => {
+    const inspectDrainableCurationWork = (
+      knowledgeLocal as unknown as {
+        inspectDrainableCurationWork?: (options: {
+          knowledgeRoot: string
+          currentLeaseId: string
+        }) => {
+          queuedCandidateIds: readonly string[]
+          recoverableClaimedCandidateIds: readonly string[]
+        }
+      }
+    ).inspectDrainableCurationWork
+    expect(inspectDrainableCurationWork).toBeTypeOf('function')
+    if (inspectDrainableCurationWork === undefined) return
+
+    const paths = makeRoot()
+    expect(inspectDrainableCurationWork({
+      knowledgeRoot: join(paths.root, 'absent-knowledge-root'),
+      currentLeaseId: 'current-lease',
+    })).toEqual({ queuedCandidateIds: [], recoverableClaimedCandidateIds: [] })
+
+    const recoverableId = enqueueRealCandidate(paths.knowledgeRoot, 'recoverable-claim')
+    const expired = acquireWriterLease(paths.knowledgeRoot)
+    if (expired.kind !== 'acquired') throw new Error('expected expired-lease seed')
+    const recoverableClaim = claimNextJob({
+      knowledgeRoot: paths.knowledgeRoot,
+      leaseId: expired.leaseId,
+    })
+    expect(recoverableClaim?.candidateId).toBe(recoverableId)
+    expect(releaseLease({
+      knowledgeRoot: paths.knowledgeRoot,
+      leaseId: expired.leaseId,
+    })).toEqual({ kind: 'released' })
+
+    const currentId = enqueueRealCandidate(paths.knowledgeRoot, 'current-claim')
+    const current = acquireWriterLease(paths.knowledgeRoot)
+    if (current.kind !== 'acquired') throw new Error('expected current-lease seed')
+    const currentClaim = claimNextJob({
+      knowledgeRoot: paths.knowledgeRoot,
+      leaseId: current.leaseId,
+    })
+    expect(currentClaim?.candidateId).toBe(currentId)
+    const queuedId = enqueueRealCandidate(paths.knowledgeRoot, 'queued-candidate')
+
+    const before = {
+      recoverableClaimPresent: existsSync(recoverableClaim!.candidateDir),
+      currentClaimPresent: existsSync(currentClaim!.candidateDir),
+      recoverableState: readJobState(paths.knowledgeRoot, recoverableId),
+      currentState: readJobState(paths.knowledgeRoot, currentId),
+    }
+    const expected = {
+      queuedCandidateIds: [queuedId],
+      recoverableClaimedCandidateIds: [recoverableId],
+    }
+    expect(inspectDrainableCurationWork({
+      knowledgeRoot: paths.knowledgeRoot,
+      currentLeaseId: current.leaseId,
+    })).toEqual(expected)
+    expect(inspectDrainableCurationWork({
+      knowledgeRoot: paths.knowledgeRoot,
+      currentLeaseId: current.leaseId,
+    })).toEqual(expected)
+    expect({
+      recoverableClaimPresent: existsSync(recoverableClaim!.candidateDir),
+      currentClaimPresent: existsSync(currentClaim!.candidateDir),
+      recoverableState: readJobState(paths.knowledgeRoot, recoverableId),
+      currentState: readJobState(paths.knowledgeRoot, currentId),
+    }).toEqual(before)
+    expect(releaseLease({
+      knowledgeRoot: paths.knowledgeRoot,
+      leaseId: current.leaseId,
+    })).toEqual({ kind: 'released' })
+  })
+
+  it('recovers a real expired-lease claim through the production drainer exactly once', async () => {
+    const paths = makeRoot()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    const candidateId = enqueueRealCandidate(paths.knowledgeRoot, 'expired-daemon-claim')
+    const expired = acquireWriterLease(paths.knowledgeRoot)
+    if (expired.kind !== 'acquired') throw new Error('expected old writer lease')
+    const claimed = claimNextJob({
+      knowledgeRoot: paths.knowledgeRoot,
+      leaseId: expired.leaseId,
+    })
+    expect(claimed?.candidateId).toBe(candidateId)
+    expect(claimed === undefined ? false : existsSync(claimed.candidateDir)).toBe(true)
+    expect(listQueuedCandidates(paths.knowledgeRoot)).toEqual([])
+    expect(readJobState(paths.knowledgeRoot, candidateId)).toMatchObject({
+      kind: 'parsed',
+      state: { lifecycle: 'queued' },
+    })
+
+    now.mockReturnValue(1_000_000 + LEASE_HEARTBEAT_TTL_MS + 1)
+    const author = vi.fn(deterministicAuthor())
+    const authorFactory = vi.fn(() => author)
+    const host = startProductionDrainHost({ paths, author: authorFactory })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'replacement daemon did not register',
+    )
+    const successor = readWriterLease(paths.knowledgeRoot)
+    expect(successor).toMatchObject({
+      kind: 'parsed',
+      lease: { epoch: expired.epoch + 1 },
+    })
+    if (successor.kind !== 'parsed') throw new Error('expected successor writer lease')
+
+    host.fire(30_000)
+    await waitUntil(() => host.drainCalls.length === 1, 'stale claim did not reach drainQueue')
+    expect(host.drainCalls[0]).toMatchObject({
+      options: {
+        knowledgeRoot: paths.knowledgeRoot,
+        lease: { leaseId: successor.lease.leaseId, epoch: successor.lease.epoch },
+      },
+      report: {
+        kind: 'drained',
+        committed: 1,
+        failures: 0,
+        remaining: 0,
+        reconcile: { jobsRequeued: 1 },
+      },
+    })
+    expect(authorFactory).toHaveBeenCalledOnce()
+    expect(author).toHaveBeenCalledOnce()
+    expect(readJobState(paths.knowledgeRoot, candidateId).kind).toBe('absent')
+    expect(listQueuedCandidates(paths.knowledgeRoot)).toEqual([])
+
+    const eventsBefore = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
+    const receiptsBefore = readDrainSessionReceipts(paths.agentQaRoot)
+    host.fire(30_000)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(host.drainCalls).toHaveLength(1)
+    expect(authorFactory).toHaveBeenCalledOnce()
+    expect(author).toHaveBeenCalledOnce()
+    expect(readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')).toBe(eventsBefore)
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toEqual(receiptsBefore)
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
+  })
+
+  it('keeps a genuinely empty root free of drain sessions, authoring, and receipts', async () => {
+    const paths = makeRoot()
+    const authorFactory = vi.fn(() => deterministicAuthor())
+    const host = startProductionDrainHost({ paths, author: authorFactory })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'empty-root daemon did not register',
+    )
+
+    host.fire(30_000)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(host.drainCalls).toEqual([])
+    expect(authorFactory).not.toHaveBeenCalled()
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toEqual([])
+    const events = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
+    expect(events).not.toMatch(/drain-session-|job-claimed|job-completed/)
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
+  })
+
+  it('does not advertise or mutate a claim owned by the daemon current lease', async () => {
+    const paths = makeRoot()
+    const authorFactory = vi.fn(() => deterministicAuthor())
+    const host = startProductionDrainHost({ paths, author: authorFactory })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'current-holder daemon did not register',
+    )
+    const current = readWriterLease(paths.knowledgeRoot)
+    if (current.kind !== 'parsed') throw new Error('expected standing daemon lease')
+
+    const candidateId = enqueueRealCandidate(paths.knowledgeRoot, 'current-daemon-claim')
+    const claimed = claimNextJob({
+      knowledgeRoot: paths.knowledgeRoot,
+      leaseId: current.lease.leaseId,
+    })
+    expect(claimed?.candidateId).toBe(candidateId)
+    expect(listQueuedCandidates(paths.knowledgeRoot)).toEqual([])
+
+    host.fire(30_000)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(host.drainCalls).toEqual([])
+    expect(authorFactory).not.toHaveBeenCalled()
+    expect(claimed === undefined ? false : existsSync(claimed.candidateDir)).toBe(true)
+    expect(readJobState(paths.knowledgeRoot, candidateId)).toMatchObject({
+      kind: 'parsed',
+      state: { lifecycle: 'queued' },
+    })
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toEqual([])
+    const events = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
+    expect(events).not.toMatch(/drain-session-|job-claimed|job-completed/)
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
   })
 })
 
