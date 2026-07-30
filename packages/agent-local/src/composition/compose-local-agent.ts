@@ -41,6 +41,7 @@ import {
   enqueueCurationCandidateProjection,
   foldRunOutcomes,
   heartbeatLease,
+  listQueuedCandidates,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
   purgeRecord,
@@ -54,6 +55,7 @@ import {
   rollbackAffectedSetFingerprint,
   rollbackCampaign,
   rollbackCurationJob,
+  runMaintenanceTail,
   RUN_OUTCOMES_PROJECTION_VERSION,
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
@@ -137,6 +139,9 @@ export interface LocalDaemonCapabilities {
   readonly releaseLease: typeof releaseLease
   readonly readWriterLease: typeof readWriterLease
   readonly countPendingCurationJobs: typeof countPendingCurationJobs
+  readonly listQueuedCandidates: typeof listQueuedCandidates
+  readonly drainQueue: typeof drainQueue
+  readonly runMaintenanceTail: typeof runMaintenanceTail
   readonly pinLocalHeadlessExecutionContext: () => void
 }
 
@@ -146,6 +151,9 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   releaseLease,
   readWriterLease,
   countPendingCurationJobs,
+  listQueuedCandidates,
+  drainQueue,
+  runMaintenanceTail,
   pinLocalHeadlessExecutionContext: () => {
     setActiveExecutionContextResolver(() => 'local-headless')
   },

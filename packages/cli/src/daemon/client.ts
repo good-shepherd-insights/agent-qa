@@ -310,3 +310,35 @@ export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<
   }
   return readUnaryResponse(response)
 }
+
+/** Best-effort curation wake-up. Tail completion never depends on daemon discovery or I/O. */
+export async function nudgeDaemon(agentQaRoot: string): Promise<void> {
+  try {
+    const inspected = inspectDaemonRegistration(agentQaRoot)
+    if (inspected.kind !== 'live') return
+    const body = JSON.stringify({ kind: 'candidates-enqueued' })
+    await new Promise<void>((resolveNudge) => {
+      const outgoing = request(
+        {
+          socketPath: inspected.registration.socketPath,
+          path: '/nudge',
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'content-length': Buffer.byteLength(body),
+            connection: 'close',
+          },
+        },
+        (response) => {
+          response.resume()
+          response.once('end', resolveNudge)
+          response.once('error', resolveNudge)
+        },
+      )
+      outgoing.once('error', resolveNudge)
+      outgoing.end(body)
+    })
+  } catch {
+    // A missed nudge is intentionally invisible; the daemon's poll loop is the backstop.
+  }
+}

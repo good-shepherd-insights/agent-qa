@@ -181,7 +181,8 @@ export interface DrainOperations extends MaintenanceOperations {
 export interface DrainOptions {
   knowledgeRoot: string
   auditBaseDir: string
-  budgetMs?: number
+  /** `unbounded` is reserved for a standing host whose process lifetime is the boundary. */
+  budgetMs?: number | 'unbounded'
   /** Standing writer authority owned by the caller; drainQueue never mutates its lifecycle. */
   lease?: { leaseId: string; epoch: number }
   author: CuratorAuthor
@@ -676,8 +677,9 @@ function reconcileDependencies(
 
 function budgetMs(options: DrainOptions): number {
   const value = options.budgetMs ?? DRAIN_BUDGET_MS
+  if (value === 'unbounded') return Number.POSITIVE_INFINITY
   if (!Number.isFinite(value) || value < 0) {
-    throw new RangeError('budgetMs must be a finite non-negative number')
+    throw new RangeError("budgetMs must be a finite non-negative number or 'unbounded'")
   }
   return value
 }

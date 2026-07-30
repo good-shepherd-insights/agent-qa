@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -11,6 +12,7 @@ import {
 import type {
   ComposeJobRecoveryInput,
   ComposeLocalAgentInput,
+  CuratorAuthor,
   JobRecoveryHost,
   LocalAgentHost,
   RunExecutionPort,
@@ -19,8 +21,13 @@ import type {
   LeaseOperationOptions,
   ReleaseLeaseOutcome,
 } from '@vostride/agent-qa-agent-local'
+import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 
 import { createShutdownController } from '../commands/shutdown-controller.js'
+import {
+  appendDrainSessionReceipt,
+  type DrainSessionReceipt,
+} from './drain-receipts.js'
 import { appendDaemonEvent } from './events.js'
 import type { DaemonEvent } from './events.js'
 import {
@@ -83,6 +90,10 @@ export interface DaemonHostOperations {
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
+  listQueuedCandidates(knowledgeRoot: string): string[]
+  drainQueue: typeof LOCAL_DAEMON_CAPABILITIES.drainQueue
+  appendDrainSessionReceipt(agentQaRoot: string, receipt: DrainSessionReceipt): void
+  randomUUID(): string
   trace?(step: DaemonHostTraceStep): void
 }
 
@@ -95,6 +106,10 @@ export interface DaemonHostOptions {
   config: ConfigReaderPort
   /** Already-host-owned model factory; agent-local never constructs a provider. */
   model: () => JobModelCapability | Promise<JobModelCapability>
+  /** Lazy so an idle daemon does not resolve curation credentials until work appears. */
+  author?: () => CuratorAuthor | Promise<CuratorAuthor>
+  /** Shipped guardrail policy applied to every daemon-authored curation pass. */
+  policy?: GuardrailPolicy
   /** Plan 08 supplies the daemon's piped child launcher. */
   runExecution?: RunExecutionPort
   /** Plan 05 binds the recorded path to the live invoke server. */
@@ -128,6 +143,10 @@ function defaultOperations(): DaemonHostOperations {
     writeDaemonRegistration,
     removeDaemonRegistration,
     startInvokeServer,
+    listQueuedCandidates: LOCAL_DAEMON_CAPABILITIES.listQueuedCandidates,
+    drainQueue: LOCAL_DAEMON_CAPABILITIES.drainQueue,
+    appendDrainSessionReceipt,
+    randomUUID,
   }
 }
 
@@ -205,12 +224,98 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let resolveCompletion: ((code: number) => void) | undefined
   let shutdownPromise: Promise<void> | undefined
   let shutdownCompleted = false
+  let drainRequested = false
+  let drainWorker: Promise<void> | undefined
+  let authorPromise: Promise<CuratorAuthor> | undefined
 
   const completion = new Promise<number>((resolve) => {
     resolveCompletion = resolve
   })
 
   let controller: ReturnType<typeof createShutdownController> | undefined
+
+  const drainSession = async (): Promise<void> => {
+    const initialCandidates = operations.listQueuedCandidates(input.knowledgeRoot)
+    if (initialCandidates.length === 0) return
+    if (input.author === undefined || input.policy === undefined) {
+      throw new Error('Daemon curation requires an author factory and guardrail policy')
+    }
+
+    const sessionId = operations.randomUUID()
+    const seenCandidateIds = new Set(initialCandidates)
+    let jobsProcessed = 0
+    let remainingAfter = initialCandidates.length
+    operations.appendDaemonEvent(input.agentQaRoot, {
+      kind: 'drain-session-start',
+      sessionId,
+      holderPid: process.pid,
+      epoch: acquired.epoch,
+    })
+
+    const author = await (authorPromise ??= Promise.resolve(input.author()))
+    while (remainingAfter > 0) {
+      for (const candidateId of operations.listQueuedCandidates(input.knowledgeRoot)) {
+        seenCandidateIds.add(candidateId)
+      }
+      const report = await operations.drainQueue({
+        knowledgeRoot: input.knowledgeRoot,
+        auditBaseDir: input.agentQaRoot,
+        budgetMs: 'unbounded',
+        lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
+        author,
+        executionContext: 'local-headless',
+        policy: input.policy,
+        maintenance: 'skip',
+      })
+      jobsProcessed += report.jobsProcessed
+      remainingAfter = report.remaining
+      if (report.remaining > 0 && report.jobsProcessed === 0) break
+    }
+
+    const candidateIds = [...seenCandidateIds].sort()
+    if (jobsProcessed > 0) {
+      operations.appendDrainSessionReceipt(input.agentQaRoot, {
+        ts: new Date(operations.now()).toISOString(),
+        sessionId,
+        holderPid: process.pid,
+        epoch: acquired.epoch,
+        candidateIds,
+        remainingAfter,
+      })
+    }
+    operations.appendDaemonEvent(input.agentQaRoot, {
+      kind: 'drain-session-end',
+      sessionId,
+      holderPid: process.pid,
+      epoch: acquired.epoch,
+      candidateIds,
+      jobsProcessed,
+      remainingAfter,
+    })
+  }
+
+  const serviceDrainRequests = async (): Promise<void> => {
+    while (drainRequested && shutdownPromise === undefined) {
+      drainRequested = false
+      await drainSession()
+    }
+  }
+
+  const requestDrain = (): void => {
+    if (shutdownPromise !== undefined) return
+    drainRequested = true
+    if (drainWorker !== undefined) return
+    drainWorker = serviceDrainRequests()
+      .catch((error) => {
+        logger.error(
+          `Daemon curation drain failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
+      .finally(() => {
+        drainWorker = undefined
+        if (drainRequested && shutdownPromise === undefined) requestDrain()
+      })
+  }
 
   const detachSignals = (): void => {
     if (controller === undefined) return
@@ -240,6 +345,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         await invokeServer.close()
         invokeServer = undefined
       }
+
+      await drainWorker
 
       localAgent?.close()
       localAgent = undefined
@@ -345,6 +452,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const startedServer = await operations.startInvokeServer({
       socketPath,
       registry: localAgent.registry,
+      onNudge: requestDrain,
     })
     if (shutdownPromise !== undefined) {
       await startedServer.close()

@@ -33,6 +33,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 
+import { nudgeDaemon } from '../daemon/client.js'
 import {
   buildCuratorAuthor,
   type BuildCuratorAuthorDependencies,
@@ -86,6 +87,7 @@ export interface CurationTailOperations {
   listCompletedRunDirs(agentQaRoot: string): string[]
   readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined
   writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void
+  nudgeDaemon(agentQaRoot: string): Promise<void>
 }
 
 export interface RunCurationTailOptions {
@@ -119,6 +121,7 @@ function defaultOperations(): CurationTailOperations {
     listCompletedRunDirs,
     readCurationTailReceipt,
     writeCurationTailReceipt,
+    nudgeDaemon,
   }
 }
 
@@ -437,6 +440,9 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         continue
       }
       operations.writeCurationTailReceipt(runDir, completedReceipt)
+      if (completedReceipt.drainKind === 'handed-off') {
+        void operations.nudgeDaemon(opts.agentQaRoot).catch(() => undefined)
+      }
     } catch {
       opts.log.warn(incompleteWarning(receiptIdentity.runId))
       if (opts.signal?.aborted === true) return

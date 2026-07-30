@@ -34,6 +34,12 @@ export const invokeEnvelopeSchema = z
 
 export type InvokeEnvelope = z.infer<typeof invokeEnvelopeSchema>
 
+export const nudgeEnvelopeSchema = z
+  .object({ kind: z.literal('candidates-enqueued') })
+  .strict()
+
+export type NudgeEnvelope = z.infer<typeof nudgeEnvelopeSchema>
+
 /**
  * The socket authenticates the local operator through its owner-only directory. Caller grants are
  * therefore minted here and are never accepted from the wire; Phase 396 owns any remote trust
@@ -62,6 +68,13 @@ export class InvokeEnvelopeError extends Error {
   }
 }
 
+export class NudgeEnvelopeError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NudgeEnvelopeError'
+  }
+}
+
 export class InvokeBodyTooLargeError extends Error {
   readonly limitBytes: number
 
@@ -80,6 +93,7 @@ export interface InvokeServerHandle {
 export interface StartInvokeServerOptions {
   readonly socketPath: string
   readonly registry: FunctionRegistry
+  readonly onNudge?: (nudge: NudgeEnvelope) => void
 }
 
 interface WireError {
@@ -205,6 +219,28 @@ async function parseEnvelope(request: IncomingMessage): Promise<InvokeEnvelope> 
   return parsed.data
 }
 
+async function parseNudgeEnvelope(request: IncomingMessage): Promise<NudgeEnvelope> {
+  let parsedJson: unknown
+  try {
+    parsedJson = JSON.parse(await readRequestBody(request)) as unknown
+  } catch (error) {
+    if (error instanceof InvokeBodyTooLargeError) throw error
+    throw new NudgeEnvelopeError(
+      `Nudge body must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  const parsed = nudgeEnvelopeSchema.safeParse(parsedJson)
+  if (!parsed.success) {
+    throw new NudgeEnvelopeError(
+      parsed.error.issues
+        .map((issue) => `${issue.path.map(String).join('.') || '<root>'}: ${issue.message}`)
+        .join('; '),
+    )
+  }
+  return parsed.data
+}
+
 function writeJson(response: ServerResponse, statusCode: number, value: unknown): void {
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -228,7 +264,7 @@ function wireError(error: unknown): WireError {
 
 function errorStatus(error: unknown): number {
   if (error instanceof InvokeBodyTooLargeError) return 413
-  if (error instanceof InvokeEnvelopeError) return 400
+  if (error instanceof InvokeEnvelopeError || error instanceof NudgeEnvelopeError) return 400
   return 500
 }
 
@@ -276,10 +312,6 @@ async function handleInvoke(
   response: ServerResponse,
   registry: FunctionRegistry,
 ): Promise<void> {
-  if (request.url !== '/invoke') {
-    writeJson(response, 404, { name: 'NotFoundError', message: 'Route not found' })
-    return
-  }
   if (request.method !== 'POST') {
     writeJson(response, 405, { name: 'MethodNotAllowedError', message: 'POST required' })
     return
@@ -307,7 +339,42 @@ async function handleInvoke(
   }
 }
 
-/** Start the one-route node:http server on a UDS or Windows named pipe. */
+async function handleNudge(
+  request: IncomingMessage,
+  response: ServerResponse,
+  onNudge: StartInvokeServerOptions['onNudge'],
+): Promise<void> {
+  if (request.method !== 'POST') {
+    writeJson(response, 405, { name: 'MethodNotAllowedError', message: 'POST required' })
+    return
+  }
+  try {
+    const envelope = await parseNudgeEnvelope(request)
+    onNudge?.(envelope)
+    response.writeHead(204, { connection: 'close' })
+    response.end()
+  } catch (error) {
+    writeJson(response, errorStatus(error), wireError(error))
+  }
+}
+
+async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: StartInvokeServerOptions,
+): Promise<void> {
+  if (request.url === '/invoke') {
+    await handleInvoke(request, response, options.registry)
+    return
+  }
+  if (request.url === '/nudge') {
+    await handleNudge(request, response, options.onNudge)
+    return
+  }
+  writeJson(response, 404, { name: 'NotFoundError', message: 'Route not found' })
+}
+
+/** Start the local invoke transport plus its typed best-effort curation nudge route. */
 export async function startInvokeServer(
   options: StartInvokeServerOptions,
 ): Promise<InvokeServerHandle> {
@@ -318,7 +385,7 @@ export async function startInvokeServer(
   const server = createServer((request, response) => {
     responses.add(response)
     response.once('close', () => responses.delete(response))
-    void handleInvoke(request, response, options.registry)
+    void handleRequest(request, response, options)
   })
   server.on('connection', (socket) => {
     sockets.add(socket)

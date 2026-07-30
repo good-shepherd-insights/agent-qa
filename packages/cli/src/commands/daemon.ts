@@ -8,14 +8,20 @@ import {
   LOCAL_DAEMON_CAPABILITIES,
 } from '@vostride/agent-qa-agent-local'
 import type {
+  CuratorAuthor,
   ReadWriterLeaseOutcome,
   WriterLease,
 } from '@vostride/agent-qa-agent-local'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { createMaskedConfigReader } from '../composition/local-agent-host.js'
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
+import { buildCuratorAuthor } from '../curation/curator-author.js'
 import { runDaemonHost } from '../daemon/host.js'
 import type { DaemonHostOptions } from '../daemon/host.js'
 import {
@@ -26,7 +32,12 @@ import type {
   DaemonRegistration,
   ReadDaemonRegistrationOutcome,
 } from '../daemon/registration.js'
-import { resolveCliJobModel } from '../llm-utils.js'
+import {
+  resolveCliJobModel,
+  resolveModelAuth,
+  resolveNamedConfig,
+  toModelProfileAndAuth,
+} from '../llm-utils.js'
 
 export interface DaemonProjectPaths {
   agentQaRoot: string
@@ -75,6 +86,12 @@ const DEFAULT_DEPS: DaemonCommandDeps = {
   countPendingCurationJobs: LOCAL_DAEMON_CAPABILITIES.countPendingCurationJobs,
   signalProcess: (pid, signal) => process.kill(pid, signal),
   now: () => Date.now(),
+}
+
+async function resolveDaemonCuratorAuthor(configPath: string): Promise<CuratorAuthor> {
+  const { config } = await resolveNamedConfig(undefined, configPath)
+  const resolved = await resolveModelAuth(config.name, config)
+  return buildCuratorAuthor(toModelProfileAndAuth(config, resolved))
 }
 
 function configPathFor(command: Command): string {
@@ -147,6 +164,8 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
           knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
           config: createMaskedConfigReader(configPath),
           model: () => resolveCliJobModel(configPath),
+          author: () => resolveDaemonCuratorAuthor(configPath),
+          policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
         })
         process.exitCode = exitCode
       } catch (error) {
