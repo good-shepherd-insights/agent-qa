@@ -18,6 +18,7 @@ import {
   loadBundle,
   publishBundle,
   purgeRecord,
+  queuedCandidateDir,
 } from '@vostride/agent-qa-knowledge-local'
 import type {
   BundleStoreConfig,
@@ -48,6 +49,7 @@ const commandHarness = vi.hoisted(() => ({
     (authority: Record<string, unknown>, call: number) => void
   ) | undefined,
   authorityRefreshCalls: 0,
+  drainQueueCalls: 0,
   releaseLeaseCalls: 0,
   rebuildIndexInputs: [] as Record<string, unknown>[],
   purgeRecordInputs: [] as Record<string, unknown>[],
@@ -56,6 +58,11 @@ const commandHarness = vi.hoisted(() => ({
   purgeRecordCalls: 0,
   rollbackCampaignCalls: 0,
   rollbackCurationJobCalls: 0,
+}))
+
+const daemonHarness = vi.hoisted(() => ({
+  nudgeCalls: [] as string[],
+  nudgeHook: undefined as ((agentQaRoot: string) => Promise<void> | void) | undefined,
 }))
 
 vi.mock('node:readline', async (importOriginal) => {
@@ -93,6 +100,10 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
   >()
   return {
     ...actual,
+    drainQueue: vi.fn((...args: Parameters<typeof actual.drainQueue>) => {
+      commandHarness.drainQueueCalls += 1
+      return actual.drainQueue(...args)
+    }),
     rebuildIndex: vi.fn((...args: Parameters<typeof actual.rebuildIndex>) => {
       const input = args[0] as unknown as Record<string, unknown>
       commandHarness.rebuildIndexInputs.push(input)
@@ -130,12 +141,39 @@ vi.mock('@vostride/agent-qa-knowledge-local', async (importOriginal) => {
   }
 })
 
+vi.mock('../daemon/client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../daemon/client.js')>()
+  return {
+    ...actual,
+    nudgeDaemon: vi.fn(async (agentQaRoot: string) => {
+      daemonHarness.nudgeCalls.push(agentQaRoot)
+      await daemonHarness.nudgeHook?.(agentQaRoot)
+    }),
+  }
+})
+
 import { createKnowledgeCommand } from '../commands/knowledge.js'
+import {
+  CURATION_TAIL_RECEIPT_FILE,
+  CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
+  type CurationTailReceipt,
+} from '../curation/curation-tail.js'
+import {
+  appendDrainSessionReceipt,
+} from '../daemon/drain-receipts.js'
+import {
+  daemonRegistrationPath,
+  writeDaemonRegistration,
+} from '../daemon/registration.js'
 
 const PRODUCT = 'maintenance-storefront'
 const CURATION_JOB_ID = 'maintenance-curation-job'
 const BUILD_ORDINAL = 12
 const LIVE_LEASE_ID = '11111111-1111-4111-8111-111111111111'
+const FIRST_CANDIDATE_ID = 'a'.repeat(64)
+const SECOND_CANDIDATE_ID = 'b'.repeat(64)
+const FIRST_SESSION_ID = '22222222-2222-4222-8222-222222222222'
+const SECOND_SESSION_ID = '33333333-3333-4333-8333-333333333333'
 
 interface FixtureWorkspace {
   root: string
@@ -379,6 +417,40 @@ function plantLiveWriterLease(workspace: FixtureWorkspace): void {
   )
 }
 
+function plantDaemonRegistration(workspace: FixtureWorkspace, pid = process.pid): void {
+  writeDaemonRegistration(workspace.runtimeRoot, {
+    schemaVersion: 1,
+    pid,
+    socketPath: join(workspace.runtimeRoot, 'daemon.sock'),
+    startedAtMs: Date.now(),
+  })
+}
+
+function seedPendingCandidate(workspace: FixtureWorkspace, candidateId: string): string {
+  const dir = queuedCandidateDir(workspace.knowledgeRoot, candidateId)
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function writeRunReceipt(
+  workspace: FixtureWorkspace,
+  directory: string,
+  receipt: Omit<CurationTailReceipt, 'schemaVersion' | 'handoffDigest' | 'projectionVersion'>,
+): void {
+  const runDir = join(workspace.runtimeRoot, 'runs', directory)
+  mkdirSync(runDir, { recursive: true })
+  writeFileSync(
+    join(runDir, CURATION_TAIL_RECEIPT_FILE),
+    `${JSON.stringify({
+      schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
+      handoffDigest: 'c'.repeat(64),
+      projectionVersion: 1,
+      ...receipt,
+    })}\n`,
+    'utf8',
+  )
+}
+
 describe('knowledge maintenance commands', () => {
   const roots: string[] = []
   let originalExitCode: typeof process.exitCode
@@ -417,6 +489,7 @@ describe('knowledge maintenance commands', () => {
     commandHarness.rebuildIndexHook = undefined
     commandHarness.authorityRefreshHook = undefined
     commandHarness.authorityRefreshCalls = 0
+    commandHarness.drainQueueCalls = 0
     commandHarness.releaseLeaseCalls = 0
     commandHarness.rebuildIndexInputs.splice(0)
     commandHarness.purgeRecordInputs.splice(0)
@@ -425,6 +498,8 @@ describe('knowledge maintenance commands', () => {
     commandHarness.purgeRecordCalls = 0
     commandHarness.rollbackCampaignCalls = 0
     commandHarness.rollbackCurationJobCalls = 0
+    daemonHarness.nudgeCalls.splice(0)
+    daemonHarness.nudgeHook = undefined
   })
 
   afterEach(() => {
@@ -446,6 +521,167 @@ describe('knowledge maintenance commands', () => {
     for (const root of roots.splice(0)) {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  it('drains the curation queue inline when daemon registration is absent', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(result.stdout).toContain('remaining 0')
+    expect(commandHarness.drainQueueCalls).toBe(1)
+    expect(daemonHarness.nudgeCalls).toEqual([])
+  })
+
+  it('cleans a stale daemon registration and falls back to the same inline drain', async () => {
+    const workspace = fixtureWorkspace(roots)
+    plantDaemonRegistration(workspace, 2_000_000_000)
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(commandHarness.drainQueueCalls).toBe(1)
+    expect(daemonHarness.nudgeCalls).toEqual([])
+    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
+  })
+
+  it('delegates to a live daemon, polls progress, and never enters the inline lease path', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const pending = seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
+    plantLiveWriterLease(workspace)
+    plantDaemonRegistration(workspace)
+    const leasePath = join(workspace.knowledgeRoot, '.lease')
+    const leaseBefore = readFileSync(leasePath, 'utf8')
+    daemonHarness.nudgeHook = () => {
+      setTimeout(() => rmSync(pending, { recursive: true, force: true }), 10)
+    }
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('remaining 1')
+    expect(result.stdout).toContain('remaining 0')
+    expect(daemonHarness.nudgeCalls).toEqual([workspace.runtimeRoot])
+    expect(commandHarness.drainQueueCalls).toBe(0)
+    expect(commandHarness.releaseLeaseCalls).toBe(0)
+    expect(readFileSync(leasePath, 'utf8')).toBe(leaseBefore)
+  })
+
+  it('times out a live-daemon wait non-zero while reporting the durable remainder', async () => {
+    vi.useFakeTimers({ now: 1_700_000_000_000 })
+    const workspace = fixtureWorkspace(roots)
+    seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
+    plantDaemonRegistration(workspace)
+
+    const invocation = invoke(workspace, ['drain'])
+    await vi.waitFor(() => expect(daemonHarness.nudgeCalls).toEqual([workspace.runtimeRoot]))
+    await vi.advanceTimersByTimeAsync(120_001)
+    const result = await invocation
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toContain('remaining 1')
+    expect(result.stderr).toContain('timed out')
+    expect(commandHarness.drainQueueCalls).toBe(0)
+  })
+
+  it('renders deterministic stitched run and daemon-session receipt status', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedPendingCandidate(workspace, SECOND_CANDIDATE_ID)
+    writeRunReceipt(workspace, 'z-run-dir', {
+      runId: 'run-zeta',
+      drainKind: 'handed-off',
+      handoffHolderPid: 404,
+      candidateIds: [SECOND_CANDIDATE_ID],
+    })
+    writeRunReceipt(workspace, 'a-run-dir', {
+      runId: 'run-alpha',
+      drainKind: 'drained',
+      handoffHolderPid: null,
+      candidateIds: [FIRST_CANDIDATE_ID, SECOND_CANDIDATE_ID],
+    })
+    appendDrainSessionReceipt(workspace.runtimeRoot, {
+      ts: '2026-07-30T00:00:02.000Z',
+      sessionId: SECOND_SESSION_ID,
+      holderPid: 505,
+      epoch: 8,
+      candidateIds: [SECOND_CANDIDATE_ID],
+      remainingAfter: 1,
+    })
+    appendDrainSessionReceipt(workspace.runtimeRoot, {
+      ts: '2026-07-30T00:00:01.000Z',
+      sessionId: FIRST_SESSION_ID,
+      holderPid: 606,
+      epoch: 9,
+      candidateIds: [FIRST_CANDIDATE_ID],
+      remainingAfter: 0,
+    })
+
+    const first = await invoke(workspace, ['drain', '--status'])
+    const second = await invoke(workspace, ['drain', '--status'])
+    expect(first.exitCode).toBeUndefined()
+    expect(second.stdout).toBe(first.stdout)
+    expect(first.stdout.indexOf('run-alpha')).toBeLessThan(first.stdout.indexOf('run-zeta'))
+    expect(first.stdout.indexOf(SECOND_SESSION_ID)).toBeLessThan(
+      first.stdout.indexOf(FIRST_SESSION_ID),
+    )
+    expect(first.stdout).toContain('remaining: 1')
+
+    const json = await invoke(workspace, ['drain', '--status', '--json'])
+    expect(json.exitCode).toBeUndefined()
+    expect(JSON.parse(json.stdout)).toEqual({
+      runReceipts: [
+        {
+          runId: 'run-alpha',
+          drainKind: 'drained',
+          handoffHolderPid: null,
+          candidateCount: 2,
+          candidateIds: [FIRST_CANDIDATE_ID, SECOND_CANDIDATE_ID],
+        },
+        {
+          runId: 'run-zeta',
+          drainKind: 'handed-off',
+          handoffHolderPid: 404,
+          candidateCount: 1,
+          candidateIds: [SECOND_CANDIDATE_ID],
+        },
+      ],
+      sessionReceipts: [
+        {
+          sessionId: SECOND_SESSION_ID,
+          holderPid: 505,
+          candidateCount: 1,
+          candidateIds: [SECOND_CANDIDATE_ID],
+        },
+        {
+          sessionId: FIRST_SESSION_ID,
+          holderPid: 606,
+          candidateCount: 1,
+          candidateIds: [FIRST_CANDIDATE_ID],
+        },
+      ],
+      remaining: 1,
+    })
+  })
+
+  it('prints a clean empty drain status and exits successfully', async () => {
+    const workspace = fixtureWorkspace(roots)
+
+    const result = await invoke(workspace, ['drain', '--status'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toBe([
+      'Knowledge curation queue status',
+      '  remaining: 0',
+      '  run receipts: none',
+      '  daemon session receipts: none',
+      '',
+    ].join('\n'))
   })
 
   it('fails closed without non-interactive confirmation and preserves committed bundle bytes', async () => {

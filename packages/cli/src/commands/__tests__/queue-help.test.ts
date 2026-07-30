@@ -10,6 +10,7 @@ vi.mock('../../config.js', () => ({
 
 import { createQueueCommand } from '../queue.js'
 import { createDaemonCommand } from '../daemon.js'
+import { createKnowledgeCommand } from '../knowledge.js'
 
 /**
  * The three-queue vocabulary pin (JOBQ-07 / D-21 / D-22).
@@ -116,6 +117,21 @@ describe('agent-qa queue help text — the three-queue vocabulary', () => {
 describe('agent-qa daemon help text — the same three-queue vocabulary', () => {
   it('names, qualifies, and orders the same three queues', () => {
     const help = helpOutput(createDaemonCommand())
+    for (const name of CANONICAL_ORDER) expect(help).toContain(name)
+    expect(qualifiersIn(proseOf(help))).toEqual([...QUALIFIERS].sort())
+
+    const positions = CANONICAL_ORDER.map((name) => help.indexOf(name))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions)
+  })
+})
+
+describe('agent-qa knowledge drain help text — the same three-queue vocabulary', () => {
+  it('names the curation queue it drains without collapsing the other two queues', () => {
+    const drain = createKnowledgeCommand().commands.find((command) => command.name() === 'drain')
+    expect(drain).toBeDefined()
+    const help = helpOutput(drain!)
+
     for (const name of CANONICAL_ORDER) expect(help).toContain(name)
     expect(qualifiersIn(proseOf(help))).toEqual([...QUALIFIERS].sort())
 
