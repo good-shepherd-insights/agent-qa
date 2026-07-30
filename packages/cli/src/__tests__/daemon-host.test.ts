@@ -42,9 +42,10 @@ import {
   inspectDaemonRegistration,
   readDaemonRegistration,
   removeDaemonRegistration,
+  removeRegistrationIfOwned,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
-import * as registrationModule from '../daemon/registration.js'
+import type { DaemonRegistration } from '../daemon/registration.js'
 
 const CHILD_ROOT_ENV = 'AGENT_QA_DAEMON_HOST_ROOT'
 const CHILD_HOST_URL_ENV = 'AGENT_QA_DAEMON_HOST_URL'
@@ -174,6 +175,11 @@ function daemonCommandDeps(
     resolvePaths: () => Promise.resolve(paths),
     readRegistration: readDaemonRegistration,
     processIsAlive: () => options.alive ?? true,
+    readIdentity: (registration) => Promise.resolve({
+      schemaVersion: 1,
+      instanceId: registration.instanceId,
+      pid: registration.pid,
+    }),
     readWriterLease: () => ({
       kind: 'parsed',
       lease: {
@@ -294,10 +300,11 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
     expect(registration.kind).toBe('parsed')
     if (registration.kind !== 'parsed') throw new Error('expected parsed daemon registration')
     expect(registration.registration).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       pid: process.pid,
       startedAtMs: 1_700_000_000_000,
     })
+    expect(registration.registration.instanceId).toMatch(/^[0-9a-f-]{36}$/)
     expect(Number.isInteger(registration.registration.startedAtMs)).toBe(true)
 
     const beforeHeartbeat = JSON.parse(
@@ -433,7 +440,8 @@ describe('daemon status and stop operator controls', () => {
   it('reports live holder, uptime, and curation depth in human and JSON forms', async () => {
     const paths = makePaths('status-live')
     writeDaemonRegistration(paths.agentQaRoot, {
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
       pid: 4321,
       socketPath: join(paths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
@@ -466,7 +474,8 @@ describe('daemon status and stop operator controls', () => {
 
     const stalePaths = makePaths('status-stale')
     writeDaemonRegistration(stalePaths.agentQaRoot, {
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
       pid: 8765,
       socketPath: join(stalePaths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
@@ -480,7 +489,8 @@ describe('daemon status and stop operator controls', () => {
   it('signals only a live registered pid and fails closed for absent or stale registrations', async () => {
     const livePaths = makePaths('stop-live')
     writeDaemonRegistration(livePaths.agentQaRoot, {
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
       pid: 5432,
       socketPath: join(livePaths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
@@ -502,7 +512,8 @@ describe('daemon status and stop operator controls', () => {
 
     const stalePaths = makePaths('stop-stale')
     writeDaemonRegistration(stalePaths.agentQaRoot, {
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
       pid: 6543,
       socketPath: join(stalePaths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
@@ -513,30 +524,30 @@ describe('daemon status and stop operator controls', () => {
       ['stop'],
     )
     expect(stale.exitCode).toBe(1)
-    expect(stale.stdout).toContain('nothing to stop')
+    expect(stale.stdout).toContain('stale registration')
     expect(staleSignal).not.toHaveBeenCalled()
   })
 
   it('refuses to signal a reused live pid whose socket reports a foreign instance nonce', async () => {
     const paths = makePaths('stop-pid-reuse')
     const signalProcess = vi.fn()
-    const registration = {
-      schemaVersion: 2,
+    const registration: DaemonRegistration = {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: HOST_INSTANCE_ID,
       pid: 5432,
       socketPath: join(paths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
     }
     const readIdentity = vi.fn(() => Promise.resolve({
-      schemaVersion: 1,
+      schemaVersion: 1 as const,
       instanceId: SUCCESSOR_INSTANCE_ID,
       pid: 5432,
     }))
-    const deps = {
+    const deps: DaemonCommandDeps = {
       ...daemonCommandDeps(paths, { signalProcess }),
       readRegistration: () => ({ kind: 'parsed' as const, registration }),
       readIdentity,
-    } as unknown as DaemonCommandDeps
+    }
 
     const stopped = await invokeDaemon(deps, ['stop'])
 
@@ -548,18 +559,18 @@ describe('daemon status and stop operator controls', () => {
 
   it('classifies an unreachable registered instance as stale instead of running', async () => {
     const paths = makePaths('status-unreachable-instance')
-    const registration = {
-      schemaVersion: 2,
+    const registration: DaemonRegistration = {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: HOST_INSTANCE_ID,
       pid: 4321,
       socketPath: join(paths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
     }
-    const deps = {
+    const deps: DaemonCommandDeps = {
       ...daemonCommandDeps(paths),
       readRegistration: () => ({ kind: 'parsed' as const, registration }),
       readIdentity: vi.fn(() => Promise.reject(new Error('socket refused'))),
-    } as unknown as DaemonCommandDeps
+    }
 
     const status = await invokeDaemon(deps, ['status', '--json'])
 
@@ -577,7 +588,7 @@ describe('daemon registration instance ownership and readiness', () => {
       pid: process.pid,
       socketPath: join(currentPaths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
-    } as never)).not.toThrow()
+    })).not.toThrow()
     expect(readDaemonRegistration(currentPaths.agentQaRoot)).toMatchObject({
       kind: 'parsed',
       registration: { instanceId: HOST_INSTANCE_ID },
@@ -596,22 +607,15 @@ describe('daemon registration instance ownership and readiness', () => {
 
   it('preserves a successor registration when an obsolete host removes its own generation', () => {
     const paths = makePaths('registration-two-generations')
-    const removeIfOwned = (
-      registrationModule as unknown as {
-        removeRegistrationIfOwned?: (agentQaRoot: string, instanceId: string) => boolean
-      }
-    ).removeRegistrationIfOwned
-    if (removeIfOwned === undefined) throw new Error('removeRegistrationIfOwned is not implemented')
-
     writeDaemonRegistration(paths.agentQaRoot, {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: SUCCESSOR_INSTANCE_ID,
       pid: process.pid + 1,
       socketPath: join(paths.agentQaRoot, 'successor.sock'),
       startedAtMs: 1_700_000_001_000,
-    } as never)
+    })
 
-    expect(removeIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID)).toBe(false)
+    expect(removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID)).toBe(false)
     expect(readDaemonRegistration(paths.agentQaRoot)).toMatchObject({
       kind: 'parsed',
       registration: { instanceId: SUCCESSOR_INSTANCE_ID },
@@ -692,7 +696,8 @@ describe('daemon registration recovery at boot', () => {
   it('removes a dead-pid registration before acquiring and proceeds', async () => {
     const paths = makePaths('boot-stale')
     writeDaemonRegistration(paths.agentQaRoot, {
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
       pid: 2_147_483_647,
       socketPath: join(paths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
@@ -730,7 +735,8 @@ describe('daemon registration recovery at boot', () => {
   it('fails before lease acquisition when a registration names a live pid', async () => {
     const paths = makePaths('boot-live')
     writeDaemonRegistration(paths.agentQaRoot, {
-      schemaVersion: 1,
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
       pid: process.pid,
       socketPath: join(paths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,

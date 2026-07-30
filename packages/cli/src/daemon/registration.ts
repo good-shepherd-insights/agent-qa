@@ -15,11 +15,21 @@ import { dirname, join } from 'node:path'
 import { z } from 'zod'
 
 export const DAEMON_REGISTRATION_FILE = 'daemon.json'
-export const DAEMON_REGISTRATION_SCHEMA_VERSION = 1
+export const DAEMON_REGISTRATION_SCHEMA_VERSION = 2
+
+const legacyDaemonRegistrationSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    pid: z.number().int().positive(),
+    socketPath: z.string().min(1),
+    startedAtMs: z.number().int().nonnegative(),
+  })
+  .strict()
 
 export const daemonRegistrationSchema = z
   .object({
     schemaVersion: z.literal(DAEMON_REGISTRATION_SCHEMA_VERSION),
+    instanceId: z.string().uuid(),
     pid: z.number().int().positive(),
     socketPath: z.string().min(1),
     startedAtMs: z.number().int().nonnegative(),
@@ -27,21 +37,24 @@ export const daemonRegistrationSchema = z
   .strict()
 
 export type DaemonRegistration = z.infer<typeof daemonRegistrationSchema>
+export type LegacyDaemonRegistration = z.infer<typeof legacyDaemonRegistrationSchema>
+export type StaleDaemonRegistration = DaemonRegistration | LegacyDaemonRegistration
 
 export type ReadDaemonRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
+  | { kind: 'obsolete'; registration: LegacyDaemonRegistration }
   | { kind: 'parsed'; registration: DaemonRegistration }
 
 export type InspectDaemonRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
   | { kind: 'live'; registration: DaemonRegistration }
-  | { kind: 'stale'; registration: DaemonRegistration }
+  | { kind: 'stale'; registration: StaleDaemonRegistration }
 
 export type RecoverDaemonRegistrationOutcome =
   | Exclude<InspectDaemonRegistrationOutcome, { kind: 'stale' }>
-  | { kind: 'recovered'; registration: DaemonRegistration }
+  | { kind: 'recovered'; registration: StaleDaemonRegistration }
 
 export type ProcessIsAlive = (pid: number) => boolean
 
@@ -111,9 +124,12 @@ export function readDaemonRegistration(agentQaRoot: string): ReadDaemonRegistrat
   }
 
   try {
-    const parsed = daemonRegistrationSchema.safeParse(JSON.parse(raw))
-    return parsed.success
-      ? { kind: 'parsed', registration: parsed.data }
+    const parsedJson = JSON.parse(raw) as unknown
+    const parsed = daemonRegistrationSchema.safeParse(parsedJson)
+    if (parsed.success) return { kind: 'parsed', registration: parsed.data }
+    const legacy = legacyDaemonRegistrationSchema.safeParse(parsedJson)
+    return legacy.success
+      ? { kind: 'obsolete', registration: legacy.data }
       : { kind: 'malformed' }
   } catch {
     return { kind: 'malformed' }
@@ -138,6 +154,9 @@ export function inspectDaemonRegistration(
   isAlive: ProcessIsAlive = processIsAlive,
 ): InspectDaemonRegistrationOutcome {
   const outcome = readDaemonRegistration(agentQaRoot)
+  if (outcome.kind === 'obsolete') {
+    return { kind: 'stale', registration: outcome.registration }
+  }
   if (outcome.kind !== 'parsed') return outcome
   return isAlive(outcome.registration.pid)
     ? { kind: 'live', registration: outcome.registration }
@@ -149,6 +168,14 @@ export function removeDaemonRegistration(agentQaRoot: string): void {
   const existed = existsSync(file)
   rmSync(file, { force: true })
   if (existed) bestEffortFsyncDirectory(dirname(file))
+}
+
+/** Remove a registration only when it still belongs to this exact daemon generation. */
+export function removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean {
+  const outcome = readDaemonRegistration(agentQaRoot)
+  if (outcome.kind !== 'parsed' || outcome.registration.instanceId !== instanceId) return false
+  removeDaemonRegistration(agentQaRoot)
+  return true
 }
 
 /** Remove only a schema-valid registration whose pid has been proven dead. */

@@ -38,6 +38,7 @@ import {
 import { appendDaemonEvent } from './events.js'
 import type { DaemonEvent } from './events.js'
 import {
+  DAEMON_IDENTITY_SCHEMA_VERSION,
   daemonSocketPath,
   startInvokeServer,
   type InvokeServerHandle,
@@ -47,6 +48,7 @@ import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   inspectDaemonRegistration,
   removeDaemonRegistration,
+  removeRegistrationIfOwned,
   writeDaemonRegistration,
 } from './registration.js'
 import type { DaemonRegistration } from './registration.js'
@@ -125,6 +127,7 @@ export interface DaemonHostOperations {
   appendDaemonEvent(agentQaRoot: string, event: DaemonEvent): void
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
+  removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
   inspectDrainableCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork
   listQueuedCandidates(knowledgeRoot: string): string[]
@@ -210,6 +213,7 @@ function defaultOperations(): DaemonHostOperations {
     appendDaemonEvent,
     writeDaemonRegistration,
     removeDaemonRegistration,
+    removeRegistrationIfOwned,
     startInvokeServer,
     inspectDrainableCurationWork: LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork,
     listQueuedCandidates: LOCAL_DAEMON_CAPABILITIES.listQueuedCandidates,
@@ -286,6 +290,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER
+  const instanceId = randomUUID()
   const recordDaemonEvent = (event: DaemonEvent): void => {
     try {
       operations.appendDaemonEvent(input.agentQaRoot, event)
@@ -730,9 +735,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       }
 
       if (registrationWritten) {
-        operations.removeDaemonRegistration(input.agentQaRoot)
+        const removed = operations.removeRegistrationIfOwned(input.agentQaRoot, instanceId)
         registrationWritten = false
-        operations.trace?.('registration-removed')
+        if (removed) operations.trace?.('registration-removed')
       }
       recordDaemonEvent({
         kind: 'daemon-stopped',
@@ -856,23 +861,19 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     operations.onSignal('SIGINT', controller.handleSignal)
     operations.onSignal('SIGTERM', controller.handleSignal)
 
-    // Registration advertises a signalable daemon, so publish it only after handlers are live.
+    // Registration is the readiness commit: handlers are live and the socket must listen first.
     const socketPath = input.socketPath ?? daemonSocketPath(
       input.agentQaRoot,
       dirname(input.agentQaRoot),
     )
-    operations.writeDaemonRegistration(input.agentQaRoot, {
-      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
-      pid: process.pid,
-      socketPath,
-      startedAtMs: operations.now(),
-    })
-    registrationWritten = true
-    operations.trace?.('registration-written')
-
     const startedServer = await operations.startInvokeServer({
       socketPath,
       registry: localAgent.registry,
+      identity: {
+        schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
+        instanceId,
+        pid: process.pid,
+      },
       onNudge: requestDrain,
     })
     if (shutdownPromise !== undefined) {
@@ -881,6 +882,16 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return await completion
     }
     invokeServer = startedServer
+
+    operations.writeDaemonRegistration(input.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId,
+      pid: process.pid,
+      socketPath,
+      startedAtMs: operations.now(),
+    })
+    registrationWritten = true
+    operations.trace?.('registration-written')
 
     curationPollTimer = operations.setInterval(requestDrain, CURATION_QUEUE_POLL_MS)
     maintenanceTimer = operations.setInterval(() => {

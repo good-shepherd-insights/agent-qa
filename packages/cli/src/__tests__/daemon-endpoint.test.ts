@@ -94,6 +94,7 @@ function localHost(agentQaRoot: string, knowledgeRoot: string): LocalAgentHost {
 function register(agentQaRoot: string, socketPath: string): void {
   writeDaemonRegistration(agentQaRoot, {
     schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+    instanceId: ENDPOINT_INSTANCE_ID,
     pid: process.pid,
     socketPath,
     startedAtMs: Date.now(),

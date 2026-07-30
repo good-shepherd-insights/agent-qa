@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, rmSync } from 'node:fs'
 import {
   createServer,
   type IncomingMessage,
+  request as httpRequest,
   type Server,
   type ServerResponse,
 } from 'node:http'
@@ -16,6 +17,8 @@ import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 export const INVOKE_ENVELOPE_SCHEMA_VERSION = 1
+export const DAEMON_IDENTITY_SCHEMA_VERSION = 1
+export const DAEMON_IDENTITY_TIMEOUT_MS = 1_000
 export const DAEMON_SOCKET_FILE = 'daemon.sock'
 
 /** Conservative floor below macOS' and Linux' platform-specific `sun_path` limits. */
@@ -39,6 +42,16 @@ export const nudgeEnvelopeSchema = z
   .strict()
 
 export type NudgeEnvelope = z.infer<typeof nudgeEnvelopeSchema>
+
+export const daemonIdentitySchema = z
+  .object({
+    schemaVersion: z.literal(DAEMON_IDENTITY_SCHEMA_VERSION),
+    instanceId: z.string().uuid(),
+    pid: z.number().int().positive(),
+  })
+  .strict()
+
+export type DaemonIdentity = z.infer<typeof daemonIdentitySchema>
 
 /**
  * The socket authenticates the local operator through its owner-only directory. Caller grants are
@@ -93,6 +106,7 @@ export interface InvokeServerHandle {
 export interface StartInvokeServerOptions {
   readonly socketPath: string
   readonly registry: FunctionRegistry
+  readonly identity?: DaemonIdentity
   readonly onNudge?: (nudge: NudgeEnvelope) => void
 }
 
@@ -249,6 +263,22 @@ function writeJson(response: ServerResponse, statusCode: number, value: unknown)
   response.end(`${JSON.stringify(value)}\n`)
 }
 
+function handleIdentity(
+  request: IncomingMessage,
+  response: ServerResponse,
+  identity: DaemonIdentity | undefined,
+): void {
+  if (identity === undefined) {
+    writeJson(response, 404, { name: 'NotFoundError', message: 'Route not found' })
+    return
+  }
+  if (request.method !== 'GET') {
+    writeJson(response, 405, { name: 'MethodNotAllowedError', message: 'GET required' })
+    return
+  }
+  writeJson(response, 200, identity)
+}
+
 function wireError(error: unknown): WireError {
   if (!(error instanceof Error)) return { name: 'Error', message: String(error) }
 
@@ -371,6 +401,10 @@ async function handleRequest(
     await handleNudge(request, response, options.onNudge)
     return
   }
+  if (request.url === '/identity') {
+    handleIdentity(request, response, options.identity)
+    return
+  }
   writeJson(response, 404, { name: 'NotFoundError', message: 'Route not found' })
 }
 
@@ -379,13 +413,19 @@ export async function startInvokeServer(
   options: StartInvokeServerOptions,
 ): Promise<InvokeServerHandle> {
   prepareSocketParent(options.socketPath)
+  const normalizedOptions = {
+    ...options,
+    ...(options.identity === undefined
+      ? {}
+      : { identity: daemonIdentitySchema.parse(options.identity) }),
+  }
 
   const sockets = new Set<Socket>()
   const responses = new Set<ServerResponse>()
   const server = createServer((request, response) => {
     responses.add(response)
     response.once('close', () => responses.delete(response))
-    void handleRequest(request, response, options)
+    void handleRequest(request, response, normalizedOptions)
   })
   server.on('connection', (socket) => {
     sockets.add(socket)
@@ -416,4 +456,60 @@ export async function startInvokeServer(
       return closing
     },
   }
+}
+
+/** Read and strictly validate the identity served by a listening daemon socket. */
+export function fetchDaemonIdentity(socketPath: string): Promise<DaemonIdentity> {
+  return new Promise((resolveIdentity, rejectIdentity) => {
+    let settled = false
+    const rejectOnce = (error: Error): void => {
+      if (settled) return
+      settled = true
+      rejectIdentity(error)
+    }
+    const outgoing = httpRequest(
+      {
+        socketPath,
+        path: '/identity',
+        method: 'GET',
+        headers: { connection: 'close' },
+      },
+      (response) => {
+        response.setEncoding('utf8')
+        let body = ''
+        response.on('data', (chunk: string) => {
+          body += chunk
+          if (Buffer.byteLength(body) > 4_096) {
+            response.destroy()
+            rejectOnce(new Error('Daemon identity response exceeds 4096 bytes'))
+          }
+        })
+        response.once('error', (error) => rejectOnce(error))
+        response.once('end', () => {
+          if (settled) return
+          const statusCode = response.statusCode ?? 500
+          if (statusCode < 200 || statusCode >= 300) {
+            rejectOnce(new Error(`Daemon identity request failed (${statusCode})`))
+            return
+          }
+          try {
+            const identity = daemonIdentitySchema.parse(JSON.parse(body) as unknown)
+            settled = true
+            resolveIdentity(identity)
+          } catch (error) {
+            rejectOnce(
+              new Error(
+                `Daemon identity response is invalid: ${error instanceof Error ? error.message : String(error)}`,
+              ),
+            )
+          }
+        })
+      },
+    )
+    outgoing.setTimeout(DAEMON_IDENTITY_TIMEOUT_MS, () => {
+      outgoing.destroy(new Error('Daemon identity request timed out'))
+    })
+    outgoing.once('error', (error) => rejectOnce(error))
+    outgoing.end()
+  })
 }

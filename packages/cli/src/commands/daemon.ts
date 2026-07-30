@@ -20,6 +20,8 @@ import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { buildCuratorAuthor } from '../curation/curator-author.js'
 import { runDaemonHost } from '../daemon/host.js'
 import type { DaemonHostOptions } from '../daemon/host.js'
+import { fetchDaemonIdentity } from '../daemon/server.js'
+import type { DaemonIdentity } from '../daemon/server.js'
 import {
   processIsAlive,
   readDaemonRegistration,
@@ -27,6 +29,7 @@ import {
 import type {
   DaemonRegistration,
   ReadDaemonRegistrationOutcome,
+  StaleDaemonRegistration,
 } from '../daemon/registration.js'
 import {
   resolveCliJobModel,
@@ -45,6 +48,7 @@ export interface DaemonCommandDeps {
   resolvePaths(configPath: string): Promise<DaemonProjectPaths>
   readRegistration(agentQaRoot: string): ReadDaemonRegistrationOutcome
   processIsAlive(pid: number): boolean
+  readIdentity(registration: DaemonRegistration): Promise<DaemonIdentity>
   readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome
   countPendingCurationJobs(knowledgeRoot: string): number
   signalProcess(pid: number, signal: NodeJS.Signals): void
@@ -78,6 +82,7 @@ const DEFAULT_DEPS: DaemonCommandDeps = {
   resolvePaths: resolveDaemonPaths,
   readRegistration: readDaemonRegistration,
   processIsAlive,
+  readIdentity: (registration) => fetchDaemonIdentity(registration.socketPath),
   readWriterLease: LOCAL_DAEMON_CAPABILITIES.readWriterLease,
   countPendingCurationJobs: LOCAL_DAEMON_CAPABILITIES.countPendingCurationJobs,
   signalProcess: (pid, signal) => process.kill(pid, signal),
@@ -97,19 +102,32 @@ function configPathFor(command: Command): string {
   return resolve(globalOpts.config ?? 'agent-qa.config.yaml')
 }
 
-function inspectRegistration(
+async function inspectRegistration(
   deps: DaemonCommandDeps,
   agentQaRoot: string,
-):
+): Promise<
   | { kind: 'absent' }
   | { kind: 'malformed' }
   | { kind: 'live'; registration: DaemonRegistration }
-  | { kind: 'stale'; registration: DaemonRegistration } {
+  | { kind: 'stale'; registration: StaleDaemonRegistration }
+> {
   const outcome = deps.readRegistration(agentQaRoot)
+  if (outcome.kind === 'obsolete') {
+    return { kind: 'stale', registration: outcome.registration }
+  }
   if (outcome.kind !== 'parsed') return outcome
-  return deps.processIsAlive(outcome.registration.pid)
-    ? { kind: 'live', registration: outcome.registration }
-    : { kind: 'stale', registration: outcome.registration }
+  if (!deps.processIsAlive(outcome.registration.pid)) {
+    return { kind: 'stale', registration: outcome.registration }
+  }
+  try {
+    const identity = await deps.readIdentity(outcome.registration)
+    return identity.instanceId === outcome.registration.instanceId
+      && identity.pid === outcome.registration.pid
+      ? { kind: 'live', registration: outcome.registration }
+      : { kind: 'stale', registration: outcome.registration }
+  } catch {
+    return { kind: 'stale', registration: outcome.registration }
+  }
 }
 
 function formatUptime(uptimeMs: number): string {
@@ -178,7 +196,7 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
     .action(async (opts: { json?: boolean }, command: Command) => {
       try {
         const paths = await deps.resolvePaths(configPathFor(command))
-        const inspected = inspectRegistration(deps, paths.agentQaRoot)
+        const inspected = await inspectRegistration(deps, paths.agentQaRoot)
         let status: DaemonStatusDto
         if (inspected.kind === 'absent') {
           status = { state: 'stopped' }
@@ -219,9 +237,13 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
     .action(async (_opts: unknown, command: Command) => {
       try {
         const paths = await deps.resolvePaths(configPathFor(command))
-        const inspected = inspectRegistration(deps, paths.agentQaRoot)
+        const inspected = await inspectRegistration(deps, paths.agentQaRoot)
         if (inspected.kind !== 'live') {
-          console.log('agent-qa daemon has nothing to stop')
+          console.log(
+            inspected.kind === 'stale'
+              ? `agent-qa daemon has a stale registration (pid ${inspected.registration.pid})`
+              : 'agent-qa daemon has nothing to stop',
+          )
           process.exitCode = 1
           return
         }
