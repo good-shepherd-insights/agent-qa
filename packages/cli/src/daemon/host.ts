@@ -53,6 +53,9 @@ export const CURATION_QUEUE_POLL_MS = 30_000
 /** Provisional writer-maintenance cadence; retune from operational evidence without adding config. */
 export const MAINTENANCE_CADENCE_MS = 300_000
 
+/** Provisional synchronous drain wait; retune from operational evidence without adding config. */
+export const DRAIN_WAIT_TIMEOUT_MS = 120_000
+
 /** Provisional graceful-stop backstop; retune from operational evidence without adding config. */
 export const DAEMON_SHUTDOWN_GRACE_MS = 10_000
 

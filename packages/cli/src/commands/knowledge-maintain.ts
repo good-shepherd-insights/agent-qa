@@ -1,10 +1,16 @@
+import { readdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
-import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
+import {
+  LOCAL_CURATION_CAPABILITIES,
+  LOCAL_DAEMON_CAPABILITIES,
+  resolveRunExecutionContext,
+} from '@vostride/agent-qa-agent-local'
 import type {
+  CuratorAuthor,
   PurgeAffectedSet,
   PurgeReceipt,
   RebuildReport,
@@ -20,6 +26,8 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import {
   createMaskingContext,
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-safety'
 import { asRecordId } from '@vostride/agent-qa-schema'
@@ -28,6 +36,14 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { resolveConfig } from '../config.js'
+import {
+  readCurationTailReceipt,
+  type CurationTailReceipt,
+} from '../curation/curation-tail.js'
+import { nudgeDaemon } from '../daemon/client.js'
+import { readDrainSessionReceipts } from '../daemon/drain-receipts.js'
+import { DRAIN_WAIT_TIMEOUT_MS } from '../daemon/host.js'
+import { recoverStaleDaemonRegistration } from '../daemon/registration.js'
 
 // The eleven maintenance verbs, taken off the local host's curation capabilities rather than
 // imported from the knowledge package directly (D-14). Bound once here so every call site below is
@@ -46,6 +62,8 @@ const {
   rollbackCampaign,
   rollbackCurationJob,
 } = LOCAL_CURATION_CAPABILITIES.maintenance
+const { drainQueue } = LOCAL_CURATION_CAPABILITIES
+const { countPendingCurationJobs } = LOCAL_DAEMON_CAPABILITIES
 
 interface RebuildOptions {
   json?: boolean
@@ -64,6 +82,32 @@ interface RollbackOptions {
 interface PurgeOptions {
   confirm?: string
   json?: boolean
+}
+
+interface DrainOptions {
+  status?: boolean
+  json?: boolean
+}
+
+interface DrainRunReceiptStatus {
+  runId: string
+  drainKind: CurationTailReceipt['drainKind']
+  handoffHolderPid: number | null
+  candidateCount: number
+  candidateIds: string[]
+}
+
+interface DrainSessionReceiptStatus {
+  sessionId: string
+  holderPid: number
+  candidateCount: number
+  candidateIds: string[]
+}
+
+interface KnowledgeDrainStatus {
+  runReceipts: DrainRunReceiptStatus[]
+  sessionReceipts: DrainSessionReceiptStatus[]
+  remaining: number
 }
 
 interface KnowledgePaths {
@@ -126,6 +170,14 @@ const ORIGIN_CLASSES = new Set<OriginClass>([
   'import',
 ])
 
+/** Short foreground feedback cadence; retune from operational evidence without adding config. */
+const DRAIN_WAIT_POLL_MS = 100
+
+const FALLBACK_CURATOR_AUTHOR: CuratorAuthor = async () => ({
+  kind: 'fallback-required',
+  reason: 'no-model',
+})
+
 /** Five seconds is strictly below the writer lease's fixed 30-second TTL divided by three. */
 const WRITER_LEASE_HEARTBEAT_INTERVAL_MS = 5_000
 
@@ -167,6 +219,151 @@ function emitHuman(maskedText: string, stream: OutputStream = 'stdout'): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function readRunReceipts(runtimeRoot: string): CurationTailReceipt[] {
+  const runsRoot = join(runtimeRoot, 'runs')
+  let runDirs: string[]
+  try {
+    runDirs = readdirSync(runsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(runsRoot, entry.name))
+      .sort(compareText)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+
+  return runDirs
+    .map((runDir) => readCurationTailReceipt(runDir))
+    .filter((receipt): receipt is CurationTailReceipt => receipt !== undefined)
+    .sort((left, right) => compareText(left.runId, right.runId))
+}
+
+function drainStatus(paths: KnowledgePaths): KnowledgeDrainStatus {
+  return {
+    runReceipts: readRunReceipts(paths.runtimeRoot).map((receipt) => ({
+      runId: receipt.runId,
+      drainKind: receipt.drainKind,
+      handoffHolderPid: receipt.handoffHolderPid,
+      candidateCount: receipt.candidateIds.length,
+      candidateIds: receipt.candidateIds,
+    })),
+    sessionReceipts: readDrainSessionReceipts(paths.runtimeRoot).map((receipt) => ({
+      sessionId: receipt.sessionId,
+      holderPid: receipt.holderPid,
+      candidateCount: receipt.candidateIds.length,
+      candidateIds: receipt.candidateIds,
+    })),
+    remaining: countPendingCurationJobs(paths.knowledgeRoot),
+  }
+}
+
+function renderDrainStatus(status: KnowledgeDrainStatus): string {
+  const lines = [
+    'Knowledge curation queue status',
+    `  remaining: ${status.remaining}`,
+  ]
+  if (status.runReceipts.length === 0) {
+    lines.push('  run receipts: none')
+  } else {
+    lines.push(`  run receipts (${status.runReceipts.length}):`)
+    for (const receipt of status.runReceipts) {
+      const holder = receipt.handoffHolderPid === null ? 'none' : String(receipt.handoffHolderPid)
+      lines.push(
+        `    ${receipt.runId}: ${receipt.drainKind}, holder ${holder}, `
+        + `candidates ${receipt.candidateCount} [${receipt.candidateIds.join(', ')}]`,
+      )
+    }
+  }
+  if (status.sessionReceipts.length === 0) {
+    lines.push('  daemon session receipts: none')
+  } else {
+    lines.push(`  daemon session receipts (${status.sessionReceipts.length}):`)
+    for (const receipt of status.sessionReceipts) {
+      lines.push(
+        `    ${receipt.sessionId}: holder ${receipt.holderPid}, `
+        + `candidates ${receipt.candidateCount} [${receipt.candidateIds.join(', ')}]`,
+      )
+    }
+  }
+  return lines.join('\n')
+}
+
+function waitForDrainPoll(delayMs: number): Promise<void> {
+  return new Promise((resolvePoll) => setTimeout(resolvePoll, delayMs))
+}
+
+async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+  const report = await drainQueue({
+    knowledgeRoot: paths.knowledgeRoot,
+    auditBaseDir: paths.auditBaseDir,
+    author: FALLBACK_CURATOR_AUTHOR,
+    executionContext: resolveRunExecutionContext(),
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+  })
+  if (options.json === true) {
+    emitJson(report)
+  } else if (report.kind === 'drained') {
+    emitHuman([
+      pc.green(pc.bold('Knowledge curation queue drained inline')),
+      `  remaining ${report.remaining}`,
+    ].join('\n'))
+  } else if (report.kind === 'handed-off') {
+    emitHuman([
+      pc.yellow(pc.bold(`Knowledge curation queue handed to pid ${report.holder.pid}`)),
+      `  remaining ${report.remaining}`,
+    ].join('\n'))
+  } else {
+    emitHuman([
+      pc.red(pc.bold('Knowledge curation queue drain aborted')),
+      `  remaining ${report.remaining}`,
+    ].join('\n'))
+  }
+  if (report.kind === 'aborted' || report.remaining > 0) process.exitCode = 1
+}
+
+async function drainViaDaemon(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+  await nudgeDaemon(paths.runtimeRoot)
+  const startedAtMs = Date.now()
+  let lastHumanRemaining: number | undefined
+
+  while (true) {
+    const remaining = countPendingCurationJobs(paths.knowledgeRoot)
+    if (options.json !== true && remaining !== lastHumanRemaining) {
+      emitHuman(`Knowledge curation queue drain: remaining ${remaining}`)
+      lastHumanRemaining = remaining
+    }
+    if (remaining === 0) {
+      if (options.json === true) {
+        emitJson({ mode: 'daemon', timedOut: false, remaining })
+      }
+      return
+    }
+
+    const elapsedMs = Date.now() - startedAtMs
+    if (elapsedMs >= DRAIN_WAIT_TIMEOUT_MS) {
+      if (options.json === true) {
+        emitJson({ mode: 'daemon', timedOut: true, remaining })
+      }
+      emitHuman(
+        pc.red(`knowledge drain: timed out with remaining ${remaining}`),
+        'stderr',
+      )
+      process.exitCode = 1
+      return
+    }
+    await waitForDrainPoll(Math.min(DRAIN_WAIT_POLL_MS, DRAIN_WAIT_TIMEOUT_MS - elapsedMs))
+  }
+}
+
+function reportDrainError(error: unknown): void {
+  emitHuman(pc.red(`knowledge drain: error: ${errorMessage(error)}`), 'stderr')
+  process.exitCode = 1
 }
 
 function reportError(verb: 'rebuild-index' | 'rollback' | 'purge', error: unknown): void {
@@ -513,6 +710,36 @@ function renderPurgeReceipt(receipt: PurgeReceipt, alreadyPurged: boolean): stri
 }
 
 export function registerKnowledgeMaintainCommands(command: Command): void {
+  command
+    .command('drain')
+    .description('Drain pending curation work or inspect its receipt chain')
+    .option('--status', 'show curation receipts and remaining depth without draining')
+    .option('--json', 'output the drain result as JSON')
+    .addHelpText(
+      'after',
+      '\nAgentQA keeps three work lanes; this command drains the second only:\n'
+      + '  run queue        test executions dispatched by the dashboard server\n'
+      + '  curation queue   knowledge curation work drained by this command\n'
+      + '  agent job queue  durable background agent jobs in .agent-qa/agent-jobs.db\n',
+    )
+    .action(async (options: DrainOptions, drainCommand: Command) => {
+      try {
+        const paths = await resolveKnowledgePaths(drainCommand)
+        if (options.status === true) {
+          const status = drainStatus(paths)
+          if (options.json === true) emitJson(status)
+          else emitHuman(renderDrainStatus(status))
+          return
+        }
+
+        const registration = recoverStaleDaemonRegistration(paths.runtimeRoot)
+        if (registration.kind === 'live') await drainViaDaemon(paths, options)
+        else await drainInline(paths, options)
+      } catch (error) {
+        reportDrainError(error)
+      }
+    })
+
   command
     .command('rebuild-index')
     .description('Rebuild derived knowledge index projections')

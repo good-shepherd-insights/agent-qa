@@ -169,7 +169,7 @@ function isCurationTailReceipt(value: unknown): value is CurationTailReceipt {
     && isSortedCandidateIds(record.candidateIds)
 }
 
-function readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined {
+export function readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined {
   try {
     const parsed: unknown = JSON.parse(
       readFileSync(join(runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'),
