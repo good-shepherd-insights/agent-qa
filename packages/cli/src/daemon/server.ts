@@ -45,6 +45,12 @@ export const nudgeEnvelopeSchema = z
 
 export type NudgeEnvelope = z.infer<typeof nudgeEnvelopeSchema>
 
+export const nudgeResponseSchema = z
+  .object({ sessionId: z.string().uuid() })
+  .strict()
+
+export type NudgeResponse = z.infer<typeof nudgeResponseSchema>
+
 export const daemonIdentitySchema = z
   .object({
     schemaVersion: z.literal(DAEMON_IDENTITY_SCHEMA_VERSION),
@@ -109,7 +115,7 @@ export interface StartInvokeServerOptions {
   readonly socketPath: string
   readonly registry: FunctionRegistry
   readonly identity?: DaemonIdentity
-  readonly onNudge?: (nudge: NudgeEnvelope) => void
+  readonly onNudge?: (nudge: NudgeEnvelope) => NudgeResponse
 }
 
 interface WireError {
@@ -406,9 +412,10 @@ async function handleNudge(
   }
   try {
     const envelope = await parseNudgeEnvelope(request)
-    onNudge?.(envelope)
-    response.writeHead(204, { connection: 'close' })
-    response.end()
+    if (onNudge === undefined) {
+      throw new NudgeEnvelopeError('Nudge handler is unavailable')
+    }
+    writeJson(response, 200, nudgeResponseSchema.parse(onNudge(envelope)))
   } catch (error) {
     writeJson(response, errorStatus(error), wireError(error))
   }

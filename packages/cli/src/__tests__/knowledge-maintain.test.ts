@@ -579,6 +579,9 @@ describe('knowledge maintenance commands', () => {
           epoch: 1,
           candidateIds: [FIRST_CANDIDATE_ID],
           remainingAfter: 0,
+          outcome: 'completed',
+          failures: 0,
+          quarantined: 0,
         })
         receiptWritten = true
       }, 150)
@@ -619,6 +622,9 @@ describe('knowledge maintenance commands', () => {
         epoch: 1,
         candidateIds: [FIRST_CANDIDATE_ID],
         remainingAfter: 1,
+        outcome: 'failed',
+        failures: 1,
+        quarantined: 0,
       })
       return { sessionId: FIRST_SESSION_ID }
     }
@@ -640,6 +646,9 @@ describe('knowledge maintenance commands', () => {
       epoch: 1,
       candidateIds: [FIRST_CANDIDATE_ID],
       remainingAfter: 0,
+      outcome: 'completed',
+      failures: 0,
+      quarantined: 0,
     })
     appendFileSync(
       join(workspace.runtimeRoot, drainReceipts.DRAIN_SESSION_RECEIPTS_FILE),
@@ -714,6 +723,9 @@ describe('knowledge maintenance commands', () => {
       epoch: 8,
       candidateIds: [SECOND_CANDIDATE_ID],
       remainingAfter: 1,
+      outcome: 'failed',
+      failures: 1,
+      quarantined: 0,
     })
     appendDrainSessionReceipt(workspace.runtimeRoot, {
       ts: '2026-07-30T00:00:01.000Z',
@@ -722,6 +734,9 @@ describe('knowledge maintenance commands', () => {
       epoch: 9,
       candidateIds: [FIRST_CANDIDATE_ID],
       remainingAfter: 0,
+      outcome: 'completed',
+      failures: 0,
+      quarantined: 0,
     })
 
     const first = await invoke(workspace, ['drain', '--status'])
@@ -759,8 +774,8 @@ describe('knowledge maintenance commands', () => {
           holderPid: 505,
           candidateCount: 1,
           candidateIds: [SECOND_CANDIDATE_ID],
-          outcome: 'completed',
-          failures: 0,
+          outcome: 'failed',
+          failures: 1,
           quarantined: 0,
           remainingAfter: 1,
         },

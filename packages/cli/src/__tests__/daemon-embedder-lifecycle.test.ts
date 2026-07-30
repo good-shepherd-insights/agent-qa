@@ -80,6 +80,7 @@ function drainReport(jobsProcessed: number, remaining: number) {
     committed: jobsProcessed,
     downgraded: 0,
     withheld: 0,
+    quarantined: 0,
     requeued: 0,
     failures: 0,
     failureDetails: [],
@@ -89,6 +90,7 @@ function drainReport(jobsProcessed: number, remaining: number) {
     writerPass: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
     gc: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
     remaining,
+    remainingWork: { queued: remaining, claimedNonterminal: 0, quarantined: 0 },
   }
 }
 
@@ -216,6 +218,11 @@ function startHarness(
     inspectDrainableCurationWork: () => ({
       queuedCandidateIds: [...queued].sort(),
       recoverableClaimedCandidateIds: [],
+    }),
+    countRemainingCurationWork: () => ({
+      queued: queued.size,
+      claimedNonterminal: 0,
+      quarantined: 0,
     }),
     listQueuedCandidates: () => [...queued].sort(),
     drainQueue,

@@ -41,7 +41,10 @@ import {
   type CurationTailReceipt,
 } from '../curation/curation-tail.js'
 import { nudgeDaemon } from '../daemon/client.js'
-import { readDrainSessionReceipts } from '../daemon/drain-receipts.js'
+import {
+  readDrainSessionReceipts,
+  type DrainSessionReceipt,
+} from '../daemon/drain-receipts.js'
 import { DRAIN_WAIT_TIMEOUT_MS } from '../daemon/host.js'
 import { recoverStaleDaemonRegistration } from '../daemon/registration.js'
 
@@ -63,7 +66,7 @@ const {
   rollbackCurationJob,
 } = LOCAL_CURATION_CAPABILITIES.maintenance
 const { drainQueue } = LOCAL_CURATION_CAPABILITIES
-const { countPendingCurationJobs } = LOCAL_DAEMON_CAPABILITIES
+const { countRemainingCurationWork } = LOCAL_DAEMON_CAPABILITIES
 
 interface RebuildOptions {
   json?: boolean
@@ -102,6 +105,10 @@ interface DrainSessionReceiptStatus {
   holderPid: number
   candidateCount: number
   candidateIds: string[]
+  outcome: DrainSessionReceipt['outcome']
+  failures: number
+  quarantined: number
+  remainingAfter: number
 }
 
 interface KnowledgeDrainStatus {
@@ -245,6 +252,7 @@ function readRunReceipts(runtimeRoot: string): CurationTailReceipt[] {
 }
 
 function drainStatus(paths: KnowledgePaths): KnowledgeDrainStatus {
+  const remainingWork = countRemainingCurationWork(paths.knowledgeRoot)
   return {
     runReceipts: readRunReceipts(paths.runtimeRoot).map((receipt) => ({
       runId: receipt.runId,
@@ -258,8 +266,14 @@ function drainStatus(paths: KnowledgePaths): KnowledgeDrainStatus {
       holderPid: receipt.holderPid,
       candidateCount: receipt.candidateIds.length,
       candidateIds: receipt.candidateIds,
+      outcome: receipt.outcome,
+      failures: receipt.failures,
+      quarantined: receipt.quarantined,
+      remainingAfter: receipt.remainingAfter,
     })),
-    remaining: countPendingCurationJobs(paths.knowledgeRoot),
+    remaining: remainingWork.queued
+      + remainingWork.claimedNonterminal
+      + remainingWork.quarantined,
   }
 }
 
@@ -287,6 +301,8 @@ function renderDrainStatus(status: KnowledgeDrainStatus): string {
     for (const receipt of status.sessionReceipts) {
       lines.push(
         `    ${receipt.sessionId}: holder ${receipt.holderPid}, `
+        + `${receipt.outcome}, remaining ${receipt.remainingAfter}, `
+        + `failures ${receipt.failures}, quarantined ${receipt.quarantined}, `
         + `candidates ${receipt.candidateCount} [${receipt.candidateIds.join(', ')}]`,
       )
     }
@@ -298,6 +314,18 @@ function waitForDrainPoll(delayMs: number): Promise<void> {
   return new Promise((resolvePoll) => setTimeout(resolvePoll, delayMs))
 }
 
+type RemainingCurationWork = ReturnType<typeof countRemainingCurationWork>
+
+function remainingTotal(work: RemainingCurationWork): number {
+  return work.queued + work.claimedNonterminal + work.quarantined
+}
+
+function renderRemainingDisposition(work: RemainingCurationWork): string {
+  return `remaining ${remainingTotal(work)} (`
+    + `queued ${work.queued}, claimed ${work.claimedNonterminal}, `
+    + `quarantined ${work.quarantined})`
+}
+
 async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
   const report = await drainQueue({
     knowledgeRoot: paths.knowledgeRoot,
@@ -306,52 +334,103 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
     executionContext: resolveRunExecutionContext(),
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
   })
+  const remainingWork = countRemainingCurationWork(paths.knowledgeRoot)
+  const remaining = remainingTotal(remainingWork)
   if (options.json === true) {
-    emitJson(report)
+    emitJson({ ...report, remaining, remainingWork })
   } else if (report.kind === 'drained') {
     emitHuman([
       pc.green(pc.bold('Knowledge curation queue drained inline')),
-      `  remaining ${report.remaining}`,
+      `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
   } else if (report.kind === 'handed-off') {
     emitHuman([
       pc.yellow(pc.bold(`Knowledge curation queue handed to pid ${report.holder.pid}`)),
-      `  remaining ${report.remaining}`,
+      `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
   } else {
     emitHuman([
       pc.red(pc.bold('Knowledge curation queue drain aborted')),
-      `  remaining ${report.remaining}`,
+      `  ${renderRemainingDisposition(remainingWork)}`,
     ].join('\n'))
   }
-  if (report.kind === 'aborted' || report.remaining > 0) process.exitCode = 1
+  if (
+    report.kind !== 'drained'
+    || report.failures > 0
+    || report.quarantined > 0
+    || remaining > 0
+  ) process.exitCode = 1
 }
 
 async function drainViaDaemon(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
-  await nudgeDaemon(paths.runtimeRoot)
+  const receiptFloor = readDrainSessionReceipts(paths.runtimeRoot).length
+  const nudge = await nudgeDaemon(paths.runtimeRoot)
   const startedAtMs = Date.now()
   let lastHumanRemaining: number | undefined
 
   while (true) {
-    const remaining = countPendingCurationJobs(paths.knowledgeRoot)
+    const remainingWork = countRemainingCurationWork(paths.knowledgeRoot)
+    const remaining = remainingTotal(remainingWork)
     if (options.json !== true && remaining !== lastHumanRemaining) {
-      emitHuman(`Knowledge curation queue drain: remaining ${remaining}`)
+      emitHuman(`Knowledge curation queue drain: ${renderRemainingDisposition(remainingWork)}`)
       lastHumanRemaining = remaining
     }
-    if (remaining === 0) {
-      if (options.json === true) {
-        emitJson({ mode: 'daemon', timedOut: false, remaining })
+
+    const receipts = readDrainSessionReceipts(paths.runtimeRoot)
+    const matchingIndex = nudge === undefined
+      ? receiptFloor
+      : receipts.findIndex((receipt) => receipt.sessionId === nudge.sessionId)
+    const terminalReceipts = matchingIndex < 0 ? [] : receipts.slice(matchingIndex)
+    for (const receipt of terminalReceipts) {
+      if (
+        receipt.outcome === 'failed'
+        || receipt.failures > 0
+        || receipt.quarantined > 0
+        || receipt.remainingAfter > 0
+      ) {
+        if (options.json === true) {
+          emitJson({
+            mode: 'daemon',
+            timedOut: false,
+            sessionId: receipt.sessionId,
+            receipt,
+            remaining,
+            remainingWork,
+          })
+        }
+        emitHuman(
+          pc.red(
+            `knowledge drain: daemon session ${receipt.sessionId} ended unresolved: `
+            + `${renderRemainingDisposition(remainingWork)}; `
+            + `failures ${receipt.failures}, quarantined ${receipt.quarantined}`,
+          ),
+          'stderr',
+        )
+        process.exitCode = 1
+        return
       }
-      return
+      if (receipt.remainingAfter === 0 && remaining === 0) {
+        if (options.json === true) {
+          emitJson({
+            mode: 'daemon',
+            timedOut: false,
+            sessionId: receipt.sessionId,
+            receipt,
+            remaining,
+            remainingWork,
+          })
+        }
+        return
+      }
     }
 
     const elapsedMs = Date.now() - startedAtMs
     if (elapsedMs >= DRAIN_WAIT_TIMEOUT_MS) {
       if (options.json === true) {
-        emitJson({ mode: 'daemon', timedOut: true, remaining })
+        emitJson({ mode: 'daemon', timedOut: true, remaining, remainingWork })
       }
       emitHuman(
-        pc.red(`knowledge drain: timed out with remaining ${remaining}`),
+        pc.red(`knowledge drain: timed out with ${renderRemainingDisposition(remainingWork)}`),
         'stderr',
       )
       process.exitCode = 1

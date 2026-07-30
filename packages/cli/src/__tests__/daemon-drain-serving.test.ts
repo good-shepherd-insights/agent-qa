@@ -343,6 +343,11 @@ function startScheduledHost(options: {
       queuedCandidateIds: [...options.queued].sort(),
       recoverableClaimedCandidateIds: [],
     }),
+    countRemainingCurationWork: () => ({
+      queued: options.queued.size,
+      claimedNonterminal: 0,
+      quarantined: 0,
+    }),
     listQueuedCandidates: () => [...options.queued].sort(),
     drainQueue: options.drainQueue,
     ...(options.acquireWriterLease === undefined
@@ -458,8 +463,8 @@ describe('daemon curation serving tracer', () => {
       clearInterval: vi.fn(),
       setTimeout: () => 2 as unknown as ReturnType<typeof setTimeout>,
       clearTimeout: vi.fn(),
-      onSignal: (signal, listener) => signals.set(signal, listener),
-      offSignal: (signal, listener) => {
+      onSignal: (signal: NodeJS.Signals, listener: () => void) => signals.set(signal, listener),
+      offSignal: (signal: NodeJS.Signals, listener: () => void) => {
         if (signals.get(signal) === listener) signals.delete(signal)
       },
       hardExit: vi.fn(),
@@ -493,6 +498,7 @@ describe('daemon curation serving tracer', () => {
       order.push('nudge')
       const response = await nudgeDaemon(agentQaRoot)
       expect(response).toEqual({ sessionId: SESSION_ID })
+      return response
     })
     await runCurationTail({
       runId: String(handoff.runId),

@@ -16,8 +16,10 @@ import {
 } from './registration.js'
 import {
   INVOKE_ENVELOPE_SCHEMA_VERSION,
+  nudgeResponseSchema,
   STREAM_END_EVENT,
   STREAM_ERROR_EVENT,
+  type NudgeResponse,
 } from './server.js'
 
 /** Provisional stream reconnect budget; retune from operational evidence without adding config. */
@@ -376,13 +378,19 @@ export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<
   return readUnaryResponse(response)
 }
 
-/** Best-effort curation wake-up. Tail completion never depends on daemon discovery or I/O. */
-export async function nudgeDaemon(agentQaRoot: string): Promise<void> {
+/** Best-effort curation wake-up returning the durable session identity when acknowledged. */
+export async function nudgeDaemon(agentQaRoot: string): Promise<NudgeResponse | undefined> {
   try {
     const inspected = inspectDaemonRegistration(agentQaRoot)
     if (inspected.kind !== 'live') return
     const body = JSON.stringify({ kind: 'candidates-enqueued' })
-    await new Promise<void>((resolveNudge) => {
+    return await new Promise<NudgeResponse | undefined>((resolveNudge) => {
+      let settled = false
+      const settle = (response: NudgeResponse | undefined): void => {
+        if (settled) return
+        settled = true
+        resolveNudge(response)
+      }
       const outgoing = request(
         {
           socketPath: inspected.registration.socketPath,
@@ -395,15 +403,26 @@ export async function nudgeDaemon(agentQaRoot: string): Promise<void> {
           },
         },
         (response) => {
-          response.resume()
-          response.once('end', resolveNudge)
-          response.once('error', resolveNudge)
+          void (async () => {
+            try {
+              const text = await readResponseText(response)
+              const statusCode = response.statusCode ?? 500
+              settle(
+                statusCode >= 200 && statusCode < 300
+                  ? nudgeResponseSchema.parse(parseJson(text, 'agent-qa daemon nudge'))
+                  : undefined,
+              )
+            } catch {
+              settle(undefined)
+            }
+          })()
         },
       )
-      outgoing.once('error', resolveNudge)
+      outgoing.once('error', () => settle(undefined))
       outgoing.end(body)
     })
   } catch {
     // A missed nudge is intentionally invisible; the daemon's poll loop is the backstop.
+    return undefined
   }
 }

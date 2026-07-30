@@ -39,6 +39,7 @@ import {
   acquireEmbedder,
   acquireWriterLease,
   countPendingCurationJobs,
+  countRemainingCurationWork,
   drainQueue,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
@@ -163,6 +164,7 @@ export interface LocalDaemonCapabilities {
   readonly releaseLease: typeof releaseLease
   readonly readWriterLease: typeof readWriterLease
   readonly countPendingCurationJobs: typeof countPendingCurationJobs
+  readonly countRemainingCurationWork: typeof countRemainingCurationWork
   readonly inspectDrainableCurationWork: typeof inspectDrainableCurationWork
   readonly listQueuedCandidates: typeof listQueuedCandidates
   readonly acquireEmbedder: typeof acquireEmbedder
@@ -192,6 +194,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   releaseLease,
   readWriterLease,
   countPendingCurationJobs,
+  countRemainingCurationWork,
   inspectDrainableCurationWork,
   listQueuedCandidates,
   acquireEmbedder,

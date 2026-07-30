@@ -87,7 +87,7 @@ export interface CurationTailOperations {
   listCompletedRunDirs(agentQaRoot: string): string[]
   readCurationTailReceipt(runDir: string): CurationTailReceipt | undefined
   writeCurationTailReceipt(runDir: string, receipt: CurationTailReceipt): void
-  nudgeDaemon(agentQaRoot: string): Promise<void>
+  nudgeDaemon: typeof nudgeDaemon
 }
 
 export interface RunCurationTailOptions {

@@ -134,6 +134,7 @@ export interface DaemonHostOperations {
   removeDaemonRegistration(agentQaRoot: string): void
   removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
+  countRemainingCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.countRemainingCurationWork
   inspectDrainableCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork
   listQueuedCandidates(knowledgeRoot: string): string[]
   acquireEmbedder: typeof LOCAL_DAEMON_CAPABILITIES.acquireEmbedder
@@ -236,6 +237,7 @@ function defaultOperations(): DaemonHostOperations {
     removeDaemonRegistration,
     removeRegistrationIfOwned,
     startInvokeServer,
+    countRemainingCurationWork: LOCAL_DAEMON_CAPABILITIES.countRemainingCurationWork,
     inspectDrainableCurationWork: LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork,
     listQueuedCandidates: LOCAL_DAEMON_CAPABILITIES.listQueuedCandidates,
     acquireEmbedder: LOCAL_DAEMON_CAPABILITIES.acquireEmbedder,
@@ -400,6 +402,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let shutdownPromise: Promise<void> | undefined
   let shutdownCompleted = false
   let drainRequested = false
+  let drainReceiptRequired = false
+  let requestedDrainSessionId: string | undefined
+  let activeDrainSessionId: string | undefined
   let drainWorker: Promise<void> | undefined
   let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
@@ -623,7 +628,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     embedderWorkerIdleTimer = timer
   }
 
-  const drainSession = async (): Promise<void> => {
+  const remainingTotal = (
+    work: ReturnType<DaemonHostOperations['countRemainingCurationWork']>,
+  ): number => work.queued + work.claimedNonterminal + work.quarantined
+
+  const drainSession = async (
+    sessionId: string,
+    receiptRequired: boolean,
+  ): Promise<void> => {
     const initialWork = operations.inspectDrainableCurationWork({
       knowledgeRoot: input.knowledgeRoot,
       currentLeaseId: acquired.leaseId,
@@ -632,15 +644,22 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       ...initialWork.queuedCandidateIds,
       ...initialWork.recoverableClaimedCandidateIds,
     ]
-    if (initialCandidates.length === 0) return
-    if (input.author === undefined || input.policy === undefined) {
+    if (initialCandidates.length === 0 && !receiptRequired) return
+    if (
+      initialCandidates.length > 0
+      && (input.author === undefined || input.policy === undefined)
+    ) {
       throw new Error('Daemon curation requires an author factory and guardrail policy')
     }
 
-    const sessionId = operations.randomUUID()
     const seenCandidateIds = new Set(initialCandidates)
     let jobsProcessed = 0
-    let remainingAfter = initialCandidates.length
+    let failures = 0
+    let quarantined = 0
+    let remainingAfter = remainingTotal(operations.countRemainingCurationWork(
+      input.knowledgeRoot,
+      { currentLeaseId: acquired.leaseId },
+    ))
     recordDaemonEvent({
       kind: 'drain-session-start',
       sessionId,
@@ -648,7 +667,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       epoch: acquired.epoch,
     })
 
-    const author = await (authorPromise ??= Promise.resolve(input.author()))
+    const author = initialCandidates.length === 0
+      ? undefined
+      : await (authorPromise ??= Promise.resolve(input.author!()))
     while (remainingAfter > 0) {
       const observed = operations.inspectDrainableCurationWork({
         knowledgeRoot: input.knowledgeRoot,
@@ -659,6 +680,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         ...observed.recoverableClaimedCandidateIds,
       ]) {
         seenCandidateIds.add(candidateId)
+      }
+      if (
+        observed.queuedCandidateIds.length === 0
+        && observed.recoverableClaimedCandidateIds.length === 0
+      ) {
+        break
       }
       let worker: EmbedderWorkerRuntime | undefined
       if (embedderLifecycleEnabled) {
@@ -680,9 +707,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           auditBaseDir: input.agentQaRoot,
           budgetMs: 'unbounded',
           lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
-          author,
+          author: author!,
           executionContext: 'local-headless',
-          policy: input.policy,
+          policy: input.policy!,
           embeddingCapability,
           maintenance: 'skip',
           onJobLifecycle: (event) => {
@@ -697,16 +724,42 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
             })
           },
         })
+      } catch (error) {
+        failures += 1
+        logger.error(
+          `Daemon curation drain failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        remainingAfter = remainingTotal(operations.countRemainingCurationWork(
+          input.knowledgeRoot,
+          { currentLeaseId: acquired.leaseId },
+        ))
+        break
       } finally {
         if (worker !== undefined) armEmbedderWorkerIdleTimer(worker)
       }
       jobsProcessed += report.jobsProcessed
-      remainingAfter = report.remaining
-      if (report.remaining > 0 && report.jobsProcessed === 0) break
+      failures += report.failures
+      quarantined += report.quarantined
+      remainingAfter = remainingTotal(operations.countRemainingCurationWork(
+        input.knowledgeRoot,
+        { currentLeaseId: acquired.leaseId },
+      ))
+      if (
+        remainingAfter > 0
+        && (
+          report.jobsProcessed === 0
+          || report.failures > 0
+          || report.quarantined > 0
+          || report.requeued > 0
+        )
+      ) break
     }
 
     const candidateIds = [...seenCandidateIds].sort()
-    if (jobsProcessed > 0) {
+    const outcome = failures === 0 && quarantined === 0 && remainingAfter === 0
+      ? 'completed' as const
+      : 'failed' as const
+    if (receiptRequired || jobsProcessed > 0 || outcome === 'failed') {
       operations.appendDrainSessionReceipt(input.agentQaRoot, {
         ts: new Date(operations.now()).toISOString(),
         sessionId,
@@ -714,6 +767,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         epoch: acquired.epoch,
         candidateIds,
         remainingAfter,
+        outcome,
+        failures,
+        quarantined,
       })
     }
     recordDaemonEvent({
@@ -730,14 +786,32 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   const serviceDrainRequests = async (): Promise<void> => {
     while (drainRequested && shutdownPromise === undefined) {
       drainRequested = false
-      await drainSession()
+      const sessionId = requestedDrainSessionId ?? operations.randomUUID()
+      const receiptRequired = drainReceiptRequired
+      requestedDrainSessionId = undefined
+      drainReceiptRequired = false
+      activeDrainSessionId = sessionId
+      try {
+        await drainSession(sessionId, receiptRequired)
+      } finally {
+        activeDrainSessionId = undefined
+      }
     }
   }
 
-  const requestDrain = (): void => {
-    if (shutdownPromise !== undefined) return
+  const requestDrain = (receiptRequired = false): string | undefined => {
+    if (shutdownPromise !== undefined) return undefined
     drainRequested = true
-    if (drainWorker !== undefined) return
+    drainReceiptRequired ||= receiptRequired
+    // A nudge arriving during an unreceipted cadence pass must identify the
+    // follow-up session whose terminal receipt is guaranteed to be written.
+    if (activeDrainSessionId !== undefined) {
+      requestedDrainSessionId ??= operations.randomUUID()
+      return requestedDrainSessionId
+    }
+    requestedDrainSessionId ??= operations.randomUUID()
+    const sessionId = requestedDrainSessionId
+    if (drainWorker !== undefined) return sessionId
     drainWorker = serviceDrainRequests()
       .catch((error) => {
         logger.error(
@@ -748,6 +822,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         drainWorker = undefined
         if (drainRequested && shutdownPromise === undefined) requestDrain()
       })
+    return sessionId
   }
 
   const detachSignals = (): void => {
@@ -976,8 +1051,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         pid: process.pid,
       },
       onNudge: () => {
-        requestDrain()
+        const sessionId = requestDrain(true)
         jobDispatcher?.wake()
+        if (sessionId === undefined) {
+          throw new Error('Daemon is shutting down and cannot accept a drain nudge')
+        }
+        return { sessionId }
       },
     })
     if (shutdownPromise !== undefined) {
