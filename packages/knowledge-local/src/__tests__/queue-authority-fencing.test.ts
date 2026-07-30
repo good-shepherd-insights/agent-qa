@@ -12,16 +12,29 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 import type { CuratorAuthor } from '../curator/author-contract.js'
+import { appendOutcomeEvent } from '../bundle-append.js'
+import { publishBundle } from '../bundle-publish.test-helper.js'
 import {
   drainQueue,
   type DrainOperations,
 } from '../curator/drain.js'
+import {
+  runKnowledgeGc,
+  type GcSummary,
+  type RunKnowledgeGcInput,
+} from '../gc.js'
+import { openIndexReaderConnection } from '../index-open.js'
+import {
+  rebuildIndex,
+  removeBundleProjectionRows,
+} from '../index-rebuild.js'
 import {
   acquireWriterLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   WriterAuthorityLostError,
   type CurrentWriterAuthority,
+  type WriterLeaseAuthority,
 } from '../lease/writer-lease.js'
 import {
   claimNextJob,
@@ -45,7 +58,10 @@ import {
   type ReconcileOnDrainStartDependencies,
   type ReconcileReport,
 } from '../journal/reconcile.js'
-import { scaffoldKnowledgeRoot } from './fixtures/bundle-fixture.js'
+import {
+  makeBundleDraftFixture,
+  scaffoldKnowledgeRoot,
+} from './fixtures/bundle-fixture.js'
 import {
   enqueueArtifactFreeCandidateProjection,
   type ArtifactFreeCandidateProjectionInput,
@@ -54,6 +70,7 @@ import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
+import { asEvidenceToken, type RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 interface FencedClaimNextJobOptions extends ClaimNextJobOptions {
@@ -84,6 +101,21 @@ const fencedWriteJobState = writeJobState as unknown as (
 const fencedReconcileOnDrainStart = reconcileOnDrainStart as unknown as (
   dependencies: FencedReconcileDependencies,
 ) => ReconcileReport
+
+interface GcAuthorityHooks {
+  beforeGcRemoval?(recordId: RecordId): void
+}
+
+const fencedRunKnowledgeGc = runKnowledgeGc as unknown as (
+  input: RunKnowledgeGcInput,
+  writerAuthority: WriterLeaseAuthority,
+  hooks?: GcAuthorityHooks,
+) => GcSummary
+const fencedRemoveBundleProjectionRows = removeBundleProjectionRows as unknown as (
+  knowledgeRoot: string,
+  bundleIds: readonly string[],
+  writerAuthority: WriterLeaseAuthority,
+) => number
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
@@ -200,6 +232,95 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
       hasIndexRow: () => true,
       applyIndexDelta: () => undefined,
       deriveIndexRowFromBundle: () => undefined,
+    }
+  }
+
+  function writerAuthority(
+    authority: CurrentWriterAuthority,
+  ): WriterLeaseAuthority {
+    return { knowledgeRoot, ...authority }
+  }
+
+  function publishGcChain(
+    chain: string,
+    supersededGenerations: number,
+  ): { superseded: Array<{ id: RecordId; dir: string }>; head: { id: RecordId; dir: string } } {
+    const config = {
+      knowledgeRoot,
+      productKey: 'queue-authority-fencing',
+      auditBaseDir: join(root, '.agent-qa'),
+      commitArtifacts: 'none' as const,
+    }
+    const generations = Array.from(
+      { length: supersededGenerations + 1 },
+      (_, index) => {
+        const generation = index + 1
+        const outcome = publishBundle(config, {
+          draft: makeBundleDraftFixture({
+            subtype: 'measurement',
+            anchors: [{ t: 'flow', name: `${chain}-${generation}` }],
+            scope: { tier: 'product', key: 'queue-authority-fencing' },
+            summary: `${chain} generation ${generation}`,
+            body: `${chain} generation ${generation} canonical body.`,
+          }),
+          discriminant: {
+            kind: 'fact',
+            subtype: 'measurement',
+            metricKey: `${chain}-${generation}`,
+          },
+          originClass: 'agent-verified',
+          createdAtOrdinal: generation,
+          screenStates: [],
+          initialEvents: [{
+            type: 'promoted',
+            evidenceToken: asEvidenceToken(`${chain}-promoted-${generation}`),
+            curationJobId: `${chain}-publish-${generation}`,
+            buildOrdinal: generation,
+          }],
+          relations: [],
+          provenance: { mode: 'standalone', sourceDescription: `${chain} fixture` },
+          artifacts: [],
+        })
+        expect(outcome.kind).toBe('published')
+        if (outcome.kind !== 'published') throw new Error('expected GC fixture publication')
+        return { id: outcome.id, dir: outcome.dir }
+      },
+    )
+
+    for (let index = 0; index < supersededGenerations; index += 1) {
+      const victim = generations[index]!
+      const replacement = generations[index + 1]!
+      const buildOrdinal = index + 2
+      expect(appendOutcomeEvent(config, victim.id, {
+        type: 'superseded',
+        evidenceToken: asEvidenceToken(`${chain}-superseded-${buildOrdinal}`),
+        curationJobId: `${chain}-supersede-${buildOrdinal}`,
+        buildOrdinal,
+        byRecordId: replacement.id,
+      }).kind).toBe('appended')
+      expect(appendOutcomeEvent(config, victim.id, {
+        type: 'window-close',
+        evidenceToken: asEvidenceToken(`${chain}-closed-${buildOrdinal}`),
+        curationJobId: `${chain}-supersede-${buildOrdinal}`,
+        buildOrdinal,
+        closedAtOrdinal: buildOrdinal,
+      }).kind).toBe('appended')
+    }
+
+    return {
+      superseded: generations.slice(0, -1),
+      head: generations.at(-1)!,
+    }
+  }
+
+  function projectionExists(recordId: string): boolean {
+    const reader = openIndexReaderConnection(knowledgeRoot)
+    try {
+      return reader.db
+        .prepare('SELECT 1 AS present FROM records WHERE bundle_id = ?')
+        .get(recordId) !== undefined
+    } finally {
+      reader.db.close()
     }
   }
 
@@ -403,5 +524,78 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
     expect(queued.every((candidateId) =>
       existsSync(queuedCandidateDir(knowledgeRoot, candidateId)),
     )).toBe(true)
+  })
+
+  it('rejects a paused GC before its first bundle removal after authority takeover', async () => {
+    const chain = publishGcChain('paused-gc', 2)
+    await rebuildIndex({ knowledgeRoot })
+    const stale = acquireAuthority()
+    const beforeRemoval = vi.fn(() => {
+      reclaim(stale)
+    })
+
+    expect(() => fencedRunKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' }, retainK: 0 },
+      writerAuthority(stale),
+      { beforeGcRemoval: beforeRemoval },
+    )).toThrow(WriterAuthorityLostError)
+
+    expect(beforeRemoval).toHaveBeenCalledOnce()
+    expect(chain.superseded.every(({ dir }) => existsSync(dir))).toBe(true)
+    expect(chain.superseded.every(({ id }) => projectionExists(id))).toBe(true)
+  })
+
+  it('stops a GC sweep at the first removal boundary after authority loss', () => {
+    const chain = publishGcChain('mid-sweep-gc', 3)
+    const ordered = [...chain.superseded].sort((left, right) =>
+      left.id.localeCompare(right.id),
+    )
+    const stale = acquireAuthority()
+    const removals: RecordId[] = []
+
+    expect(() => fencedRunKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' }, retainK: 0 },
+      writerAuthority(stale),
+      {
+        beforeGcRemoval(recordId) {
+          removals.push(recordId)
+          if (removals.length === 2) reclaim(stale)
+        },
+      },
+    )).toThrow(WriterAuthorityLostError)
+
+    expect(removals).toEqual(ordered.slice(0, 2).map(({ id }) => id))
+    expect(existsSync(ordered[0]!.dir)).toBe(false)
+    expect(ordered.slice(1).every(({ dir }) => existsSync(dir))).toBe(true)
+  })
+
+  it('accepts current-authority GC and removes exactly its planned garbage set', () => {
+    const chain = publishGcChain('current-gc', 2)
+    const authority = acquireAuthority()
+
+    const summary = fencedRunKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' }, retainK: 0 },
+      writerAuthority(authority),
+    )
+
+    expect(summary.trimmedRecordIds).toEqual(
+      chain.superseded.map(({ id }) => id).sort(),
+    )
+    expect(chain.superseded.every(({ dir }) => !existsSync(dir))).toBe(true)
+    expect(existsSync(chain.head.dir)).toBe(true)
+  })
+
+  it('rejects stale projection deletion before its transaction removes a row', async () => {
+    const chain = publishGcChain('stale-projection', 0)
+    await rebuildIndex({ knowledgeRoot })
+    const stale = acquireAuthority()
+    reclaim(stale)
+
+    expect(() => fencedRemoveBundleProjectionRows(
+      knowledgeRoot,
+      [chain.head.id],
+      writerAuthority(stale),
+    )).toThrow(WriterAuthorityLostError)
+    expect(projectionExists(chain.head.id)).toBe(true)
   })
 })
