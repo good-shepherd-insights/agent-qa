@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -21,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  applyIndexDeltaForBundle,
   appendOutcomeEvent,
   artifactFreeCaptureReceipt,
   candidateContentAddress,
@@ -28,13 +35,23 @@ import {
   deriveBundleTrust,
   enumerateBundleDirs,
   loadBundle,
+  openIndexReaderConnection,
   publishBundle,
   type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
   type LoadedBundle,
 } from '../../index.js'
-import { acquireWriterLease } from '../../lease/writer-lease.js'
+import {
+  finalizeStagedBundle,
+  stageBundle,
+} from '../../bundle-publish.js'
+import {
+  acquireWriterLease,
+  LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
+  withCurrentWriterAuthority,
+} from '../../lease/writer-lease.js'
 import { candidateAddressFixture } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import {
   THRASH_MAX_SUPERSESSIONS,
@@ -213,7 +230,10 @@ function drainState(): CommitCurationDependencies['drainState'] {
   return { supersedesSeenByAnchorKey: new Map() }
 }
 
-function deps(state = drainState()): CommitCurationDependencies {
+function deps(
+  state = drainState(),
+  overrides: Partial<CommitCurationDependencies> = {},
+): CommitCurationDependencies {
   return {
     knowledgeRoot,
     auditBaseDir,
@@ -221,7 +241,82 @@ function deps(state = drainState()): CommitCurationDependencies {
     profile: { mode: 'drain-to-active' },
     drainState: state,
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    ...overrides,
   }
+}
+
+function expireCurrentLease(): void {
+  const file = join(knowledgeRoot, LEASE_FILE)
+  const holder = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+  writeFileSync(
+    file,
+    `${JSON.stringify({
+      ...holder,
+      heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+    })}\n`,
+    'utf8',
+  )
+}
+
+function publishSuccessorUnknown(
+  authority: { leaseId: string; epoch: number },
+): RecordId {
+  const successorDraft: BundleDraft = {
+    kind: 'unknown',
+    anchors: [{ t: 'flow', name: 'successor-owned-unknown' }],
+    scope,
+    summary: 'Successor-owned unknown',
+    body: canonicalJson({ kind: 'successor-control', epoch: authority.epoch }),
+    distilledEvidenceRef: {
+      id: 'successor-owned-unknown',
+      sha: 'f'.repeat(64),
+    },
+    originStage: 'run-curation',
+  }
+  const staged = stageBundle(
+    {
+      ...storeConfig(authority.leaseId),
+      writerEpoch: authority.epoch,
+    },
+    {
+      draft: successorDraft,
+      discriminant: { kind: 'unknown', conflictRecordIds: [] },
+      originClass: 'agent-verified',
+      createdAtOrdinal: 5,
+      screenStates: [],
+      initialEvents: [
+        {
+          type: 'confirmed',
+          evidenceToken: asEvidenceToken('successor-owned-unknown'),
+          curationJobId: 'successor-owned-unknown',
+          buildOrdinal: 5,
+          origin: 'agent-verified',
+        },
+      ],
+      relations: [],
+      provenance: {
+        mode: 'standalone',
+        sourceDescription: 'successor authority control',
+      },
+      artifacts: [],
+    },
+  )
+  expect(staged.kind).toBe('staged')
+  if (staged.kind !== 'staged') throw new Error('expected successor unknown staging')
+  const published = withCurrentWriterAuthority(
+    knowledgeRoot,
+    authority,
+    () => finalizeStagedBundle(staged),
+    { mutationLockTakeoverMs: 0 },
+  )
+  expect(published.kind).toBe('published')
+  if (published.kind !== 'published') throw new Error('expected successor unknown publication')
+  applyIndexDeltaForBundle({
+    knowledgeRoot,
+    bundleId: published.id,
+    product: scope.key,
+  })
+  return published.id
 }
 
 function supersede(
@@ -575,6 +670,68 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
     const replay = commitCurationDelta(deps(), tripping.claimed, tripping.authored)
     expect(['noop', 'converted-confirm']).toContain(replay.kind)
     expect(unknowns()).toHaveLength(1)
+  })
+
+  it('refuses the old writer mint after takeover at its rename and keeps only the successor unknown', () => {
+    const lineage = seedTwoSupersessions()
+    let renameBoundaryCount = 0
+    let successorUnknownId: RecordId | undefined
+    const hooks = {
+      mutationLockTakeoverMs: 0,
+      beforePublishRename: () => {
+        renameBoundaryCount += 1
+        if (renameBoundaryCount !== 2) return
+
+        expireCurrentLease()
+        const successor = acquireWriterLease(knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })
+        expect(successor.kind).toBe('acquired')
+        if (successor.kind !== 'acquired') throw new Error('expected successor takeover')
+        successorUnknownId = publishSuccessorUnknown({
+          leaseId: successor.leaseId,
+          epoch: successor.epoch,
+        })
+      },
+    } as NonNullable<CommitCurationDependencies['hooks']> & {
+      mutationLockTakeoverMs: number
+    }
+    const claimed = job(4, 4)
+    const delta: Extract<Delta, { kind: 'Supersede' }> = {
+      kind: 'Supersede',
+      origin: 'agent',
+      scope,
+      citedIds: [lineage.third.id],
+      victimId: lineage.third.id,
+      newBundle: draft(4),
+      evidenceToken: asEvidenceToken(claimed.payload.evidenceToken),
+      authorship: {
+        path: 'llm',
+        model: { id: 'curator-fixture' },
+        executionContext: 'local-interactive',
+      },
+    }
+
+    const outcome = commitCurationDelta(
+      deps(drainState(), { hooks }),
+      claimed,
+      checkpoint(delta),
+    )
+
+    expect(renameBoundaryCount).toBe(2)
+    expect(outcome).toEqual({ kind: 'abandoned-stale-epoch', observedEpoch: 2 })
+    expect(successorUnknownId).toBeDefined()
+    expect(unknowns().map((bundle) => bundle.manifest.id)).toEqual([successorUnknownId])
+    const reader = openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(
+        reader.db
+          .prepare("SELECT bundle_id FROM records WHERE kind = 'unknown' ORDER BY bundle_id")
+          .all(),
+      ).toEqual([{ bundle_id: successorUnknownId }])
+    } finally {
+      reader.db.close()
+    }
   })
 
   it('continues Confirm and Supersede writes while the anchor is memory-off', () => {
