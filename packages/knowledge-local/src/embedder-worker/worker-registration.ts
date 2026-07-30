@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { request } from 'node:http'
+import { request, type IncomingMessage } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -28,6 +28,30 @@ export const EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION = 1
 export const EMBEDDER_WORKER_SOCKET_FILE = 'embedder-worker.sock'
 export const EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES = 100
 export const MAX_EMBEDDER_WORKER_BODY_BYTES = 4_194_304
+
+/** D-15 provisional request deadline; retune from daemon telemetry without adding config. */
+export const EMBEDDER_WORKER_REQUEST_TIMEOUT_MS = 30_000
+
+/** D-15 provisional child-readiness deadline; retune from daemon telemetry without adding config. */
+export const EMBEDDER_WORKER_START_TIMEOUT_MS = 15_000
+
+/** D-15 provisional TERM grace; retune from daemon telemetry without adding config. */
+export const EMBEDDER_WORKER_TERM_GRACE_MS = 5_000
+
+export type EmbedderWorkerTimeoutPhase = 'request' | 'start' | 'terminate'
+
+/** A bounded worker wait expired; callers can defer by phase without parsing error text. */
+export class EmbedderWorkerTimeoutError extends Error {
+  readonly phase: EmbedderWorkerTimeoutPhase
+  readonly timeoutMs: number
+
+  constructor(phase: EmbedderWorkerTimeoutPhase, timeoutMs: number) {
+    super(`Embedder worker ${phase} timed out after ${timeoutMs} ms`)
+    this.name = 'EmbedderWorkerTimeoutError'
+    this.phase = phase
+    this.timeoutMs = timeoutMs
+  }
+}
 
 export const embeddingProfileSchema = z
   .object({
@@ -273,22 +297,57 @@ export function probeEmbedderWorkerSocket(socketPath: string): Promise<boolean> 
 function requestWorker(
   socketPath: string,
   envelope: EmbedderWorkerRequest,
+  options: CreateEmbedderWorkerPortOptions,
 ): Promise<EmbedderWorkerResponse> {
   const body = JSON.stringify(embedderWorkerRequestSchema.parse(envelope))
   return new Promise((resolveRequest, rejectRequest) => {
+    const requestTimeoutMs = options.requestTimeoutMs ?? EMBEDDER_WORKER_REQUEST_TIMEOUT_MS
+    const abortController = new AbortController()
+    let responseStream: IncomingMessage | undefined
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    let settled = false
+
+    const settle = (
+      outcome: { kind: 'resolved'; response: EmbedderWorkerResponse }
+        | { kind: 'rejected'; error: unknown },
+    ): boolean => {
+      if (settled) return false
+      settled = true
+      if (timeout !== undefined) clearTimeout(timeout)
+      if (outcome.kind === 'resolved') {
+        resolveRequest(outcome.response)
+      } else {
+        try {
+          options.onUnavailable?.(outcome.error)
+        } catch {
+          // Transport refusal remains authoritative even when best-effort invalidation cannot write.
+        }
+        rejectRequest(outcome.error)
+      }
+      return true
+    }
+
     const workerRequest = request(
       {
         socketPath,
         path: '/embed',
         method: 'POST',
+        signal: abortController.signal,
         headers: {
           'content-type': 'application/json',
           'content-length': Buffer.byteLength(body),
         },
       },
       (response) => {
+        responseStream = response
         const chunks: Buffer[] = []
         let bytes = 0
+        response.once('aborted', () => {
+          settle({ kind: 'rejected', error: new Error('Embedder worker response was aborted') })
+        })
+        response.once('error', (error) => {
+          settle({ kind: 'rejected', error })
+        })
         response.on('data', (chunk: Buffer | string) => {
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
           bytes += buffer.byteLength
@@ -311,14 +370,29 @@ function requestWorker(
                   : `Embedder worker returned HTTP ${response.statusCode ?? 0}`,
               )
             }
-            resolveRequest(embedderWorkerResponseSchema.parse(parsedBody))
+            settle({
+              kind: 'resolved',
+              response: embedderWorkerResponseSchema.parse(parsedBody),
+            })
           } catch (error) {
-            rejectRequest(error)
+            settle({ kind: 'rejected', error })
           }
         })
       },
     )
-    workerRequest.once('error', rejectRequest)
+    workerRequest.once('error', (error) => {
+      const refusal = abortController.signal.aborted
+        ? abortController.signal.reason
+        : error
+      settle({ kind: 'rejected', error: refusal })
+    })
+    timeout = setTimeout(() => {
+      const error = new EmbedderWorkerTimeoutError('request', requestTimeoutMs)
+      if (!settle({ kind: 'rejected', error })) return
+      abortController.abort(error)
+      responseStream?.destroy(error)
+      workerRequest.destroy(error)
+    }, requestTimeoutMs)
     workerRequest.end(body)
   })
 }
@@ -339,9 +413,17 @@ function vectorFromResponse(
   return Float32Array.from(vector)
 }
 
+export interface CreateEmbedderWorkerPortOptions {
+  /** Test-only shortening seam; production always uses the pinned request deadline. */
+  readonly requestTimeoutMs?: number
+  /** Capability owner invalidates registration/cache after transport refusal. */
+  readonly onUnavailable?: (error: unknown) => void
+}
+
 export function createEmbedderWorkerPort(
   socketPath: string,
   expectedDimension: number,
+  options: CreateEmbedderWorkerPortOptions = {},
 ): EmbedderPort {
   return {
     async embedDocument(rendering) {
@@ -350,7 +432,7 @@ export function createEmbedderWorkerPort(
           schemaVersion: EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
           method: 'embedDocument',
           rendering,
-        }),
+        }, options),
         expectedDimension,
       )
     },
@@ -360,7 +442,7 @@ export function createEmbedderWorkerPort(
           schemaVersion: EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
           method: 'embedQuery',
           rendering,
-        }),
+        }, options),
         expectedDimension,
       )
     },

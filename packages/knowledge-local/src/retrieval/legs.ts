@@ -14,11 +14,13 @@ import {
 
 import {
   acquireEmbedder,
+  resetEmbedderCapability,
   type AcquireEmbedderOutcome,
   type EmbedderProbes,
 } from '../embedder-acquire.js'
 import { wrapEmbedderWithCache } from '../embed-cache.js'
 import type { EmbedderPort } from '../embedder-port.js'
+import { EmbedderWorkerTimeoutError } from '../embedder-worker/worker-registration.js'
 import {
   embeddingProfileKey,
   isEmbeddingVecCleanupCurrent,
@@ -450,7 +452,14 @@ export async function denseLeg(
 
   const byRecordRowid = new Map<number, DenseRowCandidate>()
   for (const text of renderings) {
-    const embedding = await embedder.embedQuery(text)
+    let embedding: Float32Array
+    try {
+      embedding = await embedder.embedQuery(text)
+    } catch (error) {
+      if (!(error instanceof EmbedderWorkerTimeoutError)) throw error
+      resetEmbedderCapability()
+      return []
+    }
     const candidates = connection.vec === 'vec0'
       ? denseVec0(connection, embedding, text, scope, k)
       : denseBrute(connection, embedding, text, scope, k)

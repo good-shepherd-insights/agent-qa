@@ -139,6 +139,11 @@ interface WorkerBackedDiscoveryResult {
   readonly embedder: EmbedderPort
 }
 
+export interface DiscoverEmbedderWorkerOptions {
+  /** Test-only shortening seam; production omits this and uses the pinned request deadline. */
+  readonly requestTimeoutMs?: number
+}
+
 function isWorkerBackedDiscovery(
   result: WorkerDiscoveryResult,
 ): result is WorkerDiscoveryResult & WorkerBackedDiscoveryResult {
@@ -150,6 +155,7 @@ function isWorkerBackedDiscovery(
 /** D-09's worker arm, rooted in the hosted project rather than ambient process cwd. */
 export async function discoverEmbedderWorker(
   agentQaRoot: string,
+  options: DiscoverEmbedderWorkerOptions = {},
 ): Promise<WorkerDiscoveryResult> {
   const projectRoot = dirname(agentQaRoot)
   const outcome = readEmbedderWorkerRegistration(agentQaRoot)
@@ -183,7 +189,19 @@ export async function discoverEmbedderWorker(
   return {
     kind: 'worker',
     profile: asEmbeddingProfile(registration.profile),
-    embedder: createEmbedderWorkerPort(registration.socketPath, registration.profile.dim),
+    embedder: createEmbedderWorkerPort(
+      registration.socketPath,
+      registration.profile.dim,
+      {
+        ...(options.requestTimeoutMs === undefined
+          ? {}
+          : { requestTimeoutMs: options.requestTimeoutMs }),
+        onUnavailable: () => {
+          removeEmbedderWorkerRegistration(agentQaRoot, registration)
+          resetEmbedderCapability(asEmbeddingProfile(registration.profile))
+        },
+      },
+    ),
   } as WorkerDiscoveryResult
 }
 

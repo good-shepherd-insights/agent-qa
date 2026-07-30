@@ -40,6 +40,9 @@ import {
   acquireWriterLease,
   countPendingCurationJobs,
   drainQueue,
+  EMBEDDER_WORKER_START_TIMEOUT_MS,
+  EMBEDDER_WORKER_TERM_GRACE_MS,
+  EmbedderWorkerTimeoutError,
   enqueueCurationCandidateProjection,
   foldRunOutcomes,
   heartbeatLease,
@@ -139,6 +142,13 @@ export type {
   WriterLease,
   WriterLeaseAuthority,
 } from '@vostride/agent-qa-knowledge-local'
+
+// Surface hosts reach worker lifecycle vocabulary through this one legal composition edge.
+export {
+  EMBEDDER_WORKER_START_TIMEOUT_MS,
+  EMBEDDER_WORKER_TERM_GRACE_MS,
+  EmbedderWorkerTimeoutError,
+}
 
 /**
  * The standing daemon's writer-authority substrate, published through the same one composition

@@ -200,6 +200,7 @@ export type {
   AcquireEmbedderOptions,
   AcquireEmbedderOutcome,
   DeferReason,
+  DiscoverEmbedderWorkerOptions,
   EmbedderProbes,
   EmbedderRung,
   EmbedderWorkerPolicy,
@@ -208,12 +209,17 @@ export type {
 } from './embedder-acquire.js'
 export type { EmbedderPort } from './embedder-port.js'
 export {
+  EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
   EMBEDDER_WORKER_REGISTRATION_FILE,
+  EMBEDDER_WORKER_START_TIMEOUT_MS,
+  EMBEDDER_WORKER_TERM_GRACE_MS,
+  EmbedderWorkerTimeoutError,
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
   writeEmbedderWorkerRegistration,
 } from './embedder-worker/worker-registration.js'
 export type {
+  EmbedderWorkerTimeoutPhase,
   EmbedderWorkerRegistration,
   ReadEmbedderWorkerRegistrationOutcome,
 } from './embedder-worker/worker-registration.js'

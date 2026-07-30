@@ -15,6 +15,7 @@ export type DaemonEventKind =
   | 'drain-session-end'
   | 'embedder-worker-start'
   | 'embedder-worker-exit'
+  | 'embedder-worker-terminate-escalated'
   | 'run-child-exit'
   | 'daemon-stopped'
 

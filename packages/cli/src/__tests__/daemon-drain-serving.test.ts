@@ -907,6 +907,7 @@ describe('daemon curation scheduling', () => {
     expect(runMaintenanceTail).toHaveBeenCalledWith({
       knowledgeRoot: paths.knowledgeRoot,
       lease: expect.objectContaining({ epoch: 1 }),
+      embeddingCapability: { kind: 'deferred', reason: 'worker-unavailable' },
     })
 
     host.signal('SIGTERM')

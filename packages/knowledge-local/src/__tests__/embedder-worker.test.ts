@@ -302,28 +302,34 @@ describe.sequential('embedder worker discovery', () => {
       }
 
       child.kill('SIGSTOP')
-      const startedAtMs = Date.now()
-      let refusal: unknown
       try {
-        await discovered.embedder.embedQuery('a stopped worker must not wedge curation')
-      } catch (error) {
-        refusal = error
+        const startedAtMs = Date.now()
+        let refusal: unknown
+        try {
+          const embedder = discovered.embedder as { embedQuery(text: string): Promise<Float32Array> }
+          await embedder.embedQuery('a stopped worker must not wedge curation')
+        } catch (error) {
+          refusal = error
+        }
+
+        expect(refusal).toBeInstanceOf(EmbedderWorkerTimeoutError)
+        expect((refusal as EmbedderWorkerTimeoutError).phase).toBe('request')
+        expect(Date.now() - startedAtMs).toBeLessThan(requestTimeoutMs + 2_000)
+        expect(existsSync(registrationPath)).toBe(false)
+        await expect(resolveEmbedderCapability({
+          preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
+          allowDownload: false,
+          workerPolicy: 'required',
+          agentQaRoot,
+        })).resolves.toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, 'exit')
+          child.kill('SIGCONT')
+          child.kill('SIGTERM')
+          await exited
+        }
       }
-
-      expect(refusal).toBeInstanceOf(EmbedderWorkerTimeoutError)
-      expect((refusal as EmbedderWorkerTimeoutError).phase).toBe('request')
-      expect(Date.now() - startedAtMs).toBeLessThan(requestTimeoutMs + 2_000)
-      expect(existsSync(registrationPath)).toBe(false)
-      await expect(resolveEmbedderCapability({
-        preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
-        allowDownload: false,
-        workerPolicy: 'required',
-        agentQaRoot,
-      })).resolves.toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
-
-      child.kill('SIGCONT')
-      child.kill('SIGTERM')
-      await once(child, 'exit')
     },
   )
 })

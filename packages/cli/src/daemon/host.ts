@@ -9,6 +9,9 @@ import {
   composeJobRecovery,
   composeLocalAgent,
   DIGEST_JOB_ID_SOURCE,
+  EMBEDDER_WORKER_START_TIMEOUT_MS,
+  EMBEDDER_WORKER_TERM_GRACE_MS,
+  EmbedderWorkerTimeoutError,
   LOCAL_DAEMON_CAPABILITIES,
   SYSTEM_CLOCK,
 } from '@vostride/agent-qa-agent-local'
@@ -69,8 +72,8 @@ export const MAINTENANCE_CADENCE_MS = 300_000
 /** Provisional synchronous drain wait; retune from operational evidence without adding config. */
 export const DRAIN_WAIT_TIMEOUT_MS = 120_000
 
-/** Provisional graceful-stop backstop; retune from operational evidence without adding config. */
-export const DAEMON_SHUTDOWN_GRACE_MS = 10_000
+/** Provisional graceful-stop backstop; includes both worker termination bounds plus scheduling. */
+export const DAEMON_SHUTDOWN_GRACE_MS = (EMBEDDER_WORKER_TERM_GRACE_MS * 2) + 1_000
 
 /** Provisional worker residency window; retune from daemon telemetry without adding config. */
 export const EMBEDDER_WORKER_IDLE_MS = 300_000
@@ -78,8 +81,7 @@ export const EMBEDDER_WORKER_IDLE_MS = 300_000
 /** Bound each captured worker stream before it is attributed to the daemon event log. */
 export const EMBEDDER_WORKER_OUTPUT_CAP_BYTES = 65_536
 
-/** Provisional child readiness backstop; model loading must not stall a drain indefinitely. */
-export const EMBEDDER_WORKER_START_TIMEOUT_MS = 120_000
+export { EMBEDDER_WORKER_START_TIMEOUT_MS, EMBEDDER_WORKER_TERM_GRACE_MS }
 
 /** Run-scoped daemon captures; raw child streams never enter daemon-events.jsonl. */
 export const RUN_CHILD_STDOUT_FILE = 'run-child.stdout.log'
@@ -140,7 +142,11 @@ export interface DaemonHostOperations {
   appendDrainSessionReceipt(agentQaRoot: string, receipt: DrainSessionReceipt): void
   resolveEmbedderWorkerEntryPath(): string
   spawnEmbedderWorker(options: EmbedderWorkerSpawnOptions): ChildProcess
-  waitForEmbedderWorkerReady(agentQaRoot: string, pid: number | undefined): Promise<void>
+  waitForEmbedderWorkerReady(
+    agentQaRoot: string,
+    pid: number | undefined,
+    signal: AbortSignal,
+  ): Promise<void>
   removeEmbedderWorkerRegistration(agentQaRoot: string): boolean
   resetEmbedderCapability(): void
   randomUUID(): string
@@ -181,9 +187,9 @@ const DEFAULT_LOGGER: DaemonHostLogger = {
 async function waitForEmbedderWorkerReady(
   agentQaRoot: string,
   pid: number | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
-  const deadline = Date.now() + EMBEDDER_WORKER_START_TIMEOUT_MS
-  while (Date.now() < deadline) {
+  while (!signal.aborted) {
     const outcome = LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration(agentQaRoot)
     if (
       outcome.kind === 'parsed'
@@ -194,9 +200,20 @@ async function waitForEmbedderWorkerReady(
     if (outcome.kind === 'malformed') {
       throw new Error('Embedder worker registration is malformed')
     }
-    await new Promise((resolve) => setTimeout(resolve, 25))
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = (): void => {
+        clearTimeout(timer)
+        reject(signal.reason)
+      }
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort)
+        resolve()
+      }, 25)
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (signal.aborted) onAbort()
+    })
   }
-  throw new Error('Embedder worker did not publish a live registration before the timeout')
+  throw signal.reason
 }
 
 function defaultOperations(): DaemonHostOperations {
@@ -459,6 +476,51 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     }
   }
 
+  const waitForEmbedderWorkerExit = (
+    runtime: EmbedderWorkerRuntime,
+    timeoutMs: number,
+  ): Promise<boolean> => new Promise((resolve) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const finish = (exited: boolean): void => {
+      if (settled) return
+      settled = true
+      if (timeout !== undefined) operations.clearTimeout(timeout)
+      resolve(exited)
+    }
+    timeout = operations.setTimeout(() => finish(false), timeoutMs)
+    timeout.unref?.()
+    void runtime.exit.then(() => finish(true))
+  })
+
+  const stopEmbedderWorker = async (
+    reason: Exclude<EmbedderWorkerExitReason, 'crash'>,
+  ): Promise<void> => {
+    const runtime = embedderWorker
+    if (runtime === undefined) return
+    clearEmbedderWorkerIdleTimer()
+    runtime.stopReason ??= reason
+
+    if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
+      if (await waitForEmbedderWorkerExit(runtime, EMBEDDER_WORKER_TERM_GRACE_MS)) return
+      throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
+    }
+
+    runtime.child.kill('SIGTERM')
+    if (await waitForEmbedderWorkerExit(runtime, EMBEDDER_WORKER_TERM_GRACE_MS)) return
+
+    recordDaemonEvent({
+      kind: 'embedder-worker-terminate-escalated',
+      sessionId: runtime.sessionId,
+      pid: runtime.child.pid,
+      signal: 'SIGKILL',
+      reason,
+    })
+    runtime.child.kill('SIGKILL')
+    if (await waitForEmbedderWorkerExit(runtime, EMBEDDER_WORKER_TERM_GRACE_MS)) return
+    throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
+  }
+
   const ensureEmbedderWorker = async (sessionId: string): Promise<EmbedderWorkerRuntime> => {
     while (embedderWorker?.stopReason !== undefined) await embedderWorker.exit
     if (embedderWorker !== undefined) {
@@ -509,16 +571,31 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         pid: child.pid,
         modelId: DEFAULT_EMBEDDING_PROFILE.model_id,
       })
-      await Promise.race([
-        operations.waitForEmbedderWorkerReady(input.agentQaRoot, child.pid),
-        runtime.exit.then(() => {
-          throw new Error('Embedder worker exited before publishing its registration')
-        }),
-      ])
+      const startAbort = new AbortController()
+      const startTimeout = operations.setTimeout(() => {
+        startAbort.abort(
+          new EmbedderWorkerTimeoutError('start', EMBEDDER_WORKER_START_TIMEOUT_MS),
+        )
+      }, EMBEDDER_WORKER_START_TIMEOUT_MS)
+      startTimeout.unref?.()
+      try {
+        await Promise.race([
+          operations.waitForEmbedderWorkerReady(
+            input.agentQaRoot,
+            child.pid,
+            startAbort.signal,
+          ),
+          runtime.exit.then(() => {
+            throw new Error('Embedder worker exited before publishing its registration')
+          }),
+        ])
+      } finally {
+        operations.clearTimeout(startTimeout)
+        if (!startAbort.signal.aborted) startAbort.abort()
+      }
     } catch (error) {
       runtime.stopReason ??= 'start-error'
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
-      await runtime.exit
+      await stopEmbedderWorker('start-error')
       throw error
     }
     return runtime
@@ -529,21 +606,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     workerPolicy: 'required',
     agentQaRoot: input.agentQaRoot,
   })
-
-  const stopEmbedderWorker = async (
-    reason: Exclude<EmbedderWorkerExitReason, 'crash' | 'start-error'>,
-  ): Promise<void> => {
-    const runtime = embedderWorker
-    if (runtime === undefined) return
-    clearEmbedderWorkerIdleTimer()
-    if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
-      await runtime.exit
-      return
-    }
-    runtime.stopReason ??= reason
-    runtime.child.kill('SIGTERM')
-    await runtime.exit
-  }
 
   const armEmbedderWorkerIdleTimer = (runtime: EmbedderWorkerRuntime): void => {
     clearEmbedderWorkerIdleTimer()

@@ -549,9 +549,13 @@ describe('daemon embedder-worker lifecycle', () => {
       () => worker.kill.mock.calls.some(([signal]) => signal === 'SIGTERM'),
       'worker did not receive SIGTERM',
     )
-    const [termDeadline] = harness.timeoutIds(EMBEDDER_WORKER_TERM_GRACE_MS)
+    const termDeadline = harness.timeoutIds(EMBEDDER_WORKER_TERM_GRACE_MS).at(-1)
     expect(termDeadline).toBeDefined()
     expect(harness.fireTimeout(termDeadline!)).toBe(true)
+    await waitUntil(
+      () => worker.kill.mock.calls.some(([signal]) => signal === 'SIGKILL'),
+      'worker did not receive SIGKILL after its TERM grace',
+    )
     await expect(harness.running).resolves.toBe(0)
 
     expect(worker.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM', 'SIGKILL'])
@@ -564,5 +568,5 @@ describe('daemon embedder-worker lifecycle', () => {
       harness.order.indexOf('lease-release'),
     )
     expect(existsSync(harness.workerRegistrationPath)).toBe(false)
-  })
+  }, 15_000)
 })
