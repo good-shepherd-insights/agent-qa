@@ -140,6 +140,12 @@ export function createJobDispatcher(input: CreateJobDispatcherInput): JobDispatc
         // resident loop must still inspect the next eligible row instead of dying with it.
         safelyReport(error)
         consecutiveRuns += 1
+        if (isSafetyProbe) {
+          // A persistent driver fault is not a license to hot-spin either. Preserve immediate
+          // failure isolation inside a batch, then yield at the same bounded host seam.
+          consecutiveRuns = 0
+          doNotRunBeforeMs = input.scheduler.now() + AGENT_JOB_DISPATCH_POLL_MS
+        }
         continue
       }
 

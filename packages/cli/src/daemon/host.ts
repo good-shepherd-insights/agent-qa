@@ -715,7 +715,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
       await jobDispatcher?.stop()
       jobDispatcher = undefined
-      localAgent?.close()
+      await localAgent?.close()
       localAgent = undefined
       recovery?.close()
       recovery = undefined

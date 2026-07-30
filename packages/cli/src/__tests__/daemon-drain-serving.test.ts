@@ -179,7 +179,9 @@ function fakeRecovery(): JobRecoveryHost {
 function fakeLocalAgent(): LocalAgentHost {
   return {
     registry: {} as FunctionRegistry,
-    jobs: () => Promise.resolve({}),
+    jobs: () => Promise.resolve({
+      queue: { runNextJob: () => Promise.resolve({ ran: false, reason: 'no-job' }) },
+    }),
     close: vi.fn(),
   } as unknown as LocalAgentHost
 }

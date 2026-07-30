@@ -9,7 +9,10 @@ import type {
 } from '@vostride/agent-qa-agent'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { composeLocalAgent } from '../composition/compose-local-agent.js'
+import {
+  composeLocalAgent,
+  LocalAgentClosedError,
+} from '../composition/compose-local-agent.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
 
 const TEST_MODEL: JobModelCapability = {
@@ -47,7 +50,7 @@ async function rejectedWithClosedError(promise: Promise<unknown>): Promise<unkno
   )
   expect(outcome.status).toBe('rejected')
   if (outcome.status !== 'rejected') return outcome.value
-  expect(outcome.error).toMatchObject({ name: 'LocalAgentClosedError' })
+  expect(outcome.error).toBeInstanceOf(LocalAgentClosedError)
   return outcome.error
 }
 
@@ -96,7 +99,7 @@ describe('composeLocalAgent job-store lifecycle (WR-03)', () => {
     expect(closeOutcome.status).toBe('fulfilled')
     expect(openOutcome.status).toBe('rejected')
     if (openOutcome.status === 'rejected') {
-      expect(openOutcome.reason).toMatchObject({ name: 'LocalAgentClosedError' })
+      expect(openOutcome.reason).toBeInstanceOf(LocalAgentClosedError)
     }
     expect(existsSync(join(root, AGENT_JOB_STORE_DB_FILE))).toBe(true)
     expect(closeStore).toHaveBeenCalledTimes(1)

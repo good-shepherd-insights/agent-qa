@@ -102,6 +102,7 @@ export {
   DIGEST_JOB_ID_SOURCE,
   LOCAL_CURATION_CAPABILITIES,
   LOCAL_DAEMON_CAPABILITIES,
+  LocalAgentClosedError,
   RunProducedNoEventsError,
   SYSTEM_CLOCK,
 } from './composition/compose-local-agent.js'

@@ -428,6 +428,18 @@ export interface LocalAgentJobs {
   readonly model: JobModelCapability
 }
 
+/** Refusal returned when durable capabilities are requested after their composition was closed. */
+export class LocalAgentClosedError extends Error {
+  override readonly name = 'LocalAgentClosedError'
+
+  constructor(readonly agentQaRoot: string) {
+    super(
+      `The local agent composition for ${agentQaRoot} is closed. A closed composition cannot `
+      + 'reopen its job store; create a new composition with fresh lifecycle ownership instead.',
+    )
+  }
+}
+
 export interface LocalAgentHost {
   /** The 384 function registry with every seed capability bound over local storage. */
   readonly registry: FunctionRegistry
@@ -446,8 +458,8 @@ export interface LocalAgentHost {
    * caller's discipline.
    */
   jobs(): Promise<LocalAgentJobs>
-  /** Close whatever was opened. A no-op on a host that never called `jobs()`. */
-  close(): void
+  /** Close whatever was opened and join an open already in flight. Idempotent. */
+  close(): Promise<void>
 }
 
 export interface ComposeLocalAgentInput {
@@ -521,26 +533,41 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
 
   let opened: LocalAgentJobs | undefined
   let opening: Promise<LocalAgentJobs> | undefined
+  let closing: Promise<void> | undefined
+  let lifecycleGeneration = 0
+  let closed = false
 
-  async function openJobs(): Promise<LocalAgentJobs> {
+  async function openJobs(openGeneration: number): Promise<LocalAgentJobs> {
     const model = await input.model()
     const store = createSqliteJobStore({
       path: join(input.agentQaRoot, AGENT_JOB_STORE_DB_FILE),
       clock,
       checkpoints: createJobCheckpointStore({ root: input.agentQaRoot }),
     })
-    const kinds = input.jobKinds ?? createRealJobKindRegistry()
-    const jobs: LocalAgentJobs = {
-      queue: createAgentJobQueue({
+    let jobs: LocalAgentJobs
+    try {
+      const kinds = input.jobKinds ?? createRealJobKindRegistry()
+      jobs = {
+        queue: createAgentJobQueue({
+          store,
+          registry: kinds,
+          clock,
+          idSource: input.idSource ?? DIGEST_JOB_ID_SOURCE,
+          model,
+        }),
         store,
-        registry: kinds,
-        clock,
-        idSource: input.idSource ?? DIGEST_JOB_ID_SOURCE,
+        kinds,
         model,
-      }),
-      store,
-      kinds,
-      model,
+      }
+    } catch (error) {
+      store.close()
+      throw error
+    }
+    if (closed || openGeneration !== lifecycleGeneration) {
+      // The model can resolve after close. Constructing then invalidating here keeps the open
+      // transactional: the late store proves it can initialize, but it never becomes reachable.
+      store.close()
+      throw new LocalAgentClosedError(input.agentQaRoot)
     }
     opened = jobs
     return jobs
@@ -551,15 +578,34 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     curation: LOCAL_CURATION_CAPABILITIES,
     clock,
     jobs(): Promise<LocalAgentJobs> {
+      if (closed) return Promise.reject(new LocalAgentClosedError(input.agentQaRoot))
       // Memoized on the PROMISE, not on the resolved value: two concurrent callers awaiting a
       // value-memoized opener would each run the factory and each open the database.
-      opening ??= openJobs()
+      opening ??= openJobs(lifecycleGeneration)
       return opening
     },
-    close(): void {
-      opened?.store.close()
+    close(): Promise<void> {
+      if (closing !== undefined) return closing
+      closed = true
+      lifecycleGeneration += 1
+      const pending = opening
+      const current = opened
       opened = undefined
-      opening = undefined
+      // Preserve the existing synchronous-close property for a fully opened composition. Callers
+      // that historically did not await close still release the handle before returning.
+      current?.store.close()
+      closing = (async () => {
+        if (pending !== undefined) {
+          try {
+            const late = await pending
+            if (late !== current) late.store.close()
+          } catch {
+            // A superseded opener closes its own store; a model/open failure owns no live handle.
+          }
+        }
+        opening = undefined
+      })()
+      return closing
     },
   }
 }
