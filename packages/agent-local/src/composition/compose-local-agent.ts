@@ -14,6 +14,7 @@
 // arch rule named composition-carveout enforces that, so the job store proper stays lean.
 
 import { existsSync, readdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
 import {
@@ -46,10 +47,13 @@ import {
   purgeAffectedSetFingerprint,
   purgeRecord,
   readCanonicalBundleAnchors,
+  readEmbedderWorkerRegistration,
   readWriterLease,
   rebuildIndex,
   refreshWriterLeaseAuthority,
   releaseLease,
+  removeEmbedderWorkerRegistration,
+  resetEmbedderCapability,
   resolvePurgeAffectedSet,
   resolveRollbackAffectedSet,
   rollbackAffectedSetFingerprint,
@@ -72,7 +76,11 @@ import {
   loadCompletedRunHandoff,
 } from '@vostride/agent-qa-runner-local'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
-import { asJobId, sha256hex16 } from '@vostride/agent-qa-schema'
+import {
+  asJobId,
+  DEFAULT_EMBEDDING_PROFILE,
+  sha256hex16,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   RunEventEnvelope,
@@ -146,8 +154,22 @@ export interface LocalDaemonCapabilities {
   readonly listQueuedCandidates: typeof listQueuedCandidates
   readonly drainQueue: typeof drainQueue
   readonly runMaintenanceTail: typeof runMaintenanceTail
+  readonly resolveEmbedderWorkerEntryPath: () => string
+  readonly readEmbedderWorkerRegistration: typeof readEmbedderWorkerRegistration
+  readonly removeEmbedderWorkerRegistration: (
+    agentQaRoot: string,
+  ) => ReturnType<typeof removeEmbedderWorkerRegistration>
+  readonly resetEmbedderCapability: () => void
   readonly loadDefaultGuardrailPolicy: () => ReturnType<typeof loadGuardrailPolicy>
   readonly pinLocalHeadlessExecutionContext: () => void
+}
+
+function resolveEmbedderWorkerEntryPath(): string {
+  const requireBase = typeof __filename === 'string'
+    ? __filename
+    : (process.argv[1] ?? join(process.cwd(), 'package.json'))
+  const knowledgeEntry = createRequire(requireBase).resolve('@vostride/agent-qa-knowledge-local')
+  return join(dirname(knowledgeEntry), 'embedder-worker', 'worker-entry.js')
 }
 
 export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze({
@@ -159,6 +181,12 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   listQueuedCandidates,
   drainQueue,
   runMaintenanceTail,
+  resolveEmbedderWorkerEntryPath,
+  readEmbedderWorkerRegistration,
+  removeEmbedderWorkerRegistration: (agentQaRoot: string) => (
+    removeEmbedderWorkerRegistration(agentQaRoot)
+  ),
+  resetEmbedderCapability: () => resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE),
   loadDefaultGuardrailPolicy: () => loadGuardrailPolicy(defaultGuardrailPolicyInput),
   pinLocalHeadlessExecutionContext: () => {
     setActiveExecutionContextResolver(() => 'local-headless')

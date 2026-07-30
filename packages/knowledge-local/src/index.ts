@@ -205,6 +205,16 @@ export type {
 } from './embedder-acquire.js'
 export type { EmbedderPort } from './embedder-port.js'
 export {
+  EMBEDDER_WORKER_REGISTRATION_FILE,
+  readEmbedderWorkerRegistration,
+  removeEmbedderWorkerRegistration,
+  writeEmbedderWorkerRegistration,
+} from './embedder-worker/worker-registration.js'
+export type {
+  EmbedderWorkerRegistration,
+  ReadEmbedderWorkerRegistrationOutcome,
+} from './embedder-worker/worker-registration.js'
+export {
   clearRebuildRequest,
   readRebuildRequest,
   REBUILD_MARKER_FILE,

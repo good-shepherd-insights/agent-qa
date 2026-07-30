@@ -232,6 +232,7 @@ function startHarness(
       writeFileSync(workerRegistrationPath, '{}\n')
       return worker.asChildProcess()
     },
+    waitForEmbedderWorkerReady: () => Promise.resolve(),
     removeEmbedderWorkerRegistration: () => {
       rmSync(workerRegistrationPath, { force: true })
     },
