@@ -2,7 +2,13 @@ import { join } from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { buildFixture, payloadsForFixture, writeFixture } from './fixtures.js'
+import {
+  PERMITTED_RUN_RECEIPT_DIFF_FIELDS,
+  buildFixture,
+  compareRunReceipts,
+  payloadsForFixture,
+  writeFixture,
+} from './fixtures.js'
 import { LOGICAL_DUMP_EXCLUDED_COLUMNS } from './logical-dump.js'
 import {
   DUAL_HOST_ENV,
@@ -79,6 +85,103 @@ if (childMode) {
     }
     const records = dump.find(({ table }) => table === 'records')
     expect(records?.columns).toContain('embed_status')
+
+    expect(PERMITTED_RUN_RECEIPT_DIFF_FIELDS).toEqual([
+      'drainKind',
+      'handoffHolderPid',
+    ])
+    expect(() => compareRunReceipts(oneShot.runReceipt, daemon.runReceipt)).not.toThrow()
+    expect(oneShot.runReceipt).toMatchObject({
+      drainKind: 'drained',
+      handoffHolderPid: null,
+      candidateIds: oneShot.candidateIds,
+    })
+    expect(daemon.runReceipt).toMatchObject({
+      drainKind: 'handed-off',
+      handoffHolderPid: daemon.pid,
+      candidateIds: daemon.candidateIds,
+    })
+    expect(oneShot.sessionReceipts).toEqual([])
+    expect(daemon.sessionReceipts).toHaveLength(1)
+    expect(daemon.sessionReceipts[0]).toMatchObject({
+      epoch: 1,
+      candidateIds: daemon.candidateIds,
+      remainingAfter: 0,
+    })
+
+    const mutatedReceipt = {
+      ...daemon.runReceipt,
+      projectionVersion: Number(daemon.runReceipt.projectionVersion) + 1,
+    }
+    expect(() => compareRunReceipts(oneShot.runReceipt, mutatedReceipt))
+      .toThrow(/projectionVersion/u)
+    }, LEG_TIMEOUT_MS)
+
+    it('keeps the daemon lease alive through an over-TTL author call', async () => {
+      const fixtureRoot = makeRoot('fixture-over-ttl')
+      const fixtureFile = join(fixtureRoot.root, 'shared-fixture.json')
+      const fixture = buildFixture('over-ttl')
+      writeFixture(fixtureFile, fixture)
+
+      const oneShot = await runLeg(
+        'one-shot',
+        makeRoot('one-shot-over-ttl'),
+        fixtureFile,
+        'over-ttl',
+      )
+      const daemon = await runLeg(
+        'daemon',
+        makeRoot('daemon-over-ttl'),
+        fixtureFile,
+        'over-ttl',
+      )
+
+      expect(oneShot.bundleTree).toBe(daemon.bundleTree)
+      expect(oneShot.logicalDump).toBe(daemon.logicalDump)
+      expect(oneShot.epoch).toBe(1)
+      expect(daemon.epoch).toBe(1)
+      expect(oneShot.commitOrder).toEqual([...oneShot.candidateIds].sort())
+      expect(daemon.commitOrder).toEqual(oneShot.commitOrder)
+      expect(() => compareRunReceipts(oneShot.runReceipt, daemon.runReceipt)).not.toThrow()
+      expect(daemon.sessionReceipts).toHaveLength(1)
+      expect(daemon.sessionReceipts[0]).toMatchObject({
+        epoch: 1,
+        candidateIds: [...fixture.candidates].map(({ candidateId }) => candidateId).sort(),
+        remainingAfter: 0,
+      })
+
+      const eventKinds = daemon.daemonEvents.map(({ kind }) => kind)
+      expect(eventKinds.filter((kind) => kind === 'epoch-bump')).toHaveLength(1)
+      expect(eventKinds.filter((kind) => kind === 'lease-heartbeated').length)
+        .toBeGreaterThanOrEqual(3)
+      expect(eventKinds).not.toContain('lease-lost')
+      expect(eventKinds.some((kind) => String(kind).includes('reclaim'))).toBe(false)
+    }, LEG_TIMEOUT_MS)
+
+    it('leaves identical fresh stores for an empty candidate set', async () => {
+      const fixtureRoot = makeRoot('fixture-empty')
+      const fixtureFile = join(fixtureRoot.root, 'shared-fixture.json')
+      const fixture = buildFixture('empty')
+      writeFixture(fixtureFile, fixture)
+
+      const oneShot = await runLeg('one-shot', makeRoot('one-shot-empty'), fixtureFile, 'empty')
+      const daemon = await runLeg('daemon', makeRoot('daemon-empty'), fixtureFile, 'empty')
+
+      expect(oneShot.bundleTree).toBe(daemon.bundleTree)
+      expect(oneShot.logicalDump).toBe(daemon.logicalDump)
+      expect(oneShot.bundleCount).toBe(0)
+      expect(daemon.bundleCount).toBe(0)
+      expect(oneShot.authorOrder).toEqual([])
+      expect(daemon.authorOrder).toEqual([])
+      expect(oneShot.commitOrder).toEqual([])
+      expect(daemon.commitOrder).toEqual([])
+      expect(oneShot.epoch).toBe(1)
+      expect(daemon.epoch).toBe(1)
+      expect(() => compareRunReceipts(oneShot.runReceipt, daemon.runReceipt)).not.toThrow()
+      expect(oneShot.runReceipt.candidateIds).toEqual([])
+      expect(daemon.runReceipt.candidateIds).toEqual([])
+      expect(oneShot.sessionReceipts).toEqual([])
+      expect(daemon.sessionReceipts).toEqual([])
     }, LEG_TIMEOUT_MS)
   })
 }
