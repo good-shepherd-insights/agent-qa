@@ -736,6 +736,48 @@ describe('daemon stale-claim drain admission', () => {
     expect(readJobState(paths.knowledgeRoot, candidateId).kind).toBe('absent')
     expect(listQueuedCandidates(paths.knowledgeRoot)).toEqual([])
 
+    const sessionEvents = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((event) => (
+        event.kind === 'drain-session-start'
+        || event.kind === 'job-claimed'
+        || event.kind === 'job-completed'
+        || event.kind === 'drain-session-end'
+      ))
+    expect(sessionEvents).toMatchObject([
+      {
+        kind: 'drain-session-start',
+        sessionId: SESSION_ID,
+        holderPid: process.pid,
+        epoch: successor.lease.epoch,
+      },
+      {
+        kind: 'job-claimed',
+        sessionId: SESSION_ID,
+        candidateId,
+        holderPid: process.pid,
+        leaseId: successor.lease.leaseId,
+        epoch: successor.lease.epoch,
+      },
+      {
+        kind: 'job-completed',
+        sessionId: SESSION_ID,
+        candidateId,
+        holderPid: process.pid,
+        leaseId: successor.lease.leaseId,
+        epoch: successor.lease.epoch,
+      },
+      {
+        kind: 'drain-session-end',
+        sessionId: SESSION_ID,
+        holderPid: process.pid,
+        epoch: successor.lease.epoch,
+        candidateIds: [candidateId],
+      },
+    ])
+
     const eventsBefore = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
     const receiptsBefore = readDrainSessionReceipts(paths.agentQaRoot)
     host.fire(30_000)

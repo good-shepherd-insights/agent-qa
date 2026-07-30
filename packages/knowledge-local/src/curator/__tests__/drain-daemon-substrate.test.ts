@@ -48,6 +48,14 @@ const NO_INDEX_MAINTENANCE = {
   vectorReconciliationOutstanding: false,
 } as const
 
+type ObservedDrainLifecycleEvent =
+  | { readonly kind: 'job-claimed'; readonly candidateId: string }
+  | { readonly kind: 'job-completed'; readonly candidateId: string }
+
+type LifecycleAwareDrainOptions = Parameters<typeof drainQueue>[0] & {
+  onJobLifecycle?: (event: ObservedDrainLifecycleEvent) => void
+}
+
 describe('drainQueue daemon substrate', () => {
   let root: string
   let knowledgeRoot: string
@@ -293,6 +301,183 @@ describe('drainQueue daemon substrate', () => {
     expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
       kind: 'released',
     })
+  })
+
+  it('reports one lifecycle completion after a real multi-delta terminal transition', async () => {
+    const candidateId = enqueue('multi-delta-lifecycle', 'local-interactive')
+    const singleDeltaAuthor = scriptedAuthor()
+    const author: CuratorAuthor = async (job, neighbors) => {
+      const authored = await singleDeltaAuthor(job, neighbors)
+      if (authored.kind !== 'authored') throw new Error('expected authored fixture')
+      const delta = authored.deltas[0]
+      if (delta === undefined) throw new Error('expected fixture delta')
+      return {
+        ...authored,
+        deltas: [delta, delta],
+      }
+    }
+    const observed: Array<ObservedDrainLifecycleEvent & { durableState: string }> = []
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'local-interactive',
+      policy,
+      maintenance: 'skip',
+      onJobLifecycle: (event) => {
+        const state = readJobState(knowledgeRoot, event.candidateId)
+        observed.push({
+          ...event,
+          durableState: state.kind === 'parsed' ? state.state.lifecycle : state.kind,
+        })
+      },
+      operations: maintenanceFreeOperations(),
+    } as LifecycleAwareDrainOptions)
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      failures: 0,
+    })
+    expect(observed).toEqual([
+      { kind: 'job-claimed', candidateId, durableState: 'claimed' },
+      { kind: 'job-completed', candidateId, durableState: 'absent' },
+    ])
+    expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
+  })
+
+  it('reports a real claim but no completion when a caller lease epoch is stale', async () => {
+    const candidateId = enqueue('stale-epoch-lifecycle', 'local-interactive')
+    const stale = acquireWriterLease(knowledgeRoot)
+    if (stale.kind !== 'acquired') throw new Error('expected stale lease seed')
+    expect(releaseLease({ knowledgeRoot, leaseId: stale.leaseId })).toEqual({
+      kind: 'released',
+    })
+    const current = acquireWriterLease(knowledgeRoot)
+    if (current.kind !== 'acquired') throw new Error('expected current lease')
+    const leasePath = join(knowledgeRoot, LEASE_FILE)
+    const currentLeaseBytes = readFileSync(leasePath)
+    const observed: ObservedDrainLifecycleEvent[] = []
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'local-interactive',
+      policy,
+      maintenance: 'skip',
+      lease: { leaseId: stale.leaseId, epoch: stale.epoch },
+      onJobLifecycle: (event) => observed.push(event),
+      operations: maintenanceFreeOperations(),
+    } as LifecycleAwareDrainOptions)
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 0,
+      failures: 1,
+      failureDetails: [
+        expect.objectContaining({
+          stage: 'commit',
+          candidateId,
+          message: expect.stringContaining('writer epoch became stale'),
+        }),
+      ],
+    })
+    expect(observed).toEqual([{ kind: 'job-claimed', candidateId }])
+    expect(readFileSync(leasePath)).toEqual(currentLeaseBytes)
+    expect(enumerateBundleDirs(knowledgeRoot)).toEqual([])
+    expect(readJobState(knowledgeRoot, candidateId)).toMatchObject({
+      kind: 'parsed',
+      state: { lifecycle: 'authored' },
+    })
+    expect(releaseLease({ knowledgeRoot, leaseId: current.leaseId })).toEqual({
+      kind: 'released',
+    })
+  })
+
+  it.each([
+    'malformed state',
+    'author failure',
+    'checkpoint failure',
+    'requeue resynthesis',
+    'embedding crash requeue',
+    'non-terminal commit failure',
+  ] as const)('never reports completion after %s', async (scenario) => {
+    const candidateId = enqueue(`lifecycle-${scenario.replaceAll(' ', '-')}`, 'ci')
+    const observed: ObservedDrainLifecycleEvent[] = []
+    let author: CuratorAuthor = scriptedAuthor()
+    const operations: Partial<DrainOperations> = maintenanceFreeOperations()
+
+    switch (scenario) {
+      case 'malformed state':
+        operations.readJobState = () => ({ kind: 'malformed', present: true })
+        break
+      case 'author failure':
+        author = async () => {
+          throw new Error('injected author failure')
+        }
+        break
+      case 'checkpoint failure':
+        operations.persistAuthoredCheckpoint = () => ({
+          kind: 'malformed-state',
+          present: true,
+        })
+        break
+      case 'requeue resynthesis':
+        operations.commitCurationDelta = () => ({
+          kind: 'requeue-resynthesis',
+          reason: 'injected compare-and-set miss',
+        })
+        break
+      case 'embedding crash requeue':
+        operations.commitCurationDelta = () => {
+          throw new Error('injected native embedding crash')
+        }
+        break
+      case 'non-terminal commit failure':
+        operations.commitCurationDelta = () => ({
+          kind: 'failed',
+          reason: 'append-failed',
+        })
+        break
+    }
+
+    await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author,
+      executionContext: 'ci',
+      policy,
+      maintenance: 'skip',
+      onJobLifecycle: (event) => observed.push(event),
+      operations,
+    } as LifecycleAwareDrainOptions)
+
+    expect(observed).toEqual([{ kind: 'job-claimed', candidateId }])
+  })
+
+  it('reports no lifecycle event when abort wins before the claim boundary', async () => {
+    enqueue('pre-claim-abort', 'ci')
+    const controller = new AbortController()
+    controller.abort()
+    const observed: ObservedDrainLifecycleEvent[] = []
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      maintenance: 'skip',
+      signal: controller.signal,
+      onJobLifecycle: (event) => observed.push(event),
+      operations: maintenanceFreeOperations(),
+    } as LifecycleAwareDrainOptions)
+
+    expect(report).toMatchObject({ kind: 'aborted', jobsProcessed: 0, committed: 0 })
+    expect(observed).toEqual([])
   })
 
   it('reports the exact pending remainder on budget cut and handed off exits', async () => {
