@@ -47,6 +47,12 @@ import type { DaemonRegistration } from './registration.js'
 /** Provisional daemon heartbeat interval; retune from operational evidence without adding config. */
 export const LEASE_HEARTBEAT_INTERVAL_MS = 10_000
 
+/** Provisional lost-nudge backstop; retune from operational evidence without adding config. */
+export const CURATION_QUEUE_POLL_MS = 30_000
+
+/** Provisional writer-maintenance cadence; retune from operational evidence without adding config. */
+export const MAINTENANCE_CADENCE_MS = 300_000
+
 /** Provisional graceful-stop backstop; retune from operational evidence without adding config. */
 export const DAEMON_SHUTDOWN_GRACE_MS = 10_000
 
@@ -92,6 +98,7 @@ export interface DaemonHostOperations {
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
   listQueuedCandidates(knowledgeRoot: string): string[]
   drainQueue: typeof LOCAL_DAEMON_CAPABILITIES.drainQueue
+  runMaintenanceTail: typeof LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail
   appendDrainSessionReceipt(agentQaRoot: string, receipt: DrainSessionReceipt): void
   randomUUID(): string
   trace?(step: DaemonHostTraceStep): void
@@ -145,6 +152,7 @@ function defaultOperations(): DaemonHostOperations {
     startInvokeServer,
     listQueuedCandidates: LOCAL_DAEMON_CAPABILITIES.listQueuedCandidates,
     drainQueue: LOCAL_DAEMON_CAPABILITIES.drainQueue,
+    runMaintenanceTail: LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail,
     appendDrainSessionReceipt,
     randomUUID,
   }
@@ -219,6 +227,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let localAgent: LocalAgentHost | undefined
   let registrationWritten = false
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  let curationPollTimer: ReturnType<typeof setInterval> | undefined
+  let maintenanceTimer: ReturnType<typeof setInterval> | undefined
   let invokeServer: InvokeServerHandle | undefined
   let graceTimer: ReturnType<typeof setTimeout> | undefined
   let resolveCompletion: ((code: number) => void) | undefined
@@ -226,6 +236,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let shutdownCompleted = false
   let drainRequested = false
   let drainWorker: Promise<void> | undefined
+  let maintenanceWorker: Promise<void> | undefined
   let authorPromise: Promise<CuratorAuthor> | undefined
 
   const completion = new Promise<number>((resolve) => {
@@ -336,6 +347,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         operations.clearInterval(heartbeatTimer)
         heartbeatTimer = undefined
       }
+      if (curationPollTimer !== undefined) {
+        operations.clearInterval(curationPollTimer)
+        curationPollTimer = undefined
+      }
+      if (maintenanceTimer !== undefined) {
+        operations.clearInterval(maintenanceTimer)
+        maintenanceTimer = undefined
+      }
       if (graceTimer !== undefined) {
         operations.clearTimeout(graceTimer)
         graceTimer = undefined
@@ -347,6 +366,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       }
 
       await drainWorker
+      await maintenanceWorker
 
       localAgent?.close()
       localAgent = undefined
@@ -460,6 +480,40 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return completion
     }
     invokeServer = startedServer
+
+    curationPollTimer = operations.setInterval(requestDrain, CURATION_QUEUE_POLL_MS)
+    maintenanceTimer = operations.setInterval(() => {
+      if (shutdownPromise !== undefined || maintenanceWorker !== undefined) return
+      maintenanceWorker = operations.runMaintenanceTail({
+        knowledgeRoot: input.knowledgeRoot,
+        lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
+      })
+        .then(() => undefined)
+        .catch((error) => {
+          operations.appendDaemonEvent(input.agentQaRoot, {
+            kind: 'lease-lost',
+            reason:
+              typeof error === 'object'
+                && error !== null
+                && 'reason' in error
+                && typeof error.reason === 'string'
+                ? error.reason
+                : 'maintenance-error',
+            observedEpoch:
+              typeof error === 'object'
+                && error !== null
+                && 'observedEpoch' in error
+                && typeof error.observedEpoch === 'number'
+                ? error.observedEpoch
+                : undefined,
+            detail: error instanceof Error ? error.message : String(error),
+          })
+          void beginShutdown(1, false, 'lease-lost')
+        })
+        .finally(() => {
+          maintenanceWorker = undefined
+        })
+    }, MAINTENANCE_CADENCE_MS)
 
     heartbeatTimer = operations.setInterval(() => {
       if (shutdownPromise !== undefined) return

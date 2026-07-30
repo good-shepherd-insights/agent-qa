@@ -193,12 +193,11 @@ function hostHarness(nowMs = 1_700_000_000_000): HostHarness {
       now: () => nowMs,
       trace: (step) => traces.push(step),
       setInterval: (callback, intervalMs) => {
-        expect(intervalMs).toBe(LEASE_HEARTBEAT_INTERVAL_MS)
-        heartbeat = callback
-        return 1 as unknown as ReturnType<typeof setInterval>
+        if (intervalMs === LEASE_HEARTBEAT_INTERVAL_MS) heartbeat = callback
+        return intervalMs as unknown as ReturnType<typeof setInterval>
       },
-      clearInterval: () => {
-        heartbeat = undefined
+      clearInterval: (timer) => {
+        if ((timer as unknown as number) === LEASE_HEARTBEAT_INTERVAL_MS) heartbeat = undefined
       },
       setTimeout: () => 2 as unknown as ReturnType<typeof setTimeout>,
       clearTimeout: () => undefined,
