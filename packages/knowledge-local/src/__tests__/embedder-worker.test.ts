@@ -208,7 +208,14 @@ describe.sequential('embedder worker discovery', () => {
       pid: child.pid,
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
     })
-    await expect(discoverEmbedderWorker()).resolves.toMatchObject({ kind: 'worker' })
+    const foreignProjectRoot = temporaryProject('foreign-cwd')
+    process.chdir(foreignProjectRoot)
+    const discoverFromHostedRoot = discoverEmbedderWorker as unknown as (
+      hostedAgentQaRoot: string,
+    ) => ReturnType<typeof discoverEmbedderWorker>
+    await expect(discoverFromHostedRoot(agentQaRoot)).resolves.toMatchObject({ kind: 'worker' })
+
+    process.chdir(projectRoot)
 
     const outcome = await resolveEmbedderCapability({
       preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,

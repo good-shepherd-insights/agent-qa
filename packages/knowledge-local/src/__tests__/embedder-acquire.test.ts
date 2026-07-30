@@ -123,6 +123,37 @@ describe('acquireEmbedder', () => {
     expect(createFloorEmbedder).not.toHaveBeenCalled()
   })
 
+  it('requires the hosted worker without entering native or floor factories', async () => {
+    const agentQaRoot = '/hosted/project/.agent-qa'
+    const discoverWorker = vi.fn().mockResolvedValue({ kind: 'no-worker' })
+    const availableMemory = vi.fn().mockReturnValue(HEALTHY_MEMORY)
+    const createNativeEmbedder = vi.fn().mockResolvedValue(makeFakeEmbedder())
+    const createFloorEmbedder = vi.fn().mockReturnValue(makeFakeEmbedder(512))
+    const requiredOptions = {
+      preferredProfile: DEFAULT_EMBEDDING_PROFILE,
+      allowDownload: false,
+      workerPolicy: 'required',
+      agentQaRoot,
+      probes: probes({
+        discoverWorker,
+        availableMemory,
+        createNativeEmbedder,
+        createFloorEmbedder,
+      }),
+    } as Parameters<typeof acquireEmbedder>[0] & {
+      readonly workerPolicy: 'required'
+      readonly agentQaRoot: string
+    }
+
+    const outcome = await acquireEmbedder(requiredOptions)
+
+    expect(outcome).toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
+    expect(discoverWorker).toHaveBeenCalledWith(agentQaRoot)
+    expect(availableMemory).not.toHaveBeenCalled()
+    expect(createNativeEmbedder).not.toHaveBeenCalled()
+    expect(createFloorEmbedder).not.toHaveBeenCalled()
+  })
+
   it('defers a missing local artifact when downloads are disallowed', async () => {
     const createFloorEmbedder = vi.fn().mockReturnValue(makeFakeEmbedder(512))
     const outcome = await acquireEmbedder({

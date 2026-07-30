@@ -24,7 +24,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CURATION_QUEUE_POLL_MS } from '../daemon/host.js'
+import { CURATION_QUEUE_POLL_MS, MAINTENANCE_CADENCE_MS } from '../daemon/host.js'
 import {
   EMBEDDER_WORKER_IDLE_MS,
   runDaemonHost,
@@ -135,6 +135,8 @@ interface LifecycleHarness {
   readonly events: Array<Record<string, unknown>>
   readonly order: string[]
   readonly drainQueue: ReturnType<typeof vi.fn>
+  readonly acquireEmbedder: ReturnType<typeof vi.fn>
+  readonly runMaintenanceTail: ReturnType<typeof vi.fn>
   readonly workerRegistrationPath: string
   isStarted(): boolean
   fireInterval(intervalMs: number): void
@@ -147,6 +149,9 @@ interface LifecycleHarness {
 function startHarness(
   label: string,
   initialReports: Array<ReturnType<typeof drainReport>>,
+  overrides: Partial<{
+    waitForEmbedderWorkerReady: () => Promise<void>
+  }> = {},
 ): LifecycleHarness {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-daemon-embedder-${label}-`))
   roots.push(root)
@@ -166,12 +171,21 @@ function startHarness(
   let nextTimerId = 1
   let nextSessionId = 0
 
-  const drainQueue = vi.fn(async () => {
+  const drainQueue = vi.fn(async (_options: unknown) => {
     const report = reports.shift()
     if (report === undefined) throw new Error('No drain report queued')
     if (report.remaining === 0) queued.clear()
     return report
   })
+  const acquireEmbedder = vi.fn(async () => ({
+    kind: 'deferred' as const,
+    reason: 'worker-unavailable' as const,
+  }))
+  const runMaintenanceTail = vi.fn(async (_options: unknown) => ({
+    writerPass: { kind: 'not-requested' as const },
+    gc: { kind: 'completed' as const, summary: { trimmedRecordIds: [] } },
+    failures: [],
+  }))
 
   const operations = {
     composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
@@ -195,6 +209,8 @@ function startHarness(
     }),
     listQueuedCandidates: () => [...queued].sort(),
     drainQueue,
+    acquireEmbedder,
+    runMaintenanceTail,
     randomUUID: () => SESSION_IDS[nextSessionId++] ?? SESSION_IDS.at(-1)!,
     setInterval: (callback: () => void, intervalMs: number) => {
       const timerId = nextTimerId++
@@ -238,7 +254,8 @@ function startHarness(
       writeFileSync(workerRegistrationPath, '{}\n')
       return worker.asChildProcess()
     },
-    waitForEmbedderWorkerReady: () => Promise.resolve(),
+    waitForEmbedderWorkerReady:
+      overrides.waitForEmbedderWorkerReady ?? (() => Promise.resolve()),
     removeEmbedderWorkerRegistration: () => {
       rmSync(workerRegistrationPath, { force: true })
     },
@@ -264,6 +281,8 @@ function startHarness(
     events,
     order,
     drainQueue,
+    acquireEmbedder,
+    runMaintenanceTail,
     workerRegistrationPath,
     isStarted() {
       return signals.has('SIGTERM')
@@ -316,6 +335,60 @@ afterEach(() => {
 })
 
 describe('daemon embedder-worker lifecycle', () => {
+  it('defers a drain when worker startup fails without regaining in-process embedding', async () => {
+    const harness = startHarness(
+      'worker-required-start-failure',
+      [drainReport(1, 0)],
+      {
+        waitForEmbedderWorkerReady: () => Promise.reject(new Error('forced start failure')),
+      },
+    )
+    await waitUntil(() => harness.isStarted(), 'daemon did not start')
+
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'drain did not finish')
+
+    expect(harness.acquireEmbedder).toHaveBeenCalledWith({
+      allowDownload: false,
+      workerPolicy: 'required',
+      agentQaRoot: expect.any(String),
+    })
+    expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: { kind: 'deferred', reason: 'worker-unavailable' },
+    }))
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      kind: 'embedder-worker-exit',
+      reason: 'start-error',
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+  })
+
+  it('ensures the worker and threads worker-required capability into scheduled maintenance', async () => {
+    const harness = startHarness('maintenance-worker-required', [])
+    await waitUntil(() => harness.isStarted(), 'daemon did not start')
+
+    harness.fireInterval(MAINTENANCE_CADENCE_MS)
+    await waitUntil(
+      () => harness.runMaintenanceTail.mock.calls.length === 1,
+      'maintenance did not finish',
+    )
+
+    expect(harness.workers).toHaveLength(1)
+    expect(harness.acquireEmbedder).toHaveBeenCalledWith({
+      allowDownload: false,
+      workerPolicy: 'required',
+      agentQaRoot: expect.any(String),
+    })
+    expect(harness.runMaintenanceTail).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: { kind: 'deferred', reason: 'worker-unavailable' },
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+  })
+
   it('spawns once for repeated session demands and attributes captured output on idle exit', async () => {
     const harness = startHarness('reuse', [drainReport(1, 1), drainReport(1, 0)])
     await waitUntil(() => harness.isStarted(), 'daemon did not start')
