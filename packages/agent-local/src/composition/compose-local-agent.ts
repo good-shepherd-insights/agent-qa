@@ -60,7 +60,11 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
-import { setActiveExecutionContextResolver } from '@vostride/agent-qa-safety'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+  setActiveExecutionContextResolver,
+} from '@vostride/agent-qa-safety'
 import {
   FsEventLog,
   HANDOFF_FILE,
@@ -142,6 +146,7 @@ export interface LocalDaemonCapabilities {
   readonly listQueuedCandidates: typeof listQueuedCandidates
   readonly drainQueue: typeof drainQueue
   readonly runMaintenanceTail: typeof runMaintenanceTail
+  readonly loadDefaultGuardrailPolicy: () => ReturnType<typeof loadGuardrailPolicy>
   readonly pinLocalHeadlessExecutionContext: () => void
 }
 
@@ -154,6 +159,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   listQueuedCandidates,
   drainQueue,
   runMaintenanceTail,
+  loadDefaultGuardrailPolicy: () => loadGuardrailPolicy(defaultGuardrailPolicyInput),
   pinLocalHeadlessExecutionContext: () => {
     setActiveExecutionContextResolver(() => 'local-headless')
   },

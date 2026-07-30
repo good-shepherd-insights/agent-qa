@@ -12,10 +12,6 @@ import type {
   ReadWriterLeaseOutcome,
   WriterLease,
 } from '@vostride/agent-qa-agent-local'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-} from '@vostride/agent-qa-safety'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
@@ -165,7 +161,7 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
           config: createMaskedConfigReader(configPath),
           model: () => resolveCliJobModel(configPath),
           author: () => resolveDaemonCuratorAuthor(configPath),
-          policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+          policy: LOCAL_DAEMON_CAPABILITIES.loadDefaultGuardrailPolicy(),
         })
         process.exitCode = exitCode
       } catch (error) {
