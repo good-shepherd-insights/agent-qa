@@ -435,17 +435,25 @@ describe('the permanent-failure disposition (D-20)', () => {
     expect(harness.store.rows().filter((row) => row.kind === 'curate-memory')).toHaveLength(1)
   })
 
-  // The ORDER of the two writes, asserted rather than argued. A host that died between them
-  // must leave the continuation already durable and the job still claimable, so the next
-  // attempt re-runs the disposition and the dedupe merges it. Recording the failure first
-  // would make the job terminal with nothing left to finish its chain.
-  it('enqueues the continuation before it records the failure', async () => {
+  // The port call count is the proof boundary. Validation and deterministic request construction
+  // happen first, then the store receives the parent and complete continuation set exactly once.
+  it('lands the failure and every continuation through one failAndChain call', async () => {
     const clock = createSteppingClock()
     const store = createFakeJobStore(clock)
-    const crashing = {
+    const calls: string[] = []
+    const observed = {
       ...store,
-      recordFailure: async () => {
-        throw new Error('the host died between the two writes')
+      enqueue: async (...args: Parameters<FakeJobStore['enqueue']>) => {
+        calls.push('enqueue')
+        return store.enqueue(...args)
+      },
+      recordFailure: async (...args: Parameters<FakeJobStore['recordFailure']>) => {
+        calls.push('recordFailure')
+        return store.recordFailure(...args)
+      },
+      failAndChain: async (...args: Parameters<FakeJobStore['failAndChain']>) => {
+        calls.push('failAndChain')
+        return store.failAndChain(...args)
       },
     }
     const registry = createJobKindRegistry([
@@ -461,7 +469,7 @@ describe('the permanent-failure disposition (D-20)', () => {
       declaration({ kind: 'curate-memory', checkpointSchedule: ['candidates-authored'] }),
     ])
     const queue = createAgentJobQueue({
-      store: crashing,
+      store: observed,
       registry,
       clock,
       idSource,
@@ -469,11 +477,70 @@ describe('the permanent-failure disposition (D-20)', () => {
     })
     const fence = await store.adoptEpoch(1)
     await queue.enqueue('analyze-run', {}, 'key')
+    calls.length = 0
 
-    await expect(queue.runNextJob({ fence })).rejects.toThrowError('died between')
+    const outcome = await queue.runNextJob({ fence })
 
+    expect(calls).toEqual(['failAndChain'])
+    expect(outcome).toMatchObject({
+      disposition: 'failed',
+      continuation: [{ deduped: false }],
+    })
     expect(store.rows().filter((row) => row.kind === 'curate-memory')).toHaveLength(1)
-    expect(store.rows().find((row) => row.kind === 'analyze-run')?.status).toBe('queued')
+    expect(store.rows().find((row) => row.kind === 'analyze-run')?.status).toBe('failed')
+  })
+
+  it('mirrors failAndChain all-or-nothing behavior in the fake store', async () => {
+    const clock = createSteppingClock()
+    const store = createFakeJobStore(clock)
+    const fence = await store.adoptEpoch(1)
+    const head = await store.enqueue({
+      id: 'job_head' as JobId,
+      kind: 'analyze-run',
+      idempotencyKey: 'head',
+      summary: 'head',
+      payload: {},
+    })
+    await store.enqueue({
+      id: 'job_taken' as JobId,
+      kind: 'analyze-run',
+      idempotencyKey: 'taken',
+      summary: 'taken',
+      payload: {},
+    })
+    await store.claimNext(fence)
+
+    await expect(
+      store.failAndChain(
+        head.job.id,
+        { kind: 'permanent', reason: 'must roll back' },
+        [
+          {
+            id: 'job_ok' as JobId,
+            kind: 'analyze-run',
+            idempotencyKey: 'ok',
+            summary: 'ok',
+            payload: {},
+          },
+          {
+            id: 'job_taken' as JobId,
+            kind: 'analyze-run',
+            idempotencyKey: 'different-key',
+            summary: 'collision',
+            payload: {},
+          },
+        ],
+        fence,
+      ),
+    ).rejects.toThrow()
+
+    expect(store.rows().map((row) => row.id).sort()).toEqual(['job_head', 'job_taken'])
+    expect(store.rows().find((row) => row.id === 'job_head')).toMatchObject({
+      status: 'queued',
+      claimed: true,
+      lastFailureKind: undefined,
+      lastFailureReason: undefined,
+    })
   })
 
   // Without this, "invoked exactly once" is satisfied by an engine that invokes it zero times.

@@ -16,7 +16,7 @@
 // durability only through `JobStorePort`, so wrapping the port is enough to stand at either side of
 // any durable write, and `packages/agent` keeps exactly zero test branches. It is deliberately
 // general over the verb set rather than special-cased to `publishCheckpoint`: plan 07's adversarial
-// legs stand beside `recordFailure`, `completeAndChain` and `recordCancellation`, and they are meant
+// legs stand beside `failAndChain`, `completeAndChain` and `recordCancellation`, and they are meant
 // to be new selectors over THIS decorator rather than a second harness.
 
 import type {
@@ -159,6 +159,7 @@ export const JOB_STORE_VERBS = [
   'enqueue',
   'claimNext',
   'completeAndChain',
+  'failAndChain',
   'recordFailure',
   'requestCancel',
   'recordCancellation',
@@ -309,6 +310,16 @@ export function instrumentJobStore(store: JobStorePort, hook: JobStoreCrashHook)
     ): Promise<JobCompleteOutcome> =>
       around({ verb: 'completeAndChain', jobId: String(jobId) }, () =>
         store.completeAndChain(jobId, next, fence),
+      ),
+
+    failAndChain: (
+      jobId: JobId,
+      disposition: Extract<JobFailureDisposition, { readonly kind: 'permanent' }>,
+      next: readonly JobInsert[],
+      fence: JobStoreFence,
+    ): Promise<JobCompleteOutcome> =>
+      around({ verb: 'failAndChain', jobId: String(jobId) }, () =>
+        store.failAndChain(jobId, disposition, next, fence),
       ),
 
     recordFailure: (

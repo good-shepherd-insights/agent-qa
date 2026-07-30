@@ -466,6 +466,132 @@ describe('agent job store: recordFailure (ledger 1)', () => {
   })
 })
 
+describe('agent job store: failAndChain atomicity (CR-07)', () => {
+  let root: string
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-fail-chain-'))
+    store = openStore(root)
+    fence = await store.adoptEpoch(1)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  async function claimHead(): Promise<void> {
+    await store.enqueue(insert('job_root', 'key-root'))
+    const claim = await store.claimNext(fence)
+    expect(claim.claimed).toBe(true)
+  }
+
+  it('refuses a stale fence before changing the parent or inserting any continuation', async () => {
+    await claimHead()
+    const current = await store.adoptEpoch(2)
+    const parentBefore = rawRow(root, 'job_root')
+
+    await expect(
+      store.failAndChain(
+        asJobId('job_root'),
+        { kind: 'permanent', reason: 'stale host gave up' },
+        [insert('job_first', 'key-first'), insert('job_second', 'key-second')],
+        fence,
+      ),
+    ).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+
+    expect(rawRow(root, 'job_root')).toEqual(parentBefore)
+    expect((await store.dumpState()).jobs.map((row) => row.id)).toEqual(['job_root'])
+
+    await expect(
+      store.failAndChain(
+        asJobId('job_root'),
+        { kind: 'permanent', reason: 'current host gave up' },
+        [insert('job_first', 'key-first'), insert('job_second', 'key-second')],
+        current,
+      ),
+    ).resolves.toMatchObject({ chained: [{ deduped: false }, { deduped: false }] })
+  })
+
+  it('publishes the terminal parent and the complete continuation set as one fact', async () => {
+    await claimHead()
+
+    const outcome = await store.failAndChain(
+      asJobId('job_root'),
+      { kind: 'permanent', reason: 'dead head' },
+      [insert('job_first', 'key-first'), insert('job_second', 'key-second')],
+      fence,
+    )
+
+    expect(outcome.job.status).toBe('failed')
+    expect(outcome.chained.map((entry) => String(entry.job.id))).toEqual([
+      'job_first',
+      'job_second',
+    ])
+    expect(rawRow(root, 'job_root')).toMatchObject({
+      status: 'failed',
+      claimed_at: null,
+      last_failure_kind: 'permanent',
+      last_failure_reason: 'dead head',
+    })
+    expect((await store.dumpState()).jobs.map((row) => row.id).sort()).toEqual([
+      'job_first',
+      'job_root',
+      'job_second',
+    ])
+  })
+
+  it('rolls back the parent transition and every earlier insert when a successor fails', async () => {
+    await store.enqueue(insert('job_taken', 'key-taken'))
+    await claimHead()
+    const parentBefore = rawRow(root, 'job_root')
+
+    await expect(
+      store.failAndChain(
+        asJobId('job_root'),
+        { kind: 'permanent', reason: 'must roll back' },
+        [
+          insert('job_ok', 'key-ok'),
+          // Fresh dedupe key plus an occupied primary id forces the second INSERT to fail
+          // after the parent transition and first successor have both executed.
+          insert('job_taken', 'key-other'),
+        ],
+        fence,
+      ),
+    ).rejects.toThrow()
+
+    expect(rawRow(root, 'job_root')).toEqual(parentBefore)
+    expect((await store.dumpState()).jobs.map((row) => row.id).sort()).toEqual([
+      'job_root',
+      'job_taken',
+    ])
+  })
+
+  it('dedupes an identical retry without creating another continuation row', async () => {
+    await claimHead()
+    const successors = [insert('job_first', 'key-first'), insert('job_second', 'key-second')]
+
+    const first = await store.failAndChain(
+      asJobId('job_root'),
+      { kind: 'permanent', reason: 'dead head' },
+      successors,
+      fence,
+    )
+    const replay = await store.failAndChain(
+      asJobId('job_root'),
+      { kind: 'permanent', reason: 'dead head' },
+      successors,
+      fence,
+    )
+
+    expect(first.chained.map((entry) => entry.deduped)).toEqual([false, false])
+    expect(replay.chained.map((entry) => entry.deduped)).toEqual([true, true])
+    expect((await store.dumpState()).jobs).toHaveLength(3)
+  })
+})
+
 describe('agent job store: the deterministic logical dump (D-03)', () => {
   const roots: string[] = []
 

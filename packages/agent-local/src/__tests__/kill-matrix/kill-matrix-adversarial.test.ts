@@ -351,7 +351,7 @@ describe('a poison job that SIGKILLs its host on every attempt (D-18, JOBQ-03)',
   }, LEG_TIMEOUT_MS)
 })
 
-// ---- LEG FAMILY 2: a kill INSIDE the failure path (D-20) -------------------------------------------
+// ---- LEG FAMILY 2: a kill around the atomic failure path (D-20 / CR-07) -----------------------------
 
 describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () => {
   const kind: JobKind = 'analyze-run'
@@ -362,39 +362,27 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
     return String(KILL_MATRIX_ID_SOURCE.jobIdFor(successor, `${jobId}->${successor}`))
   }
 
-  /**
-   * The kill lands between the continuation enqueues and the failure record.
-   *
-   * That window is the whole of plan 04's ordering argument — the disposition enqueues first so a
-   * host that dies before recording leaves the job claimable and the continuation already durable.
-   * The leg's positive evidence is exactly that: BOTH continuation rows exist at the instant of the
-   * kill, which is only possible if the producer was reached and its effect committed.
-   */
-  it('leaves its continuations durable, and the replay dedupes into exactly one of each', async () => {
+  it('leaves no continuation before failAndChain, then resumes into one complete set', async () => {
     const declaration = declarationFor(kind)
     const checkpointId = declaration.checkpointSchedule[0]!
     const paths = makeRoot('failure-path-record')
     const jobId = String(await seedJob(paths.agentQaRoot, kind, PAYLOAD))
     const successors = declaration.allowedSuccessors
     expect(successors.length).toBeGreaterThan(1)
-    const selector = verbCrashSelector('recordFailure', 'before', jobId)
+    const selector = verbCrashSelector('failAndChain', 'before', jobId)
 
     const marker = await crashAt(paths, paths.marker, selector, {
       [KILL_MATRIX_ENV.kind]: kind,
       [KILL_MATRIX_ENV.verbPoint]: selector,
       [KILL_MATRIX_ENV.payload]: JSON.stringify(PAYLOAD),
     })
-    expect(marker).toMatchObject({ verb: 'recordFailure', side: 'before', jobId })
+    expect(marker).toMatchObject({ verb: 'failAndChain', side: 'before', jobId })
 
     const crashed = await readStoreSnapshot(paths.agentQaRoot)
-    // POSITIVE EVIDENCE the disposition ran before the kill.
+    // The producer ran, but the single durable boundary has not: no partial successor may escape.
     for (const successor of successors) {
-      expect(jobRow(crashed, continuationIdFor(jobId, successor))).toMatchObject({
-        kind: successor,
-        status: 'queued',
-      })
+      expect(jobRows(crashed).some((row) => row.kind === successor)).toBe(false)
     }
-    // And that the kill landed strictly INSIDE the path: the failure itself is not recorded.
     expect(jobRow(crashed, jobId)).toMatchObject({ id: jobId, status: 'queued' })
     expect(jobRow(crashed, jobId).claimed_at).not.toBeNull()
     expect(jobHistory(crashed, jobId)).toEqual({
@@ -403,7 +391,7 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
       last_failure_kind: null,
       last_failure_reason: null,
     })
-    expect(jobRows(crashed)).toHaveLength(1 + successors.length)
+    expect(jobRows(crashed)).toHaveLength(1)
     expect(checkpointFileNames(crashed)).toEqual([checkpointPath(jobId, checkpointId)])
     const authoredPreCrash = authoredCheckpointIds(paths.invocations)
     expect(authoredPreCrash).toEqual([checkpointId])
@@ -432,9 +420,7 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
       // The recorded checkpoint was NOT republished on the way through.
       checkpointsPublished: [],
       reason: REASON,
-      // THE REPLAY DEDUPED, said by the store rather than inferred: the producer ran again and
-      // every instance it produced merged into a row that already existed.
-      continuationDeduped: successors.map(() => true),
+      continuationDeduped: successors.map(() => false),
       continuation: successors.map((successor) => continuationIdFor(jobId, successor)),
     })
     for (const successor of successors) {
@@ -474,36 +460,39 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
     )
   }, LEG_TIMEOUT_MS)
 
-  /**
-   * The kill lands between the FIRST continuation enqueue and the second.
-   *
-   * The sharper half: the disposition is half-written when the host dies, and the replay has to
-   * COMPLETE it rather than merely be harmless. A store whose replay only deduped would leave the
-   * second successor missing forever, and the first leg above could not tell.
-   */
-  it('completes a half-written disposition on resume rather than only deduping it', async () => {
+  it('makes the terminal parent and every continuation visible before failAndChain returns', async () => {
     const declaration = declarationFor(kind)
-    const paths = makeRoot('failure-path-partial')
+    const checkpointId = declaration.checkpointSchedule[0]!
+    const paths = makeRoot('failure-path-atomic')
     const jobId = String(await seedJob(paths.agentQaRoot, kind, PAYLOAD))
-    const [first, second] = declaration.allowedSuccessors
-    expect(first).toBeDefined()
-    expect(second).toBeDefined()
-    const firstId = continuationIdFor(jobId, first!)
-    const selector = verbCrashSelector('enqueue', 'after', firstId)
+    const successors = declaration.allowedSuccessors
+    expect(successors.length).toBeGreaterThan(1)
+    const selector = verbCrashSelector('failAndChain', 'after', jobId)
 
-    await crashAt(paths, paths.marker, selector, {
+    const marker = await crashAt(paths, paths.marker, selector, {
       [KILL_MATRIX_ENV.kind]: kind,
       [KILL_MATRIX_ENV.verbPoint]: selector,
       [KILL_MATRIX_ENV.payload]: JSON.stringify(PAYLOAD),
     })
+    expect(marker).toMatchObject({ verb: 'failAndChain', side: 'after', jobId })
 
     const crashed = await readStoreSnapshot(paths.agentQaRoot)
-    expect(jobRow(crashed, firstId)).toMatchObject({ kind: first!, status: 'queued' })
-    expect(jobRows(crashed).map((row) => row.kind).sort()).toEqual([first!, kind].sort())
-    expect(
-      jobRows(crashed).some((row) => row.kind === second!),
-      'the second continuation must NOT exist yet, or the kill missed its window',
-    ).toBe(false)
+    expect(jobRow(crashed, jobId)).toMatchObject({ status: 'failed', claimed_at: null })
+    expect(jobHistory(crashed, jobId)).toMatchObject({
+      attempts: 1,
+      last_failure_kind: 'permanent',
+      last_failure_reason: REASON,
+    })
+    for (const successor of successors) {
+      expect(jobRow(crashed, continuationIdFor(jobId, successor))).toMatchObject({
+        kind: successor,
+        status: 'queued',
+      })
+    }
+    expect(jobRows(crashed)).toHaveLength(1 + successors.length)
+    expect(checkpointFileNames(crashed)).toEqual([checkpointPath(jobId, checkpointId)])
+    const authoredPreCrash = authoredCheckpointIds(paths.invocations)
+    expect(authoredPreCrash).toEqual([checkpointId])
 
     const resumed = await runChildToCompletion(
       childEnv(paths, {
@@ -513,24 +502,37 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
       }),
       paths.report,
     )
+    expect(resumed.released).toEqual([])
     const outcomes = resumed.outcomes as Record<string, unknown>[]
-    // THE DECISIVE FIELD. The producer's first instance deduped into the row that survived the
-    // crash; its second did NOT, because that row never existed. A replay that were merely
-    // idempotent — and left the missing successor missing forever — reads `[true, true]` here.
-    expect(outcomes.find((entry) => entry.jobId === jobId)).toMatchObject({
-      ran: true,
-      disposition: 'failed',
-      continuationDeduped: [true, false],
-      continuation: [firstId, continuationIdFor(jobId, second!)],
-    })
+    expect(outcomes).toHaveLength(successors.length)
+    expect(outcomes.some((entry) => entry.jobId === jobId)).toBe(false)
+    for (const successor of successors) {
+      expect(outcomes.find((entry) => entry.jobId === continuationIdFor(jobId, successor))).toMatchObject({
+        ran: true,
+        disposition: 'completed',
+      })
+    }
 
     const settled = await readStoreSnapshot(paths.agentQaRoot)
-    // The missing one arrived; the surviving one did not double.
-    expect(jobRow(settled, continuationIdFor(jobId, second!))).toMatchObject({ kind: second! })
-    expect(jobRows(settled).filter((row) => row.kind === first!)).toHaveLength(1)
-    expect(jobRows(settled).filter((row) => row.kind === second!)).toHaveLength(1)
-    expect(jobRow(settled, jobId)).toMatchObject({ status: 'failed' })
-    expect(jobHistory(settled, jobId).last_failure_reason).toBe(REASON)
+    expect(jobRows(settled)).toHaveLength(1 + successors.length)
+    for (const successor of successors) {
+      expect(jobRows(settled).filter((row) => row.kind === successor)).toHaveLength(1)
+      expect(jobRow(settled, continuationIdFor(jobId, successor))).toMatchObject({ status: 'done' })
+    }
+    expect(jobRow(settled, jobId)).toMatchObject({ status: 'failed', claimed_at: null })
+    expect(jobHistory(settled, jobId)).toMatchObject({
+      attempts: 1,
+      last_failure_kind: 'permanent',
+      last_failure_reason: REASON,
+    })
+    expect(settled.checkpointBytes[checkpointPath(jobId, checkpointId)]).toBe(
+      crashed.checkpointBytes[checkpointPath(jobId, checkpointId)],
+    )
+    const authoredOnResume = authoredCheckpointIds(paths.invocations, authoredPreCrash.length)
+    expect(authoredOnResume).not.toContain(checkpointId)
+    expect([...authoredOnResume].sort()).toEqual(
+      successors.flatMap((successor) => [...declarationFor(successor).checkpointSchedule]).sort(),
+    )
   }, LEG_TIMEOUT_MS)
 })
 
