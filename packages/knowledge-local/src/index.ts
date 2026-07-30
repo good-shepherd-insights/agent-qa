@@ -202,6 +202,7 @@ export type {
   DeferReason,
   EmbedderProbes,
   EmbedderRung,
+  EmbedderWorkerPolicy,
   ResolveEmbedderCapabilityOptions,
   WorkerDiscoveryResult,
 } from './embedder-acquire.js'

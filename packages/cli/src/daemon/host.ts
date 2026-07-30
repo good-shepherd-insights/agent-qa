@@ -134,6 +134,7 @@ export interface DaemonHostOperations {
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
   inspectDrainableCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork
   listQueuedCandidates(knowledgeRoot: string): string[]
+  acquireEmbedder: typeof LOCAL_DAEMON_CAPABILITIES.acquireEmbedder
   drainQueue: typeof LOCAL_DAEMON_CAPABILITIES.drainQueue
   runMaintenanceTail: typeof LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail
   appendDrainSessionReceipt(agentQaRoot: string, receipt: DrainSessionReceipt): void
@@ -220,6 +221,7 @@ function defaultOperations(): DaemonHostOperations {
     startInvokeServer,
     inspectDrainableCurationWork: LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork,
     listQueuedCandidates: LOCAL_DAEMON_CAPABILITIES.listQueuedCandidates,
+    acquireEmbedder: LOCAL_DAEMON_CAPABILITIES.acquireEmbedder,
     drainQueue: LOCAL_DAEMON_CAPABILITIES.drainQueue,
     runMaintenanceTail: LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail,
     appendDrainSessionReceipt,
@@ -522,6 +524,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     return runtime
   }
 
+  const acquireRequiredEmbedder = () => operations.acquireEmbedder({
+    allowDownload: false,
+    workerPolicy: 'required',
+    agentQaRoot: input.agentQaRoot,
+  })
+
   const stopEmbedderWorker = async (
     reason: Exclude<EmbedderWorkerExitReason, 'crash' | 'start-error'>,
   ): Promise<void> => {
@@ -600,6 +608,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           )
         }
       }
+      const embeddingCapability = embedderLifecycleEnabled
+        ? await acquireRequiredEmbedder()
+        : { kind: 'deferred' as const, reason: 'worker-unavailable' as const }
       let report: Awaited<ReturnType<DaemonHostOperations['drainQueue']>>
       try {
         report = await operations.drainQueue({
@@ -610,6 +621,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           author,
           executionContext: 'local-headless',
           policy: input.policy,
+          embeddingCapability,
           maintenance: 'skip',
           onJobLifecycle: (event) => {
             seenCandidateIds.add(event.candidateId)
@@ -926,10 +938,31 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     curationPollTimer = operations.setInterval(requestDrain, CURATION_QUEUE_POLL_MS)
     maintenanceTimer = operations.setInterval(() => {
       if (shutdownPromise !== undefined || maintenanceWorker !== undefined) return
-      maintenanceWorker = operations.runMaintenanceTail({
-        knowledgeRoot: input.knowledgeRoot,
-        lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
-      })
+      maintenanceWorker = (async () => {
+        const sessionId = operations.randomUUID()
+        let worker: EmbedderWorkerRuntime | undefined
+        if (embedderLifecycleEnabled) {
+          try {
+            worker = await ensureEmbedderWorker(sessionId)
+          } catch (error) {
+            logger.error(
+              `Embedder worker start failed: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+        }
+        const embeddingCapability = embedderLifecycleEnabled
+          ? await acquireRequiredEmbedder()
+          : { kind: 'deferred' as const, reason: 'worker-unavailable' as const }
+        try {
+          await operations.runMaintenanceTail({
+            knowledgeRoot: input.knowledgeRoot,
+            lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
+            embeddingCapability,
+          })
+        } finally {
+          if (worker !== undefined) armEmbedderWorkerIdleTimer(worker)
+        }
+      })()
         .then(() => undefined)
         .catch((error) => {
           recordDaemonEvent({

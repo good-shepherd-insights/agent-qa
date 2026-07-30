@@ -1,4 +1,7 @@
-import { acquireEmbedder } from '../embedder-acquire.js'
+import {
+  acquireEmbedder,
+  type AcquireEmbedderOutcome,
+} from '../embedder-acquire.js'
 import {
   runKnowledgeGc,
   type GcSummary,
@@ -65,6 +68,8 @@ export interface MaintenanceBudget {
 export interface RunMaintenanceTailOptions {
   knowledgeRoot: string
   lease: { leaseId: string; epoch: number }
+  /** Host-resolved posture; daemon callers pass worker-required, one-shot callers omit it. */
+  embeddingCapability?: AcquireEmbedderOutcome
   /** Omit for daemon cadence; one-shot drains provide their 60 s boundary explicitly. */
   budget?: MaintenanceBudget
   /** Fault-injection seam; production callers must omit it. */
@@ -118,7 +123,8 @@ async function runWriterPass(
     return { kind: 'not-requested' }
   }
 
-  const capability = await operations.acquireEmbedder({ allowDownload: false })
+  const capability = options.embeddingCapability
+    ?? await operations.acquireEmbedder({ allowDownload: false })
   const injectedRebuild = options.operations?.rebuildIndex !== undefined
   const rebuild = await operations.rebuildIndex({
     knowledgeRoot: options.knowledgeRoot,

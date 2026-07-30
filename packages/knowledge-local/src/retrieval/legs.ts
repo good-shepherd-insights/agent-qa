@@ -12,7 +12,11 @@ import {
   type Anchor,
 } from '@vostride/agent-qa-schema'
 
-import { acquireEmbedder, type EmbedderProbes } from '../embedder-acquire.js'
+import {
+  acquireEmbedder,
+  type AcquireEmbedderOutcome,
+  type EmbedderProbes,
+} from '../embedder-acquire.js'
 import { wrapEmbedderWithCache } from '../embed-cache.js'
 import type { EmbedderPort } from '../embedder-port.js'
 import {
@@ -56,6 +60,8 @@ export interface LegCandidate extends FusionCandidate {
 export interface DenseLegOptions {
   /** Test/integration seam; production omission runs the automatic acquisition ladder. */
   embedder?: EmbedderPort
+  /** Host-resolved posture; a non-ready value deliberately suppresses the automatic ladder. */
+  capability?: AcquireEmbedderOutcome
   allowDownload?: boolean
   probes?: EmbedderProbes
 }
@@ -199,7 +205,18 @@ async function queryEmbedder(
   const profile = resolveActiveProfile(connection.db)
   let embedder = options.embedder
 
-  if (embedder === undefined) {
+  if (embedder === undefined && options.capability !== undefined) {
+    const outcome = options.capability
+    if (
+      outcome.kind !== 'ready'
+      || embeddingProfileKey(outcome.profile) !== embeddingProfileKey(profile)
+    ) {
+      return undefined
+    }
+    embedder = outcome.embedder
+  }
+
+  if (embedder === undefined && options.capability === undefined) {
     const outcome = await acquireEmbedder({
       preferredProfile: profile,
       allowDownload: options.allowDownload ?? false,
@@ -213,6 +230,7 @@ async function queryEmbedder(
     }
     embedder = outcome.embedder
   }
+  if (embedder === undefined) return undefined
 
   // Reader connections cannot create the derived table. An absent cache is a read miss, while a
   // present cache always wraps in check-only mode and can never materialize query rows.

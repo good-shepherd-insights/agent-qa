@@ -36,6 +36,7 @@ import type {
   StartedRun,
 } from '@vostride/agent-qa-agent'
 import {
+  acquireEmbedder,
   acquireWriterLease,
   countPendingCurationJobs,
   drainQueue,
@@ -154,6 +155,7 @@ export interface LocalDaemonCapabilities {
   readonly countPendingCurationJobs: typeof countPendingCurationJobs
   readonly inspectDrainableCurationWork: typeof inspectDrainableCurationWork
   readonly listQueuedCandidates: typeof listQueuedCandidates
+  readonly acquireEmbedder: typeof acquireEmbedder
   readonly drainQueue: typeof drainQueue
   readonly runMaintenanceTail: typeof runMaintenanceTail
   readonly resolveEmbedderWorkerEntryPath: () => string
@@ -182,6 +184,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   countPendingCurationJobs,
   inspectDrainableCurationWork,
   listQueuedCandidates,
+  acquireEmbedder,
   drainQueue,
   runMaintenanceTail,
   resolveEmbedderWorkerEntryPath,

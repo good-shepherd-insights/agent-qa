@@ -146,9 +146,10 @@ afterAll(() => {
 describe.sequential('embedder worker discovery', () => {
   it('returns no-worker when registration is absent', async () => {
     const projectRoot = temporaryProject('absent')
+    const agentQaRoot = join(projectRoot, '.agent-qa')
     process.chdir(projectRoot)
 
-    await expect(discoverEmbedderWorker()).resolves.toEqual({ kind: 'no-worker' })
+    await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
   })
 
   it('removes a dead-pid registration and returns no-worker', async () => {
@@ -162,7 +163,7 @@ describe.sequential('embedder worker discovery', () => {
     registration(projectRoot, { pid: deadPid })
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({ kind: 'parsed' })
 
-    await expect(discoverEmbedderWorker()).resolves.toEqual({ kind: 'no-worker' })
+    await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
     expect(existsSync(embedderWorkerRegistrationPath(agentQaRoot))).toBe(false)
   })
 
@@ -175,7 +176,7 @@ describe.sequential('embedder worker discovery', () => {
     })
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({ kind: 'parsed' })
 
-    await expect(discoverEmbedderWorker()).resolves.toEqual({ kind: 'no-worker' })
+    await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
     expect(existsSync(embedderWorkerRegistrationPath(agentQaRoot))).toBe(false)
   })
 
@@ -210,10 +211,7 @@ describe.sequential('embedder worker discovery', () => {
     })
     const foreignProjectRoot = temporaryProject('foreign-cwd')
     process.chdir(foreignProjectRoot)
-    const discoverFromHostedRoot = discoverEmbedderWorker as unknown as (
-      hostedAgentQaRoot: string,
-    ) => ReturnType<typeof discoverEmbedderWorker>
-    await expect(discoverFromHostedRoot(agentQaRoot)).resolves.toMatchObject({ kind: 'worker' })
+    await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toMatchObject({ kind: 'worker' })
 
     process.chdir(projectRoot)
 

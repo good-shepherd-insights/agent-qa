@@ -1,3 +1,4 @@
+import { dirname } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -39,7 +40,12 @@ export const EMBEDDER_MIN_AVAILABLE_BYTES = 1_073_741_824
 
 export type WorkerDiscoveryResult = { kind: 'no-worker' } | { kind: 'worker' }
 export type EmbedderRung = 'native' | 'floor'
-export type DeferReason = 'ram-budget' | 'cold-artifact' | 'load-failure'
+export type EmbedderWorkerPolicy = 'preferred' | 'required'
+export type DeferReason =
+  | 'ram-budget'
+  | 'cold-artifact'
+  | 'load-failure'
+  | 'worker-unavailable'
 
 export type AcquireEmbedderOutcome =
   | {
@@ -58,7 +64,7 @@ export type AcquireEmbedderOutcome =
  * user-facing selector, configuration key, environment variable, or CLI switch.
  */
 export interface EmbedderProbes {
-  discoverWorker?: () => Promise<WorkerDiscoveryResult>
+  discoverWorker?: (agentQaRoot: string) => Promise<WorkerDiscoveryResult>
   availableMemory?: () => number
   createNativeEmbedder?: (options: {
     profile: EmbeddingProfile
@@ -70,6 +76,10 @@ export interface EmbedderProbes {
 export interface AcquireEmbedderOptions {
   preferredProfile?: EmbeddingProfile
   allowDownload: boolean
+  /** Daemon posture requires the child; ordinary one-shot callers retain the preferred ladder. */
+  workerPolicy?: EmbedderWorkerPolicy
+  /** Explicit hosted runtime root. Required policy must never infer it from ambient cwd. */
+  agentQaRoot?: string
   cache?: {
     db: DatabaseSync
     mode: EmbedCacheMode
@@ -81,6 +91,10 @@ export interface AcquireEmbedderOptions {
 export interface ResolveEmbedderCapabilityOptions {
   preferredProfile?: EmbeddingProfile
   allowDownload: boolean
+  /** Daemon posture requires the child; ordinary one-shot callers retain the preferred ladder. */
+  workerPolicy?: EmbedderWorkerPolicy
+  /** Explicit hosted runtime root. Required policy must never infer it from ambient cwd. */
+  agentQaRoot?: string
   /** D-12/D-17 test seam. Production callers resolve actual host capabilities. */
   probes?: EmbedderProbes
 }
@@ -108,9 +122,15 @@ export function resetEmbedderCapability(profile?: EmbeddingProfile): void {
     return
   }
 
-  const key = embeddingProfileKey(profile)
-  processCapabilities.delete(key)
-  for (const capabilities of injectedCapabilityCaches) capabilities.delete(key)
+  const prefix = capabilityProfilePrefix(profile)
+  for (const key of processCapabilities.keys()) {
+    if (key.startsWith(prefix)) processCapabilities.delete(key)
+  }
+  for (const capabilities of injectedCapabilityCaches) {
+    for (const key of capabilities.keys()) {
+      if (key.startsWith(prefix)) capabilities.delete(key)
+    }
+  }
 }
 
 interface WorkerBackedDiscoveryResult {
@@ -127,10 +147,11 @@ function isWorkerBackedDiscovery(
   return candidate.profile !== undefined && candidate.embedder !== undefined
 }
 
-/** D-09's filled worker arm, retaining the reservation's exported signature and result union. */
-export async function discoverEmbedderWorker(): Promise<WorkerDiscoveryResult> {
-  const projectRoot = process.cwd()
-  const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+/** D-09's worker arm, rooted in the hosted project rather than ambient process cwd. */
+export async function discoverEmbedderWorker(
+  agentQaRoot: string,
+): Promise<WorkerDiscoveryResult> {
+  const projectRoot = dirname(agentQaRoot)
   const outcome = readEmbedderWorkerRegistration(agentQaRoot)
   if (outcome.kind !== 'parsed') return { kind: 'no-worker' }
 
@@ -222,6 +243,20 @@ function cacheFor(probes: EmbedderProbes | undefined): Map<string, Promise<Capab
   return created
 }
 
+function capabilityCacheKey(
+  profile: EmbeddingProfile,
+  workerPolicy: EmbedderWorkerPolicy,
+  agentQaRoot: string,
+): string {
+  const profileKey = embeddingProfileKey(profile)
+  return `${profileKey.length}:${profileKey}:${workerPolicy}:${agentQaRoot}`
+}
+
+function capabilityProfilePrefix(profile: EmbeddingProfile): string {
+  const profileKey = embeddingProfileKey(profile)
+  return `${profileKey.length}:${profileKey}:`
+}
+
 async function probeFloor(
   factory: NonNullable<EmbedderProbes['createFloorEmbedder']>,
 ): Promise<CapabilityOutcome> {
@@ -241,9 +276,13 @@ async function probeFloor(
 async function probeCapability({
   preferredProfile,
   allowDownload,
+  workerPolicy,
+  agentQaRoot,
   probes,
-}: Required<Pick<ResolveEmbedderCapabilityOptions, 'preferredProfile' | 'allowDownload'>> &
-  Pick<ResolveEmbedderCapabilityOptions, 'probes'>): Promise<CapabilityOutcome> {
+}: Required<Pick<
+  ResolveEmbedderCapabilityOptions,
+  'preferredProfile' | 'allowDownload' | 'workerPolicy' | 'agentQaRoot'
+>> & Pick<ResolveEmbedderCapabilityOptions, 'probes'>): Promise<CapabilityOutcome> {
   const discoverWorker = probes?.discoverWorker ?? discoverEmbedderWorker
   const availableMemory = probes?.availableMemory ?? (() => process.availableMemory())
   const nativeFactory = probes?.createNativeEmbedder ?? createNativeEmbedder
@@ -253,7 +292,7 @@ async function probeCapability({
   })
 
   try {
-    const worker = await discoverWorker()
+    const worker = await discoverWorker(agentQaRoot)
     if (
       isWorkerBackedDiscovery(worker)
       && embeddingProfileKey(worker.profile) === embeddingProfileKey(preferredProfile)
@@ -265,11 +304,17 @@ async function probeCapability({
         embedder: worker.embedder,
       }
     }
+    if (workerPolicy === 'required') {
+      return { kind: 'deferred', reason: 'worker-unavailable' }
+    }
     if (availableMemory() < EMBEDDER_MIN_AVAILABLE_BYTES) {
       return { kind: 'deferred', reason: 'ram-budget' }
     }
   } catch {
-    return { kind: 'deferred', reason: 'load-failure' }
+    return {
+      kind: 'deferred',
+      reason: workerPolicy === 'required' ? 'worker-unavailable' : 'load-failure',
+    }
   }
 
   if (preferredProfile.backend === 'static') return probeFloor(floorFactory)
@@ -297,14 +342,22 @@ export function resolveEmbedderCapability(
   options: ResolveEmbedderCapabilityOptions,
 ): Promise<CapabilityOutcome> {
   const preferredProfile = options.preferredProfile ?? DEFAULT_EMBEDDING_PROFILE
+  const workerPolicy = options.workerPolicy ?? 'preferred'
+  if (workerPolicy === 'required' && options.agentQaRoot === undefined) {
+    throw new TypeError('workerPolicy required needs an explicit agentQaRoot')
+  }
+  const agentQaRoot = options.agentQaRoot
+    ?? embedderWorkerAgentQaRoot(process.cwd())
   const capabilities = cacheFor(options.probes)
-  const key = embeddingProfileKey(preferredProfile)
+  const key = capabilityCacheKey(preferredProfile, workerPolicy, agentQaRoot)
   const existing = capabilities.get(key)
   if (existing !== undefined) return existing
 
   const pending = probeCapability({
     preferredProfile,
     allowDownload: options.allowDownload,
+    workerPolicy,
+    agentQaRoot,
     probes: options.probes,
   })
   capabilities.set(key, pending)

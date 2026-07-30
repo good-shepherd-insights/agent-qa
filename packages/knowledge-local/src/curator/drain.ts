@@ -18,7 +18,10 @@ import {
   readIndexMaintenanceState,
 } from '../index-open.js'
 import { rebuildIndex, removeBundleProjectionRows } from '../index-rebuild.js'
-import { acquireEmbedder } from '../embedder-acquire.js'
+import {
+  acquireEmbedder,
+  type AcquireEmbedderOutcome,
+} from '../embedder-acquire.js'
 import { runKnowledgeGc } from '../gc.js'
 import { readRebuildRequest } from '../rebuild-marker.js'
 import { buildRetrievalQuery, type RetrievalQueryInput } from '../query-helper.js'
@@ -194,6 +197,8 @@ export interface DrainOptions {
   author: CuratorAuthor
   executionContext: ExecutionContext
   policy: GuardrailPolicy
+  /** Host-resolved posture; daemon sessions pass worker-required capability here. */
+  embeddingCapability?: AcquireEmbedderOutcome
   /** Default inline preserves one-shot behavior; daemon sessions skip for their own cadence. */
   maintenance?: 'inline' | 'skip'
   signal?: AbortSignal
@@ -415,13 +420,17 @@ function targetedQueries(payload: CurationCandidatePayload): RetrievalQueryInput
   return queries
 }
 
-function retrievalOptions(payload: CurationCandidatePayload) {
+function retrievalOptions(
+  payload: CurationCandidatePayload,
+  embeddingCapability: AcquireEmbedderOutcome | undefined,
+) {
   return {
     n: SEARCH_BEFORE_CREATE_RESULTS_PER_QUERY,
     product: payload.scope.key,
     ...(payload.scope.tier === 'test' ? { testKey: payload.scope.key } : {}),
     ...(payload.scope.tier === 'suite' ? { suiteKey: payload.scope.key } : {}),
     includeSuperseded: true,
+    ...(embeddingCapability === undefined ? {} : { embeddingCapability }),
   }
 }
 
@@ -448,6 +457,7 @@ async function searchBeforeCreate(
   operations: DrainOperations,
   payload: CurationCandidatePayload,
   knowledgeRoot: string,
+  embeddingCapability: AcquireEmbedderOutcome | undefined,
 ): Promise<NeighborRecord[]> {
   let reader: KnowledgeReader | undefined
   try {
@@ -457,7 +467,11 @@ async function searchBeforeCreate(
       // The explicit build call fixes normalization/query classification at this boundary; the
       // retrieve pipeline consumes the same structured input through its public entry point.
       operations.buildRetrievalQuery(query)
-      const hits = await operations.retrieve(reader, query, retrievalOptions(payload))
+      const hits = await operations.retrieve(
+        reader,
+        query,
+        retrievalOptions(payload, embeddingCapability),
+      )
       for (const hit of hits) {
         if (!byRecordId.has(hit.id)) byRecordId.set(hit.id, hit)
       }
@@ -504,7 +518,12 @@ async function authorCheckpoint(
   job: ClaimedCurationJob,
 ): Promise<AuthoredCheckpoint> {
   const view = jobView(job.payload, options.executionContext)
-  const neighbors = await searchBeforeCreate(operations, job.payload, options.knowledgeRoot)
+  const neighbors = await searchBeforeCreate(
+    operations,
+    job.payload,
+    options.knowledgeRoot,
+    options.embeddingCapability,
+  )
   const outcome = await options.author(view, neighbors)
   if (outcome.kind === 'authored') {
     if (outcome.deltas.length === 0) {
@@ -998,6 +1017,9 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       const maintenance = await runMaintenanceTail({
         knowledgeRoot: options.knowledgeRoot,
         lease,
+        ...(options.embeddingCapability === undefined
+          ? {}
+          : { embeddingCapability: options.embeddingCapability }),
         operations,
         budget: { now, startedAtMs: startedAt, limitMs: limit },
         surfaceAuthorityLoss: false,

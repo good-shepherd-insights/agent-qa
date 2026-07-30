@@ -18,6 +18,7 @@ import {
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
 import { enumerateBundleDirs, type KnowledgeHit } from './bundle-scan.js'
+import type { AcquireEmbedderOutcome } from './embedder-acquire.js'
 import type { KnowledgeReader } from './index-reader.js'
 import {
   withKnowledgeReadSnapshot,
@@ -68,6 +69,8 @@ export interface RetrieveOptions {
   runtimeRoot?: string
   includeSuperseded?: boolean
   asOfRange?: AsOfRange
+  /** Host-resolved posture; a deferred daemon capability forbids in-process fallback. */
+  embeddingCapability?: AcquireEmbedderOutcome
 }
 
 export type RetrieveResult = IndexEntry[]
@@ -611,6 +614,7 @@ async function buildIndexLegs(
   input: RetrievalQueryInput,
   scope: RetrievalLegScope,
   n: number,
+  options: Pick<RetrieveOptions, 'embeddingCapability'>,
 ): Promise<{ legs: RankedLeg[]; query: ReturnType<typeof buildRetrievalQuery> }> {
   const { db } = connection
   const query = buildRetrievalQuery(input)
@@ -629,6 +633,9 @@ async function buildIndexLegs(
       [query.semanticText, ...fallback.map((rendering) => rendering.text)],
       scope,
       k,
+      options.embeddingCapability === undefined
+        ? {}
+        : { capability: options.embeddingCapability },
     )
     if (fallback.length > 0) {
       const confirmations = new Map(
@@ -671,7 +678,7 @@ async function retrieveFromIndex(
   const connection = context.connection
   if (connection === undefined) throw new Error('index retrieval requires an index connection')
 
-  const { legs } = await buildIndexLegs(connection, input, scope, options.n)
+  const { legs } = await buildIndexLegs(connection, input, scope, options.n, options)
   const direct = fuseWeightedRrf(legs)
   const expanded = expandOneHop(
     connection.db,
