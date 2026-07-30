@@ -16,6 +16,16 @@ import {
   NativeEmbeddingModuleLoadError,
 } from './embedder-native.js'
 import type { EmbedderPort } from './embedder-port.js'
+import {
+  asEmbeddingProfile,
+  createEmbedderWorkerPort,
+  embedderWorkerAgentQaRoot,
+  embedderWorkerProcessIsAlive,
+  embedderWorkerSocketPath,
+  probeEmbedderWorkerSocket,
+  readEmbedderWorkerRegistration,
+  removeEmbedderWorkerRegistration,
+} from './embedder-worker/worker-registration.js'
 import { embeddingProfileKey } from './index-open.js'
 
 /**
@@ -103,14 +113,57 @@ export function resetEmbedderCapability(profile?: EmbeddingProfile): void {
   for (const capabilities of injectedCapabilityCaches) capabilities.delete(key)
 }
 
-/**
- * D-09's typed worker-discovery seam.
- *
- * M2 deliberately has no worker, spawning, or IPC. M4 can fill the daemon-backed `worker` arm
- * without changing the acquisition contract used by callers.
- */
+interface WorkerBackedDiscoveryResult {
+  readonly kind: 'worker'
+  readonly profile: EmbeddingProfile
+  readonly embedder: EmbedderPort
+}
+
+function isWorkerBackedDiscovery(
+  result: WorkerDiscoveryResult,
+): result is WorkerDiscoveryResult & WorkerBackedDiscoveryResult {
+  if (result.kind !== 'worker') return false
+  const candidate = result as WorkerDiscoveryResult & Partial<WorkerBackedDiscoveryResult>
+  return candidate.profile !== undefined && candidate.embedder !== undefined
+}
+
+/** D-09's filled worker arm, retaining the reservation's exported signature and result union. */
 export async function discoverEmbedderWorker(): Promise<WorkerDiscoveryResult> {
-  return { kind: 'no-worker' }
+  const projectRoot = process.cwd()
+  const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+  const outcome = readEmbedderWorkerRegistration(agentQaRoot)
+  if (outcome.kind !== 'parsed') return { kind: 'no-worker' }
+
+  const { registration } = outcome
+  let expectedSocketPath: string
+  try {
+    expectedSocketPath = embedderWorkerSocketPath(agentQaRoot, projectRoot)
+  } catch {
+    return { kind: 'no-worker' }
+  }
+  if (registration.socketPath !== expectedSocketPath) return { kind: 'no-worker' }
+
+  let pidIsLive: boolean
+  try {
+    pidIsLive = embedderWorkerProcessIsAlive(registration.pid)
+  } catch {
+    return { kind: 'no-worker' }
+  }
+  if (!pidIsLive) {
+    removeEmbedderWorkerRegistration(agentQaRoot, registration)
+    return { kind: 'no-worker' }
+  }
+
+  if (!await probeEmbedderWorkerSocket(registration.socketPath)) {
+    removeEmbedderWorkerRegistration(agentQaRoot, registration)
+    return { kind: 'no-worker' }
+  }
+
+  return {
+    kind: 'worker',
+    profile: asEmbeddingProfile(registration.profile),
+    embedder: createEmbedderWorkerPort(registration.socketPath, registration.profile.dim),
+  } as WorkerDiscoveryResult
 }
 
 function errorRecord(error: unknown): Record<string, unknown> | undefined {
@@ -200,8 +253,18 @@ async function probeCapability({
   })
 
   try {
-    // In M2 both worker arms continue in-process: the `worker` arm reserves M4's contract shape.
-    await discoverWorker()
+    const worker = await discoverWorker()
+    if (
+      isWorkerBackedDiscovery(worker)
+      && embeddingProfileKey(worker.profile) === embeddingProfileKey(preferredProfile)
+    ) {
+      return {
+        kind: 'ready',
+        rung: worker.profile.backend === 'static' ? 'floor' : 'native',
+        profile: worker.profile,
+        embedder: worker.embedder,
+      }
+    }
     if (availableMemory() < EMBEDDER_MIN_AVAILABLE_BYTES) {
       return { kind: 'deferred', reason: 'ram-budget' }
     }
