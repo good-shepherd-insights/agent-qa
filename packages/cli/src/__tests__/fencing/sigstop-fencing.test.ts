@@ -184,7 +184,13 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           && event.pid === committed.holderPid
           && event.leaseId === committed.leaseId
           && event.epoch === committed.epoch)
-        const epochIndex = findEventAfter(events, acquiredIndex, (event) =>
+        const reclaimedIndex = findEventAfter(events, acquiredIndex, (event) =>
+          event.kind === 'lease-reclaimed'
+          && event.priorHolderPid === paused.pid
+          && event.priorLeaseId === paused.leaseId
+          && event.priorEpoch === paused.oldEpoch
+          && event.newEpoch === committed.epoch)
+        const epochIndex = findEventAfter(events, reclaimedIndex, (event) =>
           event.kind === 'epoch-bump' && event.epoch === committed.epoch)
         const sessionStartIndex = findEventAfter(events, epochIndex, (event) =>
           event.kind === 'drain-session-start'
@@ -328,6 +334,19 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           `${paths.agentQaRoot}/${DAEMON_EVENTS_FILE}`,
           'utf8',
         ).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+        const acquiredIndex = findEventAfter(events, -1, (event) =>
+          event.kind === 'lease-acquired'
+          && event.pid === committed.holderPid
+          && event.leaseId === committed.leaseId
+          && event.epoch === committed.epoch)
+        const reclaimedIndex = findEventAfter(events, acquiredIndex, (event) =>
+          event.kind === 'lease-reclaimed'
+          && event.priorHolderPid === paused.pid
+          && event.priorLeaseId === paused.leaseId
+          && event.priorEpoch === paused.oldEpoch
+          && event.newEpoch === committed.epoch)
+        findEventAfter(events, reclaimedIndex, (event) =>
+          event.kind === 'epoch-bump' && event.epoch === committed.epoch)
         expect(events.filter((event) =>
           event.kind === 'job-completed' && event.candidateId === candidateId)).toHaveLength(1)
       } finally {

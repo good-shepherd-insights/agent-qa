@@ -1011,3 +1011,91 @@ describe('daemon heartbeat authority and cadence', () => {
     await expect(running).resolves.toBe(0)
   })
 })
+
+describe('daemon shutdown and reclaim post-mortem', () => {
+  it('clears the armed grace timer so clean shutdown cannot hard-exit afterward', async () => {
+    const paths = makePaths('shutdown-grace-clear')
+    const harness = hostHarness()
+    const hardExit = vi.fn()
+    const clearGrace = vi.fn()
+    let graceCallback: (() => void) | undefined
+    let graceActive = false
+    const graceTimer = 99 as unknown as ReturnType<typeof setTimeout>
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        setTimeout: (callback) => {
+          graceCallback = callback
+          graceActive = true
+          return graceTimer
+        },
+        clearTimeout: (timer) => {
+          if (timer === graceTimer) graceActive = false
+          clearGrace(timer)
+        },
+        hardExit,
+        startInvokeServer: ({ socketPath }) => Promise.resolve({
+          socketPath,
+          close: () => Promise.resolve(),
+        }),
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'daemon did not become signalable',
+    )
+
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+    if (graceActive) graceCallback?.()
+
+    expect(clearGrace).toHaveBeenCalledWith(graceTimer)
+    expect(hardExit).not.toHaveBeenCalled()
+  })
+
+  it('records a stale lease reclaim before the successor epoch bump', async () => {
+    const paths = makePaths('lease-reclaimed-event')
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    const prior = acquireWriterLease(paths.knowledgeRoot)
+    expect(prior.kind).toBe('acquired')
+    if (prior.kind !== 'acquired') throw new Error('expected prior writer lease')
+    now.mockReturnValue(1_000_000 + LEASE_HEARTBEAT_TTL_MS)
+    const harness = hostHarness()
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: harness.operations,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'reclaiming daemon did not become signalable',
+    )
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+
+    const events = readEvents(paths.agentQaRoot)
+    const acquiredIndex = events.findIndex((event) => event.kind === 'lease-acquired')
+    const reclaimedIndex = events.findIndex((event) => event.kind === 'lease-reclaimed')
+    const epochIndex = events.findIndex((event) => event.kind === 'epoch-bump')
+    expect(events[reclaimedIndex]).toMatchObject({
+      kind: 'lease-reclaimed',
+      priorHolderPid: process.pid,
+      priorLeaseId: prior.leaseId,
+      priorEpoch: prior.epoch,
+      newEpoch: 2,
+    })
+    expect(acquiredIndex).toBeGreaterThanOrEqual(0)
+    expect(reclaimedIndex).toBeGreaterThan(acquiredIndex)
+    expect(epochIndex).toBeGreaterThan(reclaimedIndex)
+  })
+})
