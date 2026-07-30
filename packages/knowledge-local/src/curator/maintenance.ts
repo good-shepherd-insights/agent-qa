@@ -1,12 +1,19 @@
 import { acquireEmbedder } from '../embedder-acquire.js'
-import { runKnowledgeGc, type GcSummary } from '../gc.js'
+import {
+  runKnowledgeGc,
+  type GcSummary,
+  type RunKnowledgeGcHooks,
+} from '../gc.js'
 import { readIndexMaintenanceState, type IndexMaintenanceState } from '../index-open.js'
 import {
   rebuildIndex,
   removeBundleProjectionRows,
   type RebuildReport,
 } from '../index-rebuild.js'
-import { WriterAuthorityLostError } from '../lease/writer-lease.js'
+import {
+  WriterAuthorityLostError,
+  type WriterLeaseAuthority,
+} from '../lease/writer-lease.js'
 import {
   readRebuildRequest,
   type RebuildRequest,
@@ -46,6 +53,7 @@ export interface MaintenanceOperations {
   rebuildIndex: typeof rebuildIndex
   runKnowledgeGc: typeof runKnowledgeGc
   removeBundleProjectionRows: typeof removeBundleProjectionRows
+  beforeGcRemoval?: RunKnowledgeGcHooks['beforeGcRemoval']
 }
 
 export interface MaintenanceBudget {
@@ -180,10 +188,19 @@ export async function runMaintenanceTail(
      * the real ordinal horizon through this seam. Budget gates the start only and never
      * interrupts whole-dir trims.
      */
-    const summary = operations.runKnowledgeGc({
+    const writerAuthority: WriterLeaseAuthority = {
       knowledgeRoot: options.knowledgeRoot,
-      horizon: { kind: 'none' },
-    })
+      leaseId: options.lease.leaseId,
+      epoch: options.lease.epoch,
+    }
+    const summary = operations.runKnowledgeGc(
+      {
+        knowledgeRoot: options.knowledgeRoot,
+        horizon: { kind: 'none' },
+      },
+      writerAuthority,
+      { beforeGcRemoval: operations.beforeGcRemoval },
+    )
     const completed: Extract<GcPassReport, { kind: 'completed' }> = {
       kind: 'completed',
       summary,
@@ -194,6 +211,7 @@ export async function runMaintenanceTail(
         completed.projectionRowsRemoved = operations.removeBundleProjectionRows(
           options.knowledgeRoot,
           summary.trimmedRecordIds,
+          writerAuthority,
         )
       } catch (error) {
         if (shouldSurfaceAuthorityLoss(options, error)) throw error

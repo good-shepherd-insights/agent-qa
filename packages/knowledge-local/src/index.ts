@@ -146,6 +146,7 @@ export { GC_SUPERSEDED_RETAIN_K, runKnowledgeGc } from './gc.js'
 export type {
   GateHorizon,
   GcSummary,
+  RunKnowledgeGcHooks,
   RunKnowledgeGcInput,
 } from './gc.js'
 export { setActiveEmbeddingProfile } from './profile-migration.js'

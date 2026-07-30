@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   GC_SUPERSEDED_RETAIN_K,
   appendOutcomeEvent,
+  acquireWriterLease,
   drainQueue,
   openIndexReaderConnection,
   rebuildIndex,
@@ -25,6 +26,7 @@ import {
   type CuratorAuthor,
   type GcSummary,
   type PublishBundleOutcome,
+  type WriterLeaseAuthority,
 } from '../index.js'
 import { publishBundle } from '../bundle-publish.test-helper.js'
 import { indexDbPath } from '../index-open.js'
@@ -57,12 +59,14 @@ const EMPTY_RECONCILE = {
 let root: string
 let knowledgeRoot: string
 let auditBaseDir: string
+let gcWriterAuthority: WriterLeaseAuthority | undefined
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-gc-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
   auditBaseDir = join(root, '.agent-qa')
   mkdirSync(knowledgeRoot, { recursive: true })
+  gcWriterAuthority = undefined
 })
 
 afterEach(() => {
@@ -76,6 +80,18 @@ function config() {
     auditBaseDir,
     commitArtifacts: 'none' as const,
   }
+}
+
+function writerAuthority(): WriterLeaseAuthority {
+  if (gcWriterAuthority !== undefined) return gcWriterAuthority
+  const acquired = acquireWriterLease(knowledgeRoot)
+  if (acquired.kind !== 'acquired') throw new Error('expected GC writer authority')
+  gcWriterAuthority = {
+    knowledgeRoot,
+    leaseId: acquired.leaseId,
+    epoch: acquired.epoch,
+  }
+  return gcWriterAuthority
 }
 
 function chainAnchors(chain: string): Anchor[] {
@@ -238,7 +254,10 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
     const chain = publishChain('depth', 6)
     await rebuildIndex({ knowledgeRoot })
 
-    const summary = runKnowledgeGc({ knowledgeRoot, horizon: { kind: 'none' } })
+    const summary = runKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' } },
+      writerAuthority(),
+    )
 
     const trimmed = chain.superseded.slice(0, 3)
     const retained = [...chain.superseded.slice(3), chain.head]
@@ -265,7 +284,10 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
       [relationTarget.id],
     )
 
-    const first = runKnowledgeGc({ knowledgeRoot, horizon: { kind: 'none' } })
+    const first = runKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' } },
+      writerAuthority(),
+    )
 
     expect(first.skipped.unknownRef).toBe(2)
     expect(existsSync(conflictTarget.dir)).toBe(true)
@@ -278,7 +300,10 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
       reason: 'unknown-resolved',
     }).kind).toBe('appended')
 
-    const second = runKnowledgeGc({ knowledgeRoot, horizon: { kind: 'none' } })
+    const second = runKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' } },
+      writerAuthority(),
+    )
     expect(second.trimmedRecordIds).toEqual([conflictTarget.id, relationTarget.id].sort())
     expect(existsSync(conflictTarget.dir)).toBe(false)
     expect(existsSync(relationTarget.dir)).toBe(false)
@@ -291,12 +316,15 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
     const guarded = runKnowledgeGc({
       knowledgeRoot,
       horizon: { kind: 'ordinal', deepestGateOrdinal: 3 },
-    })
+    }, writerAuthority())
 
     expect(guarded.skipped.horizon).toBe(1)
     expect(existsSync(horizonTarget.dir)).toBe(true)
 
-    const unguarded = runKnowledgeGc({ knowledgeRoot, horizon: { kind: 'none' } })
+    const unguarded = runKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' } },
+      writerAuthority(),
+    )
     expect(unguarded.trimmedRecordIds).toEqual([horizonTarget.id])
     expect(existsSync(horizonTarget.dir)).toBe(false)
   })
@@ -309,7 +337,10 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
     )
     const userGeneration = chain.superseded[0]!
 
-    const summary = runKnowledgeGc({ knowledgeRoot, horizon: { kind: 'none' } })
+    const summary = runKnowledgeGc(
+      { knowledgeRoot, horizon: { kind: 'none' } },
+      writerAuthority(),
+    )
 
     expect(summary).toEqual({
       trimmedRecordIds: [],
@@ -321,16 +352,24 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
 
 describe('removeBundleProjectionRows scoping (WR-01)', () => {
   it('returns 0 without creating an index db when the db is absent or ids are empty', () => {
-    expect(removeBundleProjectionRows(knowledgeRoot, ['missing-record'])).toBe(0)
+    expect(removeBundleProjectionRows(
+      knowledgeRoot,
+      ['missing-record'],
+      writerAuthority(),
+    )).toBe(0)
     expect(existsSync(indexDbPath(knowledgeRoot))).toBe(false)
-    expect(removeBundleProjectionRows(knowledgeRoot, [])).toBe(0)
+    expect(removeBundleProjectionRows(knowledgeRoot, [], writerAuthority())).toBe(0)
   })
 
   it('skips ids without records rows and leaves existing projections untouched', async () => {
     const chain = publishChain('noop-scope', 0)
     await rebuildIndex({ knowledgeRoot })
 
-    expect(removeBundleProjectionRows(knowledgeRoot, ['unknown-bundle-id'])).toBe(0)
+    expect(removeBundleProjectionRows(
+      knowledgeRoot,
+      ['unknown-bundle-id'],
+      writerAuthority(),
+    )).toBe(0)
     expect(existingRecordIds()).toEqual([chain.head.id])
   })
 })
@@ -350,6 +389,7 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
 
   it('runs GC after the writer pass and pins the M2 none horizon in the report', async () => {
     const order: string[] = []
+    let gcAuthority: WriterLeaseAuthority | undefined
     const summary: GcSummary = {
       trimmedRecordIds: ['trimmed-record' as RecordId],
       skipped: { unknownRef: 1, withinK: 3, userOrigin: 1, horizon: 0 },
@@ -366,10 +406,22 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
           order.push('writer-pass')
           return { present: false }
         },
-        runKnowledgeGc: (input) => {
+        runKnowledgeGc: (input, authority) => {
           order.push('gc')
           expect(input).toEqual({ knowledgeRoot, horizon: { kind: 'none' } })
+          expect(authority).toMatchObject({
+            knowledgeRoot,
+            leaseId: expect.any(String),
+            epoch: expect.any(Number),
+          })
+          gcAuthority = authority
           return summary
+        },
+        removeBundleProjectionRows: (root, bundleIds, authority) => {
+          expect(root).toBe(knowledgeRoot)
+          expect(bundleIds).toEqual(summary.trimmedRecordIds)
+          expect(authority).toBe(gcAuthority)
+          return 0
         },
       },
     })

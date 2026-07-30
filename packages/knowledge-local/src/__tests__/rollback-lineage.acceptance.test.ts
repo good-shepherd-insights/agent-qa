@@ -37,6 +37,7 @@ import {
   type CommitCurationJob,
   type LoadedBundle,
   type PublishBundleOutcome,
+  type WriterLeaseAuthority,
 } from '../index.js'
 import { publishBundle } from '../bundle-publish.test-helper.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
@@ -63,6 +64,7 @@ let root: string
 let knowledgeRoot: string
 let auditBaseDir: string
 let epoch: number
+let writerAuthority: WriterLeaseAuthority
 let jobSerial: number
 
 beforeEach(() => {
@@ -73,6 +75,11 @@ beforeEach(() => {
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
   epoch = lease.epoch
+  writerAuthority = {
+    knowledgeRoot,
+    leaseId: lease.leaseId,
+    epoch: lease.epoch,
+  }
   jobSerial = 0
 })
 
@@ -592,7 +599,7 @@ describe('rollback-aware GC recent-K acceptance (DCAY-05)', () => {
       knowledgeRoot: controlKnowledgeRoot,
       horizon: { kind: 'none' },
       retainK: 1,
-    })
+    }, { ...writerAuthority, knowledgeRoot: controlKnowledgeRoot })
     const controlDir = (published: PublishedBundle) =>
       join(controlKnowledgeRoot, relative(knowledgeRoot, published.dir))
 
@@ -621,7 +628,7 @@ describe('rollback-aware GC recent-K acceptance (DCAY-05)', () => {
       knowledgeRoot,
       horizon: { kind: 'none' },
       retainK: 1,
-    })
+    }, writerAuthority)
 
     expect(restoredSummary).toEqual({
       trimmedRecordIds: [generationA.id],

@@ -62,6 +62,7 @@ import {
 import type { VecCapability } from './index-open.js'
 import {
   refreshWriterLeaseAuthority,
+  withCurrentWriterAuthority,
   type WriterLeaseAuthority,
 } from './lease/writer-lease.js'
 import { clearRebuildRequest } from './rebuild-marker.js'
@@ -1084,7 +1085,11 @@ function removeMissingBundles(
 export function removeBundleProjectionRows(
   knowledgeRoot: string,
   bundleIds: readonly string[],
+  writerAuthority: WriterLeaseAuthority,
 ): number {
+  if (writerAuthority.knowledgeRoot !== knowledgeRoot) {
+    throw new TypeError('projection cleanup writerAuthority must belong to knowledgeRoot')
+  }
   if (bundleIds.length === 0 || !existsSync(indexDbPath(knowledgeRoot))) return 0
 
   const writer = openIndexWriter(knowledgeRoot)
@@ -1104,10 +1109,12 @@ export function removeBundleProjectionRows(
     })
     if (found.length === 0) return 0
 
-    transaction(writer.db, () => {
-      for (const row of found) {
-        deleteRecordProjectionRows(writer.db, row.recordRowid, row.bundleId, row.kind)
-      }
+    withCurrentWriterAuthority(knowledgeRoot, writerAuthority, () => {
+      transaction(writer.db, () => {
+        for (const row of found) {
+          deleteRecordProjectionRows(writer.db, row.recordRowid, row.bundleId, row.kind)
+        }
+      })
     })
     return found.length
   } finally {

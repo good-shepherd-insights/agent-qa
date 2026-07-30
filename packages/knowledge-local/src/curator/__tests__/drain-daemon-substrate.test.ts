@@ -605,6 +605,17 @@ describe('drainQueue daemon substrate', () => {
       trimmedRecordIds: [],
       skipped: { unknownRef: 0, withinK: 0, userOrigin: 0, horizon: 0 },
     }
+    const beforeGcRemoval = vi.fn()
+    const runKnowledgeGc = vi.fn((input, authority, hooks) => {
+      expect(input).toEqual({ knowledgeRoot, horizon: { kind: 'none' } })
+      expect(authority).toEqual({
+        knowledgeRoot,
+        leaseId: 'direct-tail-lease',
+        epoch: 7,
+      })
+      expect(hooks).toEqual({ beforeGcRemoval })
+      return summary
+    })
 
     const result = await runMaintenanceTail({
       knowledgeRoot,
@@ -614,7 +625,8 @@ describe('drainQueue daemon substrate', () => {
         readIndexMaintenanceState: () => NO_INDEX_MAINTENANCE,
         acquireEmbedder: async () => ({ kind: 'lexical-only' }),
         rebuildIndex: vi.fn(async () => rebuild),
-        runKnowledgeGc: vi.fn(() => summary),
+        runKnowledgeGc,
+        beforeGcRemoval,
       },
     })
 
@@ -623,6 +635,8 @@ describe('drainQueue daemon substrate', () => {
       gc: { kind: 'completed', summary },
       failures: [],
     })
+    expect(runKnowledgeGc).toHaveBeenCalledOnce()
+    expect(beforeGcRemoval).not.toHaveBeenCalled()
   })
 
   it('surfaces the same WriterAuthorityLostError from a stale direct tail', async () => {

@@ -32,6 +32,7 @@ import type {
   BundleStoreConfig,
   PublishBundleInput,
   PublishBundleOutcome,
+  WriterLeaseAuthority,
 } from '../index.js'
 import { enqueueArtifactFreeCandidateProjection } from './fixtures/curation-candidate-fixture.js'
 import {
@@ -90,12 +91,14 @@ function hasVecRow(
 describe('multi-profile vector forgetting acceptance', () => {
   let root: string
   let knowledgeRoot: string
+  let gcWriterAuthority: WriterLeaseAuthority | undefined
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'knowledge-multi-profile-forgetting-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     scaffoldKnowledgeRoot(knowledgeRoot)
     vecLoadable.override = undefined
+    gcWriterAuthority = undefined
   })
 
   afterEach(() => {
@@ -110,6 +113,18 @@ describe('multi-profile vector forgetting acceptance', () => {
       auditBaseDir: join(root, '.agent-qa'),
       commitArtifacts: 'none',
     }
+  }
+
+  function writerAuthority(): WriterLeaseAuthority {
+    if (gcWriterAuthority !== undefined) return gcWriterAuthority
+    const acquired = knowledgeLocal.acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected GC writer authority')
+    gcWriterAuthority = {
+      knowledgeRoot,
+      leaseId: acquired.leaseId,
+      epoch: acquired.epoch,
+    }
+    return gcWriterAuthority
   }
 
   function input(label: string): PublishBundleInput {
@@ -493,7 +508,7 @@ describe('multi-profile vector forgetting acceptance', () => {
       knowledgeRoot,
       horizon: { kind: 'none' },
       retainK: 0,
-    })
+    }, writerAuthority())
     expect(gc.trimmedRecordIds).toEqual([target.id])
     expect(existsSync(target.dir)).toBe(false)
     expect(existsSync(replacement.dir)).toBe(true)
@@ -563,7 +578,7 @@ describe('multi-profile vector forgetting acceptance', () => {
       knowledgeRoot,
       horizon: { kind: 'none' },
       retainK: 0,
-    }).trimmedRecordIds).toEqual([target.id])
+    }, writerAuthority()).trimmedRecordIds).toEqual([target.id])
 
     let report: knowledgeLocal.RebuildReport | undefined
     await expect((async () => {

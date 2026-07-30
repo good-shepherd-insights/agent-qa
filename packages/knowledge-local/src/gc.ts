@@ -15,6 +15,10 @@ import {
   scanCanonicalBundles,
 } from './curator/lineage-fold.js'
 import type { CanonicalBundleSnapshot } from './curator/lineage-fold.js'
+import {
+  withCurrentWriterAuthority,
+  type WriterLeaseAuthority,
+} from './lease/writer-lease.js'
 
 /**
  * PROVISIONAL D-13 superseded-generation retention depth. M3 may calibrate the
@@ -45,6 +49,11 @@ export interface RunKnowledgeGcInput {
   knowledgeRoot: string
   horizon: GateHorizon
   retainK?: number
+}
+
+export interface RunKnowledgeGcHooks {
+  /** Test/chaos seam immediately before the authority check for one planned removal. */
+  beforeGcRemoval?(recordId: RecordId): void
 }
 
 interface GcBundle {
@@ -210,8 +219,15 @@ function buildWithinKExclusion(
  * RATIFICATION: this typed in-memory summary, surfaced through drain diagnostics,
  * is the low-cost §9.2-style operational note. GC writes no persisted note artifact.
  */
-export function runKnowledgeGc(input: RunKnowledgeGcInput): GcSummary {
+export function runKnowledgeGc(
+  input: RunKnowledgeGcInput,
+  writerAuthority: WriterLeaseAuthority,
+  hooks: RunKnowledgeGcHooks = {},
+): GcSummary {
   const retainK = validateInput(input)
+  if (writerAuthority.knowledgeRoot !== input.knowledgeRoot) {
+    throw new TypeError('GC writerAuthority must belong to knowledgeRoot')
+  }
   const snapshots = scanCanonicalBundles(input.knowledgeRoot)
   const loaded = loadGcBundles(input.knowledgeRoot)
 
@@ -255,7 +271,12 @@ export function runKnowledgeGc(input: RunKnowledgeGcInput): GcSummary {
   }
 
   for (const candidate of trim) {
-    rmSync(candidate.dir, { recursive: true, force: false })
+    hooks.beforeGcRemoval?.(candidate.recordId)
+    withCurrentWriterAuthority(
+      input.knowledgeRoot,
+      writerAuthority,
+      () => rmSync(candidate.dir, { recursive: true, force: false }),
+    )
   }
   return {
     trimmedRecordIds: trim.map(({ recordId }) => recordId),
