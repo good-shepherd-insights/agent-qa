@@ -1,0 +1,255 @@
+import { randomUUID } from 'node:crypto'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { expect } from 'vitest'
+
+const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
+const JITI = join(PACKAGE_ROOT, 'node_modules', '.bin', 'jiti')
+const CHILD_FIXTURES: Record<FencingChildRole, string> = {
+  'paused-drainer': fileURLToPath(new URL('./paused-drainer.fixture.ts', import.meta.url)),
+  'reclaiming-daemon': fileURLToPath(new URL('./reclaiming-daemon.fixture.ts', import.meta.url)),
+}
+
+/** Copied from the Phase 385 kill-matrix process harness. */
+export const LEG_TIMEOUT_MS = 180_000
+export const CHILD_TIMEOUT_MS = 120_000
+export const MARKER_TIMEOUT_MS = 90_000
+
+export const FENCING_ENV = {
+  role: 'AGENT_QA_FENCING_ROLE',
+  root: 'AGENT_QA_FENCING_ROOT',
+  fixture: 'AGENT_QA_FENCING_FIXTURE',
+  marker: 'AGENT_QA_FENCING_MARKER',
+  permit: 'AGENT_QA_FENCING_PERMIT',
+  report: 'AGENT_QA_FENCING_REPORT',
+  readyMarker: 'AGENT_QA_FENCING_READY_MARKER',
+  committedMarker: 'AGENT_QA_FENCING_COMMITTED_MARKER',
+  control: 'AGENT_QA_FENCING_CONTROL',
+} as const
+
+export type FencingChildRole = 'paused-drainer' | 'reclaiming-daemon'
+
+export interface FencingPaths {
+  readonly root: string
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  readonly fixture: string
+  readonly marker: string
+  readonly permit: string
+  readonly drainerReport: string
+  readonly daemonReport: string
+  readonly readyMarker: string
+  readonly committedMarker: string
+}
+
+export interface RunningChild {
+  readonly child: ChildProcess
+  readonly exited: Promise<[number | null, string | null]>
+  output(): string
+}
+
+const temporaryRoots: string[] = []
+
+export function makeRoot(label: string): FencingPaths {
+  const root = mkdtempSync(join(tmpdir(), `agent-fencing-${label}-`))
+  temporaryRoots.push(root)
+  return {
+    root,
+    agentQaRoot: join(root, '.agent-qa'),
+    knowledgeRoot: join(root, 'agent-qa-knowledge'),
+    fixture: join(root, 'candidate.fixture.json'),
+    marker: join(root, 'paused.intent-durable.marker.json'),
+    permit: join(root, 'resume.permit.json'),
+    drainerReport: join(root, 'paused-drainer.report.json'),
+    daemonReport: join(root, 'reclaiming-daemon.report.json'),
+    readyMarker: join(root, 'daemon.ready.marker.json'),
+    committedMarker: join(root, 'daemon.committed.marker.json'),
+  }
+}
+
+export function cleanupFencingRoots(): void {
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+}
+
+function bestEffortFsyncDirectory(dir: string): void {
+  let fd: number | undefined
+  try {
+    fd = openSync(dir, 'r')
+    fsyncSync(fd)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (!['EINVAL', 'EISDIR', 'EPERM', 'ENOTSUP'].includes(code ?? '')) throw error
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
+/** Durable parent/child protocol: fsync bytes, rename in-directory, then fsync the directory. */
+export function writeDurableJson(file: string, value: unknown): void {
+  mkdirSync(dirname(file), { recursive: true })
+  const temporary = `${file}.tmp-${randomUUID()}`
+  let fd: number | undefined
+  try {
+    fd = openSync(temporary, 'wx', 0o600)
+    writeFileSync(fd, `${JSON.stringify(value)}\n`, 'utf8')
+    fsyncSync(fd)
+    closeSync(fd)
+    fd = undefined
+    renameSync(temporary, file)
+    bestEffortFsyncDirectory(dirname(file))
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+    rmSync(temporary, { force: true })
+  }
+}
+
+export function readJson(file: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+}
+
+export function startChild(
+  role: FencingChildRole,
+  paths: FencingPaths,
+  extraEnv: Record<string, string> = {},
+): RunningChild {
+  const report = role === 'paused-drainer' ? paths.drainerReport : paths.daemonReport
+  const child = spawn(
+    JITI,
+    [CHILD_FIXTURES[role]],
+    {
+      cwd: PACKAGE_ROOT,
+      env: {
+        ...process.env,
+        [FENCING_ENV.role]: role,
+        [FENCING_ENV.root]: paths.root,
+        [FENCING_ENV.fixture]: paths.fixture,
+        [FENCING_ENV.marker]: paths.marker,
+        [FENCING_ENV.permit]: paths.permit,
+        [FENCING_ENV.report]: report,
+        [FENCING_ENV.readyMarker]: paths.readyMarker,
+        [FENCING_ENV.committedMarker]: paths.committedMarker,
+        AGENT_QA_MODEL_CACHE_DIR: join(paths.root, 'empty-model-cache'),
+        ...extraEnv,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  if (child.stdout === null || child.stderr === null) {
+    throw new Error('fencing child pipes were not created')
+  }
+  let captured = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  child.stdout.on('data', (chunk: string) => { captured += chunk })
+  child.stderr.on('data', (chunk: string) => { captured += chunk })
+  return {
+    child,
+    exited: once(child, 'exit') as Promise<[number | null, string | null]>,
+    output: () => captured,
+  }
+}
+
+export async function killIfRunning(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const exited = once(child, 'exit')
+  child.kill('SIGKILL')
+  await exited
+}
+
+async function awaitChildExit(running: RunningChild): Promise<{
+  code: number | null
+  signal: string | null
+}> {
+  const timer = setTimeout(() => running.child.kill('SIGKILL'), CHILD_TIMEOUT_MS)
+  try {
+    const [code, signal] = await running.exited
+    return { code, signal }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function waitForMarker(
+  running: RunningChild,
+  markerPath: string,
+  selector: string,
+): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + MARKER_TIMEOUT_MS
+  while (!existsSync(markerPath)) {
+    if (running.child.exitCode !== null || running.child.signalCode !== null) {
+      throw new Error(`fencing child exited before ${selector}:\n${running.output()}`)
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${selector}:\n${running.output()}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return readJson(markerPath)
+}
+
+export function sendSignalWhileAlive(running: RunningChild, signal: NodeJS.Signals): void {
+  expect(running.child.exitCode, `child must be alive before ${signal}`).toBeNull()
+  expect(running.child.signalCode).toBeNull()
+  expect(running.child.kill(signal)).toBe(true)
+}
+
+export async function completeChildExpectingRefusal(
+  running: RunningChild,
+  reportPath: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const { code, signal } = await awaitChildExit(running)
+    expect(
+      { exitedNonZero: code !== 0, signal },
+      `child must report its expected refusal and exit non-zero:\n${running.output()}`,
+    ).toEqual({ exitedNonZero: true, signal: null })
+    const report = readJson(reportPath)
+    expect(report.failed, `child report: ${JSON.stringify(report)}`).toBe(true)
+    expect(report.pid).not.toBe(process.pid)
+    const outcomes = report.outcomes as unknown[]
+    expect(Array.isArray(outcomes)).toBe(true)
+    expect(outcomes.length).toBeGreaterThan(0)
+    for (const outcome of outcomes as Record<string, unknown>[]) {
+      expect(outcome.kind).toBe('abandoned-stale-epoch')
+      expect(outcome.observedEpoch).toEqual(expect.any(Number))
+    }
+    return report
+  } finally {
+    await killIfRunning(running.child)
+  }
+}
+
+export async function completeChildSuccessfully(
+  running: RunningChild,
+  reportPath: string,
+): Promise<Record<string, unknown>> {
+  try {
+    const { code, signal } = await awaitChildExit(running)
+    expect(
+      { code, signal, output: code === 0 ? '' : running.output() },
+      'child must exit cleanly',
+    ).toMatchObject({ code: 0, signal: null })
+    const report = readJson(reportPath)
+    expect(report.failed, `child report: ${JSON.stringify(report)}`).toBe(false)
+    expect(report.pid).not.toBe(process.pid)
+    return report
+  } finally {
+    await killIfRunning(running.child)
+  }
+}
