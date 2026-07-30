@@ -417,16 +417,15 @@ describe('the permanent-failure disposition (D-20)', () => {
     expect(harness.store.rows().filter((row) => row.kind === 'curate-memory')).toHaveLength(1)
   })
 
-  // The crash window: a host that died between enqueuing the continuation and recording the
-  // failure re-runs the disposition on the next attempt. What makes that safe is not a flag
-  // but the idempotency key — the second enqueue merges into the row already there.
-  it('produces one continuation job even when the producer runs twice', async () => {
+  // A continuation may already exist through another producer. The compound store verb must
+  // preserve idempotent enqueue semantics while committing the parent's failure atomically.
+  it('reuses an existing continuation row by idempotency key', async () => {
     const probe = producerHarness([
       { kind: 'curate-memory', payload: {}, idempotencyKey: 'fallback' },
     ])
     const harness = await probe.harness
     await harness.queue.enqueue('analyze-run', {}, 'key')
-    // Stand in for the crashed host's half-finished disposition.
+    // Stand in for an independently materialized continuation with the same identity.
     await harness.queue.enqueue('curate-memory', {}, 'fallback')
 
     await harness.queue.runNextJob({ fence: harness.fence })
@@ -535,12 +534,13 @@ describe('the permanent-failure disposition (D-20)', () => {
     ).rejects.toThrow()
 
     expect(store.rows().map((row) => row.id).sort()).toEqual(['job_head', 'job_taken'])
-    expect(store.rows().find((row) => row.id === 'job_head')).toMatchObject({
+    const parent = store.rows().find((row) => row.id === 'job_head')
+    expect(parent).toMatchObject({
       status: 'queued',
       claimed: true,
-      lastFailureKind: undefined,
-      lastFailureReason: undefined,
     })
+    expect(parent?.lastFailureKind).toBeUndefined()
+    expect(parent?.lastFailureReason).toBeUndefined()
   })
 
   // Without this, "invoked exactly once" is satisfied by an engine that invokes it zero times.

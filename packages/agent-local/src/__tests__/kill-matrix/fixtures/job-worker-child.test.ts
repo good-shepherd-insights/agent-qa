@@ -102,9 +102,9 @@ function markerAndBlock(path: string, details: Record<string, unknown>): never {
  * at which boundary — and "cancelled somewhere" is satisfied by a cancel honoured too late.
  *
  * `continuationDeduped` is the store's own answer to whether each continuation instance merged into
- * a row that already existed. That is the difference between a replay that was merely harmless and
- * one that COMPLETED a disposition its predecessor left half-written, and it cannot be recovered
- * from the rows afterwards — by then the two look identical.
+ * a row that already existed. That distinguishes a newly materialized chain from one that reused
+ * an independently created continuation, and it cannot be recovered from the rows afterwards — by
+ * then the two look identical.
  */
 function outcomeReport(outcome: RunNextJobOutcome): Record<string, unknown> {
   if (!outcome.ran) return { ran: false, reason: outcome.reason }

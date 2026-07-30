@@ -202,8 +202,8 @@ export function checkpointCrashHook(
 // ---- crash points that are NOT a checkpoint publish (plan 07's adversarial legs) ----------------
 //
 // The derived points above straddle a checkpoint publish, which is the whole of JOBQ-03's happy
-// path. The adversarial guarantees live beside OTHER verbs: the failure disposition writes through
-// `enqueue` and `recordFailure`, a cancellation lands through `recordCancellation`, and a kind that
+// path. The adversarial guarantees live beside OTHER verbs: a failure disposition commits through
+// `failAndChain`, a cancellation lands through `recordCancellation`, and a kind that
 // declares no checkpoint at all (chat) reaches durability only through `completeAndChain`. So the
 // second point vocabulary is "a side of a named verb, optionally narrowed to one row" — the same
 // decorator, a different predicate, and no second harness.
@@ -218,9 +218,8 @@ export interface JobStoreVerbCrashPoint {
   /**
    * The row the call must concern, when the leg needs to name one.
    *
-   * Load-bearing for the failure-disposition legs: that path enqueues its continuations and then
-   * records the failure, so `enqueue` fires for rows the leg did not seed and a hook that ignored
-   * the id would die at whichever call happened to come first.
+   * Load-bearing for the failure-disposition legs: the row id distinguishes the failed head from
+   * every other durable call made while its successor set is later drained.
    */
   readonly jobId?: string
   /** `verb:side` or `verb:side:jobId`. The whole of what crosses into the child as an env var. */

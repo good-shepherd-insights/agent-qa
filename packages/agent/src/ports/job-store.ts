@@ -116,6 +116,12 @@ export interface JobCompleteOutcome {
   readonly chained: readonly JobEnqueueOutcome[]
 }
 
+/** The terminal parent and continuation rows committed by one permanent-failure transaction. */
+export interface JobFailAndChainOutcome {
+  readonly job: Job
+  readonly chained: readonly JobEnqueueOutcome[]
+}
+
 /**
  * How a failed attempt should be disposed of. Behaviour lands with the retry plan.
  *
@@ -227,6 +233,18 @@ export interface JobStorePort {
     next: readonly JobInsert[],
     fence: JobStoreFence,
   ): Promise<JobCompleteOutcome>
+
+  /**
+   * Land one permanent failure and enqueue every declared continuation in the SAME fenced
+   * transaction. A stale or crashing host therefore exposes neither half or both halves,
+   * never a terminal parent with a partial chain (or an orphaned chain with a live parent).
+   */
+  failAndChain(
+    jobId: JobId,
+    disposition: Extract<JobFailureDisposition, { readonly kind: 'permanent' }>,
+    next: readonly JobInsert[],
+    fence: JobStoreFence,
+  ): Promise<JobFailAndChainOutcome>
 
   recordFailure(
     jobId: JobId,

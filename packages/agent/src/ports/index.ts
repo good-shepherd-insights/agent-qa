@@ -12,6 +12,7 @@ export type {
   JobClaimOutcome,
   JobCompleteOutcome,
   JobEnqueueOutcome,
+  JobFailAndChainOutcome,
   JobFailureDisposition,
   JobInsert,
   JobStoreDump,

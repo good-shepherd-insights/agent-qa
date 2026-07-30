@@ -433,6 +433,24 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       })
     },
 
+    async failAndChain(
+      jobId: JobId,
+      disposition: Extract<JobFailureDisposition, { readonly kind: 'permanent' }>,
+      next: readonly JobInsert[],
+      fence: JobStoreFence,
+    ) {
+      const now = clock.now()
+      return inTransaction(() => {
+        requireFence(fence)
+        requireRow(String(jobId))
+        markFailed.run(disposition.reason, now, String(jobId))
+        // Parent transition and every insert share this transaction. If any insert raises,
+        // inTransaction rolls the parent and all earlier successors back before surfacing it.
+        const chained = next.map((request) => insertOrGet(request, now))
+        return { job: rowToJob(requireRow(String(jobId))), chained }
+      })
+    },
+
     async recordFailure(
       jobId: JobId,
       disposition: JobFailureDisposition,

@@ -18,6 +18,7 @@ import type {
   JobClaimOutcome,
   JobCompleteOutcome,
   JobEnqueueOutcome,
+  JobFailAndChainOutcome,
   JobFailureDisposition,
   JobInsert,
   JobStoreDump,
@@ -86,6 +87,9 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
         return { job: toJob(row), deduped: true }
       }
     }
+    if (rows.has(String(request.id))) {
+      throw new Error(`duplicate job row id: ${String(request.id)}`)
+    }
     const row: Row = {
       id: String(request.id),
       kind: request.kind,
@@ -101,6 +105,18 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
     }
     rows.set(row.id, row)
     return { job: toJob(row), deduped: false }
+  }
+
+  /** Roll back all row mutations when a compound fake-store verb throws. */
+  function atomically<T>(body: () => T): T {
+    const before = new Map([...rows].map(([id, row]) => [id, { ...row }]))
+    try {
+      return body()
+    } catch (error) {
+      rows.clear()
+      for (const [id, row] of before) rows.set(id, row)
+      throw error
+    }
   }
 
   return {
@@ -138,11 +154,34 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
     ): Promise<JobCompleteOutcome> {
       requireFence(fence)
       const now = clock.now()
-      const row = requireRow(jobId)
-      row.status = 'done'
-      row.claimed = false
-      row.updatedAt = now
-      return { job: toJob(row), chained: next.map((request) => insertOrGet(request, now)) }
+      return atomically(() => {
+        const row = requireRow(jobId)
+        row.status = 'done'
+        row.claimed = false
+        row.updatedAt = now
+        const chained = next.map((request) => insertOrGet(request, now))
+        return { job: toJob(row), chained }
+      })
+    },
+
+    async failAndChain(
+      jobId: JobId,
+      disposition: Extract<JobFailureDisposition, { readonly kind: 'permanent' }>,
+      next: readonly JobInsert[],
+      fence: JobStoreFence,
+    ): Promise<JobFailAndChainOutcome> {
+      requireFence(fence)
+      const now = clock.now()
+      return atomically(() => {
+        const row = requireRow(jobId)
+        row.status = 'failed'
+        row.claimed = false
+        row.updatedAt = now
+        row.lastFailureKind = disposition.kind
+        row.lastFailureReason = disposition.reason
+        const chained = next.map((request) => insertOrGet(request, now))
+        return { job: toJob(row), chained }
+      })
     },
 
     async recordFailure(

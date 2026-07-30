@@ -304,12 +304,9 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
   /**
    * Land one job permanently, running whatever continuation its kind declared (D-20).
    *
-   * ORDER MATTERS, and it is continuation-then-record on purpose. A host that dies between
-   * the two leaves the job claimed rather than failed, so a later attempt re-runs the
-   * disposition — and the second run of the producer enqueues the same instances under the
-   * same keys, which the store merges into the rows already there. Recording the failure
-   * first would make the job terminal with its continuation half-written and nothing left to
-   * finish it, which is precisely the dead head this disposition exists to prevent.
+   * Validation and deterministic request construction happen before durability. The store then
+   * receives the terminal parent and the complete continuation set in one fenced call, so there
+   * is no ordering choice here and no crash window for the engine to repair on replay.
    */
   async function failPermanently(input: {
     readonly job: Job
@@ -330,20 +327,21 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
     // declaration, and half of one already enqueued is worse than none.
     const inserts = successorRequests(declaration, requests)
 
-    const continuation: JobEnqueueOutcome[] = []
-    for (const insert of inserts) {
-      continuation.push(await store.enqueue(insert))
-    }
-    await store.recordFailure(job.id, { kind: 'permanent', reason }, fence)
+    const failed = await store.failAndChain(
+      job.id,
+      { kind: 'permanent', reason },
+      inserts,
+      fence,
+    )
 
     return {
       ran: true,
       disposition: 'failed',
-      job,
+      job: failed.job,
       checkpointsPublished: input.published,
       handlerInvoked: input.handlerInvoked,
       reason,
-      continuation,
+      continuation: failed.chained,
     }
   }
 
