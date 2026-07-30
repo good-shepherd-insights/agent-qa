@@ -1050,8 +1050,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         instanceId,
         pid: process.pid,
       },
-      onNudge: () => {
-        const sessionId = requestDrain(true)
+      onNudge: (nudge) => {
+        const sessionId = requestDrain(nudge.requireReceipt)
         jobDispatcher?.wake()
         if (sessionId === undefined) {
           throw new Error('Daemon is shutting down and cannot accept a drain nudge')

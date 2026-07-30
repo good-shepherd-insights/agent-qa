@@ -206,7 +206,7 @@ async function startHost(kinds: JobKindRegistry): Promise<RunningHost> {
     jobs: jobs!,
     scheduler,
     running,
-    nudge: () => nudge?.({ kind: 'candidates-enqueued' }),
+    nudge: () => nudge?.({ kind: 'candidates-enqueued', requireReceipt: false }),
     signal: () => signals.get('SIGTERM')?.(),
     async stop() {
       if (stopped) return

@@ -87,7 +87,7 @@ interface PurgeOptions {
   json?: boolean
 }
 
-interface DrainOptions {
+export interface DrainOptions {
   status?: boolean
   json?: boolean
 }
@@ -117,7 +117,7 @@ interface KnowledgeDrainStatus {
   remaining: number
 }
 
-interface KnowledgePaths {
+export interface KnowledgePaths {
   knowledgeRoot: string
   runtimeRoot: string
   auditBaseDir: string
@@ -179,6 +179,16 @@ const ORIGIN_CLASSES = new Set<OriginClass>([
 
 /** Short foreground feedback cadence; retune from operational evidence without adding config. */
 const DRAIN_WAIT_POLL_MS = 100
+
+export interface DaemonDrainTiming {
+  readonly waitTimeoutMs: number
+  readonly pollMs: number
+}
+
+const DEFAULT_DAEMON_DRAIN_TIMING: DaemonDrainTiming = {
+  waitTimeoutMs: DRAIN_WAIT_TIMEOUT_MS,
+  pollMs: DRAIN_WAIT_POLL_MS,
+}
 
 const FALLBACK_CURATOR_AUTHOR: CuratorAuthor = async () => ({
   kind: 'fallback-required',
@@ -362,10 +372,18 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
   ) process.exitCode = 1
 }
 
-async function drainViaDaemon(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
-  const receiptFloor = readDrainSessionReceipts(paths.runtimeRoot).length
-  const nudge = await nudgeDaemon(paths.runtimeRoot)
+export async function drainViaDaemon(
+  paths: KnowledgePaths,
+  options: DrainOptions,
+  timing: DaemonDrainTiming = DEFAULT_DAEMON_DRAIN_TIMING,
+): Promise<void> {
   const startedAtMs = Date.now()
+  const deadlineMs = startedAtMs + timing.waitTimeoutMs
+  const receiptFloor = readDrainSessionReceipts(paths.runtimeRoot).length
+  const nudge = await nudgeDaemon(paths.runtimeRoot, {
+    deadlineMs,
+    requireReceipt: true,
+  })
   let lastHumanRemaining: number | undefined
 
   while (true) {
@@ -424,19 +442,28 @@ async function drainViaDaemon(paths: KnowledgePaths, options: DrainOptions): Pro
       }
     }
 
-    const elapsedMs = Date.now() - startedAtMs
-    if (elapsedMs >= DRAIN_WAIT_TIMEOUT_MS) {
+    const remainingBudgetMs = deadlineMs - Date.now()
+    if (remainingBudgetMs <= 0) {
       if (options.json === true) {
-        emitJson({ mode: 'daemon', timedOut: true, remaining, remainingWork })
+        emitJson({
+          mode: 'daemon',
+          timedOut: true,
+          unresponsive: true,
+          remaining,
+          remainingWork,
+        })
       }
       emitHuman(
-        pc.red(`knowledge drain: timed out with ${renderRemainingDisposition(remainingWork)}`),
+        pc.red(
+          `knowledge drain: daemon unresponsive; timed out at deadline with `
+          + renderRemainingDisposition(remainingWork),
+        ),
         'stderr',
       )
       process.exitCode = 1
       return
     }
-    await waitForDrainPoll(Math.min(DRAIN_WAIT_POLL_MS, DRAIN_WAIT_TIMEOUT_MS - elapsedMs))
+    await waitForDrainPoll(Math.min(timing.pollMs, remainingBudgetMs))
   }
 }
 

@@ -25,6 +25,17 @@ import {
 /** Provisional stream reconnect budget; retune from operational evidence without adding config. */
 export const STREAM_RESUME_MAX_ATTEMPTS = 3
 
+/** Pinned nudge I/O budget; retune under D-15 from operational evidence, never config. */
+export const DAEMON_NUDGE_TIMEOUT_MS = 5_000
+
+export interface NudgeDaemonOptions {
+  /** Absolute wall-clock deadline shared with the caller's complete operation. */
+  readonly deadlineMs?: number
+  /** Request an empty terminal receipt when the caller gates completion on it. */
+  readonly requireReceipt?: boolean
+  readonly signal?: AbortSignal
+}
+
 export class DaemonNotRunningError extends Error {
   readonly reason: 'absent' | 'malformed' | 'stale' | 'unreachable'
 
@@ -379,17 +390,42 @@ export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<
 }
 
 /** Best-effort curation wake-up returning the durable session identity when acknowledged. */
-export async function nudgeDaemon(agentQaRoot: string): Promise<NudgeResponse | undefined> {
+export async function nudgeDaemon(
+  agentQaRoot: string,
+  options: NudgeDaemonOptions = {},
+): Promise<NudgeResponse | undefined> {
   try {
+    if (options.signal?.aborted === true) return undefined
     const inspected = inspectDaemonRegistration(agentQaRoot)
     if (inspected.kind !== 'live') return
-    const body = JSON.stringify({ kind: 'candidates-enqueued' })
+    const remainingDeadlineMs = options.deadlineMs === undefined
+      ? DAEMON_NUDGE_TIMEOUT_MS
+      : options.deadlineMs - Date.now()
+    if (remainingDeadlineMs <= 0) return undefined
+    const timeoutMs = Math.max(
+      1,
+      Math.min(DAEMON_NUDGE_TIMEOUT_MS, Math.floor(remainingDeadlineMs)),
+    )
+    const body = JSON.stringify({
+      kind: 'candidates-enqueued',
+      ...(options.requireReceipt === true ? { requireReceipt: true } : {}),
+    })
     return await new Promise<NudgeResponse | undefined>((resolveNudge) => {
       let settled = false
+      let responseStream: IncomingMessage | undefined
+      let timeout: ReturnType<typeof setTimeout> | undefined
       const settle = (response: NudgeResponse | undefined): void => {
         if (settled) return
         settled = true
+        if (timeout !== undefined) clearTimeout(timeout)
+        options.signal?.removeEventListener('abort', abortRequest)
         resolveNudge(response)
+      }
+      const abortRequest = (): void => {
+        if (settled) return
+        settle(undefined)
+        responseStream?.destroy()
+        outgoing.destroy()
       }
       const outgoing = request(
         {
@@ -403,6 +439,7 @@ export async function nudgeDaemon(agentQaRoot: string): Promise<NudgeResponse | 
           },
         },
         (response) => {
+          responseStream = response
           void (async () => {
             try {
               const text = await readResponseText(response)
@@ -418,7 +455,15 @@ export async function nudgeDaemon(agentQaRoot: string): Promise<NudgeResponse | 
           })()
         },
       )
+      outgoing.setTimeout(timeoutMs, abortRequest)
       outgoing.once('error', () => settle(undefined))
+      timeout = setTimeout(abortRequest, timeoutMs)
+      timeout.unref?.()
+      options.signal?.addEventListener('abort', abortRequest, { once: true })
+      if (options.signal?.aborted === true) {
+        abortRequest()
+        return
+      }
       outgoing.end(body)
     })
   } catch {

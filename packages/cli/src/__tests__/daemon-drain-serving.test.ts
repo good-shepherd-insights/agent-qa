@@ -49,14 +49,13 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import * as knowledgeMaintain from '../commands/knowledge-maintain.js'
+import { drainViaDaemon } from '../commands/knowledge-maintain.js'
 import {
   CURATION_TAIL_RECEIPT_FILE,
   runCurationTail,
   type CurationTailReceipt,
 } from '../curation/curation-tail.js'
-import { nudgeDaemon } from '../daemon/client.js'
-import * as daemonClient from '../daemon/client.js'
+import { DAEMON_NUDGE_TIMEOUT_MS, nudgeDaemon } from '../daemon/client.js'
 import {
   DRAIN_SESSION_RECEIPTS_FILE,
   readDrainSessionReceipts,
@@ -691,6 +690,7 @@ describe('daemon curation serving tracer', () => {
       child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { childOutput += chunk })
       child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { childOutput += chunk })
       const originalExitCode = process.exitCode
+      const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
       const stderr: string[] = []
       const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
         stderr.push(String(chunk))
@@ -706,21 +706,8 @@ describe('daemon curation serving tracer', () => {
         }, `daemon child never registered:\n${childOutput}`)
         expect(child.kill('SIGSTOP')).toBe(true)
 
-        const nudgeTimeout = (
-          daemonClient as unknown as { DAEMON_NUDGE_TIMEOUT_MS?: number }
-        ).DAEMON_NUDGE_TIMEOUT_MS
-        expect(nudgeTimeout).toBe(5_000)
-        const drainViaDaemon = (
-          knowledgeMaintain as unknown as {
-            drainViaDaemon?: (
-              paths: { knowledgeRoot: string; runtimeRoot: string; auditBaseDir: string },
-              options: { json?: boolean },
-              timing: { waitTimeoutMs: number; pollMs: number },
-            ) => Promise<void>
-          }
-        ).drainViaDaemon
+        expect(DAEMON_NUDGE_TIMEOUT_MS).toBe(5_000)
         expect(drainViaDaemon).toBeTypeOf('function')
-        if (drainViaDaemon === undefined) return
 
         process.exitCode = undefined
         const startedAtMs = Date.now()
@@ -740,6 +727,7 @@ describe('daemon curation serving tracer', () => {
         expect(stderr.join('')).toContain('daemon unresponsive')
         expect(stderr.join('')).toContain('queued 1')
       } finally {
+        stdoutWrite.mockRestore()
         stderrWrite.mockRestore()
         process.exitCode = originalExitCode
         if (child.exitCode === null && child.signalCode === null) {

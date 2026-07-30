@@ -40,7 +40,10 @@ export const invokeEnvelopeSchema = z
 export type InvokeEnvelope = z.infer<typeof invokeEnvelopeSchema>
 
 export const nudgeEnvelopeSchema = z
-  .object({ kind: z.literal('candidates-enqueued') })
+  .object({
+    kind: z.literal('candidates-enqueued'),
+    requireReceipt: z.boolean().default(false),
+  })
   .strict()
 
 export type NudgeEnvelope = z.infer<typeof nudgeEnvelopeSchema>
