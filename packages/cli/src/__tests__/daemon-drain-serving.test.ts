@@ -18,7 +18,11 @@ import type {
   JobRecoveryHost,
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
-import { LEASE_FILE } from '@vostride/agent-qa-knowledge-local'
+import {
+  acquireWriterLease,
+  LEASE_FILE,
+  WriterAuthorityLostError,
+} from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
@@ -126,6 +130,100 @@ function rawNudge(
     outgoing.once('error', rejectResponse)
     outgoing.end(encoded)
   })
+}
+
+interface ScheduledHostHarness {
+  running: Promise<number>
+  fire(intervalMs: number): void
+  signal(signal: NodeJS.Signals): void
+}
+
+function drainReport(jobsProcessed: number, remaining: number) {
+  return {
+    kind: 'drained' as const,
+    jobsProcessed,
+    committed: jobsProcessed,
+    downgraded: 0,
+    withheld: 0,
+    requeued: 0,
+    failures: 0,
+    failureDetails: [],
+    noops: 0,
+    noopDetails: [],
+    reconcile: undefined,
+    writerPass: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
+    gc: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
+    remaining,
+  }
+}
+
+function startScheduledHost(options: {
+  paths: ReturnType<typeof makeRoot>
+  queued: Set<string>
+  drainQueue: DaemonHostOperations['drainQueue']
+  runMaintenanceTail?: (...args: unknown[]) => unknown
+  acquireWriterLease?: DaemonHostOperations['acquireWriterLease']
+}): ScheduledHostHarness {
+  const signals = new Map<NodeJS.Signals, () => void>()
+  const intervals = new Map<number, { callback: () => void; intervalMs: number }>()
+  let nextTimerId = 1
+  const operations = {
+    composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
+    composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
+    listQueuedCandidates: () => [...options.queued].sort(),
+    drainQueue: options.drainQueue,
+    ...(options.acquireWriterLease === undefined
+      ? {}
+      : { acquireWriterLease: options.acquireWriterLease }),
+    ...(options.runMaintenanceTail === undefined
+      ? {}
+      : { runMaintenanceTail: options.runMaintenanceTail }),
+    randomUUID: () => SESSION_ID,
+    setInterval: (callback: () => void, intervalMs: number) => {
+      const timerId = nextTimerId++
+      intervals.set(timerId, { callback, intervalMs })
+      return timerId as unknown as ReturnType<typeof setInterval>
+    },
+    clearInterval: (timer: ReturnType<typeof setInterval>) => {
+      intervals.delete(timer as unknown as number)
+    },
+    setTimeout: () => 99 as unknown as ReturnType<typeof setTimeout>,
+    clearTimeout: vi.fn(),
+    onSignal: (signal: NodeJS.Signals, listener: () => void) => signals.set(signal, listener),
+    offSignal: (signal: NodeJS.Signals, listener: () => void) => {
+      if (signals.get(signal) === listener) signals.delete(signal)
+    },
+    hardExit: vi.fn(),
+    startInvokeServer: async ({ socketPath }: { socketPath: string }) => ({
+      socketPath,
+      close: () => Promise.resolve(),
+    }),
+  } as unknown as Partial<DaemonHostOperations>
+  const running = runDaemonHost({
+    agentQaRoot: options.paths.agentQaRoot,
+    knowledgeRoot: options.paths.knowledgeRoot,
+    config: CONFIG,
+    model: () => MODEL,
+    author: () => async () => ({ kind: 'fallback-required', reason: 'no-model' }),
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    operations,
+    logger: { info: vi.fn(), error: vi.fn() },
+  })
+  return {
+    running,
+    fire(intervalMs) {
+      const callbacks = [...intervals.values()]
+        .filter((scheduled) => scheduled.intervalMs === intervalMs)
+        .map((scheduled) => scheduled.callback)
+      if (callbacks.length === 0) throw new Error(`interval ${intervalMs} was not scheduled`)
+      for (const callback of callbacks) callback()
+    },
+    signal(signal) {
+      const listener = signals.get(signal)
+      if (listener === undefined) throw new Error(`${signal} listener was not installed`)
+      listener()
+    },
+  }
 }
 
 afterEach(() => {
@@ -334,5 +432,145 @@ describe('daemon curation serving tracer', () => {
     const paths = makeRoot()
     await expect(nudgeDaemon(paths.agentQaRoot)).resolves.toBeUndefined()
     expect(existsSync(join(paths.agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE))).toBe(false)
+  })
+})
+
+describe('daemon curation scheduling', () => {
+  it('drains work on the 30 second poll backstop when no nudge arrives', async () => {
+    const paths = makeRoot()
+    const queued = new Set([CANDIDATE_ID])
+    const drainQueue = vi.fn<DaemonHostOperations['drainQueue']>(async () => {
+      const jobsProcessed = queued.size
+      queued.clear()
+      return drainReport(jobsProcessed, 0)
+    })
+    const host = startScheduledHost({ paths, queued, drainQueue })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'scheduled daemon did not register',
+    )
+
+    host.fire(30_000)
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE)),
+      'poll tick did not drain the curation queue',
+    )
+
+    expect(drainQueue).toHaveBeenCalledOnce()
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toHaveLength(1)
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
+  })
+
+  it('runs maintenance every 300 seconds under the standing lease epoch', async () => {
+    const paths = makeRoot()
+    const queued = new Set<string>()
+    const runMaintenanceTail = vi.fn(async () => ({
+      writerPass: { kind: 'not-requested' },
+      gc: { kind: 'completed', summary: { trimmedRecordIds: [] } },
+      failures: [],
+    }))
+    const host = startScheduledHost({
+      paths,
+      queued,
+      drainQueue: vi.fn(async () => drainReport(0, 0)),
+      runMaintenanceTail,
+    })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'maintenance daemon did not register',
+    )
+
+    host.fire(300_000)
+    await waitUntil(() => runMaintenanceTail.mock.calls.length === 1, 'maintenance did not run')
+    expect(runMaintenanceTail).toHaveBeenCalledWith({
+      knowledgeRoot: paths.knowledgeRoot,
+      lease: expect.objectContaining({ epoch: 1 }),
+    })
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
+  })
+
+  it('routes cadence authority loss through lease-lost teardown without reacquiring', async () => {
+    const paths = makeRoot()
+    const queued = new Set<string>()
+    const acquire = vi.fn((knowledgeRoot: string) => acquireWriterLease(knowledgeRoot))
+    const runMaintenanceTail = vi.fn(async () => {
+      throw new WriterAuthorityLostError(
+        { knowledgeRoot: paths.knowledgeRoot, leaseId: SESSION_ID, epoch: 1 },
+        'stale-epoch',
+        2,
+      )
+    })
+    const host = startScheduledHost({
+      paths,
+      queued,
+      drainQueue: vi.fn(async () => drainReport(0, 0)),
+      runMaintenanceTail,
+      acquireWriterLease: acquire,
+    })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'authority-loss daemon did not register',
+    )
+
+    host.fire(300_000)
+    await expect(host.running).resolves.toBe(1)
+    expect(acquire).toHaveBeenCalledOnce()
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+    expect(readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8')).not.toBe('')
+  })
+
+  it('finishes a multi-pass over-budget queue in one unbounded session', async () => {
+    const paths = makeRoot()
+    const candidateIds = ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64)]
+    const queued = new Set(candidateIds)
+    const drainQueue = vi.fn<DaemonHostOperations['drainQueue']>(async (options) => {
+      expect(options.budgetMs).toBe('unbounded')
+      const next = [...queued].sort()[0]
+      if (next !== undefined) queued.delete(next)
+      return drainReport(next === undefined ? 0 : 1, queued.size)
+    })
+    const host = startScheduledHost({ paths, queued, drainQueue })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'unbounded-session daemon did not register',
+    )
+
+    host.fire(30_000)
+    await waitUntil(
+      () => readDrainSessionReceipts(paths.agentQaRoot).length === 1,
+      'unbounded session did not complete',
+    )
+    expect(drainQueue).toHaveBeenCalledTimes(3)
+    expect(readDrainSessionReceipts(paths.agentQaRoot)[0]).toMatchObject({
+      candidateIds,
+      remainingAfter: 0,
+    })
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
+  })
+
+  it('keeps an empty poll tick receipt- and event-free', async () => {
+    const paths = makeRoot()
+    const queued = new Set<string>()
+    const drainQueue = vi.fn<DaemonHostOperations['drainQueue']>(async () => drainReport(0, 0))
+    const host = startScheduledHost({ paths, queued, drainQueue })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'idle daemon did not register',
+    )
+
+    host.fire(30_000)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(drainQueue).not.toHaveBeenCalled()
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toEqual([])
+    const events = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
+    expect(events).not.toContain('drain-session-')
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
   })
 })
