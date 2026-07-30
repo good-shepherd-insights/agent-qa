@@ -14,7 +14,14 @@ import {
   inspectDaemonRegistration,
   type DaemonRegistration,
 } from './registration.js'
-import { INVOKE_ENVELOPE_SCHEMA_VERSION } from './server.js'
+import {
+  INVOKE_ENVELOPE_SCHEMA_VERSION,
+  STREAM_END_EVENT,
+  STREAM_ERROR_EVENT,
+} from './server.js'
+
+/** Provisional stream reconnect budget; retune from operational evidence without adding config. */
+export const STREAM_RESUME_MAX_ATTEMPTS = 3
 
 export class DaemonNotRunningError extends Error {
   readonly reason: 'absent' | 'malformed' | 'stale' | 'unreachable'
@@ -47,17 +54,31 @@ interface WireError {
   readonly earliestAvailableSeq?: unknown
 }
 
-interface SseElement {
-  readonly id: number
-  readonly value: unknown
-}
+type DaemonStreamInterruptionReason =
+  | 'transport-error'
+  | 'missing-terminal-frame'
+  | 'daemon-unavailable'
+  | 'resume-attempts-exhausted'
 
-class DaemonStreamDisconnectedError extends Error {
-  constructor(cause?: unknown) {
-    super('agent-qa daemon stream disconnected before its terminating response', { cause })
-    this.name = 'DaemonStreamDisconnectedError'
+export class DaemonStreamInterruptedError extends Error {
+  constructor(
+    readonly lastEventId: number | undefined,
+    readonly reason: DaemonStreamInterruptionReason,
+    cause?: unknown,
+  ) {
+    super(
+      `agent-qa daemon stream was interrupted (${reason}) before semantic completion` +
+        (lastEventId === undefined ? '' : ` after event ${lastEventId}`),
+      cause === undefined ? undefined : { cause },
+    )
+    this.name = 'DaemonStreamInterruptedError'
   }
 }
+
+type SseFrame =
+  | { readonly kind: 'element'; readonly id: number; readonly value: unknown }
+  | { readonly kind: 'end' }
+  | { readonly kind: 'error'; readonly value: unknown }
 
 function requireLiveRegistration(agentQaRoot: string): DaemonRegistration {
   const registration = inspectDaemonRegistration(agentQaRoot)
@@ -181,9 +202,10 @@ function isEventStream(response: IncomingMessage): boolean {
   return contentType.toLowerCase().startsWith('text/event-stream')
 }
 
-function parseEventFrame(frame: string): SseElement {
+function parseEventFrame(frame: string): SseFrame {
   const dataLines: string[] = []
   let id: number | undefined
+  let eventName = 'message'
 
   for (const line of frame.split('\n')) {
     if (line.length === 0 || line.startsWith(':')) continue
@@ -197,30 +219,50 @@ function parseEventFrame(frame: string): SseElement {
         throw new Error(`Daemon stream returned an invalid SSE id: ${value}`)
       }
       id = parsedId
+    } else if (field === 'event') {
+      eventName = value
     } else if (field === 'data') {
       dataLines.push(value)
     }
   }
 
+  if (eventName === STREAM_END_EVENT || eventName === STREAM_ERROR_EVENT) {
+    if (id !== undefined) throw new Error(`Daemon ${eventName} frame must not carry an SSE id`)
+    if (dataLines.length === 0) throw new Error(`Daemon ${eventName} frame is missing data`)
+    const value = parseJson(dataLines.join('\n'), `agent-qa daemon ${eventName} frame`)
+    return eventName === STREAM_END_EVENT
+      ? { kind: 'end' }
+      : { kind: 'error', value }
+  }
+  if (eventName !== 'message') {
+    throw new Error(`Daemon stream returned an unknown SSE event: ${eventName}`)
+  }
   if (id === undefined) throw new Error('Daemon stream event is missing its SSE id')
   if (dataLines.length === 0) throw new Error(`Daemon stream event ${id} is missing data`)
   return {
+    kind: 'element',
     id,
     value: parseJson(dataLines.join('\n'), `agent-qa daemon stream event ${id}`),
   }
 }
 
-async function* readEventStream(response: IncomingMessage): AsyncIterable<SseElement> {
+async function* readEventStream(response: IncomingMessage): AsyncIterable<{
+  readonly id: number
+  readonly value: unknown
+}> {
   response.setEncoding('utf8')
   const iterator = response[Symbol.asyncIterator]()
   let buffer = ''
+  let lastEventId: number | undefined
+  let terminalSeen = false
 
   while (true) {
     let next: IteratorResult<unknown>
     try {
       next = await iterator.next()
     } catch (error) {
-      throw new DaemonStreamDisconnectedError(error)
+      if (terminalSeen) return
+      throw new DaemonStreamInterruptedError(lastEventId, 'transport-error', error)
     }
     if (next.done) break
 
@@ -229,17 +271,32 @@ async function* readEventStream(response: IncomingMessage): AsyncIterable<SseEle
     while (boundary !== -1) {
       const frame = buffer.slice(0, boundary)
       buffer = buffer.slice(boundary + 2)
-      if (frame.length > 0) yield parseEventFrame(frame)
+      if (frame.length > 0) {
+        const parsed = parseEventFrame(frame)
+        if (terminalSeen) throw new Error('Daemon stream emitted a frame after stream-end')
+        if (parsed.kind === 'end') {
+          terminalSeen = true
+        } else if (parsed.kind === 'error') {
+          throw rehydrateFunctionError(parsed.value, 500)
+        } else {
+          lastEventId = parsed.id
+          yield parsed
+        }
+      }
       boundary = buffer.indexOf('\n\n')
     }
   }
 
-  if (!response.complete || buffer.length > 0) {
-    throw new DaemonStreamDisconnectedError()
+  if (buffer.length > 0) {
+    throw new DaemonStreamInterruptedError(lastEventId, 'transport-error')
+  }
+  if (!terminalSeen) {
+    throw new DaemonStreamInterruptedError(lastEventId, 'missing-terminal-frame')
   }
 }
 
-function resumeInput(input: unknown, lastEventId: number): Record<string, unknown> {
+function resumeInput(input: unknown, lastEventId: number | undefined): unknown {
+  if (lastEventId === undefined) return input
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new Error('Daemon stream input must be an object to resume with lastEventId')
   }
@@ -259,13 +316,13 @@ async function requireEventStream(response: IncomingMessage): Promise<void> {
 
 async function* resumeEventStream(
   firstResponse: IncomingMessage,
-  registration: DaemonRegistration,
+  agentQaRoot: string,
   functionId: string,
   input: unknown,
 ): AsyncIterable<unknown> {
   let response = firstResponse
   let lastEventId: number | undefined
-  let reconnects = 0
+  let resumeAttempts = 0
 
   while (true) {
     try {
@@ -275,21 +332,29 @@ async function* resumeEventStream(
       }
       return
     } catch (error) {
-      if (
-        !(error instanceof DaemonStreamDisconnectedError) ||
-        reconnects >= 1 ||
-        lastEventId === undefined
-      ) {
-        throw error
+      if (!(error instanceof DaemonStreamInterruptedError)) throw error
+      lastEventId = error.lastEventId ?? lastEventId
+      if (resumeAttempts >= STREAM_RESUME_MAX_ATTEMPTS) {
+        throw new DaemonStreamInterruptedError(
+          lastEventId,
+          'resume-attempts-exhausted',
+          error,
+        )
       }
     }
 
-    reconnects += 1
-    response = await openInvokeResponse(
-      registration,
-      functionId,
-      resumeInput(input, lastEventId),
-    )
+    resumeAttempts += 1
+    let registration: DaemonRegistration
+    try {
+      registration = requireLiveRegistration(agentQaRoot)
+      response = await openInvokeResponse(
+        registration,
+        functionId,
+        resumeInput(input, lastEventId),
+      )
+    } catch (error) {
+      throw new DaemonStreamInterruptedError(lastEventId, 'daemon-unavailable', error)
+    }
     await requireEventStream(response)
   }
 }
@@ -303,7 +368,7 @@ export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<
   if (isEventStream(response)) {
     return resumeEventStream(
       response,
-      registration,
+      options.agentQaRoot,
       options.functionId,
       options.input,
     )

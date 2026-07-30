@@ -20,6 +20,8 @@ export const INVOKE_ENVELOPE_SCHEMA_VERSION = 1
 export const DAEMON_IDENTITY_SCHEMA_VERSION = 1
 export const DAEMON_IDENTITY_TIMEOUT_MS = 1_000
 export const DAEMON_SOCKET_FILE = 'daemon.sock'
+export const STREAM_END_EVENT = 'stream-end'
+export const STREAM_ERROR_EVENT = 'stream-error'
 
 /** Conservative floor below macOS' and Linux' platform-specific `sun_path` limits. */
 export const DAEMON_SOCKET_PATH_BUDGET_BYTES = 100
@@ -114,6 +116,11 @@ interface WireError {
   readonly [field: string]: unknown
   readonly name: string
   readonly message: string
+}
+
+interface StreamResponseState {
+  readonly active: WeakSet<ServerResponse>
+  readonly terminal: WeakSet<ServerResponse>
 }
 
 function projectHash(projectRoot: string): string {
@@ -323,7 +330,9 @@ function streamElementSeq(element: unknown): number {
 async function writeEventStream(
   response: ServerResponse,
   result: AsyncIterable<unknown>,
+  streamResponses: StreamResponseState,
 ): Promise<void> {
+  streamResponses.active.add(response)
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache',
@@ -331,16 +340,33 @@ async function writeEventStream(
   })
   response.flushHeaders()
 
-  for await (const element of result) {
-    response.write(`id: ${streamElementSeq(element)}\ndata: ${JSON.stringify(element)}\n\n`)
+  try {
+    for await (const element of result) {
+      if (response.destroyed) return
+      response.write(`id: ${streamElementSeq(element)}\ndata: ${JSON.stringify(element)}\n\n`)
+    }
+    if (response.destroyed) return
+
+    // Element events use SSE's implicit `message` event. These reserved named events therefore
+    // cannot collide with function output and are the only semantic completion signals.
+    response.write(`event: ${STREAM_END_EVENT}\ndata: {}\n\n`)
+    streamResponses.terminal.add(response)
+    response.end()
+  } catch (error) {
+    if (response.destroyed) return
+    response.write(
+      `event: ${STREAM_ERROR_EVENT}\ndata: ${JSON.stringify(wireError(error))}\n\n`,
+    )
+    streamResponses.terminal.add(response)
+    response.end()
   }
-  response.end()
 }
 
 async function handleInvoke(
   request: IncomingMessage,
   response: ServerResponse,
   registry: FunctionRegistry,
+  streamResponses: StreamResponseState,
 ): Promise<void> {
   if (request.method !== 'POST') {
     writeJson(response, 405, { name: 'MethodNotAllowedError', message: 'POST required' })
@@ -356,7 +382,7 @@ async function handleInvoke(
       DAEMON_FUNCTION_CALLER,
     )
     if (isAsyncIterable(result)) {
-      await writeEventStream(response, result)
+      await writeEventStream(response, result, streamResponses)
       return
     }
     writeJson(response, 200, result)
@@ -392,9 +418,10 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   options: StartInvokeServerOptions,
+  streamResponses: StreamResponseState,
 ): Promise<void> {
   if (request.url === '/invoke') {
-    await handleInvoke(request, response, options.registry)
+    await handleInvoke(request, response, options.registry, streamResponses)
     return
   }
   if (request.url === '/nudge') {
@@ -422,10 +449,14 @@ export async function startInvokeServer(
 
   const sockets = new Set<Socket>()
   const responses = new Set<ServerResponse>()
+  const streamResponses: StreamResponseState = {
+    active: new WeakSet<ServerResponse>(),
+    terminal: new WeakSet<ServerResponse>(),
+  }
   const server = createServer((request, response) => {
     responses.add(response)
     response.once('close', () => responses.delete(response))
-    void handleRequest(request, response, normalizedOptions)
+    void handleRequest(request, response, normalizedOptions, streamResponses)
   })
   server.on('connection', (socket) => {
     sockets.add(socket)
@@ -444,7 +475,16 @@ export async function startInvokeServer(
     socketPath: options.socketPath,
     close(): Promise<void> {
       closing ??= new Promise<void>((resolveClose, rejectClose) => {
-        for (const response of responses) response.end()
+        for (const response of responses) {
+          if (
+            streamResponses.active.has(response) &&
+            !streamResponses.terminal.has(response)
+          ) {
+            response.destroy()
+          } else {
+            response.end()
+          }
+        }
         server.close((error) => {
           for (const socket of sockets) socket.destroy()
           if (!isNamedPipe(options.socketPath)) rmSync(options.socketPath, { force: true })
