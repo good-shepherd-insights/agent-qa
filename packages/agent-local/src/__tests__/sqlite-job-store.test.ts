@@ -26,7 +26,7 @@ import type {
   JobInsert,
   JobStoreFence,
 } from '@vostride/agent-qa-agent'
-import { asJobId } from '@vostride/agent-qa-schema'
+import { asJobId, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
@@ -80,12 +80,21 @@ function checkpointRecord(
   }
 }
 
-function openStore(root: string, clock: ClockPort = steppingClock()): SqliteJobStore {
+interface SqliteJobStoreTestHooks {
+  readonly beforeCheckpointFilePublish?: () => void
+}
+
+function openStore(
+  root: string,
+  clock: ClockPort = steppingClock(),
+  hooks?: SqliteJobStoreTestHooks,
+): SqliteJobStore {
   return createSqliteJobStore({
     path: join(root, AGENT_JOB_STORE_DB_FILE),
     clock,
     checkpoints: createJobCheckpointStore({ root }),
-  })
+    ...(hooks === undefined ? {} : { hooks }),
+  } as Parameters<typeof createSqliteJobStore>[0] & { hooks?: SqliteJobStoreTestHooks })
 }
 
 /** Read the physical insertion order, which no port verb exposes and none should. */
@@ -105,6 +114,17 @@ function rawRow(root: string, id: string): Record<string, unknown> | undefined {
   const db = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
   try {
     return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id)
+  } finally {
+    db.close()
+  }
+}
+
+function rawCheckpointRows(root: string): Record<string, unknown>[] {
+  const db = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
+  try {
+    return db
+      .prepare('SELECT * FROM job_checkpoints ORDER BY job_id, attempt, checkpoint_id')
+      .all()
   } finally {
     db.close()
   }
@@ -586,7 +606,11 @@ describe('agent job store: the deterministic logical dump (D-03)', () => {
     try {
       const dump = await store.logicalDump()
       // Enumerated from the catalogue, so a table added later is covered without an edit.
-      expect(dump.tables.map((table) => table.table)).toEqual(['job_store_fence', 'jobs'])
+      expect(dump.tables.map((table) => table.table)).toEqual([
+        'job_checkpoints',
+        'job_store_fence',
+        'jobs',
+      ])
       for (const table of dump.tables) {
         expect(table.orderBy.length).toBeGreaterThan(0)
         expect(orderedSelectSql(table.table, table.orderBy)).toContain('ORDER BY')
@@ -702,6 +726,118 @@ describe('agent job store: the stale-epoch refusal matrix (D-07)', () => {
   it('refuses to adopt an epoch behind the recorded one', async () => {
     await expect(store.adoptEpoch(1)).rejects.toBeInstanceOf(StaleJobStoreEpochError)
     expect((await store.dumpState()).epoch).toBe(2)
+  })
+})
+
+describe('agent job store: fenced checkpoint rows (CR-06)', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-checkpoint-fence-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('recovers the successor payload after the stale host wins the final file write', async () => {
+    const jobId = asJobId('job_a')
+    const staleRecord = checkpointRecord(jobId, 'analysis', { author: 'stale-host' })
+    const successorRecord = checkpointRecord(jobId, 'analysis', { author: 'successor' })
+    let crossedPublishBarrier = false
+
+    const staleHost = openStore(root, steppingClock(), {
+      beforeCheckpointFilePublish: () => {
+        crossedPublishBarrier = true
+        const successor = openStore(root)
+        try {
+          void successor.adoptEpoch(2)
+          void successor.publishCheckpoint(jobId, 'analysis', successorRecord, { epoch: 2 })
+        } finally {
+          successor.close()
+        }
+      },
+    })
+
+    try {
+      const staleFence = await staleHost.adoptEpoch(1)
+      await staleHost.enqueue(insert('job_a', 'key-a'))
+      await staleHost.claimNext(staleFence)
+
+      await staleHost.publishCheckpoint(jobId, 'analysis', staleRecord, staleFence)
+
+      expect(crossedPublishBarrier).toBe(true)
+      // The stale host resumed last and really did replace the cache file. Reading only that
+      // file would therefore adopt the wrong author even though sqlite already fenced it out.
+      expect(createJobCheckpointStore({ root }).read('job_a', 'analysis')).toEqual({
+        found: true,
+        payload: staleRecord,
+      })
+      expect(await staleHost.readCheckpoint(jobId, 'analysis')).toEqual({
+        found: true,
+        payload: successorRecord,
+      })
+      expect(rawCheckpointRows(root)).toHaveLength(1)
+      expect(rawCheckpointRows(root)[0]).toMatchObject({ epoch: 2 })
+    } finally {
+      staleHost.close()
+    }
+  })
+
+  it('persists neither a checkpoint row nor a file when the fence is already stale', async () => {
+    const store = openStore(root)
+    try {
+      const staleFence = await store.adoptEpoch(1)
+      await store.enqueue(insert('job_a', 'key-a'))
+      await store.claimNext(staleFence)
+      await store.adoptEpoch(2)
+      const before = JSON.stringify(await store.dumpState())
+      const record = checkpointRecord(asJobId('job_a'), 'analysis', { author: 'stale-host' })
+
+      await expect(
+        store.publishCheckpoint(asJobId('job_a'), 'analysis', record, staleFence),
+      ).rejects.toBeInstanceOf(StaleJobStoreEpochError)
+
+      expect(JSON.stringify(await store.dumpState())).toBe(before)
+      expect(rawCheckpointRows(root)).toEqual([])
+      expect(readdirSync(root)).not.toContain('agent-jobs')
+    } finally {
+      store.close()
+    }
+  })
+
+  it('stores the canonical payload and digest in the fenced row while the file agrees', async () => {
+    const store = openStore(root)
+    try {
+      const fence = await store.adoptEpoch(4)
+      await store.enqueue(insert('job_a', 'key-a'))
+      const claim = await store.claimNext(fence)
+      if (!claim.claimed) throw new Error('nothing to claim')
+      const record = checkpointRecord(claim.job.id, 'analysis', { verdict: 'no-takeover' })
+
+      await store.publishCheckpoint(claim.job.id, 'analysis', record, fence)
+
+      expect(rawCheckpointRows(root)).toEqual([
+        expect.objectContaining({
+          job_id: 'job_a',
+          checkpoint_id: 'analysis',
+          attempt: 1,
+          payload_json: canonicalJson(record),
+          payload_digest: sha256hex(canonicalJson(record)),
+          epoch: 4,
+        }),
+      ])
+      expect(createJobCheckpointStore({ root }).read('job_a', 'analysis')).toEqual({
+        found: true,
+        payload: record,
+      })
+      expect(await store.readCheckpoint(claim.job.id, 'analysis')).toEqual({
+        found: true,
+        payload: record,
+      })
+    } finally {
+      store.close()
+    }
   })
 })
 
