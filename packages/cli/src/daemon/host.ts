@@ -699,11 +699,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         operations.clearInterval(maintenanceTimer)
         maintenanceTimer = undefined
       }
-      if (graceTimer !== undefined) {
-        operations.clearTimeout(graceTimer)
-        graceTimer = undefined
-      }
-
       if (invokeServer !== undefined) {
         await invokeServer.close()
         invokeServer = undefined
@@ -745,6 +740,10 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         reason,
       })
       detachSignals()
+      if (graceTimer !== undefined) {
+        operations.clearTimeout(graceTimer)
+        graceTimer = undefined
+      }
       shutdownCompleted = true
       resolveCompletion?.(exitCode)
     })()
@@ -801,6 +800,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       leaseId: acquired.leaseId,
       epoch: acquired.epoch,
     })
+    if (acquired.reclaimed !== undefined) {
+      recordDaemonEvent({
+        kind: 'lease-reclaimed',
+        priorHolderPid: acquired.reclaimed.pid,
+        priorLeaseId: acquired.reclaimed.leaseId,
+        priorEpoch: acquired.reclaimed.epoch,
+        newEpoch: acquired.epoch,
+      })
+    }
     recordDaemonEvent({
       kind: 'epoch-bump',
       epoch: acquired.epoch,
@@ -842,21 +850,23 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     await localAgent.jobs()
     operations.trace?.('jobs-opened')
 
+    const armShutdownGrace = (): void => {
+      if (shutdownCompleted || graceTimer !== undefined) return
+      graceTimer = operations.setTimeout(
+        () => operations.hardExit(130),
+        DAEMON_SHUTDOWN_GRACE_MS,
+      )
+      graceTimer.unref?.()
+    }
     controller = createShutdownController({
       cancel: () => {
+        armShutdownGrace()
         void beginShutdown(0, true, 'signal')
       },
       exit: (code) => operations.hardExit(code),
       // A daemon's first signal is a successful operator stop, not a cancelled test verdict.
       setExitCode: () => undefined,
-      armGrace: () => {
-        if (shutdownCompleted) return
-        graceTimer ??= operations.setTimeout(
-          () => operations.hardExit(130),
-          DAEMON_SHUTDOWN_GRACE_MS,
-        )
-        graceTimer.unref?.()
-      },
+      armGrace: armShutdownGrace,
     })
     operations.onSignal('SIGINT', controller.handleSignal)
     operations.onSignal('SIGTERM', controller.handleSignal)

@@ -51,7 +51,7 @@ export type WriterLease = z.infer<typeof writerLeaseSchema>
 
 export type AcquireWriterLeaseOutcome =
   | { kind: 'held'; holder: WriterLease }
-  | { kind: 'acquired'; leaseId: string; epoch: number }
+  | { kind: 'acquired'; leaseId: string; epoch: number; reclaimed?: WriterLease }
   | {
       kind: 'refused'
       reason: 'corrupt-epoch-state'
@@ -515,6 +515,7 @@ export function acquireWriterLease(
     if (current.kind === 'parsed' && !isLeaseStale(current.lease, nowMs)) {
       return { kind: 'held', holder: current.lease }
     }
+    const reclaimed = current.kind === 'parsed' ? current.lease : undefined
 
     const epoch = nextEpoch(observedEpoch)
     const holder = writerLeaseSchema.parse({
@@ -526,7 +527,12 @@ export function acquireWriterLease(
     atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
     sweepStagedEpochsBefore(knowledgeRoot, epoch)
     atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
-    return { kind: 'acquired', leaseId: holder.leaseId, epoch: holder.epoch }
+    return {
+      kind: 'acquired',
+      leaseId: holder.leaseId,
+      epoch: holder.epoch,
+      ...(reclaimed === undefined ? {} : { reclaimed }),
+    }
   }, hooks)
 }
 

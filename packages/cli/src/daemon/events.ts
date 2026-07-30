@@ -5,6 +5,7 @@ export const DAEMON_EVENTS_FILE = 'daemon-events.jsonl'
 
 export type DaemonEventKind =
   | 'lease-acquired'
+  | 'lease-reclaimed'
   | 'lease-heartbeated'
   | 'lease-lost'
   | 'epoch-bump'

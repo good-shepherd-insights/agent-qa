@@ -151,6 +151,7 @@ describe('writer lease acquire, heartbeat, release, and stale self-heal (CUR-03/
     if (reclaimed.kind !== 'acquired') throw new Error('expected reclaimed writer lease')
     expect(reclaimed.epoch).toBe(2)
     expect(reclaimed.leaseId).not.toBe(first.leaseId)
+    expect(reclaimed.reclaimed).toEqual(staleLease)
     expect(leaseOnDisk()).toMatchObject({
       leaseId: reclaimed.leaseId,
       pid: process.pid,
