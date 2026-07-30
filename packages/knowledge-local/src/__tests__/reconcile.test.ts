@@ -34,6 +34,8 @@ import {
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   readCurrentEpoch,
+  readWriterLease,
+  type CurrentWriterAuthority,
 } from '../lease/writer-lease.js'
 import {
   COMMIT_INTENT_SCHEMA_VERSION,
@@ -87,9 +89,25 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
+  function currentWriterAuthority(): CurrentWriterAuthority {
+    const current = readWriterLease(knowledgeRoot)
+    if (current.kind === 'parsed') {
+      return { leaseId: current.lease.leaseId, epoch: current.lease.epoch }
+    }
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind === 'acquired') {
+      return { leaseId: acquired.leaseId, epoch: acquired.epoch }
+    }
+    if (acquired.kind === 'held') {
+      return { leaseId: acquired.holder.leaseId, epoch: acquired.holder.epoch }
+    }
+    throw acquired.error
+  }
+
   function deps(): ReconcileOnDrainStartDependencies {
     return {
       knowledgeRoot,
+      writerAuthority: currentWriterAuthority(),
       hasIndexRow: (bundleId) => indexRows.has(bundleId),
       applyIndexDelta,
       deriveIndexRowFromBundle,
@@ -177,7 +195,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
 
   function claimWithAuthoredCheckpoint(
     seed: string,
-    leaseId: string,
+    authority: CurrentWriterAuthority = currentWriterAuthority(),
   ): CurationCandidatePayload {
     const outcome = enqueueArtifactFreeCandidateProjection({
       knowledgeRoot,
@@ -193,7 +211,11 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     if (queued.kind !== 'parsed') throw new Error('expected parsed projection payload')
     expect(queued.payload.candidateId).toBe(candidateId)
 
-    const claim = claimNextJob({ knowledgeRoot, leaseId })
+    const claim = claimNextJob({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })
     expect(claim?.kind).toBe('claimed')
     if (claim?.kind !== 'claimed') throw new Error('expected claimed candidate')
     expect(claim.candidateId).toBe(candidateId)
@@ -203,6 +225,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     const persisted = persistAuthoredCheckpoint({
       knowledgeRoot,
       candidateId,
+      authority,
       authored,
     })
     expect(persisted.kind).toBe('persisted')
@@ -210,6 +233,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       knowledgeRoot,
       candidateId,
       lifecycle: 'bundling',
+      authority,
       authored,
     })
     return queued.payload
@@ -261,10 +285,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
   })
 
   it('state 3 discards an intent without bundle truth and returns the job to queued', () => {
-    const payload = claimWithAuthoredCheckpoint(
-      'missing-bundle',
-      'dead-lease',
-    )
+    const payload = claimWithAuthoredCheckpoint('missing-bundle')
     writeCommitIntent(
       knowledgeRoot,
       intent(payload.candidateId, 'fact-never-published-0123456789abcdef'),
@@ -322,10 +343,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
   })
 
   it('discards malformed intent bytes and fails toward re-processing the candidate', () => {
-    const payload = claimWithAuthoredCheckpoint(
-      'malformed-intent',
-      'dead-malformed',
-    )
+    const payload = claimWithAuthoredCheckpoint('malformed-intent')
     const file = join(
       knowledgeRoot,
       JOURNAL_SUBDIR,
@@ -352,7 +370,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
     const payload = claimWithAuthoredCheckpoint(
       'stale-reclaim',
-      stale.leaseId,
+      stale,
     )
 
     now.mockReturnValue(1_000_000 + LEASE_HEARTBEAT_TTL_MS)
@@ -399,7 +417,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
     const payload = claimWithAuthoredCheckpoint(
       'partial-enrichment',
-      stale.leaseId,
+      stale,
     )
     const published = publishBundle(
       {
@@ -525,7 +543,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     if (stale.kind !== 'acquired') throw new Error('expected stale holder setup')
     claimWithAuthoredCheckpoint(
       'malformed-mutation',
-      stale.leaseId,
+      stale,
     )
     const published = publishBundle(
       {
@@ -594,6 +612,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       'deriveIndexRowFromBundle',
       'hasIndexRow',
       'knowledgeRoot',
+      'writerAuthority',
     ])
   })
 })

@@ -36,6 +36,7 @@ import type {
 import { enqueueCanaryOutcome } from '../canary-emit.js'
 import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import * as purgeModule from '../purge.js'
+import { writeJobStateWithinCurrentAuthority } from '../queue/job-state.js'
 import {
   candidateProjectionFixture,
   enqueueArtifactFreeCandidateProjection,
@@ -239,6 +240,15 @@ describe('DCAY-05 sovereign purge', () => {
     }
   }
 
+  function writeQueuedFixture(candidateId: string): void {
+    writeJobStateWithinCurrentAuthority({
+      knowledgeRoot,
+      candidateId,
+      lifecycle: 'queued',
+      authority: { leaseId: 'purge-fixture', epoch: 0 },
+    })
+  }
+
   function input(
     identity: string,
     anchors: readonly Anchor[],
@@ -371,11 +381,7 @@ describe('DCAY-05 sovereign purge', () => {
     if (outcome.kind !== 'enqueued') {
       throw new Error(`expected ${identity} queue admission, got ${outcome.kind}`)
     }
-    knowledgeLocal.writeJobState({
-      knowledgeRoot,
-      candidateId: outcome.candidateId,
-      lifecycle: 'queued',
-    })
+    writeQueuedFixture(outcome.candidateId)
     return outcome.candidateId
   }
 
@@ -403,11 +409,7 @@ describe('DCAY-05 sovereign purge', () => {
     if (outcome.kind !== 'enqueued') {
       throw new Error(`expected ${identity} canary admission, got ${outcome.kind}`)
     }
-    knowledgeLocal.writeJobState({
-      knowledgeRoot,
-      candidateId: outcome.entryId,
-      lifecycle: 'queued',
-    })
+    writeQueuedFixture(outcome.entryId)
     return outcome.entryId
   }
 
@@ -737,11 +739,7 @@ describe('DCAY-05 sovereign purge', () => {
       const dir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, candidateId)
       mkdirSync(dir, { recursive: true })
       writeFileSync(join(dir, 'payload.json'), text, 'utf8')
-      knowledgeLocal.writeJobState({
-        knowledgeRoot,
-        candidateId,
-        lifecycle: 'queued',
-      })
+      writeQueuedFixture(candidateId)
       return dir
     }
 
@@ -1234,11 +1232,7 @@ describe('DCAY-05 sovereign purge', () => {
       throw new Error(`expected digest payload admission, got ${enqueued.kind}`)
     }
     const digestMatchId = enqueued.candidateId
-    knowledgeLocal.writeJobState({
-      knowledgeRoot,
-      candidateId: digestMatchId,
-      lifecycle: 'queued',
-    })
+    writeQueuedFixture(digestMatchId)
     const survivorId = enqueue('queue-digest-survivor', [
       { t: 'el', role: 'link', name: 'Digest survivor control' },
       { t: 'page', route: '/purge/queue/digest-survivor' },

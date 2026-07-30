@@ -357,8 +357,7 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
   })
 
   it('stops a drain on its first typed authority loss without claiming the next candidate', async () => {
-    enqueue('drain-first')
-    enqueue('drain-second')
+    const queued = [enqueue('drain-first'), enqueue('drain-second')].sort()
     const stale = acquireAuthority()
     let reclaimed = false
     const claimDuringTakeover = vi.fn((options: FencedClaimNextJobOptions) => {
@@ -401,6 +400,8 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
     })
     expect(claimDuringTakeover).toHaveBeenCalledOnce()
     expect(author).not.toHaveBeenCalled()
-    expect(readdirSync(join(knowledgeRoot, 'curation', 'queue', 'queued'))).toHaveLength(2)
+    expect(queued.every((candidateId) =>
+      existsSync(queuedCandidateDir(knowledgeRoot, candidateId)),
+    )).toBe(true)
   })
 })

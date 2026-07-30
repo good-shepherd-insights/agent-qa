@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  acquireWriterLease,
   claimNextJob,
   claimedCandidateDir,
   claimedLeaseDir,
@@ -25,6 +26,7 @@ import {
   writeJobState,
   type CurationCandidatePayload,
   type CurationJobLifecycle,
+  type CurrentWriterAuthority,
 } from '../index.js'
 import {
   enqueueArtifactFreeCandidateProjection,
@@ -34,10 +36,14 @@ import {
 describe('curation queue claim and durable lifecycle (CUR-04)', () => {
   let root: string
   let knowledgeRoot: string
+  let authority: CurrentWriterAuthority
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-job-state-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected test writer authority')
+    authority = { leaseId: acquired.leaseId, epoch: acquired.epoch }
   })
 
   afterEach(() => {
@@ -94,22 +100,34 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
     const expectedOrder = [firstInput.candidateId, secondInput.candidateId].sort()
 
     expect(listQueuedCandidates(knowledgeRoot)).toEqual(expectedOrder)
-    const firstClaim = claimNextJob({ knowledgeRoot, leaseId: 'lease-1' })
+    const firstClaim = claimNextJob({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })
     expect(firstClaim?.kind).toBe('claimed')
     if (firstClaim?.kind !== 'claimed') throw new Error('expected first claimed job')
     expect(firstClaim.candidateId).toBe(expectedOrder[0])
     expect(firstClaim.payload.candidateId).toBe(expectedOrder[0])
     expect(firstClaim.candidateDir).toBe(
-      claimedCandidateDir(knowledgeRoot, 'lease-1', expectedOrder[0]!),
+      claimedCandidateDir(knowledgeRoot, authority.leaseId, expectedOrder[0]!),
     )
     expect(firstClaim.payloadPath).toBe(join(firstClaim.candidateDir, 'payload.json'))
     expect(existsSync(queuedCandidateDir(knowledgeRoot, expectedOrder[0]!))).toBe(false)
     expect(existsSync(firstClaim.candidateDir)).toBe(true)
 
-    const secondClaim = claimNextJob({ knowledgeRoot, leaseId: 'lease-1' })
+    const secondClaim = claimNextJob({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })
     expect(secondClaim?.candidateId).toBe(expectedOrder[1])
-    expect(claimNextJob({ knowledgeRoot, leaseId: 'lease-1' })).toBeUndefined()
-    expect(listClaimedLeases(knowledgeRoot)).toEqual(['lease-1'])
+    expect(claimNextJob({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })).toBeUndefined()
+    expect(listClaimedLeases(knowledgeRoot)).toEqual([authority.leaseId])
   })
 
   it('atomically round-trips all five lifecycle values and degrades corrupt state', () => {
@@ -121,7 +139,12 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
       'committing',
     ]
     for (const lifecycle of lifecycles) {
-      writeJobState({ knowledgeRoot, candidateId: candidate.candidateId, lifecycle })
+      writeJobState({
+        knowledgeRoot,
+        candidateId: candidate.candidateId,
+        authority,
+        lifecycle,
+      })
       const read = readJobState(knowledgeRoot, candidate.candidateId)
       expect(read.kind).toBe('parsed')
       if (read.kind !== 'parsed') throw new Error('expected parsed state')
@@ -129,11 +152,16 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
       expect(read.state.embedCrashCount).toBe(0)
     }
 
-    const claimedDir = claimedCandidateDir(knowledgeRoot, 'lease-done', candidate.candidateId)
+    const claimedDir = claimedCandidateDir(
+      knowledgeRoot,
+      authority.leaseId,
+      candidate.candidateId,
+    )
     mkdirSync(claimedDir, { recursive: true })
     writeJobState({
       knowledgeRoot,
       candidateId: candidate.candidateId,
+      authority,
       lifecycle: 'done',
     })
     expect(readJobState(knowledgeRoot, candidate.candidateId)).toEqual({
@@ -161,6 +189,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
     writeJobState({
       knowledgeRoot,
       candidateId: candidate.candidateId,
+      authority,
       lifecycle: 'queued',
       embedCrashCount: 1,
     })
@@ -168,6 +197,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
     const persisted = persistAuthoredCheckpoint({
       knowledgeRoot,
       candidateId: candidate.candidateId,
+      authority,
       authored,
     })
     expect(persisted.kind).toBe('persisted')
@@ -181,6 +211,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
     writeJobState({
       knowledgeRoot,
       candidateId: candidate.candidateId,
+      authority,
       lifecycle: 'bundling',
       embedCrashCount: read.state.embedCrashCount + 1,
       authored: read.state.authored,
@@ -194,7 +225,11 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
 
   it('requeues a claimed candidate while preserving its authored checkpoint', () => {
     const candidate = enqueue('requeue')
-    const claim = claimNextJob({ knowledgeRoot, leaseId: 'dead-lease' })
+    const claim = claimNextJob({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })
     expect(claim?.kind).toBe('claimed')
     if (claim?.kind !== 'claimed') throw new Error('expected claimed job')
     const authored = { delta: { kind: 'Add', body: 'opaque' }, neighborIds: ['record-1'] }
@@ -202,6 +237,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
       persistAuthoredCheckpoint({
         knowledgeRoot,
         candidateId: candidate.candidateId,
+        authority,
         authored,
       }).kind,
     ).toBe('persisted')
@@ -211,16 +247,19 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
     writeJobState({
       knowledgeRoot,
       candidateId: candidate.candidateId,
+      authority,
       lifecycle: 'bundling',
       embedCrashCount: before.state.embedCrashCount,
       authored: before.state.authored,
     })
 
-    expect(requeueClaimed({ knowledgeRoot, leaseId: 'dead-lease' })).toEqual([
-      candidate.candidateId,
-    ])
+    expect(requeueClaimed({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })).toEqual([candidate.candidateId])
     expect(existsSync(queuedCandidateDir(knowledgeRoot, candidate.candidateId))).toBe(true)
-    expect(existsSync(claimedLeaseDir(knowledgeRoot, 'dead-lease'))).toBe(false)
+    expect(existsSync(claimedLeaseDir(knowledgeRoot, authority.leaseId))).toBe(false)
     const after = readJobState(knowledgeRoot, candidate.candidateId)
     expect(after.kind).toBe('parsed')
     if (after.kind !== 'parsed') throw new Error('expected requeued state')

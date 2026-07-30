@@ -343,7 +343,7 @@ describe('drainQueue daemon substrate', () => {
     expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
   })
 
-  it('reports a real claim but no completion when a caller lease epoch is stale', async () => {
+  it('refuses a stale caller lease before reconciliation or claim', async () => {
     const candidateId = enqueue('stale-epoch-lifecycle', 'local-interactive')
     const stale = acquireWriterLease(knowledgeRoot)
     if (stale.kind !== 'acquired') throw new Error('expected stale lease seed')
@@ -370,24 +370,24 @@ describe('drainQueue daemon substrate', () => {
 
     expect(report).toMatchObject({
       kind: 'drained',
-      jobsProcessed: 1,
+      jobsProcessed: 0,
       committed: 0,
       failures: 1,
       failureDetails: [
         expect.objectContaining({
-          stage: 'commit',
-          candidateId,
-          message: expect.stringContaining('writer epoch became stale'),
+          stage: 'reconcile',
+          message: expect.stringContaining('writer authority lost'),
         }),
       ],
     })
-    expect(observed).toEqual([{ kind: 'job-claimed', candidateId }])
+    expect(observed).toEqual([])
     expect(readFileSync(leasePath)).toEqual(currentLeaseBytes)
     expect(enumerateBundleDirs(knowledgeRoot)).toEqual([])
-    expect(readJobState(knowledgeRoot, candidateId)).toMatchObject({
-      kind: 'parsed',
-      state: { lifecycle: 'authored' },
+    expect(readJobState(knowledgeRoot, candidateId)).toEqual({
+      kind: 'absent',
+      present: false,
     })
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([candidateId])
     expect(releaseLease({ knowledgeRoot, leaseId: current.leaseId })).toEqual({
       kind: 'released',
     })

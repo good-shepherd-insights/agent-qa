@@ -15,7 +15,7 @@ import {
   CURATION_JOB_STATE_SCHEMA_VERSION,
   curationJobStateSchema,
   readJobState,
-  writeJobState,
+  writeJobStateWithinCurrentAuthority,
 } from '../queue/job-state.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -524,10 +524,11 @@ describe('format-local durability versions and strict public surface', () => {
         curationCandidatePayloadSchema.parse(JSON.parse(JSON.stringify(payload))),
       ).toEqual(payload)
 
-      writeJobState({
+      writeJobStateWithinCurrentAuthority({
         knowledgeRoot: root,
         candidateId,
         lifecycle: 'queued',
+        authority: { leaseId: 'queue-payload-fixture', epoch: 0 },
       })
       expect(readJobState(root, candidateId)).toMatchObject({
         kind: 'parsed',

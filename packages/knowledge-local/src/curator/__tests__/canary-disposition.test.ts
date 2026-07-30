@@ -342,11 +342,12 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       return { kind: 'fallback-required', reason: 'no-model' }
     })
     const build = vi.fn(buildRetrievalQuery)
-    const commit = vi.fn<DrainOperations['commitCurationDelta']>((_dependencies, job) => {
+    const commit = vi.fn<DrainOperations['commitCurationDelta']>((dependencies, job) => {
       writeJobState({
         knowledgeRoot,
         candidateId: job.candidateId,
         lifecycle: 'done',
+        authority: { leaseId: job.leaseId, epoch: dependencies.epoch },
       })
       return {
         kind: 'applied',

@@ -6,7 +6,6 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  readdirSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -18,7 +17,12 @@ import { canonicalJson } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import {
-  claimedRoot,
+  withCurrentWriterAuthority,
+  type CurrentWriterAuthority,
+} from '../lease/writer-lease.js'
+import {
+  claimedCandidateDir,
+  claimedLeaseDir,
   jobStatePath,
   jobsRoot,
 } from './queue-layout.js'
@@ -61,6 +65,7 @@ export interface WriteJobStateOptions {
   knowledgeRoot: string
   candidateId: string
   lifecycle: CurationJobLifecycle
+  authority: CurrentWriterAuthority
   embedCrashCount?: number
   authored?: unknown
 }
@@ -73,6 +78,7 @@ export type ReadJobStateOutcome =
 export interface PersistAuthoredCheckpointOptions {
   knowledgeRoot: string
   candidateId: string
+  authority: CurrentWriterAuthority
   authored: unknown
 }
 
@@ -128,24 +134,17 @@ function atomicRewrite(file: string, state: CurationJobState): void {
   }
 }
 
-function removeClaimedCandidate(knowledgeRoot: string, candidateId: string): void {
-  const root = claimedRoot(knowledgeRoot)
-  let leases: string[]
-  try {
-    leases = readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-    throw error
-  }
-
-  for (const leaseId of leases) {
-    const leaseDir = join(root, leaseId)
-    rmSync(join(leaseDir, candidateId), { recursive: true, force: true })
-    removeEmptyDir(leaseDir)
-  }
-  removeEmptyDir(root)
+function removeClaimedCandidate(
+  knowledgeRoot: string,
+  authority: CurrentWriterAuthority,
+  candidateId: string,
+): void {
+  const leaseDir = claimedLeaseDir(knowledgeRoot, authority.leaseId)
+  rmSync(
+    claimedCandidateDir(knowledgeRoot, authority.leaseId, candidateId),
+    { recursive: true, force: true },
+  )
+  removeEmptyDir(leaseDir)
 }
 
 /** Read a strict lifecycle checkpoint; corrupt bytes remain a typed present signal. */
@@ -178,7 +177,15 @@ export function readJobState(
  * claimed candidate directory. State-file absence for an absent candidate therefore means
  * done/never-existed; Plan 378-05's journal reconciliation distinguishes those cases.
  */
-export function writeJobState(opts: WriteJobStateOptions): CurationJobState {
+type WriteJobStateWithinCurrentAuthorityOptions = Omit<
+  WriteJobStateOptions,
+  'authority'
+> & { authority: CurrentWriterAuthority }
+
+/** @internal The caller must already hold withCurrentWriterAuthority for this root. */
+export function writeJobStateWithinCurrentAuthority(
+  opts: WriteJobStateWithinCurrentAuthorityOptions,
+): CurationJobState {
   const state = curationJobStateSchema.parse({
     schemaVersion: CURATION_JOB_STATE_SCHEMA_VERSION,
     candidateId: opts.candidateId,
@@ -191,12 +198,20 @@ export function writeJobState(opts: WriteJobStateOptions): CurationJobState {
   if (state.lifecycle === 'done') {
     rmSync(file, { force: true })
     bestEffortFsyncDirectory(jobsRoot(opts.knowledgeRoot))
-    removeClaimedCandidate(opts.knowledgeRoot, opts.candidateId)
+    removeClaimedCandidate(opts.knowledgeRoot, opts.authority, opts.candidateId)
     return state
   }
 
   atomicRewrite(file, state)
   return state
+}
+
+export function writeJobState(opts: WriteJobStateOptions): CurationJobState {
+  return withCurrentWriterAuthority(
+    opts.knowledgeRoot,
+    opts.authority,
+    () => writeJobStateWithinCurrentAuthority(opts),
+  )
 }
 
 /** Persist the validated-later authored value before any deterministic bundle mutation begins. */
@@ -208,6 +223,7 @@ export function persistAuthoredCheckpoint(
   const state = writeJobState({
     knowledgeRoot: opts.knowledgeRoot,
     candidateId: opts.candidateId,
+    authority: opts.authority,
     lifecycle: 'authored',
     embedCrashCount: current.kind === 'parsed' ? current.state.embedCrashCount : 0,
     authored: opts.authored,

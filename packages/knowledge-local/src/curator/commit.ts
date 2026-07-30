@@ -787,6 +787,7 @@ function markDone(deps: CommitCurationDependencies, job: CommitCurationJob): voi
   writeJobState({
     knowledgeRoot: deps.knowledgeRoot,
     candidateId: job.candidateId,
+    authority: { leaseId: job.leaseId, epoch: deps.epoch },
     lifecycle: 'done',
   })
 }
@@ -996,6 +997,7 @@ export function commitCurationDelta(
   writeJobState({
     knowledgeRoot: deps.knowledgeRoot,
     candidateId: job.candidateId,
+    authority: { leaseId: job.leaseId, epoch: deps.epoch },
     lifecycle: 'bundling',
     // Persist the parseable widened singleton so crash recovery replays through the
     // one authoredCheckpointSchema recovery boundary.
@@ -1072,6 +1074,7 @@ export function commitCurationDelta(
     writeJobState({
       knowledgeRoot: deps.knowledgeRoot,
       candidateId: job.candidateId,
+      authority: { leaseId: job.leaseId, epoch: deps.epoch },
       lifecycle: 'committing',
       authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
     })

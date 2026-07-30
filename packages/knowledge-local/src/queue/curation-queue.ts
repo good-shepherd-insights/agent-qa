@@ -28,6 +28,10 @@ import {
   publishStagedQueueEntry,
   removeEmptyDir,
 } from '../queue-transport.js'
+import {
+  withCurrentWriterAuthority,
+  type CurrentWriterAuthority,
+} from '../lease/writer-lease.js'
 export {
   bestEffortFsyncDirectory,
   durableWrite,
@@ -50,7 +54,10 @@ import {
   queuedCandidateDir,
   queuedRoot,
 } from './queue-layout.js'
-import { readJobState, writeJobState } from './job-state.js'
+import {
+  readJobState,
+  writeJobStateWithinCurrentAuthority,
+} from './job-state.js'
 import {
   buildCurationCandidateAddressFields,
   candidateContentAddress,
@@ -100,6 +107,7 @@ export type ReadCurationCandidatePayloadOutcome =
 export interface ClaimNextJobOptions {
   knowledgeRoot: string
   leaseId: string
+  authority: CurrentWriterAuthority
 }
 
 export interface ClaimedCurationJob {
@@ -127,6 +135,7 @@ export type ClaimNextJobOutcome = ClaimedCurationJob | MalformedClaimedCurationJ
 export interface RequeueClaimedOptions {
   knowledgeRoot: string
   leaseId: string
+  authority: CurrentWriterAuthority
 }
 
 export interface InspectDrainableCurationWorkOptions {
@@ -225,71 +234,92 @@ function queuedPayloads(knowledgeRoot: string): CurationCandidatePayload[] {
   })
 }
 
-function initializeClaimedState(knowledgeRoot: string, candidateId: string): void {
+function initializeClaimedState(
+  knowledgeRoot: string,
+  candidateId: string,
+  authority: CurrentWriterAuthority,
+): void {
   const state = readJobState(knowledgeRoot, candidateId)
   if (state.kind === 'absent') {
-    writeJobState({ knowledgeRoot, candidateId, lifecycle: 'queued' })
+    writeJobStateWithinCurrentAuthority({
+      knowledgeRoot,
+      candidateId,
+      authority,
+      lifecycle: 'queued',
+    })
   }
 }
 
 /** Atomically claim the lexicographically first queued content address. */
 export function claimNextJob(opts: ClaimNextJobOptions): ClaimNextJobOutcome | undefined {
-  for (const candidateId of listQueuedCandidates(opts.knowledgeRoot)) {
-    const sourceDir = queuedCandidateDir(opts.knowledgeRoot, candidateId)
-    const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
-    const candidateDir = claimedCandidateDir(
-      opts.knowledgeRoot,
-      opts.leaseId,
-      candidateId,
-    )
-    mkdirSync(leaseDir, { recursive: true })
-    try {
-      renameSync(sourceDir, candidateDir)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'ENOENT') {
-        removeEmptyDir(leaseDir)
-        continue
+  if (opts.leaseId !== opts.authority.leaseId) {
+    throw new TypeError('claimNextJob leaseId must match writer authority')
+  }
+  return withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => {
+    for (const candidateId of listQueuedCandidates(opts.knowledgeRoot)) {
+      const sourceDir = queuedCandidateDir(opts.knowledgeRoot, candidateId)
+      const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
+      const candidateDir = claimedCandidateDir(
+        opts.knowledgeRoot,
+        opts.leaseId,
+        candidateId,
+      )
+      mkdirSync(leaseDir, { recursive: true })
+      try {
+        renameSync(sourceDir, candidateDir)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          removeEmptyDir(leaseDir)
+          continue
+        }
+        if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(candidateDir)) {
+          removeEmptyDir(leaseDir)
+          continue
+        }
+        throw error
       }
-      if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(candidateDir)) {
-        removeEmptyDir(leaseDir)
-        continue
-      }
-      throw error
-    }
-    bestEffortFsyncDirectory(leaseDir)
-    bestEffortFsyncDirectory(queuedRoot(opts.knowledgeRoot))
-    initializeClaimedState(opts.knowledgeRoot, candidateId)
+      bestEffortFsyncDirectory(leaseDir)
+      bestEffortFsyncDirectory(queuedRoot(opts.knowledgeRoot))
+      initializeClaimedState(opts.knowledgeRoot, candidateId, opts.authority)
 
-    const payloadPath = join(candidateDir, 'payload.json')
-    const artifactsDir = join(candidateDir, 'artifacts')
-    const payload = readCurationCandidatePayload(candidateDir)
-    if (payload.kind !== 'parsed') {
+      const payloadPath = join(candidateDir, 'payload.json')
+      const artifactsDir = join(candidateDir, 'artifacts')
+      const payload = readCurationCandidatePayload(candidateDir)
+      if (payload.kind !== 'parsed') {
+        return {
+          kind: 'malformed',
+          candidateId,
+          leaseId: opts.leaseId,
+          candidateDir,
+          payloadPath,
+          artifactsDir,
+          payloadPresent: true,
+        }
+      }
       return {
-        kind: 'malformed',
+        kind: 'claimed',
         candidateId,
         leaseId: opts.leaseId,
+        payload: payload.payload,
         candidateDir,
         payloadPath,
         artifactsDir,
-        payloadPresent: true,
       }
     }
-    return {
-      kind: 'claimed',
-      candidateId,
-      leaseId: opts.leaseId,
-      payload: payload.payload,
-      candidateDir,
-      payloadPath,
-      artifactsDir,
-    }
-  }
-  return undefined
+    return undefined
+  })
 }
 
-/** Reclaim one dead lease without discarding an already-authored deterministic checkpoint. */
-export function requeueClaimed(opts: RequeueClaimedOptions): string[] {
+type RequeueClaimedWithinCurrentAuthorityOptions = Omit<
+  RequeueClaimedOptions,
+  'authority'
+> & { authority: CurrentWriterAuthority }
+
+/** @internal The caller must already hold withCurrentWriterAuthority for this root. */
+export function requeueClaimedWithinCurrentAuthority(
+  opts: RequeueClaimedWithinCurrentAuthorityOptions,
+): string[] {
   const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
   const candidateIds = directoryNames(leaseDir).filter((name) => CANDIDATE_ID.test(name))
   const requeued: string[] = []
@@ -316,15 +346,21 @@ export function requeueClaimed(opts: RequeueClaimedOptions): string[] {
 
     const state = readJobState(opts.knowledgeRoot, candidateId)
     if (state.kind === 'parsed') {
-      writeJobState({
+      writeJobStateWithinCurrentAuthority({
         knowledgeRoot: opts.knowledgeRoot,
         candidateId,
+        authority: opts.authority,
         lifecycle: 'queued',
         embedCrashCount: state.state.embedCrashCount,
         ...(state.state.authored === undefined ? {} : { authored: state.state.authored }),
       })
     } else if (state.kind === 'absent') {
-      writeJobState({ knowledgeRoot: opts.knowledgeRoot, candidateId, lifecycle: 'queued' })
+      writeJobStateWithinCurrentAuthority({
+        knowledgeRoot: opts.knowledgeRoot,
+        candidateId,
+        authority: opts.authority,
+        lifecycle: 'queued',
+      })
     }
     requeued.push(candidateId)
   }
@@ -332,6 +368,15 @@ export function requeueClaimed(opts: RequeueClaimedOptions): string[] {
   removeEmptyDir(claimedRoot(opts.knowledgeRoot))
   bestEffortFsyncDirectory(queuedRoot(opts.knowledgeRoot))
   return requeued
+}
+
+/** Reclaim one dead lease without discarding an already-authored deterministic checkpoint. */
+export function requeueClaimed(opts: RequeueClaimedOptions): string[] {
+  return withCurrentWriterAuthority(
+    opts.knowledgeRoot,
+    opts.authority,
+    () => requeueClaimedWithinCurrentAuthority(opts),
+  )
 }
 
 function queueCapExceeded(

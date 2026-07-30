@@ -636,6 +636,7 @@ describe('daemon stale-claim drain admission', () => {
     const recoverableClaim = claimNextJob({
       knowledgeRoot: paths.knowledgeRoot,
       leaseId: expired.leaseId,
+      authority: expired,
     })
     expect(recoverableClaim?.candidateId).toBe(recoverableId)
     expect(releaseLease({
@@ -649,6 +650,7 @@ describe('daemon stale-claim drain admission', () => {
     const currentClaim = claimNextJob({
       knowledgeRoot: paths.knowledgeRoot,
       leaseId: current.leaseId,
+      authority: current,
     })
     expect(currentClaim?.candidateId).toBe(currentId)
     const queuedId = enqueueRealCandidate(paths.knowledgeRoot, 'queued-candidate')
@@ -692,6 +694,7 @@ describe('daemon stale-claim drain admission', () => {
     const claimed = claimNextJob({
       knowledgeRoot: paths.knowledgeRoot,
       leaseId: expired.leaseId,
+      authority: expired,
     })
     expect(claimed?.candidateId).toBe(candidateId)
     expect(claimed === undefined ? false : existsSync(claimed.candidateDir)).toBe(true)
@@ -828,6 +831,7 @@ describe('daemon stale-claim drain admission', () => {
     const claimed = claimNextJob({
       knowledgeRoot: paths.knowledgeRoot,
       leaseId: current.lease.leaseId,
+      authority: current.lease,
     })
     expect(claimed?.candidateId).toBe(candidateId)
     expect(listQueuedCandidates(paths.knowledgeRoot)).toEqual([])

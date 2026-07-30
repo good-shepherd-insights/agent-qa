@@ -32,6 +32,8 @@ import {
   acquireWriterLease,
   heartbeatLease,
   releaseLease,
+  WriterAuthorityLostError,
+  type CurrentWriterAuthority,
   type WriterLease,
 } from '../lease/writer-lease.js'
 import {
@@ -534,12 +536,14 @@ function claimedExecutionContext(
 function persistCheckpoint(
   operations: DrainOperations,
   knowledgeRoot: string,
+  authority: CurrentWriterAuthority,
   candidateId: string,
   checkpoint: AuthoredCheckpoint,
 ): void {
   const persisted = operations.persistAuthoredCheckpoint({
     knowledgeRoot,
     candidateId,
+    authority,
     authored: checkpoint,
   })
   if (persisted.kind !== 'persisted') {
@@ -550,23 +554,28 @@ function persistCheckpoint(
 function clearCheckpointAndRequeue(
   operations: DrainOperations,
   knowledgeRoot: string,
-  leaseId: string,
+  authority: CurrentWriterAuthority,
   job: ClaimedCurationJob,
 ): void {
   const state = operations.readJobState(knowledgeRoot, job.candidateId)
   operations.writeJobState({
     knowledgeRoot,
     candidateId: job.candidateId,
+    authority,
     lifecycle: 'queued',
     embedCrashCount: state.kind === 'parsed' ? state.state.embedCrashCount : 0,
   })
-  operations.requeueClaimed({ knowledgeRoot, leaseId })
+  operations.requeueClaimed({
+    knowledgeRoot,
+    leaseId: authority.leaseId,
+    authority,
+  })
 }
 
 function preserveAuthoredCheckpointAndRequeue(
   operations: DrainOperations,
   knowledgeRoot: string,
-  leaseId: string,
+  authority: CurrentWriterAuthority,
   job: ClaimedCurationJob,
   checkpoint: AuthoredCheckpoint,
   embedCrashCount: number,
@@ -575,11 +584,16 @@ function preserveAuthoredCheckpointAndRequeue(
   operations.writeJobState({
     knowledgeRoot,
     candidateId: job.candidateId,
+    authority,
     lifecycle: 'authored',
     embedCrashCount,
     authored: checkpoint,
   })
-  const requeued = operations.requeueClaimed({ knowledgeRoot, leaseId })
+  const requeued = operations.requeueClaimed({
+    knowledgeRoot,
+    leaseId: authority.leaseId,
+    authority,
+  })
   if (!requeued.includes(job.candidateId)) {
     throw new Error(`${failureLabel} candidate ${job.candidateId} was not requeued`)
   }
@@ -589,7 +603,7 @@ function preserveAuthoredCheckpointAndRequeue(
 function incrementEmbedCrashAndRequeue(
   operations: DrainOperations,
   knowledgeRoot: string,
-  leaseId: string,
+  authority: CurrentWriterAuthority,
   job: ClaimedCurationJob,
   checkpoint: AuthoredCheckpoint,
   embedCrashCount: number,
@@ -597,7 +611,7 @@ function incrementEmbedCrashAndRequeue(
   return preserveAuthoredCheckpointAndRequeue(
     operations,
     knowledgeRoot,
-    leaseId,
+    authority,
     job,
     checkpoint,
     embedCrashCount + 1,
@@ -611,7 +625,7 @@ function mapCommitOutcome(
   job: ClaimedCurationJob,
   operations: DrainOperations,
   options: DrainOptions,
-  leaseId: string,
+  authority: CurrentWriterAuthority,
 ): 'continue' | 'stop' {
   switch (outcome.kind) {
     case 'applied':
@@ -652,7 +666,7 @@ function mapCommitOutcome(
         clearCheckpointAndRequeue(
           operations,
           options.knowledgeRoot,
-          leaseId,
+          authority,
           job,
         )
         report.requeued += 1
@@ -686,9 +700,11 @@ function isSuccessfulTerminalCommitOutcome(outcome: CommitCurationOutcome): bool
 function reconcileDependencies(
   operations: DrainOperations,
   knowledgeRoot: string,
+  writerAuthority: CurrentWriterAuthority,
 ) {
   return {
     knowledgeRoot,
+    writerAuthority,
     hasIndexRow: (bundleId: string) => operations.hasIndexRow(knowledgeRoot, bundleId),
     applyIndexDelta: (intent: CommitIntent) => {
       operations.applyIndexDeltaForBundle({ knowledgeRoot, bundleId: intent.bundleId })
@@ -720,7 +736,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   const limit = budgetMs(options)
   const report = emptyReport()
   const drainOwnsLease = options.lease === undefined
-  let lease: { leaseId: string; epoch: number }
+  let lease: CurrentWriterAuthority
   if (options.lease !== undefined) {
     lease = options.lease
   } else {
@@ -749,7 +765,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   try {
     try {
       result.reconcile = operations.reconcileOnDrainStart(
-        reconcileDependencies(operations, options.knowledgeRoot),
+        reconcileDependencies(operations, options.knowledgeRoot, lease),
       )
     } catch (error) {
       recordFailure(result, 'reconcile', error)
@@ -768,6 +784,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         claimed = operations.claimNextJob({
           knowledgeRoot: options.knowledgeRoot,
           leaseId: lease.leaseId,
+          authority: lease,
         })
       } catch (error) {
         recordFailure(result, 'claim', error)
@@ -820,10 +837,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           operations.writeJobState({
             knowledgeRoot: options.knowledgeRoot,
             candidateId: claimed.candidateId,
+            authority: lease,
             lifecycle: 'done',
           })
         } catch (error) {
           recordFailure(result, 'commit', error, claimed.candidateId)
+          if (error instanceof WriterAuthorityLostError) break
           continue
         }
         emitCompleted(claimed.candidateId)
@@ -856,11 +875,13 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           persistCheckpoint(
             operations,
             options.knowledgeRoot,
+            lease,
             claimed.candidateId,
             checkpoint,
           )
         } catch (error) {
           recordFailure(result, 'checkpoint', error, claimed.candidateId)
+          if (error instanceof WriterAuthorityLostError) break
           continue
         }
       }
@@ -904,7 +925,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               result.requeued += incrementEmbedCrashAndRequeue(
                 operations,
                 options.knowledgeRoot,
-                lease.leaseId,
+                lease,
                 claimed,
                 checkpoint,
                 embedCrashCount,
@@ -929,7 +950,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           claimed,
           operations,
           options,
-          lease.leaseId,
+          lease,
         )
         if (
           finalDelta
@@ -948,7 +969,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           result.requeued += preserveAuthoredCheckpointAndRequeue(
             operations,
             options.knowledgeRoot,
-            lease.leaseId,
+            lease,
             claimed,
             checkpoint,
             embedCrashCount,

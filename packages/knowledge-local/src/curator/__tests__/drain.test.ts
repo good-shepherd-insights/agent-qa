@@ -169,12 +169,13 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
   function completingCommit(
     order?: string[],
   ): DrainOperations['commitCurationDelta'] {
-    return (_deps, job): CommitCurationOutcome => {
+    return (deps, job): CommitCurationOutcome => {
       order?.push(`commit:${job.candidateId}`)
       writeJobState({
         knowledgeRoot,
         candidateId: job.candidateId,
         lifecycle: 'done',
+        authority: { leaseId: job.leaseId, epoch: deps.epoch },
       })
       return {
         kind: 'applied',
@@ -397,7 +398,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     })
     const search = vi.fn<typeof retrieve>(async () => [])
     let commits = 0
-    const commit: DrainOperations['commitCurationDelta'] = (_deps, job) => {
+    const commit: DrainOperations['commitCurationDelta'] = (deps, job) => {
       commits += 1
       const state = readJobState(knowledgeRoot, job.candidateId)
       expect(state.kind).toBe('parsed')
@@ -407,7 +408,12 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
         expect(state.state.lifecycle).toBe('authored')
         throw new Error('simulated crash after checkpoint')
       }
-      writeJobState({ knowledgeRoot, candidateId: job.candidateId, lifecycle: 'done' })
+      writeJobState({
+        knowledgeRoot,
+        candidateId: job.candidateId,
+        lifecycle: 'done',
+        authority: { leaseId: job.leaseId, epoch: deps.epoch },
+      })
       return {
         kind: 'applied',
         bundleId: asRecordId('recovered-bundle'),
@@ -468,6 +474,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
           knowledgeRoot,
           candidateId: job.candidateId,
           lifecycle: 'done',
+          authority: { leaseId: job.leaseId, epoch: deps.epoch },
         })
       }
       return {
@@ -555,6 +562,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
           knowledgeRoot,
           candidateId: job.candidateId,
           lifecycle: 'done',
+          authority: { leaseId: job.leaseId, epoch: deps.epoch },
         })
       }
       return {
@@ -666,10 +674,15 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       }
     })
     const commit: DrainOperations['commitCurationDelta'] = (
-      _deps,
+      deps,
       job,
     ): CommitCurationOutcome => {
-      writeJobState({ knowledgeRoot, candidateId: job.candidateId, lifecycle: 'done' })
+      writeJobState({
+        knowledgeRoot,
+        candidateId: job.candidateId,
+        lifecycle: 'done',
+        authority: { leaseId: job.leaseId, epoch: deps.epoch },
+      })
       return { kind: 'noop', reason: 'procedure-body-unparseable' }
     }
 
@@ -795,10 +808,15 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       }
     })
     const commit: DrainOperations['commitCurationDelta'] = (
-      _deps,
+      deps,
       job,
     ): CommitCurationOutcome => {
-      writeJobState({ knowledgeRoot, candidateId: job.candidateId, lifecycle: 'done' })
+      writeJobState({
+        knowledgeRoot,
+        candidateId: job.candidateId,
+        lifecycle: 'done',
+        authority: { leaseId: job.leaseId, epoch: deps.epoch },
+      })
       return { kind: 'noop', reason: 'evidence-token-consumed' }
     }
 

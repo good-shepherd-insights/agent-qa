@@ -8,7 +8,6 @@
  */
 import {
   existsSync,
-  readFileSync,
   readdirSync,
   rmdirSync,
   rmSync,
@@ -18,9 +17,8 @@ import { basename, join } from 'node:path'
 import { enumerateBundleDirs } from '../bundle-scan.js'
 import { loadBundle } from '../bundle-read.js'
 import {
-  isLeaseStale,
-  LEASE_FILE,
-  readCurrentEpoch,
+  withCurrentWriterAuthority,
+  type CurrentWriterAuthority,
 } from '../lease/writer-lease.js'
 import {
   claimedCandidateDir,
@@ -28,9 +26,12 @@ import {
 } from '../queue/queue-layout.js'
 import {
   listClaimedLeases,
-  requeueClaimed,
+  requeueClaimedWithinCurrentAuthority,
 } from '../queue/curation-queue.js'
-import { readJobState, writeJobState } from '../queue/job-state.js'
+import {
+  readJobState,
+  writeJobStateWithinCurrentAuthority,
+} from '../queue/job-state.js'
 import {
   clearCommitIntent,
   listCommitIntents,
@@ -40,6 +41,7 @@ import { recoverExpiredBundleMutations } from './bundle-mutation.js'
 
 export interface ReconcileOnDrainStartDependencies {
   knowledgeRoot: string
+  writerAuthority: CurrentWriterAuthority
   hasIndexRow(bundleId: string): boolean
   applyIndexDelta(intent: CommitIntent): void
   deriveIndexRowFromBundle(bundleId: string): void
@@ -54,28 +56,6 @@ export interface ReconcileReport {
   /** Present on production reconciliation; optional keeps injected legacy test reports compatible. */
   mutationsRecovered?: number
   malformed: number
-}
-
-interface LiveWriterLease {
-  leaseId: string
-  epoch: number
-}
-
-function readLiveCurrentLease(knowledgeRoot: string): LiveWriterLease | undefined {
-  let value: unknown
-  try {
-    value = JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'))
-  } catch {
-    return undefined
-  }
-  if (isLeaseStale(value, Date.now())) return undefined
-
-  const lease = value as { leaseId?: unknown; epoch?: unknown }
-  if (typeof lease.leaseId !== 'string' || typeof lease.epoch !== 'number') {
-    return undefined
-  }
-  if (lease.epoch !== readCurrentEpoch(knowledgeRoot)) return undefined
-  return { leaseId: lease.leaseId, epoch: lease.epoch }
 }
 
 function childDirectories(dir: string): string[] {
@@ -151,10 +131,15 @@ function requeueCandidate(
   knowledgeRoot: string,
   candidateId: string,
   requeued: Set<string>,
+  writerAuthority: CurrentWriterAuthority,
 ): void {
   for (const leaseId of listClaimedLeases(knowledgeRoot)) {
     if (!existsSync(claimedCandidateDir(knowledgeRoot, leaseId, candidateId))) continue
-    for (const movedCandidateId of requeueClaimed({ knowledgeRoot, leaseId })) {
+    for (const movedCandidateId of requeueClaimedWithinCurrentAuthority({
+      knowledgeRoot,
+      leaseId,
+      authority: writerAuthority,
+    })) {
       requeued.add(movedCandidateId)
     }
   }
@@ -162,9 +147,10 @@ function requeueCandidate(
   if (!existsSync(queuedCandidateDir(knowledgeRoot, candidateId))) return
   const state = readJobState(knowledgeRoot, candidateId)
   if (state.kind === 'parsed' && state.state.lifecycle === 'queued') return
-  writeJobState({
+  writeJobStateWithinCurrentAuthority({
     knowledgeRoot,
     candidateId,
+    authority: writerAuthority,
     lifecycle: 'queued',
     embedCrashCount: state.kind === 'parsed' ? state.state.embedCrashCount : 0,
     ...(state.kind === 'parsed' && state.state.authored !== undefined
@@ -190,7 +176,7 @@ function loadedBundleIds(knowledgeRoot: string): Map<string, string> {
  * Index writes are caller-injected so Plan 378-10 and this recovery path share one projection
  * authority. A thrown apply/derive operation intentionally leaves the intent in place for retry.
  */
-export function reconcileOnDrainStart(
+function reconcileOnDrainStartWithinCurrentAuthority(
   deps: ReconcileOnDrainStartDependencies,
 ): ReconcileReport {
   const report: ReconcileReport = {
@@ -203,15 +189,15 @@ export function reconcileOnDrainStart(
     malformed: 0,
   }
   const requeued = new Set<string>()
-  const current = readLiveCurrentLease(deps.knowledgeRoot)
   const expiredLeaseIds = new Set<string>()
 
   for (const leaseId of listClaimedLeases(deps.knowledgeRoot)) {
-    if (current?.leaseId === leaseId) continue
+    if (deps.writerAuthority.leaseId === leaseId) continue
     expiredLeaseIds.add(leaseId)
-    for (const candidateId of requeueClaimed({
+    for (const candidateId of requeueClaimedWithinCurrentAuthority({
       knowledgeRoot: deps.knowledgeRoot,
       leaseId,
+      authority: deps.writerAuthority,
     })) {
       requeued.add(candidateId)
     }
@@ -233,7 +219,12 @@ export function reconcileOnDrainStart(
 
   for (const entry of entries) {
     if ('malformed' in entry) {
-      requeueCandidate(deps.knowledgeRoot, entry.candidateId, requeued)
+      requeueCandidate(
+        deps.knowledgeRoot,
+        entry.candidateId,
+        requeued,
+        deps.writerAuthority,
+      )
       clearCommitIntent(deps.knowledgeRoot, entry.candidateId)
       report.intentsDiscarded += 1
       report.malformed += 1
@@ -242,7 +233,12 @@ export function reconcileOnDrainStart(
 
     const { parsed: intent } = entry
     if (!bundles.has(intent.bundleId)) {
-      requeueCandidate(deps.knowledgeRoot, intent.candidateId, requeued)
+      requeueCandidate(
+        deps.knowledgeRoot,
+        intent.candidateId,
+        requeued,
+        deps.writerAuthority,
+      )
       clearCommitIntent(deps.knowledgeRoot, intent.candidateId)
       report.intentsDiscarded += 1
       continue
@@ -263,4 +259,14 @@ export function reconcileOnDrainStart(
 
   report.jobsRequeued = requeued.size
   return report
+}
+
+export function reconcileOnDrainStart(
+  deps: ReconcileOnDrainStartDependencies,
+): ReconcileReport {
+  return withCurrentWriterAuthority(
+    deps.knowledgeRoot,
+    deps.writerAuthority,
+    () => reconcileOnDrainStartWithinCurrentAuthority(deps),
+  )
 }
