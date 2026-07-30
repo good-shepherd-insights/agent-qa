@@ -152,6 +152,10 @@ export type DrainReport = DrainReportBase &
     | { kind: 'handed-off'; holder: WriterLease }
   )
 
+export type CurationDrainLifecycleEvent =
+  | { readonly kind: 'job-claimed'; readonly candidateId: string }
+  | { readonly kind: 'job-completed'; readonly candidateId: string }
+
 /**
  * Internal capability table used by focused fault-injection tests. Production callers omit it;
  * every default delegates directly to the shipped queue, lease, retrieval, commit, and rebuild
@@ -191,6 +195,8 @@ export interface DrainOptions {
   /** Default inline preserves one-shot behavior; daemon sessions skip for their own cadence. */
   maintenance?: 'inline' | 'skip'
   signal?: AbortSignal
+  /** Synchronous durable-boundary observer; daemon hosts append these facts before proceeding. */
+  onJobLifecycle?: (event: CurationDrainLifecycleEvent) => void
   /** D-06 test seam. Production uses the one wall clock only at drain boundaries. */
   now?: () => number
   /** Fault-injection seam; production callers must omit it. */
@@ -659,6 +665,24 @@ function mapCommitOutcome(
   }
 }
 
+function isSuccessfulTerminalCommitOutcome(outcome: CommitCurationOutcome): boolean {
+  // These kinds return only after markDone for a non-deferred delta. `withheld` and `failed`
+  // also describe branches that can exit before queue completion, so their names alone are not
+  // sufficient evidence for a lifecycle fact.
+  switch (outcome.kind) {
+    case 'applied':
+    case 'converted-confirm':
+    case 'downgraded':
+    case 'noop':
+      return true
+    case 'withheld':
+    case 'failed':
+    case 'abandoned-stale-epoch':
+    case 'requeue-resynthesis':
+      return false
+  }
+}
+
 function reconcileDependencies(
   operations: DrainOperations,
   knowledgeRoot: string,
@@ -715,6 +739,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     kind: 'drained',
   }
   const drainState: DispositionDrainState = { supersedesSeenByAnchorKey: new Map() }
+  const completedCandidateIds = new Set<string>()
+  const emitCompleted = (candidateId: string): void => {
+    if (completedCandidateIds.has(candidateId)) return
+    completedCandidateIds.add(candidateId)
+    options.onJobLifecycle?.({ kind: 'job-completed', candidateId })
+  }
   try {
     try {
       result.reconcile = operations.reconcileOnDrainStart(
@@ -743,6 +773,10 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         break
       }
       if (claimed === undefined) break
+      options.onJobLifecycle?.({
+        kind: 'job-claimed',
+        candidateId: claimed.candidateId,
+      })
       result.jobsProcessed += 1
       const executionContext = claimedExecutionContext(claimed, options.executionContext)
 
@@ -787,10 +821,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             candidateId: claimed.candidateId,
             lifecycle: 'done',
           })
-          result.committed += 1
         } catch (error) {
           recordFailure(result, 'commit', error, claimed.candidateId)
+          continue
         }
+        emitCompleted(claimed.candidateId)
+        result.committed += 1
         continue
       }
 
@@ -886,16 +922,22 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           continue
         }
         if (outcome.kind === 'failed') anySliceFailed = true
+        const mapped = mapCommitOutcome(
+          result,
+          outcome,
+          claimed,
+          operations,
+          options,
+          lease.leaseId,
+        )
         if (
-          mapCommitOutcome(
-            result,
-            outcome,
-            claimed,
-            operations,
-            options,
-            lease.leaseId,
-          ) === 'stop'
+          finalDelta
+          && !anySliceFailed
+          && isSuccessfulTerminalCommitOutcome(outcome)
         ) {
+          emitCompleted(claimed.candidateId)
+        }
+        if (mapped === 'stop') {
           stopDrain = true
           break
         }

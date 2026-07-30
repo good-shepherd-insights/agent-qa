@@ -559,6 +559,17 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           executionContext: 'local-headless',
           policy: input.policy,
           maintenance: 'skip',
+          onJobLifecycle: (event) => {
+            seenCandidateIds.add(event.candidateId)
+            operations.appendDaemonEvent(input.agentQaRoot, {
+              kind: event.kind,
+              sessionId,
+              candidateId: event.candidateId,
+              holderPid: process.pid,
+              leaseId: acquired.leaseId,
+              epoch: acquired.epoch,
+            })
+          },
         })
       } finally {
         if (worker !== undefined) armEmbedderWorkerIdleTimer(worker)

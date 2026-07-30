@@ -357,6 +357,7 @@ export {
   drainQueue,
 } from './curator/drain.js'
 export type {
+  CurationDrainLifecycleEvent,
   DrainFailure,
   DrainFailureStage,
   DrainNoop,

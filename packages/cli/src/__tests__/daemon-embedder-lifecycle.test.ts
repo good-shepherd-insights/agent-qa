@@ -187,6 +187,10 @@ function startHarness(
       order.push('lease-release')
       return { kind: 'released' as const }
     },
+    inspectDrainableCurationWork: () => ({
+      queuedCandidateIds: [...queued].sort(),
+      recoverableClaimedCandidateIds: [],
+    }),
     listQueuedCandidates: () => [...queued].sort(),
     drainQueue,
     randomUUID: () => SESSION_IDS[nextSessionId++] ?? SESSION_IDS.at(-1)!,

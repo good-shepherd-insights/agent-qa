@@ -38,7 +38,11 @@ import {
 import { readJobState } from '../../queue/job-state.js'
 import { requestRebuild } from '../../rebuild-marker.js'
 import type { CuratorAuthor } from '../author-contract.js'
-import { drainQueue, type DrainOperations } from '../drain.js'
+import {
+  drainQueue,
+  type CurationDrainLifecycleEvent,
+  type DrainOperations,
+} from '../drain.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
@@ -47,14 +51,6 @@ const NO_INDEX_MAINTENANCE = {
   renderingEpochStale: false,
   vectorReconciliationOutstanding: false,
 } as const
-
-type ObservedDrainLifecycleEvent =
-  | { readonly kind: 'job-claimed'; readonly candidateId: string }
-  | { readonly kind: 'job-completed'; readonly candidateId: string }
-
-type LifecycleAwareDrainOptions = Parameters<typeof drainQueue>[0] & {
-  onJobLifecycle?: (event: ObservedDrainLifecycleEvent) => void
-}
 
 describe('drainQueue daemon substrate', () => {
   let root: string
@@ -316,7 +312,7 @@ describe('drainQueue daemon substrate', () => {
         deltas: [delta, delta],
       }
     }
-    const observed: Array<ObservedDrainLifecycleEvent & { durableState: string }> = []
+    const observed: Array<CurationDrainLifecycleEvent & { durableState: string }> = []
 
     const report = await drainQueue({
       knowledgeRoot,
@@ -333,7 +329,7 @@ describe('drainQueue daemon substrate', () => {
         })
       },
       operations: maintenanceFreeOperations(),
-    } as LifecycleAwareDrainOptions)
+    })
 
     expect(report).toMatchObject({
       kind: 'drained',
@@ -341,7 +337,7 @@ describe('drainQueue daemon substrate', () => {
       failures: 0,
     })
     expect(observed).toEqual([
-      { kind: 'job-claimed', candidateId, durableState: 'claimed' },
+      { kind: 'job-claimed', candidateId, durableState: 'queued' },
       { kind: 'job-completed', candidateId, durableState: 'absent' },
     ])
     expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
@@ -358,7 +354,7 @@ describe('drainQueue daemon substrate', () => {
     if (current.kind !== 'acquired') throw new Error('expected current lease')
     const leasePath = join(knowledgeRoot, LEASE_FILE)
     const currentLeaseBytes = readFileSync(leasePath)
-    const observed: ObservedDrainLifecycleEvent[] = []
+    const observed: CurationDrainLifecycleEvent[] = []
 
     const report = await drainQueue({
       knowledgeRoot,
@@ -370,7 +366,7 @@ describe('drainQueue daemon substrate', () => {
       lease: { leaseId: stale.leaseId, epoch: stale.epoch },
       onJobLifecycle: (event) => observed.push(event),
       operations: maintenanceFreeOperations(),
-    } as LifecycleAwareDrainOptions)
+    })
 
     expect(report).toMatchObject({
       kind: 'drained',
@@ -406,7 +402,7 @@ describe('drainQueue daemon substrate', () => {
     'non-terminal commit failure',
   ] as const)('never reports completion after %s', async (scenario) => {
     const candidateId = enqueue(`lifecycle-${scenario.replaceAll(' ', '-')}`, 'ci')
-    const observed: ObservedDrainLifecycleEvent[] = []
+    const observed: CurationDrainLifecycleEvent[] = []
     let author: CuratorAuthor = scriptedAuthor()
     const operations: Partial<DrainOperations> = maintenanceFreeOperations()
 
@@ -453,7 +449,7 @@ describe('drainQueue daemon substrate', () => {
       maintenance: 'skip',
       onJobLifecycle: (event) => observed.push(event),
       operations,
-    } as LifecycleAwareDrainOptions)
+    })
 
     expect(observed).toEqual([{ kind: 'job-claimed', candidateId }])
   })
@@ -462,7 +458,7 @@ describe('drainQueue daemon substrate', () => {
     enqueue('pre-claim-abort', 'ci')
     const controller = new AbortController()
     controller.abort()
-    const observed: ObservedDrainLifecycleEvent[] = []
+    const observed: CurationDrainLifecycleEvent[] = []
 
     const report = await drainQueue({
       knowledgeRoot,
@@ -474,7 +470,7 @@ describe('drainQueue daemon substrate', () => {
       signal: controller.signal,
       onJobLifecycle: (event) => observed.push(event),
       operations: maintenanceFreeOperations(),
-    } as LifecycleAwareDrainOptions)
+    })
 
     expect(report).toMatchObject({ kind: 'aborted', jobsProcessed: 0, committed: 0 })
     expect(observed).toEqual([])
