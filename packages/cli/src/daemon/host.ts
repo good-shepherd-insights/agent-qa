@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 
@@ -27,6 +28,7 @@ import {
   DEFAULT_EMBEDDING_PROFILE,
   type GuardrailPolicy,
 } from '@vostride/agent-qa-schema'
+import { slugBranch } from '@vostride/agent-qa-runner-local'
 
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
@@ -72,6 +74,10 @@ export const EMBEDDER_WORKER_OUTPUT_CAP_BYTES = 65_536
 
 /** Provisional child readiness backstop; model loading must not stall a drain indefinitely. */
 export const EMBEDDER_WORKER_START_TIMEOUT_MS = 120_000
+
+/** Run-scoped daemon captures; raw child streams never enter daemon-events.jsonl. */
+export const RUN_CHILD_STDOUT_FILE = 'run-child.stdout.log'
+export const RUN_CHILD_STDERR_FILE = 'run-child.stderr.log'
 
 export type DaemonHostTraceStep =
   | 'posture-pinned'
@@ -147,8 +153,12 @@ export interface DaemonHostOptions {
   author?: () => CuratorAuthor | Promise<CuratorAuthor>
   /** Shipped guardrail policy applied to every daemon-authored curation pass. */
   policy?: GuardrailPolicy
-  /** Plan 08 supplies the daemon's piped child launcher. */
+  /** Explicit test/embedding override; it wins over the production Plan 08 binding. */
   runExecution?: RunExecutionPort
+  /** Exact resolved project config path. Presence binds the production run executor. */
+  configPath?: string
+  /** Test-only real-child fixture entry. Production re-enters the current CLI entry. */
+  cliEntry?: string
   /** Plan 05 binds the recorded path to the live invoke server. */
   socketPath?: string
   logger?: DaemonHostLogger
@@ -276,6 +286,33 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
   const operations = { ...defaultOperations(), ...input.operations }
   const logger = input.logger ?? DEFAULT_LOGGER
+  let runExecution = input.runExecution
+  if (runExecution === undefined && input.configPath !== undefined) {
+    // Keep legacy/test hosts that omit configPath independent of the CLI-only composition graph.
+    // Production has the resolved path and loads its real child boundary exactly once at startup.
+    const { createCliRunExecution, createPipedLaunchChild } = await import(
+      '../composition/local-agent-host.js'
+    )
+    const configPath = input.configPath
+    const cliEntry = input.cliEntry ?? process.argv[1] ?? ''
+    runExecution = createCliRunExecution({
+      configPath,
+      cliEntry,
+      launchChild: createPipedLaunchChild(cliEntry, async (closed) => {
+        const runDir = join(input.agentQaRoot, 'runs', slugBranch(closed.runId))
+        await mkdir(runDir, { recursive: true })
+        await Promise.all([
+          writeFile(join(runDir, RUN_CHILD_STDOUT_FILE), closed.stdout, 'utf8'),
+          writeFile(join(runDir, RUN_CHILD_STDERR_FILE), closed.stderr, 'utf8'),
+        ])
+        operations.appendDaemonEvent(input.agentQaRoot, {
+          kind: 'run-child-exit',
+          runId: closed.runId,
+          exitCode: closed.exitCode,
+        })
+      }),
+    })
+  }
   // `operations` is test-only. Legacy injected drain fixtures opt out unless they also provide
   // the worker command seam; production (no operations table) always manages the child.
   const embedderLifecycleEnabled = input.operations?.drainQueue === undefined
@@ -726,7 +763,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       config: input.config,
       knowledgeRoot: () => input.knowledgeRoot,
       model: () => model,
-      ...(input.runExecution === undefined ? {} : { runExecution: input.runExecution }),
+      ...(runExecution === undefined ? {} : { runExecution }),
       clock: SYSTEM_CLOCK,
       idSource: DIGEST_JOB_ID_SOURCE,
     })

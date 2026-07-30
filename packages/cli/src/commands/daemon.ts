@@ -158,6 +158,7 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         const exitCode = await deps.runHost({
           agentQaRoot: resolve(configDir, '.agent-qa'),
           knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
+          configPath,
           config: createMaskedConfigReader(configPath),
           model: () => resolveCliJobModel(configPath),
           author: () => resolveDaemonCuratorAuthor(configPath),

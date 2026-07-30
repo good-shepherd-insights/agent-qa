@@ -14,6 +14,7 @@ export type DaemonEventKind =
   | 'drain-session-end'
   | 'embedder-worker-start'
   | 'embedder-worker-exit'
+  | 'run-child-exit'
   | 'daemon-stopped'
 
 /** A lifecycle fact. Kinds are closed while later plans may add kind-specific scalar fields. */

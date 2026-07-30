@@ -129,6 +129,19 @@ export type RunChildLauncher = (input: {
   readonly env: NodeJS.ProcessEnv
 }) => Promise<number>
 
+/** The daemon-owned facts available only after its piped run child has closed. */
+export interface PipedRunChildClose {
+  readonly runId: string
+  readonly exitCode: number
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/** Persist captured child output before the launcher's numeric completion becomes observable. */
+export type PipedRunChildCloseSink = (
+  closed: PipedRunChildClose,
+) => void | Promise<void>
+
 export interface CreateCliRunExecutionInput {
   /** The configuration file this invocation resolves against. */
   readonly configPath: string
@@ -158,6 +171,63 @@ function defaultLaunchChild(entry: string): RunChildLauncher {
     // A signalled child never produced an exit code; reporting one would claim an ordinary
     // termination. 130 is the conventional SIGINT code and reads as "interrupted" downstream.
     child.on('close', (code, signal) => resolve(code ?? (signal === null ? 1 : 130)))
+  })
+}
+
+/**
+ * Build the daemon's real child launcher.
+ *
+ * Unlike the terminal launcher above, this process has no operator terminal to inherit. Its
+ * streams are captured into run-scoped files by the supplied close sink, and that sink completes
+ * before the launcher exposes the child's numeric exit code to the run-execution port.
+ */
+export function createPipedLaunchChild(
+  entry: string,
+  onClose: PipedRunChildCloseSink,
+): RunChildLauncher {
+  return ({ argv, env }) => new Promise<number>((resolveLaunch, rejectLaunch) => {
+    const runId = env.AGENT_QA_RUN_ID
+    if (entry.trim().length === 0) {
+      rejectLaunch(new RunChildSpawnError('the CLI entry path is empty'))
+      return
+    }
+    if (runId === undefined || runId.length === 0) {
+      rejectLaunch(new RunChildSpawnError('AGENT_QA_RUN_ID is missing from the child environment'))
+      return
+    }
+
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(process.execPath, [entry, ...argv], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+      })
+    } catch (error) {
+      rejectLaunch(new RunChildSpawnError(error instanceof Error ? error.message : String(error)))
+      return
+    }
+
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    child.stdout?.setEncoding('utf8')
+    child.stderr?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => { stdout += chunk })
+    child.stderr?.on('data', (chunk: string) => { stderr += chunk })
+    child.on('error', (error: Error) => {
+      if (settled) return
+      settled = true
+      rejectLaunch(new RunChildSpawnError(error.message))
+    })
+    child.on('close', (code, signal) => {
+      if (settled) return
+      settled = true
+      const exitCode = code ?? (signal === null ? 1 : 130)
+      void (async () => {
+        await onClose({ runId, exitCode, stdout, stderr })
+        resolveLaunch(exitCode)
+      })().catch(rejectLaunch)
+    })
   })
 }
 
