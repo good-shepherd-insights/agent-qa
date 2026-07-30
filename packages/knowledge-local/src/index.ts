@@ -280,17 +280,22 @@ export {
 export {
   claimNextJob,
   countPendingCurationJobs,
+  countRemainingCurationWork,
   enqueueCurationCandidate,
   enqueueCurationCandidateProjection,
   inspectDrainableCurationWork,
   listClaimedLeases,
   listQueuedCandidates,
   readCurationCandidatePayload,
+  quarantineClaimed,
   requeueClaimed,
 } from './queue/curation-queue.js'
 export type {
   ClaimedCurationJob,
   ClaimNextJobOptions,
+  CountRemainingCurationWorkOptions,
+  CurationQuarantineReason,
+  CurationRemainingWork,
   ClaimNextJobOutcome,
   CurationEnqueueRefusalReason,
   CurationProjectionArtifactSource,
@@ -300,6 +305,7 @@ export type {
   InspectDrainableCurationWorkOptions,
   MalformedClaimedCurationJob,
   ReadCurationCandidatePayloadOutcome,
+  QuarantineClaimedOptions,
   RequeueClaimedOptions,
 } from './queue/curation-queue.js'
 export {

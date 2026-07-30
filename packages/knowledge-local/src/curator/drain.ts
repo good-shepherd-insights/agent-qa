@@ -41,8 +41,11 @@ import {
 } from '../lease/writer-lease.js'
 import {
   claimNextJob,
-  countPendingCurationJobs,
+  countRemainingCurationWork,
+  quarantineClaimed,
   requeueClaimed,
+  type CurationQuarantineReason,
+  type CurationRemainingWork,
   type ClaimedCurationJob,
   type ClaimNextJobOutcome,
   type MalformedClaimedCurationJob,
@@ -108,6 +111,7 @@ export type DrainFailureStage =
   | 'author'
   | 'checkpoint'
   | 'commit'
+  | 'quarantine'
   | 'requeue'
   | 'release'
   | 'writer-pass'
@@ -139,6 +143,7 @@ interface DrainReportBase {
   committed: number
   downgraded: number
   withheld: number
+  quarantined: number
   requeued: number
   failures: number
   failureDetails: DrainFailure[]
@@ -147,8 +152,10 @@ interface DrainReportBase {
   reconcile: ReconcileReport | undefined
   writerPass: WriterPassReport
   gc: GcPassReport
-  /** Visibility only: durable jobs still present in the pending queue at drain exit. */
+  /** Visibility only: every durable disposition that still prevents queue completion. */
   remaining: number
+  /** Durable remainder partition. The current writer's nonterminal claim is included. */
+  remainingWork: CurationRemainingWork
 }
 
 export type DrainReport = DrainReportBase &
@@ -172,6 +179,7 @@ export interface DrainOperations extends MaintenanceOperations {
   releaseLease: typeof releaseLease
   reconcileOnDrainStart: typeof reconcileOnDrainStart
   claimNextJob: typeof claimNextJob
+  quarantineClaimed: typeof quarantineClaimed
   requeueClaimed: typeof requeueClaimed
   readJobState: typeof readJobState
   writeJobState: typeof writeJobState
@@ -245,6 +253,7 @@ const DEFAULT_OPERATIONS: DrainOperations = {
   releaseLease,
   reconcileOnDrainStart,
   claimNextJob,
+  quarantineClaimed,
   requeueClaimed,
   readJobState,
   writeJobState,
@@ -315,6 +324,7 @@ function emptyReport(): DrainReportBase {
     committed: 0,
     downgraded: 0,
     withheld: 0,
+    quarantined: 0,
     requeued: 0,
     failures: 0,
     failureDetails: [],
@@ -324,7 +334,24 @@ function emptyReport(): DrainReportBase {
     writerPass: { kind: 'not-requested' },
     gc: { kind: 'not-run' },
     remaining: 0,
+    remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
   }
+}
+
+function updateRemaining(
+  report: DrainReportBase,
+  knowledgeRoot: string,
+  currentLeaseId?: string,
+): void {
+  const remainingWork = countRemainingCurationWork(
+    knowledgeRoot,
+    currentLeaseId === undefined ? {} : { currentLeaseId },
+  )
+  report.remainingWork = remainingWork
+  report.remaining =
+    remainingWork.queued
+    + remainingWork.claimedNonterminal
+    + remainingWork.quarantined
 }
 
 function recordFailure(
@@ -575,20 +602,62 @@ function clearCheckpointAndRequeue(
   knowledgeRoot: string,
   authority: CurrentWriterAuthority,
   job: ClaimedCurationJob,
-): void {
-  const state = operations.readJobState(knowledgeRoot, job.candidateId)
+): number {
+  return clearCandidateAndRequeue(
+    operations,
+    knowledgeRoot,
+    authority,
+    job.candidateId,
+  )
+}
+
+function clearCandidateAndRequeue(
+  operations: DrainOperations,
+  knowledgeRoot: string,
+  authority: CurrentWriterAuthority,
+  candidateId: string,
+): number {
+  const state = operations.readJobState(knowledgeRoot, candidateId)
   operations.writeJobState({
     knowledgeRoot,
-    candidateId: job.candidateId,
+    candidateId,
     authority,
     lifecycle: 'queued',
     embedCrashCount: state.kind === 'parsed' ? state.state.embedCrashCount : 0,
   })
-  operations.requeueClaimed({
+  const requeued = operations.requeueClaimed({
     knowledgeRoot,
     leaseId: authority.leaseId,
     authority,
   })
+  if (!requeued.includes(candidateId)) {
+    throw new Error(`failed candidate ${candidateId} was not requeued`)
+  }
+  return requeued.length
+}
+
+function quarantineMalformedClaim(
+  report: DrainReportBase,
+  operations: DrainOperations,
+  knowledgeRoot: string,
+  authority: CurrentWriterAuthority,
+  candidateId: string,
+  reason: CurationQuarantineReason,
+): boolean {
+  try {
+    operations.quarantineClaimed({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      candidateId,
+      authority,
+      reason,
+    })
+    report.quarantined += 1
+    return true
+  } catch (error) {
+    recordFailure(report, 'quarantine', error, candidateId)
+    return false
+  }
 }
 
 function preserveAuthoredCheckpointAndRequeue(
@@ -763,7 +832,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     if (acquired.kind === 'held') {
       report.writerPass = { kind: 'skipped', reason: 'lease-held' }
       report.gc = { kind: 'skipped', reason: 'lease-held' }
-      report.remaining = countPendingCurationJobs(options.knowledgeRoot)
+      updateRemaining(report, options.knowledgeRoot)
       return { ...report, kind: 'handed-off', holder: acquired.holder }
     }
     if (acquired.kind === 'refused') throw acquired.error
@@ -840,6 +909,14 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             'claimed candidate payload is malformed',
             claimed.candidateId,
           )
+          if (!quarantineMalformedClaim(
+            result,
+            operations,
+            options.knowledgeRoot,
+            lease,
+            claimed.candidateId,
+            'malformed-payload',
+          )) break
           continue
         }
         try {
@@ -862,7 +939,17 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         } catch (error) {
           recordFailure(result, 'commit', error, claimed.candidateId)
           if (error instanceof WriterAuthorityLostError) break
-          continue
+          try {
+            result.requeued += clearCandidateAndRequeue(
+              operations,
+              options.knowledgeRoot,
+              lease,
+              claimed.candidateId,
+            )
+          } catch (requeueError) {
+            recordFailure(result, 'requeue', requeueError, claimed.candidateId)
+          }
+          break
         }
         emitCompleted(claimed.candidateId)
         result.committed += 1
@@ -873,6 +960,14 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       const state = operations.readJobState(options.knowledgeRoot, claimed.candidateId)
       if (state.kind === 'malformed') {
         recordFailure(result, 'job-state', 'job lifecycle state is malformed', claimed.candidateId)
+        if (!quarantineMalformedClaim(
+          result,
+          operations,
+          options.knowledgeRoot,
+          lease,
+          claimed.candidateId,
+          'malformed-job-state',
+        )) break
         continue
       }
       const embedCrashCount = state.kind === 'parsed' ? state.state.embedCrashCount : 0
@@ -881,6 +976,14 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           checkpoint = parseAuthoredCheckpoint(state.state.authored)
         } catch (error) {
           recordFailure(result, 'checkpoint', error, claimed.candidateId)
+          if (!quarantineMalformedClaim(
+            result,
+            operations,
+            options.knowledgeRoot,
+            lease,
+            claimed.candidateId,
+            'malformed-authored-checkpoint',
+          )) break
           continue
         }
       } else {
@@ -888,7 +991,17 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           checkpoint = await authorCheckpoint(options, operations, claimed)
         } catch (error) {
           recordFailure(result, 'author', error, claimed.candidateId)
-          continue
+          try {
+            result.requeued += clearCheckpointAndRequeue(
+              operations,
+              options.knowledgeRoot,
+              lease,
+              claimed,
+            )
+          } catch (requeueError) {
+            recordFailure(result, 'requeue', requeueError, claimed.candidateId)
+          }
+          break
         }
         try {
           persistCheckpoint(
@@ -901,7 +1014,17 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         } catch (error) {
           recordFailure(result, 'checkpoint', error, claimed.candidateId)
           if (error instanceof WriterAuthorityLostError) break
-          continue
+          try {
+            result.requeued += clearCheckpointAndRequeue(
+              operations,
+              options.knowledgeRoot,
+              lease,
+              claimed,
+            )
+          } catch (requeueError) {
+            recordFailure(result, 'requeue', requeueError, claimed.candidateId)
+          }
+          break
         }
       }
 
@@ -963,6 +1086,12 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
           continue
         }
         if (outcome.kind === 'failed') anySliceFailed = true
+        if (
+          outcome.kind === 'withheld'
+          && operations.readJobState(options.knowledgeRoot, claimed.candidateId).kind !== 'absent'
+        ) {
+          anySliceFailed = true
+        }
         const mapped = mapCommitOutcome(
           result,
           outcome,
@@ -1043,6 +1172,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         recordFailure(result, 'release', error)
       }
     }
-    result.remaining = countPendingCurationJobs(options.knowledgeRoot)
+    updateRemaining(result, options.knowledgeRoot, lease.leaseId)
   }
 }

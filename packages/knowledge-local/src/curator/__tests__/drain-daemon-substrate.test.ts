@@ -10,7 +10,12 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { CurationAuthorship, Delta, ExecutionContext } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  type CurationAuthorship,
+  type Delta,
+  type ExecutionContext,
+} from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -743,15 +748,18 @@ describe('drainQueue daemon substrate', () => {
       remaining: 1,
       remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
     })
-    expect(readJobState(knowledgeRoot, candidateId)).toMatchObject({
+    const state = readJobState(knowledgeRoot, candidateId)
+    expect(state).toMatchObject({
       kind: 'parsed',
-      state: { lifecycle: 'queued', authored: undefined },
+      state: { lifecycle: 'queued' },
     })
+    if (state.kind !== 'parsed') throw new Error('expected parsed requeued state')
+    expect(state.state.authored).toBeUndefined()
   })
 
   it('requeues a failed canary commit instead of losing its malformed sibling claim', async () => {
     const enqueued = enqueueCanaryOutcome(knowledgeRoot, {
-      candidateId: 'missing-canary-candidate',
+      candidateId: asRecordId('missing-canary-candidate'),
       runId: 'run-canary-requeue',
       testId: 'canary-requeue',
       testIndex: 0,
@@ -804,10 +812,13 @@ describe('drainQueue daemon substrate', () => {
       remaining: 1,
       remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
     })
-    expect(readJobState(knowledgeRoot, candidateId)).toMatchObject({
+    const state = readJobState(knowledgeRoot, candidateId)
+    expect(state).toMatchObject({
       kind: 'parsed',
-      state: { lifecycle: 'authored' },
+      state: { lifecycle: 'queued' },
     })
+    if (state.kind !== 'parsed') throw new Error('expected parsed requeued state')
+    expect(state.state.authored).toBeDefined()
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([candidateId])
   })
 

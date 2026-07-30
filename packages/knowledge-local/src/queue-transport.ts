@@ -16,6 +16,8 @@ export const QUEUE_DIR = 'memory/queue'
 export const QUEUED_SUBDIR = 'queued'
 /** Lease-partitioned candidates atomically removed from the pending set. */
 export const CLAIMED_SUBDIR = 'claimed'
+/** Terminally isolated candidates that require operator inspection or repair. */
+export const QUARANTINED_SUBDIR = 'quarantined'
 /** Durable lifecycle checkpoints keyed by candidate content address. */
 export const JOBS_SUBDIR = 'jobs'
 /** Provisional fail-closed disk-growth limit for one knowledge scope. */
@@ -50,6 +52,10 @@ export function claimedRoot(knowledgeRoot: string): string {
   return join(queueRoot(knowledgeRoot), CLAIMED_SUBDIR)
 }
 
+export function quarantinedRoot(knowledgeRoot: string): string {
+  return join(queueRoot(knowledgeRoot), QUARANTINED_SUBDIR)
+}
+
 export function jobsRoot(knowledgeRoot: string): string {
   return join(queueRoot(knowledgeRoot), JOBS_SUBDIR)
 }
@@ -75,6 +81,14 @@ export function claimedCandidateDir(
 ): string {
   assertQueueSegment(candidateId, 'candidateId')
   return join(claimedLeaseDir(knowledgeRoot, leaseId), candidateId)
+}
+
+export function quarantinedCandidateDir(
+  knowledgeRoot: string,
+  candidateId: string,
+): string {
+  assertQueueSegment(candidateId, 'candidateId')
+  return join(quarantinedRoot(knowledgeRoot), candidateId)
 }
 
 export function jobStatePath(knowledgeRoot: string, candidateId: string): string {

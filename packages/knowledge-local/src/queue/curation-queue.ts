@@ -48,8 +48,13 @@ import {
   claimedCandidateDir,
   claimedLeaseDir,
   claimedRoot,
+  jobStatePath,
+  jobsRoot,
   QUEUE_MAX_EMITS_PER_RUN,
   QUEUE_MAX_JOBS_PER_SCOPE,
+  quarantinedCandidateDir,
+  quarantinedRoot,
+  queueRoot,
   queueStagingRoot,
   queuedCandidateDir,
   queuedRoot,
@@ -148,6 +153,33 @@ export interface DrainableCurationWork {
   readonly recoverableClaimedCandidateIds: readonly string[]
 }
 
+export interface CountRemainingCurationWorkOptions {
+  /** Diagnostic identity only. The current claim remains included in the count. */
+  readonly currentLeaseId?: string
+}
+
+export interface CurationRemainingWork {
+  readonly queued: number
+  readonly claimedNonterminal: number
+  readonly quarantined: number
+}
+
+export const CURATION_QUARANTINE_SCHEMA_VERSION = 1
+export const CURATION_QUARANTINE_FILE = 'quarantine.json'
+
+export type CurationQuarantineReason =
+  | 'malformed-payload'
+  | 'malformed-job-state'
+  | 'malformed-authored-checkpoint'
+
+export interface QuarantineClaimedOptions {
+  readonly knowledgeRoot: string
+  readonly leaseId: string
+  readonly candidateId: string
+  readonly authority: CurrentWriterAuthority
+  readonly reason: CurationQuarantineReason
+}
+
 function directoryNames(dir: string): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
@@ -171,6 +203,29 @@ export function listQueuedCandidates(knowledgeRoot: string): string[] {
 /** Visibility-only count over the same durable pending layout consumed by claimNextJob. */
 export function countPendingCurationJobs(knowledgeRoot: string): number {
   return listQueuedCandidates(knowledgeRoot).length
+}
+
+/**
+ * Count every durable unit that prevents the queue from being complete.
+ *
+ * Unlike recovery visibility this includes the current writer's claim: a process can crash
+ * after its last pending rename, so excluding that claim would produce a false zero.
+ */
+export function countRemainingCurationWork(
+  knowledgeRoot: string,
+  _options: CountRemainingCurationWorkOptions = {},
+): CurationRemainingWork {
+  let claimedNonterminal = 0
+  for (const leaseId of listClaimedLeases(knowledgeRoot)) {
+    claimedNonterminal += directoryNames(claimedLeaseDir(knowledgeRoot, leaseId))
+      .filter((candidateId) => CANDIDATE_ID.test(candidateId)).length
+  }
+  return {
+    queued: listQueuedCandidates(knowledgeRoot).length,
+    claimedNonterminal,
+    quarantined: directoryNames(quarantinedRoot(knowledgeRoot))
+      .filter((candidateId) => CANDIDATE_ID.test(candidateId)).length,
+  }
 }
 
 /** Return deterministic active/recoverable lease directory order. */
@@ -377,6 +432,75 @@ export function requeueClaimed(opts: RequeueClaimedOptions): string[] {
     opts.authority,
     () => requeueClaimedWithinCurrentAuthority(opts),
   )
+}
+
+/**
+ * Fenced terminal disposition for a claimed job whose durable inputs cannot be interpreted.
+ * The claimed payload, optional lifecycle bytes, and reason document move as one directory.
+ */
+export function quarantineClaimed(opts: QuarantineClaimedOptions): string {
+  if (opts.leaseId !== opts.authority.leaseId) {
+    throw new TypeError('quarantineClaimed leaseId must match writer authority')
+  }
+  return withCurrentWriterAuthority(opts.knowledgeRoot, opts.authority, () => {
+    const sourceDir = claimedCandidateDir(
+      opts.knowledgeRoot,
+      opts.leaseId,
+      opts.candidateId,
+    )
+    const targetRoot = quarantinedRoot(opts.knowledgeRoot)
+    const targetDir = quarantinedCandidateDir(opts.knowledgeRoot, opts.candidateId)
+    if (!existsSync(sourceDir)) {
+      if (existsSync(targetDir)) return targetDir
+      throw new Error(`claimed candidate ${opts.candidateId} is absent`)
+    }
+
+    const reasonPath = join(sourceDir, CURATION_QUARANTINE_FILE)
+    if (!existsSync(reasonPath)) {
+      durableWrite(
+        reasonPath,
+        `${canonicalJson({
+          schemaVersion: CURATION_QUARANTINE_SCHEMA_VERSION,
+          candidateId: opts.candidateId,
+          leaseId: opts.leaseId,
+          reason: opts.reason,
+          quarantinedAt: new Date().toISOString(),
+        })}\n`,
+      )
+    }
+
+    const statePath = jobStatePath(opts.knowledgeRoot, opts.candidateId)
+    if (existsSync(statePath)) {
+      const firstArchive = join(sourceDir, 'job-state.json')
+      renameSync(
+        statePath,
+        existsSync(firstArchive)
+          ? join(sourceDir, `job-state-${randomUUID()}.json`)
+          : firstArchive,
+      )
+      bestEffortFsyncDirectory(jobsRoot(opts.knowledgeRoot))
+    }
+    bestEffortFsyncDirectory(sourceDir)
+    mkdirSync(targetRoot, { recursive: true })
+    try {
+      renameSync(sourceDir, targetDir)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if ((code === 'EEXIST' || code === 'ENOTEMPTY') && existsSync(targetDir)) {
+        rmSync(sourceDir, { recursive: true, force: true })
+      } else {
+        throw error
+      }
+    }
+    const leaseDir = claimedLeaseDir(opts.knowledgeRoot, opts.leaseId)
+    bestEffortFsyncDirectory(leaseDir)
+    bestEffortFsyncDirectory(targetRoot)
+    removeEmptyDir(leaseDir)
+    bestEffortFsyncDirectory(claimedRoot(opts.knowledgeRoot))
+    removeEmptyDir(claimedRoot(opts.knowledgeRoot))
+    bestEffortFsyncDirectory(queueRoot(opts.knowledgeRoot))
+    return targetDir
+  })
 }
 
 function queueCapExceeded(
