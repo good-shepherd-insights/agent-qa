@@ -26,9 +26,9 @@ import type {
 } from '@vostride/agent-qa-agent-local'
 import {
   DEFAULT_EMBEDDING_PROFILE,
+  slugBranch,
   type GuardrailPolicy,
 } from '@vostride/agent-qa-schema'
-import { slugBranch } from '@vostride/agent-qa-runner-local'
 
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
