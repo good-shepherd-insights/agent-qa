@@ -277,4 +277,12 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(source).toContain('withCurrentWriterAuthority(')
     expect(source).not.toContain('const beforePublish = staleEpoch(deps)')
   })
+
+  it('keeps the unfenced compatibility publisher out of the public and commit surfaces', () => {
+    const source = readFileSync(new URL('../curator/commit.ts', import.meta.url), 'utf8')
+
+    expect(publicSurface).not.toHaveProperty('publishBundle')
+    expect(source).not.toMatch(/import\s*\{[^}]*\bpublishBundle\b[^}]*\}/s)
+    expect(source).not.toMatch(/\bpublishBundle\s*\(\s*config\s*,/)
+  })
 })
