@@ -54,6 +54,7 @@ import {
 const roots: string[] = []
 const hosts: LocalAgentHost[] = []
 const servers: InvokeServerHandle[] = []
+const ENDPOINT_INSTANCE_ID = '33333333-3333-4333-8333-333333333333'
 
 const MASKED_CONFIG = {
   schemaVersion: 1 as const,
@@ -395,6 +396,50 @@ describe('daemon /invoke endpoint tracer', () => {
   it('keeps invokeFunction as the route module\'s only dispatch call', () => {
     const source = readFileSync(new URL('../daemon/server.ts', import.meta.url), 'utf8')
     expect(source.match(/\binvokeFunction\s*\(/g)).toHaveLength(1)
+  })
+
+  it('serves the daemon instance identity without widening the function registry surface', async () => {
+    const root = temporaryRoot('identity')
+    const agentQaRoot = join(root, '.agent-qa')
+    const socketPath = join(agentQaRoot, 'daemon.sock')
+    const host = localHost(agentQaRoot, join(root, 'agent-qa-knowledge'))
+    const server = await startInvokeServer({
+      socketPath,
+      registry: host.registry,
+      identity: {
+        schemaVersion: 1,
+        instanceId: ENDPOINT_INSTANCE_ID,
+        pid: process.pid,
+      },
+    } as Parameters<typeof startInvokeServer>[0])
+    servers.push(server)
+
+    const response = await new Promise<{ statusCode: number; text: string }>((resolveResponse, rejectResponse) => {
+      const outgoing = request({
+        socketPath,
+        path: '/identity',
+        method: 'GET',
+        headers: { connection: 'close' },
+      }, (incoming) => {
+        incoming.setEncoding('utf8')
+        let text = ''
+        incoming.on('data', (chunk: string) => { text += chunk })
+        incoming.once('error', rejectResponse)
+        incoming.once('end', () => resolveResponse({
+          statusCode: incoming.statusCode ?? 500,
+          text,
+        }))
+      })
+      outgoing.once('error', rejectResponse)
+      outgoing.end()
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(JSON.parse(response.text)).toEqual({
+      schemaVersion: 1,
+      instanceId: ENDPOINT_INSTANCE_ID,
+      pid: process.pid,
+    })
   })
 
   it('matches in-process invocation through the registered over-budget fallback socket', async () => {

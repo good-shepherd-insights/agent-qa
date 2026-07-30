@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -37,10 +38,13 @@ import {
 import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
 import {
   DAEMON_REGISTRATION_FILE,
+  DAEMON_REGISTRATION_SCHEMA_VERSION,
+  inspectDaemonRegistration,
   readDaemonRegistration,
   removeDaemonRegistration,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
+import * as registrationModule from '../daemon/registration.js'
 
 const CHILD_ROOT_ENV = 'AGENT_QA_DAEMON_HOST_ROOT'
 const CHILD_HOST_URL_ENV = 'AGENT_QA_DAEMON_HOST_URL'
@@ -71,6 +75,8 @@ export async function resolve(specifier, context, nextResolve) {
 `
 
 const temporaryRoots: string[] = []
+const HOST_INSTANCE_ID = '11111111-1111-4111-8111-111111111111'
+const SUCCESSOR_INSTANCE_ID = '22222222-2222-4222-8222-222222222222'
 
 function makePaths(label: string): {
   root: string
@@ -509,6 +515,176 @@ describe('daemon status and stop operator controls', () => {
     expect(stale.exitCode).toBe(1)
     expect(stale.stdout).toContain('nothing to stop')
     expect(staleSignal).not.toHaveBeenCalled()
+  })
+
+  it('refuses to signal a reused live pid whose socket reports a foreign instance nonce', async () => {
+    const paths = makePaths('stop-pid-reuse')
+    const signalProcess = vi.fn()
+    const registration = {
+      schemaVersion: 2,
+      instanceId: HOST_INSTANCE_ID,
+      pid: 5432,
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    }
+    const readIdentity = vi.fn(() => Promise.resolve({
+      schemaVersion: 1,
+      instanceId: SUCCESSOR_INSTANCE_ID,
+      pid: 5432,
+    }))
+    const deps = {
+      ...daemonCommandDeps(paths, { signalProcess }),
+      readRegistration: () => ({ kind: 'parsed' as const, registration }),
+      readIdentity,
+    } as unknown as DaemonCommandDeps
+
+    const stopped = await invokeDaemon(deps, ['stop'])
+
+    expect(stopped.exitCode).toBe(1)
+    expect(stopped.stdout).toContain('stale')
+    expect(readIdentity).toHaveBeenCalledTimes(1)
+    expect(signalProcess).not.toHaveBeenCalled()
+  })
+
+  it('classifies an unreachable registered instance as stale instead of running', async () => {
+    const paths = makePaths('status-unreachable-instance')
+    const registration = {
+      schemaVersion: 2,
+      instanceId: HOST_INSTANCE_ID,
+      pid: 4321,
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    }
+    const deps = {
+      ...daemonCommandDeps(paths),
+      readRegistration: () => ({ kind: 'parsed' as const, registration }),
+      readIdentity: vi.fn(() => Promise.reject(new Error('socket refused'))),
+    } as unknown as DaemonCommandDeps
+
+    const status = await invokeDaemon(deps, ['status', '--json'])
+
+    expect(status.exitCode).toBe(0)
+    expect(JSON.parse(status.stdout)).toMatchObject({ state: 'stale', pid: 4321 })
+  })
+})
+
+describe('daemon registration instance ownership and readiness', () => {
+  it('requires an instance nonce and treats the previous schema version as stale', () => {
+    const currentPaths = makePaths('registration-current-version')
+    expect(() => writeDaemonRegistration(currentPaths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(currentPaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    } as never)).not.toThrow()
+    expect(readDaemonRegistration(currentPaths.agentQaRoot)).toMatchObject({
+      kind: 'parsed',
+      registration: { instanceId: HOST_INSTANCE_ID },
+    })
+
+    const legacyPaths = makePaths('registration-legacy-version')
+    mkdirSync(legacyPaths.agentQaRoot, { recursive: true })
+    writeFileSync(join(legacyPaths.agentQaRoot, DAEMON_REGISTRATION_FILE), JSON.stringify({
+      schemaVersion: 1,
+      pid: process.pid,
+      socketPath: join(legacyPaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    }), { encoding: 'utf8', flag: 'w' })
+    expect(inspectDaemonRegistration(legacyPaths.agentQaRoot, () => true).kind).toBe('stale')
+  })
+
+  it('preserves a successor registration when an obsolete host removes its own generation', () => {
+    const paths = makePaths('registration-two-generations')
+    const removeIfOwned = (
+      registrationModule as unknown as {
+        removeRegistrationIfOwned?: (agentQaRoot: string, instanceId: string) => boolean
+      }
+    ).removeRegistrationIfOwned
+    if (removeIfOwned === undefined) throw new Error('removeRegistrationIfOwned is not implemented')
+
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: SUCCESSOR_INSTANCE_ID,
+      pid: process.pid + 1,
+      socketPath: join(paths.agentQaRoot, 'successor.sock'),
+      startedAtMs: 1_700_000_001_000,
+    } as never)
+
+    expect(removeIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID)).toBe(false)
+    expect(readDaemonRegistration(paths.agentQaRoot)).toMatchObject({
+      kind: 'parsed',
+      registration: { instanceId: SUCCESSOR_INSTANCE_ID },
+    })
+  })
+
+  it('publishes registration only after the invoke socket has finished listening', async () => {
+    const paths = makePaths('registration-after-listen')
+    const harness = hostHarness()
+    let listening = false
+    let resolveListen: ((handle: { socketPath: string; close(): Promise<void> }) => void) | undefined
+    const startServer = vi.fn(() => new Promise<{
+      socketPath: string
+      close(): Promise<void>
+    }>((resolve) => {
+      resolveListen = resolve
+    }))
+    let registrationPublishedBeforeListen = false
+    const writeRegistration = vi.fn((...args: Parameters<typeof writeDaemonRegistration>) => {
+      if (!listening) registrationPublishedBeforeListen = true
+      writeDaemonRegistration(...args)
+    })
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        startInvokeServer: startServer,
+        writeDaemonRegistration: writeRegistration,
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(() => startServer.mock.calls.length === 1, 'invoke server was not started')
+    const presentWhileListenPending = existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+    listening = true
+    resolveListen?.({
+      socketPath: join(paths.agentQaRoot, 'daemon.sock'),
+      close: () => Promise.resolve(),
+    })
+    await waitUntil(
+      () => writeRegistration.mock.calls.length === 1,
+      'registration was not published after listen',
+    )
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+
+    expect(presentWhileListenPending).toBe(false)
+    expect(registrationPublishedBeforeListen).toBe(false)
+  })
+
+  it('leaves no registration publication when invoke socket binding fails', async () => {
+    const paths = makePaths('registration-bind-failure')
+    const harness = hostHarness()
+    const writeRegistration = vi.fn(writeDaemonRegistration)
+
+    await expect(runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        writeDaemonRegistration: writeRegistration,
+        startInvokeServer: () => Promise.reject(new Error('bind failed')),
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })).rejects.toThrow('bind failed')
+
+    expect(writeRegistration).not.toHaveBeenCalled()
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
   })
 })
 
