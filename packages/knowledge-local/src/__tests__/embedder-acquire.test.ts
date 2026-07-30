@@ -1,14 +1,20 @@
 import { DatabaseSync } from 'node:sqlite'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   DEFAULT_EMBEDDING_PROFILE,
   STATIC_FLOOR_EMBEDDING_PROFILE,
+  type EmbeddingProfile,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   EMBEDDER_MIN_AVAILABLE_BYTES,
   acquireEmbedder,
+  resetEmbedderCapability,
+  resolveEmbedderCapability,
   type EmbedderProbes,
 } from '../embedder-acquire.js'
 import { ensureEmbedCacheTable } from '../embed-cache.js'
@@ -16,6 +22,8 @@ import type { EmbedderPort } from '../embedder-port.js'
 import { makeFakeEmbedder } from './fixtures/fake-embedder.js'
 
 const HEALTHY_MEMORY = EMBEDDER_MIN_AVAILABLE_BYTES + 1
+
+afterEach(() => resetEmbedderCapability())
 
 function moduleUnavailableError(): Error {
   return Object.assign(new Error("Cannot find package '@huggingface/transformers'"), {
@@ -165,6 +173,78 @@ describe('acquireEmbedder', () => {
     expect(discoverWorker).toHaveBeenCalledTimes(1)
     expect(availableMemory).toHaveBeenCalledTimes(1)
     expect(createNativeEmbedder).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-probes a staged artifact after reset while the no-reset control stays deferred', async () => {
+    const fixtureDir = mkdtempSync(join(tmpdir(), 'agent-qa-embedder-reset-'))
+    const artifact = join(fixtureDir, 'model.onnx')
+    const native = makeFakeEmbedder(DEFAULT_EMBEDDING_PROFILE.dim)
+    const createNativeEmbedder = vi.fn(async () => {
+      if (!existsSync(artifact)) throw coldArtifactError()
+      return native
+    })
+    const injected = probes({ createNativeEmbedder })
+    const options = {
+      preferredProfile: DEFAULT_EMBEDDING_PROFILE,
+      allowDownload: false,
+      probes: injected,
+    } as const
+
+    try {
+      const firstDrain = await resolveEmbedderCapability(options)
+      expect(firstDrain).toEqual({ kind: 'deferred', reason: 'cold-artifact' })
+
+      writeFileSync(artifact, 'staged model artifact', 'utf8')
+      const stickyControl = await resolveEmbedderCapability(options)
+      expect(stickyControl).toBe(firstDrain)
+      expect(stickyControl).toEqual({ kind: 'deferred', reason: 'cold-artifact' })
+      expect(createNativeEmbedder).toHaveBeenCalledTimes(1)
+
+      resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE)
+      const secondDrain = await resolveEmbedderCapability(options)
+      expect(secondDrain).toEqual({
+        kind: 'ready',
+        rung: 'native',
+        profile: DEFAULT_EMBEDDING_PROFILE,
+        embedder: native,
+      })
+      expect(createNativeEmbedder).toHaveBeenCalledTimes(2)
+    } finally {
+      rmSync(fixtureDir, { recursive: true, force: true })
+    }
+  })
+
+  it('clears only the named profile or every profile when no profile is supplied', async () => {
+    const secondProfile: EmbeddingProfile = {
+      ...DEFAULT_EMBEDDING_PROFILE,
+      model_id: `${DEFAULT_EMBEDDING_PROFILE.model_id}-reset-control`,
+    }
+    const createNativeEmbedder = vi.fn().mockResolvedValue(makeFakeEmbedder())
+    const injected = probes({ createNativeEmbedder })
+    const resolve = (preferredProfile: EmbeddingProfile) =>
+      resolveEmbedderCapability({
+        preferredProfile,
+        allowDownload: false,
+        probes: injected,
+      })
+
+    const firstDefault = await resolve(DEFAULT_EMBEDDING_PROFILE)
+    const firstControl = await resolve(secondProfile)
+    expect(createNativeEmbedder).toHaveBeenCalledTimes(2)
+
+    resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE)
+    const secondDefault = await resolve(DEFAULT_EMBEDDING_PROFILE)
+    const stickyControl = await resolve(secondProfile)
+    expect(secondDefault).not.toBe(firstDefault)
+    expect(stickyControl).toBe(firstControl)
+    expect(createNativeEmbedder).toHaveBeenCalledTimes(3)
+
+    resetEmbedderCapability()
+    const thirdDefault = await resolve(DEFAULT_EMBEDDING_PROFILE)
+    const secondControl = await resolve(secondProfile)
+    expect(thirdDefault).not.toBe(secondDefault)
+    expect(secondControl).not.toBe(firstControl)
+    expect(createNativeEmbedder).toHaveBeenCalledTimes(5)
   })
 
   it('composes a ready capability with the content-hash cache binding', async () => {

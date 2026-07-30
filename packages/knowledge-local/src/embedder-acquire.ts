@@ -82,6 +82,26 @@ const injectedCapabilities = new WeakMap<
   EmbedderProbes,
   Map<string, Promise<CapabilityOutcome>>
 >()
+const injectedCapabilityCaches = new Set<Map<string, Promise<CapabilityOutcome>>>()
+
+/**
+ * Invalidate process-lifetime capability resolution without touching process-local pipelines.
+ *
+ * A named profile clears only its memo entry. Omitting the profile clears every production and
+ * probe-isolated entry so a long-lived host can re-probe after its worker or artifact state moves.
+ */
+export function resetEmbedderCapability(profile?: EmbeddingProfile): void {
+  if (profile === undefined) {
+    processCapabilities.clear()
+    for (const capabilities of injectedCapabilityCaches) capabilities.clear()
+    injectedCapabilityCaches.clear()
+    return
+  }
+
+  const key = embeddingProfileKey(profile)
+  processCapabilities.delete(key)
+  for (const capabilities of injectedCapabilityCaches) capabilities.delete(key)
+}
 
 /**
  * D-09's typed worker-discovery seam.
@@ -138,10 +158,14 @@ function cacheFor(probes: EmbedderProbes | undefined): Map<string, Promise<Capab
   if (probes === undefined) return processCapabilities
 
   const existing = injectedCapabilities.get(probes)
-  if (existing !== undefined) return existing
+  if (existing !== undefined) {
+    injectedCapabilityCaches.add(existing)
+    return existing
+  }
 
   const created = new Map<string, Promise<CapabilityOutcome>>()
   injectedCapabilities.set(probes, created)
+  injectedCapabilityCaches.add(created)
   return created
 }
 
