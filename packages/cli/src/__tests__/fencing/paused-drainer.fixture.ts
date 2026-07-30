@@ -40,6 +40,16 @@ function blockSynchronouslyUntil(file: string): void {
   while (!existsSync(file)) Atomics.wait(sleepCell, 0, 0, 20)
 }
 
+type PauseAt = 'afterIntentWritten' | 'afterFinalAuthorityCompare'
+
+function requestedPauseAt(): PauseAt {
+  const value = process.env[FENCING_ENV.pauseAt] ?? 'afterIntentWritten'
+  if (value !== 'afterIntentWritten' && value !== 'afterFinalAuthorityCompare') {
+    throw new Error(`unsupported fencing pause point: ${value}`)
+  }
+  return value
+}
+
 function currentAuthor(fixture: ReturnType<typeof readFixture>): CuratorAuthor {
   return createScriptedAuthor(fixture, [])
 }
@@ -107,6 +117,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
   const agentQaRoot = join(root, '.agent-qa')
   const control = process.env[FENCING_ENV.control] === '1'
+  const pauseAt = requestedPauseAt()
   const candidateId = fixture.candidates[0]?.candidateId
   if (candidateId === undefined || fixture.candidates.length !== 1) {
     throw new Error('fencing fixture requires exactly one candidate')
@@ -149,7 +160,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
           hookCount += 1
         },
       }
-    } else {
+    } else if (pauseAt === 'afterIntentWritten') {
       deps.hooks = {
         ...originalHooks,
         afterIntentWritten: () => {
@@ -157,6 +168,26 @@ export async function runPausedDrainerFixture(): Promise<void> {
           hookCount += 1
           writeDurableJson(marker, {
             phase: 'afterIntentWritten',
+            pid: process.pid,
+            candidateId: job.candidateId,
+            leaseId: job.leaseId,
+            oldEpoch: deps.epoch,
+          })
+          blockSynchronouslyUntil(permit)
+        },
+        beforePublishRename: () => {
+          beforePublishRenameReached = true
+          throw new Error('stale drainer reached beforePublishRename')
+        },
+      }
+    } else {
+      deps.hooks = {
+        ...originalHooks,
+        afterFinalAuthorityCompare: () => {
+          originalHooks?.afterFinalAuthorityCompare?.()
+          hookCount += 1
+          writeDurableJson(marker, {
+            phase: 'afterFinalAuthorityCompare',
             pid: process.pid,
             candidateId: job.candidateId,
             leaseId: job.leaseId,
@@ -210,6 +241,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
       writeDurableJson(reportFile, {
         failed: false,
         control: true,
+        pauseAt,
         pid: process.pid,
         candidateId,
         oldEpoch: retained.deps.epoch,
@@ -228,12 +260,13 @@ export async function runPausedDrainerFixture(): Promise<void> {
     }
     if (hookCount !== 1 || beforePublishRenameReached) {
       throw new Error(
-        `invalid guard path: afterIntentWritten=${hookCount}, beforePublishRename=${beforePublishRenameReached}`,
+        `invalid guard path: ${pauseAt}=${hookCount}, beforePublishRename=${beforePublishRenameReached}`,
       )
     }
 
     writeDurableJson(reportFile, {
       failed: true,
+      pauseAt,
       pid: process.pid,
       candidateId,
       oldEpoch: retained.deps.epoch,
@@ -245,7 +278,10 @@ export async function runPausedDrainerFixture(): Promise<void> {
       nonHeartbeatEventsUnchanged: firstSnapshot === secondSnapshot,
       publicationEntryCount,
       outcomes: [
-        { guard: 'beforePublish', ...firstOutcome },
+        {
+          guard: pauseAt === 'afterIntentWritten' ? 'beforePublish' : pauseAt,
+          ...firstOutcome,
+        },
         { guard: 'beforeWork', ...secondOutcome },
       ],
     })
