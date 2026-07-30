@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { request } from 'node:http'
 import {
   existsSync,
@@ -9,6 +11,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import type { ConfigReaderPort, FunctionRegistry, JobModelCapability } from '@vostride/agent-qa-agent'
 import type {
@@ -46,12 +49,14 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import * as knowledgeMaintain from '../commands/knowledge-maintain.js'
 import {
   CURATION_TAIL_RECEIPT_FILE,
   runCurationTail,
   type CurationTailReceipt,
 } from '../curation/curation-tail.js'
 import { nudgeDaemon } from '../daemon/client.js'
+import * as daemonClient from '../daemon/client.js'
 import {
   DRAIN_SESSION_RECEIPTS_FILE,
   readDrainSessionReceipts,
@@ -75,6 +80,32 @@ const CONFIG: ConfigReaderPort = {
 
 const CANDIDATE_ID = 'b'.repeat(64)
 const SESSION_ID = '00000000-0000-4000-8000-000000000006'
+const STOPPED_DAEMON_ROOT_ENV = 'AGENT_QA_STOPPED_DAEMON_ROOT'
+const STOPPED_DAEMON_HOST_URL_ENV = 'AGENT_QA_STOPPED_DAEMON_HOST_URL'
+const STOPPED_DAEMON_CHILD_SCRIPT = `
+const root = process.env.${STOPPED_DAEMON_ROOT_ENV}
+const hostUrl = process.env.${STOPPED_DAEMON_HOST_URL_ENV}
+if (root === undefined || hostUrl === undefined) throw new Error('stopped daemon fixture missing')
+const { runDaemonHost } = await import(hostUrl)
+process.exitCode = await runDaemonHost({
+  agentQaRoot: root + '/.agent-qa',
+  knowledgeRoot: root + '/agent-qa-knowledge',
+  config: { getMasked: async () => ({ schemaVersion: 1, configPath: root + '/agent-qa.config.yaml', entries: [] }) },
+  model: () => ({ modelId: 'test:stopped-daemon', generate: async () => ({ text: 'unused' }) }),
+})
+`
+const TYPESCRIPT_LOADER = `
+export async function resolve(specifier, context, nextResolve) {
+  try {
+    return await nextResolve(specifier, context)
+  } catch (error) {
+    if (error?.code === 'ERR_MODULE_NOT_FOUND' && specifier.startsWith('.') && specifier.endsWith('.js')) {
+      return nextResolve(specifier.slice(0, -3) + '.ts', context)
+    }
+    throw error
+  }
+}
+`
 const roots: string[] = []
 
 function makeRoot(): { root: string; agentQaRoot: string; knowledgeRoot: string; runDir: string } {
@@ -629,6 +660,97 @@ describe('daemon curation serving tracer', () => {
     await expect(nudgeDaemon(paths.agentQaRoot)).resolves.toBeUndefined()
     expect(existsSync(join(paths.agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE))).toBe(false)
   })
+
+  it.runIf(process.platform !== 'win32')(
+    'exits a delegated drain within its deadline when the real daemon child is SIGSTOPped',
+    async () => {
+      const paths = makeRoot()
+      enqueueRealCandidate(paths.knowledgeRoot, 'stopped-daemon-remainder')
+      const loaderPath = join(paths.root, 'typescript-loader.mjs')
+      writeFileSync(loaderPath, TYPESCRIPT_LOADER, 'utf8')
+      const child = spawn(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          '--experimental-loader',
+          pathToFileURL(loaderPath).href,
+          '--input-type=module',
+          '--eval',
+          STOPPED_DAEMON_CHILD_SCRIPT,
+        ],
+        {
+          env: {
+            ...process.env,
+            [STOPPED_DAEMON_ROOT_ENV]: paths.root,
+            [STOPPED_DAEMON_HOST_URL_ENV]: new URL('../daemon/host.ts', import.meta.url).href,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+      let childOutput = ''
+      child.stdout?.setEncoding('utf8').on('data', (chunk: string) => { childOutput += chunk })
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { childOutput += chunk })
+      const originalExitCode = process.exitCode
+      const stderr: string[] = []
+      const stderrWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+        stderr.push(String(chunk))
+        return true
+      })
+
+      try {
+        await waitUntil(() => {
+          if (child.exitCode !== null || child.signalCode !== null) {
+            throw new Error(`daemon child exited before registration:\n${childOutput}`)
+          }
+          return existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+        }, `daemon child never registered:\n${childOutput}`)
+        expect(child.kill('SIGSTOP')).toBe(true)
+
+        const nudgeTimeout = (
+          daemonClient as unknown as { DAEMON_NUDGE_TIMEOUT_MS?: number }
+        ).DAEMON_NUDGE_TIMEOUT_MS
+        expect(nudgeTimeout).toBe(5_000)
+        const drainViaDaemon = (
+          knowledgeMaintain as unknown as {
+            drainViaDaemon?: (
+              paths: { knowledgeRoot: string; runtimeRoot: string; auditBaseDir: string },
+              options: { json?: boolean },
+              timing: { waitTimeoutMs: number; pollMs: number },
+            ) => Promise<void>
+          }
+        ).drainViaDaemon
+        expect(drainViaDaemon).toBeTypeOf('function')
+        if (drainViaDaemon === undefined) return
+
+        process.exitCode = undefined
+        const startedAtMs = Date.now()
+        await drainViaDaemon(
+          {
+            knowledgeRoot: paths.knowledgeRoot,
+            runtimeRoot: paths.agentQaRoot,
+            auditBaseDir: paths.agentQaRoot,
+          },
+          {},
+          { waitTimeoutMs: 250, pollMs: 10 },
+        )
+        const elapsedMs = Date.now() - startedAtMs
+
+        expect(process.exitCode).toBe(1)
+        expect(elapsedMs).toBeLessThan(2_000)
+        expect(stderr.join('')).toContain('daemon unresponsive')
+        expect(stderr.join('')).toContain('queued 1')
+      } finally {
+        stderrWrite.mockRestore()
+        process.exitCode = originalExitCode
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGCONT')
+          child.kill('SIGKILL')
+          await once(child, 'exit')
+        }
+      }
+    },
+    15_000,
+  )
 
   it('does not receipt success while the last candidate is claimed and authoring fails', async () => {
     const paths = makeRoot()

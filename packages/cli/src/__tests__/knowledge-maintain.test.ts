@@ -64,8 +64,12 @@ const commandHarness = vi.hoisted(() => ({
 
 const daemonHarness = vi.hoisted(() => ({
   nudgeCalls: [] as string[],
+  nudgeOptions: [] as Array<{ deadlineMs?: number; signal?: AbortSignal } | undefined>,
   nudgeHook: undefined as (
-    | ((agentQaRoot: string) =>
+    | ((
+      agentQaRoot: string,
+      options?: { deadlineMs?: number; signal?: AbortSignal },
+    ) =>
       | Promise<{ sessionId: string } | undefined>
       | { sessionId: string }
       | undefined)
@@ -153,9 +157,13 @@ vi.mock('../daemon/client.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../daemon/client.js')>()
   return {
     ...actual,
-    nudgeDaemon: vi.fn(async (agentQaRoot: string) => {
+    nudgeDaemon: vi.fn(async (
+      agentQaRoot: string,
+      options?: { deadlineMs?: number; signal?: AbortSignal },
+    ) => {
       daemonHarness.nudgeCalls.push(agentQaRoot)
-      return await daemonHarness.nudgeHook?.(agentQaRoot)
+      daemonHarness.nudgeOptions.push(options)
+      return await daemonHarness.nudgeHook?.(agentQaRoot, options)
     }),
   }
 })
@@ -511,6 +519,7 @@ describe('knowledge maintenance commands', () => {
     commandHarness.rollbackCampaignCalls = 0
     commandHarness.rollbackCurationJobCalls = 0
     daemonHarness.nudgeCalls.splice(0)
+    daemonHarness.nudgeOptions.splice(0)
     daemonHarness.nudgeHook = undefined
   })
 
@@ -699,6 +708,36 @@ describe('knowledge maintenance commands', () => {
     expect(result.stdout).toContain('remaining 1')
     expect(result.stderr).toContain('timed out')
     expect(commandHarness.drainQueueCalls).toBe(0)
+  })
+
+  it('starts the overall deadline before a slow nudge and never grants a second wait budget', async () => {
+    const startedAtMs = 1_700_000_000_000
+    vi.useFakeTimers({ now: startedAtMs })
+    const workspace = fixtureWorkspace(roots)
+    seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
+    plantDaemonRegistration(workspace)
+    daemonHarness.nudgeHook = (_agentQaRoot, options) => {
+      expect(options?.deadlineMs).toBe(startedAtMs + 120_000)
+      vi.setSystemTime(startedAtMs + 120_001)
+      return undefined
+    }
+
+    let completedAtMs: number | undefined
+    const invocation = invoke(workspace, ['drain']).then((result) => {
+      completedAtMs = Date.now()
+      return result
+    })
+    await vi.waitFor(() => expect(daemonHarness.nudgeCalls).toHaveLength(1))
+    await vi.advanceTimersByTimeAsync(120_001)
+    const result = await invocation
+
+    expect(daemonHarness.nudgeOptions).toEqual([{
+      deadlineMs: startedAtMs + 120_000,
+    }])
+    expect(completedAtMs).toBe(startedAtMs + 120_001)
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('daemon unresponsive')
+    expect(result.stderr).toContain('queued 1')
   })
 
   it('renders deterministic stitched run and daemon-session receipt status', async () => {
