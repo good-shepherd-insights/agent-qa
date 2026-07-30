@@ -399,6 +399,15 @@ describe('daemon /invoke endpoint tracer', () => {
     expect(source.match(/\binvokeFunction\s*\(/g)).toHaveLength(1)
   })
 
+  it('pins bounded stream resume attempts in source for evidence-based retuning', async () => {
+    const clientModule = (await import('../daemon/client.js')) as Record<string, unknown>
+    const source = readFileSync(new URL('../daemon/client.ts', import.meta.url), 'utf8')
+
+    expect(clientModule.STREAM_RESUME_MAX_ATTEMPTS).toBe(3)
+    expect(source).toMatch(/STREAM_RESUME_MAX_ATTEMPTS\s*=\s*3/u)
+    expect(source).toMatch(/retune from .*evidence.*without adding config/iu)
+  })
+
   it('serves the daemon instance identity without widening the function registry surface', async () => {
     const root = temporaryRoot('identity')
     const agentQaRoot = join(root, '.agent-qa')
@@ -552,7 +561,7 @@ describe('daemon /invoke endpoint tracer', () => {
 })
 
 describe('daemon /invoke endpoint semantic parity', () => {
-  it('frames element seq values as SSE ids and resumes exactly once after a dropped stream', async () => {
+  it('frames terminal completion and resumes from lastEventId after clean shutdown', async () => {
     const semantic = await semanticModules()
     const elements = [
       { seq: 1, value: 'one' },
@@ -560,7 +569,10 @@ describe('daemon /invoke endpoint semantic parity', () => {
       { seq: 3, value: 'three' },
     ]
     const resumeInputs: Array<number | undefined> = []
-    let shouldDrop = true
+    let releaseInitialStream!: () => void
+    const initialStreamBlocked = new Promise<void>((resolveBlocked) => {
+      releaseInitialStream = resolveBlocked
+    })
     const streamInput = z.object({ lastEventId: z.number().int().optional() }).strict()
     const streamOutput = z.object({ seq: z.number().int(), value: z.string() }).strict()
     const { registry } = await registryFixture([
@@ -593,21 +605,20 @@ describe('daemon /invoke endpoint semantic parity', () => {
           return (async function* () {
             for (const element of elements.filter(({ seq }) => seq > (input.lastEventId ?? 0))) {
               yield element
-              if (shouldDrop) {
-                shouldDrop = false
-                await new Promise((resolveDrop) => setTimeout(resolveDrop, 10))
-                throw new Error('simulated stream transport drop')
+              if (input.lastEventId === undefined && element.seq === 1) {
+                await initialStreamBlocked
               }
             }
           })()
         },
       },
     ])
-    const { agentQaRoot, socketPath } = await startRegistryServer(
-      'sse',
-      registry,
-      semantic.startInvokeServer,
-    )
+    const root = temporaryRoot('sse')
+    const agentQaRoot = join(root, '.agent-qa')
+    const socketPath = join(agentQaRoot, 'daemon.sock')
+    register(agentQaRoot, socketPath)
+    const firstServer = await semantic.startInvokeServer({ socketPath, registry })
+    servers.push(firstServer)
 
     const framed = await rawInvoke(socketPath, 'synthetic.frames', {})
     expect(framed.statusCode).toBe(200)
@@ -615,7 +626,8 @@ describe('daemon /invoke endpoint semantic parity', () => {
     expect(framed.text).toBe(
       'id: 1\ndata: {"seq":1,"value":"one"}\n\n' +
         'id: 2\ndata: {"seq":2,"value":"two"}\n\n' +
-        'id: 3\ndata: {"seq":3,"value":"three"}\n\n',
+        'id: 3\ndata: {"seq":3,"value":"three"}\n\n' +
+        'event: stream-end\ndata: {}\n\n',
     )
 
     const result = await semantic.invokeViaDaemon({
@@ -623,11 +635,151 @@ describe('daemon /invoke endpoint semantic parity', () => {
       functionId: 'synthetic.resume',
       input: {},
     })
-    const observed: unknown[] = []
-    for await (const element of result as AsyncIterable<unknown>) observed.push(element)
+    const iterator = (result as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+    const first = await iterator.next()
+    expect(first).toEqual({ done: false, value: elements[0] })
+
+    const successorSocketPath = join(agentQaRoot, 'daemon-successor.sock')
+    const successorServer = await semantic.startInvokeServer({
+      socketPath: successorSocketPath,
+      registry,
+    })
+    servers.push(successorServer)
+    register(agentQaRoot, successorSocketPath)
+
+    const remainderPromise = (async () => {
+      const remainder: unknown[] = []
+      while (true) {
+        const next = await iterator.next()
+        if (next.done) return remainder
+        remainder.push(next.value)
+      }
+    })()
+
+    await firstServer.close()
+    releaseInitialStream()
+    const observed = [first.value, ...(await remainderPromise)]
 
     expect(observed).toEqual(elements)
     expect(resumeInputs).toEqual([undefined, 1])
+  })
+
+  it('rejects a clean shutdown between events instead of accepting partial success', async () => {
+    const semantic = await semanticModules()
+    let releaseStream!: () => void
+    const streamBlocked = new Promise<void>((resolveBlocked) => {
+      releaseStream = resolveBlocked
+    })
+    const streamInput = z.object({ lastEventId: z.number().int().optional() }).strict()
+    const streamOutput = z.object({ seq: z.number().int(), value: z.string() }).strict()
+    const { registry } = await registryFixture([
+      {
+        id: 'synthetic.clean-shutdown',
+        summary: 'Clean shutdown between two stream events.',
+        requiredScopes: ['read'],
+        resultKind: 'stream',
+        input: streamInput,
+        output: streamOutput,
+        risk: { name: 'fn:synthetic.clean-shutdown', recognized: true, readOnly: true },
+        async invoke() {
+          return (async function* () {
+            yield { seq: 1, value: 'before-shutdown' }
+            await streamBlocked
+            yield { seq: 2, value: 'after-shutdown' }
+          })()
+        },
+      },
+    ])
+    const { agentQaRoot } = await startRegistryServer(
+      'clean-shutdown',
+      registry,
+      semantic.startInvokeServer,
+    )
+    const result = await semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.clean-shutdown',
+      input: {},
+    })
+    const iterator = (result as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { seq: 1, value: 'before-shutdown' },
+    })
+    const interrupted = iterator.next()
+    const activeServer = servers.at(-1)
+    if (activeServer === undefined) throw new Error('Expected an active daemon server')
+
+    await activeServer.close()
+    releaseStream()
+    const error = await capturedRejection(interrupted)
+
+    expect(error).toMatchObject({
+      name: 'DaemonStreamInterruptedError',
+      lastEventId: 1,
+      reason: expect.any(String),
+    })
+  })
+
+  it('rehydrates a terminal stream error with in-process named-error parity', async () => {
+    const semantic = await semanticModules()
+    const streamInput = z.object({ lastEventId: z.number().int().optional() }).strict()
+    const streamOutput = z.object({ seq: z.number().int(), value: z.string() }).strict()
+    const { registry } = await registryFixture([
+      {
+        id: 'synthetic.stream-error',
+        summary: 'Named error after a delivered stream element.',
+        requiredScopes: ['read'],
+        resultKind: 'stream',
+        input: streamInput,
+        output: streamOutput,
+        risk: { name: 'fn:synthetic.stream-error', recognized: true, readOnly: true },
+        async invoke() {
+          return (async function* () {
+            yield { seq: 1, value: 'before-error' }
+            throw new semantic.StreamReplayFloorError('run-stream-error', 1, 7)
+          })()
+        },
+      },
+    ])
+
+    const inProcessResult = await semantic.invokeFunction(
+      registry,
+      'synthetic.stream-error',
+      {},
+      DAEMON_FUNCTION_CALLER,
+    )
+    const inProcessError = await capturedRejection((async () => {
+      for await (const _element of inProcessResult as AsyncIterable<unknown>) {
+        // Consume through the semantic failure boundary.
+      }
+    })())
+    expect(inProcessError).toBeInstanceOf(semantic.StreamReplayFloorError)
+
+    const { agentQaRoot } = await startRegistryServer(
+      'terminal-stream-error',
+      registry,
+      semantic.startInvokeServer,
+    )
+    const overWireResult = await semantic.invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'synthetic.stream-error',
+      input: {},
+    })
+    const overWireError = await capturedRejection((async () => {
+      for await (const _element of overWireResult as AsyncIterable<unknown>) {
+        // Consume through the framed semantic failure boundary.
+      }
+    })())
+
+    expect(overWireError).toBeInstanceOf(semantic.StreamReplayFloorError)
+    expect(overWireError).toMatchObject({
+      name: inProcessError.name,
+      message: inProcessError.message,
+      runId: 'run-stream-error',
+      requestedSeq: 1,
+      earliestAvailableSeq: 7,
+    })
   })
 
   it('rehydrates every named refusal class with its structured fields intact', async () => {
