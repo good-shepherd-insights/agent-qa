@@ -26,6 +26,7 @@ import {
   EPOCH_FILE,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_TAKEOVER_MS,
   WriterAuthorityLostError,
 } from '../lease/writer-lease.js'
 import {
@@ -39,6 +40,7 @@ interface ExpectedAuthoritySurface {
     authority: { leaseId: string; epoch: number },
     mutate: () => T,
     hooks?: {
+      afterMutationLockAcquired?: () => void
       afterFinalAuthorityCompare?: () => void
       mutationLockTakeoverMs?: number
     },
@@ -227,6 +229,92 @@ describe('writer authority and bundle publication are one indivisible protocol (
     } finally {
       reader.db.close()
     }
+  })
+
+  it('takes over a live mutation-lock generation only after its bounded deadline', () => {
+    const authority = acquireAuthority()
+    const lockFile = join(
+      knowledgeRoot,
+      'memory',
+      'index',
+      '.writer-lease-mutation-lock',
+    )
+    const takeoverMs = 35
+    let originalOwner: Record<string, unknown> | undefined
+    let successorOwner: Record<string, unknown> | undefined
+    let successorMutationAtMs = 0
+    let staleMutationCount = 0
+    let refusal: unknown
+
+    try {
+      expectedSurface.withCurrentWriterAuthority(
+        knowledgeRoot,
+        authority,
+        () => ++staleMutationCount,
+        {
+          mutationLockTakeoverMs: takeoverMs,
+          afterMutationLockAcquired: () => {
+            originalOwner = JSON.parse(readFileSync(lockFile, 'utf8')) as Record<
+              string,
+              unknown
+            >
+            expectedSurface.withCurrentWriterAuthority(
+              knowledgeRoot,
+              authority,
+              () => {
+                successorMutationAtMs = Date.now()
+                successorOwner = JSON.parse(readFileSync(lockFile, 'utf8')) as Record<
+                  string,
+                  unknown
+                >
+              },
+              { mutationLockTakeoverMs: takeoverMs },
+            )
+          },
+        },
+      )
+    } catch (error) {
+      refusal = error
+    }
+
+    expect(originalOwner).toMatchObject({ pid: process.pid })
+    expect(successorOwner).toMatchObject({ pid: process.pid })
+    expect(successorOwner?.generationToken).not.toBe(originalOwner?.generationToken)
+    expect(successorMutationAtMs - Number(originalOwner?.acquiredAtMs)).toBeGreaterThanOrEqual(
+      takeoverMs,
+    )
+    expect(staleMutationCount).toBe(0)
+    expect(refusal).toBeInstanceOf(WriterAuthorityLostError)
+    expect(refusal).toMatchObject({ reason: 'mutation-lock-generation-lost' })
+  })
+
+  it('recovers a dead-PID mutation-lock owner immediately without waiting for the deadline', () => {
+    const authority = acquireAuthority()
+    const lockParent = join(knowledgeRoot, 'memory', 'index')
+    const lockFile = join(lockParent, '.writer-lease-mutation-lock')
+    mkdirSync(lockParent, { recursive: true })
+    writeFileSync(lockFile, `${JSON.stringify({
+      pid: 2_147_483_647,
+      acquiredAtMs: Date.now(),
+      generationToken: 'dead-owner-generation',
+    })}\n`, 'utf8')
+    const startedAtMs = Date.now()
+
+    const result = expectedSurface.withCurrentWriterAuthority(
+      knowledgeRoot,
+      authority,
+      () => 'recovered',
+      { mutationLockTakeoverMs: MUTATION_LOCK_TAKEOVER_MS },
+    )
+
+    expect(result).toBe('recovered')
+    expect(Date.now() - startedAtMs).toBeLessThan(1_000)
+    expect(existsSync(lockFile)).toBe(false)
+  })
+
+  it('exports the pinned production mutation-lock takeover bound without a config seam', () => {
+    expect(MUTATION_LOCK_TAKEOVER_MS).toBe(45_000)
+    expect(publicSurface.MUTATION_LOCK_TAKEOVER_MS).toBe(MUTATION_LOCK_TAKEOVER_MS)
   })
 
   it('stages bundle bytes under an epoch-keyed reader-invisible directory', () => {

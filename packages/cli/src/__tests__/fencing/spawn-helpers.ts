@@ -41,6 +41,7 @@ export const FENCING_ENV = {
   readyMarker: 'AGENT_QA_FENCING_READY_MARKER',
   committedMarker: 'AGENT_QA_FENCING_COMMITTED_MARKER',
   control: 'AGENT_QA_FENCING_CONTROL',
+  pauseAt: 'AGENT_QA_FENCING_PAUSE_AT',
 } as const
 
 export type FencingChildRole = 'paused-drainer' | 'reclaiming-daemon'

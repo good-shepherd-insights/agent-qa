@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 
 import {
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_TAKEOVER_MS,
   enumerateBundleDirs,
   loadBundle,
   openIndexReaderConnection,
@@ -214,6 +215,119 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           && event.pid === committed.holderPid
           && event.epoch === committed.epoch)
         findEventAfter(events, heartbeatIndex, (event) => event.kind === 'daemon-stopped')
+        expect(events.filter((event) =>
+          event.kind === 'job-completed' && event.candidateId === candidateId)).toHaveLength(1)
+      } finally {
+        if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
+          drainer.child.kill('SIGCONT')
+        }
+        await killIfRunning(drainer.child)
+        if (daemon !== undefined) await killIfRunning(daemon.child)
+        expect(existsSync(paths.fixture)).toBe(true)
+      }
+    }, LEG_TIMEOUT_MS)
+
+    test('refuses a SIGSTOPped drainer taken over after the final authority comparison', async () => {
+      const paths = makeRoot('post-comparison-takeover')
+      const fixture = singleCandidateFixture()
+      const candidateId = fixture.candidates[0]!.candidateId
+      writeFixture(paths.fixture, fixture)
+
+      const drainer = startChild('paused-drainer', paths, {
+        [FENCING_ENV.pauseAt]: 'afterFinalAuthorityCompare',
+      })
+      let daemon: ReturnType<typeof startChild> | undefined
+      try {
+        const paused = await waitForMarker(
+          drainer,
+          paths.marker,
+          'afterFinalAuthorityCompare marker',
+        )
+        expect(paused).toMatchObject({
+          phase: 'afterFinalAuthorityCompare',
+          pid: drainer.child.pid,
+          candidateId,
+          oldEpoch: 1,
+        })
+        sendSignalWhileAlive(drainer, 'SIGSTOP')
+        const stoppedAtMs = Date.now()
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, LEASE_HEARTBEAT_TTL_MS + 1_500))
+
+        daemon = startChild('reclaiming-daemon', paths)
+        await waitForMarker(daemon, paths.readyMarker, 'takeover daemon readiness')
+        await nudgeDaemon(paths.agentQaRoot)
+        const committed = await waitForMarker(
+          daemon,
+          paths.committedMarker,
+          'takeover daemon commit and post-X heartbeat',
+        )
+        expect(committed).toMatchObject({
+          committed: true,
+          candidateId,
+          holderPid: daemon.child.pid,
+          epoch: 2,
+          diskEpoch: 2,
+        })
+        expect(Date.now() - stoppedAtMs).toBeLessThan(
+          LEASE_HEARTBEAT_TTL_MS + MUTATION_LOCK_TAKEOVER_MS + 20_000,
+        )
+
+        const beforeResume = readWriterLease(paths.knowledgeRoot)
+        expect(beforeResume.kind).toBe('parsed')
+        if (beforeResume.kind !== 'parsed') throw new Error('takeover daemon lease disappeared')
+        expect(beforeResume.lease).toMatchObject({
+          pid: daemon.child.pid,
+          leaseId: committed.leaseId,
+          epoch: 2,
+        })
+        expect(Date.now() - beforeResume.lease.heartbeatAtMs).toBeLessThan(
+          LEASE_HEARTBEAT_TTL_MS,
+        )
+
+        writeDurableJson(paths.permit, { resume: true })
+        sendSignalWhileAlive(drainer, 'SIGCONT')
+        const refusal = await completeChildExpectingRefusal(drainer, paths.drainerReport)
+        expect(refusal).toMatchObject({
+          pauseAt: 'afterFinalAuthorityCompare',
+          candidateId,
+          oldEpoch: 1,
+          exactInputRetained: true,
+          hookCount: 1,
+          beforePublishRenameReached: false,
+          publicationEntryCount: 0,
+        })
+        expect(refusal.outcomes).toEqual([{
+          guard: 'afterFinalAuthorityCompare',
+          kind: 'abandoned-stale-epoch',
+          observedEpoch: 2,
+        }, {
+          guard: 'beforeWork',
+          kind: 'abandoned-stale-epoch',
+          observedEpoch: 2,
+        }])
+        expect(storeDigest(paths.knowledgeRoot)).toBe(committed.storeDigest)
+
+        sendSignalWhileAlive(daemon, 'SIGTERM')
+        const daemonReport = await completeChildSuccessfully(daemon, paths.daemonReport)
+        expect(daemonReport).toMatchObject({ candidateId, exitCode: 0 })
+        expect(inspectDaemonRegistration(paths.agentQaRoot).kind).toBe('absent')
+        expect(readWriterLease(paths.knowledgeRoot).kind).toBe('absent')
+
+        const bundles = enumerateBundleDirs(paths.knowledgeRoot)
+        expect(bundles).toHaveLength(1)
+        expect(loadBundle(bundles[0]!.dir).kind).toBe('loaded')
+        const { db } = openIndexReaderConnection(paths.knowledgeRoot)
+        try {
+          expect(db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count).toBe(1)
+        } finally {
+          db.close()
+        }
+        const events = readFileSync(
+          `${paths.agentQaRoot}/${DAEMON_EVENTS_FILE}`,
+          'utf8',
+        ).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
         expect(events.filter((event) =>
           event.kind === 'job-completed' && event.candidateId === candidateId)).toHaveLength(1)
       } finally {
