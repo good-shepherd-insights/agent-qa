@@ -164,9 +164,11 @@ export async function runLeg(
 ): Promise<LegReport> {
   const running = startChild(host, paths, fixtureFile, variant)
   const timeout = setTimeout(() => running.child.kill('SIGKILL'), CHILD_TIMEOUT_MS)
+  // Subscribe before observing the marker so a fast child cannot exit between the two waits.
+  const exited = once(running.child, 'exit') as Promise<[number | null, string | null]>
   try {
     await waitForMarker(running, paths.marker, paths.report)
-    const [code, signal] = (await once(running.child, 'exit')) as [number | null, string | null]
+    const [code, signal] = await exited
     expect(
       { code, signal, output: code === 0 ? '' : running.output() },
       `${host} child must exit cleanly`,
