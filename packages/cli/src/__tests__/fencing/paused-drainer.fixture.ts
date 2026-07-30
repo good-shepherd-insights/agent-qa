@@ -1,10 +1,12 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 import {
   commitCurationDelta,
   drainQueue,
   openIndexWriter,
+  publishBundle,
+  readJobState,
   type AuthoredDeltaCheckpoint,
   type CommitCurationDependencies,
   type CommitCurationJob,
@@ -15,12 +17,16 @@ import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
+import { canonicalJson } from '@vostride/agent-qa-schema'
 
+import { DRAIN_SESSION_RECEIPTS_FILE } from '../../daemon/drain-receipts.js'
+import { DAEMON_EVENTS_FILE } from '../../daemon/events.js'
 import {
   createScriptedAuthor,
   enqueueFixtureBytes,
   readFixture,
 } from '../dual-host/fixtures.js'
+import { canonicalBundleTree, orderedLogicalDump } from '../dual-host/logical-dump.js'
 import { FENCING_ENV, writeDurableJson } from './spawn-helpers.js'
 
 function requiredEnv(name: string): string {
@@ -38,6 +44,60 @@ function currentAuthor(fixture: ReturnType<typeof readFixture>): CuratorAuthor {
   return createScriptedAuthor(fixture, [])
 }
 
+function filesBelow(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const file = join(dir, entry.name)
+      return entry.isDirectory() ? filesBelow(file) : entry.isFile() ? [file] : []
+    })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+function byteTree(dir: string): readonly { path: string; bytes: string }[] {
+  return filesBelow(dir).map((file) => ({
+    path: relative(dir, file),
+    bytes: readFileSync(file).toString('base64'),
+  })).sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function fileBytes(file: string): string | null {
+  try {
+    return readFileSync(file).toString('base64')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+function nonHeartbeatEvents(agentQaRoot: string): readonly Record<string, unknown>[] {
+  const file = join(agentQaRoot, DAEMON_EVENTS_FILE)
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8').split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((event) => event.kind !== 'lease-heartbeated')
+}
+
+function mutationSnapshot(
+  knowledgeRoot: string,
+  agentQaRoot: string,
+  candidateId: string,
+): string {
+  const queueRoot = join(knowledgeRoot, 'memory', 'queue')
+  return canonicalJson({
+    bundles: canonicalBundleTree(knowledgeRoot),
+    logicalIndex: orderedLogicalDump(knowledgeRoot),
+    queueTree: byteTree(queueRoot),
+    jobState: readJobState(knowledgeRoot, candidateId),
+    intentTree: byteTree(join(queueRoot, 'journal')),
+    drainSessionReceipts: fileBytes(join(agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE)),
+    nonHeartbeatEvents: nonHeartbeatEvents(agentQaRoot),
+  })
+}
+
 export async function runPausedDrainerFixture(): Promise<void> {
   const root = requiredEnv(FENCING_ENV.root)
   const fixture = readFixture(requiredEnv(FENCING_ENV.fixture))
@@ -46,6 +106,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
   const reportFile = requiredEnv(FENCING_ENV.report)
   const knowledgeRoot = join(root, 'agent-qa-knowledge')
   const agentQaRoot = join(root, '.agent-qa')
+  const control = process.env[FENCING_ENV.control] === '1'
   const candidateId = fixture.candidates[0]?.candidateId
   if (candidateId === undefined || fixture.candidates.length !== 1) {
     throw new Error('fencing fixture requires exactly one candidate')
@@ -62,6 +123,15 @@ export async function runPausedDrainerFixture(): Promise<void> {
     checkpoint: AuthoredDeltaCheckpoint
   } | undefined
   let firstOutcome: CommitCurationOutcome | undefined
+  let secondOutcome: CommitCurationOutcome | undefined
+  let firstSnapshot: string | undefined
+  let secondSnapshot: string | undefined
+  let publicationEntryCount = 0
+  let retainedReferenceEquality = {
+    deps: false,
+    job: false,
+    checkpoint: false,
+  }
 
   const wrappedCommit = (
     deps: CommitCurationDependencies,
@@ -69,12 +139,21 @@ export async function runPausedDrainerFixture(): Promise<void> {
     checkpoint: AuthoredDeltaCheckpoint,
   ): CommitCurationOutcome => {
     if (retained !== undefined) throw new Error('the real drain entered the commit wrapper twice')
-    const retainedDeps: CommitCurationDependencies = {
-      ...deps,
-      hooks: {
-        ...deps.hooks,
+    const originalHooks = deps.hooks
+    const originalPublisher = deps.operations?.publishBundle ?? publishBundle
+    if (control) {
+      deps.hooks = {
+        ...originalHooks,
         afterIntentWritten: () => {
-          deps.hooks?.afterIntentWritten?.()
+          originalHooks?.afterIntentWritten?.()
+          hookCount += 1
+        },
+      }
+    } else {
+      deps.hooks = {
+        ...originalHooks,
+        afterIntentWritten: () => {
+          originalHooks?.afterIntentWritten?.()
           hookCount += 1
           writeDurableJson(marker, {
             phase: 'afterIntentWritten',
@@ -89,10 +168,27 @@ export async function runPausedDrainerFixture(): Promise<void> {
           beforePublishRenameReached = true
           throw new Error('stale drainer reached beforePublishRename')
         },
+      }
+    }
+    deps.operations = {
+      ...deps.operations,
+      publishBundle: (...args: Parameters<typeof publishBundle>) => {
+        publicationEntryCount += 1
+        return originalPublisher(...args)
       },
     }
-    retained = { deps: retainedDeps, job, checkpoint }
-    firstOutcome = commitCurationDelta(retainedDeps, job, checkpoint)
+    retained = { deps, job, checkpoint }
+    retainedReferenceEquality = {
+      deps: retained.deps === deps,
+      job: retained.job === job,
+      checkpoint: retained.checkpoint === checkpoint,
+    }
+    firstOutcome = commitCurationDelta(retained.deps, retained.job, retained.checkpoint)
+    if (!control) {
+      firstSnapshot = mutationSnapshot(knowledgeRoot, agentQaRoot, candidateId)
+      secondOutcome = commitCurationDelta(retained.deps, retained.job, retained.checkpoint)
+      secondSnapshot = mutationSnapshot(knowledgeRoot, agentQaRoot, candidateId)
+    }
     return firstOutcome
   }
 
@@ -107,7 +203,27 @@ export async function runPausedDrainerFixture(): Promise<void> {
       operations: { commitCurationDelta: wrappedCommit },
     })
 
-    if (retained === undefined || firstOutcome?.kind !== 'abandoned-stale-epoch') {
+    if (control) {
+      if (retained === undefined || firstOutcome?.kind !== 'applied') {
+        throw new Error(`control did not accept current authority: ${JSON.stringify(firstOutcome)}`)
+      }
+      writeDurableJson(reportFile, {
+        failed: false,
+        control: true,
+        pid: process.pid,
+        candidateId,
+        oldEpoch: retained.deps.epoch,
+        hookCount,
+        acceptedKind: firstOutcome.kind,
+        publicationEntryCount,
+      })
+      return
+    }
+    if (
+      retained === undefined
+      || firstOutcome?.kind !== 'abandoned-stale-epoch'
+      || secondOutcome?.kind !== 'abandoned-stale-epoch'
+    ) {
       throw new Error(`expected a real stale-epoch refusal, received ${JSON.stringify(firstOutcome)}`)
     }
     if (hookCount !== 1 || beforePublishRenameReached) {
@@ -122,9 +238,16 @@ export async function runPausedDrainerFixture(): Promise<void> {
       candidateId,
       oldEpoch: retained.deps.epoch,
       exactInputRetained: true,
+      retainedReferenceEquality,
       hookCount,
       beforePublishRenameReached,
-      outcomes: [{ guard: 'beforePublish', ...firstOutcome }],
+      mutationFreeReplay: firstSnapshot === secondSnapshot,
+      nonHeartbeatEventsUnchanged: firstSnapshot === secondSnapshot,
+      publicationEntryCount,
+      outcomes: [
+        { guard: 'beforePublish', ...firstOutcome },
+        { guard: 'beforeWork', ...secondOutcome },
+      ],
     })
     throw new Error(
       `expected fencing refusal: ${firstOutcome.kind} (observed ${firstOutcome.observedEpoch})`,

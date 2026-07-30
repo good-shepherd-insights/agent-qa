@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 
 import {
@@ -17,6 +18,7 @@ import {
   writeFixture,
   type DualHostFixture,
 } from '../dual-host/fixtures.js'
+import { canonicalBundleTree, orderedLogicalDump } from '../dual-host/logical-dump.js'
 import {
   FENCING_ENV,
   LEG_TIMEOUT_MS,
@@ -50,6 +52,14 @@ function findEventAfter(
   const relative = events.slice(after + 1).findIndex(predicate)
   expect(relative).toBeGreaterThanOrEqual(0)
   return after + 1 + relative
+}
+
+function storeDigest(knowledgeRoot: string): string {
+  return createHash('sha256')
+    .update(canonicalBundleTree(knowledgeRoot))
+    .update('\0')
+    .update(orderedLogicalDump(knowledgeRoot))
+    .digest('hex')
 }
 
 describePosix('SIGSTOP writer-epoch fencing', () => {
@@ -146,6 +156,7 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
         expect(Date.now() - afterRefusal.lease.heartbeatAtMs).toBeLessThan(
           LEASE_HEARTBEAT_TTL_MS,
         )
+        expect(storeDigest(paths.knowledgeRoot)).toBe(committed.storeDigest)
 
         sendSignalWhileAlive(daemon, 'SIGTERM')
         const daemonReport = await completeChildSuccessfully(daemon, paths.daemonReport)
@@ -233,6 +244,7 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           candidateId,
           hookCount: 1,
           acceptedKind: 'applied',
+          publicationEntryCount: 1,
         })
         expect(enumerateBundleDirs(paths.knowledgeRoot)).toHaveLength(1)
         const { db } = openIndexReaderConnection(paths.knowledgeRoot)
