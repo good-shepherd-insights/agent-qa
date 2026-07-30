@@ -18,6 +18,7 @@ import {
   type DualHostFixture,
 } from '../dual-host/fixtures.js'
 import {
+  FENCING_ENV,
   LEG_TIMEOUT_MS,
   cleanupFencingRoots,
   completeChildExpectingRefusal,
@@ -32,17 +33,31 @@ import {
 
 const describePosix = process.platform === 'win32' ? describe.skip : describe
 
+function singleCandidateFixture(): DualHostFixture {
+  const source = buildFixture('mixed')
+  return {
+    ...source,
+    candidates: [source.candidates[0]!],
+    delayedCandidateId: null,
+  }
+}
+
+function findEventAfter(
+  events: readonly Record<string, unknown>[],
+  after: number,
+  predicate: (event: Record<string, unknown>) => boolean,
+): number {
+  const relative = events.slice(after + 1).findIndex(predicate)
+  expect(relative).toBeGreaterThanOrEqual(0)
+  return after + 1 + relative
+}
+
 describePosix('SIGSTOP writer-epoch fencing', () => {
   afterAll(cleanupFencingRoots)
 
     test('refuses a drainer resumed after the daemon reclaims and commits X', async () => {
       const paths = makeRoot('reclaim')
-      const source = buildFixture('mixed')
-      const fixture: DualHostFixture = {
-        ...source,
-        candidates: [source.candidates[0]!],
-        delayedCandidateId: null,
-      }
+      const fixture = singleCandidateFixture()
       writeFixture(paths.fixture, fixture)
 
       const drainer = startChild('paused-drainer', paths)
@@ -101,12 +116,24 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           exactInputRetained: true,
           hookCount: 1,
           beforePublishRenameReached: false,
-          outcomes: [{
+          retainedReferenceEquality: {
+            deps: true,
+            job: true,
+            checkpoint: true,
+          },
+          mutationFreeReplay: true,
+          nonHeartbeatEventsUnchanged: true,
+          publicationEntryCount: 0,
+        })
+        expect(refusal.outcomes).toEqual([{
             guard: 'beforePublish',
             kind: 'abandoned-stale-epoch',
             observedEpoch: 2,
-          }],
-        })
+          }, {
+            guard: 'beforeWork',
+            kind: 'abandoned-stale-epoch',
+            observedEpoch: 2,
+          }])
 
         const afterRefusal = readWriterLease(paths.knowledgeRoot)
         expect(afterRefusal.kind).toBe('parsed')
@@ -140,9 +167,44 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           `${paths.agentQaRoot}/${DAEMON_EVENTS_FILE}`,
           'utf8',
         ).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+        const acquiredIndex = findEventAfter(events, -1, (event) =>
+          event.kind === 'lease-acquired'
+          && event.pid === committed.holderPid
+          && event.leaseId === committed.leaseId
+          && event.epoch === committed.epoch)
+        const epochIndex = findEventAfter(events, acquiredIndex, (event) =>
+          event.kind === 'epoch-bump' && event.epoch === committed.epoch)
+        const sessionStartIndex = findEventAfter(events, epochIndex, (event) =>
+          event.kind === 'drain-session-start'
+          && event.holderPid === committed.holderPid
+          && event.epoch === committed.epoch)
+        const sessionId = events[sessionStartIndex]!.sessionId
+        const claimedIndex = findEventAfter(events, sessionStartIndex, (event) =>
+          event.kind === 'job-claimed'
+          && event.candidateId === candidateId
+          && event.sessionId === sessionId
+          && event.holderPid === committed.holderPid
+          && event.leaseId === committed.leaseId
+          && event.epoch === committed.epoch)
+        const completedIndex = findEventAfter(events, claimedIndex, (event) =>
+          event.kind === 'job-completed'
+          && event.candidateId === candidateId
+          && event.sessionId === sessionId
+          && event.holderPid === committed.holderPid
+          && event.leaseId === committed.leaseId
+          && event.epoch === committed.epoch)
+        const sessionEndIndex = findEventAfter(events, completedIndex, (event) =>
+          event.kind === 'drain-session-end'
+          && event.sessionId === sessionId
+          && event.holderPid === committed.holderPid
+          && event.epoch === committed.epoch)
+        const heartbeatIndex = findEventAfter(events, sessionEndIndex, (event) =>
+          event.kind === 'lease-heartbeated'
+          && event.pid === committed.holderPid
+          && event.epoch === committed.epoch)
+        findEventAfter(events, heartbeatIndex, (event) => event.kind === 'daemon-stopped')
         expect(events.filter((event) =>
           event.kind === 'job-completed' && event.candidateId === candidateId)).toHaveLength(1)
-        expect(events.at(-1)?.kind).toBe('daemon-stopped')
       } finally {
         if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
           drainer.child.kill('SIGCONT')
@@ -151,5 +213,36 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
         if (daemon !== undefined) await killIfRunning(daemon.child)
         expect(existsSync(paths.fixture)).toBe(true)
       }
-  }, LEG_TIMEOUT_MS)
-})
+    }, LEG_TIMEOUT_MS)
+
+    test('accepts the same real commit wrapper when authority was never reclaimed', async () => {
+      const paths = makeRoot('no-pause-control')
+      const fixture = singleCandidateFixture()
+      const candidateId = fixture.candidates[0]!.candidateId
+      writeFixture(paths.fixture, fixture)
+      writeDurableJson(paths.permit, { resume: true, control: true })
+
+      const control = startChild('paused-drainer', paths, {
+        [FENCING_ENV.control]: '1',
+      })
+      try {
+        const report = await completeChildSuccessfully(control, paths.drainerReport)
+        expect(report).toMatchObject({
+          failed: false,
+          control: true,
+          candidateId,
+          hookCount: 1,
+          acceptedKind: 'applied',
+        })
+        expect(enumerateBundleDirs(paths.knowledgeRoot)).toHaveLength(1)
+        const { db } = openIndexReaderConnection(paths.knowledgeRoot)
+        try {
+          expect(db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count).toBe(1)
+        } finally {
+          db.close()
+        }
+      } finally {
+        await killIfRunning(control.child)
+      }
+    }, LEG_TIMEOUT_MS)
+  })
