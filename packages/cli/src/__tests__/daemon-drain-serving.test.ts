@@ -312,6 +312,7 @@ function drainReport(jobsProcessed: number, remaining: number) {
     committed: jobsProcessed,
     downgraded: 0,
     withheld: 0,
+    quarantined: 0,
     requeued: 0,
     failures: 0,
     failureDetails: [],
@@ -321,6 +322,7 @@ function drainReport(jobsProcessed: number, remaining: number) {
     writerPass: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
     gc: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
     remaining,
+    remainingWork: { queued: remaining, claimedNonterminal: 0, quarantined: 0 },
   }
 }
 
@@ -424,6 +426,7 @@ describe('daemon curation serving tracer', () => {
         committed: jobsProcessed,
         downgraded: 0,
         withheld: 0,
+        quarantined: 0,
         requeued: 0,
         failures: 0,
         failureDetails: [],
@@ -433,14 +436,20 @@ describe('daemon curation serving tracer', () => {
         writerPass: { kind: 'skipped', reason: 'daemon-cadence' },
         gc: { kind: 'skipped', reason: 'daemon-cadence' },
         remaining: 0,
+        remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
       }
     })
-    const hostOperations: Partial<DaemonHostOperations> = {
+    const hostOperations = {
       composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
       composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
       inspectDrainableCurationWork: () => ({
         queuedCandidateIds: [...queued].sort(),
         recoverableClaimedCandidateIds: [],
+      }),
+      countRemainingCurationWork: () => ({
+        queued: queued.size,
+        claimedNonterminal: 0,
+        quarantined: 0,
       }),
       listQueuedCandidates: () => [...queued].sort(),
       drainQueue,
@@ -454,7 +463,7 @@ describe('daemon curation serving tracer', () => {
         if (signals.get(signal) === listener) signals.delete(signal)
       },
       hardExit: vi.fn(),
-    }
+    } as unknown as Partial<DaemonHostOperations>
     const author = vi.fn<CuratorAuthor>(async () => ({
       kind: 'fallback-required',
       reason: 'no-model',
@@ -482,7 +491,8 @@ describe('daemon curation serving tracer', () => {
     const order: string[] = []
     const nudge = vi.fn(async (agentQaRoot: string) => {
       order.push('nudge')
-      await nudgeDaemon(agentQaRoot)
+      const response = await nudgeDaemon(agentQaRoot)
+      expect(response).toEqual({ sessionId: SESSION_ID })
     })
     await runCurationTail({
       runId: String(handoff.runId),
@@ -533,6 +543,7 @@ describe('daemon curation serving tracer', () => {
           committed: 0,
           downgraded: 0,
           withheld: 0,
+          quarantined: 0,
           requeued: 0,
           failures: 0,
           failureDetails: [],
@@ -542,6 +553,7 @@ describe('daemon curation serving tracer', () => {
           writerPass: { kind: 'skipped', reason: 'lease-held' },
           gc: { kind: 'skipped', reason: 'lease-held' },
           remaining: 1,
+          remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
         }),
         listCompletedRunDirs: () => [paths.runDir],
         readCurationTailReceipt: () => undefined,
@@ -580,6 +592,9 @@ describe('daemon curation serving tracer', () => {
       epoch: 1,
       candidateIds: [CANDIDATE_ID],
       remainingAfter: 0,
+      outcome: 'completed',
+      failures: 0,
+      quarantined: 0,
     }])
     const events = readFileSync(join(paths.agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
       .trim()
@@ -607,6 +622,59 @@ describe('daemon curation serving tracer', () => {
     const paths = makeRoot()
     await expect(nudgeDaemon(paths.agentQaRoot)).resolves.toBeUndefined()
     expect(existsSync(join(paths.agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE))).toBe(false)
+  })
+
+  it('does not receipt success while the last candidate is claimed and authoring fails', async () => {
+    const paths = makeRoot()
+    const candidateId = enqueueRealCandidate(paths.knowledgeRoot, 'claimed-not-done')
+    let releaseFirstAuthor!: () => void
+    const firstAuthorGate = new Promise<void>((resolve) => {
+      releaseFirstAuthor = resolve
+    })
+    let authorCalls = 0
+    const fallback = deterministicAuthor()
+    const author: CuratorAuthor = async (job, neighbors) => {
+      authorCalls += 1
+      if (authorCalls === 1) {
+        await firstAuthorGate
+        throw new Error('injected terminal author failure')
+      }
+      return fallback(job, neighbors)
+    }
+    const host = startProductionDrainHost({ paths, author: () => author })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'claimed-not-done daemon did not register',
+    )
+
+    host.fire(30_000)
+    await waitUntil(
+      () => listQueuedCandidates(paths.knowledgeRoot).length === 0,
+      'candidate was not claimed',
+    )
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toEqual([])
+    releaseFirstAuthor()
+    await waitUntil(
+      () => readDrainSessionReceipts(paths.agentQaRoot).length === 1,
+      'terminal failure receipt was not written',
+    )
+
+    expect(readDrainSessionReceipts(paths.agentQaRoot)).toEqual([{
+      ts: expect.any(String),
+      sessionId: SESSION_ID,
+      holderPid: process.pid,
+      epoch: expect.any(Number),
+      candidateIds: [candidateId],
+      remainingAfter: 1,
+      outcome: 'failed',
+      failures: 1,
+      quarantined: 0,
+    }])
+    expect(listQueuedCandidates(paths.knowledgeRoot)).toEqual([candidateId])
+    expect(authorCalls).toBe(1)
+
+    host.signal('SIGTERM')
+    await expect(host.running).resolves.toBe(0)
   })
 })
 

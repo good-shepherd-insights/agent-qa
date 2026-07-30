@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -62,7 +64,13 @@ const commandHarness = vi.hoisted(() => ({
 
 const daemonHarness = vi.hoisted(() => ({
   nudgeCalls: [] as string[],
-  nudgeHook: undefined as ((agentQaRoot: string) => Promise<void> | void) | undefined,
+  nudgeHook: undefined as (
+    | ((agentQaRoot: string) =>
+      | Promise<{ sessionId: string } | undefined>
+      | { sessionId: string }
+      | undefined)
+    | undefined
+  ),
 }))
 
 vi.mock('node:readline', async (importOriginal) => {
@@ -147,7 +155,7 @@ vi.mock('../daemon/client.js', async (importOriginal) => {
     ...actual,
     nudgeDaemon: vi.fn(async (agentQaRoot: string) => {
       daemonHarness.nudgeCalls.push(agentQaRoot)
-      await daemonHarness.nudgeHook?.(agentQaRoot)
+      return await daemonHarness.nudgeHook?.(agentQaRoot)
     }),
   }
 })
@@ -161,6 +169,7 @@ import {
 import {
   appendDrainSessionReceipt,
 } from '../daemon/drain-receipts.js'
+import * as drainReceipts from '../daemon/drain-receipts.js'
 import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   daemonRegistrationPath,
@@ -559,8 +568,21 @@ describe('knowledge maintenance commands', () => {
     plantDaemonRegistration(workspace)
     const leasePath = join(workspace.knowledgeRoot, '.lease')
     const leaseBefore = readFileSync(leasePath, 'utf8')
+    let receiptWritten = false
     daemonHarness.nudgeHook = () => {
       setTimeout(() => rmSync(pending, { recursive: true, force: true }), 10)
+      setTimeout(() => {
+        appendDrainSessionReceipt(workspace.runtimeRoot, {
+          ts: '2026-07-30T00:00:00.000Z',
+          sessionId: FIRST_SESSION_ID,
+          holderPid: process.pid,
+          epoch: 1,
+          candidateIds: [FIRST_CANDIDATE_ID],
+          remainingAfter: 0,
+        })
+        receiptWritten = true
+      }, 150)
+      return { sessionId: FIRST_SESSION_ID }
     }
 
     const result = await invoke(workspace, ['drain'])
@@ -570,9 +592,87 @@ describe('knowledge maintenance commands', () => {
     expect(result.stdout).toContain('remaining 1')
     expect(result.stdout).toContain('remaining 0')
     expect(daemonHarness.nudgeCalls).toEqual([workspace.runtimeRoot])
+    expect(receiptWritten).toBe(true)
     expect(commandHarness.drainQueueCalls).toBe(0)
     expect(commandHarness.releaseLeaseCalls).toBe(0)
     expect(readFileSync(leasePath, 'utf8')).toBe(leaseBefore)
+  })
+
+  it('never treats queued-zero as success while the terminal receipt reports a claim', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const pending = seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
+    plantLiveWriterLease(workspace)
+    plantDaemonRegistration(workspace)
+    daemonHarness.nudgeHook = () => {
+      const claimDir = join(
+        workspace.knowledgeRoot,
+        'memory/queue/claimed',
+        LIVE_LEASE_ID,
+        FIRST_CANDIDATE_ID,
+      )
+      mkdirSync(join(claimDir, '..'), { recursive: true })
+      renameSync(pending, claimDir)
+      appendDrainSessionReceipt(workspace.runtimeRoot, {
+        ts: '2026-07-30T00:00:00.000Z',
+        sessionId: FIRST_SESSION_ID,
+        holderPid: process.pid,
+        epoch: 1,
+        candidateIds: [FIRST_CANDIDATE_ID],
+        remainingAfter: 1,
+      })
+      return { sessionId: FIRST_SESSION_ID }
+    }
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('unresolved')
+    expect(result.stderr).toContain('claimed 1')
+    expect(commandHarness.drainQueueCalls).toBe(0)
+  })
+
+  it('retains valid receipt history across one torn tail and rejects completed malformation', () => {
+    const workspace = fixtureWorkspace(roots)
+    appendDrainSessionReceipt(workspace.runtimeRoot, {
+      ts: '2026-07-30T00:00:00.000Z',
+      sessionId: FIRST_SESSION_ID,
+      holderPid: process.pid,
+      epoch: 1,
+      candidateIds: [FIRST_CANDIDATE_ID],
+      remainingAfter: 0,
+    })
+    appendFileSync(
+      join(workspace.runtimeRoot, drainReceipts.DRAIN_SESSION_RECEIPTS_FILE),
+      '{"ts":"torn-final-line"',
+      'utf8',
+    )
+    const readDrainSessionReceiptLedger = (
+      drainReceipts as unknown as {
+        readDrainSessionReceiptLedger?: (agentQaRoot: string) => {
+          receipts: unknown[]
+          warnings: Array<{ kind: string; line: number }>
+        }
+      }
+    ).readDrainSessionReceiptLedger
+    expect(readDrainSessionReceiptLedger).toBeTypeOf('function')
+    expect(readDrainSessionReceiptLedger?.(workspace.runtimeRoot)).toMatchObject({
+      receipts: [{ sessionId: FIRST_SESSION_ID, remainingAfter: 0 }],
+      warnings: [{ kind: 'torn-final-line', line: 2 }],
+    })
+
+    writeFileSync(
+      join(workspace.runtimeRoot, drainReceipts.DRAIN_SESSION_RECEIPTS_FILE),
+      `${JSON.stringify({
+        ts: '2026-07-30T00:00:00.000Z',
+        sessionId: FIRST_SESSION_ID,
+        holderPid: process.pid,
+        epoch: 1,
+        candidateIds: [FIRST_CANDIDATE_ID],
+        remainingAfter: 0,
+      })}\n{"malformed":true}\n`,
+      'utf8',
+    )
+    expect(() => readDrainSessionReceiptLedger?.(workspace.runtimeRoot)).toThrow()
   })
 
   it('times out a live-daemon wait non-zero while reporting the durable remainder', async () => {
@@ -659,12 +759,20 @@ describe('knowledge maintenance commands', () => {
           holderPid: 505,
           candidateCount: 1,
           candidateIds: [SECOND_CANDIDATE_ID],
+          outcome: 'completed',
+          failures: 0,
+          quarantined: 0,
+          remainingAfter: 1,
         },
         {
           sessionId: FIRST_SESSION_ID,
           holderPid: 606,
           candidateCount: 1,
           candidateIds: [FIRST_CANDIDATE_ID],
+          outcome: 'completed',
+          failures: 0,
+          quarantined: 0,
+          remainingAfter: 0,
         },
       ],
       remaining: 1,
