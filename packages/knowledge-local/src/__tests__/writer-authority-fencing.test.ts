@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -24,9 +25,11 @@ import {
 import {
   acquireWriterLease,
   EPOCH_FILE,
+  heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   MUTATION_LOCK_TAKEOVER_MS,
+  readCurrentEpoch,
   WriterAuthorityLostError,
 } from '../lease/writer-lease.js'
 import {
@@ -47,6 +50,22 @@ interface ExpectedAuthoritySurface {
   ): T
 }
 
+interface ExpectedCorruptEpochStateError extends Error {
+  readonly path: string
+  readonly reason: 'unreadable' | 'malformed' | 'overflow'
+  readonly rawPreview: string
+}
+
+interface ExpectedCorruptEpochSurface {
+  CorruptEpochStateError: new (...args: never[]) => ExpectedCorruptEpochStateError
+}
+
+type ExpectedAcquireOutcome = ReturnType<typeof acquireWriterLease> | {
+  kind: 'refused'
+  reason: 'corrupt-epoch-state'
+  error: ExpectedCorruptEpochStateError
+}
+
 type AcquireWithDeadline = (
   knowledgeRoot: string,
   hooks?: {
@@ -55,8 +74,13 @@ type AcquireWithDeadline = (
   },
 ) => ReturnType<typeof acquireWriterLease>
 
-const expectedSurface = publicSurface as typeof publicSurface & ExpectedAuthoritySurface
+const expectedSurface = publicSurface as typeof publicSurface
+  & ExpectedAuthoritySurface
+  & ExpectedCorruptEpochSurface
 const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
+const acquireFailClosed = acquireWriterLease as (
+  knowledgeRoot: string,
+) => ExpectedAcquireOutcome
 
 const PRODUCT = 'writer-authority-fencing'
 
@@ -315,6 +339,107 @@ describe('writer authority and bundle publication are one indivisible protocol (
   it('exports the pinned production mutation-lock takeover bound without a config seam', () => {
     expect(MUTATION_LOCK_TAKEOVER_MS).toBe(45_000)
     expect(publicSurface.MUTATION_LOCK_TAKEOVER_MS).toBe(MUTATION_LOCK_TAKEOVER_MS)
+  })
+
+  it.each([
+    ['garbage bytes', 'not-an-integer\n', 'malformed'],
+    ['fractional bytes', '1.5\n', 'malformed'],
+    ['negative bytes', '-1\n', 'malformed'],
+    ['unsafe-integer overflow', '9007199254740992\n', 'overflow'],
+  ] as const)('refuses acquisition for %s instead of rolling the epoch back', (_, raw, reason) => {
+    mkdirSync(knowledgeRoot, { recursive: true })
+    const file = join(knowledgeRoot, EPOCH_FILE)
+    writeFileSync(file, raw, 'utf8')
+
+    const outcome = acquireFailClosed(knowledgeRoot)
+
+    expect(outcome.kind).toBe('refused')
+    if (outcome.kind !== 'refused') throw new Error('corrupt epoch acquisition was not refused')
+    expect(expectedSurface.CorruptEpochStateError).toBeTypeOf('function')
+    expect(outcome).toMatchObject({ reason: 'corrupt-epoch-state' })
+    expect(outcome.error).toBeInstanceOf(expectedSurface.CorruptEpochStateError)
+    expect(outcome.error).toMatchObject({ path: file, reason })
+    expect(outcome.error.rawPreview.length).toBeGreaterThan(0)
+    expect(readFileSync(file, 'utf8')).toBe(raw)
+    expect(existsSync(join(knowledgeRoot, LEASE_FILE))).toBe(false)
+  })
+
+  it.skipIf(typeof process.getuid === 'function' && process.getuid() === 0)(
+    'refuses acquisition when the epoch file is unreadable',
+    () => {
+      mkdirSync(knowledgeRoot, { recursive: true })
+      const file = join(knowledgeRoot, EPOCH_FILE)
+      writeFileSync(file, '1\n', 'utf8')
+      chmodSync(file, 0o000)
+      try {
+        const outcome = acquireFailClosed(knowledgeRoot)
+
+        expect(outcome.kind).toBe('refused')
+        if (outcome.kind !== 'refused') throw new Error('unreadable epoch acquisition was not refused')
+        expect(outcome).toMatchObject({
+          reason: 'corrupt-epoch-state',
+          error: { path: file, reason: 'unreadable' },
+        })
+        expect(outcome.error).toBeInstanceOf(expectedSurface.CorruptEpochStateError)
+      } finally {
+        chmodSync(file, 0o600)
+      }
+    },
+  )
+
+  it('keeps the never-initialized ENOENT path at epoch zero and first acquisition at epoch one', () => {
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(0)
+
+    const outcome = acquireFailClosed(knowledgeRoot)
+
+    expect(outcome).toMatchObject({ kind: 'acquired', epoch: 1 })
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('1\n')
+  })
+
+  it('refuses heartbeat and governed mutation when epoch bytes become corrupt', () => {
+    const authority = acquireAuthority()
+    const leaseBefore = readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), 'torn-epoch\n', 'utf8')
+    let mutationCount = 0
+
+    const heartbeat = heartbeatLease({ knowledgeRoot, leaseId: authority.leaseId }) as unknown as {
+      kind: 'refused'
+      reason: 'corrupt-epoch-state'
+      error: ExpectedCorruptEpochStateError
+    }
+
+    expect(heartbeat).toMatchObject({
+      kind: 'refused',
+      reason: 'corrupt-epoch-state',
+      error: { reason: 'malformed' },
+    })
+    expect(() => expectedSurface.withCurrentWriterAuthority(
+      knowledgeRoot,
+      authority,
+      () => ++mutationCount,
+    )).toThrow(expectedSurface.CorruptEpochStateError)
+    expect(mutationCount).toBe(0)
+    expect(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')).toBe(leaseBefore)
+  })
+
+  it('never re-mints epoch one over corrupt state held by a hypothetical stale epoch-one writer', () => {
+    acquireAuthority()
+    makeStale()
+    const leaseFile = join(knowledgeRoot, LEASE_FILE)
+    const epochFile = join(knowledgeRoot, EPOCH_FILE)
+    const leaseBefore = readFileSync(leaseFile, 'utf8')
+    const corruptBytes = 'corrupt-after-epoch-one\n'
+    writeFileSync(epochFile, corruptBytes, 'utf8')
+
+    const outcome = acquireFailClosed(knowledgeRoot)
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'corrupt-epoch-state',
+      error: { reason: 'malformed' },
+    })
+    expect(readFileSync(epochFile, 'utf8')).toBe(corruptBytes)
+    expect(readFileSync(leaseFile, 'utf8')).toBe(leaseBefore)
   })
 
   it('stages bundle bytes under an epoch-keyed reader-invisible directory', () => {
