@@ -1,7 +1,9 @@
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -22,6 +24,7 @@ import {
 } from '../../__tests__/fixtures/curation-candidate-fixture.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
+import { enqueueCanaryOutcome } from '../../canary-emit.js'
 import * as knowledgeLocal from '../../index.js'
 import {
   acquireWriterLease,
@@ -36,6 +39,11 @@ import {
   type ClaimedCurationJob,
 } from '../../queue/curation-queue.js'
 import { readJobState } from '../../queue/job-state.js'
+import {
+  claimedCandidateDir,
+  claimedLeaseDir,
+  queuedCandidateDir,
+} from '../../queue/queue-layout.js'
 import { requestRebuild } from '../../rebuild-marker.js'
 import type { CuratorAuthor } from '../author-contract.js'
 import {
@@ -530,6 +538,277 @@ describe('drainQueue daemon substrate', () => {
     enqueue('pending-count-one', 'ci')
     enqueue('pending-count-two', 'ci')
     expect(countPendingCurationJobs?.(knowledgeRoot)).toBe(2)
+  })
+
+  it('counts the current claim while recovery visibility excludes only that claim', () => {
+    const candidateIds = [
+      enqueue('remaining-current-claim', 'ci'),
+      enqueue('remaining-foreign-claim', 'ci'),
+    ].sort()
+    const authority = acquireWriterLease(knowledgeRoot)
+    if (authority.kind !== 'acquired') throw new Error('expected writer authority')
+    const current = claimNextJob({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      authority,
+    })
+    expect(current?.candidateId).toBe(candidateIds[0])
+    if (current === undefined) throw new Error('expected current claim')
+
+    const foreignLeaseId = 'foreign-visible-lease'
+    mkdirSync(claimedLeaseDir(knowledgeRoot, foreignLeaseId), { recursive: true })
+    renameSync(
+      queuedCandidateDir(knowledgeRoot, candidateIds[1]!),
+      claimedCandidateDir(knowledgeRoot, foreignLeaseId, candidateIds[1]!),
+    )
+
+    const countRemainingCurationWork = (
+      curationQueue as unknown as {
+        countRemainingCurationWork?: (
+          knowledgeRoot: string,
+          options?: { currentLeaseId?: string },
+        ) => { queued: number; claimedNonterminal: number; quarantined: number }
+      }
+    ).countRemainingCurationWork
+    const quarantineClaimed = (
+      curationQueue as unknown as {
+        quarantineClaimed?: (options: {
+          knowledgeRoot: string
+          leaseId: string
+          candidateId: string
+          authority: { leaseId: string; epoch: number }
+          reason: 'malformed-payload'
+        }) => string
+      }
+    ).quarantineClaimed
+
+    expect(countRemainingCurationWork).toBeTypeOf('function')
+    expect(quarantineClaimed).toBeTypeOf('function')
+    expect(
+      countRemainingCurationWork?.(knowledgeRoot, {
+        currentLeaseId: authority.leaseId,
+      }),
+    ).toEqual({ queued: 0, claimedNonterminal: 2, quarantined: 0 })
+    expect(
+      curationQueue.inspectDrainableCurationWork({
+        knowledgeRoot,
+        currentLeaseId: authority.leaseId,
+      }),
+    ).toEqual({
+      queuedCandidateIds: [],
+      recoverableClaimedCandidateIds: [candidateIds[1]],
+    })
+
+    quarantineClaimed?.({
+      knowledgeRoot,
+      leaseId: authority.leaseId,
+      candidateId: current.candidateId,
+      authority,
+      reason: 'malformed-payload',
+    })
+
+    expect(
+      countRemainingCurationWork?.(knowledgeRoot, {
+        currentLeaseId: authority.leaseId,
+      }),
+    ).toEqual({ queued: 0, claimedNonterminal: 1, quarantined: 1 })
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(
+            knowledgeRoot,
+            'memory/queue/quarantined',
+            current.candidateId,
+            'quarantine.json',
+          ),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({
+      schemaVersion: 1,
+      candidateId: current.candidateId,
+      leaseId: authority.leaseId,
+      reason: 'malformed-payload',
+    })
+    expect(releaseLease({ knowledgeRoot, leaseId: authority.leaseId })).toEqual({
+      kind: 'released',
+    })
+  })
+
+  it.each([
+    ['malformed payload', 'malformed-payload'],
+    ['malformed state', 'malformed-job-state'],
+    ['malformed checkpoint', 'malformed-authored-checkpoint'],
+  ] as const)('durably quarantines %s instead of stranding its claim', async (scenario, reason) => {
+    const candidateId = enqueue(`quarantine-${scenario.replaceAll(' ', '-')}`, 'ci')
+    const operations: Partial<DrainOperations> = maintenanceFreeOperations()
+    if (scenario === 'malformed payload') {
+      writeFileSync(join(queuedCandidateDir(knowledgeRoot, candidateId), 'payload.json'), '{')
+    } else if (scenario === 'malformed state') {
+      operations.readJobState = () => ({ kind: 'malformed', present: true })
+    } else {
+      operations.readJobState = () => ({
+        kind: 'parsed',
+        present: true,
+        state: {
+          schemaVersion: 1,
+          candidateId,
+          lifecycle: 'authored',
+          embedCrashCount: 0,
+          authored: { malformed: true },
+          updatedAt: '2026-07-30T00:00:00.000Z',
+        },
+      })
+    }
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      maintenance: 'skip',
+      operations,
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      quarantined: 1,
+      failures: 1,
+      remaining: 1,
+      remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 1 },
+    })
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+    expect(
+      JSON.parse(
+        readFileSync(
+          join(
+            knowledgeRoot,
+            'memory/queue/quarantined',
+            candidateId,
+            'quarantine.json',
+          ),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({ candidateId, reason })
+  })
+
+  it('requeues an author failure across two polling cycles with visible remaining work', async () => {
+    const candidateId = enqueue('two-poll-author-failure', 'ci')
+    const author: CuratorAuthor = async () => {
+      throw new Error('injected author failure')
+    }
+
+    for (let poll = 0; poll < 2; poll += 1) {
+      const report = await drainQueue({
+        knowledgeRoot,
+        auditBaseDir,
+        author,
+        executionContext: 'ci',
+        policy,
+        maintenance: 'skip',
+        operations: maintenanceFreeOperations(),
+      })
+      expect(report).toMatchObject({
+        jobsProcessed: 1,
+        requeued: 1,
+        failures: 1,
+        remaining: 1,
+        remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
+      })
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([candidateId])
+    }
+  })
+
+  it('requeues checkpoint-persist failure with a cleared durable checkpoint', async () => {
+    const candidateId = enqueue('checkpoint-persist-requeue', 'ci')
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      maintenance: 'skip',
+      operations: {
+        ...maintenanceFreeOperations(),
+        persistAuthoredCheckpoint: () => ({ kind: 'malformed-state', present: true }),
+      },
+    })
+
+    expect(report).toMatchObject({
+      requeued: 1,
+      failures: 1,
+      remaining: 1,
+      remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
+    })
+    expect(readJobState(knowledgeRoot, candidateId)).toMatchObject({
+      kind: 'parsed',
+      state: { lifecycle: 'queued', authored: undefined },
+    })
+  })
+
+  it('requeues a failed canary commit instead of losing its malformed sibling claim', async () => {
+    const enqueued = enqueueCanaryOutcome(knowledgeRoot, {
+      candidateId: 'missing-canary-candidate',
+      runId: 'run-canary-requeue',
+      testId: 'canary-requeue',
+      testIndex: 0,
+      buildOrdinal: 42,
+      stepIndex: 0,
+      runOutcome: 'positive',
+      exercisedAnchor: { t: 'page', route: '/missing-canary' },
+      attribution: 'run-canary-requeue:canary-requeue:0',
+      briefDigest: 'missing canary target',
+    })
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      maintenance: 'skip',
+      operations: maintenanceFreeOperations(),
+    })
+
+    expect(report).toMatchObject({
+      jobsProcessed: 1,
+      requeued: 1,
+      failures: 1,
+      remaining: 1,
+      remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
+    })
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([enqueued.entryId])
+  })
+
+  it('requeues a nonterminal withheld outcome with its authored checkpoint', async () => {
+    const candidateId = enqueue('withheld-nonterminal', 'ci')
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'ci',
+      policy,
+      maintenance: 'skip',
+      operations: {
+        ...maintenanceFreeOperations(),
+        commitCurationDelta: () => ({ kind: 'withheld', reason: 'egress-blocked' }),
+      },
+    })
+
+    expect(report).toMatchObject({
+      withheld: 1,
+      requeued: 1,
+      failures: 0,
+      remaining: 1,
+      remainingWork: { queued: 1, claimedNonterminal: 0, quarantined: 0 },
+    })
+    expect(readJobState(knowledgeRoot, candidateId)).toMatchObject({
+      kind: 'parsed',
+      state: { lifecycle: 'authored' },
+    })
+    expect(listQueuedCandidates(knowledgeRoot)).toEqual([candidateId])
   })
 
   it('omits every maintenance mutation when the daemon cadence owns the tail', async () => {
