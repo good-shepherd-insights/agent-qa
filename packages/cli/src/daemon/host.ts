@@ -120,6 +120,7 @@ export interface DaemonHostOperations {
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
+  inspectDrainableCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork
   listQueuedCandidates(knowledgeRoot: string): string[]
   drainQueue: typeof LOCAL_DAEMON_CAPABILITIES.drainQueue
   runMaintenanceTail: typeof LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail
@@ -200,6 +201,7 @@ function defaultOperations(): DaemonHostOperations {
     writeDaemonRegistration,
     removeDaemonRegistration,
     startInvokeServer,
+    inspectDrainableCurationWork: LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork,
     listQueuedCandidates: LOCAL_DAEMON_CAPABILITIES.listQueuedCandidates,
     drainQueue: LOCAL_DAEMON_CAPABILITIES.drainQueue,
     runMaintenanceTail: LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail,
@@ -500,7 +502,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   }
 
   const drainSession = async (): Promise<void> => {
-    const initialCandidates = operations.listQueuedCandidates(input.knowledgeRoot)
+    const initialWork = operations.inspectDrainableCurationWork({
+      knowledgeRoot: input.knowledgeRoot,
+      currentLeaseId: acquired.leaseId,
+    })
+    const initialCandidates = [
+      ...initialWork.queuedCandidateIds,
+      ...initialWork.recoverableClaimedCandidateIds,
+    ]
     if (initialCandidates.length === 0) return
     if (input.author === undefined || input.policy === undefined) {
       throw new Error('Daemon curation requires an author factory and guardrail policy')
@@ -519,7 +528,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
     const author = await (authorPromise ??= Promise.resolve(input.author()))
     while (remainingAfter > 0) {
-      for (const candidateId of operations.listQueuedCandidates(input.knowledgeRoot)) {
+      const observed = operations.inspectDrainableCurationWork({
+        knowledgeRoot: input.knowledgeRoot,
+        currentLeaseId: acquired.leaseId,
+      })
+      for (const candidateId of [
+        ...observed.queuedCandidateIds,
+        ...observed.recoverableClaimedCandidateIds,
+      ]) {
         seenCandidateIds.add(candidateId)
       }
       let worker: EmbedderWorkerRuntime | undefined

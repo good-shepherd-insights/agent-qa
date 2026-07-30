@@ -129,6 +129,16 @@ export interface RequeueClaimedOptions {
   leaseId: string
 }
 
+export interface InspectDrainableCurationWorkOptions {
+  readonly knowledgeRoot: string
+  readonly currentLeaseId: string
+}
+
+export interface DrainableCurationWork {
+  readonly queuedCandidateIds: readonly string[]
+  readonly recoverableClaimedCandidateIds: readonly string[]
+}
+
 function directoryNames(dir: string): string[] {
   try {
     return readdirSync(dir, { withFileTypes: true })
@@ -157,6 +167,30 @@ export function countPendingCurationJobs(knowledgeRoot: string): number {
 /** Return deterministic active/recoverable lease directory order. */
 export function listClaimedLeases(knowledgeRoot: string): string[] {
   return directoryNames(claimedRoot(knowledgeRoot)).filter((name) => SAFE_LEASE_ID.test(name))
+}
+
+/**
+ * Observe work the current writer can reach through the canonical reconciliation path.
+ *
+ * This deliberately performs no recovery itself. The current lease is excluded by the same
+ * identity rule as reconcileOnDrainStart; drainQueue remains the only owner of requeue mutation.
+ */
+export function inspectDrainableCurationWork(
+  options: InspectDrainableCurationWorkOptions,
+): DrainableCurationWork {
+  const recoverableClaimedCandidateIds = new Set<string>()
+  for (const leaseId of listClaimedLeases(options.knowledgeRoot)) {
+    if (leaseId === options.currentLeaseId) continue
+    for (const candidateId of directoryNames(
+      claimedLeaseDir(options.knowledgeRoot, leaseId),
+    )) {
+      if (CANDIDATE_ID.test(candidateId)) recoverableClaimedCandidateIds.add(candidateId)
+    }
+  }
+  return {
+    queuedCandidateIds: listQueuedCandidates(options.knowledgeRoot),
+    recoverableClaimedCandidateIds: [...recoverableClaimedCandidateIds].sort(),
+  }
 }
 
 export function readCurationCandidatePayload(

@@ -335,6 +335,10 @@ function startScheduledHost(options: {
   const operations = {
     composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
     composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
+    inspectDrainableCurationWork: () => ({
+      queuedCandidateIds: [...options.queued].sort(),
+      recoverableClaimedCandidateIds: [],
+    }),
     listQueuedCandidates: () => [...options.queued].sort(),
     drainQueue: options.drainQueue,
     ...(options.acquireWriterLease === undefined
@@ -432,6 +436,10 @@ describe('daemon curation serving tracer', () => {
     const hostOperations: Partial<DaemonHostOperations> = {
       composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
       composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
+      inspectDrainableCurationWork: () => ({
+        queuedCandidateIds: [...queued].sort(),
+        recoverableClaimedCandidateIds: [],
+      }),
       listQueuedCandidates: () => [...queued].sort(),
       drainQueue,
       randomUUID: () => SESSION_ID,
