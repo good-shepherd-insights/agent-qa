@@ -3,11 +3,13 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -159,8 +161,7 @@ export function writeDaemonRegistration(
   atomicRewrite(daemonRegistrationPath(agentQaRoot), `${JSON.stringify(validated)}\n`)
 }
 
-export function readDaemonRegistration(agentQaRoot: string): ReadDaemonRegistrationOutcome {
-  const file = daemonRegistrationPath(agentQaRoot)
+function readDaemonRegistrationFile(file: string): ReadDaemonRegistrationOutcome {
   let raw: string
   try {
     raw = readFileSync(file, 'utf8')
@@ -179,6 +180,10 @@ export function readDaemonRegistration(agentQaRoot: string): ReadDaemonRegistrat
   } catch {
     return { kind: 'malformed' }
   }
+}
+
+export function readDaemonRegistration(agentQaRoot: string): ReadDaemonRegistrationOutcome {
+  return readDaemonRegistrationFile(daemonRegistrationPath(agentQaRoot))
 }
 
 /** Signal-zero liveness probe: EPERM proves existence; only ESRCH proves a stale pid. */
@@ -303,12 +308,60 @@ export function removeDaemonRegistration(agentQaRoot: string): void {
   if (existed) bestEffortFsyncDirectory(dirname(file))
 }
 
-/** Remove a registration only when it still belongs to this exact daemon generation. */
-export function removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean {
-  const outcome = readDaemonRegistration(agentQaRoot)
-  if (outcome.kind !== 'parsed' || outcome.registration.instanceId !== instanceId) return false
-  removeDaemonRegistration(agentQaRoot)
-  return true
+export interface RemoveRegistrationIfOwnedOptions {
+  /** Test-only barrier immediately before the atomic quarantine rename. */
+  readonly beforeQuarantineRename?: () => void
+  /** Test-only barrier after quarantine publication and before ownership verification. */
+  readonly afterQuarantine?: (quarantinePath: string) => void
+  /** Focused durability seam; production uses the best-effort platform fsync helper. */
+  readonly fsyncDirectory?: (directory: string) => void
+}
+
+/**
+ * Atomically quarantine, verify, and remove only this exact daemon generation.
+ *
+ * A mismatched quarantine is restored with a hard link so an EEXIST successor can never be
+ * overwritten by an obsolete host's cleanup.
+ */
+export function removeRegistrationIfOwned(
+  agentQaRoot: string,
+  instanceId: string,
+  options: RemoveRegistrationIfOwnedOptions = {},
+): boolean {
+  const file = daemonRegistrationPath(agentQaRoot)
+  const parent = dirname(file)
+  const quarantine = `${file}.remove-${instanceId}-${randomUUID()}`
+  const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
+
+  options.beforeQuarantineRename?.()
+  try {
+    renameSync(file, quarantine)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+  fsyncDirectory(parent)
+  options.afterQuarantine?.(quarantine)
+
+  const outcome = readDaemonRegistrationFile(quarantine)
+  if (
+    outcome.kind === 'parsed'
+    && outcome.registration.instanceId === instanceId
+  ) {
+    unlinkSync(quarantine)
+    fsyncDirectory(parent)
+    return true
+  }
+
+  try {
+    linkSync(quarantine, file)
+    fsyncDirectory(parent)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  unlinkSync(quarantine)
+  fsyncDirectory(parent)
+  return false
 }
 
 /** Remove only a schema-valid registration whose pid has been proven dead. */
