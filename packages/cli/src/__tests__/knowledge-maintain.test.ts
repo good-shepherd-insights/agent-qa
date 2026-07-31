@@ -12,6 +12,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   acquireWriterLease,
@@ -86,6 +87,18 @@ const daemonHarness = vi.hoisted(() => ({
       | undefined)
     | undefined
   ),
+  // The classification seam: only the identity handshake is injected, so every routing case
+  // below is decided by the real five-way classifier reading real lease and registration bytes.
+  identityHook: undefined as (
+    | ((registration: { instanceId: string; pid: number; socketPath: string }) =>
+      Promise<{ schemaVersion: 1; instanceId: string; pid: number }>)
+    | undefined
+  ),
+  classifyCalls: 0,
+  unconditionalRemovals: 0,
+  ownedRemovals: [] as string[],
+  obsoleteRemovals: 0,
+  ownedRemovalHook: undefined as (((instanceId: string) => boolean | undefined) | undefined),
 }))
 
 vi.mock('node:readline', async (importOriginal) => {
@@ -181,6 +194,46 @@ vi.mock('../daemon/client.js', async (importOriginal) => {
       daemonHarness.nudgeCallTimes.push(Date.now())
       daemonHarness.nudgeOptions.push(options)
       return await daemonHarness.nudgeHook?.(agentQaRoot, options)
+    }),
+  }
+})
+
+vi.mock('../daemon/registration.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../daemon/registration.js')>()
+  return {
+    ...actual,
+    classifyDaemonRegistration: vi.fn(async (
+      input: Parameters<typeof actual.classifyDaemonRegistration>[0],
+    ) => {
+      daemonHarness.classifyCalls += 1
+      return await actual.classifyDaemonRegistration({
+        ...input,
+        ...(daemonHarness.identityHook === undefined
+          ? {}
+          : { operations: { fetchIdentity: daemonHarness.identityHook } }),
+      })
+    }),
+    // Plan 22's prohibition, recorded rather than asserted by grep: no client path may reach
+    // the unconditional delete.
+    removeDaemonRegistration: vi.fn((agentQaRoot: string) => {
+      daemonHarness.unconditionalRemovals += 1
+      actual.removeDaemonRegistration(agentQaRoot)
+    }),
+    removeRegistrationIfOwned: vi.fn((
+      agentQaRoot: string,
+      instanceId: string,
+      options?: Parameters<typeof actual.removeRegistrationIfOwned>[2],
+    ) => {
+      daemonHarness.ownedRemovals.push(instanceId)
+      const forced = daemonHarness.ownedRemovalHook?.(instanceId)
+      if (forced !== undefined) return forced
+      return actual.removeRegistrationIfOwned(agentQaRoot, instanceId, options)
+    }),
+    removeObsoleteDaemonRegistrationIfExpected: vi.fn((
+      ...args: Parameters<typeof actual.removeObsoleteDaemonRegistrationIfExpected>
+    ) => {
+      daemonHarness.obsoleteRemovals += 1
+      return actual.removeObsoleteDaemonRegistrationIfExpected(...args)
     }),
   }
 })
@@ -463,6 +516,42 @@ function plantDaemonRegistration(workspace: FixtureWorkspace, pid = process.pid)
   })
 }
 
+/**
+ * Answer the identity handshake as the registered generation itself would.
+ *
+ * Delegation is only legal for a nonce-authenticated host, so a delegating fixture has to
+ * produce that proof. Nothing else about classification is stubbed.
+ */
+function armLiveDaemonIdentity(): void {
+  daemonHarness.identityHook = (registration) => Promise.resolve({
+    schemaVersion: 1 as const,
+    instanceId: registration.instanceId,
+    pid: registration.pid,
+  })
+}
+
+/** A live pid whose socket answers with somebody else's identity: alive is not authority. */
+function armForeignDaemonIdentity(): void {
+  daemonHarness.identityHook = () => Promise.resolve({
+    schemaVersion: 1 as const,
+    instanceId: '99999999-9999-4999-8999-999999999999',
+    pid: 1,
+  })
+}
+
+function plantRenewalSidecar(
+  workspace: FixtureWorkspace,
+  leaseId: string,
+  heartbeatAtMs: number,
+): void {
+  mkdirSync(workspace.knowledgeRoot, { recursive: true })
+  writeFileSync(
+    join(workspace.knowledgeRoot, '.lease-renewal'),
+    `${JSON.stringify({ leaseId, heartbeatAtMs })}\n`,
+    'utf8',
+  )
+}
+
 function seedPendingCandidate(workspace: FixtureWorkspace, candidateId: string): string {
   const dir = queuedCandidateDir(workspace.knowledgeRoot, candidateId)
   mkdirSync(dir, { recursive: true })
@@ -539,6 +628,12 @@ describe('knowledge maintenance commands', () => {
     daemonHarness.nudgeCallTimes.splice(0)
     daemonHarness.nudgeOptions.splice(0)
     daemonHarness.nudgeHook = undefined
+    daemonHarness.identityHook = undefined
+    daemonHarness.classifyCalls = 0
+    daemonHarness.unconditionalRemovals = 0
+    daemonHarness.ownedRemovals.splice(0)
+    daemonHarness.obsoleteRemovals = 0
+    daemonHarness.ownedRemovalHook = undefined
   })
 
   afterEach(() => {
@@ -588,11 +683,134 @@ describe('knowledge maintenance commands', () => {
     expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
   })
 
+  it('routes drain on classified daemon identity and never on signal-zero liveness', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../commands/knowledge-maintain.ts', import.meta.url)),
+      'utf8',
+    )
+    expect(source).toContain('classifyDaemonRegistration')
+    expect(source).not.toContain('recoverStaleDaemonRegistration')
+  })
+
+  it('refuses to guess a drain mode from a malformed daemon registration', async () => {
+    const workspace = fixtureWorkspace(roots)
+    writeFileSync(daemonRegistrationPath(workspace.runtimeRoot), '{ not json', 'utf8')
+    const registrationBefore = readFileSync(daemonRegistrationPath(workspace.runtimeRoot))
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('registration-malformed')
+    expect(commandHarness.drainQueueCalls).toBe(0)
+    expect(daemonHarness.nudgeCalls).toEqual([])
+    expect(readFileSync(daemonRegistrationPath(workspace.runtimeRoot)))
+      .toEqual(registrationBefore)
+  })
+
+  it('removes exactly the classified stale generation before draining inline', async () => {
+    const workspace = fixtureWorkspace(roots)
+    plantDaemonRegistration(workspace, 2_000_000_000)
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(daemonHarness.ownedRemovals).toEqual([DAEMON_INSTANCE_ID])
+    expect(daemonHarness.unconditionalRemovals).toBe(0)
+    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
+    expect(commandHarness.drainQueueCalls).toBe(1)
+  })
+
+  it('byte-compares an obsolete-schema registration before removing it', async () => {
+    const workspace = fixtureWorkspace(roots)
+    writeFileSync(
+      daemonRegistrationPath(workspace.runtimeRoot),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        pid: 2_000_000_000,
+        socketPath: join(workspace.runtimeRoot, 'daemon.sock'),
+        startedAtMs: 1_700_000_000_000,
+      })}\n`,
+      'utf8',
+    )
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(daemonHarness.obsoleteRemovals).toBe(1)
+    expect(daemonHarness.unconditionalRemovals).toBe(0)
+    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
+    expect(commandHarness.drainQueueCalls).toBe(1)
+  })
+
+  it('reclassifies once when the registration changed under an exact removal', async () => {
+    const workspace = fixtureWorkspace(roots)
+    plantDaemonRegistration(workspace, 2_000_000_000)
+    daemonHarness.ownedRemovalHook = () => {
+      // A successor cleaned up in the window between classification and removal.
+      rmSync(daemonRegistrationPath(workspace.runtimeRoot), { force: true })
+      return false
+    }
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(daemonHarness.classifyCalls).toBe(2)
+    expect(daemonHarness.ownedRemovals).toEqual([DAEMON_INSTANCE_ID])
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(commandHarness.drainQueueCalls).toBe(1)
+  })
+
+  it('fails closed naming the holder when an unreachable daemon is still renewing', async () => {
+    const nowMs = 1_700_000_000_000
+    vi.useFakeTimers({ now: nowMs })
+    const workspace = fixtureWorkspace(roots)
+    seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
+    // The lease FILE has aged out because the holder's own governed mutation owns the lock;
+    // 386-29's sidecar is what proves it is still alive.
+    mkdirSync(join(workspace.knowledgeRoot, 'memory', 'index'), { recursive: true })
+    writeFileSync(join(workspace.knowledgeRoot, '.epoch'), '7\n', 'utf8')
+    writeFileSync(
+      join(workspace.knowledgeRoot, '.lease'),
+      `${JSON.stringify({
+        leaseId: LIVE_LEASE_ID,
+        pid: 4242,
+        epoch: 7,
+        heartbeatAtMs: nowMs - 90_000,
+      })}\n`,
+      'utf8',
+    )
+    plantRenewalSidecar(workspace, LIVE_LEASE_ID, nowMs)
+    plantDaemonRegistration(workspace)
+    armForeignDaemonIdentity()
+    const registrationBefore = readFileSync(daemonRegistrationPath(workspace.runtimeRoot))
+    const leaseBefore = readFileSync(join(workspace.knowledgeRoot, '.lease'))
+
+    const invocation = invoke(workspace, ['drain'])
+    // A refusing route never reaches the daemon wait loop; advancing past its deadline keeps
+    // pid-liveness routing (which does reach it) from holding the leg for two full minutes.
+    await vi.advanceTimersByTimeAsync(121_000)
+    const result = await invocation
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain('writer-lease-held')
+    expect(result.stderr).toContain('pid 4242')
+    expect(result.stderr).toContain(LIVE_LEASE_ID)
+    expect(commandHarness.drainQueueCalls).toBe(0)
+    expect(daemonHarness.ownedRemovals).toEqual([])
+    expect(daemonHarness.unconditionalRemovals).toBe(0)
+    expect(readFileSync(daemonRegistrationPath(workspace.runtimeRoot)))
+      .toEqual(registrationBefore)
+    expect(readFileSync(join(workspace.knowledgeRoot, '.lease'))).toEqual(leaseBefore)
+  }, 60_000)
+
   it('delegates to a live daemon, polls progress, and never enters the inline lease path', async () => {
     const workspace = fixtureWorkspace(roots)
     const pending = seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
     plantLiveWriterLease(workspace)
     plantDaemonRegistration(workspace)
+    armLiveDaemonIdentity()
     const leasePath = join(workspace.knowledgeRoot, '.lease')
     const leaseBefore = readFileSync(leasePath, 'utf8')
     let receiptWritten = false
@@ -633,6 +851,7 @@ describe('knowledge maintenance commands', () => {
     const pending = seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
     plantLiveWriterLease(workspace)
     plantDaemonRegistration(workspace)
+    armLiveDaemonIdentity()
     daemonHarness.nudgeHook = () => {
       const claimDir = join(
         workspace.knowledgeRoot,
@@ -662,6 +881,34 @@ describe('knowledge maintenance commands', () => {
     expect(result.stderr).toContain('unresolved')
     expect(result.stderr).toContain('claimed 1')
     expect(commandHarness.drainQueueCalls).toBe(0)
+  })
+
+  it('fsyncs the receipt directory exactly once, when the ledger is created', () => {
+    const workspace = fixtureWorkspace(roots)
+    const fsyncDirectory = vi.fn()
+    const receipt = {
+      ts: '2026-07-30T00:00:00.000Z',
+      sessionId: FIRST_SESSION_ID,
+      holderPid: process.pid,
+      epoch: 1,
+      candidateIds: [FIRST_CANDIDATE_ID],
+      remainingAfter: 0,
+      outcome: 'completed' as const,
+      failures: 0,
+      quarantined: 0,
+    }
+
+    appendDrainSessionReceipt(workspace.runtimeRoot, receipt, { fsyncDirectory })
+    // WR-03: the directory entry that first publishes the ledger must survive the crash window.
+    expect(fsyncDirectory.mock.calls).toEqual([[workspace.runtimeRoot]])
+
+    appendDrainSessionReceipt(
+      workspace.runtimeRoot,
+      { ...receipt, sessionId: SECOND_SESSION_ID },
+      { fsyncDirectory },
+    )
+    expect(fsyncDirectory.mock.calls).toEqual([[workspace.runtimeRoot]])
+    expect(drainReceipts.readDrainSessionReceipts(workspace.runtimeRoot)).toHaveLength(2)
   })
 
   it('retains valid receipt history across one torn tail and rejects completed malformation', () => {
@@ -716,6 +963,7 @@ describe('knowledge maintenance commands', () => {
     const workspace = fixtureWorkspace(roots)
     seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
     plantDaemonRegistration(workspace)
+    armLiveDaemonIdentity()
 
     const invocation = invoke(workspace, ['drain'])
     await vi.waitFor(() => expect(daemonHarness.nudgeCalls).toEqual([workspace.runtimeRoot]))
@@ -734,6 +982,7 @@ describe('knowledge maintenance commands', () => {
     const workspace = fixtureWorkspace(roots)
     seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
     plantDaemonRegistration(workspace)
+    armLiveDaemonIdentity()
     daemonHarness.nudgeHook = (_agentQaRoot, options) => {
       if (options?.deadlineMs !== undefined) vi.setSystemTime(options.deadlineMs + 1)
       return undefined

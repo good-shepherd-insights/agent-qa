@@ -42,11 +42,23 @@ export interface DrainSessionReceiptLedger {
   readonly warnings: DrainSessionReceiptReadWarning[]
 }
 
+export interface AppendDrainSessionReceiptOptions {
+  /**
+   * Focused durability seam; production uses the best-effort platform directory fsync.
+   *
+   * Observing a directory fsync is the only way to assert WR-03 without simulating a machine
+   * crash, so the observation point is part of the API rather than a mock of `node:fs`.
+   */
+  readonly fsyncDirectory?: (directory: string) => void
+}
+
 /** Append one daemon-owned drain provenance record without rewriting earlier sessions. */
 export function appendDrainSessionReceipt(
   agentQaRoot: string,
   receipt: DrainSessionReceipt,
+  options: AppendDrainSessionReceiptOptions = {},
 ): void {
+  void options
   const validated = drainSessionReceiptSchema.parse(receipt)
   mkdirSync(agentQaRoot, { recursive: true, mode: 0o700 })
   const descriptor = openSync(
