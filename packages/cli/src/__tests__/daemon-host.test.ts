@@ -1222,6 +1222,87 @@ describe('daemon heartbeat authority and cadence', () => {
       reason: 'lease-id-mismatch',
       observedEpoch: 2,
     })
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-lost'),
+    ).toHaveLength(1)
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'daemon-stopped'),
+    ).toEqual([expect.objectContaining({ exitCode: 1, reason: 'lease-lost' })])
+  })
+
+  it('treats an unexpected supervisor crash as one authority-loss shutdown', async () => {
+    const paths = makePaths('heartbeat-worker-crash')
+    const harness = hostHarness()
+    const acquire = vi.fn((knowledgeRoot: string) => acquireWriterLease(knowledgeRoot))
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: { ...harness.operations, acquireWriterLease: acquire },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'daemon did not finish crash-fixture startup',
+    )
+
+    harness.crashHeartbeat(new Error('worker exited with code 17'))
+    harness.crashHeartbeat(new Error('duplicate worker exit notification'))
+    await expect(running).resolves.toBe(1)
+
+    const events = readEvents(paths.agentQaRoot)
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(events.filter((event) => event.kind === 'lease-lost')).toEqual([
+      expect.objectContaining({
+        kind: 'lease-lost',
+        reason: 'heartbeat-error',
+        detail: 'worker exited with code 17',
+      }),
+    ])
+    expect(events.filter((event) => event.kind === 'daemon-stopped')).toEqual([
+      expect.objectContaining({ exitCode: 1, reason: 'lease-lost' }),
+    ])
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+  })
+
+  it('retains and stops a supervisor that crashes while its start promise resolves', async () => {
+    const paths = makePaths('heartbeat-worker-start-race')
+    const harness = hostHarness()
+    const stopSupervisor = vi.fn(() => Promise.resolve())
+    const model = vi.fn(() => {
+      throw new Error('protected startup ran after supervisor crash')
+    })
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model,
+      operations: {
+        ...harness.operations,
+        startHeartbeatSupervisor: async (options) => {
+          options.onUnexpectedExit(new Error('worker crashed during readiness handoff'))
+          return { stop: stopSupervisor }
+        },
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+
+    await expect(running).resolves.toBe(1)
+    expect(model).not.toHaveBeenCalled()
+    expect(stopSupervisor).toHaveBeenCalledTimes(1)
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-lost'),
+    ).toEqual([
+      expect.objectContaining({
+        reason: 'heartbeat-error',
+        detail: 'worker crashed during readiness handoff',
+      }),
+    ])
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'daemon-stopped'),
+    ).toHaveLength(1)
   })
 
   it('keeps three scheduled opportunities inside the writer-lease TTL', () => {
@@ -1280,6 +1361,49 @@ describe('daemon shutdown and reclaim post-mortem', () => {
     'localAgent.close',
     'releaseLease',
   ] as const
+
+  it.each([
+    { trigger: 'graceful signal', expectedCode: 0 },
+    { trigger: 'lease-loss crash', expectedCode: 1 },
+  ] as const)(
+    'tears the supervisor down before the server on $trigger',
+    async ({ trigger, expectedCode }) => {
+      const paths = makePaths(`shutdown-supervisor-order-${expectedCode}`)
+      const harness = hostHarness()
+      const stages: string[] = []
+      const running = runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        operations: {
+          ...harness.operations,
+          runShutdownStage: async (stage, action) => {
+            stages.push(stage)
+            await action()
+          },
+          startInvokeServer: ({ socketPath }) => Promise.resolve({
+            socketPath,
+            close: () => Promise.resolve(),
+          }),
+        },
+        logger: { info: vi.fn(), error: vi.fn() },
+      })
+      await waitUntil(
+        () => harness.signals.has('SIGTERM'),
+        `daemon did not become signalable for ${trigger}`,
+      )
+
+      if (expectedCode === 0) harness.signal('SIGTERM')
+      else harness.crashHeartbeat()
+      await expect(running).resolves.toBe(expectedCode)
+
+      expect(stages[0]).toBe('heartbeatSupervisor.stop')
+      expect(stages.indexOf('heartbeatSupervisor.stop')).toBeLessThan(
+        stages.indexOf('invokeServer.close'),
+      )
+    },
+  )
 
   it.each(awaitedStages)(
     'converges through final cleanup when the %s shutdown stage fails',
