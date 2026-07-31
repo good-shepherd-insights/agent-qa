@@ -8,11 +8,16 @@ import {
   LEASE_HEARTBEAT_TTL_MS,
   acquireWriterLease,
   readWriterLease,
+  releaseLease,
 } from '@vostride/agent-qa-knowledge-local';
 import type { ConfigReaderPort } from '@vostride/agent-qa-agent';
 import { describe, expect, it } from 'vitest';
 
 import { runDaemonHost } from '../daemon/host.js';
+import {
+  startHeartbeatSupervisor,
+  type HeartbeatSupervisorMessage,
+} from '../daemon/heartbeat-supervisor.js';
 
 const FIXTURE_ROLE = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROLE;
 const FIXTURE_ROOT = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROOT;
@@ -57,6 +62,18 @@ async function waitForFile(
     if (Date.now() >= deadline) {
       throw new Error(`Timed out waiting for fixture file: ${path}`);
     }
+    await delay(25);
+  }
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${description}`);
     await delay(25);
   }
 }
@@ -185,6 +202,80 @@ if (FIXTURE_ROLE === 'contender') {
   });
 } else {
   describe('daemon heartbeat supervision across real process boundaries', () => {
+    it('stops a live worker idempotently without emitting later heartbeats', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-stop-'));
+      const acquired = acquireWriterLease(root);
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
+      }
+      const messages: HeartbeatSupervisorMessage[] = [];
+      const unexpected: Error[] = [];
+      const supervisor = await startHeartbeatSupervisor({
+        knowledgeRoot: root,
+        leaseId: acquired.leaseId,
+        intervalMs: 25,
+        onMessage: (message) => messages.push(message),
+        onUnexpectedExit: (error) => unexpected.push(error),
+      });
+
+      await waitForCondition(
+        () => messages.some((message) => message.kind === 'heartbeated'),
+        'a supervised heartbeat',
+      );
+      const firstStop = supervisor.stop();
+      const secondStop = supervisor.stop();
+      expect(secondStop).toBe(firstStop);
+      await firstStop;
+      const stoppedCount = messages.length;
+      await delay(100);
+
+      expect(messages).toHaveLength(stoppedCount);
+      expect(unexpected).toEqual([]);
+    });
+
+    it('reports one refusal, halts recurrence, and preserves the replacement lease', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-refusal-'));
+      const acquired = acquireWriterLease(root);
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
+      }
+      const messages: HeartbeatSupervisorMessage[] = [];
+      const unexpected: Error[] = [];
+      const supervisor = await startHeartbeatSupervisor({
+        knowledgeRoot: root,
+        leaseId: acquired.leaseId,
+        intervalMs: 25,
+        onMessage: (message) => messages.push(message),
+        onUnexpectedExit: (error) => unexpected.push(error),
+      });
+      expect(releaseLease({ knowledgeRoot: root, leaseId: acquired.leaseId })).toEqual({
+        kind: 'released',
+      });
+      const replacement = acquireWriterLease(root);
+      if (replacement.kind !== 'acquired') {
+        throw new Error(`Expected replacement fixture lease, received ${replacement.kind}`);
+      }
+
+      await waitForCondition(
+        () => messages.some((message) => message.kind === 'refused'),
+        'a supervised refusal',
+      );
+      const refusalCount = messages.filter((message) => message.kind === 'refused').length;
+      await delay(100);
+      await supervisor.stop();
+
+      expect(refusalCount).toBe(1);
+      expect(messages.filter((message) => message.kind === 'refused')).toHaveLength(1);
+      expect(unexpected).toEqual([]);
+      expect(readWriterLease(root)).toEqual({
+        kind: 'parsed',
+        lease: expect.objectContaining({
+          leaseId: replacement.leaseId,
+          epoch: replacement.epoch,
+        }),
+      });
+    });
+
     it(
       'keeps the writer lease held while only the daemon main loop is blocked past TTL',
       async () => {

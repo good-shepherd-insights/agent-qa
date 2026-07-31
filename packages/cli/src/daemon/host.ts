@@ -513,6 +513,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let jobDispatcher: JobDispatcher | undefined
   let registrationWritten = false
   let heartbeatSupervisor: HeartbeatSupervisorHandle | undefined
+  let heartbeatSupervisorStarting = false
+  let pendingHeartbeatFailure: (() => void) | undefined
   let curationPollTimer: ReturnType<typeof setInterval> | undefined
   let maintenanceTimer: ReturnType<typeof setInterval> | undefined
   let invokeServer: InvokeServerHandle | undefined
@@ -1402,30 +1404,46 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return
     }
 
-    if (heartbeat.kind === 'refused') {
-      recordDaemonEvent({
-        kind: 'lease-lost',
-        reason: heartbeat.reason,
-        observedEpoch: heartbeat.observedEpoch ?? heartbeat.holder?.epoch,
-      })
-    } else {
-      recordDaemonEvent({
-        kind: 'lease-lost',
-        reason: 'heartbeat-error',
-        detail: `${heartbeat.name}: ${heartbeat.message}`,
-      })
+    const failAuthority = (): void => {
+      if (shutdownPromise !== undefined) return
+      if (heartbeat.kind === 'refused') {
+        recordDaemonEvent({
+          kind: 'lease-lost',
+          reason: heartbeat.reason,
+          observedEpoch: heartbeat.observedEpoch ?? heartbeat.holder?.epoch,
+        })
+      } else {
+        recordDaemonEvent({
+          kind: 'lease-lost',
+          reason: 'heartbeat-error',
+          detail: `${heartbeat.name}: ${heartbeat.message}`,
+        })
+      }
+      void beginShutdown(1, false, 'lease-lost')
     }
-    void beginShutdown(1, false, 'lease-lost')
+    if (heartbeatSupervisorStarting && heartbeatSupervisor === undefined) {
+      pendingHeartbeatFailure ??= failAuthority
+      return
+    }
+    failAuthority()
   }
 
   const handleUnexpectedHeartbeatExit = (error: Error): void => {
     if (shutdownPromise !== undefined) return
-    recordDaemonEvent({
-      kind: 'lease-lost',
-      reason: 'heartbeat-error',
-      detail: error.message,
-    })
-    void beginShutdown(1, false, 'lease-lost')
+    const failAuthority = (): void => {
+      if (shutdownPromise !== undefined) return
+      recordDaemonEvent({
+        kind: 'lease-lost',
+        reason: 'heartbeat-error',
+        detail: error.message,
+      })
+      void beginShutdown(1, false, 'lease-lost')
+    }
+    if (heartbeatSupervisorStarting && heartbeatSupervisor === undefined) {
+      pendingHeartbeatFailure ??= failAuthority
+      return
+    }
+    failAuthority()
   }
 
   try {
@@ -1440,13 +1458,25 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return await completion
     }
 
-    heartbeatSupervisor = await operations.startHeartbeatSupervisor({
-      knowledgeRoot: authority.knowledgeRoot,
-      leaseId: authority.leaseId,
-      intervalMs: LEASE_HEARTBEAT_INTERVAL_MS,
-      onMessage: handleHeartbeatMessage,
-      onUnexpectedExit: handleUnexpectedHeartbeatExit,
-    })
+    heartbeatSupervisorStarting = true
+    try {
+      heartbeatSupervisor = await operations.startHeartbeatSupervisor({
+        knowledgeRoot: authority.knowledgeRoot,
+        leaseId: authority.leaseId,
+        intervalMs: LEASE_HEARTBEAT_INTERVAL_MS,
+        onMessage: handleHeartbeatMessage,
+        onUnexpectedExit: handleUnexpectedHeartbeatExit,
+      })
+    } finally {
+      heartbeatSupervisorStarting = false
+    }
+    const startupFailure = pendingHeartbeatFailure
+    pendingHeartbeatFailure = undefined
+    startupFailure?.()
+    if (shutdownPromise !== undefined) {
+      await shutdownPromise
+      return await completion
+    }
     operations.trace?.('heartbeat-started')
     recordDaemonEvent({
       kind: 'lease-acquired',
