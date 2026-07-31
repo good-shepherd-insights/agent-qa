@@ -69,7 +69,9 @@ import {
   type WriterAuthorityLostReason,
 } from '../lease/writer-lease.js'
 import {
+  JOURNAL_SUBDIR,
   listCommitIntents,
+  writeCommitIntent,
   type CommitIntent,
 } from '../journal/intent-journal.js'
 import {
@@ -1347,6 +1349,161 @@ describe('writer authority and bundle publication are one indivisible protocol (
     })
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
     expect(durableTailSnapshot()).toEqual(before)
+  })
+
+  function journalDir(): string {
+    return join(knowledgeRoot, JOURNAL_SUBDIR)
+  }
+
+  function reconcileAs(authority: { leaseId: string; epoch: number }): {
+    report: ReconcileReport
+    replayed: CommitIntent[]
+    derived: string[]
+  } {
+    const replayed: CommitIntent[] = []
+    const derived: string[] = []
+    const report = reconcileOnDrainStart({
+      knowledgeRoot,
+      writerAuthority: authority,
+      hasIndexRow: (bundleId) => indexRecordExists(bundleId),
+      applyIndexDelta: (intent) => {
+        replayed.push(intent)
+        publicSurface.applyIndexDeltaForBundle({
+          knowledgeRoot,
+          bundleId: intent.bundleId,
+          product: PRODUCT,
+        })
+      },
+      deriveIndexRowFromBundle: (bundleId) => {
+        derived.push(bundleId)
+        publicSurface.deriveIndexRowFromBundle({
+          knowledgeRoot,
+          bundleId,
+          product: PRODUCT,
+        })
+      },
+    })
+    return { report, replayed, derived }
+  }
+
+  function seedCompletedCandidate(
+    authority: { leaseId: string; epoch: number },
+    value: string,
+  ): { candidateId: string; bundleId: RecordId } {
+    const claimed = measurementJob(authority, value, 42)
+    const outcome = commitCurationDelta(
+      curationDependencies(authority),
+      claimed,
+      checkpoint(addMeasurementDelta(value)),
+    )
+    if (outcome.kind !== 'applied') throw new Error('expected applied measurement Add')
+    return { candidateId: claimed.candidateId, bundleId: outcome.bundleId }
+  }
+
+  function takeOver(): { leaseId: string; epoch: number } {
+    makeStale()
+    const successor = acquireWithDeadline(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+    expect(successor.kind).toBe('acquired')
+    if (successor.kind !== 'acquired') throw new Error('expected successor takeover')
+    return { leaseId: successor.leaseId, epoch: successor.epoch }
+  }
+
+  it('quarantines an intent from a generation reconciliation already superseded (CR-09)', () => {
+    const authority = acquireAuthority()
+    const seeded = seedCompletedCandidate(authority, '100')
+    const successor = takeOver()
+
+    // The successor reconciles the generation it inherits; its epoch becomes the watermark.
+    expect(reconcileAs(successor).report).toMatchObject({ intentsReplayed: 0 })
+
+    // A writer from the superseded generation publishes an intent for a candidate the
+    // successor has already completed.
+    const stale: CommitIntent = {
+      schemaVersion: 1,
+      candidateId: seeded.candidateId,
+      bundleId: seeded.bundleId,
+      deltaKind: 'Add',
+      epoch: authority.epoch,
+    }
+    writeCommitIntent(knowledgeRoot, stale)
+    const staleBytes = readFileSync(
+      join(journalDir(), `${seeded.candidateId}.intent.json`),
+      'utf8',
+    )
+    const before = durableTailSnapshot()
+
+    const { report, replayed } = reconcileAs(successor)
+
+    expect(replayed).toEqual([])
+    expect(report).toMatchObject({
+      intentsQuarantinedStale: 1,
+      intentsReplayed: 0,
+      intentsCleared: 0,
+      intentsDiscarded: 0,
+      jobsRequeued: 0,
+    })
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
+    // The bytes survive for post-mortem under a name reconciliation never lists.
+    const quarantined = `.stale-${authority.epoch}-${seeded.candidateId}.intent.json`
+    expect(readdirSync(journalDir()).filter((name) => name.startsWith('.stale-')))
+      .toEqual([quarantined])
+    expect(readFileSync(join(journalDir(), quarantined), 'utf8')).toBe(staleBytes)
+    expect(durableTailSnapshot()).toEqual(before)
+  })
+
+  it('still replays the crash journal of the generation it inherits (CR-09 control)', () => {
+    const authority = acquireAuthority()
+    const seeded = seedCompletedCandidate(authority, '100')
+    // A predecessor crashed after publishing its intent and before its index apply.
+    const crashed: CommitIntent = {
+      schemaVersion: 1,
+      candidateId: 'b'.repeat(64),
+      bundleId: seeded.bundleId,
+      deltaKind: 'Confirm',
+      targetRecordId: seeded.bundleId,
+      epoch: authority.epoch,
+    }
+    writeCommitIntent(knowledgeRoot, crashed)
+    const successor = takeOver()
+
+    const { report, replayed } = reconcileAs(successor)
+
+    expect(replayed).toEqual([crashed])
+    expect(report).toMatchObject({ intentsReplayed: 1, intentsCleared: 1 })
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
+    expect(readdirSync(journalDir()).filter((name) => name.startsWith('.stale-'))).toEqual([])
+    expect(indexRecordExists(seeded.bundleId)).toBe(true)
+  })
+
+  it('reconciles the same journal state twice with no second-pass effect (DAEM-09)', () => {
+    const authority = acquireAuthority()
+    const seeded = seedCompletedCandidate(authority, '100')
+    writeCommitIntent(knowledgeRoot, {
+      schemaVersion: 1,
+      candidateId: 'c'.repeat(64),
+      bundleId: seeded.bundleId,
+      deltaKind: 'Confirm',
+      targetRecordId: seeded.bundleId,
+      epoch: authority.epoch,
+    })
+    const successor = takeOver()
+
+    expect(reconcileAs(successor).report).toMatchObject({ intentsReplayed: 1 })
+    const afterFirstPass = durableTailSnapshot()
+
+    const second = reconcileAs(successor)
+
+    expect(second.replayed).toEqual([])
+    expect(second.derived).toEqual([])
+    expect(second.report).toMatchObject({
+      intentsReplayed: 0,
+      intentsCleared: 0,
+      intentsDiscarded: 0,
+      intentsQuarantinedStale: 0,
+      jobsRequeued: 0,
+      malformed: 0,
+    })
+    expect(durableTailSnapshot()).toEqual(afterFirstPass)
   })
 
   it('never lets a writer paused before the tail entry publish an intent behind its successor (CR-09)', () => {
