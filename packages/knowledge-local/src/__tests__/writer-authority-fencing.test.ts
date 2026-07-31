@@ -12,10 +12,25 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { BundleOutcomeEventSchema, slugBranch } from '@vostride/agent-qa-schema'
+import {
+  BundleOutcomeEventSchema,
+  asEvidenceToken,
+  asRecordId,
+  slugBranch,
+  type Anchor,
+  type BundleDraft,
+  type Delta,
+  type MeasurementObservation,
+} from '@vostride/agent-qa-schema'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as publicSurface from '../index.js'
+import { loadBundle, readMeasurements } from '../bundle-read.js'
+import { enumerateBundleDirs } from '../bundle-scan.js'
 import {
   finalizeStagedBundle,
   publishBundle,
@@ -23,6 +38,22 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../bundle-publish.test-helper.js'
+import { candidateAddressFixture } from './fixtures/curation-candidate-fixture.js'
+import {
+  CURATION_QUEUE_SCHEMA_VERSION,
+  artifactFreeCaptureReceipt,
+  candidateContentAddress,
+  type BuildCurationCandidateAddressFieldsInput,
+} from '../queue/queue-payload.js'
+import {
+  commitCurationDelta,
+  type CommitCurationDependencies,
+  type CommitCurationJob,
+} from '../curator/commit.js'
+import type {
+  AuthoredDeltaCheckpoint,
+  DispositionProfile,
+} from '../curator/author-contract.js'
 import {
   acquireWriterLease,
   EPOCH_FILE,
@@ -233,6 +264,201 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
     try {
       return Number(reader.db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count)
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  const measurementAnchors: Anchor[] = [
+    { t: 'flow', name: 'measurement:reported-value' },
+    { t: 'platform', platform: 'web' },
+  ]
+
+  function measurementDraft(value: string): BundleDraft {
+    return {
+      kind: 'fact',
+      subtype: 'measurement',
+      anchors: measurementAnchors,
+      scope: { tier: 'product', key: PRODUCT },
+      summary: `reported-value measured as ${value}`,
+      body: `Verified reported-value value: ${value}.`,
+      distilledEvidenceRef: {
+        id: `measurement-${value}`,
+        sha: 'a'.repeat(64),
+      },
+      originStage: 'run-curation',
+    }
+  }
+
+  function measurementJob(
+    authority: { leaseId: string; epoch: number },
+    value: string,
+    buildOrdinal: number,
+  ): CommitCurationJob {
+    const fields = candidateAddressFixture({
+      schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
+      sourceRunId: `run-measurement-${buildOrdinal}`,
+      scope: { tier: 'product', key: PRODUCT },
+      buildOrdinal,
+      executionContext: 'local-interactive',
+      secretFlagged: false,
+      injectionFlagged: false,
+      kind: 'fact',
+      subtype: 'measurement',
+      anchors: measurementAnchors,
+      summarySeed: `reported-value measured as ${value}`,
+      bodySeed: `Verified reported-value value: ${value}.`,
+      distilledObservations: [],
+      evidenceToken: `measurement-evidence-${buildOrdinal}-${value}`,
+      attributingObservationId: `measurement-observation-${buildOrdinal}-${value}`,
+      artifactInventory: [],
+      captureReceipt: artifactFreeCaptureReceipt(),
+      emittedAt: '2026-07-31T10:00:00.000Z',
+    } satisfies BuildCurationCandidateAddressFieldsInput)
+    const payload = {
+      candidateId: candidateContentAddress(fields),
+      ...fields,
+    }
+    const candidateDir = join(root, 'claimed', payload.candidateId)
+    const artifactsDir = join(candidateDir, 'artifacts')
+    mkdirSync(artifactsDir, { recursive: true })
+    writeFileSync(join(candidateDir, 'payload.json'), JSON.stringify(payload), 'utf8')
+    return {
+      kind: 'claimed',
+      candidateId: payload.candidateId,
+      leaseId: authority.leaseId,
+      payload,
+      candidateDir,
+      payloadPath: join(candidateDir, 'payload.json'),
+      artifactsDir,
+      screenStates: [],
+    }
+  }
+
+  function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
+    return {
+      schemaVersion: 1,
+      delta,
+      neighborIds: [...delta.citedIds],
+      preconditions: [...(delta.precondition ?? [])],
+      authorship: delta.authorship ?? {
+        path: 'llm',
+        model: { id: 'writer-authority-fixture' },
+        executionContext: 'local-interactive',
+      },
+    }
+  }
+
+  function curationDependencies(
+    authority: { leaseId: string; epoch: number },
+    profile: DispositionProfile = { mode: 'drain-to-active' },
+    overrides: Partial<CommitCurationDependencies> = {},
+  ): CommitCurationDependencies {
+    return {
+      knowledgeRoot,
+      auditBaseDir,
+      epoch: authority.epoch,
+      profile,
+      drainState: { supersedesSeenByAnchorKey: new Map() },
+      policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+      ...overrides,
+    }
+  }
+
+  function addMeasurementDelta(value: string): Extract<Delta, { kind: 'Add' }> {
+    return {
+      kind: 'Add',
+      origin: 'agent',
+      scope: { tier: 'product', key: PRODUCT },
+      citedIds: [],
+      authorship: {
+        path: 'llm',
+        model: { id: 'writer-authority-fixture' },
+        executionContext: 'local-interactive',
+      },
+      bundle: measurementDraft(value),
+    }
+  }
+
+  function seedMeasurementVictim(
+    authority: { leaseId: string; epoch: number },
+    value: string,
+  ): Extract<ReturnType<typeof commitCurationDelta>, { kind: 'applied' }> {
+    const claimed = measurementJob(authority, value, 42)
+    const outcome = commitCurationDelta(
+      curationDependencies(authority),
+      claimed,
+      checkpoint(addMeasurementDelta(value)),
+    )
+    if (outcome.kind !== 'applied') throw new Error('expected applied measurement Add')
+    return outcome
+  }
+
+  function measurementSupersede(
+    authority: { leaseId: string; epoch: number },
+    victimId: string,
+    value: string,
+    buildOrdinal: number,
+  ): { claimed: CommitCurationJob; authored: AuthoredDeltaCheckpoint } {
+    const claimed = measurementJob(authority, value, buildOrdinal)
+    claimed.targetProducts = { [victimId]: PRODUCT }
+    const delta: Extract<Delta, { kind: 'Supersede' }> = {
+      kind: 'Supersede',
+      origin: 'agent',
+      scope: claimed.payload.scope,
+      citedIds: [asRecordId(victimId)],
+      precondition: [{
+        recordId: asRecordId(victimId),
+        observedStatus: 'candidate',
+        observedOrdinal: 42,
+      }],
+      authorship: {
+        path: 'llm',
+        model: { id: 'writer-authority-fixture' },
+        executionContext: 'local-interactive',
+      },
+      victimId: asRecordId(victimId),
+      newBundle: measurementDraft(value),
+      evidenceToken: asEvidenceToken(claimed.payload.evidenceToken),
+    }
+    return { claimed, authored: checkpoint(delta) }
+  }
+
+  function appendVictimObservation(
+    authority: { leaseId: string; epoch: number },
+    bundleId: string,
+    value: number,
+    buildOrdinal: number,
+  ): void {
+    const observation: MeasurementObservation = {
+      value,
+      buildOrdinal,
+      evidenceToken: `seed-measurement-${buildOrdinal}`,
+      curationJobId: `seed-measurement-job-${buildOrdinal}`,
+    }
+    expect(publicSurface.appendMeasurementObservation(
+      config(authority),
+      bundleId,
+      observation,
+    ).kind).toBe('appended')
+  }
+
+  function durableTailSnapshot(): unknown {
+    const bundles = enumerateBundleDirs(knowledgeRoot).map(({ product, dir }) => ({
+      product,
+      bundleId: dir.slice(dir.lastIndexOf('/') + 1),
+      outcomes: readFileSync(join(dir, 'evidence/outcomes.jsonl'), 'utf8'),
+      measurements: existsSync(join(dir, 'evidence/measurements.json'))
+        ? readFileSync(join(dir, 'evidence/measurements.json'), 'utf8')
+        : undefined,
+      relations: readFileSync(join(dir, 'relations.json'), 'utf8'),
+    }))
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      return {
+        bundles,
+        rows: reader.db.prepare('SELECT * FROM records ORDER BY bundle_id').all(),
+      }
     } finally {
       reader.db.close()
     }
@@ -973,6 +1199,132 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
     expect(successor).toMatchObject({ kind: 'acquired', epoch: 2 })
     expect(existsSync(staleDir)).toBe(false)
+  })
+
+  it('lets a successor win after intent but before the held tail with zero durable writes', () => {
+    const authority = acquireAuthority()
+    const victim = seedMeasurementVictim(authority, '100')
+    const replacement = measurementSupersede(authority, victim.bundleId, '204', 47)
+    const before = durableTailSnapshot()
+    let successor: ReturnType<typeof acquireWriterLease> | undefined
+
+    const outcome = commitCurationDelta(
+      curationDependencies(authority, undefined, {
+        hooks: {
+          afterIntentWritten: () => {
+            makeStale()
+            successor = acquireWithDeadline(knowledgeRoot, {
+              mutationLockTakeoverMs: 0,
+            })
+          },
+          mutationLockTakeoverMs: 0,
+        },
+      }),
+      replacement.claimed,
+      replacement.authored,
+    )
+
+    expect(successor).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+    expect(outcome).toMatchObject({
+      kind: 'abandoned-stale-epoch',
+      observedEpoch: authority.epoch + 1,
+    })
+    expect(durableTailSnapshot()).toEqual(before)
+  })
+
+  it('keeps a successor out from publication through every replay-safe commit-tail family', () => {
+    const authority = acquireAuthority()
+    const victim = seedMeasurementVictim(authority, '100')
+    appendVictimObservation(authority, victim.bundleId, 200, 43)
+    appendVictimObservation(authority, victim.bundleId, 201, 44)
+    appendVictimObservation(authority, victim.bundleId, 202, 45)
+    appendVictimObservation(authority, victim.bundleId, 203, 46)
+    const replacement = measurementSupersede(authority, victim.bundleId, '204', 47)
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+
+    const outcome = commitCurationDelta(
+      curationDependencies(authority, undefined, {
+        hooks: {
+          afterBundlePublished: () => {
+            makeStale()
+            contender = acquireWithDeadline(knowledgeRoot, {
+              mutationLockTakeoverMs: 0,
+            })
+          },
+          mutationLockTakeoverMs: 0,
+        },
+      }),
+      replacement.claimed,
+      replacement.authored,
+    )
+
+    expect(outcome.kind).toBe('applied')
+    if (outcome.kind !== 'applied') throw new Error('expected applied drift Supersede')
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+
+    const loadedReplacement = loadBundle(outcome.bundleDir)
+    const loadedVictim = loadBundle(victim.bundleDir)
+    expect(loadedReplacement.kind).toBe('loaded')
+    expect(loadedVictim.kind).toBe('loaded')
+    if (loadedReplacement.kind !== 'loaded' || loadedVictim.kind !== 'loaded') {
+      throw new Error('expected both supersede bundles to load')
+    }
+    expect(loadedReplacement.bundle.events.filter(
+      (event) => event.curationJobId === replacement.claimed.candidateId,
+    ).map((event) => event.type)).toEqual(['confirmed', 'promoted'])
+    expect(loadedVictim.bundle.events.filter(
+      (event) => event.curationJobId === replacement.claimed.candidateId,
+    ).map((event) => event.type)).toEqual(['window-close', 'superseded'])
+    expect(loadedReplacement.bundle.relations.relations).toContainEqual({
+      type: 'supersedes',
+      targetId: victim.bundleId,
+      addedAtOrdinal: 47,
+      curationJobId: replacement.claimed.candidateId,
+    })
+    expect(loadedVictim.bundle.relations.relations).toContainEqual({
+      type: 'superseded-by',
+      targetId: outcome.bundleId,
+      addedAtOrdinal: 47,
+      curationJobId: replacement.claimed.candidateId,
+    })
+    expect(readMeasurements(outcome.bundleDir)).toEqual({
+      baseline: { mu0: 204, sigma0: 0, n0: 1, openedAtOrdinal: 47 },
+      observations: [],
+    })
+    expect(readMeasurements(victim.bundleDir)?.observations.filter(
+      (observation) => observation.curationJobId === replacement.claimed.candidateId,
+    )).toHaveLength(1)
+
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(reader.db.prepare(`
+        SELECT bundle_id FROM records
+        WHERE bundle_id IN (?, ?)
+        ORDER BY bundle_id
+      `).all(victim.bundleId, outcome.bundleId)).toEqual(
+        [victim.bundleId, outcome.bundleId]
+          .sort()
+          .map((bundleId) => ({ bundle_id: bundleId })),
+      )
+    } finally {
+      reader.db.close()
+    }
+
+    const after = durableTailSnapshot()
+    expect(
+      commitCurationDelta(
+        curationDependencies(authority),
+        replacement.claimed,
+        replacement.authored,
+      ),
+    ).toMatchObject({ kind: 'requeue-resynthesis', reason: 'compare-and-set' })
+    expect(durableTailSnapshot()).toEqual(after)
   })
 
   it('routes commit publication through the lock-held primitive instead of a detached read', () => {
