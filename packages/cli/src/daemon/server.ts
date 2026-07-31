@@ -19,8 +19,6 @@ import { z } from 'zod'
 export const INVOKE_ENVELOPE_SCHEMA_VERSION = 1
 export const DAEMON_IDENTITY_SCHEMA_VERSION = 1
 export const DAEMON_IDENTITY_TIMEOUT_MS = 1_000
-/** The pre-generation fixed name. Retained only so one-time recovery can unlink what it left. */
-export const LEGACY_DAEMON_SOCKET_FILE = 'daemon.sock'
 export const STREAM_END_EVENT = 'stream-end'
 export const STREAM_ERROR_EVENT = 'stream-error'
 
