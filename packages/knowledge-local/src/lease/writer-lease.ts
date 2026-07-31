@@ -211,6 +211,8 @@ export interface MutationLockOptions {
   /** Test/chaos seam after the claim is committed and before the held transaction begins. */
   afterMutationLockClaimed?: (generationToken: string) => void
   afterMutationLockAcquired?: () => void
+  /** Test/chaos seam inside acquisition, after the epoch rewrite and before lease publication. */
+  afterEpochRewrite?: () => void
   mutationLockTakeoverMs?: number
 }
 
@@ -672,6 +674,31 @@ export function isLeaseStale(lease: unknown, nowMs: number): boolean {
   return nowMs - parsed.data.heartbeatAtMs >= LEASE_HEARTBEAT_TTL_MS
 }
 
+/**
+ * A published holder counts as current only when its recorded epoch still equals the disk epoch.
+ *
+ * WR-04: a crash between the epoch rewrite and the lease rewrite leaves a lease naming the previous
+ * epoch. Reporting that lease as `held` manufactures a phantom holder no TTL sweep ever reclaims,
+ * so an epoch-invalid lease is recovery input rather than an answer.
+ */
+function leaseEpochIsCurrent(knowledgeRoot: string, lease: WriterLease): boolean {
+  try {
+    return lease.epoch === readEpoch(knowledgeRoot)
+  } catch (error) {
+    // Corrupt epoch bytes are never an answer; the in-lock read returns the typed refusal.
+    if (error instanceof CorruptEpochStateError) return false
+    throw error
+  }
+}
+
+function isCurrentHolder(
+  knowledgeRoot: string,
+  lease: WriterLease,
+  nowMs: number,
+): boolean {
+  return !isLeaseStale(lease, nowMs) && leaseEpochIsCurrent(knowledgeRoot, lease)
+}
+
 /** Return a live holder or atomically mint a new, monotonically fenced writer identity. */
 export function acquireWriterLease(
   knowledgeRoot: string,
@@ -689,7 +716,7 @@ export function acquireWriterLease(
   const beforeLock = readWriterLease(knowledgeRoot)
   if (
     beforeLock.kind === 'parsed'
-    && !isLeaseStale(beforeLock.lease, mutationLockNowMs())
+    && isCurrentHolder(knowledgeRoot, beforeLock.lease, mutationLockNowMs())
   ) {
     return { kind: 'held', holder: beforeLock.lease }
   }
@@ -708,7 +735,11 @@ export function acquireWriterLease(
         }
         const current = readWriterLease(knowledgeRoot)
         const nowMs = Date.now()
-        if (current.kind === 'parsed' && !isLeaseStale(current.lease, nowMs)) {
+        if (
+          current.kind === 'parsed'
+          && !isLeaseStale(current.lease, nowMs)
+          && current.lease.epoch === observedEpoch
+        ) {
           return { kind: 'held', holder: current.lease }
         }
         const reclaimed = current.kind === 'parsed' ? current.lease : undefined
@@ -721,6 +752,7 @@ export function acquireWriterLease(
           heartbeatAtMs: nowMs,
         })
         atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
+        hooks?.afterEpochRewrite?.()
         sweepStagedEpochsBefore(knowledgeRoot, epoch)
         atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
         return {
@@ -732,8 +764,18 @@ export function acquireWriterLease(
       }, hooks)
     } catch (error) {
       if (!(error instanceof MutationLockBusyError)) throw error
+      /**
+       * Contention answers 'held' only for an epoch-valid lease. Staleness deliberately does NOT
+       * disqualify a holder here: the lock is busy, so the published holder is inside its own
+       * serialized section and a stale heartbeat is exactly the fencing case DAEM-09 protects
+       * (a paused drainer must be reported as holding, not stolen from). An epoch-mismatched
+       * lease is different in kind — nobody can still be inside a transaction for a superseded
+       * epoch — so it is recovery input and the loop keeps waiting for the lock.
+       */
       const current = readWriterLease(knowledgeRoot)
-      if (current.kind === 'parsed') return { kind: 'held', holder: current.lease }
+      if (current.kind === 'parsed' && leaseEpochIsCurrent(knowledgeRoot, current.lease)) {
+        return { kind: 'held', holder: current.lease }
+      }
       Atomics.wait(
         MUTATION_LOCK_TERMINATION_WAIT,
         0,
