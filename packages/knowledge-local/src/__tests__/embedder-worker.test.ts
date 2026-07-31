@@ -2,9 +2,11 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -33,6 +35,7 @@ import {
   embedderWorkerRegistrationPath,
   embedderWorkerSocketPath,
   readEmbedderWorkerRegistration,
+  removeEmbedderWorkerRegistration,
   writeEmbedderWorkerRegistration,
 } from '../embedder-worker/worker-registration.js'
 import {
@@ -233,6 +236,56 @@ describe.sequential('embedder worker discovery', () => {
     expect(Buffer.byteLength(second)).toBeLessThanOrEqual(
       EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
     )
+  })
+
+  it('atomically preserves a successor published after predecessor quarantine and double-removes as a no-op', () => {
+    const projectRoot = temporaryProject('atomic-remove')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
+    const derive = embedderWorkerSocketPath as (
+      root: string,
+      project: string,
+      instance: string,
+    ) => string
+    const predecessor = {
+      schemaVersion: 2,
+      instanceId: '00000000-0000-4000-8000-000000000104',
+      pid: process.pid,
+      socketPath: derive(
+        agentQaRoot,
+        projectRoot,
+        '00000000-0000-4000-8000-000000000104',
+      ),
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: 104,
+    }
+    const successor = {
+      ...predecessor,
+      instanceId: '00000000-0000-4000-8000-000000000105',
+      socketPath: derive(
+        agentQaRoot,
+        projectRoot,
+        '00000000-0000-4000-8000-000000000105',
+      ),
+      startedAtMs: 105,
+    }
+    const predecessorBytes = Buffer.from(`${JSON.stringify(predecessor)}\n`)
+    const successorBytes = Buffer.from(`${JSON.stringify(successor)}\n`)
+    mkdirSync(agentQaRoot, { recursive: true })
+    writeFileSync(registrationPath, predecessorBytes)
+
+    const removeWithBarrier = removeEmbedderWorkerRegistration as unknown as (
+      root: string,
+      expected: typeof predecessor,
+      options: { afterQuarantine: () => void },
+    ) => boolean
+    expect(removeWithBarrier(agentQaRoot, predecessor, {
+      afterQuarantine: () => writeFileSync(registrationPath, successorBytes),
+    })).toBe(true)
+    expect(readFileSync(registrationPath)).toEqual(successorBytes)
+
+    expect(removeEmbedderWorkerRegistration(agentQaRoot, successor as never)).toBe(true)
+    expect(removeEmbedderWorkerRegistration(agentQaRoot, successor as never)).toBe(false)
   })
 
   it('keeps successor registration bytes and socket serving after delayed predecessor close', async () => {
