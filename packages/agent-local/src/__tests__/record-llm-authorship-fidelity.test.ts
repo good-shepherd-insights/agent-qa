@@ -38,7 +38,7 @@ import type { SqliteJobStore } from '../store/sqlite-job-store.js'
 
 const FIXTURE_KIND = 'analyze-run' as const
 const FIXTURE_CHECKPOINT = 'analysis'
-const HOST_DIED = 'the host died after the model answered'
+const FIRST_HOST_HANDLER_FAILURE = 'first host handler failed after the model answered'
 
 function createSteppingClock(): ClockPort {
   let tick = 0
@@ -75,7 +75,7 @@ interface FidelityFixture {
   readonly author: JobAuthorCallback<unknown>
   /** Every value the primitive handed back, in pass order. */
   readonly returned: unknown[]
-  /** Set on the first pass so the host dies holding a durable checkpoint and an unfinished job. */
+  /** Set on the first pass so the durable checkpoint is followed by a normal retry disposition. */
   readonly thenThrow?: string
 }
 
@@ -139,8 +139,9 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
   }
 
   /**
-   * Author once in a host that then dies, recover the claim, and let a SECOND host — new engine,
-   * new registry, new connection, nothing shared but the bytes on disk — run the same job again.
+   * Author once in a host whose handler then fails, assert that the engine lands and releases the
+   * retry disposition, and let a SECOND host — new engine, new registry, new connection, nothing
+   * shared but the bytes on disk — run the same job again.
    */
   async function authorAcrossTwoHosts(input: {
     readonly author: JobAuthorCallback<unknown>
@@ -154,12 +155,31 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
     const returned: unknown[] = []
 
     const first = openPass(
-      fidelityDeclaration({ author: countingAuthor, returned, thenThrow: HOST_DIED }),
+      fidelityDeclaration({
+        author: countingAuthor,
+        returned,
+        thenThrow: FIRST_HOST_HANDLER_FAILURE,
+      }),
     )
     const firstFence = await first.store.adoptEpoch(1)
     await first.queue.enqueue(FIXTURE_KIND, { runRef: 'run_1' }, input.idempotencyKey)
-    await expect(first.queue.runNextJob({ fence: firstFence })).rejects.toThrow(HOST_DIED)
-    await first.queue.recoverAbandonedClaims({ fence: firstFence })
+    const firstOutcome = await first.queue.runNextJob({ fence: firstFence })
+
+    expect(firstOutcome).toMatchObject({
+      ran: true,
+      disposition: 'retry-scheduled',
+      handlerInvoked: true,
+      checkpointsPublished: [FIXTURE_CHECKPOINT],
+      reason: `handler-threw: ${FIRST_HOST_HANDLER_FAILURE}`,
+      retryDelayMs: 0,
+      attemptsRemaining: 2,
+      job: { attempts: 1, status: 'queued' },
+    })
+    expect((await first.store.dumpState()).jobs[0]).toMatchObject({
+      status: 'queued',
+      claimed: false,
+      attempts: 1,
+    })
     closePass(first)
 
     const second = openPass(fidelityDeclaration({ author: countingAuthor, returned }))
