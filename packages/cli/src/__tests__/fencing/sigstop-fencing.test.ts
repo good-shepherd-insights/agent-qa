@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
   acquireWriterLease,
   LEASE_HEARTBEAT_TTL_MS,
-  MUTATION_LOCK_TAKEOVER_MS,
   enumerateBundleDirs,
   loadBundle,
   openIndexReaderConnection,
@@ -89,15 +88,6 @@ function immediateWriterAttempt(knowledgeRoot: string): 'busy' | 'entered' {
   }
 }
 
-function expireLeaseFile(knowledgeRoot: string): void {
-  const file = join(knowledgeRoot, '.lease')
-  const lease = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
-  writeFileSync(file, `${JSON.stringify({
-    ...lease,
-    heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
-  })}\n`, 'utf8')
-}
-
 describePosix('SIGSTOP writer-epoch fencing', () => {
   afterAll(cleanupFencingRoots)
 
@@ -158,7 +148,6 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           db.close()
         }
 
-        expireLeaseFile(paths.knowledgeRoot)
         expect(acquireWriterLease(paths.knowledgeRoot, {
           mutationLockTakeoverMs: 0,
         })).toMatchObject({ kind: 'acquired', epoch: 2 })
@@ -337,8 +326,8 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
       }
     }, LEG_TIMEOUT_MS)
 
-    test('refuses a SIGSTOPped drainer taken over after the final authority comparison', async () => {
-      const paths = makeRoot('post-comparison-takeover')
+    test('serializes takeover behind a drainer paused after the final authority comparison', async () => {
+      const paths = makeRoot('post-comparison-held')
       const fixture = singleCandidateFixture()
       const candidateId = fixture.candidates[0]!.candidateId
       writeFixture(paths.fixture, fixture)
@@ -346,7 +335,6 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
       const drainer = startChild('paused-drainer', paths, {
         [FENCING_ENV.pauseAt]: 'afterFinalAuthorityCompare',
       })
-      let daemon: ReturnType<typeof startChild> | undefined
       try {
         const paused = await waitForMarker(
           drainer,
@@ -360,71 +348,32 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           oldEpoch: 1,
         })
         sendSignalWhileAlive(drainer, 'SIGSTOP')
-        const stoppedAtMs = Date.now()
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, LEASE_HEARTBEAT_TTL_MS + 1_500))
-
-        daemon = startChild('reclaiming-daemon', paths)
-        await waitForMarker(daemon, paths.readyMarker, 'takeover daemon readiness')
-        await nudgeDaemon(paths.agentQaRoot)
-        const committed = await waitForMarker(
-          daemon,
-          paths.committedMarker,
-          'takeover daemon commit and post-X heartbeat',
-        )
-        expect(committed).toMatchObject({
-          committed: true,
-          candidateId,
-          holderPid: daemon.child.pid,
-          epoch: 2,
-          diskEpoch: 2,
+        expect(immediateWriterAttempt(paths.knowledgeRoot)).toBe('busy')
+        expect(acquireWriterLease(paths.knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })).toMatchObject({
+          kind: 'held',
+          holder: {
+            pid: drainer.child.pid,
+            leaseId: paused.leaseId,
+            epoch: 1,
+          },
         })
-        expect(Date.now() - stoppedAtMs).toBeLessThan(
-          LEASE_HEARTBEAT_TTL_MS + MUTATION_LOCK_TAKEOVER_MS + 20_000,
-        )
-
-        const beforeResume = readWriterLease(paths.knowledgeRoot)
-        expect(beforeResume.kind).toBe('parsed')
-        if (beforeResume.kind !== 'parsed') throw new Error('takeover daemon lease disappeared')
-        expect(beforeResume.lease).toMatchObject({
-          pid: daemon.child.pid,
-          leaseId: committed.leaseId,
-          epoch: 2,
-        })
-        expect(Date.now() - beforeResume.lease.heartbeatAtMs).toBeLessThan(
-          LEASE_HEARTBEAT_TTL_MS,
-        )
+        expect(drainer.child.exitCode).toBeNull()
+        expect(drainer.child.signalCode).toBeNull()
 
         writeDurableJson(paths.permit, { resume: true })
         sendSignalWhileAlive(drainer, 'SIGCONT')
-        const refusal = await completeChildExpectingRefusal(drainer, paths.drainerReport)
-        expect(refusal).toMatchObject({
+        const report = await completeChildSuccessfully(drainer, paths.drainerReport)
+        expect(report).toMatchObject({
           pauseAt: 'afterFinalAuthorityCompare',
           candidateId,
           oldEpoch: 1,
-          exactInputRetained: true,
           hookCount: 1,
-          beforePublishRenameReached: false,
-          publicationEntryCount: 0,
+          beforePublishRenameReached: true,
+          acceptedKind: 'applied',
+          publicationEntryCount: 1,
         })
-        expect(refusal.outcomes).toEqual([{
-          guard: 'afterFinalAuthorityCompare',
-          kind: 'abandoned-stale-epoch',
-          observedEpoch: 2,
-        }, {
-          guard: 'beforeWork',
-          kind: 'abandoned-stale-epoch',
-          observedEpoch: 2,
-        }])
-        expect(storeDigest(paths.knowledgeRoot)).toBe(committed.storeDigest)
-
-        sendSignalWhileAlive(daemon, 'SIGTERM')
-        const daemonReport = await completeChildSuccessfully(daemon, paths.daemonReport)
-        expect(daemonReport).toMatchObject({ candidateId, exitCode: 0 })
-        expect(inspectDaemonRegistration(paths.agentQaRoot).kind).toBe('absent')
-        expect(readWriterLease(paths.knowledgeRoot).kind).toBe('absent')
-
         const bundles = enumerateBundleDirs(paths.knowledgeRoot)
         expect(bundles).toHaveLength(1)
         expect(loadBundle(bundles[0]!.dir).kind).toBe('loaded')
@@ -434,31 +383,15 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
         } finally {
           db.close()
         }
-        const events = readFileSync(
-          `${paths.agentQaRoot}/${DAEMON_EVENTS_FILE}`,
-          'utf8',
-        ).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
-        const acquiredIndex = findEventAfter(events, -1, (event) =>
-          event.kind === 'lease-acquired'
-          && event.pid === committed.holderPid
-          && event.leaseId === committed.leaseId
-          && event.epoch === committed.epoch)
-        const reclaimedIndex = findEventAfter(events, acquiredIndex, (event) =>
-          event.kind === 'lease-reclaimed'
-          && event.priorHolderPid === paused.pid
-          && event.priorLeaseId === paused.leaseId
-          && event.priorEpoch === paused.oldEpoch
-          && event.newEpoch === committed.epoch)
-        findEventAfter(events, reclaimedIndex, (event) =>
-          event.kind === 'epoch-bump' && event.epoch === committed.epoch)
-        expect(events.filter((event) =>
-          event.kind === 'job-completed' && event.candidateId === candidateId)).toHaveLength(1)
+
+        expect(acquireWriterLease(paths.knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })).toMatchObject({ kind: 'acquired', epoch: 2 })
       } finally {
         if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
           drainer.child.kill('SIGCONT')
         }
         await killIfRunning(drainer.child)
-        if (daemon !== undefined) await killIfRunning(daemon.child)
         expect(existsSync(paths.fixture)).toBe(true)
       }
     }, LEG_TIMEOUT_MS)

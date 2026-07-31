@@ -10,7 +10,6 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
-  linkSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -22,6 +21,7 @@ import {
 } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { z } from 'zod'
 
@@ -34,9 +34,22 @@ export const LEASE_HEARTBEAT_TTL_MS = 30_000
 /** Bounded mutation-lock takeover; retune from operational evidence without adding config. */
 export const MUTATION_LOCK_TAKEOVER_MS = 45_000
 
-const MUTATION_LOCK_FILE = '.writer-lease-mutation-lock'
-const MUTATION_LOCK_POLL_MS = 5
-const MUTATION_LOCK_WAIT = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT))
+/** Authority-store filename is pinned; retune only through a data-migration plan. */
+export const WRITER_AUTHORITY_DB_FILE = '.writer-authority.sqlite'
+
+/**
+ * Provisional SQLite contention window; retune from operational evidence without adding config.
+ *
+ * The takeover deadline remains separate: this short timeout makes each failed write attempt
+ * observable so the contender can apply the lease and verified-termination policy.
+ */
+export const MUTATION_LOCK_BUSY_TIMEOUT_MS = 2_000
+
+const MUTATION_LOCK_TERMINATION_POLL_MS = 10
+const MUTATION_LOCK_TERMINATION_TIMEOUT_MS = 5_000
+const MUTATION_LOCK_TERMINATION_WAIT = new Int32Array(
+  new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+)
 
 const writerLeaseSchema = z
   .object({
@@ -163,8 +176,8 @@ function epochPath(knowledgeRoot: string): string {
   return join(knowledgeRoot, EPOCH_FILE)
 }
 
-function mutationLockPath(knowledgeRoot: string): string {
-  return join(knowledgeRoot, 'memory', 'index', MUTATION_LOCK_FILE)
+function writerAuthorityDbPath(knowledgeRoot: string): string {
+  return join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
 }
 
 function bestEffortFsyncDirectory(dir: string): void {
@@ -194,7 +207,7 @@ interface MutationLockOwner {
   generationToken: string
 }
 
-interface MutationLockOptions {
+export interface MutationLockOptions {
   afterMutationLockAcquired?: () => void
   mutationLockTakeoverMs?: number
 }
@@ -209,37 +222,22 @@ export interface CurrentWriterAuthorityHooks extends MutationLockOptions {
   afterFinalAuthorityCompare?: () => void
 }
 
-function readMutationLockOwner(lockFile: string): MutationLockOwner | undefined {
-  try {
-    const parsed = JSON.parse(readFileSync(lockFile, 'utf8')) as unknown
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
-    const value = parsed as Record<string, unknown>
-    return typeof value.pid === 'number'
-      && Number.isSafeInteger(value.pid)
-      && value.pid > 0
-      && typeof value.acquiredAtMs === 'number'
-      && Number.isSafeInteger(value.acquiredAtMs)
-      && value.acquiredAtMs >= 0
-      && typeof value.generationToken === 'string'
-      && value.generationToken !== ''
-      ? {
-          pid: value.pid,
-          acquiredAtMs: value.acquiredAtMs,
-          generationToken: value.generationToken,
-        }
-      : undefined
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
+class MutationLockBusyError extends Error {
+  override readonly name = 'MutationLockBusyError'
+  readonly owner?: MutationLockOwner
+
+  constructor(owner?: MutationLockOwner) {
+    super('writer lease mutation lock is busy')
+    this.owner = owner
   }
 }
 
-function waitForMutationLock(): void {
-  Atomics.wait(MUTATION_LOCK_WAIT, 0, 0, MUTATION_LOCK_POLL_MS)
+class MutationLockGenerationLostError extends Error {
+  override readonly name = 'MutationLockGenerationLostError'
 }
 
 function mutationLockNowMs(): number {
-  return new Date().getTime()
+  return Date.now()
 }
 
 function processIsAlive(pid: number): boolean {
@@ -254,107 +252,250 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
-function writeMutationLockOwner(file: string, owner: MutationLockOwner): void {
-  const fd = openSync(file, 'wx')
-  try {
-    writeFileSync(fd, `${JSON.stringify(owner)}\n`, 'utf8')
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
+function isSqliteBusy(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ERR_SQLITE_ERROR'
+    && /database is (?:locked|busy)/i.test((error as Error).message)
+}
+
+function openWriterAuthorityDb(knowledgeRoot: string): DatabaseSync {
+  mkdirSync(knowledgeRoot, { recursive: true })
+  const db = new DatabaseSync(writerAuthorityDbPath(knowledgeRoot), {
+    timeout: MUTATION_LOCK_BUSY_TIMEOUT_MS,
+  })
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec(`PRAGMA busy_timeout = ${MUTATION_LOCK_BUSY_TIMEOUT_MS}`)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mutation_lock (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      generation_token TEXT NOT NULL,
+      pid INTEGER NOT NULL CHECK (pid > 0),
+      acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0)
+    ) STRICT
+  `)
+  return db
+}
+
+function parseMutationLockOwner(value: unknown): MutationLockOwner | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const row = value as Record<string, unknown>
+  return typeof row.pid === 'number'
+    && Number.isSafeInteger(row.pid)
+    && row.pid > 0
+    && typeof row.acquired_at_ms === 'number'
+    && Number.isSafeInteger(row.acquired_at_ms)
+    && row.acquired_at_ms >= 0
+    && typeof row.generation_token === 'string'
+    && row.generation_token !== ''
+    ? {
+        pid: row.pid,
+        acquiredAtMs: row.acquired_at_ms,
+        generationToken: row.generation_token,
+      }
+    : undefined
+}
+
+function readMutationLockOwner(db: DatabaseSync): MutationLockOwner | undefined {
+  return parseMutationLockOwner(db.prepare(`
+    SELECT generation_token, pid, acquired_at_ms
+    FROM mutation_lock
+    WHERE id = 1
+  `).get())
 }
 
 function mutationLockGenerationIsCurrent(
-  lockFile: string,
+  db: DatabaseSync,
   generationToken: string,
 ): boolean {
-  return readMutationLockOwner(lockFile)?.generationToken === generationToken
+  return readMutationLockOwner(db)?.generationToken === generationToken
 }
 
-function takeOverMutationLock(
-  lockFile: string,
-  lockParent: string,
+function compareAndSwapMutationLock(
+  db: DatabaseSync,
   expected: MutationLockOwner,
+  replacement: MutationLockOwner,
 ): boolean {
-  const quarantine = `${lockFile}.reclaimed-${expected.generationToken}-${randomUUID()}`
-  try {
-    renameSync(lockFile, quarantine)
-    bestEffortFsyncDirectory(lockParent)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
-    throw error
-  }
+  const result = db.prepare(`
+    UPDATE mutation_lock
+    SET generation_token = ?, pid = ?, acquired_at_ms = ?
+    WHERE id = 1 AND generation_token = ?
+  `).run(
+    replacement.generationToken,
+    replacement.pid,
+    replacement.acquiredAtMs,
+    expected.generationToken,
+  )
+  return result.changes === 1
+}
 
-  const reclaimed = readMutationLockOwner(quarantine)
-  if (reclaimed?.generationToken !== expected.generationToken) {
-    try {
-      renameSync(quarantine, lockFile)
-      bestEffortFsyncDirectory(lockParent)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      rmSync(quarantine, { force: true })
-    }
-    return false
+function waitForVerifiedProcessExit(pid: number): boolean {
+  const deadline = mutationLockNowMs() + MUTATION_LOCK_TERMINATION_TIMEOUT_MS
+  while (processIsAlive(pid)) {
+    if (mutationLockNowMs() >= deadline) return false
+    Atomics.wait(
+      MUTATION_LOCK_TERMINATION_WAIT,
+      0,
+      0,
+      MUTATION_LOCK_TERMINATION_POLL_MS,
+    )
   }
-
-  rmSync(quarantine, { force: true })
-  bestEffortFsyncDirectory(lockParent)
   return true
+}
+
+function terminateExactMutationLockOwner(owner: MutationLockOwner): boolean {
+  if (owner.pid === process.pid) return false
+  try {
+    process.kill(owner.pid, 'SIGKILL')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code !== 'ESRCH') {
+      if (code === 'EPERM') return false
+      throw error
+    }
+  }
+  return waitForVerifiedProcessExit(owner.pid)
+}
+
+function leasePermitsEscalation(knowledgeRoot: string, owner: MutationLockOwner): boolean {
+  if (!processIsAlive(owner.pid)) return true
+  const lease = readWriterLease(knowledgeRoot)
+  return lease.kind !== 'parsed' || isLeaseStale(lease.lease, mutationLockNowMs())
+}
+
+function tryEscalatedMutationLockTakeover(
+  db: DatabaseSync,
+  knowledgeRoot: string,
+  expected: MutationLockOwner,
+  replacement: MutationLockOwner,
+  takeoverMs: number,
+): boolean {
+  if (mutationLockNowMs() - expected.acquiredAtMs < takeoverMs) return false
+  if (!leasePermitsEscalation(knowledgeRoot, expected)) return false
+  if (processIsAlive(expected.pid) && !terminateExactMutationLockOwner(expected)) return false
+
+  const observedAfterTermination = readMutationLockOwner(db)
+  if (observedAfterTermination?.generationToken !== expected.generationToken) return false
+  return compareAndSwapMutationLock(db, expected, replacement)
+}
+
+function claimMutationLock(
+  db: DatabaseSync,
+  knowledgeRoot: string,
+  owner: MutationLockOwner,
+  takeoverMs: number,
+): void {
+  try {
+    const inserted = db.prepare(`
+      INSERT INTO mutation_lock (id, generation_token, pid, acquired_at_ms)
+      VALUES (1, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING
+    `).run(owner.generationToken, owner.pid, owner.acquiredAtMs)
+    if (inserted.changes === 1) return
+  } catch (error) {
+    if (!isSqliteBusy(error)) throw error
+    const current = readMutationLockOwner(db)
+    if (
+      current !== undefined
+      && tryEscalatedMutationLockTakeover(
+        db,
+        knowledgeRoot,
+        current,
+        owner,
+        takeoverMs,
+      )
+    ) {
+      return
+    }
+    throw new MutationLockBusyError(current)
+  }
+
+  const current = readMutationLockOwner(db)
+  if (current === undefined) {
+    throw new MutationLockBusyError()
+  }
+
+  const ownerIsDead = !processIsAlive(current.pid)
+  const ownerPastDeadline =
+    mutationLockNowMs() - current.acquiredAtMs >= takeoverMs
+  if (!ownerIsDead && !ownerPastDeadline) {
+    throw new MutationLockBusyError(current)
+  }
+
+  try {
+    if (compareAndSwapMutationLock(db, current, owner)) return
+  } catch (error) {
+    if (!isSqliteBusy(error)) throw error
+    if (
+      tryEscalatedMutationLockTakeover(
+        db,
+        knowledgeRoot,
+        current,
+        owner,
+        takeoverMs,
+      )
+    ) {
+      return
+    }
+    throw new MutationLockBusyError(current)
+  }
+  throw new MutationLockBusyError(readMutationLockOwner(db))
+}
+
+function releaseMutationLock(db: DatabaseSync, generationToken: string): void {
+  db.prepare(`
+    DELETE FROM mutation_lock
+    WHERE id = 1 AND generation_token = ?
+  `).run(generationToken)
 }
 
 function withMutationLock<T>(
   knowledgeRoot: string,
-  mutate: (generationToken: string) => T,
+  mutate: (generationToken: string, db: DatabaseSync) => T,
   options: MutationLockOptions = {},
 ): T {
-  const lockFile = mutationLockPath(knowledgeRoot)
-  const lockParent = dirname(lockFile)
-  mkdirSync(lockParent, { recursive: true })
+  const db = openWriterAuthorityDb(knowledgeRoot)
   const owner: MutationLockOwner = {
     pid: process.pid,
     acquiredAtMs: mutationLockNowMs(),
     generationToken: randomUUID(),
   }
-  const ownerFile = `${lockFile}.owner-${owner.generationToken}`
-  writeMutationLockOwner(ownerFile, owner)
-
-  let acquired = false
+  const takeoverMs = options.mutationLockTakeoverMs ?? MUTATION_LOCK_TAKEOVER_MS
+  let claimed = false
+  let transactionOpen = false
   try {
-    while (!acquired) {
+    claimMutationLock(db, knowledgeRoot, owner, takeoverMs)
+    claimed = true
+    try {
+      db.exec('BEGIN IMMEDIATE')
+      transactionOpen = true
+    } catch (error) {
+      if (isSqliteBusy(error)) throw new MutationLockBusyError(readMutationLockOwner(db))
+      throw error
+    }
+
+    if (!mutationLockGenerationIsCurrent(db, owner.generationToken)) {
+      throw new MutationLockGenerationLostError()
+    }
+    options.afterMutationLockAcquired?.()
+    const result = mutate(owner.generationToken, db)
+    db.exec('COMMIT')
+    transactionOpen = false
+    return result
+  } finally {
+    if (transactionOpen) {
       try {
-        linkSync(ownerFile, lockFile)
-        bestEffortFsyncDirectory(lockParent)
-        acquired = true
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-        const current = readMutationLockOwner(lockFile)
-        if (current === undefined) {
-          if (!existsSync(lockFile)) continue
-          throw new Error('writer lease mutation lock owner is malformed')
-        }
-        const takeoverMs = options.mutationLockTakeoverMs ?? MUTATION_LOCK_TAKEOVER_MS
-        if (
-          !processIsAlive(current.pid)
-          || mutationLockNowMs() - current.acquiredAtMs >= takeoverMs
-        ) {
-          takeOverMutationLock(lockFile, lockParent, current)
-          continue
-        }
-        waitForMutationLock()
+        db.exec('ROLLBACK')
+      } catch {
+        // The original failure is authoritative.
       }
     }
-
-    options.afterMutationLockAcquired?.()
-    return mutate(owner.generationToken)
-  } finally {
-    if (
-      acquired
-      && mutationLockGenerationIsCurrent(lockFile, owner.generationToken)
-    ) {
-      rmSync(lockFile, { force: true })
-      bestEffortFsyncDirectory(lockParent)
+    if (claimed) {
+      try {
+        releaseMutationLock(db, owner.generationToken)
+      } catch {
+        // A crashed/contended cleanup leaves a CAS-recoverable row.
+      }
     }
-    rmSync(ownerFile, { force: true })
+    db.close()
   }
 }
 
@@ -500,40 +641,63 @@ export function acquireWriterLease(
   hooks?: MutationLockOptions,
 ): AcquireWriterLeaseOutcome {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
-  return withMutationLock(knowledgeRoot, () => {
-    let observedEpoch: number
-    try {
-      observedEpoch = readEpoch(knowledgeRoot)
-    } catch (error) {
-      if (error instanceof CorruptEpochStateError) {
-        return { kind: 'refused' as const, reason: 'corrupt-epoch-state' as const, error }
-      }
-      throw error
+  try {
+    readEpoch(knowledgeRoot)
+  } catch (error) {
+    if (error instanceof CorruptEpochStateError) {
+      return { kind: 'refused', reason: 'corrupt-epoch-state', error }
     }
-    const current = readWriterLease(knowledgeRoot)
-    const nowMs = Date.now()
-    if (current.kind === 'parsed' && !isLeaseStale(current.lease, nowMs)) {
-      return { kind: 'held', holder: current.lease }
-    }
-    const reclaimed = current.kind === 'parsed' ? current.lease : undefined
+    throw error
+  }
+  const beforeLock = readWriterLease(knowledgeRoot)
+  if (
+    beforeLock.kind === 'parsed'
+    && !isLeaseStale(beforeLock.lease, mutationLockNowMs())
+  ) {
+    return { kind: 'held', holder: beforeLock.lease }
+  }
 
-    const epoch = nextEpoch(observedEpoch)
-    const holder = writerLeaseSchema.parse({
-      leaseId: randomUUID(),
-      pid: process.pid,
-      epoch,
-      heartbeatAtMs: nowMs,
-    })
-    atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
-    sweepStagedEpochsBefore(knowledgeRoot, epoch)
-    atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
-    return {
-      kind: 'acquired',
-      leaseId: holder.leaseId,
-      epoch: holder.epoch,
-      ...(reclaimed === undefined ? {} : { reclaimed }),
-    }
-  }, hooks)
+  try {
+    return withMutationLock(knowledgeRoot, () => {
+      let observedEpoch: number
+      try {
+        observedEpoch = readEpoch(knowledgeRoot)
+      } catch (error) {
+        if (error instanceof CorruptEpochStateError) {
+          return { kind: 'refused' as const, reason: 'corrupt-epoch-state' as const, error }
+        }
+        throw error
+      }
+      const current = readWriterLease(knowledgeRoot)
+      const nowMs = Date.now()
+      if (current.kind === 'parsed' && !isLeaseStale(current.lease, nowMs)) {
+        return { kind: 'held', holder: current.lease }
+      }
+      const reclaimed = current.kind === 'parsed' ? current.lease : undefined
+
+      const epoch = nextEpoch(observedEpoch)
+      const holder = writerLeaseSchema.parse({
+        leaseId: randomUUID(),
+        pid: process.pid,
+        epoch,
+        heartbeatAtMs: nowMs,
+      })
+      atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
+      sweepStagedEpochsBefore(knowledgeRoot, epoch)
+      atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
+      return {
+        kind: 'acquired',
+        leaseId: holder.leaseId,
+        epoch: holder.epoch,
+        ...(reclaimed === undefined ? {} : { reclaimed }),
+      }
+    }, hooks)
+  } catch (error) {
+    if (!(error instanceof MutationLockBusyError)) throw error
+    const current = readWriterLease(knowledgeRoot)
+    if (current.kind === 'parsed') return { kind: 'held', holder: current.lease }
+    throw error
+  }
 }
 
 /**
@@ -549,21 +713,30 @@ export function withCurrentWriterAuthority<T>(
 ): T {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
   const fullAuthority: WriterLeaseAuthority = { knowledgeRoot, ...authority }
-  return withMutationLock(knowledgeRoot, (generationToken) => {
-    const observedEpoch = readCurrentEpoch(knowledgeRoot)
-    if (observedEpoch !== authority.epoch) {
-      throw new WriterAuthorityLostError(
-        fullAuthority,
-        'epoch-mismatch-before-heartbeat',
-        observedEpoch,
-      )
-    }
-    hooks.afterFinalAuthorityCompare?.()
+  try {
+    return withMutationLock(knowledgeRoot, (generationToken, db) => {
+      const observedEpoch = readCurrentEpoch(knowledgeRoot)
+      if (observedEpoch !== authority.epoch) {
+        throw new WriterAuthorityLostError(
+          fullAuthority,
+          'epoch-mismatch-before-heartbeat',
+          observedEpoch,
+        )
+      }
+      hooks.afterFinalAuthorityCompare?.()
+      if (!mutationLockGenerationIsCurrent(db, generationToken)) {
+        throw new WriterAuthorityLostError(
+          fullAuthority,
+          'mutation-lock-generation-lost',
+          readCurrentEpoch(knowledgeRoot),
+        )
+      }
+      return mutate()
+    }, hooks)
+  } catch (error) {
     if (
-      !mutationLockGenerationIsCurrent(
-        mutationLockPath(knowledgeRoot),
-        generationToken,
-      )
+      error instanceof MutationLockBusyError
+      || error instanceof MutationLockGenerationLostError
     ) {
       throw new WriterAuthorityLostError(
         fullAuthority,
@@ -571,8 +744,8 @@ export function withCurrentWriterAuthority<T>(
         readCurrentEpoch(knowledgeRoot),
       )
     }
-    return mutate()
-  }, hooks)
+    throw error
+  }
 }
 
 /** Refresh the matching current-epoch holder; reclaim races return a typed refusal. */

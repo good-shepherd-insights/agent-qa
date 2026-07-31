@@ -219,150 +219,98 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(mutations).toBe(1)
   })
 
-  it('refuses a generation reclaimed after the final authority comparison', () => {
+  it('keeps the current generation non-stealable after the final authority comparison', () => {
     const authority = acquireAuthority()
-    let successorEpoch = 0
-    let successorId = ''
-    const staleStage = stageBundle(config(authority), input('stale-drainer'))
-    expect(staleStage.kind).toBe('staged')
-    if (staleStage.kind !== 'staged') throw new Error('expected stale staged bundle')
+    const staged = stageBundle(config(authority), input('current-drainer'))
+    expect(staged.kind).toBe('staged')
+    if (staged.kind !== 'staged') throw new Error('expected staged bundle')
+    let whileHeld: ReturnType<typeof acquireWriterLease> | undefined
 
-    expect(() =>
-      expectedSurface.withCurrentWriterAuthority(
-        knowledgeRoot,
-        authority,
-        () => finalizeStagedBundle(staleStage),
-        {
-          mutationLockTakeoverMs: 0,
-          afterFinalAuthorityCompare: () => {
-            makeStale()
-            const successor = acquireWithDeadline(knowledgeRoot, {
-              mutationLockTakeoverMs: 0,
-            })
-            expect(successor.kind).toBe('acquired')
-            if (successor.kind !== 'acquired') throw new Error('expected successor takeover')
-            successorEpoch = successor.epoch
-            const successorAuthority = {
-              leaseId: successor.leaseId,
-              epoch: successor.epoch,
-            }
-            const successorStage = stageBundle(
-              config(successorAuthority),
-              input('successor-daemon'),
-            )
-            expect(successorStage.kind).toBe('staged')
-            if (successorStage.kind !== 'staged') {
-              throw new Error('expected successor staged bundle')
-            }
-            const published = expectedSurface.withCurrentWriterAuthority(
-              knowledgeRoot,
-              successorAuthority,
-              () => finalizeStagedBundle(successorStage),
-              { mutationLockTakeoverMs: 0 },
-            )
-            expect(published.kind).toBe('published')
-            if (published.kind !== 'published') {
-              throw new Error('expected successor publication')
-            }
-            successorId = published.id
-            publicSurface.applyIndexDeltaForBundle({
-              knowledgeRoot,
-              product: PRODUCT,
-              bundleId: published.id,
-            })
-          },
-        },
-      ),
-    ).toThrow(WriterAuthorityLostError)
-
-    expect(successorEpoch).toBe(2)
-    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('2\n')
-    const bundlesDir = join(
+    const published = expectedSurface.withCurrentWriterAuthority(
       knowledgeRoot,
-      'memory',
-      slugBranch(PRODUCT),
-      'bundles',
+      authority,
+      () => finalizeStagedBundle(staged),
+      {
+        mutationLockTakeoverMs: 0,
+        afterFinalAuthorityCompare: () => {
+          whileHeld = acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
+        },
+      },
     )
-    expect(readdirSync(bundlesDir).filter((entry) => entry !== '.staging')).toEqual([
-      successorId,
-    ])
+
+    expect(whileHeld).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(published.kind).toBe('published')
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('1\n')
+    if (published.kind !== 'published') throw new Error('expected current publication')
+    publicSurface.applyIndexDeltaForBundle({
+      knowledgeRoot,
+      product: PRODUCT,
+      bundleId: published.id,
+    })
     const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
     try {
       expect(
         reader.db.prepare('SELECT bundle_id FROM records').all(),
-      ).toEqual([{ bundle_id: successorId }])
+      ).toEqual([{ bundle_id: published.id }])
     } finally {
       reader.db.close()
     }
   })
 
-  it('takes over a live mutation-lock generation only after its bounded deadline', () => {
+  it('does not replace a live lock row when a fresh holder re-enters acquisition', () => {
     const authority = acquireAuthority()
-    const lockFile = join(
+    const dbFile = join(knowledgeRoot, '.writer-authority.sqlite')
+    let before: Record<string, unknown> | undefined
+    let after: Record<string, unknown> | undefined
+    let mutationCount = 0
+
+    expectedSurface.withCurrentWriterAuthority(
       knowledgeRoot,
-      'memory',
-      'index',
-      '.writer-lease-mutation-lock',
-    )
-    const takeoverMs = 35
-    let originalOwner: Record<string, unknown> | undefined
-    let successorOwner: Record<string, unknown> | undefined
-    let successorMutationAtMs = 0
-    let staleMutationCount = 0
-    let refusal: unknown
-
-    try {
-      expectedSurface.withCurrentWriterAuthority(
-        knowledgeRoot,
-        authority,
-        () => ++staleMutationCount,
-        {
-          mutationLockTakeoverMs: takeoverMs,
-          afterMutationLockAcquired: () => {
-            originalOwner = JSON.parse(readFileSync(lockFile, 'utf8')) as Record<
-              string,
-              unknown
-            >
-            expectedSurface.withCurrentWriterAuthority(
-              knowledgeRoot,
-              authority,
-              () => {
-                successorMutationAtMs = Date.now()
-                successorOwner = JSON.parse(readFileSync(lockFile, 'utf8')) as Record<
-                  string,
-                  unknown
-                >
-              },
-              { mutationLockTakeoverMs: takeoverMs },
-            )
-          },
+      authority,
+      () => ++mutationCount,
+      {
+        mutationLockTakeoverMs: 0,
+        afterMutationLockAcquired: () => {
+          const reader = new DatabaseSync(dbFile, { readOnly: true })
+          try {
+            before = reader.prepare('SELECT * FROM mutation_lock WHERE id = 1').get()
+            expect(acquireWithDeadline(knowledgeRoot, {
+              mutationLockTakeoverMs: 0,
+            })).toMatchObject({ kind: 'held' })
+            after = reader.prepare('SELECT * FROM mutation_lock WHERE id = 1').get()
+          } finally {
+            reader.close()
+          }
         },
-      )
-    } catch (error) {
-      refusal = error
-    }
-
-    expect(originalOwner).toMatchObject({ pid: process.pid })
-    expect(successorOwner).toMatchObject({ pid: process.pid })
-    expect(successorOwner?.generationToken).not.toBe(originalOwner?.generationToken)
-    expect(successorMutationAtMs - Number(originalOwner?.acquiredAtMs)).toBeGreaterThanOrEqual(
-      takeoverMs,
+      },
     )
-    expect(staleMutationCount).toBe(0)
-    expect(refusal).toBeInstanceOf(WriterAuthorityLostError)
-    expect(refusal).toMatchObject({ reason: 'mutation-lock-generation-lost' })
+
+    expect(mutationCount).toBe(1)
+    expect(before).toEqual(after)
+    expect(before).toMatchObject({ pid: process.pid })
   })
 
   it('recovers a dead-PID mutation-lock owner immediately without waiting for the deadline', () => {
     const authority = acquireAuthority()
-    const lockParent = join(knowledgeRoot, 'memory', 'index')
-    const lockFile = join(lockParent, '.writer-lease-mutation-lock')
-    mkdirSync(lockParent, { recursive: true })
-    writeFileSync(lockFile, `${JSON.stringify({
-      pid: 2_147_483_647,
-      acquiredAtMs: Date.now(),
-      generationToken: 'dead-owner-generation',
-    })}\n`, 'utf8')
+    const db = new DatabaseSync(join(knowledgeRoot, '.writer-authority.sqlite'))
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS mutation_lock (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        generation_token TEXT NOT NULL,
+        pid INTEGER NOT NULL CHECK (pid > 0),
+        acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0)
+      ) STRICT
+    `)
+    db.prepare(`
+      INSERT INTO mutation_lock (id, generation_token, pid, acquired_at_ms)
+      VALUES (1, ?, ?, ?)
+    `).run('dead-owner-generation', 2_147_483_647, Date.now())
+    db.close()
     const startedAtMs = Date.now()
 
     const result = expectedSurface.withCurrentWriterAuthority(
@@ -374,7 +322,14 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
     expect(result).toBe('recovered')
     expect(Date.now() - startedAtMs).toBeLessThan(1_000)
-    expect(existsSync(lockFile)).toBe(false)
+    const verifier = new DatabaseSync(join(knowledgeRoot, '.writer-authority.sqlite'), {
+      readOnly: true,
+    })
+    try {
+      expect(verifier.prepare('SELECT * FROM mutation_lock').get()).toBeUndefined()
+    } finally {
+      verifier.close()
+    }
   })
 
   it('exports the pinned production mutation-lock takeover bound without a config seam', () => {

@@ -200,8 +200,8 @@ export async function runPausedDrainerFixture(): Promise<void> {
           blockSynchronouslyUntil(permit)
         },
         beforePublishRename: () => {
+          originalHooks?.beforePublishRename?.()
           beforePublishRenameReached = true
-          throw new Error('stale drainer reached beforePublishRename')
         },
       }
     } else {
@@ -236,7 +236,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
       checkpoint: retained.checkpoint === checkpoint,
     }
     firstOutcome = commitCurationDelta(retained.deps, retained.job, retained.checkpoint)
-    if (!control) {
+    if (!control && pauseAt === 'afterIntentWritten') {
       firstSnapshot = mutationSnapshot(knowledgeRoot, agentQaRoot, candidateId)
       secondOutcome = commitCurationDelta(retained.deps, retained.job, retained.checkpoint)
       secondSnapshot = mutationSnapshot(knowledgeRoot, agentQaRoot, candidateId)
@@ -272,10 +272,13 @@ export async function runPausedDrainerFixture(): Promise<void> {
       })
       return
     }
-    if (pauseAt === 'publish-rename') {
+    if (
+      pauseAt === 'publish-rename'
+      || pauseAt === 'afterFinalAuthorityCompare'
+    ) {
       if (retained === undefined || firstOutcome?.kind !== 'applied') {
         throw new Error(
-          `publish-rename holder did not complete: ${JSON.stringify(firstOutcome)}`,
+          `${pauseAt} holder did not complete: ${JSON.stringify(firstOutcome)}`,
         )
       }
       writeDurableJson(reportFile, {
