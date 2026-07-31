@@ -1,4 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import {
+  execFileSync,
+  spawn,
+  type ChildProcessWithoutNullStreams,
+} from 'node:child_process'
 import {
   existsSync,
   mkdtempSync,
@@ -160,6 +164,117 @@ function spawnClaimedLeaseAcquirer(
       stdio: ['pipe', 'pipe', 'pipe'],
     },
   )
+}
+
+/**
+ * An unrelated process that merely occupies a pid.
+ *
+ * CR-04's threat is a crashed owner whose pid is later handed to a stranger. This child never
+ * touches the authority store, so anything that reaches it arrived purely because a durable row
+ * still names its pid.
+ */
+function spawnIdleSurrogate(exitPermitFile: string): ChildProcessWithoutNullStreams {
+  const source = `
+    const { existsSync } = await import('node:fs');
+    const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    process.stdout.write('surrogate-alive\\n');
+    while (!existsSync(process.env.AGENT_QA_LEASE_TEST_EXIT_PERMIT)) {
+      Atomics.wait(wait, 0, 0, 10);
+    }
+  `
+  return spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    {
+      env: { ...process.env, AGENT_QA_LEASE_TEST_EXIT_PERMIT: exitPermitFile },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+}
+
+/**
+ * Occupy the authority store's write transaction without claiming the lock through the module.
+ *
+ * The start permit exists so the test can seed a row naming THIS child's pid before the child
+ * takes the write lock; the release permit ends the transaction and the child then exits.
+ */
+function spawnAuthorityDbBlocker(
+  dbPath: string,
+  startPermitFile: string,
+  releasePermitFile: string,
+): ChildProcessWithoutNullStreams {
+  const source = `
+    const { existsSync } = await import('node:fs');
+    const { DatabaseSync } = await import('node:sqlite');
+    const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    while (!existsSync(process.env.AGENT_QA_LEASE_TEST_START_PERMIT)) {
+      Atomics.wait(wait, 0, 0, 10);
+    }
+    const db = new DatabaseSync(process.env.AGENT_QA_LEASE_TEST_DB);
+    db.exec('PRAGMA busy_timeout = 250');
+    db.exec('BEGIN IMMEDIATE');
+    process.stdout.write('blocking\\n');
+    while (!existsSync(process.env.AGENT_QA_LEASE_TEST_RELEASE_PERMIT)) {
+      Atomics.wait(wait, 0, 0, 10);
+    }
+    db.exec('ROLLBACK');
+    db.close();
+  `
+  return spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    {
+      env: {
+        ...process.env,
+        AGENT_QA_LEASE_TEST_DB: dbPath,
+        AGENT_QA_LEASE_TEST_START_PERMIT: startPermitFile,
+        AGENT_QA_LEASE_TEST_RELEASE_PERMIT: releasePermitFile,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+}
+
+function collectStdout(child: ChildProcessWithoutNullStreams): () => string {
+  let output = ''
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => { output += chunk })
+  return () => output
+}
+
+function lastJsonLine(text: string): unknown {
+  const lines = text.split('\n').filter((line) => line.trim() !== '')
+  return JSON.parse(lines[lines.length - 1] ?? '')
+}
+
+function processIsAliveInTest(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Read the OS-reported start time of a pid WITHOUT going through the module under test.
+ *
+ * The incarnation guard must be anchored outside the lock module's own vocabulary, so these cases
+ * compare the recorded token against an independently observed kernel fact rather than against the
+ * module's own helper.
+ */
+function observedProcessStartToken(pid: number): string {
+  if (process.platform === 'linux') {
+    const raw = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const fields = raw.slice(raw.lastIndexOf(')') + 1).trim().split(/\s+/)
+    const starttime = fields[19]
+    if (starttime === undefined) throw new Error(`no starttime field for pid ${pid}`)
+    return starttime
+  }
+  const observed = execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+    encoding: 'utf8',
+  }).trim()
+  if (observed === '') throw new Error(`no start time reported for pid ${pid}`)
+  return observed
 }
 
 function waitForOutput(child: ChildProcessWithoutNullStreams, expected: string): Promise<void> {
@@ -884,4 +999,356 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
 
     expect(leaseOnDisk()).toMatchObject({ pid: contenderChild.pid, epoch: 2 })
   }, 15_000)
+})
+
+/**
+ * CR-04: the mutation-lock row's generation token authenticates the ROW, not the process that
+ * currently occupies the recorded pid. After a crash plus pid reuse, escalation would otherwise be
+ * a local arbitrary-process-termination primitive.
+ *
+ * The lock table's shape is written out literally here on purpose: these cases pin the durable
+ * contract a contender reads, independently of whatever the module names its own column.
+ */
+const LEGACY_MUTATION_LOCK_TABLE = `
+  CREATE TABLE IF NOT EXISTS mutation_lock (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    generation_token TEXT NOT NULL,
+    pid INTEGER NOT NULL CHECK (pid > 0),
+    acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0)
+  ) STRICT
+`
+
+/** A token no live process can ever report: the recorded owner is provably not this pid's tenant. */
+const DEAD_OWNER_INCARNATION = 'incarnation-of-a-process-that-already-died'
+
+describe('mutation-lock owner process incarnation (CR-04)', () => {
+  let root: string
+  let knowledgeRoot: string
+  const spawned: ChildProcessWithoutNullStreams[] = []
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-incarnation-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+  })
+
+  afterEach(() => {
+    for (const child of spawned.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+        try {
+          process.kill(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone; the leg's own assertions own the outcome.
+        }
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function track(child: ChildProcessWithoutNullStreams): ChildProcessWithoutNullStreams {
+    spawned.push(child)
+    return child
+  }
+
+  function authorityDbPath(): string {
+    return join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+  }
+
+  function mutationLockColumnNames(): string[] {
+    const db = new DatabaseSync(authorityDbPath(), { readOnly: true })
+    try {
+      return (
+        db.prepare("SELECT name FROM pragma_table_info('mutation_lock')").all() as {
+          name: string
+        }[]
+      ).map((column) => column.name)
+    } finally {
+      db.close()
+    }
+  }
+
+  function readMutationLockRow(): Record<string, unknown> | undefined {
+    const db = new DatabaseSync(authorityDbPath(), { readOnly: true })
+    try {
+      return db.prepare('SELECT * FROM mutation_lock WHERE id = 1').get() as
+        | Record<string, unknown>
+        | undefined
+    } finally {
+      db.close()
+    }
+  }
+
+  function seedMutationLockRow(row: {
+    pid: number
+    acquiredAtMs: number
+    generationToken: string
+    incarnation?: string | null
+    legacyShape?: boolean
+  }): void {
+    mkdirSync(knowledgeRoot, { recursive: true })
+    const db = new DatabaseSync(authorityDbPath())
+    try {
+      db.exec('PRAGMA journal_mode = WAL')
+      db.exec(LEGACY_MUTATION_LOCK_TABLE)
+      const columns = (
+        db.prepare("SELECT name FROM pragma_table_info('mutation_lock')").all() as {
+          name: string
+        }[]
+      ).map((column) => column.name)
+      if (row.legacyShape === true) {
+        db.prepare(`
+          INSERT OR REPLACE INTO mutation_lock (id, generation_token, pid, acquired_at_ms)
+          VALUES (1, ?, ?, ?)
+        `).run(row.generationToken, row.pid, row.acquiredAtMs)
+        return
+      }
+      if (!columns.includes('incarnation')) {
+        db.exec('ALTER TABLE mutation_lock ADD COLUMN incarnation TEXT')
+      }
+      db.prepare(`
+        INSERT OR REPLACE INTO mutation_lock (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, ?, ?, ?, ?)
+      `).run(row.generationToken, row.pid, row.acquiredAtMs, row.incarnation ?? null)
+    } finally {
+      db.close()
+    }
+  }
+
+  /** Occupy the authority store exactly as a long governed mutation does, from this process. */
+  function holdAuthorityTransaction(): () => void {
+    const db = new DatabaseSync(authorityDbPath())
+    db.exec('PRAGMA busy_timeout = 250')
+    db.exec('BEGIN IMMEDIATE')
+    let open = true
+    return () => {
+      if (!open) return
+      open = false
+      try {
+        db.exec('ROLLBACK')
+      } finally {
+        db.close()
+      }
+    }
+  }
+
+  function leaseOnDisk(): WriterLease {
+    return JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')) as WriterLease
+  }
+
+  it('exports a process-incarnation helper anchored on the OS-reported start time', () => {
+    const surface = publicWriterSurface as unknown as Record<string, unknown>
+    expect(surface.resolveProcessIncarnation).toBeTypeOf('function')
+    const resolve = surface.resolveProcessIncarnation as (pid: number) => string | undefined
+
+    const own = resolve(process.pid)
+    expect(own).toBeTypeOf('string')
+    expect(own).toContain(observedProcessStartToken(process.pid))
+    expect(resolve(-1)).toBeUndefined()
+    expect(resolve(0)).toBeUndefined()
+    expect(resolve(2 ** 30)).toBeUndefined()
+  })
+
+  it('leaves an unrelated process occupying a reused pid unsignaled while the row is reclaimed', async () => {
+    const exitPermit = join(root, 'surrogate.exit')
+    const surrogate = track(spawnIdleSurrogate(exitPermit))
+    const surrogateExit = observeExit(surrogate)
+    await waitForOutput(surrogate, 'surrogate-alive\n')
+    if (surrogate.pid === undefined) throw new Error('surrogate never started')
+
+    seedMutationLockRow({
+      pid: surrogate.pid,
+      acquiredAtMs: Date.now() - 60_000,
+      generationToken: 'crashed-original-generation',
+      incarnation: DEAD_OWNER_INCARNATION,
+    })
+
+    // A transient third-party writer is what pushes the contender onto the escalation path at all.
+    const releaseBlockingWrite = holdAuthorityTransaction()
+    const contender = track(spawnLeaseAcquirer(knowledgeRoot, 0, 0))
+    const contenderStdout = collectStdout(contender)
+    const contenderExit = observeExit(contender)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 3_000))
+
+      expect(surrogate.signalCode).toBeNull()
+      expect(surrogate.exitCode).toBeNull()
+      expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+    } finally {
+      releaseBlockingWrite()
+    }
+
+    expect(await contenderExit).toMatchObject({ code: 0, signal: null })
+    expect(lastJsonLine(contenderStdout())).toMatchObject({ kind: 'acquired', epoch: 1 })
+    expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+    expect(surrogate.signalCode).toBeNull()
+
+    writeFileSync(exitPermit, 'exit\n', 'utf8')
+    expect(await surrogateExit).toMatchObject({ code: 0, signal: null })
+  }, 40_000)
+
+  it('refuses to escalate against an unattributed lock row and never signals its live owner', async () => {
+    const startPermit = join(root, 'blocker.start')
+    const releasePermit = join(root, 'blocker.release')
+    mkdirSync(knowledgeRoot, { recursive: true })
+    const blocker = track(
+      spawnAuthorityDbBlocker(authorityDbPath(), startPermit, releasePermit),
+    )
+    const blockerExit = observeExit(blocker)
+    if (blocker.pid === undefined) throw new Error('blocker never started')
+
+    seedMutationLockRow({
+      pid: blocker.pid,
+      acquiredAtMs: Date.now() - 60_000,
+      generationToken: 'unattributed-generation',
+      incarnation: null,
+    })
+    writeFileSync(startPermit, 'start\n', 'utf8')
+    await waitForOutput(blocker, 'blocking\n')
+
+    const contender = track(spawnLeaseAcquirer(knowledgeRoot, 0, 0))
+    const contenderStdout = collectStdout(contender)
+    const contenderExit = observeExit(contender)
+    await new Promise((resolve) => setTimeout(resolve, 4_000))
+
+    expect(blocker.signalCode).toBeNull()
+    expect(blocker.exitCode).toBeNull()
+    expect(contender.exitCode).toBeNull()
+
+    writeFileSync(releasePermit, 'release\n', 'utf8')
+    expect(await blockerExit).toMatchObject({ code: 0, signal: null })
+    expect(await contenderExit).toMatchObject({ code: 0, signal: null })
+    expect(lastJsonLine(contenderStdout())).toMatchObject({ kind: 'acquired', epoch: 1 })
+  }, 40_000)
+
+  it('records the claimant own start-time token and still kills the exact stale held-section owner', async () => {
+    const permitFile = join(root, 'incarnation-control.permit')
+    const holder = track(spawnAuthorityHolder(knowledgeRoot, permitFile))
+    const holderExit = observeExit(holder)
+    await waitForOutput(holder, 'inside\n')
+    if (holder.pid === undefined) throw new Error('holder never started')
+
+    const claimed = readMutationLockRow()
+    expect(claimed).toMatchObject({ pid: holder.pid })
+    expect(String(claimed?.incarnation ?? '')).toContain(observedProcessStartToken(holder.pid))
+
+    writeFileSync(
+      join(knowledgeRoot, LEASE_FILE),
+      `${JSON.stringify({
+        ...leaseOnDisk(),
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+      })}\n`,
+      'utf8',
+    )
+
+    const contender = track(spawnLeaseAcquirer(knowledgeRoot, 0, 0))
+    const contenderExit = observeExit(contender)
+    expect(await holderExit).toMatchObject({ code: null, signal: 'SIGKILL' })
+    expect(await contenderExit).toMatchObject({ code: 0, signal: null })
+    expect(leaseOnDisk()).toMatchObject({ pid: contender.pid, epoch: 2 })
+  }, 25_000)
+
+  it('fires no takeover one clock step before the deadline and reclaims exactly at it', async () => {
+    const bound = 12_000
+    const frozenMs = 4_000_000
+    const exitPermit = join(root, 'boundary.exit')
+    const surrogate = track(spawnIdleSurrogate(exitPermit))
+    const surrogateExit = observeExit(surrogate)
+    await waitForOutput(surrogate, 'surrogate-alive\n')
+    if (surrogate.pid === undefined) throw new Error('surrogate never started')
+
+    mkdirSync(knowledgeRoot, { recursive: true })
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), '1\n', 'utf8')
+    const staleLease: WriterLease = {
+      leaseId: '11111111-1111-4111-8111-111111111111',
+      pid: surrogate.pid,
+      epoch: 1,
+      heartbeatAtMs: frozenMs - LEASE_HEARTBEAT_TTL_MS,
+    }
+    writeFileSync(join(knowledgeRoot, LEASE_FILE), `${JSON.stringify(staleLease)}\n`, 'utf8')
+
+    // Both clocks are pinned so the deadline comparison is exact rather than drift-tolerant.
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValue(frozenMs)
+    const lockClock = vi.spyOn(Date.prototype, 'getTime').mockReturnValue(frozenMs)
+    try {
+      seedMutationLockRow({
+        pid: surrogate.pid,
+        acquiredAtMs: frozenMs - bound + 1,
+        generationToken: 'boundary-generation',
+        incarnation: DEAD_OWNER_INCARNATION,
+      })
+
+      expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: bound })).toEqual({
+        kind: 'held',
+        holder: staleLease,
+      })
+
+      seedMutationLockRow({
+        pid: surrogate.pid,
+        acquiredAtMs: frozenMs - bound,
+        generationToken: 'boundary-generation',
+        incarnation: DEAD_OWNER_INCARNATION,
+      })
+
+      expect(
+        acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: bound }),
+      ).toMatchObject({ kind: 'acquired', epoch: 2, reclaimed: staleLease })
+    } finally {
+      lockClock.mockRestore()
+      wallClock.mockRestore()
+    }
+
+    expect(surrogate.signalCode).toBeNull()
+    expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+    writeFileSync(exitPermit, 'exit\n', 'utf8')
+    expect(await surrogateExit).toMatchObject({ code: 0, signal: null })
+  }, 25_000)
+
+  it('upgrades a pre-incarnation authority store and leaves its inherited row unattributed', async () => {
+    const exitPermit = join(root, 'legacy.exit')
+    const surrogate = track(spawnIdleSurrogate(exitPermit))
+    const surrogateExit = observeExit(surrogate)
+    await waitForOutput(surrogate, 'surrogate-alive\n')
+    if (surrogate.pid === undefined) throw new Error('surrogate never started')
+
+    seedMutationLockRow({
+      pid: surrogate.pid,
+      acquiredAtMs: Date.now(),
+      generationToken: 'legacy-generation',
+      legacyShape: true,
+    })
+    expect(mutationLockColumnNames()).not.toContain('incarnation')
+
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), '1\n', 'utf8')
+    const staleLease: WriterLease = {
+      leaseId: '22222222-2222-4222-8222-222222222222',
+      pid: surrogate.pid,
+      epoch: 1,
+      heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS - 1,
+    }
+    writeFileSync(join(knowledgeRoot, LEASE_FILE), `${JSON.stringify(staleLease)}\n`, 'utf8')
+
+    expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 60_000 })).toEqual({
+      kind: 'held',
+      holder: staleLease,
+    })
+    expect(mutationLockColumnNames()).toContain('incarnation')
+    expect(readMutationLockRow()?.incarnation).toBeNull()
+    expect(surrogate.signalCode).toBeNull()
+
+    let claimedRow: Record<string, unknown> | undefined
+    const acquired = acquireWriterLease(knowledgeRoot, {
+      mutationLockTakeoverMs: 0,
+      afterMutationLockAcquired: () => { claimedRow = readMutationLockRow() },
+    })
+
+    expect(acquired).toMatchObject({ kind: 'acquired', epoch: 2 })
+    expect(claimedRow).toMatchObject({ pid: process.pid })
+    expect(String(claimedRow?.incarnation ?? '')).toContain(
+      observedProcessStartToken(process.pid),
+    )
+    expect(surrogate.signalCode).toBeNull()
+    expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+
+    writeFileSync(exitPermit, 'exit\n', 'utf8')
+    expect(await surrogateExit).toMatchObject({ code: 0, signal: null })
+  }, 25_000)
 })
