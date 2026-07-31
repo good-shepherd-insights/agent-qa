@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,24 +84,34 @@ interface FixtureChild {
 }
 
 function startFixture(
-  role: 'busy-daemon' | 'stopped-daemon' | 'contender',
+  role: 'busy-daemon' | 'stopped-daemon' | 'contender' | 'cwd-supervisor',
   values: {
     root: string;
     marker?: string;
     report?: string;
+    cwd?: string;
   },
 ): FixtureChild {
   const child = spawn(
     process.execPath,
-    [VITEST_BIN, 'run', THIS_TEST_FILE, '--pool=threads', '--maxWorkers=1'],
+    [
+      VITEST_BIN,
+      'run',
+      THIS_TEST_FILE,
+      '--root',
+      PACKAGE_ROOT,
+      '--pool=threads',
+      '--maxWorkers=1',
+    ],
     {
-      cwd: PACKAGE_ROOT,
+      cwd: values.cwd ?? PACKAGE_ROOT,
       env: {
         ...process.env,
         AGENT_QA_HEARTBEAT_FIXTURE_ROLE: role,
         AGENT_QA_HEARTBEAT_FIXTURE_ROOT: values.root,
         AGENT_QA_HEARTBEAT_FIXTURE_MARKER: values.marker,
         AGENT_QA_HEARTBEAT_FIXTURE_REPORT: values.report,
+        NODE_PATH: role === 'cwd-supervisor' ? '' : process.env.NODE_PATH,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -139,6 +149,37 @@ if (FIXTURE_ROLE === 'contender') {
       const attemptedAtMs = Date.now();
       const result = acquireWriterLease(root);
       writeFileSync(report, JSON.stringify({ attemptedAtMs, result }), 'utf8');
+    });
+  });
+} else if (FIXTURE_ROLE === 'cwd-supervisor') {
+  describe('daemon heartbeat unrelated-cwd fixture', () => {
+    it('loads the supervisor capability independently of process cwd', async () => {
+      const root = requiredFixtureValue(FIXTURE_ROOT, 'fixture root');
+      const report = requiredFixtureValue(FIXTURE_REPORT, 'fixture report');
+      const acquired = acquireWriterLease(root);
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
+      }
+      const messages: HeartbeatSupervisorMessage[] = [];
+      const supervisor = await startHeartbeatSupervisor({
+        knowledgeRoot: root,
+        leaseId: acquired.leaseId,
+        intervalMs: 25,
+        onMessage: (message) => messages.push(message),
+        onUnexpectedExit: (error) => {
+          throw error;
+        },
+      });
+      await waitForCondition(
+        () => messages.some((message) => message.kind === 'heartbeated'),
+        'an unrelated-cwd heartbeat',
+      );
+      await supervisor.stop();
+      writeFileSync(
+        report,
+        JSON.stringify({ cwd: process.cwd(), heartbeatCount: messages.length }),
+        'utf8',
+      );
     });
   });
 } else if (FIXTURE_ROLE === 'busy-daemon') {
@@ -202,6 +243,19 @@ if (FIXTURE_ROLE === 'contender') {
   });
 } else {
   describe('daemon heartbeat supervision across real process boundaries', () => {
+    it('resolves the worker capability when the launching project cwd has no dependencies', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-cwd-'));
+      const report = join(root, 'cwd-supervisor.json');
+      const fixture = startFixture('cwd-supervisor', { root, report, cwd: root });
+      const exited = await fixture.exit;
+
+      expect(exited, exited.output).toMatchObject({ code: 0, signal: null });
+      expect(JSON.parse(readFileSync(report, 'utf8'))).toMatchObject({
+        cwd: realpathSync(root),
+        heartbeatCount: expect.any(Number),
+      });
+    }, 15_000);
+
     it('stops a live worker idempotently without emitting later heartbeats', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-stop-'));
       const acquired = acquireWriterLease(root);
