@@ -27,7 +27,11 @@ import {
   readFixture,
 } from '../dual-host/fixtures.js'
 import { canonicalBundleTree, orderedLogicalDump } from '../dual-host/logical-dump.js'
-import { FENCING_ENV, writeDurableJson } from './spawn-helpers.js'
+import {
+  FENCING_ENV,
+  writeDurableJson,
+  type FencingPauseAt,
+} from './spawn-helpers.js'
 
 function requiredEnv(name: string): string {
   const value = process.env[name]
@@ -40,14 +44,13 @@ function blockSynchronouslyUntil(file: string): void {
   while (!existsSync(file)) Atomics.wait(sleepCell, 0, 0, 20)
 }
 
-type PauseAt = 'afterIntentWritten' | 'afterFinalAuthorityCompare' | 'publish-rename'
-
-function requestedPauseAt(): PauseAt {
+function requestedPauseAt(): FencingPauseAt {
   const value = process.env[FENCING_ENV.pauseAt] ?? 'afterIntentWritten'
   if (
     value !== 'afterIntentWritten'
     && value !== 'afterFinalAuthorityCompare'
     && value !== 'publish-rename'
+    && value !== 'afterBundlePublished'
   ) {
     throw new Error(`unsupported fencing pause point: ${value}`)
   }
@@ -204,6 +207,23 @@ export async function runPausedDrainerFixture(): Promise<void> {
           beforePublishRenameReached = true
         },
       }
+    } else if (pauseAt === 'afterBundlePublished') {
+      deps.hooks = {
+        ...originalHooks,
+        afterBundlePublished: (bundleId) => {
+          originalHooks?.afterBundlePublished?.(bundleId)
+          hookCount += 1
+          writeDurableJson(marker, {
+            phase: 'afterBundlePublished',
+            pid: process.pid,
+            candidateId: job.candidateId,
+            bundleId,
+            leaseId: job.leaseId,
+            oldEpoch: deps.epoch,
+          })
+          blockSynchronouslyUntil(permit)
+        },
+      }
     } else {
       deps.hooks = {
         ...originalHooks,
@@ -275,6 +295,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
     if (
       pauseAt === 'publish-rename'
       || pauseAt === 'afterFinalAuthorityCompare'
+      || pauseAt === 'afterBundlePublished'
     ) {
       if (retained === undefined || firstOutcome?.kind !== 'applied') {
         throw new Error(

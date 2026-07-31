@@ -539,7 +539,9 @@ function storeConfig(
 type PreparedBundlePublication =
   | {
       kind: 'override'
-      publish: NonNullable<CommitCurationDependencies['operations']>['publishBundle']
+      publish: NonNullable<
+        NonNullable<CommitCurationDependencies['operations']>['publishBundle']
+      >
       config: BundleStoreConfig
       input: PublishBundleInput
     }
@@ -1150,8 +1152,8 @@ export function commitCurationDelta(
           let convertedConfirm = false
           let confirmedEventDuplicate = false
           let measurementAppendDuplicate = false
+          let tailMutationAppended = false
           let freshlyPublished = false
-          let promotionAppended = false
           let promotionHoldReason: PromotionGateHoldReason | undefined
           const config = storeConfig(deps, productKey, job.leaseId)
           if (preparedPublication !== undefined) {
@@ -1277,7 +1279,7 @@ export function commitCurationDelta(
                   finishCommitWithinCurrentAuthority(deps, job)
                   return promotedFailure
                 }
-                promotionAppended = promoted.kind === 'appended'
+                tailMutationAppended ||= promoted.kind === 'appended'
               } else {
                 promotionHoldReason = gate.reason
               }
@@ -1289,18 +1291,18 @@ export function commitCurationDelta(
               && draft.subtype === 'measurement'
               && measurementValue !== undefined
             ) {
-              const baselineFailure = appendFailure(
-                writeMeasurementBaseline(config, published.id, {
-                  mu0: measurementValue,
-                  sigma0: 0,
-                  n0: 1,
-                  openedAtOrdinal: job.payload.buildOrdinal,
-                }),
-              )
+              const baseline = writeMeasurementBaseline(config, published.id, {
+                mu0: measurementValue,
+                sigma0: 0,
+                n0: 1,
+                openedAtOrdinal: job.payload.buildOrdinal,
+              })
+              const baselineFailure = appendFailure(baseline)
               if (baselineFailure !== undefined) {
                 finishCommitWithinCurrentAuthority(deps, job)
                 return baselineFailure
               }
+              tailMutationAppended ||= baseline.kind === 'appended'
             }
 
             if (disposed.kind === 'apply' && disposed.bornActive === true) {
@@ -1309,18 +1311,18 @@ export function commitCurationDelta(
               }
               // §5.5.5 carve-out: a deterministic drift Supersede is exempt from candidate-gating
               // and born active. Only drain-to-active disposition can set this D-02 marker.
-              const promotedFailure = appendFailure(
-                appendOutcomeEvent(config, published.id, {
+              const promoted = appendOutcomeEvent(config, published.id, {
                   type: 'promoted',
                   evidenceToken: derivePromotedEvidenceToken(delta.evidenceToken),
                   curationJobId: job.candidateId,
                   buildOrdinal: job.payload.buildOrdinal,
-                }),
-              )
+                })
+              const promotedFailure = appendFailure(promoted)
               if (promotedFailure !== undefined) {
                 finishCommitWithinCurrentAuthority(deps, job)
                 return promotedFailure
               }
+              tailMutationAppended ||= promoted.kind === 'appended'
             }
             if (freshlyPublished) deps.hooks?.afterBundlePublished?.(published.id)
             if (disposed.kind === 'apply' && disposed.bornActive === true) {
@@ -1405,6 +1407,7 @@ export function commitCurationDelta(
               return failure
             }
             measurementAppendDuplicate = appended.kind === 'duplicate'
+            tailMutationAppended ||= appended.kind === 'appended'
           }
 
           const canonicalConfig = storeConfig(
@@ -1413,11 +1416,13 @@ export function commitCurationDelta(
             job.leaseId,
           )
           for (const relation of relationRows) {
-            const failure = appendFailure(appendRelation(canonicalConfig, bundleId, relation))
+            const appended = appendRelation(canonicalConfig, bundleId, relation)
+            const failure = appendFailure(appended)
             if (failure !== undefined) {
               finishCommitWithinCurrentAuthority(deps, job)
               return failure
             }
+            tailMutationAppended ||= appended.kind === 'appended'
           }
 
           if (delta.kind === 'Supersede') {
@@ -1442,6 +1447,7 @@ export function commitCurationDelta(
               finishCommitWithinCurrentAuthority(deps, job)
               return supersededFailure
             }
+            tailMutationAppended ||= superseded.kind === 'appended'
             const closeToken = asEvidenceToken(
               sha256hex(canonicalJson({ token: delta.evidenceToken, event: 'window-close' })),
             )
@@ -1457,11 +1463,26 @@ export function commitCurationDelta(
               finishCommitWithinCurrentAuthority(deps, job)
               return closeFailure
             }
+            tailMutationAppended ||= closed.kind === 'appended'
             applyIndexDeltaForBundleWithinCurrentAuthority({
               knowledgeRoot: deps.knowledgeRoot,
               bundleId: delta.victimId,
               product: victim.product,
             })
+          }
+
+          const evidenceTokenConsumed =
+            confirmedEventDuplicate
+            && !tailMutationAppended
+            && (
+              disposed.measurementAppend === undefined
+              || measurementAppendDuplicate
+            )
+            && (disposed.unknownMintIntents?.length ?? 0) === 0
+            && (disposed.unknownResolutionIntents?.length ?? 0) === 0
+          if (evidenceTokenConsumed) {
+            finishCommitWithinCurrentAuthority(deps, job)
+            return { kind: 'noop', reason: 'evidence-token-consumed' }
           }
 
           applyIndexDeltaForBundleWithinCurrentAuthority({
@@ -1490,20 +1511,6 @@ export function commitCurationDelta(
           }
           deps.hooks?.afterIndexApplied?.(bundleId)
           finishCommitWithinCurrentAuthority(deps, job)
-
-          if (confirmedEventDuplicate && measurementAppendDuplicate) {
-            return { kind: 'noop', reason: 'evidence-token-consumed' }
-          }
-          if (
-            confirmedEventDuplicate
-            && disposed.measurementAppend === undefined
-            && !promotionAppended
-            && !(disposed.kind === 'apply' && disposed.bornActive === true)
-            && (disposed.unknownMintIntents?.length ?? 0) === 0
-            && (disposed.unknownResolutionIntents?.length ?? 0) === 0
-          ) {
-            return { kind: 'noop', reason: 'evidence-token-consumed' }
-          }
 
           const result: CommittedBundleResult = {
             bundleId,

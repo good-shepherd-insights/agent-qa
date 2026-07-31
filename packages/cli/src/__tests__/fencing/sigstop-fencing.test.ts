@@ -32,6 +32,7 @@ import {
   makeRoot,
   sendSignalWhileAlive,
   startChild,
+  startPausedDrainer,
   waitForMarker,
   writeDurableJson,
 } from './spawn-helpers.js'
@@ -167,9 +168,7 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
       const candidateId = fixture.candidates[0]!.candidateId
       writeFixture(paths.fixture, fixture)
 
-      const drainer = startChild('paused-drainer', paths, {
-        [FENCING_ENV.pauseAt]: 'afterBundlePublished',
-      })
+      const drainer = startPausedDrainer(paths, 'afterBundlePublished')
       try {
         const paused = await waitForMarker(
           drainer,

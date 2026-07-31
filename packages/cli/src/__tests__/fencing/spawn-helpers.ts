@@ -45,6 +45,11 @@ export const FENCING_ENV = {
 } as const
 
 export type FencingChildRole = 'paused-drainer' | 'reclaiming-daemon'
+export type FencingPauseAt =
+  | 'afterIntentWritten'
+  | 'afterFinalAuthorityCompare'
+  | 'publish-rename'
+  | 'afterBundlePublished'
 
 export interface FencingPaths {
   readonly root: string
@@ -164,6 +169,15 @@ export function startChild(
     exited: once(child, 'exit') as Promise<[number | null, string | null]>,
     output: () => captured,
   }
+}
+
+export function startPausedDrainer(
+  paths: FencingPaths,
+  pauseAt: FencingPauseAt,
+): RunningChild {
+  return startChild('paused-drainer', paths, {
+    [FENCING_ENV.pauseAt]: pauseAt,
+  })
 }
 
 export async function killIfRunning(child: ChildProcess): Promise<void> {
