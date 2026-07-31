@@ -1221,7 +1221,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     expect(loaded.bundle.events.filter((event) => event.type === 'promoted')).toHaveLength(1)
   })
 
-  it('abandons stale epochs before intent and between intent and publish without bundle mutation', () => {
+  it('abandons stale epochs before staging and before the held tail without bundle mutation', () => {
     const beforeJob = job(artifactFreeCaptureReceipt(), {
       attributingObservationId: 'stale-before',
     })
@@ -1239,7 +1239,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     const staleBetween = commitCurationDelta(
       deps(undefined, {
         hooks: {
-          afterIntentWritten: () => {
+          beforeCommitAuthorityEntry: () => {
             writeFileSync(join(knowledgeRoot, '.epoch'), `${epoch + 1}\n`, 'utf8')
           },
         },
@@ -1248,7 +1248,9 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       checkpoint(addDelta()),
     )
     expect(staleBetween.kind).toBe('abandoned-stale-epoch')
-    expect(listCommitIntents(knowledgeRoot)).toHaveLength(1)
+    // CR-09: the intent is published inside the held tail, so a writer superseded before
+    // the entry leaves no orphan behind for a later reconciliation to replay.
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
     expect(existsSync(join(knowledgeRoot, 'memory', 'storefront', 'bundles'))).toBe(false)
   })
 

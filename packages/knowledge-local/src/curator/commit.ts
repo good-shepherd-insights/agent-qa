@@ -1123,24 +1123,10 @@ export function commitCurationDelta(
       prepareUnknownMintIntent(deps, job, checkpoint, intent, bundleId),
     )
 
-    const beforeIntent = staleEpoch(deps)
-    if (beforeIntent !== undefined) return beforeIntent
-    writeJobState({
-      knowledgeRoot: deps.knowledgeRoot,
-      candidateId: job.candidateId,
-      authority: { leaseId: job.leaseId, epoch: deps.epoch },
-      lifecycle: 'committing',
-      authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
-    })
-    writeCommitIntent(deps.knowledgeRoot, {
-      schemaVersion: 1,
-      candidateId: job.candidateId,
-      bundleId,
-      deltaKind: delta.kind,
-      ...(mutationTarget(delta) === undefined ? {} : { targetRecordId: mutationTarget(delta) }),
-      epoch: deps.epoch,
-    })
-    deps.hooks?.afterIntentWritten?.()
+    // Cheap early abandon only. The load-bearing check is the tail's authority entry, which
+    // reads lease identity and epoch inside the transaction it then holds.
+    const beforeAuthorityEntry = staleEpoch(deps)
+    if (beforeAuthorityEntry !== undefined) return beforeAuthorityEntry
     deps.hooks?.beforeCommitAuthorityEntry?.()
     const authority = { leaseId: job.leaseId, epoch: deps.epoch }
     const authorityHooks = {
@@ -1156,6 +1142,32 @@ export function commitCurationDelta(
         deps.knowledgeRoot,
         authority,
         () => {
+          /**
+           * CR-09: the committing transition and the durable intent are the first writes of
+           * the held section, not the last writes before it. A superseded writer is refused
+           * by the entry ladder above and therefore cannot publish either, so no intent can
+           * exist that was not authored under live, exact authority. Both use the
+           * within-held forms: re-entering withCurrentWriterAuthority here would open a
+           * second connection against the BEGIN IMMEDIATE this callback already runs under.
+           */
+          writeJobStateWithinCurrentAuthority({
+            knowledgeRoot: deps.knowledgeRoot,
+            candidateId: job.candidateId,
+            authority,
+            lifecycle: 'committing',
+            authored: widenAuthoredDeltaCheckpoint(dispositionCheckpoint),
+          })
+          writeCommitIntent(deps.knowledgeRoot, {
+            schemaVersion: 1,
+            candidateId: job.candidateId,
+            bundleId,
+            deltaKind: delta.kind,
+            ...(mutationTarget(delta) === undefined
+              ? {}
+              : { targetRecordId: mutationTarget(delta) }),
+            epoch: deps.epoch,
+          })
+          deps.hooks?.afterIntentWritten?.()
           let convertedConfirm = false
           let confirmedEventDuplicate = false
           let measurementAppendDuplicate = false

@@ -680,7 +680,7 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
     let successorUnknownId: RecordId | undefined
     const hooks = {
       mutationLockTakeoverMs: 0,
-      afterIntentWritten: () => {
+      beforeCommitAuthorityEntry: () => {
         intentBoundaryCount += 1
         expireCurrentLease()
         const successor = acquireWriterLease(knowledgeRoot, {

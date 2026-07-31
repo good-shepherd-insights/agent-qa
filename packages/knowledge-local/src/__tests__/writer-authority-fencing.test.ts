@@ -1314,7 +1314,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(existsSync(staleDir)).toBe(false)
   })
 
-  it('lets a successor win after intent but before the held tail with zero durable writes', () => {
+  it('lets a successor win before the held tail with zero durable writes', () => {
     const authority = acquireAuthority()
     const victim = seedMeasurementVictim(authority, '100')
     const replacement = measurementSupersede(authority, victim.bundleId, '204', 47)
@@ -1324,7 +1324,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const outcome = commitCurationDelta(
       curationDependencies(authority, undefined, {
         hooks: {
-          afterIntentWritten: () => {
+          beforeCommitAuthorityEntry: () => {
             makeStale()
             successor = acquireWithDeadline(knowledgeRoot, {
               mutationLockTakeoverMs: 0,
@@ -1345,6 +1345,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
       kind: 'abandoned-stale-epoch',
       observedEpoch: authority.epoch + 1,
     })
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
     expect(durableTailSnapshot()).toEqual(before)
   })
 
@@ -1520,6 +1521,22 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
     expect(source).toContain('withCurrentWriterAuthority(')
     expect(source).not.toContain('const beforePublish = staleEpoch(deps)')
+  })
+
+  it('creates the commit intent lexically inside the tail that finalizes publication (CR-09)', () => {
+    const source = readFileSync(new URL('../curator/commit.ts', import.meta.url), 'utf8')
+    const tailStart = source.indexOf('return withCurrentWriterAuthority(')
+
+    expect(tailStart).toBeGreaterThan(0)
+    expect(source.split('return withCurrentWriterAuthority(')).toHaveLength(2)
+    const beforeTail = source.slice(0, tailStart)
+    const heldTail = source.slice(tailStart)
+
+    expect(beforeTail).not.toContain('writeCommitIntent(')
+    expect(beforeTail).not.toContain("lifecycle: 'committing'")
+    expect(heldTail).toContain('writeCommitIntent(')
+    expect(heldTail).toContain("lifecycle: 'committing'")
+    expect(heldTail).toContain('finalizePreparedPublicationWithinCurrentAuthority(')
   })
 
   it('keeps the unfenced compatibility publisher out of the public and commit surfaces', () => {
