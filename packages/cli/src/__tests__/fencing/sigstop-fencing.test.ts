@@ -159,6 +159,113 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
       }
     }, LEG_TIMEOUT_MS)
 
+    const postPublicationTailTest =
+      'serializes takeover behind a drainer paused in the post-publication commit tail'
+    test(postPublicationTailTest, async () => {
+      const paths = makeRoot('post-publication-tail-held')
+      const fixture = singleCandidateFixture()
+      const candidateId = fixture.candidates[0]!.candidateId
+      writeFixture(paths.fixture, fixture)
+
+      const drainer = startChild('paused-drainer', paths, {
+        [FENCING_ENV.pauseAt]: 'afterBundlePublished',
+      })
+      try {
+        const paused = await waitForMarker(
+          drainer,
+          paths.marker,
+          'afterBundlePublished marker',
+        )
+        expect(paused).toMatchObject({
+          phase: 'afterBundlePublished',
+          pid: drainer.child.pid,
+          candidateId,
+          oldEpoch: 1,
+        })
+        sendSignalWhileAlive(drainer, 'SIGSTOP')
+
+        expect(immediateWriterAttempt(paths.knowledgeRoot)).toBe('busy')
+        expect(acquireWriterLease(paths.knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })).toMatchObject({
+          kind: 'held',
+          holder: {
+            pid: drainer.child.pid,
+            leaseId: paused.leaseId,
+            epoch: 1,
+          },
+        })
+        expect(drainer.child.exitCode).toBeNull()
+        expect(drainer.child.signalCode).toBeNull()
+
+        const pausedBundles = enumerateBundleDirs(paths.knowledgeRoot)
+        expect(pausedBundles).toHaveLength(1)
+        const pausedBundle = loadBundle(pausedBundles[0]!.dir)
+        expect(pausedBundle.kind).toBe('loaded')
+        if (pausedBundle.kind !== 'loaded') throw new Error('paused bundle was not readable')
+        expect(pausedBundle.bundle.events.map((event) => event.type)).toEqual([
+          'confirmed',
+          'promoted',
+        ])
+        expect(pausedBundle.bundle.relations.relations).toEqual([])
+        expect(existsSync(join(
+          pausedBundles[0]!.dir,
+          'evidence/measurements.json',
+        ))).toBe(false)
+        const pausedIndex = openIndexReaderConnection(paths.knowledgeRoot)
+        try {
+          expect(pausedIndex.db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count)
+            .toBe(0)
+        } finally {
+          pausedIndex.db.close()
+        }
+
+        writeDurableJson(paths.permit, { resume: true })
+        sendSignalWhileAlive(drainer, 'SIGCONT')
+        const report = await completeChildSuccessfully(drainer, paths.drainerReport)
+        expect(report).toMatchObject({
+          pauseAt: 'afterBundlePublished',
+          candidateId,
+          oldEpoch: 1,
+          hookCount: 1,
+          acceptedKind: 'applied',
+          publicationEntryCount: 1,
+        })
+
+        const bundles = enumerateBundleDirs(paths.knowledgeRoot)
+        expect(bundles).toHaveLength(1)
+        const loaded = loadBundle(bundles[0]!.dir)
+        expect(loaded.kind).toBe('loaded')
+        if (loaded.kind !== 'loaded') throw new Error('completed bundle was not readable')
+        expect(loaded.bundle.events.map((event) => event.type)).toEqual([
+          'confirmed',
+          'promoted',
+        ])
+        expect(loaded.bundle.relations.relations).toEqual([])
+        expect(existsSync(join(
+          bundles[0]!.dir,
+          'evidence/measurements.json',
+        ))).toBe(false)
+        const completedIndex = openIndexReaderConnection(paths.knowledgeRoot)
+        try {
+          expect(completedIndex.db.prepare(`
+            SELECT bundle_id FROM records ORDER BY bundle_id
+          `).all()).toEqual([{ bundle_id: loaded.bundle.manifest.id }])
+        } finally {
+          completedIndex.db.close()
+        }
+
+        expect(acquireWriterLease(paths.knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })).toMatchObject({ kind: 'acquired', epoch: 2 })
+      } finally {
+        if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
+          drainer.child.kill('SIGCONT')
+        }
+        await killIfRunning(drainer.child)
+      }
+    }, LEG_TIMEOUT_MS)
+
     test('refuses a drainer resumed after the daemon reclaims and commits X', async () => {
       const paths = makeRoot('reclaim')
       const fixture = singleCandidateFixture()

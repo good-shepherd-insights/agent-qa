@@ -3,15 +3,17 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import {
   asRecordId,
+  canonicalJson,
   type CurationAuthorship,
   type Delta,
   type ExecutionContext,
@@ -175,6 +177,68 @@ describe('drainQueue daemon substrate', () => {
     )
   }
 
+  type SqlValue = null | number | string | bigint | Uint8Array
+
+  function quoteIdentifier(identifier: string): string {
+    return `"${identifier.replaceAll('"', '""')}"`
+  }
+
+  function normalizeSqlValue(value: SqlValue): unknown {
+    if (typeof value === 'bigint') return { bigint: value.toString() }
+    if (value instanceof Uint8Array) {
+      return { blobHex: Buffer.from(value).toString('hex') }
+    }
+    return value
+  }
+
+  function orderedLogicalIndexDump(): string {
+    const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+    try {
+      const tables = reader.db.prepare(`
+        SELECT name
+        FROM sqlite_schema
+        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+        ORDER BY name
+      `).all().map((row) => String(row.name))
+      return canonicalJson(tables.map((table) => {
+        const columns = reader.db
+          .prepare(`PRAGMA table_info(${quoteIdentifier(table)})`)
+          .all()
+          .map((row) => String(row.name))
+          .filter((column) => column !== 'embedding')
+        if (columns.length === 0) return { table, columns, rows: [] }
+        const selection = columns.map(quoteIdentifier).join(', ')
+        const rows = reader.db.prepare(
+          `SELECT ${selection} FROM ${quoteIdentifier(table)} ORDER BY ${selection}`,
+        ).all().map((row) => Object.fromEntries(
+          columns.map((column) => [
+            column,
+            normalizeSqlValue(row[column] as SqlValue),
+          ]),
+        ))
+        return { table, columns, rows }
+      }))
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  function bundleByteTree(): string {
+    const filesBelow = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const file = join(dir, entry.name)
+        return entry.isDirectory() ? filesBelow(file) : entry.isFile() ? [file] : []
+      })
+    return canonicalJson(
+      enumerateBundleDirs(knowledgeRoot)
+        .flatMap(({ dir }) => filesBelow(dir).map((file) => ({
+          path: relative(knowledgeRoot, file),
+          bytes: readFileSync(file).toString('base64'),
+        })))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    )
+  }
+
   function reportRemaining(report: unknown): unknown {
     return (report as { remaining?: unknown }).remaining
   }
@@ -237,6 +301,57 @@ describe('drainQueue daemon substrate', () => {
     expect(second).toMatchObject({ kind: 'drained', jobsProcessed: 0, committed: 0 })
     expect(reportRemaining(second)).toBe(0)
     expect(statusesBySummary()).toEqual(beforeSecondDrain)
+  })
+
+  const completedReplayTest =
+    'replays one completed candidate through duplicate arms without changing durable state'
+  it(completedReplayTest, async () => {
+    const candidateId = enqueue('completed-replay', 'local-interactive')
+    const authority = acquireWriterLease(knowledgeRoot)
+    if (authority.kind !== 'acquired') throw new Error('expected caller-owned replay lease')
+    let retained: Parameters<typeof knowledgeLocal.commitCurationDelta> | undefined
+
+    const report = await drainQueue({
+      knowledgeRoot,
+      auditBaseDir,
+      author: scriptedAuthor(),
+      executionContext: 'local-interactive',
+      policy,
+      maintenance: 'skip',
+      lease: { leaseId: authority.leaseId, epoch: authority.epoch },
+      operations: {
+        ...maintenanceFreeOperations(),
+        commitCurationDelta: (...args) => {
+          retained = args
+          return knowledgeLocal.commitCurationDelta(...args)
+        },
+      },
+    })
+
+    expect(report).toMatchObject({
+      kind: 'drained',
+      jobsProcessed: 1,
+      committed: 1,
+      failures: 0,
+    })
+    expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
+    if (retained === undefined) throw new Error('drain did not retain its commit input')
+    const before = {
+      bundles: bundleByteTree(),
+      logicalIndex: orderedLogicalIndexDump(),
+    }
+
+    expect(knowledgeLocal.commitCurationDelta(...retained)).toMatchObject({
+      kind: 'noop',
+      reason: 'evidence-token-consumed',
+    })
+    expect({
+      bundles: bundleByteTree(),
+      logicalIndex: orderedLogicalIndexDump(),
+    }).toEqual(before)
+    expect(releaseLease({ knowledgeRoot, leaseId: authority.leaseId })).toEqual({
+      kind: 'released',
+    })
   })
 
   it('uses the drain-scoped fallback for a claimed legacy payload without context', async () => {
