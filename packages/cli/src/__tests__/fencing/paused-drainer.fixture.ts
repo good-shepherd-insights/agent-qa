@@ -45,9 +45,9 @@ function blockSynchronouslyUntil(file: string): void {
 }
 
 function requestedPauseAt(): FencingPauseAt {
-  const value = process.env[FENCING_ENV.pauseAt] ?? 'afterIntentWritten'
+  const value = process.env[FENCING_ENV.pauseAt] ?? 'beforeCommitAuthorityEntry'
   if (
-    value !== 'afterIntentWritten'
+    value !== 'beforeCommitAuthorityEntry'
     && value !== 'afterFinalAuthorityCompare'
     && value !== 'publish-rename'
     && value !== 'afterBundlePublished'
@@ -167,14 +167,14 @@ export async function runPausedDrainerFixture(): Promise<void> {
           hookCount += 1
         },
       }
-    } else if (pauseAt === 'afterIntentWritten') {
+    } else if (pauseAt === 'beforeCommitAuthorityEntry') {
       deps.hooks = {
         ...originalHooks,
-        afterIntentWritten: () => {
-          originalHooks?.afterIntentWritten?.()
+        beforeCommitAuthorityEntry: () => {
+          originalHooks?.beforeCommitAuthorityEntry?.()
           hookCount += 1
           writeDurableJson(marker, {
-            phase: 'afterIntentWritten',
+            phase: 'beforeCommitAuthorityEntry',
             pid: process.pid,
             candidateId: job.candidateId,
             leaseId: job.leaseId,
@@ -256,7 +256,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
       checkpoint: retained.checkpoint === checkpoint,
     }
     firstOutcome = commitCurationDelta(retained.deps, retained.job, retained.checkpoint)
-    if (!control && pauseAt === 'afterIntentWritten') {
+    if (!control && pauseAt === 'beforeCommitAuthorityEntry') {
       firstSnapshot = mutationSnapshot(knowledgeRoot, agentQaRoot, candidateId)
       secondOutcome = commitCurationDelta(retained.deps, retained.job, retained.checkpoint)
       secondSnapshot = mutationSnapshot(knowledgeRoot, agentQaRoot, candidateId)
@@ -343,7 +343,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
       publicationEntryCount,
       outcomes: [
         {
-          guard: pauseAt === 'afterIntentWritten' ? 'beforePublish' : pauseAt,
+          guard: pauseAt === 'beforeCommitAuthorityEntry' ? 'beforePublish' : pauseAt,
           ...firstOutcome,
         },
         { guard: 'beforeWork', ...secondOutcome },

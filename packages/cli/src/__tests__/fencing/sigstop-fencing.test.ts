@@ -273,10 +273,10 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
       const drainer = startChild('paused-drainer', paths)
       let daemon: ReturnType<typeof startChild> | undefined
       try {
-        const paused = await waitForMarker(drainer, paths.marker, 'afterIntentWritten marker')
+        const paused = await waitForMarker(drainer, paths.marker, 'beforeCommitAuthorityEntry marker')
         const candidateId = fixture.candidates[0]!.candidateId
         expect(paused).toMatchObject({
-          phase: 'afterIntentWritten',
+          phase: 'beforeCommitAuthorityEntry',
           pid: drainer.child.pid,
           candidateId,
           oldEpoch: 1,

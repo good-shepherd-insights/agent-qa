@@ -46,7 +46,7 @@ export const FENCING_ENV = {
 
 export type FencingChildRole = 'paused-drainer' | 'reclaiming-daemon'
 export type FencingPauseAt =
-  | 'afterIntentWritten'
+  | 'beforeCommitAuthorityEntry'
   | 'afterFinalAuthorityCompare'
   | 'publish-rename'
   | 'afterBundlePublished'
