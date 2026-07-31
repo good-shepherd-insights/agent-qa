@@ -31,6 +31,7 @@ import {
   type DaemonCommandDeps,
 } from '../commands/daemon.js'
 import {
+  DAEMON_SHUTDOWN_GRACE_MS,
   LEASE_HEARTBEAT_INTERVAL_MS,
   runDaemonHost,
   type DaemonHostOperations,
@@ -1256,6 +1257,140 @@ describe('daemon heartbeat authority and cadence', () => {
 })
 
 describe('daemon shutdown and reclaim post-mortem', () => {
+  const awaitedStages = [
+    'invokeServer.close',
+    'drainWorker',
+    'maintenanceWorker',
+    'stopEmbedderWorker',
+    'jobDispatcher.stop',
+    'localAgent.close',
+    'releaseLease',
+  ] as const
+
+  it.each(awaitedStages)(
+    'converges through final cleanup when the %s shutdown stage fails',
+    async (failedStage) => {
+      const paths = makePaths(`shutdown-failure-${failedStage.replaceAll('.', '-')}`)
+      const harness = hostHarness()
+      const errors: string[] = []
+      const clearGrace = vi.fn()
+      const runShutdownStage = vi.fn(async (
+        stage: typeof awaitedStages[number],
+        action: () => void | Promise<void>,
+      ) => {
+        if (stage === failedStage) throw new Error(`injected ${stage} failure`)
+        await action()
+      })
+
+      const running = runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        operations: {
+          ...harness.operations,
+          runShutdownStage,
+          clearTimeout: (timer) => {
+            clearGrace(timer)
+            harness.operations.clearTimeout?.(timer)
+          },
+          startInvokeServer: ({ socketPath }) => Promise.resolve({
+            socketPath,
+            close: () => Promise.resolve(),
+          }),
+        } as Partial<DaemonHostOperations>,
+        logger: { info: vi.fn(), error: (message) => errors.push(message) },
+      })
+      await waitUntil(
+        () => harness.signals.has('SIGTERM'),
+        `daemon did not become signalable for ${failedStage}`,
+      )
+      expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(true)
+
+      harness.signal('SIGTERM')
+      await expect(running).resolves.toBe(1)
+
+      expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+      expect(harness.signals.size).toBe(0)
+      expect(clearGrace).toHaveBeenCalled()
+      expect(errors).toContain(`Daemon shutdown stage ${failedStage} failed: injected ${failedStage} failure`)
+      expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
+        kind: 'shutdown-stage-failed',
+        stage: failedStage,
+        message: `injected ${failedStage} failure`,
+      }))
+      expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
+        kind: 'daemon-stopped',
+        exitCode: 1,
+        failureCount: 1,
+        failedStages: [failedStage],
+      }))
+    },
+  )
+
+  it('arms the hard-exit grace path when lease loss wedges cleanup', async () => {
+    const paths = makePaths('shutdown-lease-lost-grace')
+    const harness = hostHarness()
+    const hardExit = vi.fn()
+    const runShutdownStage = vi.fn((
+      stage: typeof awaitedStages[number],
+      action: () => void | Promise<void>,
+    ): Promise<void> => stage === 'invokeServer.close'
+      ? new Promise(() => undefined)
+      : Promise.resolve(action()))
+    let graceCallback: (() => void) | undefined
+
+    void runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        runShutdownStage,
+        setTimeout: (callback, delayMs) => {
+          if (delayMs === DAEMON_SHUTDOWN_GRACE_MS) graceCallback = callback
+          return delayMs as unknown as ReturnType<typeof setTimeout>
+        },
+        hardExit,
+        startInvokeServer: ({ socketPath }) => Promise.resolve({
+          socketPath,
+          close: () => Promise.resolve(),
+        }),
+      } as Partial<DaemonHostOperations>,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'lease-loss grace daemon did not become signalable',
+    )
+    const replacement: WriterLease = {
+      leaseId: '551a9f42-7862-43ac-a6bf-236b53c51b24',
+      pid: process.pid + 1,
+      epoch: 2,
+      heartbeatAtMs: 1_700_000_010_000,
+    }
+    writeFileSync(
+      join(paths.knowledgeRoot, LEASE_FILE),
+      `${JSON.stringify(replacement)}\n`,
+      'utf8',
+    )
+
+    harness.fireHeartbeat()
+    await waitUntil(
+      () => graceCallback !== undefined,
+      'lease-loss shutdown did not arm its grace timer',
+      500,
+    )
+    graceCallback?.()
+
+    expect(runShutdownStage).toHaveBeenCalledWith(
+      'invokeServer.close',
+      expect.any(Function),
+    )
+    expect(hardExit).toHaveBeenCalledWith(130)
+  })
+
   it('clears the armed grace timer so clean shutdown cannot hard-exit afterward', async () => {
     const paths = makePaths('shutdown-grace-clear')
     const harness = hostHarness()
