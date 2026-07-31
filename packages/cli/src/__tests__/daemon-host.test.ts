@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -605,8 +606,60 @@ describe('daemon registration instance ownership and readiness', () => {
     expect(inspectDaemonRegistration(legacyPaths.agentQaRoot, () => true).kind).toBe('stale')
   })
 
-  it('preserves a successor registration when an obsolete host removes its own generation', () => {
+  it('preserves successor bytes when replacement wins the quarantine barrier', () => {
     const paths = makePaths('registration-two-generations')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'host.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    expect(readDaemonRegistration(paths.agentQaRoot)).toMatchObject({
+      kind: 'parsed',
+      registration: { instanceId: HOST_INSTANCE_ID },
+    })
+    const successor: DaemonRegistration = {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: SUCCESSOR_INSTANCE_ID,
+      pid: process.pid + 1,
+      socketPath: join(paths.agentQaRoot, 'successor.sock'),
+      startedAtMs: 1_700_000_001_000,
+    }
+    let successorBytes: Buffer | undefined
+
+    expect(removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID, {
+      beforeQuarantineRename: () => {
+        writeDaemonRegistration(paths.agentQaRoot, successor)
+        successorBytes = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+      },
+    })).toBe(false)
+    expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(
+      successorBytes,
+    )
+  })
+
+  it('removes an owned registration and fsyncs its parent after quarantine transitions', () => {
+    const paths = makePaths('registration-owned-remove')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'host.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const fsyncDirectory = vi.fn()
+
+    expect(removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID, {
+      fsyncDirectory,
+    })).toBe(true)
+    expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+    expect(fsyncDirectory).toHaveBeenCalledWith(paths.agentQaRoot)
+    expect(fsyncDirectory.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('drops a mismatched quarantine when a third registration already occupies the path', () => {
+    const paths = makePaths('registration-mismatch-restore')
     writeDaemonRegistration(paths.agentQaRoot, {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: SUCCESSOR_INSTANCE_ID,
@@ -614,12 +667,25 @@ describe('daemon registration instance ownership and readiness', () => {
       socketPath: join(paths.agentQaRoot, 'successor.sock'),
       startedAtMs: 1_700_000_001_000,
     })
+    const third: DaemonRegistration = {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: '33333333-3333-4333-8333-333333333333',
+      pid: process.pid + 2,
+      socketPath: join(paths.agentQaRoot, 'third.sock'),
+      startedAtMs: 1_700_000_002_000,
+    }
+    let thirdBytes: Buffer | undefined
 
-    expect(removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID)).toBe(false)
-    expect(readDaemonRegistration(paths.agentQaRoot)).toMatchObject({
-      kind: 'parsed',
-      registration: { instanceId: SUCCESSOR_INSTANCE_ID },
-    })
+    expect(removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID, {
+      afterQuarantine: () => {
+        writeDaemonRegistration(paths.agentQaRoot, third)
+        thirdBytes = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+      },
+    })).toBe(false)
+    expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(thirdBytes)
+    expect(
+      readdirSync(paths.agentQaRoot).filter((name) => name.includes('.remove-')),
+    ).toEqual([])
   })
 
   it('publishes registration only after the invoke socket has finished listening', async () => {
