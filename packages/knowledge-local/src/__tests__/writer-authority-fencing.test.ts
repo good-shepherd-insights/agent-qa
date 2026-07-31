@@ -21,6 +21,7 @@ import {
   type BundleDraft,
   type Delta,
   type MeasurementObservation,
+  type RecordId,
 } from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
@@ -426,7 +427,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
   function appendVictimObservation(
     authority: { leaseId: string; epoch: number },
-    bundleId: string,
+    bundleId: RecordId,
     value: number,
     buildOrdinal: number,
   ): void {
