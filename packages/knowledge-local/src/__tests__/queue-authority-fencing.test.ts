@@ -32,6 +32,7 @@ import {
   acquireWriterLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
   type CurrentWriterAuthority,
   type WriterLeaseAuthority,
@@ -132,6 +133,12 @@ function snapshotTree(root: string): string[] {
     for (const entry of readdirSync(path).sort()) {
       const absolute = join(path, entry)
       const key = relative(root, absolute)
+      if (
+        key === WRITER_AUTHORITY_DB_FILE
+        || key.startsWith(`${WRITER_AUTHORITY_DB_FILE}-`)
+      ) {
+        continue
+      }
       const stat = lstatSync(absolute)
       if (stat.isDirectory()) {
         snapshot.push(`dir:${key}`)

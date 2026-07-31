@@ -672,16 +672,14 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
     expect(unknowns()).toHaveLength(1)
   })
 
-  it('refuses the old writer mint after takeover at its rename and keeps only the successor unknown', () => {
+  it('refuses the old writer before its governed rename and keeps only the successor unknown', () => {
     const lineage = seedTwoSupersessions()
-    let renameBoundaryCount = 0
+    let intentBoundaryCount = 0
     let successorUnknownId: RecordId | undefined
     const hooks = {
       mutationLockTakeoverMs: 0,
-      beforePublishRename: () => {
-        renameBoundaryCount += 1
-        if (renameBoundaryCount !== 2) return
-
+      afterIntentWritten: () => {
+        intentBoundaryCount += 1
         expireCurrentLease()
         const successor = acquireWriterLease(knowledgeRoot, {
           mutationLockTakeoverMs: 0,
@@ -718,7 +716,7 @@ describe('thrash guard lineage and lifecycle (DCAY-03)', () => {
       checkpoint(delta),
     )
 
-    expect(renameBoundaryCount).toBe(2)
+    expect(intentBoundaryCount).toBe(1)
     expect(outcome).toEqual({ kind: 'abandoned-stale-epoch', observedEpoch: 2 })
     expect(successorUnknownId).toBeDefined()
     expect(unknowns().map((bundle) => bundle.manifest.id)).toEqual([successorUnknownId])

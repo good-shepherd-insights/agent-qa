@@ -396,11 +396,13 @@ export {
   heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_BUSY_TIMEOUT_MS,
   MUTATION_LOCK_TAKEOVER_MS,
   readWriterLease,
   refreshWriterLeaseAuthority,
   releaseLease,
   withCurrentWriterAuthority,
+  WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
 } from './lease/writer-lease.js'
 export type {
