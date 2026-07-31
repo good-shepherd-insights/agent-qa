@@ -228,6 +228,7 @@ function hostHarness(nowMs = 1_700_000_000_000): HostHarness {
       startHeartbeatSupervisor: async (options) => {
         heartbeat = options
         return {
+          exited: Promise.resolve(),
           stop: async () => {
             heartbeat = undefined
           },
@@ -1284,7 +1285,7 @@ describe('daemon heartbeat authority and cadence', () => {
         ...harness.operations,
         startHeartbeatSupervisor: async (options) => {
           options.onUnexpectedExit(new Error('worker crashed during readiness handoff'))
-          return { stop: stopSupervisor }
+          return { exited: Promise.resolve(), stop: stopSupervisor }
         },
       },
       logger: { info: vi.fn(), error: vi.fn() },

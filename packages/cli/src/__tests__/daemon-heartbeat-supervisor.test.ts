@@ -8,11 +8,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
 
 import {
   LEASE_HEARTBEAT_TTL_MS,
+  WRITER_AUTHORITY_DB_FILE,
   acquireWriterLease,
   readWriterLease,
   releaseLease,
@@ -23,6 +25,7 @@ import { describe, expect, it } from 'vitest';
 
 import { runDaemonHost } from '../daemon/host.js';
 import {
+  HEARTBEAT_SUPERVISOR_STOP_TIMEOUT_MS,
   startHeartbeatSupervisor,
   type HeartbeatSupervisorMessage,
 } from '../daemon/heartbeat-supervisor.js';
@@ -476,6 +479,71 @@ if (FIXTURE_ROLE === 'contender') {
       },
       MUTATION_HOLD_MS + LEASE_HEARTBEAT_TTL_MS + 60_000,
     );
+
+    it('resolves a graceful stop well inside the stop timeout', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-graceful-'));
+      const acquired = acquireWriterLease(root);
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
+      }
+      const supervisor = await startHeartbeatSupervisor({
+        knowledgeRoot: root,
+        leaseId: acquired.leaseId,
+        intervalMs: 25,
+        onMessage: () => undefined,
+        onUnexpectedExit: (error) => {
+          throw error;
+        },
+      });
+
+      const startedAtMs = Date.now();
+      await supervisor.stop();
+
+      expect(Date.now() - startedAtMs).toBeLessThan(HEARTBEAT_SUPERVISOR_STOP_TIMEOUT_MS);
+    }, 20_000);
+
+    it('resolves stop only after a wedged heartbeat worker thread has exited', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-wedge-'));
+      const acquired = acquireWriterLease(root);
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
+      }
+      // A held external authority transaction wedges the worker inside its synchronous
+      // persistence call, exactly as a long governed mutation does in production.
+      const wedge = new DatabaseSync(join(root, WRITER_AUTHORITY_DB_FILE));
+      wedge.exec('PRAGMA busy_timeout = 250');
+      wedge.exec('BEGIN IMMEDIATE');
+
+      try {
+        const unexpected: Error[] = [];
+        const supervisor = await startHeartbeatSupervisor({
+          knowledgeRoot: root,
+          leaseId: acquired.leaseId,
+          intervalMs: 25,
+          stopTimeoutMs: 100,
+          onMessage: () => undefined,
+          onUnexpectedExit: (error) => unexpected.push(error),
+        });
+        let workerExited = false;
+        void supervisor.exited.then(() => {
+          workerExited = true;
+        });
+
+        // The worker entered its heartbeat at ~25ms and is wedged for the full SQLite busy
+        // window, so the 100ms graceful deadline necessarily elapses while the thread is live.
+        await delay(500);
+        await supervisor.stop();
+
+        expect(
+          workerExited,
+          'stop() resolved before the heartbeat worker thread exited',
+        ).toBe(true);
+        expect(unexpected).toEqual([]);
+      } finally {
+        wedge.exec('ROLLBACK');
+        wedge.close();
+      }
+    }, 30_000);
 
     it(
       'keeps the writer lease held while only the daemon main loop is blocked past TTL',

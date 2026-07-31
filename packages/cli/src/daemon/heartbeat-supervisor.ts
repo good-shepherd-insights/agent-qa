@@ -39,9 +39,19 @@ export interface StartHeartbeatSupervisorOptions {
   readonly intervalMs: number
   readonly onMessage: (message: HeartbeatSupervisorMessage) => void
   readonly onUnexpectedExit: (error: Error) => void
+  /**
+   * Test/chaos seam for the pinned graceful-stop window, mirroring `mutationLockTakeoverMs`.
+   *
+   * A real wedge is bounded by MUTATION_LOCK_BUSY_TIMEOUT_MS (2s), which is shorter than the
+   * pinned 3s window, so shortening the window is the only way to reach the escalation branch
+   * from a test. Production never sets it.
+   */
+  readonly stopTimeoutMs?: number
 }
 
 export interface HeartbeatSupervisorHandle {
+  /** Settles once the supervisor thread has actually exited; never rejects. */
+  readonly exited: Promise<void>
   stop(): Promise<void>
 }
 
@@ -188,6 +198,12 @@ export function startHeartbeatSupervisor(
   let stopPromise: Promise<void> | undefined
   let resolveStop: (() => void) | undefined
   let stopTimer: ReturnType<typeof setTimeout> | undefined
+  const stopTimeoutMs = options.stopTimeoutMs ?? HEARTBEAT_SUPERVISOR_STOP_TIMEOUT_MS
+
+  let resolveExited: (() => void) | undefined
+  const exitedPromise = new Promise<void>((resolve) => {
+    resolveExited = resolve
+  })
 
   const finishStop = (): void => {
     if (stopTimer !== undefined) {
@@ -205,6 +221,7 @@ export function startHeartbeatSupervisor(
   }
 
   const handle: HeartbeatSupervisorHandle = {
+    exited: exitedPromise,
     stop: () => {
       if (stopPromise !== undefined) return stopPromise
       stopping = true
@@ -215,7 +232,7 @@ export function startHeartbeatSupervisor(
         stopTimer = setTimeout(() => {
           void worker.terminate().catch(() => undefined)
           finishStop()
-        }, HEARTBEAT_SUPERVISOR_STOP_TIMEOUT_MS)
+        }, stopTimeoutMs)
         stopTimer.unref?.()
         try {
           worker.postMessage({ kind: 'stop' })
@@ -277,6 +294,8 @@ export function startHeartbeatSupervisor(
 
     worker.on('exit', (code) => {
       exited = true
+      resolveExited?.()
+      resolveExited = undefined
       finishStop()
       if (!ready) {
         failStartup(new Error(`heartbeat supervisor exited before ready with code ${code}`))
