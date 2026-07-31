@@ -391,11 +391,28 @@ function openWriterAuthorityDb(knowledgeRoot: string): DatabaseSync {
         incarnation TEXT
       ) STRICT
     `)
+    upgradeMutationLockSchema(db)
     return db
   } catch (error) {
     db.close()
     throw error
   }
+}
+
+/**
+ * Add the incarnation column to a store created before CR-04 shipped.
+ *
+ * The authority database is transient lock state, not knowledge, so this needs no data-migration
+ * plan: an inherited row keeps a NULL incarnation and is therefore unattributed, which fails the
+ * signal check closed. That is the correct reading — nothing on disk can say which process wrote
+ * a row that predates the column.
+ */
+function upgradeMutationLockSchema(db: DatabaseSync): void {
+  const columns = db.prepare(`
+    SELECT name FROM pragma_table_info('mutation_lock')
+  `).all() as { name: string }[]
+  if (columns.some((column) => column.name === 'incarnation')) return
+  db.exec('ALTER TABLE mutation_lock ADD COLUMN incarnation TEXT')
 }
 
 function parseMutationLockOwner(value: unknown): MutationLockOwner | undefined {
