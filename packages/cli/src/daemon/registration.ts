@@ -90,7 +90,14 @@ export type ClassifyDaemonRegistrationOutcome =
 export interface DaemonRegistrationClassificationOperations {
   fetchIdentity(registration: DaemonRegistration): Promise<DaemonIdentity>
   readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome
-  isLeaseStale(lease: unknown, nowMs: number): boolean
+  /**
+   * Composite freshness (386-29), never the lease file alone.
+   *
+   * A daemon inside a long governed mutation cannot rewrite its own lease — that is precisely
+   * the schedule the renewal sidecar exists for — so classifying on the file would call a
+   * healthy holder recoverable and hand its work to a thief.
+   */
+  isWriterLeaseFresh(knowledgeRoot: string, lease: WriterLease, nowMs: number): boolean
   now(): number
   setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
   clearTimeout(timer: ReturnType<typeof setTimeout>): void
@@ -223,7 +230,7 @@ class DaemonIdentityHandshakeTimeoutError extends Error {
 const DEFAULT_CLASSIFICATION_OPERATIONS: DaemonRegistrationClassificationOperations = {
   fetchIdentity: (registration) => fetchDaemonIdentity(registration.socketPath),
   readWriterLease: LOCAL_DAEMON_CAPABILITIES.readWriterLease,
-  isLeaseStale: LOCAL_DAEMON_CAPABILITIES.isLeaseStale,
+  isWriterLeaseFresh: LOCAL_DAEMON_CAPABILITIES.isWriterLeaseFresh,
   now: () => Date.now(),
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimeout: (timer) => clearTimeout(timer),
@@ -284,7 +291,7 @@ export async function classifyDaemonRegistration(
   const lease = operations.readWriterLease(input.knowledgeRoot)
   if (
     lease.kind === 'parsed'
-    && !operations.isLeaseStale(lease.lease, operations.now())
+    && operations.isWriterLeaseFresh(input.knowledgeRoot, lease.lease, operations.now())
   ) {
     return {
       kind: 'unreachable-lease-fresh',

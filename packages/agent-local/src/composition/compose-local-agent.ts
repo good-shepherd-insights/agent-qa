@@ -51,6 +51,7 @@ import {
   heartbeatLease,
   inspectDrainableCurationWork,
   isLeaseStale,
+  isWriterLeaseFresh,
   listQueuedCandidates,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
@@ -170,6 +171,13 @@ export interface LocalDaemonCapabilities {
   readonly releaseLease: typeof releaseLease
   readonly readWriterLease: typeof readWriterLease
   readonly isLeaseStale: typeof isLeaseStale
+  /**
+   * CR-03/CR-08: lease-file freshness OR a renewal sidecar naming the current lease.
+   *
+   * Any surface that classifies a holder as recoverable must read this and not the lease file
+   * alone, or a daemon renewing through its own governed mutation looks reclaimable.
+   */
+  readonly isWriterLeaseFresh: typeof isWriterLeaseFresh
   readonly countPendingCurationJobs: typeof countPendingCurationJobs
   readonly countRemainingCurationWork: typeof countRemainingCurationWork
   readonly inspectDrainableCurationWork: typeof inspectDrainableCurationWork
@@ -207,6 +215,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   releaseLease,
   readWriterLease,
   isLeaseStale,
+  isWriterLeaseFresh,
   countPendingCurationJobs,
   countRemainingCurationWork,
   inspectDrainableCurationWork,

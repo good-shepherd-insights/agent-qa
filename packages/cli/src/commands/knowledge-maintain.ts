@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -42,11 +43,17 @@ import {
 } from '../curation/curation-tail.js'
 import { nudgeDaemon } from '../daemon/client.js'
 import {
+  appendDrainSessionReceipt,
   readDrainSessionReceipts,
   type DrainSessionReceipt,
 } from '../daemon/drain-receipts.js'
 import { DRAIN_WAIT_TIMEOUT_MS } from '../daemon/host.js'
-import { recoverStaleDaemonRegistration } from '../daemon/registration.js'
+import {
+  classifyDaemonRegistration,
+  removeObsoleteDaemonRegistrationIfExpected,
+  removeRegistrationIfOwned,
+  type ClassifyDaemonRegistrationOutcome,
+} from '../daemon/registration.js'
 
 // The eleven maintenance verbs, taken off the local host's curation capabilities rather than
 // imported from the knowledge package directly (D-14). Bound once here so every call site below is
@@ -66,7 +73,7 @@ const {
   rollbackCurationJob,
 } = LOCAL_CURATION_CAPABILITIES.maintenance
 const { drainQueue } = LOCAL_CURATION_CAPABILITIES
-const { countRemainingCurationWork } = LOCAL_DAEMON_CAPABILITIES
+const { countRemainingCurationWork, readWriterLease } = LOCAL_DAEMON_CAPABILITIES
 
 interface RebuildOptions {
   json?: boolean
@@ -336,16 +343,60 @@ function renderRemainingDisposition(work: RemainingCurationWork): string {
     + `quarantined ${work.quarantined})`
 }
 
+/**
+ * Append the same provenance record a daemon session appends, for a session run inline.
+ *
+ * D-16's receipt chain answers "who drained what, and what was left". Once the one-shot host
+ * can recover a wedged daemon's queue, the chain would be silent about exactly the sessions
+ * that mattered most unless the recovering host attests its own.
+ */
+function recordInlineDrainSession(
+  paths: KnowledgePaths,
+  report: Awaited<ReturnType<typeof drainQueue>>,
+  remaining: number,
+  seenCandidateIds: ReadonlySet<string>,
+  authority: { leaseId: string; epoch: number } | undefined,
+): void {
+  if (authority === undefined || seenCandidateIds.size === 0) return
+  appendDrainSessionReceipt(paths.runtimeRoot, {
+    ts: new Date().toISOString(),
+    sessionId: randomUUID(),
+    holderPid: process.pid,
+    epoch: authority.epoch,
+    candidateIds: [...seenCandidateIds].sort(compareText),
+    remainingAfter: remaining,
+    outcome: report.failures === 0 && report.quarantined === 0 && remaining === 0
+      ? 'completed'
+      : 'failed',
+    failures: report.failures,
+    quarantined: report.quarantined,
+  })
+}
+
 async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+  const seenCandidateIds = new Set<string>()
+  let inlineAuthority: { leaseId: string; epoch: number } | undefined
   const report = await drainQueue({
     knowledgeRoot: paths.knowledgeRoot,
     auditBaseDir: paths.auditBaseDir,
     author: FALLBACK_CURATOR_AUTHOR,
     executionContext: resolveRunExecutionContext(),
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    onJobLifecycle: (event) => {
+      seenCandidateIds.add(event.candidateId)
+      // The lease is only readable as OURS while the drain holds it, and a durable boundary is
+      // the one moment that is guaranteed. A drain that never claimed anything has no session
+      // to attest, and a handed-off drain must never mint a receipt for another host's work.
+      if (inlineAuthority !== undefined) return
+      const lease = readWriterLease(paths.knowledgeRoot)
+      if (lease.kind === 'parsed' && lease.lease.pid === process.pid) {
+        inlineAuthority = { leaseId: lease.lease.leaseId, epoch: lease.lease.epoch }
+      }
+    },
   })
   const remainingWork = countRemainingCurationWork(paths.knowledgeRoot)
   const remaining = remainingTotal(remainingWork)
+  recordInlineDrainSession(paths, report, remaining, seenCandidateIds, inlineAuthority)
   if (options.json === true) {
     emitJson({ ...report, remaining, remainingWork })
   } else if (report.kind === 'drained') {
@@ -466,6 +517,134 @@ export async function drainViaDaemon(
     }
     await waitForDrainPoll(Math.min(timing.pollMs, remainingBudgetMs))
   }
+}
+
+type RecoverableDaemonRegistration = Extract<
+  ClassifyDaemonRegistrationOutcome,
+  { kind: 'obsolete' | 'unreachable-lease-stale' }
+>
+
+function classifyDrainHost(
+  paths: KnowledgePaths,
+): Promise<ClassifyDaemonRegistrationOutcome> {
+  return classifyDaemonRegistration({
+    agentQaRoot: paths.runtimeRoot,
+    knowledgeRoot: paths.knowledgeRoot,
+  })
+}
+
+/** Remove exactly the generation that was classified, through the shape-appropriate predicate. */
+function removeClassifiedDrainRegistration(
+  paths: KnowledgePaths,
+  classified: RecoverableDaemonRegistration,
+): boolean {
+  return classified.kind === 'obsolete'
+    ? removeObsoleteDaemonRegistrationIfExpected(paths.runtimeRoot, classified.registration)
+    : removeRegistrationIfOwned(paths.runtimeRoot, classified.registration.instanceId)
+}
+
+/**
+ * Refusals for a host this command must not recover from, and must not guess about.
+ *
+ * D-14's law in one place: a fresh holder keeps its lease and gets named; registration bytes
+ * this command cannot parse select nothing at all.
+ */
+function refuseDrainRouting(
+  outcome: ClassifyDaemonRegistrationOutcome,
+  options: DrainOptions,
+): outcome is Extract<
+  ClassifyDaemonRegistrationOutcome,
+  { kind: 'malformed' | 'unreachable-lease-fresh' }
+> {
+  if (outcome.kind === 'malformed') {
+    if (options.json === true) {
+      emitJson({ mode: 'refused', reason: 'registration-malformed' })
+    }
+    emitHuman(
+      pc.red(
+        'knowledge drain: refusal [registration-malformed]: the daemon registration cannot be '
+        + 'parsed, so no drain mode can be chosen from it; inspect .agent-qa/daemon.json',
+      ),
+      'stderr',
+    )
+    process.exitCode = 1
+    return true
+  }
+  if (outcome.kind === 'unreachable-lease-fresh') {
+    const ageMs = Math.max(0, Date.now() - outcome.holder.heartbeatAtMs)
+    if (options.json === true) {
+      emitJson({
+        mode: 'refused',
+        reason: 'writer-lease-held',
+        holder: outcome.holder,
+        identityFailure: outcome.identityFailure,
+        registrationPid: outcome.registration.pid,
+      })
+    }
+    emitHuman(
+      pc.red(
+        `knowledge drain: refusal [writer-lease-held]: writer lease is held by `
+        + `pid ${outcome.holder.pid}, lease ${outcome.holder.leaseId}, `
+        + `epoch ${outcome.holder.epoch}, last renewed ${ageMs}ms ago; `
+        + `the registered daemon (pid ${outcome.registration.pid}) did not answer its identity `
+        + `handshake [${outcome.identityFailure}]`,
+      ),
+      'stderr',
+    )
+    process.exitCode = 1
+    return true
+  }
+  return false
+}
+
+/**
+ * Choose a drain mode from authenticated daemon identity and composite lease freshness.
+ *
+ * Signal-zero liveness chose the mode before this: a SIGSTOPped daemon and an unrelated process
+ * that inherited a dead daemon's pid both looked "live", so the command delegated to a host that
+ * could never answer and reported it as an error instead of finishing the work itself.
+ */
+async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise<void> {
+  const classified = await classifyDrainHost(paths)
+  if (classified.kind === 'live-confirmed') {
+    await drainViaDaemon(paths, options)
+    return
+  }
+  if (refuseDrainRouting(classified, options)) return
+  if (classified.kind === 'absent') {
+    await drainInline(paths, options)
+    return
+  }
+
+  if (!removeClassifiedDrainRegistration(paths, classified)) {
+    // The registration changed between classification and removal. Look once more rather than
+    // act on a file this command never classified, and fail closed rather than race a third
+    // writer.
+    const reclassified = await classifyDrainHost(paths)
+    if (reclassified.kind === 'live-confirmed') {
+      await drainViaDaemon(paths, options)
+      return
+    }
+    if (refuseDrainRouting(reclassified, options)) return
+    if (
+      reclassified.kind !== 'absent'
+      && !removeClassifiedDrainRegistration(paths, reclassified)
+    ) {
+      if (options.json === true) {
+        emitJson({ mode: 'refused', reason: 'registration-contended' })
+      }
+      emitHuman(
+        pc.red(
+          'knowledge drain: refusal [registration-contended]: the daemon registration changed '
+          + 'twice while it was being classified; rerun the command',
+        ),
+        'stderr',
+      )
+      process.exitCode = 1
+      return
+    }
+  }
+  await drainInline(paths, options)
 }
 
 function reportDrainError(error: unknown): void {
@@ -847,9 +1026,7 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           return
         }
 
-        const registration = recoverStaleDaemonRegistration(paths.runtimeRoot)
-        if (registration.kind === 'live') await drainViaDaemon(paths, options)
-        else await drainInline(paths, options)
+        await routeDrain(paths, options)
       } catch (error) {
         reportDrainError(error)
       }

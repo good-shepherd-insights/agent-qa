@@ -763,8 +763,9 @@ describe('knowledge maintenance commands', () => {
   })
 
   it('fails closed naming the holder when an unreachable daemon is still renewing', async () => {
-    const nowMs = 1_700_000_000_000
-    vi.useFakeTimers({ now: nowMs })
+    // Real timers: the sidecar's freshness IS the subject, so a clock this test advances would
+    // age out the very fact the case exists to honour.
+    const nowMs = Date.now()
     const workspace = fixtureWorkspace(roots)
     seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
     // The lease FILE has aged out because the holder's own governed mutation owns the lock;
@@ -787,11 +788,7 @@ describe('knowledge maintenance commands', () => {
     const registrationBefore = readFileSync(daemonRegistrationPath(workspace.runtimeRoot))
     const leaseBefore = readFileSync(join(workspace.knowledgeRoot, '.lease'))
 
-    const invocation = invoke(workspace, ['drain'])
-    // A refusing route never reaches the daemon wait loop; advancing past its deadline keeps
-    // pid-liveness routing (which does reach it) from holding the leg for two full minutes.
-    await vi.advanceTimersByTimeAsync(121_000)
-    const result = await invocation
+    const result = await invoke(workspace, ['drain'])
 
     expect(result.exitCode).toBe(1)
     expect(result.stderr).toContain('writer-lease-held')
@@ -803,7 +800,7 @@ describe('knowledge maintenance commands', () => {
     expect(readFileSync(daemonRegistrationPath(workspace.runtimeRoot)))
       .toEqual(registrationBefore)
     expect(readFileSync(join(workspace.knowledgeRoot, '.lease'))).toEqual(leaseBefore)
-  }, 60_000)
+  }, 180_000)
 
   it('delegates to a live daemon, polls progress, and never enters the inline lease path', async () => {
     const workspace = fixtureWorkspace(roots)
