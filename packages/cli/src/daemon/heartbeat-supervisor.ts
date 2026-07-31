@@ -24,6 +24,7 @@ type HeartbeatSupervisorRefusalReason = Extract<
 
 export type HeartbeatSupervisorMessage =
   | { readonly kind: 'heartbeated'; readonly holder: HeartbeatSupervisorHolder }
+  | { readonly kind: 'deferred'; readonly reason: 'mutation-lock-busy' }
   | {
       readonly kind: 'refused'
       readonly reason: HeartbeatSupervisorRefusalReason
@@ -77,7 +78,6 @@ const busyRetryDelayMs = Math.max(25, Math.min(250, Math.floor(intervalMs / 20))
 let timer
 let loopHalted = false
 let closing = false
-let busySinceMs
 
 function schedule(delayMs) {
   if (loopHalted || closing) return
@@ -97,9 +97,16 @@ function heartbeat() {
   if (loopHalted || closing) return
   try {
     const outcome = LOCAL_DAEMON_CAPABILITIES.heartbeatLease(authority)
-    busySinceMs = undefined
     if (outcome.kind === 'heartbeated') {
       parentPort.postMessage({ kind: 'heartbeated', holder: outcome.holder })
+      schedule(intervalMs)
+      return
+    }
+    // CR-03: a renewal deferred to the lock-free sidecar is a healthy beat, not a failure. The
+    // recurrence stays armed at its normal cadence so the next strong beat lands as soon as the
+    // governed mutation commits. Only a typed refusal is authority loss.
+    if (outcome.kind === 'deferred') {
+      parentPort.postMessage({ kind: 'deferred', reason: outcome.reason })
       schedule(intervalMs)
       return
     }
@@ -111,13 +118,11 @@ function heartbeat() {
       observedEpoch: outcome.observedEpoch,
     })
   } catch (error) {
+    // Contention never halts the loop: heartbeatLease resolves it to a deferred renewal, and any
+    // residual lock-busy throw is retried rather than treated as lease-unsafe.
     if (error instanceof Error && error.name === 'MutationLockBusyError') {
-      const nowMs = Date.now()
-      busySinceMs ??= nowMs
-      if (nowMs - busySinceMs < intervalMs) {
-        schedule(busyRetryDelayMs)
-        return
-      }
+      schedule(busyRetryDelayMs)
+      return
     }
     loopHalted = true
     parentPort.postMessage({
@@ -142,6 +147,7 @@ function isWorkerMessage(value: unknown): value is WorkerMessage {
   return kind === 'ready'
     || kind === 'stopped'
     || kind === 'heartbeated'
+    || kind === 'deferred'
     || kind === 'refused'
     || kind === 'error'
 }

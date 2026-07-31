@@ -28,6 +28,20 @@ import { z } from 'zod'
 export const LEASE_FILE = '.lease'
 export const EPOCH_FILE = '.epoch'
 
+/**
+ * Lock-free renewal sidecar for the current holder (CR-03).
+ *
+ * Renewal must not queue behind the governed mutation it exists to protect: `heartbeatLease`
+ * enters the same `withMutationLock` primitive as every fenced write, so a long valid mutation
+ * would otherwise starve its own heartbeat, cross the TTL, and become takeover-eligible. When
+ * renewal loses that race it publishes freshness here instead, without the lock.
+ *
+ * The file is safe unserialized because it carries no authority: it is honoured only when its
+ * `leaseId` equals the CURRENT on-disk lease's id and it is itself within the heartbeat TTL. A
+ * superseded holder's sidecar therefore extends nothing, and a stopped process writes none at all.
+ */
+export const LEASE_RENEWAL_FILE = '.lease-renewal'
+
 /** Provisional writer-heartbeat TTL; retune from operational evidence without adding config. */
 export const LEASE_HEARTBEAT_TTL_MS = 30_000
 
@@ -62,6 +76,21 @@ const writerLeaseSchema = z
 
 export type WriterLease = z.infer<typeof writerLeaseSchema>
 
+const leaseRenewalSchema = z
+  .object({
+    leaseId: z.string().uuid(),
+    heartbeatAtMs: z.number().int().nonnegative(),
+  })
+  .strict()
+
+/** Advisory freshness for one exact lease id; never epoch or identity authority. */
+export type LeaseRenewal = z.infer<typeof leaseRenewalSchema>
+
+export type ReadLeaseRenewalOutcome =
+  | { kind: 'absent' }
+  | { kind: 'malformed' }
+  | { kind: 'parsed'; renewal: LeaseRenewal }
+
 export type AcquireWriterLeaseOutcome =
   | { kind: 'held'; holder: WriterLease }
   | { kind: 'acquired'; leaseId: string; epoch: number; reclaimed?: WriterLease }
@@ -78,6 +107,7 @@ export interface LeaseOperationOptions {
 
 export type HeartbeatLeaseOutcome =
   | { kind: 'heartbeated'; holder: WriterLease }
+  | { kind: 'deferred'; reason: 'mutation-lock-busy' }
   | {
       kind: 'refused'
       reason:
@@ -174,6 +204,10 @@ function leasePath(knowledgeRoot: string): string {
 
 function epochPath(knowledgeRoot: string): string {
   return join(knowledgeRoot, EPOCH_FILE)
+}
+
+function leaseRenewalPath(knowledgeRoot: string): string {
+  return join(knowledgeRoot, LEASE_RENEWAL_FILE)
 }
 
 function writerAuthorityDbPath(knowledgeRoot: string): string {
@@ -386,7 +420,11 @@ function terminateExactMutationLockOwner(owner: MutationLockOwner): boolean {
 function leasePermitsEscalation(knowledgeRoot: string, owner: MutationLockOwner): boolean {
   if (!processIsAlive(owner.pid)) return true
   const lease = readWriterLease(knowledgeRoot)
-  return lease.kind !== 'parsed' || isLeaseStale(lease.lease, mutationLockNowMs())
+  // CR-03: a holder still renewing through the sidecar is healthy, not wedged. Escalation here
+  // ends in SIGKILL, so a renewing holder must never reach it just because the mutation it is
+  // performing is the reason its lease file cannot be rewritten.
+  return lease.kind !== 'parsed'
+    || !isWriterLeaseFresh(knowledgeRoot, lease.lease, mutationLockNowMs())
 }
 
 function tryEscalatedMutationLockTakeover(
@@ -614,6 +652,42 @@ export function readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome {
   }
 }
 
+/** Read the advisory renewal sidecar; an unreadable or invalid file is simply no renewal. */
+export function readLeaseRenewal(knowledgeRoot: string): ReadLeaseRenewalOutcome {
+  const file = leaseRenewalPath(knowledgeRoot)
+  let raw: string
+  try {
+    raw = readFileSync(file, 'utf8')
+  } catch {
+    return existsSync(file) ? { kind: 'malformed' } : { kind: 'absent' }
+  }
+
+  try {
+    const parsed = leaseRenewalSchema.safeParse(JSON.parse(raw))
+    return parsed.success ? { kind: 'parsed', renewal: parsed.data } : { kind: 'malformed' }
+  } catch {
+    return { kind: 'malformed' }
+  }
+}
+
+/**
+ * Publish freshness for one lease id without entering the mutation lock.
+ *
+ * The caller has already verified that `leaseId` is the current on-disk holder; this write is
+ * deliberately unserialized because a torn or lost sidecar can only ever make a live holder look
+ * older than it is, never younger.
+ */
+function writeLeaseRenewal(knowledgeRoot: string, renewal: LeaseRenewal): void {
+  atomicRewrite(
+    leaseRenewalPath(knowledgeRoot),
+    `${JSON.stringify(leaseRenewalSchema.parse(renewal))}\n`,
+  )
+}
+
+function clearLeaseRenewal(knowledgeRoot: string): void {
+  rmSync(leaseRenewalPath(knowledgeRoot), { force: true })
+}
+
 function previewEpochState(raw: string): string {
   const preview = raw.slice(0, 64).replaceAll('\r', '\\r').replaceAll('\n', '\\n')
   return preview === '' ? '<empty>' : preview
@@ -675,6 +749,28 @@ export function isLeaseStale(lease: unknown, nowMs: number): boolean {
 }
 
 /**
+ * Composite freshness: the lease file itself, OR a renewal sidecar bound to this exact holder.
+ *
+ * CR-03: a holder inside a long governed mutation cannot refresh `.lease`, because publishing it
+ * requires the very transaction the mutation is holding. Its renewal lands in the sidecar instead,
+ * so takeover classification must read both. The sidecar is honoured only when it names THIS
+ * lease's id — a superseded holder's leftover sidecar extends nothing — and only while it is
+ * itself within `LEASE_HEARTBEAT_TTL_MS`, so a stopped process (which writes no sidecar at all)
+ * still ages out and remains legitimately reclaimable.
+ */
+export function isWriterLeaseFresh(
+  knowledgeRoot: string,
+  lease: WriterLease,
+  nowMs: number,
+): boolean {
+  if (!isLeaseStale(lease, nowMs)) return true
+  if (!Number.isFinite(nowMs)) return false
+  const renewal = readLeaseRenewal(knowledgeRoot)
+  if (renewal.kind !== 'parsed' || renewal.renewal.leaseId !== lease.leaseId) return false
+  return nowMs - renewal.renewal.heartbeatAtMs < LEASE_HEARTBEAT_TTL_MS
+}
+
+/**
  * A published holder counts as current only when its recorded epoch still equals the disk epoch.
  *
  * WR-04: a crash between the epoch rewrite and the lease rewrite leaves a lease naming the previous
@@ -696,7 +792,8 @@ function isCurrentHolder(
   lease: WriterLease,
   nowMs: number,
 ): boolean {
-  return !isLeaseStale(lease, nowMs) && leaseEpochIsCurrent(knowledgeRoot, lease)
+  return isWriterLeaseFresh(knowledgeRoot, lease, nowMs)
+    && leaseEpochIsCurrent(knowledgeRoot, lease)
 }
 
 /** Return a live holder or atomically mint a new, monotonically fenced writer identity. */
@@ -737,7 +834,7 @@ export function acquireWriterLease(
         const nowMs = Date.now()
         if (
           current.kind === 'parsed'
-          && !isLeaseStale(current.lease, nowMs)
+          && isWriterLeaseFresh(knowledgeRoot, current.lease, nowMs)
           && current.lease.epoch === observedEpoch
         ) {
           return { kind: 'held', holder: current.lease }
@@ -754,6 +851,8 @@ export function acquireWriterLease(
         atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
         hooks?.afterEpochRewrite?.()
         sweepStagedEpochsBefore(knowledgeRoot, epoch)
+        // The reclaimed holder's renewal can no longer speak for this root.
+        clearLeaseRenewal(knowledgeRoot)
         atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
         return {
           kind: 'acquired',
@@ -854,9 +953,35 @@ export function withCurrentWriterAuthority<T>(
   }
 }
 
-/** Refresh the matching current-epoch holder; reclaim races return a typed refusal. */
+/**
+ * Refresh the matching current-epoch holder; reclaim races return a typed refusal.
+ *
+ * CR-03: renewal shares `withMutationLock` with every governed mutation, so the holder's own
+ * long-running write can lock it out of its own heartbeat. Contention is therefore not a failure
+ * — it falls back to the lock-free renewal sidecar and reports `deferred`. Identity is still
+ * proven first: only a lease file that parses AND names this exact holder may be extended.
+ */
 export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutcome {
   assertAbsoluteKnowledgeRoot(opts.knowledgeRoot)
+  try {
+    return heartbeatLeaseUnderMutationLock(opts)
+  } catch (error) {
+    if (!(error instanceof MutationLockBusyError)) throw error
+    const current = readWriterLease(opts.knowledgeRoot)
+    if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
+    if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
+    if (current.lease.leaseId !== opts.leaseId) {
+      return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
+    }
+    writeLeaseRenewal(opts.knowledgeRoot, {
+      leaseId: opts.leaseId,
+      heartbeatAtMs: Date.now(),
+    })
+    return { kind: 'deferred', reason: 'mutation-lock-busy' }
+  }
+}
+
+function heartbeatLeaseUnderMutationLock(opts: LeaseOperationOptions): HeartbeatLeaseOutcome {
   return withMutationLock(opts.knowledgeRoot, () => {
     const current = readWriterLease(opts.knowledgeRoot)
     if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
@@ -952,6 +1077,8 @@ export function releaseLease(opts: LeaseOperationOptions): ReleaseLeaseOutcome {
     }
 
     rmSync(leasePath(opts.knowledgeRoot), { force: true })
+    // A released holder must not keep extending its own freshness through the sidecar.
+    clearLeaseRenewal(opts.knowledgeRoot)
     bestEffortFsyncDirectory(opts.knowledgeRoot)
     return { kind: 'released' }
   })

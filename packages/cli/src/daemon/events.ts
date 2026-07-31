@@ -7,6 +7,7 @@ export type DaemonEventKind =
   | 'lease-acquired'
   | 'lease-reclaimed'
   | 'lease-heartbeated'
+  | 'lease-renewal-deferred'
   | 'lease-lost'
   | 'epoch-bump'
   | 'registration-recovered'

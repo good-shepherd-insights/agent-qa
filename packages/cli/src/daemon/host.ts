@@ -1403,6 +1403,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       })
       return
     }
+    // CR-03: the lease is still ours; renewal simply rode the sidecar because a governed mutation
+    // held the authority transaction. Record the fact and keep serving — this is not lease loss.
+    if (heartbeat.kind === 'deferred') {
+      recordDaemonEvent({
+        kind: 'lease-renewal-deferred',
+        reason: heartbeat.reason,
+      })
+      return
+    }
 
     const failAuthority = (): void => {
       if (shutdownPromise !== undefined) return
@@ -1497,12 +1506,21 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       kind: 'epoch-bump',
       epoch: acquired.epoch,
     })
-    recordDaemonEvent({
-      kind: 'lease-heartbeated',
-      pid: initialHeartbeat.holder.pid,
-      epoch: initialHeartbeat.holder.epoch,
-      heartbeatAtMs: initialHeartbeat.holder.heartbeatAtMs,
-    })
+    if (initialHeartbeat.kind === 'deferred') {
+      // The lease we just acquired is fresh by construction; renewal only rode the sidecar
+      // because a governed mutation already held the authority transaction.
+      recordDaemonEvent({
+        kind: 'lease-renewal-deferred',
+        reason: initialHeartbeat.reason,
+      })
+    } else {
+      recordDaemonEvent({
+        kind: 'lease-heartbeated',
+        pid: initialHeartbeat.holder.pid,
+        epoch: initialHeartbeat.holder.epoch,
+        heartbeatAtMs: initialHeartbeat.holder.heartbeatAtMs,
+      })
+    }
 
     const model = await input.model()
     recovery = operations.composeJobRecovery({
