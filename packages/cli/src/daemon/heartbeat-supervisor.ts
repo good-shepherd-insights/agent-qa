@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
 import type { HeartbeatLeaseOutcome } from '@vostride/agent-qa-agent-local'
@@ -50,12 +52,15 @@ type WorkerMessage =
 const HEARTBEAT_WORKER_SOURCE = String.raw`
 'use strict'
 
+const { isAbsolute } = require('node:path')
 const { parentPort, workerData } = require('node:worker_threads')
-const { LOCAL_DAEMON_CAPABILITIES } = require('@vostride/agent-qa-agent-local')
 
 if (parentPort === null) throw new Error('heartbeat supervisor requires a parent port')
 
-const { knowledgeRoot, leaseId, intervalMs } = workerData
+const { agentLocalEntryPath, knowledgeRoot, leaseId, intervalMs } = workerData
+if (typeof agentLocalEntryPath !== 'string' || !isAbsolute(agentLocalEntryPath)) {
+  throw new TypeError('heartbeat supervisor agentLocalEntryPath must be absolute')
+}
 if (typeof knowledgeRoot !== 'string' || knowledgeRoot.length === 0) {
   throw new TypeError('heartbeat supervisor knowledgeRoot must be a non-empty string')
 }
@@ -66,6 +71,7 @@ if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
   throw new TypeError('heartbeat supervisor intervalMs must be a positive safe integer')
 }
 
+const { LOCAL_DAEMON_CAPABILITIES } = require(agentLocalEntryPath)
 const authority = { knowledgeRoot, leaseId }
 const busyRetryDelayMs = Math.max(25, Math.min(250, Math.floor(intervalMs / 20)))
 let timer
@@ -150,12 +156,19 @@ function isWorkerMessage(value: unknown): value is WorkerMessage {
 export function startHeartbeatSupervisor(
   options: StartHeartbeatSupervisorOptions,
 ): Promise<HeartbeatSupervisorHandle> {
+  const requireBase = typeof __filename === 'string'
+    ? __filename
+    : (process.argv[1] ?? join(process.cwd(), 'package.json'))
+  const agentLocalEntryPath = createRequire(requireBase).resolve(
+    '@vostride/agent-qa-agent-local',
+  )
   const worker = new Worker(HEARTBEAT_WORKER_SOURCE, {
     eval: true,
     // Do not inherit `--input-type=module` or test loaders that would reinterpret eval as ESM.
     execArgv: [],
     name: 'agent-qa-writer-lease-heartbeat',
     workerData: {
+      agentLocalEntryPath,
       knowledgeRoot: options.knowledgeRoot,
       leaseId: options.leaseId,
       intervalMs: options.intervalMs,
