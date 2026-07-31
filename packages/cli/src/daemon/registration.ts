@@ -12,10 +12,21 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import type {
+  ReadWriterLeaseOutcome,
+  WriterLease,
+} from '@vostride/agent-qa-agent-local'
+import { LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { z } from 'zod'
+
+import { fetchDaemonIdentity } from './server.js'
+import type { DaemonIdentity } from './server.js'
 
 export const DAEMON_REGISTRATION_FILE = 'daemon.json'
 export const DAEMON_REGISTRATION_SCHEMA_VERSION = 2
+
+/** Pinned identity-probe bound; retune from daemon evidence without adding config. */
+export const DAEMON_IDENTITY_HANDSHAKE_TIMEOUT_MS = 1_000
 
 const legacyDaemonRegistrationSchema = z
   .object({
@@ -55,6 +66,40 @@ export type InspectDaemonRegistrationOutcome =
 export type RecoverDaemonRegistrationOutcome =
   | Exclude<InspectDaemonRegistrationOutcome, { kind: 'stale' }>
   | { kind: 'recovered'; registration: StaleDaemonRegistration }
+
+export type ClassifyDaemonRegistrationOutcome =
+  | { kind: 'absent' }
+  | { kind: 'malformed' }
+  | { kind: 'obsolete'; registration: LegacyDaemonRegistration }
+  | { kind: 'live-confirmed'; registration: DaemonRegistration }
+  | {
+      kind: 'unreachable-lease-fresh'
+      registration: DaemonRegistration
+      holder: WriterLease
+      identityFailure: 'mismatch' | 'timeout' | 'unreachable'
+    }
+  | {
+      kind: 'unreachable-lease-stale'
+      registration: DaemonRegistration
+      lease: ReadWriterLeaseOutcome
+      identityFailure: 'mismatch' | 'timeout' | 'unreachable'
+    }
+
+export interface DaemonRegistrationClassificationOperations {
+  fetchIdentity(registration: DaemonRegistration): Promise<DaemonIdentity>
+  readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome
+  isLeaseStale(lease: unknown, nowMs: number): boolean
+  now(): number
+  setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
+  clearTimeout(timer: ReturnType<typeof setTimeout>): void
+}
+
+export interface ClassifyDaemonRegistrationInput {
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: string
+  /** Focused test seam. Production callers omit it. */
+  readonly operations?: Partial<DaemonRegistrationClassificationOperations>
+}
 
 export type ProcessIsAlive = (pid: number) => boolean
 
@@ -161,6 +206,94 @@ export function inspectDaemonRegistration(
   return isAlive(outcome.registration.pid)
     ? { kind: 'live', registration: outcome.registration }
     : { kind: 'stale', registration: outcome.registration }
+}
+
+class DaemonIdentityHandshakeTimeoutError extends Error {
+  constructor() {
+    super(`Daemon identity handshake exceeded ${DAEMON_IDENTITY_HANDSHAKE_TIMEOUT_MS}ms`)
+    this.name = 'DaemonIdentityHandshakeTimeoutError'
+  }
+}
+
+const DEFAULT_CLASSIFICATION_OPERATIONS: DaemonRegistrationClassificationOperations = {
+  fetchIdentity: (registration) => fetchDaemonIdentity(registration.socketPath),
+  readWriterLease: LOCAL_DAEMON_CAPABILITIES.readWriterLease,
+  isLeaseStale: LOCAL_DAEMON_CAPABILITIES.isLeaseStale,
+  now: () => Date.now(),
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (timer) => clearTimeout(timer),
+}
+
+async function fetchIdentityWithinBound(
+  registration: DaemonRegistration,
+  operations: DaemonRegistrationClassificationOperations,
+): Promise<DaemonIdentity> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operations.fetchIdentity(registration),
+      new Promise<never>((_resolve, reject) => {
+        timeout = operations.setTimeout(
+          () => reject(new DaemonIdentityHandshakeTimeoutError()),
+          DAEMON_IDENTITY_HANDSHAKE_TIMEOUT_MS,
+        )
+        timeout.unref?.()
+      }),
+    ])
+  } finally {
+    if (timeout !== undefined) operations.clearTimeout(timeout)
+  }
+}
+
+/**
+ * Classify daemon authority from its nonce-authenticated socket identity and current writer lease.
+ *
+ * PID signal-zero is deliberately absent: an alive, stopped, or reused PID is not daemon proof.
+ */
+export async function classifyDaemonRegistration(
+  input: ClassifyDaemonRegistrationInput,
+): Promise<ClassifyDaemonRegistrationOutcome> {
+  const outcome = readDaemonRegistration(input.agentQaRoot)
+  if (outcome.kind !== 'parsed') return outcome
+
+  const operations = {
+    ...DEFAULT_CLASSIFICATION_OPERATIONS,
+    ...input.operations,
+  }
+  let identityFailure: 'mismatch' | 'timeout' | 'unreachable'
+  try {
+    const identity = await fetchIdentityWithinBound(outcome.registration, operations)
+    if (
+      identity.instanceId === outcome.registration.instanceId
+      && identity.pid === outcome.registration.pid
+    ) {
+      return { kind: 'live-confirmed', registration: outcome.registration }
+    }
+    identityFailure = 'mismatch'
+  } catch (error) {
+    identityFailure = error instanceof DaemonIdentityHandshakeTimeoutError
+      ? 'timeout'
+      : 'unreachable'
+  }
+
+  const lease = operations.readWriterLease(input.knowledgeRoot)
+  if (
+    lease.kind === 'parsed'
+    && !operations.isLeaseStale(lease.lease, operations.now())
+  ) {
+    return {
+      kind: 'unreachable-lease-fresh',
+      registration: outcome.registration,
+      holder: lease.lease,
+      identityFailure,
+    }
+  }
+  return {
+    kind: 'unreachable-lease-stale',
+    registration: outcome.registration,
+    lease,
+    identityFailure,
+  }
 }
 
 export function removeDaemonRegistration(agentQaRoot: string): void {

@@ -1,4 +1,5 @@
 import { request, type IncomingMessage } from 'node:http'
+import { dirname, join } from 'node:path'
 
 import {
   FunctionDeniedError,
@@ -11,7 +12,7 @@ import {
 import type { FunctionScope } from '@vostride/agent-qa-schema'
 
 import {
-  inspectDaemonRegistration,
+  classifyDaemonRegistration,
   type DaemonRegistration,
 } from './registration.js'
 import {
@@ -29,6 +30,8 @@ export const STREAM_RESUME_MAX_ATTEMPTS = 3
 export const DAEMON_NUDGE_TIMEOUT_MS = 5_000
 
 export interface NudgeDaemonOptions {
+  /** Resolved configured root; defaults only for legacy project-local callers. */
+  readonly knowledgeRoot?: string
   /** Absolute wall-clock deadline shared with the caller's complete operation. */
   readonly deadlineMs?: number
   /** Request an empty terminal receipt when the caller gates completion on it. */
@@ -37,9 +40,9 @@ export interface NudgeDaemonOptions {
 }
 
 export class DaemonNotRunningError extends Error {
-  readonly reason: 'absent' | 'malformed' | 'stale' | 'unreachable'
+  readonly reason: DaemonNotRunningReason
 
-  constructor(reason: 'absent' | 'malformed' | 'stale' | 'unreachable', detail?: string) {
+  constructor(reason: DaemonNotRunningReason, detail?: string) {
     super(
       `agent-qa daemon is not running (${reason}${detail ? `: ${detail}` : ''}). ` +
         'Start `agent-qa daemon`, or omit --via-daemon.',
@@ -51,9 +54,18 @@ export class DaemonNotRunningError extends Error {
 
 interface InvokeViaDaemonOptions {
   readonly agentQaRoot: string
+  readonly knowledgeRoot?: string
   readonly functionId: string
   readonly input: unknown
 }
+
+export type DaemonNotRunningReason =
+  | 'absent'
+  | 'malformed'
+  | 'obsolete'
+  | 'unreachable-lease-fresh'
+  | 'unreachable-lease-stale'
+  | 'unreachable'
 
 interface WireError {
   readonly name?: unknown
@@ -93,9 +105,16 @@ type SseFrame =
   | { readonly kind: 'end' }
   | { readonly kind: 'error'; readonly value: unknown }
 
-function requireLiveRegistration(agentQaRoot: string): DaemonRegistration {
-  const registration = inspectDaemonRegistration(agentQaRoot)
-  if (registration.kind === 'live') return registration.registration
+function defaultKnowledgeRoot(agentQaRoot: string): string {
+  return join(dirname(agentQaRoot), 'agent-qa-knowledge')
+}
+
+async function requireLiveRegistration(
+  agentQaRoot: string,
+  knowledgeRoot = defaultKnowledgeRoot(agentQaRoot),
+): Promise<DaemonRegistration> {
+  const registration = await classifyDaemonRegistration({ agentQaRoot, knowledgeRoot })
+  if (registration.kind === 'live-confirmed') return registration.registration
   throw new DaemonNotRunningError(registration.kind)
 }
 
@@ -330,6 +349,7 @@ async function requireEventStream(response: IncomingMessage): Promise<void> {
 async function* resumeEventStream(
   firstResponse: IncomingMessage,
   agentQaRoot: string,
+  knowledgeRoot: string | undefined,
   functionId: string,
   input: unknown,
 ): AsyncIterable<unknown> {
@@ -359,7 +379,7 @@ async function* resumeEventStream(
     resumeAttempts += 1
     let registration: DaemonRegistration
     try {
-      registration = requireLiveRegistration(agentQaRoot)
+      registration = await requireLiveRegistration(agentQaRoot, knowledgeRoot)
       response = await openInvokeResponse(
         registration,
         functionId,
@@ -374,7 +394,10 @@ async function* resumeEventStream(
 
 /** Invoke through the socket path recorded by the live registration; never recompute discovery. */
 export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<unknown> {
-  const registration = requireLiveRegistration(options.agentQaRoot)
+  const registration = await requireLiveRegistration(
+    options.agentQaRoot,
+    options.knowledgeRoot,
+  )
   const response = await openInvokeResponse(registration, options.functionId, options.input)
   const statusCode = response.statusCode ?? 500
   if (statusCode < 200 || statusCode >= 300) return readUnaryResponse(response)
@@ -382,6 +405,7 @@ export async function invokeViaDaemon(options: InvokeViaDaemonOptions): Promise<
     return resumeEventStream(
       response,
       options.agentQaRoot,
+      options.knowledgeRoot,
       options.functionId,
       options.input,
     )
@@ -396,8 +420,11 @@ export async function nudgeDaemon(
 ): Promise<NudgeResponse | undefined> {
   try {
     if (options.signal?.aborted === true) return undefined
-    const inspected = inspectDaemonRegistration(agentQaRoot)
-    if (inspected.kind !== 'live') return
+    const inspected = await classifyDaemonRegistration({
+      agentQaRoot,
+      knowledgeRoot: options.knowledgeRoot ?? defaultKnowledgeRoot(agentQaRoot),
+    })
+    if (inspected.kind !== 'live-confirmed') return
     const remainingDeadlineMs = options.deadlineMs === undefined
       ? DAEMON_NUDGE_TIMEOUT_MS
       : options.deadlineMs - Date.now()

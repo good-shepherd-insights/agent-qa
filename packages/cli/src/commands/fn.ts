@@ -20,6 +20,7 @@ import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
 } from '../composition/local-agent-host.js'
+import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 
 interface FnOptions {
@@ -219,6 +220,15 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
         const composition = compositionInput(command)
         const viaDaemon =
           options.viaDaemon === true || process.env.AGENT_QA_VIA_DAEMON === '1'
+        const daemonKnowledgeRoot = viaDaemon
+          ? resolveConfiguredKnowledgeRoot(
+              await resolveConfig({
+                configPath: composition.configPath,
+                loadAuthPlugins: false,
+              }),
+              dirname(composition.configPath),
+            )
+          : undefined
         // D-07: daemon routing is explicit. A live registration never changes the default,
         // while the explicit route does not compose a second local host before going over wire.
         const localRegistry = viaDaemon
@@ -251,7 +261,12 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
 
         const input = withResumeToken(parsedInput(options.input), options.from)
         const result = viaDaemon
-          ? await invokeViaDaemon({ agentQaRoot: composition.agentQaRoot, functionId: id, input })
+          ? await invokeViaDaemon({
+              agentQaRoot: composition.agentQaRoot,
+              knowledgeRoot: daemonKnowledgeRoot,
+              functionId: id,
+              input,
+            })
           : await invokeFunction(localRegistry!, id, input, CLI_FUNCTION_CALLER)
 
         // The registry knows which ops stream (D-08); the rendering follows the RESULT so

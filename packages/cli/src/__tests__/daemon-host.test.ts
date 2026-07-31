@@ -707,7 +707,7 @@ describe('daemon registration recovery at boot', () => {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: HOST_INSTANCE_ID,
       pid: process.pid,
-      socketPath: join(paths.agentQaRoot, 'missing.sock'),
+      socketPath: daemonSocketPath(paths.agentQaRoot, paths.root),
       startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
     })
     const harness = hostHarness(nowMs)
@@ -808,7 +808,7 @@ describe('daemon registration recovery at boot', () => {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: HOST_INSTANCE_ID,
       pid: process.pid,
-      socketPath: join(paths.agentQaRoot, 'missing.sock'),
+      socketPath: daemonSocketPath(paths.agentQaRoot, paths.root),
       startedAtMs: nowMs - 5_000,
     })
     const acquire = vi.fn()
@@ -928,7 +928,14 @@ describe('daemon registration recovery at boot', () => {
       knowledgeRoot: paths.knowledgeRoot,
       config: TEST_CONFIG,
       model: () => TEST_MODEL,
-      operations: { acquireWriterLease: acquire },
+      operations: {
+        acquireWriterLease: acquire,
+        classifyDaemonRegistration: async () => {
+          const outcome = readDaemonRegistration(paths.agentQaRoot)
+          if (outcome.kind !== 'parsed') throw new Error('expected parsed registration')
+          return { kind: 'live-confirmed', registration: outcome.registration }
+        },
+      },
       logger: { info: vi.fn(), error: (message) => errors.push(message) },
     })).resolves.toBe(1)
 

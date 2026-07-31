@@ -381,6 +381,7 @@ export async function drainViaDaemon(
   const deadlineMs = startedAtMs + timing.waitTimeoutMs
   const receiptFloor = readDrainSessionReceipts(paths.runtimeRoot).length
   const nudge = await nudgeDaemon(paths.runtimeRoot, {
+    knowledgeRoot: paths.knowledgeRoot,
     deadlineMs,
     requireReceipt: true,
   })

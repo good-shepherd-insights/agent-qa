@@ -48,11 +48,16 @@ import {
   type StartInvokeServerOptions,
 } from './server.js'
 import {
+  classifyDaemonRegistration,
   DAEMON_REGISTRATION_SCHEMA_VERSION,
-  inspectDaemonRegistration,
+  readDaemonRegistration,
   removeDaemonRegistration,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
+} from './registration.js'
+import type {
+  ClassifyDaemonRegistrationInput,
+  ClassifyDaemonRegistrationOutcome,
 } from './registration.js'
 import type { DaemonRegistration } from './registration.js'
 import {
@@ -133,6 +138,9 @@ export interface DaemonHostOperations {
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
   removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean
+  classifyDaemonRegistration(
+    input: ClassifyDaemonRegistrationInput,
+  ): Promise<ClassifyDaemonRegistrationOutcome>
   startInvokeServer(options: StartInvokeServerOptions): Promise<InvokeServerHandle>
   countRemainingCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.countRemainingCurationWork
   inspectDrainableCurationWork: typeof LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork
@@ -236,6 +244,7 @@ function defaultOperations(): DaemonHostOperations {
     writeDaemonRegistration,
     removeDaemonRegistration,
     removeRegistrationIfOwned,
+    classifyDaemonRegistration,
     startInvokeServer,
     countRemainingCurationWork: LOCAL_DAEMON_CAPABILITIES.countRemainingCurationWork,
     inspectDrainableCurationWork: LOCAL_DAEMON_CAPABILITIES.inspectDrainableCurationWork,
@@ -357,8 +366,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     || input.operations.spawnEmbedderWorker !== undefined
   operations.trace?.('posture-pinned')
 
-  const registration = inspectDaemonRegistration(input.agentQaRoot)
-  if (registration.kind === 'live') {
+  const registrationSnapshot = readDaemonRegistration(input.agentQaRoot)
+  const registration = registrationSnapshot.kind === 'parsed'
+    ? await operations.classifyDaemonRegistration({
+      agentQaRoot: input.agentQaRoot,
+      knowledgeRoot: input.knowledgeRoot,
+    })
+    : registrationSnapshot
+  if (registration.kind === 'live-confirmed') {
     logger.error(liveRegistrationMessage(registration.registration))
     return 1
   }
@@ -366,8 +381,23 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     logger.error('agent-qa daemon registration is malformed; refusing to overwrite it')
     return 1
   }
-  if (registration.kind === 'stale') {
+  if (registration.kind === 'unreachable-lease-fresh') {
+    logger.error(heldMessage(registration.holder))
+    return 1
+  }
+  if (
+    registration.kind === 'obsolete'
+    || registration.kind === 'unreachable-lease-stale'
+  ) {
     operations.removeDaemonRegistration(input.agentQaRoot)
+    recordDaemonEvent({
+      kind: 'registration-recovered',
+      classification: registration.kind,
+      pid: registration.registration.pid,
+      ...('instanceId' in registration.registration
+        ? { instanceId: registration.registration.instanceId }
+        : {}),
+    })
   }
 
   const acquired = operations.acquireWriterLease(input.knowledgeRoot)

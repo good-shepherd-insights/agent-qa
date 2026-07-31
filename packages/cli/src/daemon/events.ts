@@ -9,6 +9,7 @@ export type DaemonEventKind =
   | 'lease-heartbeated'
   | 'lease-lost'
   | 'epoch-bump'
+  | 'registration-recovered'
   | 'job-claimed'
   | 'job-completed'
   | 'drain-session-start'

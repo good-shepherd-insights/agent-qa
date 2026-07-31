@@ -48,6 +48,7 @@ import {
   foldRunOutcomes,
   heartbeatLease,
   inspectDrainableCurationWork,
+  isLeaseStale,
   listQueuedCandidates,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
@@ -163,6 +164,7 @@ export interface LocalDaemonCapabilities {
   readonly heartbeatLease: typeof heartbeatLease
   readonly releaseLease: typeof releaseLease
   readonly readWriterLease: typeof readWriterLease
+  readonly isLeaseStale: typeof isLeaseStale
   readonly countPendingCurationJobs: typeof countPendingCurationJobs
   readonly countRemainingCurationWork: typeof countRemainingCurationWork
   readonly inspectDrainableCurationWork: typeof inspectDrainableCurationWork
@@ -193,6 +195,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   heartbeatLease,
   releaseLease,
   readWriterLease,
+  isLeaseStale,
   countPendingCurationJobs,
   countRemainingCurationWork,
   inspectDrainableCurationWork,

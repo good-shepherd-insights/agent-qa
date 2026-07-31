@@ -55,6 +55,11 @@ const roots: string[] = []
 const hosts: LocalAgentHost[] = []
 const servers: InvokeServerHandle[] = []
 const ENDPOINT_INSTANCE_ID = '33333333-3333-4333-8333-333333333333'
+const ENDPOINT_IDENTITY = {
+  schemaVersion: 1 as const,
+  instanceId: ENDPOINT_INSTANCE_ID,
+  pid: process.pid,
+}
 
 const MASKED_CONFIG = {
   schemaVersion: 1 as const,
@@ -212,7 +217,7 @@ async function startRegistryServer(
   const agentQaRoot = join(root, '.agent-qa')
   const socketPath = join(agentQaRoot, 'daemon.sock')
   register(agentQaRoot, socketPath)
-  const server = await startServer({ socketPath, registry })
+  const server = await startServer({ socketPath, registry, identity: ENDPOINT_IDENTITY })
   servers.push(server)
   return { agentQaRoot, socketPath }
 }
@@ -347,7 +352,11 @@ async function startFnServer(
   registry: FunctionRegistry,
 ): Promise<void> {
   register(fixture.agentQaRoot, fixture.socketPath)
-  const server = await startInvokeServer({ socketPath: fixture.socketPath, registry })
+  const server = await startInvokeServer({
+    socketPath: fixture.socketPath,
+    registry,
+    identity: ENDPOINT_IDENTITY,
+  })
   servers.push(server)
 }
 
@@ -434,11 +443,7 @@ describe('daemon /invoke endpoint tracer', () => {
     const server = await startInvokeServer({
       socketPath,
       registry: host.registry,
-      identity: {
-        schemaVersion: 1,
-        instanceId: ENDPOINT_INSTANCE_ID,
-        pid: process.pid,
-      },
+      identity: ENDPOINT_IDENTITY,
     } as Parameters<typeof startInvokeServer>[0])
     servers.push(server)
 
@@ -524,7 +529,11 @@ describe('daemon /invoke endpoint tracer', () => {
 
     const host = localHost(agentQaRoot, join(root, 'agent-qa-knowledge'))
     register(agentQaRoot, socketPath)
-    const server = await startInvokeServer({ socketPath, registry: host.registry })
+    const server = await startInvokeServer({
+      socketPath,
+      registry: host.registry,
+      identity: ENDPOINT_IDENTITY,
+    })
     servers.push(server)
 
     await expect(invokeViaDaemon({
@@ -554,7 +563,11 @@ describe('daemon /invoke endpoint tracer', () => {
 
     const host = localHost(agentQaRoot, join(root, 'agent-qa-knowledge'))
     register(agentQaRoot, socketPath)
-    const server = await startInvokeServer({ socketPath, registry: host.registry })
+    const server = await startInvokeServer({
+      socketPath,
+      registry: host.registry,
+      identity: ENDPOINT_IDENTITY,
+    })
     servers.push(server)
 
     await expect(invokeViaDaemon({
@@ -635,7 +648,11 @@ describe('daemon /invoke endpoint semantic parity', () => {
     const agentQaRoot = join(root, '.agent-qa')
     const socketPath = join(agentQaRoot, 'daemon.sock')
     register(agentQaRoot, socketPath)
-    const firstServer = await semantic.startInvokeServer({ socketPath, registry })
+    const firstServer = await semantic.startInvokeServer({
+      socketPath,
+      registry,
+      identity: ENDPOINT_IDENTITY,
+    })
     servers.push(firstServer)
 
     const framed = await rawInvoke(socketPath, 'synthetic.frames', {})
@@ -661,6 +678,7 @@ describe('daemon /invoke endpoint semantic parity', () => {
     const successorServer = await semantic.startInvokeServer({
       socketPath: successorSocketPath,
       registry,
+      identity: ENDPOINT_IDENTITY,
     })
     servers.push(successorServer)
     register(agentQaRoot, successorSocketPath)
@@ -1051,6 +1069,7 @@ describe('agent-qa fn explicit daemon routing', () => {
     const server = await semantic.startInvokeServer({
       socketPath: fixture.socketPath,
       registry,
+      identity: ENDPOINT_IDENTITY,
     })
     servers.push(server)
 

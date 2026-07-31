@@ -441,7 +441,10 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       }
       operations.writeCurationTailReceipt(runDir, completedReceipt)
       if (completedReceipt.drainKind === 'handed-off') {
-        void operations.nudgeDaemon(opts.agentQaRoot).catch(() => undefined)
+        void operations.nudgeDaemon(
+          opts.agentQaRoot,
+          { knowledgeRoot },
+        ).catch(() => undefined)
       }
     } catch {
       opts.log.warn(incompleteWarning(receiptIdentity.runId))

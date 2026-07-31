@@ -394,6 +394,7 @@ export {
   acquireWriterLease,
   CorruptEpochStateError,
   heartbeatLease,
+  isLeaseStale,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   MUTATION_LOCK_BUSY_TIMEOUT_MS,
