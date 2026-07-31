@@ -18,6 +18,7 @@ export type DaemonEventKind =
   | 'embedder-worker-exit'
   | 'embedder-worker-terminate-escalated'
   | 'run-child-exit'
+  | 'shutdown-stage-failed'
   | 'daemon-stopped'
 
 /** A lifecycle fact. Kinds are closed while later plans may add kind-specific scalar fields. */

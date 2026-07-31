@@ -1391,6 +1391,78 @@ describe('daemon shutdown and reclaim post-mortem', () => {
     expect(hardExit).toHaveBeenCalledWith(130)
   })
 
+  it('memoizes one lease-loss shutdown while its first cleanup is still pending', async () => {
+    const paths = makePaths('shutdown-once-only')
+    const harness = hostHarness()
+    let heartbeatCallback: (() => void) | undefined
+    let releaseClose: (() => void) | undefined
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve
+    })
+    const removeOwned = vi.fn(removeRegistrationIfOwned)
+    const runShutdownStage = vi.fn(async (
+      stage: typeof awaitedStages[number],
+      action: () => void | Promise<void>,
+    ) => {
+      if (stage === 'invokeServer.close') await closeGate
+      await action()
+    })
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        runShutdownStage,
+        removeRegistrationIfOwned: removeOwned,
+        setInterval: (callback, intervalMs) => {
+          if (intervalMs === LEASE_HEARTBEAT_INTERVAL_MS) heartbeatCallback = callback
+          return intervalMs as unknown as ReturnType<typeof setInterval>
+        },
+        clearInterval: () => undefined,
+        startInvokeServer: ({ socketPath }) => Promise.resolve({
+          socketPath,
+          close: () => Promise.resolve(),
+        }),
+      } as Partial<DaemonHostOperations>,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM') && heartbeatCallback !== undefined,
+      'once-only daemon did not become signalable',
+    )
+    const replacement: WriterLease = {
+      leaseId: '551a9f42-7862-43ac-a6bf-236b53c51b24',
+      pid: process.pid + 1,
+      epoch: 2,
+      heartbeatAtMs: 1_700_000_010_000,
+    }
+    writeFileSync(
+      join(paths.knowledgeRoot, LEASE_FILE),
+      `${JSON.stringify(replacement)}\n`,
+      'utf8',
+    )
+
+    heartbeatCallback?.()
+    heartbeatCallback?.()
+    await waitUntil(
+      () => runShutdownStage.mock.calls.some(([stage]) => stage === 'invokeServer.close'),
+      'once-only shutdown did not reach its blocked close',
+    )
+    releaseClose?.()
+
+    await expect(running).resolves.toBe(1)
+    expect(
+      runShutdownStage.mock.calls.filter(([stage]) => stage === 'invokeServer.close'),
+    ).toHaveLength(1)
+    expect(removeOwned).toHaveBeenCalledTimes(1)
+    expect(
+      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'daemon-stopped'),
+    ).toHaveLength(1)
+  })
+
   it('clears the armed grace timer so clean shutdown cannot hard-exit afterward', async () => {
     const paths = makePaths('shutdown-grace-clear')
     const harness = hostHarness()

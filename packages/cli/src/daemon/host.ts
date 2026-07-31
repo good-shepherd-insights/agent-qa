@@ -118,6 +118,15 @@ export interface EmbedderWorkerSpawnOptions {
   readonly stdio: readonly ['ignore', 'pipe', 'pipe']
 }
 
+export type DaemonShutdownStage =
+  | 'invokeServer.close'
+  | 'drainWorker'
+  | 'maintenanceWorker'
+  | 'stopEmbedderWorker'
+  | 'jobDispatcher.stop'
+  | 'localAgent.close'
+  | 'releaseLease'
+
 export interface DaemonHostOperations {
   /** Test-only scheduler seam; production uses libuv's monotonic timer scheduling. */
   setInterval(callback: () => void, intervalMs: number): ReturnType<typeof setInterval>
@@ -129,6 +138,11 @@ export interface DaemonHostOperations {
   onSignal(signal: NodeJS.Signals, listener: () => void): void
   offSignal(signal: NodeJS.Signals, listener: () => void): void
   hardExit(code: number): void
+  /** Focused failure-injection seam around each awaited shutdown stage. */
+  runShutdownStage(
+    stage: DaemonShutdownStage,
+    action: () => void | Promise<void>,
+  ): Promise<void>
   acquireWriterLease(knowledgeRoot: string): AcquireWriterLeaseOutcome
   heartbeatLease(options: LeaseOperationOptions): HeartbeatLeaseOutcome
   releaseLease(options: LeaseOperationOptions): ReleaseLeaseOutcome
@@ -235,6 +249,9 @@ function defaultOperations(): DaemonHostOperations {
     onSignal: (signal, listener) => process.on(signal, listener),
     offSignal: (signal, listener) => process.off(signal, listener),
     hardExit: (code) => process.exit(code),
+    runShutdownStage: async (_stage, action) => {
+      await action()
+    },
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
     heartbeatLease: LOCAL_DAEMON_CAPABILITIES.heartbeatLease,
     releaseLease: LOCAL_DAEMON_CAPABILITIES.releaseLease,
@@ -857,9 +874,34 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
   const detachSignals = (): void => {
     if (controller === undefined) return
-    operations.offSignal('SIGINT', controller.handleSignal)
-    operations.offSignal('SIGTERM', controller.handleSignal)
-    controller.dispose()
+    const activeController = controller
+    controller = undefined
+    let firstFailure: unknown
+    try {
+      operations.offSignal('SIGINT', activeController.handleSignal)
+    } catch (error) {
+      firstFailure = error
+    }
+    try {
+      operations.offSignal('SIGTERM', activeController.handleSignal)
+    } catch (error) {
+      firstFailure ??= error
+    }
+    try {
+      activeController.dispose()
+    } catch (error) {
+      firstFailure ??= error
+    }
+    if (firstFailure !== undefined) throw firstFailure
+  }
+
+  const armShutdownGrace = (): void => {
+    if (shutdownCompleted || graceTimer !== undefined) return
+    graceTimer = operations.setTimeout(
+      () => operations.hardExit(130),
+      DAEMON_SHUTDOWN_GRACE_MS,
+    )
+    graceTimer.unref?.()
   }
 
   const beginShutdown = (
@@ -868,70 +910,155 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     reason: 'signal' | 'lease-lost' | 'startup-error',
   ): Promise<void> => {
     if (shutdownPromise !== undefined) return shutdownPromise
-    shutdownPromise = (async () => {
-      operations.trace?.('shutdown-started')
-      if (heartbeatTimer !== undefined) {
-        operations.clearInterval(heartbeatTimer)
-        heartbeatTimer = undefined
-      }
-      if (curationPollTimer !== undefined) {
-        operations.clearInterval(curationPollTimer)
-        curationPollTimer = undefined
-      }
-      if (maintenanceTimer !== undefined) {
-        operations.clearInterval(maintenanceTimer)
-        maintenanceTimer = undefined
-      }
-      if (invokeServer !== undefined) {
-        await invokeServer.close()
-        invokeServer = undefined
-      }
-
-      await drainWorker
-      await maintenanceWorker
-      clearEmbedderWorkerIdleTimer()
-      await stopEmbedderWorker('daemon-stop')
-
-      await jobDispatcher?.stop()
-      jobDispatcher = undefined
-      await localAgent?.close()
-      localAgent = undefined
-      recovery?.close()
-      recovery = undefined
-
+    const executeShutdown = async (): Promise<void> => {
+      const failures: Array<{ stage: string; message: string }> = []
       let exitCode = requestedCode
-      if (releaseAuthority) {
-        const released = operations.releaseLease(authority)
-        if (released.kind === 'released') {
-          operations.trace?.('lease-released')
-        } else {
-          exitCode = 1
+      const recordShutdownFailure = (stage: string, error: unknown): void => {
+        const message = error instanceof Error ? error.message : String(error)
+        failures.push({ stage, message })
+        try {
+          logger.error(`Daemon shutdown stage ${stage} failed: ${message}`)
+        } catch {
+          // A logger failure must not interrupt cleanup convergence.
+        }
+        try {
           recordDaemonEvent({
-            kind: 'lease-lost',
-            reason: released.reason,
-            observedEpoch: released.holder?.epoch,
+            kind: 'shutdown-stage-failed',
+            stage,
+            message,
           })
+        } catch {
+          // Event recording is best-effort and already reports its own sink failures.
+        }
+      }
+      const runStage = async (
+        stage: DaemonShutdownStage,
+        action: () => void | Promise<void>,
+      ): Promise<void> => {
+        try {
+          await operations.runShutdownStage(stage, action)
+        } catch (error) {
+          recordShutdownFailure(stage, error)
+        }
+      }
+      const runSyncCleanup = (stage: string, action: () => void): void => {
+        try {
+          action()
+        } catch (error) {
+          recordShutdownFailure(stage, error)
         }
       }
 
-      if (registrationWritten) {
-        const removed = operations.removeRegistrationIfOwned(input.agentQaRoot, instanceId)
-        registrationWritten = false
-        if (removed) operations.trace?.('registration-removed')
+      try {
+        if (reason === 'lease-lost') {
+          runSyncCleanup('shutdownGrace.arm', armShutdownGrace)
+        }
+        runSyncCleanup('shutdown.trace', () => operations.trace?.('shutdown-started'))
+        if (heartbeatTimer !== undefined) {
+          const timer = heartbeatTimer
+          heartbeatTimer = undefined
+          runSyncCleanup('heartbeatTimer.clear', () => operations.clearInterval(timer))
+        }
+        if (curationPollTimer !== undefined) {
+          const timer = curationPollTimer
+          curationPollTimer = undefined
+          runSyncCleanup('curationPollTimer.clear', () => operations.clearInterval(timer))
+        }
+        if (maintenanceTimer !== undefined) {
+          const timer = maintenanceTimer
+          maintenanceTimer = undefined
+          runSyncCleanup('maintenanceTimer.clear', () => operations.clearInterval(timer))
+        }
+
+        const server = invokeServer
+        invokeServer = undefined
+        await runStage('invokeServer.close', async () => {
+          await server?.close()
+        })
+
+        await runStage('drainWorker', async () => {
+          await drainWorker
+        })
+        drainWorker = undefined
+        await runStage('maintenanceWorker', async () => {
+          await maintenanceWorker
+        })
+        maintenanceWorker = undefined
+
+        runSyncCleanup('embedderWorkerIdleTimer.clear', clearEmbedderWorkerIdleTimer)
+        await runStage('stopEmbedderWorker', async () => {
+          await stopEmbedderWorker('daemon-stop')
+        })
+
+        const dispatcher = jobDispatcher
+        jobDispatcher = undefined
+        await runStage('jobDispatcher.stop', async () => {
+          await dispatcher?.stop()
+        })
+        const agent = localAgent
+        localAgent = undefined
+        await runStage('localAgent.close', async () => {
+          await agent?.close()
+        })
+        const activeRecovery = recovery
+        recovery = undefined
+        runSyncCleanup('recovery.close', () => activeRecovery?.close())
+
+        if (releaseAuthority) {
+          await runStage('releaseLease', () => {
+            const released = operations.releaseLease(authority)
+            if (released.kind === 'released') {
+              operations.trace?.('lease-released')
+            } else {
+              exitCode = 1
+              recordDaemonEvent({
+                kind: 'lease-lost',
+                reason: released.reason,
+                observedEpoch: released.holder?.epoch,
+              })
+            }
+          })
+        }
+      } catch (error) {
+        // The staged helpers should contain failures; this protects convergence from helper bugs.
+        recordShutdownFailure('shutdown.unexpected', error)
+      } finally {
+        if (registrationWritten) {
+          registrationWritten = false
+          runSyncCleanup('removeRegistrationIfOwned', () => {
+            const removed = operations.removeRegistrationIfOwned(
+              input.agentQaRoot,
+              instanceId,
+            )
+            if (removed) operations.trace?.('registration-removed')
+          })
+        }
+        runSyncCleanup('signals.detach', detachSignals)
+        if (graceTimer !== undefined) {
+          const timer = graceTimer
+          graceTimer = undefined
+          runSyncCleanup('shutdownGrace.clear', () => operations.clearTimeout(timer))
+        }
+
+        if (failures.length > 0) exitCode = 1
+        try {
+          recordDaemonEvent({
+            kind: 'daemon-stopped',
+            exitCode,
+            reason,
+            failureCount: failures.length,
+            failedStages: failures.map((failure) => failure.stage),
+            failures,
+          })
+        } catch {
+          // Completion still settles if both the event sink and its logger fail.
+        }
+        shutdownCompleted = true
+        resolveCompletion?.(exitCode)
       }
-      recordDaemonEvent({
-        kind: 'daemon-stopped',
-        exitCode,
-        reason,
-      })
-      detachSignals()
-      if (graceTimer !== undefined) {
-        operations.clearTimeout(graceTimer)
-        graceTimer = undefined
-      }
-      shutdownCompleted = true
-      resolveCompletion?.(exitCode)
-    })()
+    }
+    // Publish the memo before cleanup begins so even a synchronous re-entrant trigger observes it.
+    shutdownPromise = Promise.resolve().then(executeShutdown)
     return shutdownPromise
   }
 
@@ -1046,14 +1173,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       ),
     })
 
-    const armShutdownGrace = (): void => {
-      if (shutdownCompleted || graceTimer !== undefined) return
-      graceTimer = operations.setTimeout(
-        () => operations.hardExit(130),
-        DAEMON_SHUTDOWN_GRACE_MS,
-      )
-      graceTimer.unref?.()
-    }
     controller = createShutdownController({
       cancel: () => {
         armShutdownGrace()
