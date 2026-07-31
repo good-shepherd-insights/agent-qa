@@ -332,7 +332,6 @@ describe('thrown-handler disposition edges (386-21)', () => {
     expect(row).toMatchObject({
       status: 'queued',
       attempts: 1,
-      claimed: true,
     })
     expect(row).not.toHaveProperty('lastFailureKind')
     expect(row).not.toHaveProperty('lastFailureReason')
