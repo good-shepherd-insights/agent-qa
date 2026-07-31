@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
+  acquireWriterLease,
   LEASE_HEARTBEAT_TTL_MS,
   MUTATION_LOCK_TAKEOVER_MS,
   enumerateBundleDirs,
@@ -63,8 +66,109 @@ function storeDigest(knowledgeRoot: string): string {
     .digest('hex')
 }
 
+function immediateWriterAttempt(knowledgeRoot: string): 'busy' | 'entered' {
+  const db = new DatabaseSync(join(knowledgeRoot, '.writer-authority.sqlite'), {
+    timeout: 5,
+  })
+  let transactionOpen = false
+  try {
+    db.exec('BEGIN IMMEDIATE')
+    transactionOpen = true
+    return 'entered'
+  } catch (error) {
+    if (
+      (error as NodeJS.ErrnoException).code === 'ERR_SQLITE_ERROR'
+      && /database is locked/i.test((error as Error).message)
+    ) {
+      return 'busy'
+    }
+    throw error
+  } finally {
+    if (transactionOpen) db.exec('ROLLBACK')
+    db.close()
+  }
+}
+
+function expireLeaseFile(knowledgeRoot: string): void {
+  const file = join(knowledgeRoot, '.lease')
+  const lease = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+  writeFileSync(file, `${JSON.stringify({
+    ...lease,
+    heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+  })}\n`, 'utf8')
+}
+
 describePosix('SIGSTOP writer-epoch fencing', () => {
   afterAll(cleanupFencingRoots)
+
+    test('serializes takeover behind a drainer paused inside the publish rename mutation', async () => {
+      const paths = makeRoot('publish-rename-held')
+      const fixture = singleCandidateFixture()
+      const candidateId = fixture.candidates[0]!.candidateId
+      writeFixture(paths.fixture, fixture)
+
+      const drainer = startChild('paused-drainer', paths, {
+        [FENCING_ENV.pauseAt]: 'publish-rename',
+      })
+      try {
+        const paused = await waitForMarker(
+          drainer,
+          paths.marker,
+          'beforePublishRename marker',
+        )
+        expect(paused).toMatchObject({
+          phase: 'beforePublishRename',
+          pid: drainer.child.pid,
+          candidateId,
+          oldEpoch: 1,
+        })
+        sendSignalWhileAlive(drainer, 'SIGSTOP')
+
+        expect(immediateWriterAttempt(paths.knowledgeRoot)).toBe('busy')
+        const whilePaused = acquireWriterLease(paths.knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })
+        expect(whilePaused).toMatchObject({
+          kind: 'held',
+          holder: {
+            pid: drainer.child.pid,
+            leaseId: paused.leaseId,
+            epoch: 1,
+          },
+        })
+        expect(drainer.child.exitCode).toBeNull()
+        expect(drainer.child.signalCode).toBeNull()
+
+        writeDurableJson(paths.permit, { resume: true })
+        sendSignalWhileAlive(drainer, 'SIGCONT')
+        const report = await completeChildSuccessfully(drainer, paths.drainerReport)
+        expect(report).toMatchObject({
+          pauseAt: 'publish-rename',
+          candidateId,
+          hookCount: 1,
+          beforePublishRenameReached: true,
+          acceptedKind: 'applied',
+          publicationEntryCount: 1,
+        })
+        expect(enumerateBundleDirs(paths.knowledgeRoot)).toHaveLength(1)
+        const { db } = openIndexReaderConnection(paths.knowledgeRoot)
+        try {
+          expect(db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count).toBe(1)
+        } finally {
+          db.close()
+        }
+
+        expireLeaseFile(paths.knowledgeRoot)
+        expect(acquireWriterLease(paths.knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+        })).toMatchObject({ kind: 'acquired', epoch: 2 })
+      } finally {
+        if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
+          drainer.child.kill('SIGCONT')
+        }
+        await killIfRunning(drainer.child)
+      }
+    }, LEG_TIMEOUT_MS)
 
     test('refuses a drainer resumed after the daemon reclaims and commits X', async () => {
       const paths = makeRoot('reclaim')

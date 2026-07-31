@@ -40,11 +40,15 @@ function blockSynchronouslyUntil(file: string): void {
   while (!existsSync(file)) Atomics.wait(sleepCell, 0, 0, 20)
 }
 
-type PauseAt = 'afterIntentWritten' | 'afterFinalAuthorityCompare'
+type PauseAt = 'afterIntentWritten' | 'afterFinalAuthorityCompare' | 'publish-rename'
 
 function requestedPauseAt(): PauseAt {
   const value = process.env[FENCING_ENV.pauseAt] ?? 'afterIntentWritten'
-  if (value !== 'afterIntentWritten' && value !== 'afterFinalAuthorityCompare') {
+  if (
+    value !== 'afterIntentWritten'
+    && value !== 'afterFinalAuthorityCompare'
+    && value !== 'publish-rename'
+  ) {
     throw new Error(`unsupported fencing pause point: ${value}`)
   }
   return value
@@ -180,7 +184,7 @@ export async function runPausedDrainerFixture(): Promise<void> {
           throw new Error('stale drainer reached beforePublishRename')
         },
       }
-    } else {
+    } else if (pauseAt === 'afterFinalAuthorityCompare') {
       deps.hooks = {
         ...originalHooks,
         afterFinalAuthorityCompare: () => {
@@ -198,6 +202,23 @@ export async function runPausedDrainerFixture(): Promise<void> {
         beforePublishRename: () => {
           beforePublishRenameReached = true
           throw new Error('stale drainer reached beforePublishRename')
+        },
+      }
+    } else {
+      deps.hooks = {
+        ...originalHooks,
+        beforePublishRename: () => {
+          originalHooks?.beforePublishRename?.()
+          hookCount += 1
+          beforePublishRenameReached = true
+          writeDurableJson(marker, {
+            phase: 'beforePublishRename',
+            pid: process.pid,
+            candidateId: job.candidateId,
+            leaseId: job.leaseId,
+            oldEpoch: deps.epoch,
+          })
+          blockSynchronouslyUntil(permit)
         },
       }
     }
@@ -246,6 +267,25 @@ export async function runPausedDrainerFixture(): Promise<void> {
         candidateId,
         oldEpoch: retained.deps.epoch,
         hookCount,
+        acceptedKind: firstOutcome.kind,
+        publicationEntryCount,
+      })
+      return
+    }
+    if (pauseAt === 'publish-rename') {
+      if (retained === undefined || firstOutcome?.kind !== 'applied') {
+        throw new Error(
+          `publish-rename holder did not complete: ${JSON.stringify(firstOutcome)}`,
+        )
+      }
+      writeDurableJson(reportFile, {
+        failed: false,
+        pauseAt,
+        pid: process.pid,
+        candidateId,
+        oldEpoch: retained.deps.epoch,
+        hookCount,
+        beforePublishRenameReached,
         acceptedKind: firstOutcome.kind,
         publicationEntryCount,
       })

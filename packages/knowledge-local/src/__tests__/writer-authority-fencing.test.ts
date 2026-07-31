@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { BundleOutcomeEventSchema, slugBranch } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -175,6 +176,46 @@ describe('writer authority and bundle publication are one indivisible protocol (
     )
 
     expect(result).toBe(1)
+    expect(mutations).toBe(1)
+  })
+
+  it('keeps a contender out while the current authority is inside mutate past its final guard', () => {
+    const authority = acquireAuthority()
+    let mutations = 0
+    let contenderResult: 'busy' | 'entered' | undefined
+
+    expectedSurface.withCurrentWriterAuthority(
+      knowledgeRoot,
+      authority,
+      () => {
+        mutations += 1
+        const contender = new DatabaseSync(
+          join(knowledgeRoot, '.writer-authority.sqlite'),
+          { timeout: 5 },
+        )
+        let contenderTransactionOpen = false
+        try {
+          contender.exec('BEGIN IMMEDIATE')
+          contenderTransactionOpen = true
+          contenderResult = 'entered'
+        } catch (error) {
+          contenderResult = (error as NodeJS.ErrnoException).code === 'ERR_SQLITE_ERROR'
+            && /database is locked/i.test((error as Error).message)
+            ? 'busy'
+            : undefined
+        } finally {
+          if (contenderTransactionOpen) contender.exec('ROLLBACK')
+          contender.close()
+        }
+      },
+      {
+        afterFinalAuthorityCompare: () => {
+          expect(mutations).toBe(0)
+        },
+      },
+    )
+
+    expect(contenderResult).toBe('busy')
     expect(mutations).toBe(1)
   })
 
