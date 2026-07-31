@@ -59,6 +59,7 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
   let knowledgeRoot: string
   let auditBaseDir: string
   let epoch: number
+  let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-store-procedure-boundary-'))
@@ -67,6 +68,7 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
     epoch = lease.epoch
+    leaseId = lease.leaseId
   })
 
   afterEach(() => {
@@ -81,6 +83,7 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
       auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
+      writerLeaseId: leaseId,
       sourceBuildOrdinal: 43,
       ...overrides,
     }
@@ -217,11 +220,19 @@ describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
   let root: string
   let knowledgeRoot: string
   let auditBaseDir: string
+  let epoch: number
+  let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-store-promote-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     auditBaseDir = join(root, '.agent-qa')
+    // CR-02: promote() now runs its whole gate-and-write body inside the exact-authority
+    // fence, so this fixture has to hold the lease it mutates under rather than name one.
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
+    epoch = lease.epoch
+    leaseId = lease.leaseId
   })
 
   afterEach(() => {
@@ -321,6 +332,8 @@ describe('KnowledgePort promote deterministic gate (PROM-01/D-17)', () => {
       knowledgeRoot,
       auditBaseDir,
       executionContext: 'local-interactive',
+      epoch,
+      writerLeaseId: leaseId,
       sourceBuildOrdinal: 43,
       ...overrides,
     }

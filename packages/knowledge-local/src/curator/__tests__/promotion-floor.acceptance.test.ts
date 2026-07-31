@@ -278,6 +278,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       auditBaseDir,
       executionContext: 'local-interactive',
       epoch: lease.epoch,
+      writerLeaseId: lease.leaseId,
       sourceBuildOrdinal,
     })
   }

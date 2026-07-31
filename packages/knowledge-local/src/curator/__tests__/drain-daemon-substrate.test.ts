@@ -1290,7 +1290,12 @@ describe('drainQueue daemon substrate', () => {
       })
       expect(eventTypes()).not.toContain('contradicted')
       expect(canarySnapshot()).toEqual(before)
-      expect(readJobState(knowledgeRoot, enqueued.entryId).kind).toBe('absent')
+      // The terminal transition shares the refused section, so the claim survives for the
+      // successor to reconcile rather than being completed behind an append that never landed.
+      const state = readJobState(knowledgeRoot, enqueued.entryId)
+      expect(state.kind).toBe('parsed')
+      if (state.kind !== 'parsed') throw new Error('expected a surviving nonterminal claim')
+      expect(state.state.lifecycle).not.toBe('done')
     })
 
     it('lands no canary promotion behind a takeover completed before its held section', async () => {

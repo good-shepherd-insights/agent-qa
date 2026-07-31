@@ -58,6 +58,7 @@ import {
   persistAuthoredCheckpoint,
   readJobState,
   writeJobState,
+  writeJobStateWithinCurrentAuthority,
 } from '../queue/job-state.js'
 import type { CurationCandidatePayload } from '../queue/queue-payload.js'
 import {
@@ -931,17 +932,26 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             sourceBuildOrdinal: canaryOutcome.buildOrdinal,
             sourceRunId: canaryOutcome.runId,
             policy: options.policy,
+            writerLeaseId: lease.leaseId,
+            /**
+             * CR-02: the terminal transition joins the canary tail's own held section through
+             * the within-held form. Calling the fenced writeJobState here would re-enter
+             * withCurrentWriterAuthority against a BEGIN IMMEDIATE the tail already holds and
+             * deadlock (the Plan 25/28 within-held idiom).
+             */
+            onCanaryTailWithinCurrentAuthority: () => {
+              writeJobStateWithinCurrentAuthority({
+                knowledgeRoot: options.knowledgeRoot,
+                candidateId: claimed.candidateId,
+                authority: lease,
+                lifecycle: 'done',
+              })
+            },
             ...(operations.canaryAuthorityHooks === undefined
               ? {}
               : { canaryAuthorityHooks: operations.canaryAuthorityHooks }),
           })
           await store.recordCanaryOutcome(canaryOutcome)
-          operations.writeJobState({
-            knowledgeRoot: options.knowledgeRoot,
-            candidateId: claimed.candidateId,
-            authority: lease,
-            lifecycle: 'done',
-          })
         } catch (error) {
           recordFailure(result, 'commit', error, claimed.candidateId)
           if (error instanceof WriterAuthorityLostError) break

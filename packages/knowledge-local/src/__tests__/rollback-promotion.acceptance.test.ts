@@ -299,6 +299,7 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
       auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
+      writerLeaseId: leaseId,
       sourceBuildOrdinal: 45,
     })
     await expect(store.promote(held.id)).rejects.toMatchObject({

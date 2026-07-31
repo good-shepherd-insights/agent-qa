@@ -1028,6 +1028,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
+      writerLeaseId: leaseId,
     })
 
     await store.commit([addDelta(verifiedFactDraft({ summary: 'Bridge checkout fact' }))])
@@ -1848,6 +1849,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
+      writerLeaseId: leaseId,
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: { commitCurationDelta: operation },
     })
@@ -1874,6 +1876,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       auditBaseDir,
       executionContext: 'local-interactive',
       epoch,
+      writerLeaseId: leaseId,
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
       operations: { commitCurationDelta: operation },
     })
@@ -1890,6 +1893,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       auditBaseDir,
       executionContext: 'ci',
       epoch,
+      writerLeaseId: leaseId,
     })
 
     await expect(

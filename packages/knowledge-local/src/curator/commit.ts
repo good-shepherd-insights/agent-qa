@@ -199,7 +199,8 @@ export function applyIndexDeltaForBundle(input: ApplyIndexDeltaForBundleInput): 
   projectBundleIndexRow(input)
 }
 
-function applyIndexDeltaForBundleWithinCurrentAuthority(
+/** @internal The caller must already hold withCurrentWriterAuthority for this root. */
+export function applyIndexDeltaForBundleWithinCurrentAuthority(
   input: ApplyIndexDeltaForBundleInput,
 ): void {
   projectBundleIndexRowWithinCurrentAuthority(input)

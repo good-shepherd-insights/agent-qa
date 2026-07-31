@@ -37,7 +37,7 @@ import {
   BundleTargetResolutionError,
   resolveProductQualifiedBundleDir,
 } from '../bundle-scan.js'
-import { readCurrentEpoch, readWriterLease } from '../lease/writer-lease.js'
+import { readCurrentEpoch, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -52,7 +52,7 @@ import type {
 import { resolveDispositionProfile } from './author-contract.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
-  applyIndexDeltaForBundle,
+  applyIndexDeltaForBundleWithinCurrentAuthority,
   assemblePromotionGateInput,
   commitCurationDelta,
   derivePromotedEvidenceToken,
@@ -67,13 +67,17 @@ import type {
 /**
  * CR-02 takeover barriers. Test-only seams naming the three points at which a canary flow is
  * about to make canonical state durable; production callers omit them.
+ *
+ * The two entry barriers fire OUTSIDE the held section, which is what lets a schedule complete a
+ * real takeover there and then observe the resumed writer's refusal. `beforeIndexProjection` fires
+ * INSIDE it, so its schedule observes a contender blocked behind the tail instead.
  */
 export interface CanaryAuthorityHooks {
-  /** Before the negative arm's contradicted append. */
+  /** Immediately before the negative arm enters its held section. */
   beforeNegativeAppend?: () => void
-  /** Before the promoted append that finalizes a positive canary. */
+  /** Immediately before the positive arm enters its held promotion section. */
   beforePromotionAppend?: () => void
-  /** Before the negative arm's index projection. */
+  /** Inside the negative arm's held section, between its append and its projection. */
   beforeIndexProjection?: () => void
 }
 
@@ -84,13 +88,14 @@ export interface CreateLocalKnowledgeStoreConfig {
   /** The holder's fresh lease epoch. Defaults to a fresh disk read for composition roots. */
   epoch?: number
   /**
-   * The holder's lease id, paired with `epoch` and defaulting the same way.
+   * The caller's real writer-lease id, paired with `epoch`.
    *
-   * CR-01: canonical mutation now requires the exact live identity, so this bridge can no longer
-   * synthesize one. When the caller supplies nothing the currently published holder is adopted;
-   * if no holder is published the fence refuses by name instead of laundering a fabricated id.
+   * CR-02: every canonical append, promotion, and index projection this store performs carries
+   * this identity into `withCurrentWriterAuthority`, so a store constructed by someone who is not
+   * the published holder is refused at its first canonical mutation instead of laundering a
+   * fabricated id. It is required precisely so no code path can omit it and fall back to one.
    */
-  writerLeaseId?: string
+  writerLeaseId: string
   policy?: GuardrailPolicy
   /** Port calls lack a run ordinal; callers with run context should supply it. */
   sourceBuildOrdinal?: number
@@ -98,6 +103,12 @@ export interface CreateLocalKnowledgeStoreConfig {
   screenStates?: readonly ScreenState[]
   /** Fault-injection seam; production callers must omit it. */
   canaryAuthorityHooks?: CanaryAuthorityHooks
+  /**
+   * Joins the caller's own terminal work to the canary tail's held section. The drain's `done`
+   * job-state write uses this so the append, the projection, and the lifecycle transition are one
+   * indivisible section; implementations must use within-held write forms only.
+   */
+  onCanaryTailWithinCurrentAuthority?: () => void
   operations?: {
     /** Test/chaos seam; production always uses commitCurationDelta. */
     commitCurationDelta?: typeof commitCurationDelta
@@ -274,13 +285,14 @@ function syntheticAuthorship(
   }
 }
 
-/** Path-safe stand-in used only when no holder is published; the fence then refuses by name. */
-const UNHELD_BRIDGE_LEASE_ID = 'knowledge-port'
-
-function bridgeLeaseId(config: CreateLocalKnowledgeStoreConfig): string {
-  if (config.writerLeaseId !== undefined) return config.writerLeaseId
-  const current = readWriterLease(config.knowledgeRoot)
-  return current.kind === 'parsed' ? current.lease.leaseId : UNHELD_BRIDGE_LEASE_ID
+/** The one authority every canonical mutation in this file carries; never synthesized. */
+function currentAuthority(
+  config: CreateLocalKnowledgeStoreConfig,
+): { leaseId: string; epoch: number } {
+  return {
+    leaseId: config.writerLeaseId,
+    epoch: config.epoch ?? readCurrentEpoch(config.knowledgeRoot),
+  }
 }
 
 function bridgeDelta(
@@ -300,7 +312,7 @@ function bridgeDelta(
     ?? (observedOrdinals.length === 0 ? 0 : Math.max(...observedOrdinals) + 1)
   const fields = addressFields(config, delta, targetTruth, buildOrdinal)
   const candidateId = candidateContentAddress(fields)
-  const leaseId = bridgeLeaseId(config)
+  const leaseId = config.writerLeaseId
   const candidateDir = claimedCandidateDir(config.knowledgeRoot, leaseId, candidateId)
   const artifactsDir = join(candidateDir, 'artifacts')
   const payload: CurationCandidatePayload = { candidateId, ...fields }
@@ -377,6 +389,131 @@ export function createLocalKnowledgeStore(
   const operation = config.operations?.commitCurationDelta ?? commitCurationDelta
   const policy = config.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput)
 
+  function bundleStoreConfig(productKey: string): BundleStoreConfig {
+    return {
+      knowledgeRoot: config.knowledgeRoot,
+      productKey,
+      auditBaseDir: config.auditBaseDir,
+      commitArtifacts: 'none',
+      writerLeaseId: config.writerLeaseId,
+      policy,
+    }
+  }
+
+  /**
+   * @internal The caller must already hold withCurrentWriterAuthority for this root. Every
+   * append and projection below is irreversible canonical work, so the whole gate-and-write
+   * body lives in one section rather than re-entering the fence per unit.
+   */
+  function promoteWithinCurrentAuthority(candidateId: RecordId): void {
+    /**
+     * D-17: later callers add evidence first, then ask this same gate to judge it. The
+     * execution posture is deliberately resolved at call time, and no override input exists.
+     */
+    if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
+      throw new KnowledgePromotionError(candidateId, 'propose-only')
+    }
+
+    const resolved = resolveTruth(config.knowledgeRoot, candidateId)
+    if (resolved === undefined) {
+      throw new KnowledgePromotionError(candidateId, 'not-found')
+    }
+    const appendConfig = bundleStoreConfig(resolved.product)
+    if (resolved.observedStatus === 'active') {
+      /**
+       * CR-01: the active fast path is a gate re-validation, never a bypass. A crash
+       * between a rollback's confirmation retraction and its Plan-23 promotion cascade
+       * leaves canonical active-with-zero-support until replay; attesting success over
+       * that stale authority would launder a rolled-back promotion. The same pure gate
+       * (D-17) is re-evaluated over the promoted-set-aside status: the status the record
+       * would hold if its promoted authority were set aside.
+       */
+      const gateInput = assemblePromotionGateInput({
+        knowledgeRoot: config.knowledgeRoot,
+        bundleDir: resolved.bundleDir,
+        bundle: resolved.bundle,
+      })
+      const setAside = foldBundleTrust(
+        survivingOutcomeEvents(resolved.bundle.events)
+          .filter(({ type }) => type !== 'promoted'),
+        {
+          originClass: resolved.bundle.frontmatter.originClass,
+          evidenceIncomplete: resolved.bundle.manifest.evidenceIncomplete,
+          createdAtOrdinal: resolved.bundle.frontmatter.createdAtOrdinal,
+        },
+      )
+      const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
+      if (revalidated.verdict === 'promote') {
+        // Still authorized: heal append-before-projection retries while preserving the
+        // already-active noop contract byte-for-byte.
+        applyIndexDeltaForBundleWithinCurrentAuthority({
+          knowledgeRoot: config.knowledgeRoot,
+          bundleId: candidateId,
+          product: resolved.product,
+        })
+        return
+      }
+      // Stale authority: append-only retraction of every surviving promoted event under a
+      // deterministic replay-safe identity, then re-project and refuse with the gate's
+      // hold reason. History is never rewritten; replayed heals dedup to no-ops.
+      const survivingPromoted = survivingOutcomeEvents(resolved.bundle.events)
+        .filter(({ type }) => type === 'promoted')
+      const healReceiptId = `promote-heal:${candidateId}`
+      for (const promoted of survivingPromoted) {
+        const appended = appendOutcomeEvent(appendConfig, candidateId, {
+          type: 'retracted',
+          evidenceToken: asEvidenceToken(sha256hex(canonicalJson({
+            healedPromotedEventKey: eventDedupKey(promoted),
+            candidateId,
+          }))),
+          curationJobId: healReceiptId,
+          buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
+          retractsEvidenceToken: promoted.evidenceToken,
+          retractsCurationJobId: promoted.curationJobId,
+          rollbackReceiptId: healReceiptId,
+        })
+        if (appended.kind === 'egress-blocked') {
+          throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
+        }
+        if (appended.kind === 'not-found') {
+          throw new KnowledgePromotionError(candidateId, appended.kind)
+        }
+      }
+      applyIndexDeltaForBundleWithinCurrentAuthority({
+        knowledgeRoot: config.knowledgeRoot,
+        bundleId: candidateId,
+        product: resolved.product,
+      })
+      throw new KnowledgePromotionError(candidateId, revalidated.reason)
+    }
+
+    const gate = evaluatePromotionGate(assemblePromotionGateInput({
+      knowledgeRoot: config.knowledgeRoot,
+      bundleDir: resolved.bundleDir,
+      bundle: resolved.bundle,
+    }))
+    if (gate.verdict === 'hold') {
+      throw new KnowledgePromotionError(candidateId, gate.reason)
+    }
+    const appended = appendOutcomeEvent(appendConfig, candidateId, {
+      type: 'promoted',
+      evidenceToken: derivePromotedEvidenceToken(candidateId),
+      curationJobId: `promote:${candidateId}`,
+      buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
+    })
+    if (appended.kind === 'egress-blocked') {
+      throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
+    }
+    if (appended.kind === 'not-found') {
+      throw new KnowledgePromotionError(candidateId, appended.kind)
+    }
+    applyIndexDeltaForBundleWithinCurrentAuthority({
+      knowledgeRoot: config.knowledgeRoot,
+      bundleId: candidateId,
+      product: resolved.product,
+    })
+  }
+
   async function commitWithProfile(
     deltas: Delta[],
     profile: DispositionProfile,
@@ -399,7 +536,7 @@ export function createLocalKnowledgeStore(
         {
           knowledgeRoot: config.knowledgeRoot,
           auditBaseDir: config.auditBaseDir,
-          epoch: config.epoch ?? readCurrentEpoch(config.knowledgeRoot),
+          epoch: currentAuthority(config).epoch,
           profile,
           drainState,
           policy,
@@ -448,51 +585,63 @@ export function createLocalKnowledgeStore(
             },
           }
           await store.commit([confirm])
-          try {
-            await store.promote(outcome.candidateId)
-          } catch (error) {
-            // A gate hold or propose-only posture means "not yet". The durable Confirm remains
-            // valid evidence and must not turn a crash replay into a permanently failing job.
-            if (!expectedPromotionHold(error)) throw error
-          }
+          /**
+           * CR-02: the Confirm has its own fenced commit pipeline; the promotion tail that
+           * follows it is a second, separate held section which the caller's terminal job-state
+           * write joins. A takeover between the two leaves the durable Confirm as valid replay
+           * evidence, which is exactly what lets the successor's drain finish the candidate.
+           */
+          config.canaryAuthorityHooks?.beforePromotionAppend?.()
+          withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+            try {
+              promoteWithinCurrentAuthority(outcome.candidateId)
+            } catch (error) {
+              // A gate hold or propose-only posture means "not yet". The durable Confirm remains
+              // valid evidence and must not turn a crash replay into a permanently failing job.
+              if (!expectedPromotionHold(error)) throw error
+            }
+            config.onCanaryTailWithinCurrentAuthority?.()
+          })
           return
         }
         case 'negative': {
           // D-22: negative canary evidence joins the canonical outcome log and therefore reuses
           // the existing deterministic trust/status fold; no parallel lifecycle logic is added.
-          const appendConfig: BundleStoreConfig = {
-            knowledgeRoot: config.knowledgeRoot,
-            productKey: resolved.product,
-            auditBaseDir: config.auditBaseDir,
-            commitArtifacts: 'none',
-            writerLeaseId: 'knowledge-port',
-            policy,
-          }
+          const appendConfig = bundleStoreConfig(resolved.product)
+          /**
+           * CR-02: contradicted evidence is trust/status currency, so the append, the projection
+           * it implies, and the caller's terminal job-state write are ONE held section. A
+           * takeover completed at the barrier below therefore finds nothing of this writer
+           * landed, and a contender arriving after entry is told who holds the tail instead.
+           */
           config.canaryAuthorityHooks?.beforeNegativeAppend?.()
-          const appended = appendOutcomeEvent(appendConfig, outcome.candidateId, {
-            type: 'contradicted',
-            evidenceToken,
-            curationJobId: observationId,
-            buildOrdinal: outcome.buildOrdinal,
-            observationOrdinal: outcome.stepIndex,
-            observationId,
-            origin: 'agent-verified',
-          })
-          if (appended.kind === 'egress-blocked') {
-            throw new KnowledgePromotionError(
-              outcome.candidateId,
-              appended.kind,
-              appended.detections,
-            )
-          }
-          if (appended.kind === 'not-found') {
-            throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
-          }
-          config.canaryAuthorityHooks?.beforeIndexProjection?.()
-          applyIndexDeltaForBundle({
-            knowledgeRoot: config.knowledgeRoot,
-            bundleId: outcome.candidateId,
-            product: resolved.product,
+          withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+            const appended = appendOutcomeEvent(appendConfig, outcome.candidateId, {
+              type: 'contradicted',
+              evidenceToken,
+              curationJobId: observationId,
+              buildOrdinal: outcome.buildOrdinal,
+              observationOrdinal: outcome.stepIndex,
+              observationId,
+              origin: 'agent-verified',
+            })
+            if (appended.kind === 'egress-blocked') {
+              throw new KnowledgePromotionError(
+                outcome.candidateId,
+                appended.kind,
+                appended.detections,
+              )
+            }
+            if (appended.kind === 'not-found') {
+              throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
+            }
+            config.canaryAuthorityHooks?.beforeIndexProjection?.()
+            applyIndexDeltaForBundleWithinCurrentAuthority({
+              knowledgeRoot: config.knowledgeRoot,
+              bundleId: outcome.candidateId,
+              product: resolved.product,
+            })
+            config.onCanaryTailWithinCurrentAuthority?.()
           })
           return
         }
@@ -501,119 +650,8 @@ export function createLocalKnowledgeStore(
       }
     },
     async promote(candidateId: RecordId): Promise<void> {
-      /**
-       * D-17: later callers add evidence first, then ask this same gate to judge it. The
-       * execution posture is deliberately resolved at call time, and no override input exists.
-       */
-      if (resolveDispositionProfile(config.executionContext).mode === 'propose-only') {
-        throw new KnowledgePromotionError(candidateId, 'propose-only')
-      }
-
-      const resolved = resolveTruth(config.knowledgeRoot, candidateId)
-      if (resolved === undefined) {
-        throw new KnowledgePromotionError(candidateId, 'not-found')
-      }
-      const appendConfig: BundleStoreConfig = {
-        knowledgeRoot: config.knowledgeRoot,
-        productKey: resolved.product,
-        auditBaseDir: config.auditBaseDir,
-        commitArtifacts: 'none',
-        writerLeaseId: 'knowledge-port',
-        policy,
-      }
-      if (resolved.observedStatus === 'active') {
-        /**
-         * CR-01: the active fast path is a gate re-validation, never a bypass. A crash
-         * between a rollback's confirmation retraction and its Plan-23 promotion cascade
-         * leaves canonical active-with-zero-support until replay; attesting success over
-         * that stale authority would launder a rolled-back promotion. The same pure gate
-         * (D-17) is re-evaluated over the promoted-set-aside status: the status the record
-         * would hold if its promoted authority were set aside.
-         */
-        const gateInput = assemblePromotionGateInput({
-          knowledgeRoot: config.knowledgeRoot,
-          bundleDir: resolved.bundleDir,
-          bundle: resolved.bundle,
-        })
-        const setAside = foldBundleTrust(
-          survivingOutcomeEvents(resolved.bundle.events)
-            .filter(({ type }) => type !== 'promoted'),
-          {
-            originClass: resolved.bundle.frontmatter.originClass,
-            evidenceIncomplete: resolved.bundle.manifest.evidenceIncomplete,
-            createdAtOrdinal: resolved.bundle.frontmatter.createdAtOrdinal,
-          },
-        )
-        const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
-        if (revalidated.verdict === 'promote') {
-          // Still authorized: heal append-before-projection retries while preserving the
-          // already-active noop contract byte-for-byte.
-          applyIndexDeltaForBundle({
-            knowledgeRoot: config.knowledgeRoot,
-            bundleId: candidateId,
-            product: resolved.product,
-          })
-          return
-        }
-        // Stale authority: append-only retraction of every surviving promoted event under a
-        // deterministic replay-safe identity, then re-project and refuse with the gate's
-        // hold reason. History is never rewritten; replayed heals dedup to no-ops.
-        const survivingPromoted = survivingOutcomeEvents(resolved.bundle.events)
-          .filter(({ type }) => type === 'promoted')
-        const healReceiptId = `promote-heal:${candidateId}`
-        for (const promoted of survivingPromoted) {
-          const appended = appendOutcomeEvent(appendConfig, candidateId, {
-            type: 'retracted',
-            evidenceToken: asEvidenceToken(sha256hex(canonicalJson({
-              healedPromotedEventKey: eventDedupKey(promoted),
-              candidateId,
-            }))),
-            curationJobId: healReceiptId,
-            buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
-            retractsEvidenceToken: promoted.evidenceToken,
-            retractsCurationJobId: promoted.curationJobId,
-            rollbackReceiptId: healReceiptId,
-          })
-          if (appended.kind === 'egress-blocked') {
-            throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
-          }
-          if (appended.kind === 'not-found') {
-            throw new KnowledgePromotionError(candidateId, appended.kind)
-          }
-        }
-        applyIndexDeltaForBundle({
-          knowledgeRoot: config.knowledgeRoot,
-          bundleId: candidateId,
-          product: resolved.product,
-        })
-        throw new KnowledgePromotionError(candidateId, revalidated.reason)
-      }
-
-      const gate = evaluatePromotionGate(assemblePromotionGateInput({
-        knowledgeRoot: config.knowledgeRoot,
-        bundleDir: resolved.bundleDir,
-        bundle: resolved.bundle,
-      }))
-      if (gate.verdict === 'hold') {
-        throw new KnowledgePromotionError(candidateId, gate.reason)
-      }
-      config.canaryAuthorityHooks?.beforePromotionAppend?.()
-      const appended = appendOutcomeEvent(appendConfig, candidateId, {
-        type: 'promoted',
-        evidenceToken: derivePromotedEvidenceToken(candidateId),
-        curationJobId: `promote:${candidateId}`,
-        buildOrdinal: promotionBuildOrdinal(config, resolved.bundle),
-      })
-      if (appended.kind === 'egress-blocked') {
-        throw new KnowledgePromotionError(candidateId, appended.kind, appended.detections)
-      }
-      if (appended.kind === 'not-found') {
-        throw new KnowledgePromotionError(candidateId, appended.kind)
-      }
-      applyIndexDeltaForBundle({
-        knowledgeRoot: config.knowledgeRoot,
-        bundleId: candidateId,
-        product: resolved.product,
+      withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
+        promoteWithinCurrentAuthority(candidateId)
       })
     },
   }
