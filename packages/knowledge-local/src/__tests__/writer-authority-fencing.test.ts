@@ -272,6 +272,78 @@ describe('writer authority and bundle publication are one indivisible protocol (
     }
   })
 
+  it('keeps index authority held through the before-COMMIT failpoint', async () => {
+    const authority = acquireAuthority()
+    const published = publishBundle(config(authority), input('index-commit-fence'))
+    expect(published.kind).toBe('published')
+    if (published.kind !== 'published') throw new Error('expected published index fixture')
+    let hookCalls = 0
+    let contenderDuringCommit: ReturnType<typeof acquireWriterLease> | undefined
+
+    const report = await publicSurface.rebuildIndex({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        beforeTransactionCommit: () => {
+          hookCalls += 1
+          makeStale()
+          contenderDuringCommit = acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
+        },
+      },
+    })
+
+    expect(hookCalls).toBe(1)
+    expect(contenderDuringCommit).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(report.projected).toBe(1)
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(
+        reader.db.prepare('SELECT bundle_id FROM records WHERE bundle_id = ?').get(published.id),
+      ).toEqual({ bundle_id: published.id })
+    } finally {
+      reader.db.close()
+    }
+
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+  })
+
+  it('refuses a stale index authority before its transaction and leaves zero rows', async () => {
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    const authority = acquireAuthority()
+    const published = publishBundle(config(authority), input('index-successor-first'))
+    expect(published.kind).toBe('published')
+    if (published.kind !== 'published') throw new Error('expected published index fixture')
+    makeStale()
+    expect(acquireWithDeadline(knowledgeRoot, {
+      mutationLockTakeoverMs: 0,
+    })).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+
+    await expect(publicSurface.rebuildIndex({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+    })).rejects.toBeInstanceOf(WriterAuthorityLostError)
+
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      expect(
+        reader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(published.id),
+      ).toBeUndefined()
+    } finally {
+      reader.db.close()
+    }
+  })
+
   it('does not replace a live lock row when a fresh holder re-enters acquisition', () => {
     const authority = acquireAuthority()
     const dbFile = join(knowledgeRoot, '.writer-authority.sqlite')
