@@ -123,6 +123,50 @@ describe('acquireEmbedder', () => {
     expect(createFloorEmbedder).not.toHaveBeenCalled()
   })
 
+  it('serves the static floor below the RAM budget because the floor is the no-budget rung', async () => {
+    // The 1 GiB gate exists to keep the ONNX runtime from loading on a host that cannot hold it.
+    // The static floor loads a shipped deterministic asset and constructs no runtime at all, so
+    // applying the same gate refuses the exact rung that exists for a host with no memory to
+    // spare — and the embedder worker, which asks for this profile by name, then dies at startup
+    // with `could not resolve profile: deferred` on any loaded machine.
+    const floor = makeFakeEmbedder(STATIC_FLOOR_EMBEDDING_PROFILE.dim)
+    const createNativeEmbedder = vi.fn().mockRejectedValue(
+      new Error('the native runtime must never load for a static profile'),
+    )
+
+    const outcome = await acquireEmbedder({
+      preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      allowDownload: false,
+      probes: probes({
+        availableMemory: vi.fn().mockReturnValue(0),
+        createNativeEmbedder,
+        createFloorEmbedder: vi.fn().mockReturnValue(floor),
+      }),
+    })
+
+    expect(outcome).toEqual({
+      kind: 'ready',
+      rung: 'floor',
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      embedder: floor,
+    })
+    expect(createNativeEmbedder).not.toHaveBeenCalled()
+  })
+
+  it('still requires the hosted worker for a static profile below the RAM budget', async () => {
+    // Required policy is a posture, not a resource question: it must keep winning over both the
+    // budget gate and the floor short-circuit.
+    const outcome = await resolveEmbedderCapability({
+      preferredProfile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      allowDownload: false,
+      workerPolicy: 'required',
+      agentQaRoot: '/hosted/project/.agent-qa',
+      probes: probes({ availableMemory: vi.fn().mockReturnValue(0) }),
+    })
+
+    expect(outcome).toEqual({ kind: 'deferred', reason: 'worker-unavailable' })
+  })
+
   it('requires the hosted worker without entering native or floor factories', async () => {
     const agentQaRoot = '/hosted/project/.agent-qa'
     const discoverWorker = vi.fn().mockResolvedValue({ kind: 'no-worker' })

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import {
   existsSync,
@@ -23,12 +23,14 @@ import {
   resolveEmbedderCapability,
 } from '../embedder-acquire.js'
 import { createFloorEmbedder } from '../embedder-floor.js'
+import { resolveProcessIncarnation } from '../lease/writer-lease.js'
 import {
   EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
   EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
+  EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
   EmbedderWorkerTimeoutError,
   createEmbedderWorkerPort,
   embedderWorkerAgentQaRoot,
@@ -36,6 +38,7 @@ import {
   embedderWorkerSocketPath,
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
+  verifyEmbedderWorkerIncarnation,
   writeEmbedderWorkerRegistration,
 } from '../embedder-worker/worker-registration.js'
 import {
@@ -80,15 +83,37 @@ function registration(
 ): void {
   const agentQaRoot = join(projectRoot, '.agent-qa')
   const instanceId = overrides.instanceId ?? '00000000-0000-4000-8000-000000000100'
+  const pid = overrides.pid ?? process.pid
   writeEmbedderWorkerRegistration(agentQaRoot, {
     schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
     instanceId,
-    pid: overrides.pid ?? process.pid,
+    pid,
     socketPath:
       overrides.socketPath ?? embedderWorkerSocketPath(agentQaRoot, projectRoot, instanceId),
     profile: STATIC_FLOOR_EMBEDDING_PROFILE,
     startedAtMs: Date.now(),
+    incarnation: resolveProcessIncarnation(pid) ?? EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
   })
+}
+
+/**
+ * The pid's start time read straight from the kernel, never through the module under test.
+ *
+ * Prior-round law: an identity assertion phrased in the code's own vocabulary only proves the code
+ * agrees with itself. The recorded token stays free to carry whatever opaque prefix it likes; it is
+ * not free to carry a start time the OS never reported.
+ */
+function kernelStartTimeFact(pid: number): string {
+  if (process.platform === 'linux') {
+    const raw = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const afterComm = raw.slice(raw.lastIndexOf(')') + 1).trim().split(/\s+/)
+    const startTime = afterComm[19]
+    if (startTime === undefined) throw new Error(`Could not read starttime for pid ${pid}`)
+    return startTime
+  }
+  return execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+    encoding: 'utf8',
+  }).trim()
 }
 
 function rawWorkerRequest(socketPath: string, body: unknown): Promise<unknown> {
@@ -177,9 +202,10 @@ describe.sequential('embedder worker discovery', () => {
     await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
   })
 
-  it('round-trips v2 identity and atomically recovers a stale v1 registration', () => {
-    const projectRoot = temporaryProject('registration-v2')
+  it('round-trips v3 identity and atomically recovers stale v2 and v1 registrations', () => {
+    const projectRoot = temporaryProject('registration-v3')
     const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
     const instanceId = '00000000-0000-4000-8000-000000000101'
     const socketPath = (embedderWorkerSocketPath as (
       root: string,
@@ -187,19 +213,46 @@ describe.sequential('embedder worker discovery', () => {
       instance: string,
     ) => string)(agentQaRoot, projectRoot, instanceId)
     const expected = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       instanceId,
       pid: process.pid,
       socketPath,
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
       startedAtMs: Date.now(),
+      incarnation: resolveProcessIncarnation(process.pid)
+        ?? EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
     }
 
+    expect(EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION).toBe(3)
     writeEmbedderWorkerRegistration(agentQaRoot, expected as never)
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toEqual({
       kind: 'parsed',
       registration: expected,
     })
+
+    // A v3 file missing the incarnation is not a registration at all: the field the signal decision
+    // depends on may never be optional, or the guard is bypassable by omission.
+    const { incarnation: _omitted, ...withoutIncarnation } = expected
+    writeFileSync(registrationPath, `${JSON.stringify(withoutIncarnation)}\n`)
+    expect(readEmbedderWorkerRegistration(agentQaRoot)).toEqual({ kind: 'malformed' })
+
+    // v2 predates the incarnation field, so it joins v1 as stale-recoverable rather than parsed:
+    // a resident worker that cannot prove which process it is gets replaced, never adopted.
+    const superseded = {
+      schemaVersion: 2,
+      instanceId,
+      pid: process.pid,
+      socketPath,
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: expected.startedAtMs,
+    } as const
+    writeFileSync(registrationPath, `${JSON.stringify(superseded)}\n`)
+    expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
+      kind: 'stale-recoverable',
+      registration: { schemaVersion: 2, instanceId },
+    })
+    expect(removeEmbedderWorkerRegistration(agentQaRoot, superseded)).toBe(true)
+    expect(removeEmbedderWorkerRegistration(agentQaRoot, superseded)).toBe(false)
 
     const legacy = {
       schemaVersion: 1,
@@ -208,13 +261,93 @@ describe.sequential('embedder worker discovery', () => {
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
       startedAtMs: expected.startedAtMs,
     } as const
-    writeFileSync(embedderWorkerRegistrationPath(agentQaRoot), `${JSON.stringify(legacy)}\n`)
+    writeFileSync(registrationPath, `${JSON.stringify(legacy)}\n`)
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
       kind: 'stale-recoverable',
       registration: { schemaVersion: 1 },
     })
     expect(removeEmbedderWorkerRegistration(agentQaRoot, legacy)).toBe(true)
     expect(removeEmbedderWorkerRegistration(agentQaRoot, legacy)).toBe(false)
+  })
+
+  it('refuses to delete a v3 successor while removing a superseded v2 predecessor', () => {
+    const projectRoot = temporaryProject('v2-successor-safety')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
+    const predecessor = {
+      schemaVersion: 2,
+      instanceId: '00000000-0000-4000-8000-000000000106',
+      pid: process.pid,
+      socketPath: join(agentQaRoot, 'embedder-worker-legacy.sock'),
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: 106,
+    } as const
+    const successorBytes = Buffer.from(`${JSON.stringify({
+      schemaVersion: 3,
+      instanceId: '00000000-0000-4000-8000-000000000107',
+      pid: process.pid,
+      socketPath: join(agentQaRoot, 'embedder-worker-successor.sock'),
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: 107,
+      incarnation: 'proc-starttime:107',
+    })}\n`)
+    mkdirSync(agentQaRoot, { recursive: true })
+    writeFileSync(registrationPath, `${JSON.stringify(predecessor)}\n`)
+
+    const removeWithBarrier = removeEmbedderWorkerRegistration as unknown as (
+      root: string,
+      expected: typeof predecessor,
+      options: { afterQuarantine: () => void },
+    ) => boolean
+    // The predecessor's own removal succeeds — it owned the bytes it quarantined — and the v3
+    // successor published across the barrier survives untouched. Superseded schemas get the same
+    // successor-safety guarantee as v1, which is what makes replacing them safe without a shim.
+    expect(removeWithBarrier(agentQaRoot, predecessor, {
+      afterQuarantine: () => writeFileSync(registrationPath, successorBytes),
+    })).toBe(true)
+    expect(readFileSync(registrationPath)).toEqual(successorBytes)
+    expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
+      kind: 'parsed',
+      registration: { instanceId: '00000000-0000-4000-8000-000000000107' },
+    })
+  })
+
+  it('answers match, mismatch, and unverifiable for a registered pid current occupant', async () => {
+    const projectRoot = temporaryProject('incarnation-verdict')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const instanceId = '00000000-0000-4000-8000-000000000108'
+    const live = {
+      schemaVersion: 3,
+      instanceId,
+      pid: process.pid,
+      socketPath: join(agentQaRoot, 'embedder-worker-verdict.sock'),
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: Date.now(),
+      incarnation: resolveProcessIncarnation(process.pid)
+        ?? EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
+    } as const
+
+    const exitedChild = spawn(process.execPath, ['-e', 'process.exit(0)'])
+    const deadPid = exitedChild.pid
+    if (deadPid === undefined) throw new Error('Expected the fixture child to have a pid')
+    await once(exitedChild, 'exit')
+
+    expect(verifyEmbedderWorkerIncarnation(live as never)).toBe(
+      process.platform === 'win32' ? 'unverifiable' : 'match',
+    )
+    expect(verifyEmbedderWorkerIncarnation({
+      ...live,
+      incarnation: 'proc-starttime:1',
+    } as never)).toBe(process.platform === 'win32' ? 'unverifiable' : 'mismatch')
+    // The sentinel is what a worker records when it cannot attribute itself. It is never a signal
+    // target, even though the pid it names is unquestionably alive.
+    expect(verifyEmbedderWorkerIncarnation({
+      ...live,
+      incarnation: EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
+    } as never)).toBe('unverifiable')
+    expect(verifyEmbedderWorkerIncarnation({ ...live, pid: deadPid } as never)).toBe(
+      'unverifiable',
+    )
   })
 
   it('derives distinct bounded socket paths for concurrent worker instances', () => {
@@ -255,7 +388,7 @@ describe.sequential('embedder worker discovery', () => {
       instance: string,
     ) => string
     const predecessor = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       instanceId: '00000000-0000-4000-8000-000000000104',
       pid: process.pid,
       socketPath: derive(
@@ -265,6 +398,7 @@ describe.sequential('embedder worker discovery', () => {
       ),
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
       startedAtMs: 104,
+      incarnation: 'proc-starttime:104',
     }
     const successor = {
       ...predecessor,
@@ -385,11 +519,19 @@ describe.sequential('embedder worker discovery', () => {
     )
     const registeredWorker = JSON.parse(readFileSync(registrationPath, 'utf8')) as {
       socketPath: string
+      incarnation: string
     }
     expect(registeredWorker).toMatchObject({
+      schemaVersion: 3,
       pid: child.pid,
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
     })
+    // The worker attributes ITSELF, and the recorded token has to carry a fact this test read from
+    // the kernel rather than from the module that wrote it.
+    if (process.platform !== 'win32' && child.pid !== undefined) {
+      expect(registeredWorker.incarnation).toContain(kernelStartTimeFact(child.pid))
+      expect(verifyEmbedderWorkerIncarnation(registeredWorker as never)).toBe('match')
+    }
     const foreignProjectRoot = temporaryProject('foreign-cwd')
     process.chdir(foreignProjectRoot)
     await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toMatchObject({ kind: 'worker' })

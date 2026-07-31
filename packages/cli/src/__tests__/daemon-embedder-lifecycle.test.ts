@@ -1,5 +1,5 @@
-import type { ChildProcess } from 'node:child_process'
-import { EventEmitter } from 'node:events'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { EventEmitter, once } from 'node:events'
 import {
   existsSync,
   mkdirSync,
@@ -58,18 +58,47 @@ const SESSION_IDS = [
 const ORPHAN_INSTANCE_ID = '00000000-0000-4000-8000-000000000081'
 const REUSED_PID_INSTANCE_ID = '00000000-0000-4000-8000-000000000082'
 const roots: string[] = []
+const surrogates: ChildProcess[] = []
 
 function orphanRegistration(
   instanceId = ORPHAN_INSTANCE_ID,
   profile: EmbedderWorkerRegistration['profile'] = DEFAULT_EMBEDDING_PROFILE,
+  overrides: Partial<Pick<EmbedderWorkerRegistration, 'pid' | 'incarnation'>> = {},
 ): EmbedderWorkerRegistration {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     instanceId,
-    pid: instanceId === REUSED_PID_INSTANCE_ID ? 8_802 : 8_801,
+    pid: overrides.pid ?? (instanceId === REUSED_PID_INSTANCE_ID ? 8_802 : 8_801),
     socketPath: join(tmpdir(), `agent-qa-orphan-${instanceId}.sock`),
     profile,
     startedAtMs: 1_785_000_000_000,
+    incarnation: overrides.incarnation ?? 'proc-starttime:1785000000000',
+  }
+}
+
+/**
+ * A real, unrelated live process standing in for whoever the kernel handed a dead worker's pid to.
+ *
+ * The reused-pid legs deliberately drive the PRODUCTION signal and liveness paths against this
+ * child: a guard that only holds against a recording stub proves nothing about whether an innocent
+ * process survives.
+ */
+function spawnSurrogate(): ChildProcess {
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => undefined, 120_000)'], {
+    stdio: 'ignore',
+  })
+  surrogates.push(child)
+  if (child.pid === undefined) throw new Error('Surrogate process did not receive a pid')
+  return child
+}
+
+function isSurrogateAlive(child: ChildProcess): boolean {
+  if (child.exitCode !== null || child.signalCode !== null) return false
+  try {
+    process.kill(child.pid!, 0)
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -188,6 +217,9 @@ function startHarness(
     orphanSocketAnswers: boolean
     orphanProcessAlive: boolean
     acquireFromRegistration: boolean
+    /** Omit the process-control stubs so the daemon drives real signals against real pids. */
+    realProcessControl: boolean
+    incarnationVerdict: 'match' | 'mismatch' | 'unverifiable'
   }> = {},
 ): LifecycleHarness {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-daemon-embedder-${label}-`))
@@ -323,12 +355,13 @@ function startHarness(
       const instanceId = request.args[3]
       if (instanceId === undefined) throw new Error('Worker instance id was not passed')
       const registration: EmbedderWorkerRegistration = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         instanceId,
         pid: worker.pid,
         socketPath: join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
         profile: DEFAULT_EMBEDDING_PROFILE,
         startedAtMs: Date.now(),
+        incarnation: `proc-starttime:${worker.pid}`,
       }
       workerRegistrations.set(worker.pid, registration)
       livePids.add(worker.pid)
@@ -355,8 +388,9 @@ function startHarness(
         typeof parsed === 'object'
         && parsed !== null
         && 'schemaVersion' in parsed
-        && parsed.schemaVersion === 2
+        && parsed.schemaVersion === 3
         && 'instanceId' in parsed
+        && 'incarnation' in parsed
       ) {
         return { kind: 'parsed' as const, registration: parsed as EmbedderWorkerRegistration }
       }
@@ -376,6 +410,8 @@ function startHarness(
       ? overrides.orphanRegistration.socketPath
       : join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
     embedderWorkerProcessIsAlive: (pid: number) => livePids.has(pid),
+    verifyEmbedderWorkerIncarnation: (_registration: EmbedderWorkerRegistration) =>
+      overrides.incarnationVerdict ?? 'match',
     signalEmbedderWorkerProcess: (pid: number, signal: NodeJS.Signals) => {
       processSignals.push({ pid, signal })
       order.push(`signal:${pid}:${signal}`)
@@ -414,7 +450,18 @@ function startHarness(
       return true
     },
     resetEmbedderCapability: resetCapability,
-  } as unknown as Partial<DaemonHostOperations>
+  } as unknown as Partial<DaemonHostOperations> & Record<string, unknown>
+
+  if (overrides.realProcessControl === true) {
+    // Production liveness, incarnation, and signal delivery. Only the daemon's surroundings stay
+    // stubbed, so "the surrogate is still alive" is a claim about the OS, not about a fake.
+    delete operations.embedderWorkerProcessIsAlive
+    delete operations.signalEmbedderWorkerProcess
+    delete operations.waitForEmbedderWorkerProcessExit
+    if (overrides.incarnationVerdict === undefined) {
+      delete operations.verifyEmbedderWorkerIncarnation
+    }
+  }
 
   const running = runDaemonHost({
     agentQaRoot,
@@ -486,8 +533,14 @@ async function waitUntil(predicate: () => boolean, message: string): Promise<voi
   }
 }
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks()
+  for (const child of surrogates.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL')
+      await once(child, 'exit')
+    }
+  }
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -689,7 +742,7 @@ describe('daemon embedder-worker lifecycle', () => {
     harness.fireInterval(CURATION_QUEUE_POLL_MS)
     await waitUntil(() => harness.workers.length === 1, 'predecessor worker did not spawn')
 
-    const successorBytes = Buffer.from('{"schemaVersion":2,"successor":true}\n')
+    const successorBytes = Buffer.from('{"schemaVersion":3,"successor":true}\n')
     writeFileSync(harness.workerRegistrationPath, successorBytes)
     harness.workers[0]!.crash()
     await waitUntil(() => harness.resetCapability.mock.calls.length === 1, 'exit not handled')
@@ -781,32 +834,158 @@ describe('daemon embedder-worker lifecycle', () => {
     await expect(harness.running).resolves.toBe(0)
   })
 
-  it('bounds the reused-pid hazard to the parsed registration after its socket probe fails', async () => {
-    const orphan = orphanRegistration(REUSED_PID_INSTANCE_ID)
-    const harness = startHarness(
-      'reused-pid-guard',
-      [drainReport(1, 0)],
-      {
-        orphanRegistration: orphan,
-        orphanSocketAnswers: false,
-        orphanProcessAlive: true,
-        acquireFromRegistration: true,
-      },
-    )
-    await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
+  it.skipIf(process.platform === 'win32')(
+    'withholds every signal from a live reused pid whose incarnation does not match (CR-05)',
+    async () => {
+      // The registration is schema-valid, names a live pid, and its socket is dead — the exact
+      // evidence the daemon used to treat as licence to SIGTERM-then-SIGKILL. The pid now belongs
+      // to an unrelated process, and the ONLY thing that says so is the OS-assigned start time.
+      const surrogate = spawnSurrogate()
+      const orphan = orphanRegistration(REUSED_PID_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
+        pid: surrogate.pid!,
+        incarnation: 'proc-starttime:0',
+      })
+      const harness = startHarness(
+        'reused-pid-unsignaled',
+        [drainReport(1, 0)],
+        {
+          orphanRegistration: orphan,
+          orphanSocketAnswers: false,
+          orphanProcessAlive: true,
+          acquireFromRegistration: true,
+          realProcessControl: true,
+        },
+      )
+      await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
 
-    harness.fireInterval(CURATION_QUEUE_POLL_MS)
-    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'guarded replacement did not finish')
+      harness.fireInterval(CURATION_QUEUE_POLL_MS)
+      await waitUntil(
+        () => harness.drainQueue.mock.calls.length === 1,
+        'signal-free replacement did not finish',
+      )
 
-    expect(harness.processSignals).toEqual([{ pid: orphan.pid, signal: 'SIGTERM' }])
-    expect(harness.workers).toHaveLength(1)
-    expect(harness.order.indexOf(`wait-dead:${orphan.pid}`)).toBeLessThan(
-      harness.order.indexOf('spawn'),
-    )
+      // The innocent occupant is untouched: alive, never signalled, and it later exits on its own
+      // terms rather than by a signal the daemon guessed its way into sending.
+      expect(isSurrogateAlive(surrogate)).toBe(true)
+      expect(surrogate.signalCode).toBeNull()
 
-    harness.signal('SIGTERM')
-    await expect(harness.running).resolves.toBe(0)
-  })
+      // Replacement never depended on touching that pid. Generation-specific sockets mean the
+      // fresh worker cannot collide with whatever the unverified occupant is doing.
+      expect(harness.workers).toHaveLength(1)
+      const successor = JSON.parse(readFileSync(harness.workerRegistrationPath, 'utf8')) as {
+        instanceId: string
+      }
+      expect(successor.instanceId).not.toBe(orphan.instanceId)
+      expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+        embeddingCapability: expect.objectContaining({ kind: 'ready' }),
+      }))
+      expect(harness.events).toContainEqual(expect.objectContaining({
+        kind: 'embedder-worker-start',
+        outcome: 'replaced',
+        replacedInstanceId: orphan.instanceId,
+        signalWithheld: true,
+        incarnationVerdict: 'mismatch',
+      }))
+
+      harness.signal('SIGTERM')
+      await expect(harness.running).resolves.toBe(0)
+      expect(isSurrogateAlive(surrogate)).toBe(true)
+    },
+    20_000,
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'withholds every signal from a live pid whose incarnation cannot be resolved at all',
+    async () => {
+      // Unverifiable is a refusal, never a default-allow: a pid we cannot attribute is exactly the
+      // pid we must not signal, even though it is unambiguously alive.
+      const surrogate = spawnSurrogate()
+      const orphan = orphanRegistration(REUSED_PID_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
+        pid: surrogate.pid!,
+      })
+      const harness = startHarness(
+        'unverifiable-unsignaled',
+        [drainReport(1, 0)],
+        {
+          orphanRegistration: orphan,
+          orphanSocketAnswers: false,
+          orphanProcessAlive: true,
+          acquireFromRegistration: true,
+          realProcessControl: true,
+          incarnationVerdict: 'unverifiable',
+        },
+      )
+      await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
+
+      harness.fireInterval(CURATION_QUEUE_POLL_MS)
+      await waitUntil(
+        () => harness.drainQueue.mock.calls.length === 1,
+        'signal-free replacement did not finish',
+      )
+
+      expect(isSurrogateAlive(surrogate)).toBe(true)
+      expect(surrogate.signalCode).toBeNull()
+      expect(harness.workers).toHaveLength(1)
+      expect(existsSync(harness.workerRegistrationPath)).toBe(true)
+      expect(harness.events).toContainEqual(expect.objectContaining({
+        kind: 'embedder-worker-start',
+        outcome: 'replaced',
+        signalWithheld: true,
+        incarnationVerdict: 'unverifiable',
+      }))
+
+      harness.signal('SIGTERM')
+      await expect(harness.running).resolves.toBe(0)
+      expect(isSurrogateAlive(surrogate)).toBe(true)
+    },
+    20_000,
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'still terminates a real dead-socket orphan whose incarnation matches its registration',
+    async () => {
+      // The load-bearing accepting control. A guard that refused everything would pass both legs
+      // above and fail here, so this is what makes the fix non-trivial: a verified owner is still
+      // TERM-bounded and reaped before its replacement starts.
+      const owner = spawnSurrogate()
+      const orphan = orphanRegistration(ORPHAN_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
+        pid: owner.pid!,
+      })
+      const harness = startHarness(
+        'verified-owner-terminated',
+        [drainReport(1, 0)],
+        {
+          orphanRegistration: orphan,
+          orphanSocketAnswers: false,
+          orphanProcessAlive: true,
+          acquireFromRegistration: true,
+          realProcessControl: true,
+          incarnationVerdict: 'match',
+        },
+      )
+      await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
+
+      harness.fireInterval(CURATION_QUEUE_POLL_MS)
+      await waitUntil(
+        () => harness.drainQueue.mock.calls.length === 1,
+        'verified replacement did not finish',
+      )
+
+      expect(isSurrogateAlive(owner)).toBe(false)
+      expect(owner.signalCode).toBe('SIGTERM')
+      expect(harness.workers).toHaveLength(1)
+      expect(harness.events).toContainEqual(expect.objectContaining({
+        kind: 'embedder-worker-start',
+        outcome: 'replaced',
+        replacedInstanceId: orphan.instanceId,
+        signalWithheld: false,
+      }))
+
+      harness.signal('SIGTERM')
+      await expect(harness.running).resolves.toBe(0)
+    },
+    20_000,
+  )
 
   it('serializes concurrent ensure calls until one fresh worker registration is ready', async () => {
     let publishRegistration: (() => void) | undefined
@@ -817,12 +996,13 @@ describe('daemon embedder-worker lifecycle', () => {
         acquireFromRegistration: true,
         waitForEmbedderWorkerReady: (agentQaRoot, pid, instanceId) => new Promise((resolve) => {
           const registration: EmbedderWorkerRegistration = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             instanceId,
             pid: pid!,
             socketPath: join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
             profile: DEFAULT_EMBEDDING_PROFILE,
             startedAtMs: Date.now(),
+            incarnation: `proc-starttime:${pid!}`,
           }
           publishRegistration = () => {
             mkdirSync(agentQaRoot, { recursive: true })
