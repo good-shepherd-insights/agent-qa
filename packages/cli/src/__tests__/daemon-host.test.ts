@@ -39,10 +39,15 @@ import {
 } from '../daemon/host.js'
 import type { HeartbeatSupervisorMessage } from '../daemon/heartbeat-supervisor.js'
 import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
-import { daemonSocketPath, startInvokeServer } from '../daemon/server.js'
+import {
+  DAEMON_SOCKET_PATH_BUDGET_BYTES,
+  daemonSocketPath,
+  startInvokeServer,
+} from '../daemon/server.js'
 import {
   DAEMON_REGISTRATION_FILE,
   DAEMON_REGISTRATION_SCHEMA_VERSION,
+  classifyDaemonRegistration,
   inspectDaemonRegistration,
   readDaemonRegistration,
   removeDaemonRegistration,
@@ -773,6 +778,58 @@ describe('daemon registration instance ownership and readiness', () => {
   })
 })
 
+describe('daemon socket addressing per generation', () => {
+  const originalPlatform = process.platform
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    })
+  })
+
+  it('discriminates every socket arm by instance while keeping the byte budget', () => {
+    const projectRoot = '/tmp/p'
+    const agentQaRoot = `${projectRoot}/.agent-qa`
+
+    const projectLocal = daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID)
+    const projectLocalSuccessor = daemonSocketPath(
+      agentQaRoot,
+      projectRoot,
+      SUCCESSOR_INSTANCE_ID,
+    )
+    expect(projectLocal.startsWith(`${agentQaRoot}/daemon-`)).toBe(true)
+    expect(projectLocal.endsWith('.sock')).toBe(true)
+    expect(projectLocal).not.toBe(projectLocalSuccessor)
+    expect(daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID)).toBe(projectLocal)
+    expect(Buffer.byteLength(projectLocal))
+      .toBeLessThanOrEqual(DAEMON_SOCKET_PATH_BUDGET_BYTES)
+
+    // A project-local path that no longer fits must still discriminate in the fallback arm.
+    const deepAgentQaRoot = `/tmp/${'d'.repeat(120)}/.agent-qa`
+    const fallback = daemonSocketPath(deepAgentQaRoot, projectRoot, HOST_INSTANCE_ID)
+    const fallbackSuccessor = daemonSocketPath(
+      deepAgentQaRoot,
+      projectRoot,
+      SUCCESSOR_INSTANCE_ID,
+    )
+    expect(fallback.startsWith(deepAgentQaRoot)).toBe(false)
+    expect(fallback).not.toBe(fallbackSuccessor)
+    expect(fallback).not.toBe(projectLocal)
+    expect(Buffer.byteLength(fallback)).toBeLessThanOrEqual(DAEMON_SOCKET_PATH_BUDGET_BYTES)
+
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    const pipe = daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID)
+    const pipeSuccessor = daemonSocketPath(agentQaRoot, projectRoot, SUCCESSOR_INSTANCE_ID)
+    expect(pipe.startsWith('\\\\.\\pipe\\agent-qa-')).toBe(true)
+    expect(pipe).not.toBe(pipeSuccessor)
+  })
+
+  it('refuses an instance discriminator that is not a daemon instance nonce', () => {
+    expect(() => daemonSocketPath('/tmp/p/.agent-qa', '/tmp/p', 'not-a-uuid')).toThrow()
+  })
+})
+
 describe('daemon registration recovery at boot', () => {
   it('recovers an alive-pid registration with no listener once its writer lease is stale', async () => {
     const paths = makePaths('boot-alive-no-listener-stale-lease')
@@ -788,7 +845,7 @@ describe('daemon registration recovery at boot', () => {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: HOST_INSTANCE_ID,
       pid: process.pid,
-      socketPath: daemonSocketPath(paths.agentQaRoot, paths.root),
+      socketPath: daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID),
       startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
     })
     const harness = hostHarness(nowMs)
@@ -819,7 +876,7 @@ describe('daemon registration recovery at boot', () => {
   it('recovers a foreign identity for an alive pid once its writer lease is stale', async () => {
     const paths = makePaths('boot-foreign-identity-stale-lease')
     const nowMs = Date.now()
-    const socketPath = daemonSocketPath(paths.agentQaRoot, paths.root)
+    const socketPath = daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID)
     mkdirSync(paths.knowledgeRoot, { recursive: true })
     writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
       leaseId: 'f48afbd4-d67c-48aa-a488-e1890133542c',
@@ -889,7 +946,7 @@ describe('daemon registration recovery at boot', () => {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
       instanceId: HOST_INSTANCE_ID,
       pid: process.pid,
-      socketPath: daemonSocketPath(paths.agentQaRoot, paths.root),
+      socketPath: daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID),
       startedAtMs: nowMs - 5_000,
     })
     const acquire = vi.fn()
@@ -1023,6 +1080,249 @@ describe('daemon registration recovery at boot', () => {
     expect(acquire).not.toHaveBeenCalled()
     expect(errors[0]).toContain(`pid ${process.pid}`)
     expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(before)
+  })
+
+  it('keeps a successor registration published between classification and cleanup', async () => {
+    // Short label: the successor's socket path is explicit here and must stay inside the
+    // platform's sun_path limit without the daemonSocketPath fallback's help.
+    const paths = makePaths('toctou')
+    const nowMs = Date.now()
+    const successorSocket = join(paths.root, 's.sock')
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+      leaseId: '0a1cf5b4-64a5-4d31-9d2a-95c1c4c72b52',
+      pid: process.pid,
+      epoch: 1,
+      heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })}\n`)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'never.sock'),
+      startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })
+    const successorRegistration: DaemonRegistration = {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: SUCCESSOR_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: successorSocket,
+      startedAtMs: nowMs,
+    }
+    const successorServer = await startInvokeServer({
+      socketPath: successorSocket,
+      registry: {} as never,
+      identity: {
+        schemaVersion: 1,
+        instanceId: SUCCESSOR_INSTANCE_ID,
+        pid: process.pid,
+      },
+    })
+    let successorBytes: Buffer | undefined
+    let barrierFired = false
+    // The barrier IS the schedule under test: a successor publishes in the window between the
+    // late starter's classification and its cleanup.
+    const classify = vi.fn(async (
+      input: Parameters<DaemonHostOperations['classifyDaemonRegistration']>[0],
+    ) => {
+      const outcome = await classifyDaemonRegistration(input)
+      if (!barrierFired) {
+        barrierFired = true
+        writeDaemonRegistration(paths.agentQaRoot, successorRegistration)
+        successorBytes = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+      }
+      return outcome
+    })
+    const acquire = vi.fn(() => {
+      throw new Error('startup contended for authority against a live successor')
+    })
+    const unconditionalRemove = vi.fn(removeDaemonRegistration)
+    const errors: string[] = []
+    let outcome: unknown
+
+    try {
+      outcome = await runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        operations: {
+          classifyDaemonRegistration: classify,
+          acquireWriterLease: acquire as never,
+          removeDaemonRegistration: unconditionalRemove,
+        },
+        logger: { info: vi.fn(), error: (message) => errors.push(message) },
+      }).catch((error: unknown) => error)
+    } finally {
+      await successorServer.close()
+    }
+
+    const registrationFile = join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)
+    expect(barrierFired).toBe(true)
+    expect(
+      existsSync(registrationFile),
+      'the late starter deleted a registration it never classified',
+    ).toBe(true)
+    expect(readFileSync(registrationFile)).toEqual(successorBytes)
+    expect(unconditionalRemove).not.toHaveBeenCalled()
+    expect(acquire).not.toHaveBeenCalled()
+    expect(classify.mock.calls.length).toBe(2)
+    expect(errors).toEqual([expect.stringContaining('daemon registration since')])
+    expect(outcome).toBe(1)
+  })
+
+  it('classifies a registration whose recorded socket path is a plain file', async () => {
+    const paths = makePaths('non-socket')
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    const plainFile = join(paths.agentQaRoot, 'not-really.sock')
+    writeFileSync(plainFile, '')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: plainFile,
+      startedAtMs: 1_700_000_000_000,
+    })
+
+    // Registration bytes select a connect() target, so a non-socket path is attacker-shaped input
+    // and must classify as unreachable rather than escape as an unhandled EINVAL.
+    await expect(classifyDaemonRegistration({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+    })).resolves.toMatchObject({ kind: 'unreachable-lease-stale' })
+  })
+
+  it('unlinks only the socket recorded in the registration it exactly removed', async () => {
+    const paths = makePaths('sock-exact')
+    const nowMs = Date.now()
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    const recordedSocket = join(paths.agentQaRoot, 'recorded.sock')
+    const bystanderSocket = join(paths.agentQaRoot, 'bystander.sock')
+    writeFileSync(recordedSocket, '')
+    writeFileSync(bystanderSocket, '')
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+      leaseId: '9d1a9e07-3fd5-4a3f-b0da-7c1a9b6bb3f8',
+      pid: process.pid,
+      epoch: 1,
+      heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })}\n`)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: recordedSocket,
+      startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })
+    const harness = hostHarness(nowMs)
+    const removeOwned = vi.fn(removeRegistrationIfOwned)
+    const unconditionalRemove = vi.fn(removeDaemonRegistration)
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        removeRegistrationIfOwned: removeOwned,
+        removeDaemonRegistration: unconditionalRemove,
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'stale registration recovery never reached readiness',
+      5_000,
+    )
+
+    expect(unconditionalRemove).not.toHaveBeenCalled()
+    expect(removeOwned).toHaveBeenCalledWith(paths.agentQaRoot, HOST_INSTANCE_ID)
+    expect(existsSync(recordedSocket)).toBe(false)
+    expect(existsSync(bystanderSocket)).toBe(true)
+    expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
+      kind: 'registration-recovered',
+      instanceId: HOST_INSTANCE_ID,
+      socketPath: recordedSocket,
+      socketRemoved: true,
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+  })
+
+  it('removes an obsolete registration only when its quarantined bytes still match', async () => {
+    const registrationModule = await import('../daemon/registration.js') as unknown as {
+      removeObsoleteDaemonRegistrationIfExpected(
+        agentQaRoot: string,
+        expected: {
+          schemaVersion: 1
+          pid: number
+          socketPath: string
+          startedAtMs: number
+        },
+        options?: { beforeQuarantineRename?: () => void },
+      ): boolean
+    }
+    expect(typeof registrationModule.removeObsoleteDaemonRegistrationIfExpected).toBe('function')
+
+    const matchPaths = makePaths('obsolete-match')
+    mkdirSync(matchPaths.agentQaRoot, { recursive: true })
+    const legacy = {
+      schemaVersion: 1 as const,
+      pid: process.pid,
+      socketPath: join(matchPaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    }
+    writeFileSync(
+      join(matchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE),
+      `${JSON.stringify(legacy)}\n`,
+      'utf8',
+    )
+    expect(registrationModule.removeObsoleteDaemonRegistrationIfExpected(
+      matchPaths.agentQaRoot,
+      legacy,
+    )).toBe(true)
+    expect(existsSync(join(matchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
+
+    const mismatchPaths = makePaths('obsolete-mismatch')
+    mkdirSync(mismatchPaths.agentQaRoot, { recursive: true })
+    const predecessor = {
+      schemaVersion: 1 as const,
+      pid: process.pid,
+      socketPath: join(mismatchPaths.agentQaRoot, 'daemon.sock'),
+      startedAtMs: 1_700_000_000_000,
+    }
+    writeFileSync(
+      join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE),
+      `${JSON.stringify(predecessor)}\n`,
+      'utf8',
+    )
+    let successorBytes: Buffer | undefined
+
+    expect(registrationModule.removeObsoleteDaemonRegistrationIfExpected(
+      mismatchPaths.agentQaRoot,
+      predecessor,
+      {
+        beforeQuarantineRename: () => {
+          writeDaemonRegistration(mismatchPaths.agentQaRoot, {
+            schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+            instanceId: SUCCESSOR_INSTANCE_ID,
+            pid: process.pid + 1,
+            socketPath: join(mismatchPaths.agentQaRoot, 'successor.sock'),
+            startedAtMs: 1_700_000_005_000,
+          })
+          successorBytes = readFileSync(
+            join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE),
+          )
+        },
+      },
+    )).toBe(false)
+    expect(readFileSync(join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE)))
+      .toEqual(successorBytes)
+    expect(
+      readdirSync(mismatchPaths.agentQaRoot).filter((name) => name.includes('.remove-')),
+    ).toEqual([])
   })
 })
 
