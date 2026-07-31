@@ -9,6 +9,7 @@ import {
   acquireWriterLease,
   readWriterLease,
 } from '@vostride/agent-qa-knowledge-local';
+import type { ConfigReaderPort } from '@vostride/agent-qa-agent';
 import { describe, expect, it } from 'vitest';
 
 import { runDaemonHost } from '../daemon/host.js';
@@ -23,21 +24,12 @@ const THIS_TEST_FILE = fileURLToPath(import.meta.url);
 const BLOCK_MARGIN_MS = 20_000;
 const RECLAIM_MARGIN_MS = 1_000;
 
-const daemonConfig = {
-  version: 1 as const,
-  daemon: {
-    autostart: true,
-    pollingIntervalMs: 5_000,
-    maxConcurrentJobs: 1,
-  },
-  embedder: {
-    model: 'test-model',
-    dimensions: 3,
-  },
-  llm: {
-    provider: 'openai' as const,
-    model: 'test-model',
-  },
+const daemonConfig: ConfigReaderPort = {
+  getMasked: () => Promise.resolve({
+    schemaVersion: 1,
+    configPath: '/tmp/agent-qa-heartbeat-fixture.yaml',
+    entries: [],
+  }),
 };
 
 function requiredFixtureValue(value: string | undefined, name: string): string {
@@ -58,7 +50,7 @@ async function waitForFile(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
-    if (child?.process.exitCode !== null) {
+    if (child !== undefined && child.process.exitCode !== null) {
       const exited = await child.exit;
       throw new Error(`Fixture exited before writing ${path}:\n${exited.output}`);
     }

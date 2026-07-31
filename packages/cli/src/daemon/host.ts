@@ -66,6 +66,13 @@ import {
   createJobDispatcher,
   type JobDispatcher,
 } from './job-dispatcher.js'
+import {
+  HEARTBEAT_SUPERVISOR_STOP_TIMEOUT_MS,
+  startHeartbeatSupervisor,
+  type HeartbeatSupervisorHandle,
+  type HeartbeatSupervisorMessage,
+  type StartHeartbeatSupervisorOptions,
+} from './heartbeat-supervisor.js'
 
 /** Provisional daemon heartbeat interval; retune from operational evidence without adding config. */
 export const LEASE_HEARTBEAT_INTERVAL_MS = 10_000
@@ -79,8 +86,9 @@ export const MAINTENANCE_CADENCE_MS = 300_000
 /** Provisional synchronous drain wait; retune from operational evidence without adding config. */
 export const DRAIN_WAIT_TIMEOUT_MS = 120_000
 
-/** Provisional graceful-stop backstop; includes both worker termination bounds plus scheduling. */
-export const DAEMON_SHUTDOWN_GRACE_MS = (EMBEDDER_WORKER_TERM_GRACE_MS * 2) + 1_000
+/** Provisional graceful-stop backstop; includes all worker termination bounds plus scheduling. */
+export const DAEMON_SHUTDOWN_GRACE_MS =
+  (EMBEDDER_WORKER_TERM_GRACE_MS * 2) + HEARTBEAT_SUPERVISOR_STOP_TIMEOUT_MS + 1_000
 
 /** Provisional worker residency window; retune from daemon telemetry without adding config. */
 export const EMBEDDER_WORKER_IDLE_MS = 300_000
@@ -132,6 +140,7 @@ export interface EmbedderWorkerSpawnOptions {
 }
 
 export type DaemonShutdownStage =
+  | 'heartbeatSupervisor.stop'
   | 'invokeServer.close'
   | 'drainWorker'
   | 'maintenanceWorker'
@@ -156,6 +165,9 @@ export interface DaemonHostOperations {
     stage: DaemonShutdownStage,
     action: () => void | Promise<void>,
   ): Promise<void>
+  startHeartbeatSupervisor(
+    options: StartHeartbeatSupervisorOptions,
+  ): Promise<HeartbeatSupervisorHandle>
   acquireWriterLease(knowledgeRoot: string): AcquireWriterLeaseOutcome
   heartbeatLease(options: LeaseOperationOptions): HeartbeatLeaseOutcome
   releaseLease(options: LeaseOperationOptions): ReleaseLeaseOutcome
@@ -304,6 +316,7 @@ function defaultOperations(): DaemonHostOperations {
     runShutdownStage: async (_stage, action) => {
       await action()
     },
+    startHeartbeatSupervisor,
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
     heartbeatLease: LOCAL_DAEMON_CAPABILITIES.heartbeatLease,
     releaseLease: LOCAL_DAEMON_CAPABILITIES.releaseLease,
@@ -499,7 +512,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let localAgent: LocalAgentHost | undefined
   let jobDispatcher: JobDispatcher | undefined
   let registrationWritten = false
-  let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  let heartbeatSupervisor: HeartbeatSupervisorHandle | undefined
   let curationPollTimer: ReturnType<typeof setInterval> | undefined
   let maintenanceTimer: ReturnType<typeof setInterval> | undefined
   let invokeServer: InvokeServerHandle | undefined
@@ -1269,11 +1282,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           runSyncCleanup('shutdownGrace.arm', armShutdownGrace)
         }
         runSyncCleanup('shutdown.trace', () => operations.trace?.('shutdown-started'))
-        if (heartbeatTimer !== undefined) {
-          const timer = heartbeatTimer
-          heartbeatTimer = undefined
-          runSyncCleanup('heartbeatTimer.clear', () => operations.clearInterval(timer))
-        }
+        const supervisor = heartbeatSupervisor
+        heartbeatSupervisor = undefined
+        await runStage('heartbeatSupervisor.stop', async () => {
+          await supervisor?.stop()
+        })
         if (curationPollTimer !== undefined) {
           const timer = curationPollTimer
           curationPollTimer = undefined
@@ -1377,34 +1390,42 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     return shutdownPromise
   }
 
-  const heartbeatOnce = (): boolean => {
-    if (shutdownPromise !== undefined) return false
-    try {
-      const heartbeat = operations.heartbeatLease(authority)
-      if (heartbeat.kind === 'heartbeated') {
-        recordDaemonEvent({
-          kind: 'lease-heartbeated',
-          pid: heartbeat.holder.pid,
-          epoch: heartbeat.holder.epoch,
-          heartbeatAtMs: heartbeat.holder.heartbeatAtMs,
-        })
-        return true
-      }
+  const handleHeartbeatMessage = (heartbeat: HeartbeatSupervisorMessage): void => {
+    if (shutdownPromise !== undefined) return
+    if (heartbeat.kind === 'heartbeated') {
+      recordDaemonEvent({
+        kind: 'lease-heartbeated',
+        pid: heartbeat.holder.pid,
+        epoch: heartbeat.holder.epoch,
+        heartbeatAtMs: heartbeat.holder.heartbeatAtMs,
+      })
+      return
+    }
 
+    if (heartbeat.kind === 'refused') {
       recordDaemonEvent({
         kind: 'lease-lost',
         reason: heartbeat.reason,
         observedEpoch: heartbeat.observedEpoch ?? heartbeat.holder?.epoch,
       })
-    } catch (error) {
+    } else {
       recordDaemonEvent({
         kind: 'lease-lost',
         reason: 'heartbeat-error',
-        detail: error instanceof Error ? error.message : String(error),
+        detail: `${heartbeat.name}: ${heartbeat.message}`,
       })
     }
     void beginShutdown(1, false, 'lease-lost')
-    return false
+  }
+
+  const handleUnexpectedHeartbeatExit = (error: Error): void => {
+    if (shutdownPromise !== undefined) return
+    recordDaemonEvent({
+      kind: 'lease-lost',
+      reason: 'heartbeat-error',
+      detail: error.message,
+    })
+    void beginShutdown(1, false, 'lease-lost')
   }
 
   try {
@@ -1419,7 +1440,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return await completion
     }
 
-    heartbeatTimer = operations.setInterval(heartbeatOnce, LEASE_HEARTBEAT_INTERVAL_MS)
+    heartbeatSupervisor = await operations.startHeartbeatSupervisor({
+      knowledgeRoot: authority.knowledgeRoot,
+      leaseId: authority.leaseId,
+      intervalMs: LEASE_HEARTBEAT_INTERVAL_MS,
+      onMessage: handleHeartbeatMessage,
+      onUnexpectedExit: handleUnexpectedHeartbeatExit,
+    })
     operations.trace?.('heartbeat-started')
     recordDaemonEvent({
       kind: 'lease-acquired',

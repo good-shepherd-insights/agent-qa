@@ -37,6 +37,7 @@ import {
   type DaemonHostOperations,
   type DaemonHostTraceStep,
 } from '../daemon/host.js'
+import type { HeartbeatSupervisorMessage } from '../daemon/heartbeat-supervisor.js'
 import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
 import { daemonSocketPath, startInvokeServer } from '../daemon/server.js'
 import {
@@ -115,7 +116,8 @@ interface HostHarness {
   operations: Partial<DaemonHostOperations>
   traces: DaemonHostTraceStep[]
   signals: Map<NodeJS.Signals, () => void>
-  fireHeartbeat(): void
+  fireHeartbeat(message?: HeartbeatSupervisorMessage): void
+  crashHeartbeat(error?: Error): void
   signal(signal: NodeJS.Signals): void
 }
 
@@ -201,7 +203,7 @@ function daemonCommandDeps(
 function hostHarness(nowMs = 1_700_000_000_000): HostHarness {
   const traces: DaemonHostTraceStep[] = []
   const signals = new Map<NodeJS.Signals, () => void>()
-  let heartbeat: (() => void) | undefined
+  let heartbeat: Parameters<DaemonHostOperations['startHeartbeatSupervisor']>[0] | undefined
 
   return {
     traces,
@@ -209,13 +211,9 @@ function hostHarness(nowMs = 1_700_000_000_000): HostHarness {
     operations: {
       now: () => nowMs,
       trace: (step) => traces.push(step),
-      setInterval: (callback, intervalMs) => {
-        if (intervalMs === LEASE_HEARTBEAT_INTERVAL_MS) heartbeat = callback
-        return intervalMs as unknown as ReturnType<typeof setInterval>
-      },
-      clearInterval: (timer) => {
-        if ((timer as unknown as number) === LEASE_HEARTBEAT_INTERVAL_MS) heartbeat = undefined
-      },
+      setInterval: (_callback, intervalMs) =>
+        intervalMs as unknown as ReturnType<typeof setInterval>,
+      clearInterval: () => undefined,
       setTimeout: () => 2 as unknown as ReturnType<typeof setTimeout>,
       clearTimeout: () => undefined,
       onSignal: (signal, listener) => {
@@ -227,10 +225,25 @@ function hostHarness(nowMs = 1_700_000_000_000): HostHarness {
       hardExit: (code) => {
         throw new Error(`unexpected hard exit ${code}`)
       },
+      startHeartbeatSupervisor: async (options) => {
+        heartbeat = options
+        return {
+          stop: async () => {
+            heartbeat = undefined
+          },
+        }
+      },
     },
-    fireHeartbeat: () => {
-      if (heartbeat === undefined) throw new Error('heartbeat timer was not installed')
-      heartbeat()
+    fireHeartbeat: (message) => {
+      if (heartbeat === undefined) throw new Error('heartbeat supervisor was not installed')
+      heartbeat.onMessage(message ?? heartbeatLease({
+        knowledgeRoot: heartbeat.knowledgeRoot,
+        leaseId: heartbeat.leaseId,
+      }))
+    },
+    crashHeartbeat: (error = new Error('heartbeat worker crashed')) => {
+      if (heartbeat === undefined) throw new Error('heartbeat supervisor was not installed')
+      heartbeat.onUnexpectedExit(error)
     },
     signal: (signal) => {
       const listener = signals.get(signal)
@@ -1031,6 +1044,7 @@ describe('daemon heartbeat authority and cadence', () => {
       operations: { ...harness.operations, heartbeatLease: heartbeats },
       logger: { info: vi.fn(), error: vi.fn() },
     })
+    await Promise.resolve()
 
     const acquiredLease = JSON.parse(
       readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8'),
@@ -1038,7 +1052,10 @@ describe('daemon heartbeat authority and cadence', () => {
     now.mockReturnValue(1_700_000_000_000 + LEASE_HEARTBEAT_TTL_MS + 1)
     let heartbeatError: unknown
     try {
-      harness.fireHeartbeat()
+      harness.fireHeartbeat(heartbeats({
+        knowledgeRoot: paths.knowledgeRoot,
+        leaseId: acquiredLease.leaseId,
+      }))
     } catch (error) {
       heartbeatError = error
     }
@@ -1107,10 +1124,6 @@ describe('daemon heartbeat authority and cadence', () => {
         releaseLease: release,
         writeDaemonRegistration: writeRegistration,
         startInvokeServer: startServer,
-        setInterval: (callback, intervalMs) => {
-          if (intervalMs === LEASE_HEARTBEAT_INTERVAL_MS) queueMicrotask(callback)
-          return intervalMs as unknown as ReturnType<typeof setInterval>
-        },
       },
       logger: { info: vi.fn(), error: vi.fn() },
     })
@@ -1258,6 +1271,7 @@ describe('daemon heartbeat authority and cadence', () => {
 
 describe('daemon shutdown and reclaim post-mortem', () => {
   const awaitedStages = [
+    'heartbeatSupervisor.stop',
     'invokeServer.close',
     'drainWorker',
     'maintenanceWorker',
@@ -1394,7 +1408,6 @@ describe('daemon shutdown and reclaim post-mortem', () => {
   it('memoizes one lease-loss shutdown while its first cleanup is still pending', async () => {
     const paths = makePaths('shutdown-once-only')
     const harness = hostHarness()
-    let heartbeatCallback: (() => void) | undefined
     let releaseClose: (() => void) | undefined
     const closeGate = new Promise<void>((resolve) => {
       releaseClose = resolve
@@ -1417,11 +1430,6 @@ describe('daemon shutdown and reclaim post-mortem', () => {
         ...harness.operations,
         runShutdownStage,
         removeRegistrationIfOwned: removeOwned,
-        setInterval: (callback, intervalMs) => {
-          if (intervalMs === LEASE_HEARTBEAT_INTERVAL_MS) heartbeatCallback = callback
-          return intervalMs as unknown as ReturnType<typeof setInterval>
-        },
-        clearInterval: () => undefined,
         startInvokeServer: ({ socketPath }) => Promise.resolve({
           socketPath,
           close: () => Promise.resolve(),
@@ -1430,7 +1438,7 @@ describe('daemon shutdown and reclaim post-mortem', () => {
       logger: { info: vi.fn(), error: vi.fn() },
     })
     await waitUntil(
-      () => harness.signals.has('SIGTERM') && heartbeatCallback !== undefined,
+      () => harness.signals.has('SIGTERM'),
       'once-only daemon did not become signalable',
     )
     const replacement: WriterLease = {
@@ -1445,8 +1453,8 @@ describe('daemon shutdown and reclaim post-mortem', () => {
       'utf8',
     )
 
-    heartbeatCallback?.()
-    heartbeatCallback?.()
+    harness.fireHeartbeat()
+    harness.fireHeartbeat()
     await waitUntil(
       () => runShutdownStage.mock.calls.some(([stage]) => stage === 'invokeServer.close'),
       'once-only shutdown did not reach its blocked close',
