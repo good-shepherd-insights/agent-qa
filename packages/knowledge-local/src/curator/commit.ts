@@ -111,6 +111,12 @@ export interface CommitCurationDependencies {
    */
   deferCompletion?: true
   hooks?: {
+    /**
+     * Test/chaos seam after every pre-staging write and immediately before the commit tail
+     * enters its current-writer-authority section. Nothing durable and reader-relevant to this
+     * candidate has been published yet when it fires.
+     */
+    beforeCommitAuthorityEntry?: () => void
     /** Test/chaos seam immediately after the durable intent rename. */
     afterIntentWritten?: () => void
     /** Test/chaos seam while the complete bundle is staged but still reader-invisible. */
@@ -1135,6 +1141,7 @@ export function commitCurationDelta(
       epoch: deps.epoch,
     })
     deps.hooks?.afterIntentWritten?.()
+    deps.hooks?.beforeCommitAuthorityEntry?.()
     const authority = { leaseId: job.leaseId, epoch: deps.epoch }
     const authorityHooks = {
       ...(deps.hooks?.afterFinalAuthorityCompare === undefined

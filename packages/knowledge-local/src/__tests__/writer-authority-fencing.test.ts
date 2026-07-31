@@ -69,6 +69,14 @@ import {
   type WriterAuthorityLostReason,
 } from '../lease/writer-lease.js'
 import {
+  listCommitIntents,
+  type CommitIntent,
+} from '../journal/intent-journal.js'
+import {
+  reconcileOnDrainStart,
+  type ReconcileReport,
+} from '../journal/reconcile.js'
+import {
   makeBundleDraftFixture,
 } from './fixtures/bundle-fixture.js'
 
@@ -1338,6 +1346,89 @@ describe('writer authority and bundle publication are one indivisible protocol (
       observedEpoch: authority.epoch + 1,
     })
     expect(durableTailSnapshot()).toEqual(before)
+  })
+
+  it('never lets a writer paused before the tail entry publish an intent behind its successor (CR-09)', () => {
+    const authority = acquireAuthority()
+    const victim = seedMeasurementVictim(authority, '100')
+    const replacement = measurementSupersede(authority, victim.bundleId, '204', 47)
+
+    let journalAtPause: ReturnType<typeof listCommitIntents> | undefined
+    let successor: ReturnType<typeof acquireWriterLease> | undefined
+    let successorReconcile: ReconcileReport | undefined
+    let successorOutcome: ReturnType<typeof commitCurationDelta> | undefined
+    let successorSnapshot: unknown
+    const replayedBySuccessor: CommitIntent[] = []
+    let finalAuthorityComparisons = 0
+
+    const outcome = commitCurationDelta(
+      curationDependencies(authority, undefined, {
+        hooks: {
+          mutationLockTakeoverMs: 0,
+          afterFinalAuthorityCompare: () => {
+            finalAuthorityComparisons += 1
+          },
+          beforeCommitAuthorityEntry: () => {
+            // Everything the paused writer has already made durable for this candidate.
+            journalAtPause = listCommitIntents(knowledgeRoot)
+
+            makeStale()
+            const taken = acquireWithDeadline(knowledgeRoot, {
+              mutationLockTakeoverMs: 0,
+            })
+            successor = taken
+            if (taken.kind !== 'acquired') throw new Error('expected successor takeover')
+            const successorAuthority = { leaseId: taken.leaseId, epoch: taken.epoch }
+
+            successorReconcile = reconcileOnDrainStart({
+              knowledgeRoot,
+              writerAuthority: successorAuthority,
+              hasIndexRow: (bundleId) => indexRecordExists(bundleId),
+              applyIndexDelta: (intent) => {
+                replayedBySuccessor.push(intent)
+              },
+              deriveIndexRowFromBundle: () => {},
+            })
+
+            successorOutcome = commitCurationDelta(
+              curationDependencies(successorAuthority, undefined, {
+                hooks: { mutationLockTakeoverMs: 0 },
+              }),
+              { ...replacement.claimed, leaseId: taken.leaseId },
+              replacement.authored,
+            )
+            successorSnapshot = durableTailSnapshot()
+          },
+        },
+      }),
+      replacement.claimed,
+      replacement.authored,
+    )
+
+    expect(successor).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+    expect(successorOutcome?.kind).toBe('applied')
+    // What the successor observes: an empty journal, so nothing of the old generation to
+    // replay or discard, and no candidate requeued behind its own completion.
+    expect(journalAtPause).toEqual([])
+    expect(replayedBySuccessor).toEqual([])
+    expect(successorReconcile).toMatchObject({
+      intentsReplayed: 0,
+      intentsDiscarded: 0,
+      intentsCleared: 0,
+      jobsRequeued: 0,
+    })
+    // What the resumed writer observes: a refusal at the entry ladder, before the
+    // post-identity failpoint, with nothing of its own left on disk.
+    expect(outcome).toMatchObject({
+      kind: 'abandoned-stale-epoch',
+      observedEpoch: authority.epoch + 1,
+    })
+    expect(finalAuthorityComparisons).toBe(0)
+    expect(listCommitIntents(knowledgeRoot)).toEqual([])
+    expect(durableTailSnapshot()).toEqual(successorSnapshot)
   })
 
   it('keeps a successor out from publication through every replay-safe commit-tail family', () => {
