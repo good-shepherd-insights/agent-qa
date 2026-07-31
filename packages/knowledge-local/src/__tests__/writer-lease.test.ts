@@ -4,12 +4,12 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -24,9 +24,11 @@ import {
   isLeaseStale,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_TAKEOVER_MS,
   readCurrentEpoch,
   refreshWriterLeaseAuthority,
   releaseLease,
+  WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
   type WriterAuthorityLostReason,
   type WriterLease,
@@ -37,6 +39,7 @@ const WRITER_LEASE_MODULE_URL = new URL('../lease/writer-lease.ts', import.meta.
 function spawnLeaseAcquirer(
   knowledgeRoot: string,
   stallInsideLockMs: number,
+  mutationLockTakeoverMs = MUTATION_LOCK_TAKEOVER_MS,
 ): ChildProcessWithoutNullStreams {
   const source = `
     const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
@@ -46,6 +49,7 @@ function spawnLeaseAcquirer(
         process.stdout.write('locked\\n');
         Atomics.wait(wait, 0, 0, Number(process.env.AGENT_QA_LEASE_TEST_STALL_MS));
       },
+      mutationLockTakeoverMs: Number(process.env.AGENT_QA_LEASE_TEST_TAKEOVER_MS),
     });
     process.stdout.write(JSON.stringify(outcome) + '\\n');
   `
@@ -57,6 +61,86 @@ function spawnLeaseAcquirer(
         ...process.env,
         AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
         AGENT_QA_LEASE_TEST_STALL_MS: String(stallInsideLockMs),
+        AGENT_QA_LEASE_TEST_TAKEOVER_MS: String(mutationLockTakeoverMs),
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+}
+
+function spawnAuthorityHolder(
+  knowledgeRoot: string,
+  permitFile: string,
+): ChildProcessWithoutNullStreams {
+  const source = `
+    const { existsSync } = await import('node:fs');
+    const {
+      acquireWriterLease,
+      releaseLease,
+      withCurrentWriterAuthority,
+    } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    const acquired = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT);
+    if (acquired.kind !== 'acquired') throw new Error('holder did not acquire');
+    withCurrentWriterAuthority(
+      process.env.AGENT_QA_LEASE_TEST_ROOT,
+      { leaseId: acquired.leaseId, epoch: acquired.epoch },
+      () => process.stdout.write('mutated\\n'),
+      {
+        afterFinalAuthorityCompare: () => {
+          process.stdout.write('inside\\n');
+          while (!existsSync(process.env.AGENT_QA_LEASE_TEST_PERMIT)) {
+            Atomics.wait(wait, 0, 0, 10);
+          }
+        },
+      },
+    );
+    releaseLease({
+      knowledgeRoot: process.env.AGENT_QA_LEASE_TEST_ROOT,
+      leaseId: acquired.leaseId,
+    });
+    process.stdout.write('done\\n');
+  `
+  return spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    {
+      env: {
+        ...process.env,
+        AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+        AGENT_QA_LEASE_TEST_PERMIT: permitFile,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  )
+}
+
+function spawnClaimedLeaseAcquirer(
+  knowledgeRoot: string,
+  permitFile: string,
+): ChildProcessWithoutNullStreams {
+  const source = `
+    const { existsSync } = await import('node:fs');
+    const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
+      afterMutationLockClaimed: () => {
+        process.stdout.write('claimed\\n');
+        while (!existsSync(process.env.AGENT_QA_LEASE_TEST_PERMIT)) {
+          Atomics.wait(wait, 0, 0, 10);
+        }
+      },
+    });
+    process.stdout.write(JSON.stringify(outcome) + '\\n');
+  `
+  return spawn(
+    process.execPath,
+    ['--experimental-strip-types', '--input-type=module', '--eval', source],
+    {
+      env: {
+        ...process.env,
+        AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+        AGENT_QA_LEASE_TEST_PERMIT: permitFile,
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     },
@@ -89,6 +173,19 @@ function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
       if (code === 0) resolve()
       else reject(new Error(`lease child exited ${code}: ${stderr}`))
     })
+  })
+}
+
+function observeExit(child: ChildProcessWithoutNullStreams): Promise<{
+  code: number | null
+  signal: NodeJS.Signals | null
+  stderr: string
+}> {
+  return new Promise((resolve, reject) => {
+    let stderr = ''
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => resolve({ code, signal, stderr }))
   })
 }
 
@@ -412,7 +509,7 @@ describe('writer lease mutation lock ownership', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('does not steal or remove a live owner lock after the former five-second threshold', async () => {
+  it('waits behind a live held transaction until the original acquisition completes', async () => {
     const first = spawnLeaseAcquirer(knowledgeRoot, 6_500)
     await waitForOutput(first, 'locked\n')
 
@@ -423,12 +520,96 @@ describe('writer lease mutation lock ownership', () => {
 
     expect(secondExited).toBe(false)
     await Promise.all([waitForExit(first), waitForExit(second)])
-    expect(
-      readdirSync(join(knowledgeRoot, 'memory', 'index'))
-        .filter((entry) => entry.startsWith('.writer-lease-mutation-lock')),
-    ).toEqual([])
+    const authorityDb = new DatabaseSync(
+      join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE),
+      { readOnly: true },
+    )
+    try {
+      expect(
+        authorityDb.prepare('SELECT * FROM mutation_lock WHERE id = 1').get(),
+      ).toBeUndefined()
+    } finally {
+      authorityDb.close()
+    }
     expect(JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'))).toMatchObject({
       pid: first.pid,
+      epoch: 1,
+    })
+  }, 10_000)
+
+  it('short-circuits a fresh lease without killing its held-section owner', async () => {
+    const permitFile = join(root, 'fresh-holder.permit')
+    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
+    const holderExit = observeExit(holder)
+    await waitForOutput(holder, 'inside\n')
+
+    const startedAtMs = Date.now()
+    const contender = acquireWriterLease(knowledgeRoot, {
+      mutationLockTakeoverMs: 0,
+    })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { pid: holder.pid, epoch: 1 },
+    })
+    expect(Date.now() - startedAtMs).toBeLessThan(250)
+    expect(holder.exitCode).toBeNull()
+    expect(holder.signalCode).toBeNull()
+
+    writeFileSync(permitFile, 'resume\n', 'utf8')
+    expect(await holderExit).toMatchObject({ code: 0, signal: null })
+    expect(existsSync(join(knowledgeRoot, LEASE_FILE))).toBe(false)
+  }, 10_000)
+
+  it('kills and verifies the exact stale held-section owner before takeover', async () => {
+    const permitFile = join(root, 'stale-holder.permit')
+    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
+    const holderExit = observeExit(holder)
+    await waitForOutput(holder, 'inside\n')
+    const staleLease = JSON.parse(
+      readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'),
+    ) as WriterLease
+    writeFileSync(
+      join(knowledgeRoot, LEASE_FILE),
+      `${JSON.stringify({
+        ...staleLease,
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+      })}\n`,
+      'utf8',
+    )
+
+    const contender = spawnLeaseAcquirer(knowledgeRoot, 0, 0)
+    const contenderExit = waitForExit(contender)
+    expect(await holderExit).toMatchObject({ code: null, signal: 'SIGKILL' })
+    await contenderExit
+
+    expect(JSON.parse(
+      readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'),
+    )).toMatchObject({
+      pid: contender.pid,
+      epoch: 2,
+    })
+  }, 15_000)
+
+  it('CAS-takes a live crash row after its deadline and rejects the late original', async () => {
+    const permitFile = join(root, 'claimed-holder.permit')
+    const original = spawnClaimedLeaseAcquirer(knowledgeRoot, permitFile)
+    const originalExit = observeExit(original)
+    await waitForOutput(original, 'claimed\n')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const replacement = spawnLeaseAcquirer(knowledgeRoot, 0, 25)
+    await waitForExit(replacement)
+    writeFileSync(permitFile, 'resume\n', 'utf8')
+    const refused = await originalExit
+
+    expect(refused.code).not.toBe(0)
+    expect(refused.signal).toBeNull()
+    expect(refused.stderr).toContain('MutationLockGenerationLostError')
+    expect(JSON.parse(
+      readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'),
+    )).toMatchObject({
+      pid: replacement.pid,
       epoch: 1,
     })
   }, 10_000)
