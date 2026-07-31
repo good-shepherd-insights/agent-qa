@@ -186,15 +186,70 @@ describe('bounded retry (D-18)', () => {
     expect(outcome).toMatchObject({ disposition: 'retry-scheduled' })
     expect(statusOf(harness.store, String(enqueued.job.id))).toBe('queued')
   })
+
+  it('lands a thrown handler as a fenced retry with declaration backoff', async () => {
+    const clock = createSteppingClock()
+    const store = createFakeJobStore(clock)
+    const recordFailureCalls: Parameters<FakeJobStore['recordFailure']>[] = []
+    const observed = {
+      ...store,
+      recordFailure: async (...args: Parameters<FakeJobStore['recordFailure']>) => {
+        recordFailureCalls.push(args)
+        return store.recordFailure(...args)
+      },
+    }
+    const registry = createJobKindRegistry([
+      declaration({
+        maxAttempts: 3,
+        backoff: {
+          kind: 'exponential',
+          initialDelayMs: 125,
+          factor: 2,
+          maxDelayMs: 1_000,
+        },
+        handler: async () => {
+          throw new Error('synthetic engine crash')
+        },
+      }),
+    ])
+    const queue = createAgentJobQueue({
+      store: observed,
+      registry,
+      clock,
+      idSource,
+      model: unusedModel,
+    })
+    const fence = await store.adoptEpoch(7)
+    const enqueued = await queue.enqueue('analyze-run', {}, 'thrown-retry')
+
+    const outcome = await queue.runNextJob({ fence })
+
+    expect(outcome).toMatchObject({
+      ran: true,
+      disposition: 'retry-scheduled',
+      job: { id: enqueued.job.id, attempts: 1 },
+      handlerInvoked: true,
+      reason: 'handler-threw: synthetic engine crash',
+      retryDelayMs: 125,
+      attemptsRemaining: 2,
+    })
+    expect(recordFailureCalls).toEqual([
+      [
+        enqueued.job.id,
+        { kind: 'retry', reason: 'handler-threw: synthetic engine crash' },
+        fence,
+      ],
+    ])
+    expect(store.rows().find((row) => row.id === String(enqueued.job.id))).toMatchObject({
+      status: 'queued',
+      claimed: false,
+      attempts: 1,
+    })
+  })
 })
 
-describe('the poison job: a handler that never returns still exhausts its bound (D-18)', () => {
-  // The whole point of counting the attempt at the CLAIM. A handler that kills its host never
-  // reports anything, so an engine that consulted maxAttempts only while recording a failure
-  // would never consult it at all for exactly the job the bound exists to stop. Here the
-  // handler throws, which is the in-process shape of the same fact: control never reaches the
-  // driver's failure branch, and nothing is recorded.
-  it('lands failed without ever invoking the handler again, and terminates', async () => {
+describe('the poison job: a handler that throws still exhausts its bound (D-18)', () => {
+  it('lands each thrown attempt and terminates on the declared bound', async () => {
     let calls = 0
     const harness = await harnessFor([
       declaration({
@@ -208,27 +263,23 @@ describe('the poison job: a handler that never returns still exhausts its bound 
     const enqueued = await harness.queue.enqueue('analyze-run', {}, 'key')
 
     const outcomes: RunNextJobOutcome[] = []
-    // A bounded pump: if the bound were unenforceable on this path the loop would run out
-    // rather than hang, and the assertions below would report which way it failed.
-    for (let pump = 0; pump < 12; pump += 1) {
-      if (statusOf(harness.store, String(enqueued.job.id)) !== 'queued') break
-      try {
-        outcomes.push(await harness.queue.runNextJob({ fence: harness.fence }))
-      } catch {
-        // The host died. A fresh host adopts authority and releases the abandoned claim.
-        await harness.queue.recoverAbandonedClaims({ fence: harness.fence })
-      }
+    for (let pump = 0; pump < 3; pump += 1) {
+      outcomes.push(await harness.queue.runNextJob({ fence: harness.fence }))
     }
 
     expect(calls).toBe(3)
     expect(statusOf(harness.store, String(enqueued.job.id))).toBe('failed')
-    expect(outcomes).toHaveLength(1)
-    expect(outcomes[0]).toMatchObject({
+    expect(outcomes.map((outcome) => outcome.ran && outcome.disposition)).toEqual([
+      'retry-scheduled',
+      'retry-scheduled',
+      'failed',
+    ])
+    expect(outcomes[2]).toMatchObject({
       ran: true,
       disposition: 'failed',
-      handlerInvoked: false,
+      handlerInvoked: true,
+      reason: 'handler-threw: host died mid-handler',
     })
-    expect(String((outcomes[0] as { reason: string }).reason)).toContain('3')
   })
 
   it('runs the exhausted job to completion when the bound has NOT been spent', async () => {
@@ -246,15 +297,10 @@ describe('the poison job: a handler that never returns still exhausts its bound 
 
 describe('abandoned claims', () => {
   it('releases a claim its host never finished, preserving the attempt it spent', async () => {
-    const harness = await harnessFor([
-      declaration({
-        handler: async () => {
-          throw new Error('host died mid-handler')
-        },
-      }),
-    ])
+    const harness = await harnessFor([declaration()])
     const enqueued = await harness.queue.enqueue('analyze-run', {}, 'key')
-    await expect(harness.queue.runNextJob({ fence: harness.fence })).rejects.toThrowError()
+    const claimed = await harness.store.claimNext(harness.fence)
+    expect(claimed).toMatchObject({ claimed: true, job: { id: enqueued.job.id } })
 
     expect(harness.store.rows()[0]?.claimed).toBe(true)
     const recovered = await harness.queue.recoverAbandonedClaims({ fence: harness.fence })

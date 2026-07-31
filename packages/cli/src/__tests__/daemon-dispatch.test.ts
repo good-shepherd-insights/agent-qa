@@ -288,28 +288,66 @@ describe('resident daemon agent-job dispatcher (CR-05)', () => {
     })
   })
 
-  it('survives a throwing handler and immediately serves the next job', async () => {
+  it('lands a throwing handler for retry, re-serves it, and completes the next job', async () => {
+    const invocations: string[] = []
     const completed: string[] = []
     const host = await startHost(jobKinds(async (context) => {
-      const payload = context.payload as { fail?: boolean }
-      if (payload.fail === true) throw new Error('synthetic handler crash')
-      completed.push(String(context.job.id))
+      const jobId = String(context.job.id)
+      const payload = context.payload as { throwOnce?: boolean }
+      invocations.push(`${jobId}:${context.job.attempts}`)
+      if (payload.throwOnce === true && context.job.attempts === 1) {
+        throw new Error('synthetic handler crash')
+      }
+      completed.push(jobId)
       return { status: 'complete', next: [] }
     }))
 
-    await host.jobs.queue.enqueue(FIXTURE_KIND, { fail: true }, 'a-failing-job')
-    const survivor = await host.jobs.queue.enqueue(FIXTURE_KIND, {}, 'b-surviving-job')
+    const retried = await host.jobs.queue.enqueue(
+      FIXTURE_KIND,
+      { throwOnce: true },
+      'a-retried-job',
+    )
     host.nudge()
 
-    await waitUntil(() => completed.length === 1, 'dispatcher stopped after a handler threw')
-    expect(completed).toEqual([String(survivor.job.id)])
-    expect((await host.jobs.store.dumpState()).jobs.map((job) => ({
-      id: job.id,
-      status: job.status,
-      claimed: job.claimed,
-    }))).toEqual(expect.arrayContaining([
-      expect.objectContaining({ status: 'queued', claimed: true }),
-      expect.objectContaining({ id: String(survivor.job.id), status: 'done', claimed: false }),
+    await waitUntil(() => invocations.length === 1, 'throwing attempt was not dispatched')
+    expect(invocations).toEqual([`${String(retried.job.id)}:1`])
+    expect((await host.jobs.store.dumpState()).jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: String(retried.job.id),
+        status: 'queued',
+        attempts: 1,
+        claimed: false,
+      }),
+    ]))
+
+    await host.scheduler.advanceBy(RETRY_DELAY_MS - 1)
+    expect(invocations).toEqual([`${String(retried.job.id)}:1`])
+    await host.scheduler.advanceBy(1)
+    await waitUntil(() => completed.length === 1, 'throwing job was not re-served')
+
+    const survivor = await host.jobs.queue.enqueue(FIXTURE_KIND, {}, 'b-surviving-job')
+    host.nudge()
+    await waitUntil(() => completed.length === 2, 'dispatcher did not survive the throwing job')
+
+    expect(invocations).toEqual([
+      `${String(retried.job.id)}:1`,
+      `${String(retried.job.id)}:2`,
+      `${String(survivor.job.id)}:1`,
+    ])
+    expect(completed).toEqual([String(retried.job.id), String(survivor.job.id)])
+    expect((await host.jobs.store.dumpState()).jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: String(retried.job.id),
+        status: 'done',
+        attempts: 2,
+        claimed: false,
+      }),
+      expect.objectContaining({
+        id: String(survivor.job.id),
+        status: 'done',
+        attempts: 1,
+        claimed: false,
+      }),
     ]))
   })
 
