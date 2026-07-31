@@ -2,12 +2,14 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,7 +25,12 @@ import {
   releaseLease,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
-import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
+import type { CuratorAuthor } from '@vostride/agent-qa-agent-local'
+import {
+  defaultGuardrailPolicyInput,
+  getActiveExecutionContext,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -31,6 +38,7 @@ import {
   createDaemonCommand,
   type DaemonCommandDeps,
 } from '../commands/daemon.js'
+import type { DrainSessionReceipt } from '../daemon/drain-receipts.js'
 import {
   DAEMON_SHUTDOWN_GRACE_MS,
   LEASE_HEARTBEAT_INTERVAL_MS,
@@ -304,6 +312,173 @@ function readEvents(agentQaRoot: string): Array<Record<string, unknown>> {
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+const LATE_CANDIDATE_ID = 'c'.repeat(64)
+
+/**
+ * Durability and reader members are reached through the module namespace so that a RED run — in
+ * which they do not exist yet — fails on the assertion that names the missing behaviour instead of
+ * failing to link, which would have masked every other case in this file.
+ */
+interface DaemonEventsUnderTest {
+  appendDaemonEvent(
+    agentQaRoot: string,
+    event: { kind: string } & Record<string, unknown>,
+    now?: () => Date,
+    options?: {
+      fsyncFile?: (descriptor: number) => void
+      fsyncDirectory?: (directory: string) => void
+    },
+  ): void
+  readDaemonEventLedger?: (agentQaRoot: string) => {
+    events: Array<Record<string, unknown>>
+    warnings: Array<{ kind: string; line: number; message: string }>
+  }
+}
+
+async function eventsUnderTest(): Promise<DaemonEventsUnderTest> {
+  return (await import('../daemon/events.js')) as unknown as DaemonEventsUnderTest
+}
+
+function drainQueueReport(
+  jobsProcessed: number,
+  remaining: number,
+): Awaited<ReturnType<DaemonHostOperations['drainQueue']>> {
+  return {
+    kind: 'drained' as const,
+    jobsProcessed,
+    committed: jobsProcessed,
+    downgraded: 0,
+    withheld: 0,
+    quarantined: 0,
+    requeued: 0,
+    failures: 0,
+    failureDetails: [],
+    noops: 0,
+    noopDetails: [],
+    reconcile: undefined,
+    writerPass: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
+    gc: { kind: 'skipped' as const, reason: 'daemon-cadence' as const },
+    remaining,
+    remainingWork: { queued: remaining, claimedNonterminal: 0, quarantined: 0 },
+  } as unknown as Awaited<ReturnType<DaemonHostOperations['drainQueue']>>
+}
+
+interface DrainHostHarness {
+  readonly drainCalls: Array<Parameters<DaemonHostOperations['drainQueue']>[0]>
+  readonly receipts: DrainSessionReceipt[]
+  readonly errors: string[]
+  nudge(requireReceipt: boolean): Promise<void>
+  stop(): Promise<void>
+}
+
+/**
+ * A daemon host whose curation inspection, counting, and drain are scripted.
+ *
+ * The nudge path is driven through the server's own `onNudge` handler rather than a socket, so the
+ * receipt-required session under test is the production one and nothing about the transport is
+ * part of the measurement.
+ */
+function drainHostHarness(options: {
+  paths: ReturnType<typeof makePaths>
+  author?: () => CuratorAuthor | Promise<CuratorAuthor>
+  inspect: () => { queuedCandidateIds: string[]; recoverableClaimedCandidateIds: string[] }
+  countRemaining: () => { queued: number; claimedNonterminal: number; quarantined: number }
+  drainQueue: DaemonHostOperations['drainQueue']
+}): DrainHostHarness {
+  const signals = new Map<NodeJS.Signals, () => void>()
+  const drainCalls: Array<Parameters<DaemonHostOperations['drainQueue']>[0]> = []
+  const receipts: DrainSessionReceipt[] = []
+  const errors: string[] = []
+  let onNudge: ((nudge: { kind: 'candidates-enqueued'; requireReceipt: boolean }) => unknown)
+    | undefined
+  let drainSessions = 0
+
+  const operations = {
+    composeJobRecovery: () => ({
+      store: { adoptEpoch: () => Promise.resolve({ epoch: 1 }) },
+      recoverAbandonedClaims: () => Promise.resolve({ recovered: 0 }),
+      resumePending: () => Promise.resolve([]),
+      close: vi.fn(),
+    }),
+    composeLocalAgent: () => ({
+      registry: {},
+      jobs: () => Promise.resolve({
+        queue: { runNextJob: () => Promise.resolve({ ran: false, reason: 'no-job' }) },
+      }),
+      close: vi.fn(),
+    }),
+    inspectDrainableCurationWork: () => options.inspect(),
+    countRemainingCurationWork: () => options.countRemaining(),
+    listQueuedCandidates: () => [],
+    drainQueue: async (drainOptions: Parameters<DaemonHostOperations['drainQueue']>[0]) => {
+      drainCalls.push(drainOptions)
+      return await options.drainQueue(drainOptions)
+    },
+    appendDrainSessionReceipt: (_agentQaRoot: string, receipt: DrainSessionReceipt) => {
+      receipts.push(receipt)
+      drainSessions += 1
+    },
+    setInterval: () => 1 as unknown as ReturnType<typeof setInterval>,
+    clearInterval: () => undefined,
+    setTimeout: () => 2 as unknown as ReturnType<typeof setTimeout>,
+    clearTimeout: () => undefined,
+    onSignal: (signal: NodeJS.Signals, listener: () => void) => {
+      signals.set(signal, listener)
+    },
+    offSignal: (signal: NodeJS.Signals, listener: () => void) => {
+      if (signals.get(signal) === listener) signals.delete(signal)
+    },
+    hardExit: (code: number) => {
+      throw new Error(`unexpected hard exit ${code}`)
+    },
+    startHeartbeatSupervisor: () => Promise.resolve({
+      exited: Promise.resolve(),
+      stop: () => Promise.resolve(),
+    }),
+    startInvokeServer: (
+      started: { socketPath: string; onNudge?: typeof onNudge },
+    ) => {
+      onNudge = started.onNudge
+      return Promise.resolve({
+        socketPath: started.socketPath,
+        close: () => Promise.resolve(),
+      })
+    },
+  } as unknown as Partial<DaemonHostOperations>
+
+  const running = runDaemonHost({
+    agentQaRoot: options.paths.agentQaRoot,
+    knowledgeRoot: options.paths.knowledgeRoot,
+    config: TEST_CONFIG,
+    model: () => TEST_MODEL,
+    ...(options.author === undefined ? {} : { author: options.author }),
+    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    operations,
+    logger: { info: vi.fn(), error: (message) => errors.push(message) },
+  })
+
+  return {
+    drainCalls,
+    receipts,
+    errors,
+    async nudge(requireReceipt) {
+      await waitUntil(() => onNudge !== undefined, 'invoke server was never started')
+      const settled = drainCalls.length + drainSessions + errors.length
+      onNudge!({ kind: 'candidates-enqueued', requireReceipt })
+      await waitUntil(
+        () => drainCalls.length + drainSessions + errors.length > settled,
+        'the nudged drain session never settled',
+      )
+    },
+    async stop() {
+      const listener = signals.get('SIGTERM')
+      if (listener === undefined) throw new Error('SIGTERM listener was not installed')
+      listener()
+      await expect(running).resolves.toBe(0)
+    },
+  }
 }
 
 afterEach(() => {
@@ -2020,5 +2195,214 @@ describe('daemon shutdown and reclaim post-mortem', () => {
     expect(acquiredIndex).toBeGreaterThanOrEqual(0)
     expect(reclaimedIndex).toBeGreaterThan(acquiredIndex)
     expect(epochIndex).toBeGreaterThan(reclaimedIndex)
+  })
+})
+
+/**
+ * WR-01: a receipt-required session may start empty, and work may arrive before the loop looks.
+ *
+ * The barrier is scheduled through the inspection seam itself: the FIRST inspection returns the
+ * empty root the session was started for and enqueues the candidate as it returns, so the arrival
+ * lands after the initial inspection and before the loop's observation — the exact window the
+ * review describes and the only one where the eager author assignment is observable.
+ */
+describe('drain session authorship at every arrival time', () => {
+  it('authors a candidate that arrives between the initial inspection and the loop observation', async () => {
+    const paths = makePaths('late-candidate')
+    const queued = new Set<string>()
+    let inspections = 0
+    const author: CuratorAuthor = () => Promise.resolve({
+      kind: 'fallback-required',
+      reason: 'no-model',
+    })
+    const authorFactory = vi.fn(() => author)
+    const harness = drainHostHarness({
+      paths,
+      author: authorFactory,
+      inspect: () => {
+        inspections += 1
+        const observed = [...queued].sort()
+        // The arrival: after the initial inspection has decided the session is empty.
+        if (inspections === 1) queued.add(LATE_CANDIDATE_ID)
+        return { queuedCandidateIds: observed, recoverableClaimedCandidateIds: [] }
+      },
+      countRemaining: () => ({
+        queued: queued.size,
+        claimedNonterminal: 0,
+        quarantined: 0,
+      }),
+      drainQueue: () => {
+        queued.clear()
+        return Promise.resolve(drainQueueReport(1, 0))
+      },
+    })
+
+    await harness.nudge(true)
+    await harness.stop()
+
+    expect(harness.errors).toEqual([])
+    expect(authorFactory).toHaveBeenCalledTimes(1)
+    expect(harness.drainCalls).toHaveLength(1)
+    expect(harness.drainCalls[0]?.author).toBe(author)
+    expect(harness.drainCalls[0]?.policy).toBeDefined()
+    expect(harness.receipts).toHaveLength(1)
+    expect(harness.receipts[0]).toMatchObject({
+      candidateIds: [LATE_CANDIDATE_ID],
+      remainingAfter: 0,
+      outcome: 'completed',
+    })
+  })
+
+  it('raises the named configuration refusal when the late candidate has no author factory', async () => {
+    const paths = makePaths('late-candidate-no-factory')
+    const queued = new Set<string>()
+    let inspections = 0
+    const harness = drainHostHarness({
+      paths,
+      inspect: () => {
+        inspections += 1
+        const observed = [...queued].sort()
+        if (inspections === 1) queued.add(LATE_CANDIDATE_ID)
+        return { queuedCandidateIds: observed, recoverableClaimedCandidateIds: [] }
+      },
+      countRemaining: () => ({
+        queued: queued.size,
+        claimedNonterminal: 0,
+        quarantined: 0,
+      }),
+      drainQueue: () => {
+        queued.clear()
+        return Promise.resolve(drainQueueReport(1, 0))
+      },
+    })
+
+    await harness.nudge(true)
+    await harness.stop()
+
+    expect(harness.drainCalls).toEqual([])
+    expect(harness.receipts).toEqual([])
+    expect(harness.errors.join('\n')).toContain(
+      'Daemon curation requires an author factory and guardrail policy',
+    )
+  })
+
+  it('completes a receipt-only empty session with no factory and no arrivals', async () => {
+    const paths = makePaths('receipt-only-empty')
+    const harness = drainHostHarness({
+      paths,
+      inspect: () => ({ queuedCandidateIds: [], recoverableClaimedCandidateIds: [] }),
+      countRemaining: () => ({ queued: 0, claimedNonterminal: 0, quarantined: 0 }),
+      drainQueue: () => Promise.resolve(drainQueueReport(0, 0)),
+    })
+
+    await harness.nudge(true)
+    await harness.stop()
+
+    expect(harness.errors).toEqual([])
+    expect(harness.drainCalls).toEqual([])
+    expect(harness.receipts).toHaveLength(1)
+    expect(harness.receipts[0]).toMatchObject({
+      candidateIds: [],
+      remainingAfter: 0,
+      outcome: 'completed',
+    })
+  })
+})
+
+/**
+ * WR-02: the lifecycle ledger is D-04's fencing post-mortem and a `daemon status` source, so a
+ * crash must not lose an acknowledged fact and a torn final append must not break its readers.
+ */
+describe('daemon lifecycle event durability and torn-tail reading', () => {
+  it('fsyncs every accepted event through an owned owner-only descriptor', async () => {
+    const paths = makePaths('event-durability')
+    const events = await eventsUnderTest()
+    const fsyncedSizes: number[] = []
+    const fsyncedDirectories: string[] = []
+    const seam = {
+      fsyncFile: (descriptor: number) => fsyncedSizes.push(fstatSync(descriptor).size),
+      fsyncDirectory: (directory: string) => fsyncedDirectories.push(directory),
+    }
+
+    const clock = () => new Date('2026-08-01T00:00:00.000Z')
+    events.appendDaemonEvent(paths.agentQaRoot, { kind: 'lease-acquired' }, clock, seam)
+    events.appendDaemonEvent(paths.agentQaRoot, { kind: 'lease-heartbeated' }, clock, seam)
+    events.appendDaemonEvent(paths.agentQaRoot, { kind: 'daemon-stopped' }, clock, seam)
+
+    const file = join(paths.agentQaRoot, DAEMON_EVENTS_FILE)
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    // Each fsync must carry the ledger's OWN descriptor, already holding the bytes it makes
+    // durable — a fsync of anything else, or before the write, would not match these sizes.
+    let cumulative = 0
+    const expectedSizes = readFileSync(file, 'utf8')
+      .split(/(?<=\n)/)
+      .filter((line) => line.length > 0)
+      .map((line) => (cumulative += Buffer.byteLength(line)))
+    expect(expectedSizes).toHaveLength(3)
+    expect(fsyncedSizes).toEqual(expectedSizes)
+    expect(fsyncedDirectories).toEqual([paths.agentQaRoot])
+  })
+
+  it('isolates a torn final append while keeping every complete record', async () => {
+    const paths = makePaths('event-torn-tail')
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    const file = join(paths.agentQaRoot, DAEMON_EVENTS_FILE)
+    writeFileSync(
+      file,
+      `${JSON.stringify({ ts: '2026-08-01T00:00:00.000Z', kind: 'lease-acquired', epoch: 1 })}\n`
+      + `${JSON.stringify({ ts: '2026-08-01T00:00:01.000Z', kind: 'lease-heartbeated' })}\n`
+      + '{"ts":"2026-08-01T00:00:02.000Z","kind":"daemon-sto',
+      'utf8',
+    )
+    const events = await eventsUnderTest()
+    expect(events.readDaemonEventLedger).toBeTypeOf('function')
+
+    const ledger = events.readDaemonEventLedger!(paths.agentQaRoot)
+    expect(ledger.events.map((event) => event.kind)).toEqual([
+      'lease-acquired',
+      'lease-heartbeated',
+    ])
+    expect(ledger.events[0]).toMatchObject({ epoch: 1 })
+    expect(ledger.warnings).toEqual([
+      { kind: 'torn-final-line', line: 3, message: expect.stringContaining('line 3') },
+    ])
+  })
+
+  it('reports a complete malformed row as malformed and keeps reading past it', async () => {
+    const paths = makePaths('event-malformed-row')
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    const file = join(paths.agentQaRoot, DAEMON_EVENTS_FILE)
+    writeFileSync(
+      file,
+      `${JSON.stringify({ ts: '2026-08-01T00:00:00.000Z', kind: 'lease-acquired' })}\n`
+      + `${JSON.stringify({ ts: '2026-08-01T00:00:01.000Z', kind: 'not-a-daemon-event-kind' })}\n`
+      + '{"ts":"2026-08-01T00:00:02.000Z","kind":}\n'
+      + `${JSON.stringify({ ts: '2026-08-01T00:00:03.000Z', kind: 'daemon-stopped' })}\n`,
+      'utf8',
+    )
+    const events = await eventsUnderTest()
+    expect(events.readDaemonEventLedger).toBeTypeOf('function')
+
+    const ledger = events.readDaemonEventLedger!(paths.agentQaRoot)
+    // The records AFTER the bad rows survive: a malformed row is not a tear, so nothing truncates.
+    expect(ledger.events.map((event) => event.kind)).toEqual([
+      'lease-acquired',
+      'daemon-stopped',
+    ])
+    expect(ledger.warnings.map((warning) => warning.kind)).toEqual([
+      'malformed-row',
+      'malformed-row',
+    ])
+    expect(ledger.warnings.map((warning) => warning.line)).toEqual([2, 3])
+  })
+
+  it('reads an absent ledger as empty rather than failing', async () => {
+    const paths = makePaths('event-absent-ledger')
+    const events = await eventsUnderTest()
+    expect(events.readDaemonEventLedger).toBeTypeOf('function')
+    expect(events.readDaemonEventLedger!(paths.agentQaRoot)).toEqual({
+      events: [],
+      warnings: [],
+    })
   })
 })
