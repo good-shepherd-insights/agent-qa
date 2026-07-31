@@ -25,6 +25,13 @@ import { z } from 'zod'
 export const JOURNAL_SUBDIR = 'memory/queue/journal'
 export const COMMIT_INTENT_SCHEMA_VERSION = 1
 
+/**
+ * Highest writer epoch whose reconciliation has completed, relative to knowledgeRoot. Pinned
+ * state, not configuration: reconciliation writes it inside the authority section it already
+ * holds, so the watermark can never lag a completed pass.
+ */
+export const RECONCILED_EPOCH_FILE = `${JOURNAL_SUBDIR}/.reconciled-epoch`
+
 const CANDIDATE_ID = /^[0-9a-f]{64}$/
 const INTENT_FILE = /^([0-9a-f]{64})\.intent\.json$/
 
@@ -78,16 +85,13 @@ function bestEffortFsyncDirectory(dir: string): void {
   }
 }
 
-/** Durably replace one candidate's intent before any reader-visible bundle mutation. */
-export function writeCommitIntent(knowledgeRoot: string, intent: CommitIntent): void {
-  const parsed = commitIntentSchema.parse(intent)
-  const file = intentPath(knowledgeRoot, parsed.candidateId)
+function atomicRewrite(file: string, text: string): void {
   mkdirSync(dirname(file), { recursive: true })
   const temporary = `${file}.tmp-${randomUUID()}`
   let fd: number | undefined
   try {
     fd = openSync(temporary, 'wx')
-    writeFileSync(fd, `${canonicalJson(parsed)}\n`, 'utf8')
+    writeFileSync(fd, text, 'utf8')
     fsyncSync(fd)
     closeSync(fd)
     fd = undefined
@@ -97,6 +101,57 @@ export function writeCommitIntent(knowledgeRoot: string, intent: CommitIntent): 
     if (fd !== undefined) closeSync(fd)
     rmSync(temporary, { force: true })
   }
+}
+
+/** Durably replace one candidate's intent before any reader-visible bundle mutation. */
+export function writeCommitIntent(knowledgeRoot: string, intent: CommitIntent): void {
+  const parsed = commitIntentSchema.parse(intent)
+  atomicRewrite(
+    intentPath(knowledgeRoot, parsed.candidateId),
+    `${canonicalJson(parsed)}\n`,
+  )
+}
+
+/**
+ * Highest epoch whose reconciliation completed. Tolerant by construction: an absent or
+ * unreadable watermark is zero, which admits every intent and preserves crash recovery on a
+ * root that has never been reconciled.
+ */
+export function readReconciledEpoch(knowledgeRoot: string): number {
+  let raw: string
+  try {
+    raw = readFileSync(join(knowledgeRoot, RECONCILED_EPOCH_FILE), 'utf8')
+  } catch {
+    return 0
+  }
+  const parsed = z.number().int().nonnegative().safeParse(Number(raw.trim()))
+  return parsed.success ? parsed.data : 0
+}
+
+/** @internal The caller must already hold withCurrentWriterAuthority for this root. */
+export function writeReconciledEpochWithinCurrentAuthority(
+  knowledgeRoot: string,
+  epoch: number,
+): void {
+  const validated = z.number().int().positive().parse(epoch)
+  atomicRewrite(join(knowledgeRoot, RECONCILED_EPOCH_FILE), `${validated}\n`)
+}
+
+/**
+ * Preserve a superseded generation's intent bytes under a name `listCommitIntents` never
+ * returns. Discarding them silently would erase the only record that a fenced-out writer
+ * reached the journal at all (T-386-28-03).
+ */
+export function quarantineStaleCommitIntent(
+  knowledgeRoot: string,
+  candidateId: string,
+  epoch: number,
+): string {
+  const file = intentPath(knowledgeRoot, candidateId)
+  const quarantined = `.stale-${epoch}-${candidateId}.intent.json`
+  renameSync(file, join(dirname(file), quarantined))
+  bestEffortFsyncDirectory(dirname(file))
+  return quarantined
 }
 
 /** Clear one confirmed intent after its index projection has been applied. */

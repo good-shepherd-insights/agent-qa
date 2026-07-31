@@ -51,6 +51,7 @@ const EMPTY_RECONCILE = {
   intentsCleared: 0,
   intentsReplayed: 0,
   intentsDiscarded: 0,
+  intentsQuarantinedStale: 0,
   jobsRequeued: 0,
   orphansRemoved: 0,
   malformed: 0,

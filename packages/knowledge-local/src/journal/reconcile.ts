@@ -35,7 +35,11 @@ import {
 import {
   clearCommitIntent,
   listCommitIntents,
+  quarantineStaleCommitIntent,
+  readReconciledEpoch,
+  writeReconciledEpochWithinCurrentAuthority,
   type CommitIntent,
+  type ListedCommitIntent,
 } from './intent-journal.js'
 import { recoverExpiredBundleMutations } from './bundle-mutation.js'
 
@@ -51,6 +55,8 @@ export interface ReconcileReport {
   intentsCleared: number
   intentsReplayed: number
   intentsDiscarded: number
+  /** Intents authored before the reconciled-epoch watermark: renamed aside, never replayed. */
+  intentsQuarantinedStale: number
   jobsRequeued: number
   orphansRemoved: number
   /** Present on production reconciliation; optional keeps injected legacy test reports compatible. */
@@ -183,6 +189,7 @@ function reconcileOnDrainStartWithinCurrentAuthority(
     intentsCleared: 0,
     intentsReplayed: 0,
     intentsDiscarded: 0,
+    intentsQuarantinedStale: 0,
     jobsRequeued: 0,
     orphansRemoved: 0,
     mutationsRecovered: 0,
@@ -211,7 +218,27 @@ function reconcileOnDrainStartWithinCurrentAuthority(
     expiredLeaseIds,
   )
 
-  const entries = listCommitIntents(deps.knowledgeRoot)
+  /**
+   * An intent authored before the last completed reconciliation belongs to a generation this
+   * writer has already superseded: replaying it would apply obsolete index work or requeue a
+   * candidate the successor already completed. Keyed off the watermark rather than bare epoch
+   * inequality, because the crash journal a successor legitimately inherits is written at a
+   * lower epoch too and must still replay.
+   */
+  const reconciledEpoch = readReconciledEpoch(deps.knowledgeRoot)
+  const entries: ListedCommitIntent[] = []
+  for (const entry of listCommitIntents(deps.knowledgeRoot)) {
+    if ('parsed' in entry && entry.parsed.epoch < reconciledEpoch) {
+      quarantineStaleCommitIntent(
+        deps.knowledgeRoot,
+        entry.parsed.candidateId,
+        entry.parsed.epoch,
+      )
+      report.intentsQuarantinedStale += 1
+      continue
+    }
+    entries.push(entry)
+  }
   const bundleIdsWithIntent = new Set(
     entries.flatMap((entry) => ('parsed' in entry ? [entry.parsed.bundleId] : [])),
   )
@@ -257,6 +284,11 @@ function reconcileOnDrainStartWithinCurrentAuthority(
     deps.deriveIndexRowFromBundle(bundleId)
   }
 
+  // Last step of the held section: the watermark advances only for a pass that completed.
+  writeReconciledEpochWithinCurrentAuthority(
+    deps.knowledgeRoot,
+    deps.writerAuthority.epoch,
+  )
   report.jobsRequeued = requeued.size
   return report
 }
