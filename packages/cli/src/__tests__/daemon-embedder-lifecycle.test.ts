@@ -55,7 +55,23 @@ const SESSION_IDS = [
   '00000000-0000-4000-8000-000000000072',
   '00000000-0000-4000-8000-000000000073',
 ]
+const ORPHAN_INSTANCE_ID = '00000000-0000-4000-8000-000000000081'
+const REUSED_PID_INSTANCE_ID = '00000000-0000-4000-8000-000000000082'
 const roots: string[] = []
+
+function orphanRegistration(
+  instanceId = ORPHAN_INSTANCE_ID,
+  profile = DEFAULT_EMBEDDING_PROFILE,
+): EmbedderWorkerRegistration {
+  return {
+    schemaVersion: 2,
+    instanceId,
+    pid: instanceId === REUSED_PID_INSTANCE_ID ? 8_802 : 8_801,
+    socketPath: join(tmpdir(), `agent-qa-orphan-${instanceId}.sock`),
+    profile,
+    startedAtMs: 1_785_000_000_000,
+  }
+}
 
 function fakeRecovery(): JobRecoveryHost {
   return {
@@ -143,6 +159,8 @@ interface LifecycleHarness {
   readonly events: Array<Record<string, unknown>>
   readonly errors: string[]
   readonly order: string[]
+  readonly processSignals: Array<{ pid: number; signal: NodeJS.Signals }>
+  readonly unlinkedSockets: string[]
   readonly drainQueue: ReturnType<typeof vi.fn>
   readonly acquireEmbedder: ReturnType<typeof vi.fn>
   readonly runMaintenanceTail: ReturnType<typeof vi.fn>
@@ -166,6 +184,10 @@ function startHarness(
       signal: AbortSignal,
     ) => Promise<EmbedderWorkerRegistration>
     workerIgnoresTerm: boolean
+    orphanRegistration: EmbedderWorkerRegistration
+    orphanSocketAnswers: boolean
+    orphanProcessAlive: boolean
+    acquireFromRegistration: boolean
   }> = {},
 ): LifecycleHarness {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-daemon-embedder-${label}-`))
@@ -184,7 +206,10 @@ function startHarness(
   const events: Array<Record<string, unknown>> = []
   const errors: string[] = []
   const order: string[] = []
+  const processSignals: Array<{ pid: number; signal: NodeJS.Signals }> = []
+  const unlinkedSockets: string[] = []
   const resetCapability = vi.fn()
+  const livePids = new Set<number>()
   let nextTimerId = 1
   let nextSessionId = 0
 
@@ -194,10 +219,32 @@ function startHarness(
     if (report.remaining === 0) queued.clear()
     return report
   })
-  const acquireEmbedder = vi.fn(async () => ({
-    kind: 'deferred' as const,
-    reason: 'worker-unavailable' as const,
-  }))
+  if (overrides.orphanRegistration !== undefined) {
+    mkdirSync(agentQaRoot, { recursive: true })
+    writeFileSync(
+      workerRegistrationPath,
+      `${JSON.stringify(overrides.orphanRegistration)}\n`,
+    )
+    if (overrides.orphanProcessAlive !== false) livePids.add(overrides.orphanRegistration.pid)
+  }
+
+  const acquireEmbedder = vi.fn(async () => {
+    if (overrides.acquireFromRegistration === true && existsSync(workerRegistrationPath)) {
+      return {
+        kind: 'ready' as const,
+        rung: 'native' as const,
+        profile: DEFAULT_EMBEDDING_PROFILE,
+        embedder: {
+          embedDocument: async () => new Int8Array(DEFAULT_EMBEDDING_PROFILE.dim),
+          embedQuery: async () => new Int8Array(DEFAULT_EMBEDDING_PROFILE.dim),
+        },
+      }
+    }
+    return {
+      kind: 'deferred' as const,
+      reason: 'worker-unavailable' as const,
+    }
+  })
   const runMaintenanceTail = vi.fn(async (_options: unknown) => ({
     writerPass: { kind: 'not-requested' as const },
     gc: { kind: 'completed' as const, summary: { trimmedRecordIds: [] } },
@@ -269,6 +316,7 @@ function startHarness(
     },
     resolveEmbedderWorkerEntryPath: () => '/fixture/dist/embedder-worker/worker-entry.js',
     spawnEmbedderWorker: (request: EmbedderWorkerSpawnOptions) => {
+      order.push('spawn')
       spawnRequests.push(request)
       const worker = new StubWorker(7_100 + workers.length, overrides.workerIgnoresTerm)
       workers.push(worker)
@@ -283,8 +331,7 @@ function startHarness(
         startedAtMs: Date.now(),
       }
       workerRegistrations.set(worker.pid, registration)
-      mkdirSync(agentQaRoot, { recursive: true })
-      writeFileSync(workerRegistrationPath, `${JSON.stringify(registration)}\n`)
+      livePids.add(worker.pid)
       return worker.asChildProcess()
     },
     waitForEmbedderWorkerReady:
@@ -293,8 +340,51 @@ function startHarness(
         if (registration === undefined || registration.instanceId !== instanceId) {
           return Promise.reject(new Error('Expected matching worker registration'))
         }
+        mkdirSync(agentQaRoot, { recursive: true })
+        writeFileSync(workerRegistrationPath, `${JSON.stringify(registration)}\n`)
         return Promise.resolve(registration)
       }),
+    readEmbedderWorkerRegistration: () => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(readFileSync(workerRegistrationPath, 'utf8')) as unknown
+      } catch {
+        return { kind: 'absent' as const }
+      }
+      if (
+        typeof parsed === 'object'
+        && parsed !== null
+        && 'schemaVersion' in parsed
+        && parsed.schemaVersion === 2
+        && 'instanceId' in parsed
+      ) {
+        return { kind: 'parsed' as const, registration: parsed as EmbedderWorkerRegistration }
+      }
+      return { kind: 'malformed' as const }
+    },
+    probeEmbedderWorkerSocket: async (socketPath: string) => {
+      if (socketPath === overrides.orphanRegistration?.socketPath) {
+        return overrides.orphanSocketAnswers !== false
+      }
+      return true
+    },
+    embedderWorkerProcessIsAlive: (pid: number) => livePids.has(pid),
+    signalEmbedderWorkerProcess: (pid: number, signal: NodeJS.Signals) => {
+      processSignals.push({ pid, signal })
+      order.push(`signal:${pid}:${signal}`)
+      if (!livePids.has(pid)) return false
+      livePids.delete(pid)
+      return true
+    },
+    waitForEmbedderWorkerProcessExit: async (pid: number) => {
+      order.push(`wait-dead:${pid}`)
+      return !livePids.has(pid)
+    },
+    unlinkEmbedderWorkerSocket: (socketPath: string) => {
+      unlinkedSockets.push(socketPath)
+      order.push(`unlink:${socketPath}`)
+      rmSync(socketPath, { force: true })
+    },
     removeEmbedderWorkerRegistration: (
       _agentQaRoot: string,
       expected: EmbedderWorkerRegistration,
@@ -338,6 +428,8 @@ function startHarness(
     events,
     errors,
     order,
+    processSignals,
+    unlinkedSockets,
     drainQueue,
     acquireEmbedder,
     runMaintenanceTail,
@@ -596,6 +688,166 @@ describe('daemon embedder-worker lifecycle', () => {
     await waitUntil(() => harness.resetCapability.mock.calls.length === 1, 'exit not handled')
 
     expect(readFileSync(harness.workerRegistrationPath)).toEqual(successorBytes)
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+  })
+
+  it('adopts a matching worker orphaned by predecessor daemon SIGKILL and owns its shutdown', async () => {
+    const orphan = orphanRegistration()
+    const harness = startHarness(
+      'sigkill-orphan-adopt',
+      [drainReport(1, 0)],
+      {
+        orphanRegistration: orphan,
+        orphanSocketAnswers: true,
+        orphanProcessAlive: true,
+        acquireFromRegistration: true,
+      },
+    )
+    await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
+
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'adopted drain did not finish')
+
+    expect(harness.workers).toHaveLength(0)
+    expect(harness.spawnRequests).toHaveLength(0)
+    expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: expect.objectContaining({ kind: 'ready' }),
+    }))
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      kind: 'embedder-worker-start',
+      mode: 'adopted',
+      outcome: 'adopted',
+      instanceId: orphan.instanceId,
+      pid: orphan.pid,
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+    expect(harness.processSignals).toEqual([{ pid: orphan.pid, signal: 'SIGTERM' }])
+    expect(harness.unlinkedSockets).toContain(orphan.socketPath)
+    expect(existsSync(harness.workerRegistrationPath)).toBe(false)
+  })
+
+  it('verified-terminates a mismatched live orphan before spawning a fresh generation', async () => {
+    const orphan = orphanRegistration(
+      ORPHAN_INSTANCE_ID,
+      { ...DEFAULT_EMBEDDING_PROFILE, revision: 'incompatible-revision' },
+    )
+    const harness = startHarness(
+      'sigkill-orphan-replace',
+      [drainReport(1, 0)],
+      {
+        orphanRegistration: orphan,
+        orphanSocketAnswers: true,
+        orphanProcessAlive: true,
+        acquireFromRegistration: true,
+      },
+    )
+    await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
+
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'replacement drain did not finish')
+
+    expect(harness.workers).toHaveLength(1)
+    expect(harness.processSignals).toContainEqual({ pid: orphan.pid, signal: 'SIGTERM' })
+    expect(harness.order.indexOf(`wait-dead:${orphan.pid}`)).toBeLessThan(
+      harness.order.indexOf('spawn'),
+    )
+    expect(harness.unlinkedSockets).toContain(orphan.socketPath)
+    const successor = JSON.parse(readFileSync(harness.workerRegistrationPath, 'utf8')) as {
+      instanceId: string
+    }
+    expect(successor.instanceId).not.toBe(orphan.instanceId)
+    expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: expect.objectContaining({ kind: 'ready' }),
+    }))
+    expect(harness.events).toContainEqual(expect.objectContaining({
+      kind: 'embedder-worker-start',
+      mode: 'spawned',
+      outcome: 'replaced',
+      replacedInstanceId: orphan.instanceId,
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+  })
+
+  it('bounds the reused-pid hazard to the parsed registration after its socket probe fails', async () => {
+    const orphan = orphanRegistration(REUSED_PID_INSTANCE_ID)
+    const harness = startHarness(
+      'reused-pid-guard',
+      [drainReport(1, 0)],
+      {
+        orphanRegistration: orphan,
+        orphanSocketAnswers: false,
+        orphanProcessAlive: true,
+        acquireFromRegistration: true,
+      },
+    )
+    await waitUntil(() => harness.isStarted(), 'replacement daemon did not start')
+
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'guarded replacement did not finish')
+
+    expect(harness.processSignals).toEqual([{ pid: orphan.pid, signal: 'SIGTERM' }])
+    expect(harness.workers).toHaveLength(1)
+    expect(harness.order.indexOf(`wait-dead:${orphan.pid}`)).toBeLessThan(
+      harness.order.indexOf('spawn'),
+    )
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
+  })
+
+  it('serializes concurrent ensure calls until one fresh worker registration is ready', async () => {
+    let publishRegistration: (() => void) | undefined
+    const harness = startHarness(
+      'double-ensure',
+      [drainReport(1, 0)],
+      {
+        acquireFromRegistration: true,
+        waitForEmbedderWorkerReady: (agentQaRoot, pid, instanceId) => new Promise((resolve) => {
+          const registration: EmbedderWorkerRegistration = {
+            schemaVersion: 2,
+            instanceId,
+            pid: pid!,
+            socketPath: join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
+            profile: DEFAULT_EMBEDDING_PROFILE,
+            startedAtMs: Date.now(),
+          }
+          publishRegistration = () => {
+            mkdirSync(agentQaRoot, { recursive: true })
+            writeFileSync(
+              join(agentQaRoot, 'embedder-worker.json'),
+              `${JSON.stringify(registration)}\n`,
+            )
+            resolve(registration)
+          }
+        }),
+      },
+    )
+    await waitUntil(() => harness.isStarted(), 'daemon did not start')
+
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    harness.fireInterval(MAINTENANCE_CADENCE_MS)
+    await waitUntil(() => publishRegistration !== undefined, 'fresh worker did not begin startup')
+    expect(harness.workers).toHaveLength(1)
+    publishRegistration!()
+    await waitUntil(
+      () => harness.drainQueue.mock.calls.length === 1
+        && harness.runMaintenanceTail.mock.calls.length === 1,
+      'concurrent demands did not finish',
+    )
+
+    expect(harness.workers).toHaveLength(1)
+    expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: expect.objectContaining({ kind: 'ready' }),
+    }))
+    expect(harness.runMaintenanceTail).toHaveBeenCalledWith(expect.objectContaining({
+      embeddingCapability: expect.objectContaining({ kind: 'ready' }),
+    }))
 
     harness.signal('SIGTERM')
     await expect(harness.running).resolves.toBe(0)
