@@ -65,10 +65,6 @@ export type InspectDaemonRegistrationOutcome =
   | { kind: 'live'; registration: DaemonRegistration }
   | { kind: 'stale'; registration: StaleDaemonRegistration }
 
-export type RecoverDaemonRegistrationOutcome =
-  | Exclude<InspectDaemonRegistrationOutcome, { kind: 'stale' }>
-  | { kind: 'recovered'; registration: StaleDaemonRegistration }
-
 export type ClassifyDaemonRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
@@ -206,6 +202,13 @@ export function processIsAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Read-only pid-liveness view, kept for status reporting and test observation only.
+ *
+ * A `live` verdict here is signal-zero alone, which is not daemon authority: use
+ * `classifyDaemonRegistration` anywhere the answer selects a removal, a delegation, or a
+ * lease.
+ */
 export function inspectDaemonRegistration(
   agentQaRoot: string,
   isAlive: ProcessIsAlive = processIsAlive,
@@ -405,15 +408,4 @@ export function removeObsoleteDaemonRegistrationIfExpected(
       && outcome.registration.startedAtMs === expected.startedAtMs,
     options,
   )
-}
-
-/** Remove only a schema-valid registration whose pid has been proven dead. */
-export function recoverStaleDaemonRegistration(
-  agentQaRoot: string,
-  isAlive: ProcessIsAlive = processIsAlive,
-): RecoverDaemonRegistrationOutcome {
-  const outcome = inspectDaemonRegistration(agentQaRoot, isAlive)
-  if (outcome.kind !== 'stale') return outcome
-  removeDaemonRegistration(agentQaRoot)
-  return { kind: 'recovered', registration: outcome.registration }
 }
