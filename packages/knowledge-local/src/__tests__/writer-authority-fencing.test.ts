@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -65,6 +66,7 @@ import {
   readCurrentEpoch,
   releaseLease,
   WriterAuthorityLostError,
+  type WriterAuthorityLostReason,
 } from '../lease/writer-lease.js'
 import {
   makeBundleDraftFixture,
@@ -478,6 +480,108 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
     expect(result).toBe(1)
     expect(mutations).toBe(1)
+  })
+
+  /**
+   * CR-01: an authority refusal is only trustworthy when the mutation demonstrably never ran and
+   * the decision was reached with the mutation lock held. `lockAcquired`/`finalCompare` pin the
+   * decision point: the lock was taken, and the post-identity failpoint was never reached.
+   */
+  function expectAuthorityRefusal(
+    label: string,
+    authority: { leaseId: string; epoch: number },
+    reason: WriterAuthorityLostReason,
+  ): void {
+    const marker = join(root, `${label}.mutation-marker`)
+    let mutations = 0
+    let lockAcquired = 0
+    let finalCompare = 0
+    let caught: unknown
+
+    try {
+      expectedSurface.withCurrentWriterAuthority(
+        knowledgeRoot,
+        authority,
+        () => {
+          mutations += 1
+          writeFileSync(marker, 'mutated\n', 'utf8')
+          return mutations
+        },
+        {
+          afterMutationLockAcquired: () => { lockAcquired += 1 },
+          afterFinalAuthorityCompare: () => { finalCompare += 1 },
+        },
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(WriterAuthorityLostError)
+    expect(caught).toMatchObject({ name: 'WriterAuthorityLostError', reason })
+    expect(mutations).toBe(0)
+    expect(existsSync(marker)).toBe(false)
+    expect(lockAcquired).toBe(1)
+    expect(finalCompare).toBe(0)
+  }
+
+  it('refuses a fabricated lease id at the current epoch without running the mutation', () => {
+    const authority = acquireAuthority()
+    const leaseBefore = readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')
+
+    expectAuthorityRefusal(
+      'fabricated-id',
+      { leaseId: randomUUID(), epoch: authority.epoch },
+      'lease-id-mismatch',
+    )
+
+    expect(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')).toBe(leaseBefore)
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(authority.epoch)
+  })
+
+  it('refuses a released holder even though release never advances the epoch', () => {
+    const authority = acquireAuthority()
+    expect(releaseLease({ knowledgeRoot, leaseId: authority.leaseId })).toEqual({
+      kind: 'released',
+    })
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(authority.epoch)
+
+    expectAuthorityRefusal('post-release', authority, 'lease-missing')
+
+    expect(existsSync(join(knowledgeRoot, LEASE_FILE))).toBe(false)
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(authority.epoch)
+  })
+
+  it('refuses the real holder once its published lease bytes are truncated', () => {
+    const authority = acquireAuthority()
+    const leaseFile = join(knowledgeRoot, LEASE_FILE)
+    const truncated = readFileSync(leaseFile, 'utf8').slice(0, 12)
+    writeFileSync(leaseFile, truncated, 'utf8')
+
+    expectAuthorityRefusal('malformed-lease', authority, 'lease-malformed')
+
+    expect(readFileSync(leaseFile, 'utf8')).toBe(truncated)
+  })
+
+  it('refuses a real holder whose lease file vanished under it', () => {
+    const authority = acquireAuthority()
+    rmSync(join(knowledgeRoot, LEASE_FILE), { force: true })
+
+    expectAuthorityRefusal('vanished-lease', authority, 'lease-missing')
+  })
+
+  it('refuses the current holder id presented against a stale epoch', () => {
+    const authority = acquireAuthority()
+    writeFileSync(
+      join(knowledgeRoot, EPOCH_FILE),
+      `${authority.epoch + 1}\n`,
+      'utf8',
+    )
+
+    expectAuthorityRefusal(
+      'id-match-stale-epoch',
+      authority,
+      'epoch-mismatch-before-heartbeat',
+    )
   })
 
   it('keeps a contender out while the current authority is inside mutate past its final guard', () => {

@@ -36,6 +36,21 @@ import {
 
 const WRITER_LEASE_MODULE_URL = new URL('../lease/writer-lease.ts', import.meta.url).href
 
+/** WR-04 crash seam: the acquired path publishes the epoch before it publishes the lease. */
+type AcquireWithEpochSeam = (
+  knowledgeRoot: string,
+  hooks: {
+    afterEpochRewrite?: () => void
+    mutationLockTakeoverMs?: number
+  },
+) => ReturnType<typeof acquireWriterLease>
+
+const acquireWithEpochSeam = acquireWriterLease as AcquireWithEpochSeam
+
+function elapsedMs(startedAtNs: bigint): number {
+  return Number(process.hrtime.bigint() - startedAtNs) / 1e6
+}
+
 function spawnLeaseAcquirer(
   knowledgeRoot: string,
   stallInsideLockMs: number,
@@ -229,6 +244,68 @@ describe('writer lease acquire, heartbeat, release, and stale self-heal (CUR-03/
     const held = acquireWriterLease(knowledgeRoot)
 
     expect(held).toEqual({ kind: 'held', holder: leaseOnDisk() })
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8').trim()).toBe('1')
+  })
+
+  it('reclaims a fresh-looking holder whose recorded epoch no longer matches disk (WR-04)', () => {
+    const first = acquireWriterLease(knowledgeRoot)
+    expect(first.kind).toBe('acquired')
+    if (first.kind !== 'acquired') throw new Error('expected first acquired writer lease')
+    const phantom = leaseOnDisk()
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), '2\n', 'utf8')
+
+    const outcome = acquireWriterLease(knowledgeRoot)
+
+    expect(outcome.kind).toBe('acquired')
+    if (outcome.kind !== 'acquired') throw new Error('expected epoch-invalid holder reclaim')
+    expect(outcome.epoch).toBe(3)
+    expect(outcome.reclaimed).toEqual(phantom)
+    expect(leaseOnDisk()).toMatchObject({ leaseId: outcome.leaseId, epoch: 3 })
+  })
+
+  it('recovers promptly from a crash between the epoch rewrite and the lease publication', () => {
+    const first = acquireWriterLease(knowledgeRoot)
+    expect(first.kind).toBe('acquired')
+    if (first.kind !== 'acquired') throw new Error('expected first acquired writer lease')
+    const outgoing = leaseOnDisk()
+    now.mockReturnValue(1_000_000 + LEASE_HEARTBEAT_TTL_MS)
+
+    expect(() => acquireWithEpochSeam(knowledgeRoot, {
+      afterEpochRewrite: () => {
+        /**
+         * The epoch is already durable at 2 while the lease still names epoch 1. The outgoing
+         * holder's bytes are re-stamped fresh to model the worst reachable torn state: a
+         * phantom holder that no TTL sweep will ever classify as stale.
+         */
+        writeFileSync(
+          join(knowledgeRoot, LEASE_FILE),
+          `${JSON.stringify({ ...outgoing, heartbeatAtMs: Date.now() })}\n`,
+          'utf8',
+        )
+        throw new Error('crash between epoch and lease publication')
+      },
+    })).toThrow(/crash between epoch and lease publication/)
+
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8').trim()).toBe('2')
+    expect(leaseOnDisk()).toMatchObject({ leaseId: first.leaseId, epoch: 1 })
+    const startedAtNs = process.hrtime.bigint()
+
+    const contender = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+
+    expect(contender).toMatchObject({ kind: 'acquired', epoch: 3 })
+    expect(elapsedMs(startedAtNs)).toBeLessThan(1_000)
+  })
+
+  it('still returns a fresh epoch-matching holder immediately under a zero takeover bound', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    expect(acquired.kind).toBe('acquired')
+    if (acquired.kind !== 'acquired') throw new Error('expected acquired writer lease')
+    const startedAtNs = process.hrtime.bigint()
+
+    const held = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+
+    expect(held).toEqual({ kind: 'held', holder: leaseOnDisk() })
+    expect(elapsedMs(startedAtNs)).toBeLessThan(250)
     expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8').trim()).toBe('1')
   })
 
