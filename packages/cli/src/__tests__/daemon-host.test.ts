@@ -47,7 +47,11 @@ import {
   type DaemonHostTraceStep,
 } from '../daemon/host.js'
 import type { HeartbeatSupervisorMessage } from '../daemon/heartbeat-supervisor.js'
-import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
+import {
+  appendDaemonEvent,
+  DAEMON_EVENTS_FILE,
+  readDaemonEventLedger,
+} from '../daemon/events.js'
 import {
   DAEMON_SOCKET_PATH_BUDGET_BYTES,
   daemonSocketPath,
@@ -307,39 +311,14 @@ async function abandonSocketFile(socketPath: string): Promise<void> {
   }
 }
 
+/** Record-level reading goes through the shipped torn-tail-tolerant reader (WR-02). */
 function readEvents(agentQaRoot: string): Array<Record<string, unknown>> {
-  return readFileSync(join(agentQaRoot, DAEMON_EVENTS_FILE), 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
+  const ledger = readDaemonEventLedger(agentQaRoot)
+  expect(ledger.warnings).toEqual([])
+  return [...ledger.events]
 }
 
 const LATE_CANDIDATE_ID = 'c'.repeat(64)
-
-/**
- * Durability and reader members are reached through the module namespace so that a RED run — in
- * which they do not exist yet — fails on the assertion that names the missing behaviour instead of
- * failing to link, which would have masked every other case in this file.
- */
-interface DaemonEventsUnderTest {
-  appendDaemonEvent(
-    agentQaRoot: string,
-    event: { kind: string } & Record<string, unknown>,
-    now?: () => Date,
-    options?: {
-      fsyncFile?: (descriptor: number) => void
-      fsyncDirectory?: (directory: string) => void
-    },
-  ): void
-  readDaemonEventLedger?: (agentQaRoot: string) => {
-    events: Array<Record<string, unknown>>
-    warnings: Array<{ kind: string; line: number; message: string }>
-  }
-}
-
-async function eventsUnderTest(): Promise<DaemonEventsUnderTest> {
-  return (await import('../daemon/events.js')) as unknown as DaemonEventsUnderTest
-}
 
 function drainQueueReport(
   jobsProcessed: number,
@@ -2314,9 +2293,8 @@ describe('drain session authorship at every arrival time', () => {
  * crash must not lose an acknowledged fact and a torn final append must not break its readers.
  */
 describe('daemon lifecycle event durability and torn-tail reading', () => {
-  it('fsyncs every accepted event through an owned owner-only descriptor', async () => {
+  it('fsyncs every accepted event through an owned owner-only descriptor', () => {
     const paths = makePaths('event-durability')
-    const events = await eventsUnderTest()
     const fsyncedSizes: number[] = []
     const fsyncedDirectories: string[] = []
     const seam = {
@@ -2325,9 +2303,9 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
     }
 
     const clock = () => new Date('2026-08-01T00:00:00.000Z')
-    events.appendDaemonEvent(paths.agentQaRoot, { kind: 'lease-acquired' }, clock, seam)
-    events.appendDaemonEvent(paths.agentQaRoot, { kind: 'lease-heartbeated' }, clock, seam)
-    events.appendDaemonEvent(paths.agentQaRoot, { kind: 'daemon-stopped' }, clock, seam)
+    appendDaemonEvent(paths.agentQaRoot, { kind: 'lease-acquired' }, clock, seam)
+    appendDaemonEvent(paths.agentQaRoot, { kind: 'lease-heartbeated' }, clock, seam)
+    appendDaemonEvent(paths.agentQaRoot, { kind: 'daemon-stopped' }, clock, seam)
 
     const file = join(paths.agentQaRoot, DAEMON_EVENTS_FILE)
     expect(statSync(file).mode & 0o777).toBe(0o600)
@@ -2343,7 +2321,7 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
     expect(fsyncedDirectories).toEqual([paths.agentQaRoot])
   })
 
-  it('isolates a torn final append while keeping every complete record', async () => {
+  it('isolates a torn final append while keeping every complete record', () => {
     const paths = makePaths('event-torn-tail')
     mkdirSync(paths.agentQaRoot, { recursive: true })
     const file = join(paths.agentQaRoot, DAEMON_EVENTS_FILE)
@@ -2354,10 +2332,7 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
       + '{"ts":"2026-08-01T00:00:02.000Z","kind":"daemon-sto',
       'utf8',
     )
-    const events = await eventsUnderTest()
-    expect(events.readDaemonEventLedger).toBeTypeOf('function')
-
-    const ledger = events.readDaemonEventLedger!(paths.agentQaRoot)
+    const ledger = readDaemonEventLedger(paths.agentQaRoot)
     expect(ledger.events.map((event) => event.kind)).toEqual([
       'lease-acquired',
       'lease-heartbeated',
@@ -2368,7 +2343,7 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
     ])
   })
 
-  it('reports a complete malformed row as malformed and keeps reading past it', async () => {
+  it('reports a complete malformed row as malformed and keeps reading past it', () => {
     const paths = makePaths('event-malformed-row')
     mkdirSync(paths.agentQaRoot, { recursive: true })
     const file = join(paths.agentQaRoot, DAEMON_EVENTS_FILE)
@@ -2380,10 +2355,7 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
       + `${JSON.stringify({ ts: '2026-08-01T00:00:03.000Z', kind: 'daemon-stopped' })}\n`,
       'utf8',
     )
-    const events = await eventsUnderTest()
-    expect(events.readDaemonEventLedger).toBeTypeOf('function')
-
-    const ledger = events.readDaemonEventLedger!(paths.agentQaRoot)
+    const ledger = readDaemonEventLedger(paths.agentQaRoot)
     // The records AFTER the bad rows survive: a malformed row is not a tear, so nothing truncates.
     expect(ledger.events.map((event) => event.kind)).toEqual([
       'lease-acquired',
@@ -2396,11 +2368,9 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
     expect(ledger.warnings.map((warning) => warning.line)).toEqual([2, 3])
   })
 
-  it('reads an absent ledger as empty rather than failing', async () => {
+  it('reads an absent ledger as empty rather than failing', () => {
     const paths = makePaths('event-absent-ledger')
-    const events = await eventsUnderTest()
-    expect(events.readDaemonEventLedger).toBeTypeOf('function')
-    expect(events.readDaemonEventLedger!(paths.agentQaRoot)).toEqual({
+    expect(readDaemonEventLedger(paths.agentQaRoot)).toEqual({
       events: [],
       warnings: [],
     })

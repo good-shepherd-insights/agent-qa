@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -15,7 +15,7 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
+import { readDaemonEventLedger } from '../daemon/events.js'
 import {
   runDaemonHost,
   type DaemonHostOperations,
@@ -219,14 +219,11 @@ async function startHost(kinds: JobKindRegistry): Promise<RunningHost> {
   return host
 }
 
+/** Record-level reading goes through the shipped torn-tail-tolerant reader (WR-02). */
 function readEvents(agentQaRoot: string): readonly Record<string, unknown>[] {
-  const path = join(agentQaRoot, DAEMON_EVENTS_FILE)
-  if (!existsSync(path)) return []
-  return readFileSync(path, 'utf8')
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
+  const ledger = readDaemonEventLedger(agentQaRoot)
+  expect(ledger.warnings).toEqual([])
+  return ledger.events
 }
 
 afterEach(async () => {

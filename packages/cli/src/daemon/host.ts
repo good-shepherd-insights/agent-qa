@@ -1155,6 +1155,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       ...initialWork.recoverableClaimedCandidateIds,
     ]
     if (initialCandidates.length === 0 && !receiptRequired) return
+    // Fail fast, before publishing a session start this host cannot serve. The late-arrival path
+    // repeats the same named check at its own resolution point below.
     if (
       initialCandidates.length > 0
       && (input.author === undefined || input.policy === undefined)
@@ -1177,9 +1179,27 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       epoch: acquired.epoch,
     })
 
-    const author = initialCandidates.length === 0
-      ? undefined
-      : await (authorPromise ??= Promise.resolve(input.author!()))
+    /**
+     * WR-01: a receipt-required session may legitimately start with no candidates, and work can
+     * arrive between the initial inspection and the loop's first observation. Resolving the author
+     * eagerly fixed it to `undefined` for that whole session, so the arrival was drained
+     * unauthored. The author is therefore resolved — and the configuration validated — at the
+     * first observed candidate, whenever it appears; `authorPromise` still memoizes the factory to
+     * at most one invocation per process.
+     */
+    let curation: { author: CuratorAuthor; policy: GuardrailPolicy } | undefined
+    const resolveCuration = async (): Promise<{
+      author: CuratorAuthor
+      policy: GuardrailPolicy
+    }> => {
+      const factory = input.author
+      const policy = input.policy
+      if (factory === undefined || policy === undefined) {
+        throw new Error('Daemon curation requires an author factory and guardrail policy')
+      }
+      return { author: await (authorPromise ??= Promise.resolve(factory())), policy }
+    }
+    if (initialCandidates.length > 0) curation = await resolveCuration()
     while (remainingAfter > 0) {
       const observed = operations.inspectDrainableCurationWork({
         knowledgeRoot: input.knowledgeRoot,
@@ -1197,6 +1217,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       ) {
         break
       }
+      const sessionCuration = (curation ??= await resolveCuration())
       let worker: EmbedderWorkerRuntime | undefined
       if (embedderLifecycleEnabled) {
         try {
@@ -1217,9 +1238,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           auditBaseDir: input.agentQaRoot,
           budgetMs: 'unbounded',
           lease: { leaseId: acquired.leaseId, epoch: acquired.epoch },
-          author: author!,
+          author: sessionCuration.author,
           executionContext: 'local-headless',
-          policy: input.policy!,
+          policy: sessionCuration.policy,
           embeddingCapability,
           maintenance: 'skip',
           onJobLifecycle: (event) => {
