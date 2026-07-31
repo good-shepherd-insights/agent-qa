@@ -36,6 +36,7 @@ import {
   type DaemonHostTraceStep,
 } from '../daemon/host.js'
 import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
+import { daemonSocketPath, startInvokeServer } from '../daemon/server.js'
 import {
   DAEMON_REGISTRATION_FILE,
   DAEMON_REGISTRATION_SCHEMA_VERSION,
@@ -692,6 +693,176 @@ describe('daemon registration instance ownership and readiness', () => {
 })
 
 describe('daemon registration recovery at boot', () => {
+  it('recovers an alive-pid registration with no listener once its writer lease is stale', async () => {
+    const paths = makePaths('boot-alive-no-listener-stale-lease')
+    const nowMs = Date.now()
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+      leaseId: '6bcefd58-bc64-4d9d-a491-324658b125ca',
+      pid: process.pid,
+      epoch: 1,
+      heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })}\n`)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'missing.sock'),
+      startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })
+    const harness = hostHarness(nowMs)
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: harness.operations,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'alive-pid stale registration was not recovered',
+      3_000,
+    )
+    expect(harness.traces).toContain('lease-acquired')
+    expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
+      kind: 'registration-recovered',
+      instanceId: HOST_INSTANCE_ID,
+    }))
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+  })
+
+  it('recovers a foreign identity for an alive pid once its writer lease is stale', async () => {
+    const paths = makePaths('boot-foreign-identity-stale-lease')
+    const nowMs = Date.now()
+    const socketPath = daemonSocketPath(paths.agentQaRoot, paths.root)
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+      leaseId: 'f48afbd4-d67c-48aa-a488-e1890133542c',
+      pid: process.pid,
+      epoch: 1,
+      heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })}\n`)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath,
+      startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })
+    const foreign = await startInvokeServer({
+      socketPath,
+      registry: {} as never,
+      identity: {
+        schemaVersion: 1,
+        instanceId: SUCCESSOR_INSTANCE_ID,
+        pid: process.pid,
+      },
+    })
+    const harness = hostHarness(nowMs)
+
+    try {
+      const running = runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        operations: {
+          ...harness.operations,
+          startInvokeServer: () => Promise.resolve({
+            socketPath: join(paths.agentQaRoot, 'successor.sock'),
+            close: () => Promise.resolve(),
+          }),
+        },
+        logger: { info: vi.fn(), error: vi.fn() },
+      })
+
+      await waitUntil(
+        () => harness.signals.has('SIGTERM'),
+        'foreign identity registration was not recovered',
+        3_000,
+      )
+      expect(harness.traces).toContain('lease-acquired')
+      harness.signal('SIGTERM')
+      await expect(running).resolves.toBe(0)
+    } finally {
+      await foreign.close()
+    }
+  })
+
+  it('refuses an unreachable registration while a different writer lease is fresh', async () => {
+    const paths = makePaths('boot-unreachable-fresh-lease')
+    const nowMs = Date.now()
+    const leaseHolderPid = process.pid + 10_000
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+      leaseId: 'd97c6375-c7b5-4581-aae8-bc0f20926bcf',
+      pid: leaseHolderPid,
+      epoch: 4,
+      heartbeatAtMs: nowMs - 1,
+    })}\n`)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'missing.sock'),
+      startedAtMs: nowMs - 5_000,
+    })
+    const acquire = vi.fn()
+    const errors: string[] = []
+
+    await expect(runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: { acquireWriterLease: acquire as never },
+      logger: { info: vi.fn(), error: (message) => errors.push(message) },
+    })).resolves.toBe(1)
+
+    expect(acquire).not.toHaveBeenCalled()
+    expect(errors).toEqual([
+      expect.stringContaining(`pid ${leaseHolderPid}`),
+    ])
+    expect(readDaemonRegistration(paths.agentQaRoot).kind).toBe('parsed')
+  })
+
+  it('bounds a never-resolving identity handshake by the pinned timeout', async () => {
+    const paths = makePaths('classification-timeout')
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'never.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    const registrationModule = await import('../daemon/registration.js') as unknown as {
+      DAEMON_IDENTITY_HANDSHAKE_TIMEOUT_MS: number
+      classifyDaemonRegistration(input: {
+        agentQaRoot: string
+        knowledgeRoot: string
+        operations: {
+          fetchIdentity(): Promise<never>
+        }
+      }): Promise<{ kind: string }>
+    }
+    const startedAt = Date.now()
+
+    const outcome = await registrationModule.classifyDaemonRegistration({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      operations: { fetchIdentity: () => new Promise<never>(() => undefined) },
+    })
+
+    expect(outcome.kind).toBe('unreachable-lease-stale')
+    expect(Date.now() - startedAt).toBeLessThanOrEqual(
+      registrationModule.DAEMON_IDENTITY_HANDSHAKE_TIMEOUT_MS + 500,
+    )
+  })
+
   it('removes a dead-pid registration before acquiring and proceeds', async () => {
     const paths = makePaths('boot-stale')
     writeDaemonRegistration(paths.agentQaRoot, {

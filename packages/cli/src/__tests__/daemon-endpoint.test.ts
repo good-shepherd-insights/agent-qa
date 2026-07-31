@@ -33,7 +33,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { createFnCommand } from '../commands/fn.js'
-import { invokeViaDaemon } from '../daemon/client.js'
+import { DaemonNotRunningError, invokeViaDaemon } from '../daemon/client.js'
 import {
   DAEMON_SOCKET_PATH_BUDGET_BYTES,
   DAEMON_FUNCTION_CALLER,
@@ -397,6 +397,21 @@ afterEach(async () => {
 })
 
 describe('daemon /invoke endpoint tracer', () => {
+  it('rejects an alive-pid registration whose identity endpoint is unreachable', async () => {
+    const root = temporaryRoot('alive-pid-no-listener')
+    const agentQaRoot = join(root, '.agent-qa')
+    register(agentQaRoot, join(agentQaRoot, 'missing.sock'))
+
+    await expect(invokeViaDaemon({
+      agentQaRoot,
+      functionId: 'config.get',
+      input: {},
+    })).rejects.toMatchObject({
+      name: DaemonNotRunningError.name,
+      reason: 'unreachable-lease-stale',
+    })
+  })
+
   it('keeps invokeFunction as the route module\'s only dispatch call', () => {
     const source = readFileSync(new URL('../daemon/server.ts', import.meta.url), 'utf8')
     expect(source.match(/\binvokeFunction\s*\(/g)).toHaveLength(1)
