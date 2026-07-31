@@ -46,6 +46,7 @@ import {
   DAEMON_IDENTITY_SCHEMA_VERSION,
   daemonSocketPath,
   startInvokeServer,
+  unlinkDaemonSocket,
   type InvokeServerHandle,
   type StartInvokeServerOptions,
 } from './server.js'
@@ -54,12 +55,14 @@ import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   readDaemonRegistration,
   removeDaemonRegistration,
+  removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
 } from './registration.js'
 import type {
   ClassifyDaemonRegistrationInput,
   ClassifyDaemonRegistrationOutcome,
+  LegacyDaemonRegistration,
 } from './registration.js'
 import type { DaemonRegistration } from './registration.js'
 import {
@@ -177,6 +180,11 @@ export interface DaemonHostOperations {
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
   removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean
+  removeObsoleteDaemonRegistrationIfExpected(
+    agentQaRoot: string,
+    expected: LegacyDaemonRegistration,
+  ): boolean
+  unlinkDaemonSocket(socketPath: string): boolean
   classifyDaemonRegistration(
     input: ClassifyDaemonRegistrationInput,
   ): Promise<ClassifyDaemonRegistrationOutcome>
@@ -328,6 +336,8 @@ function defaultOperations(): DaemonHostOperations {
     writeDaemonRegistration,
     removeDaemonRegistration,
     removeRegistrationIfOwned,
+    removeObsoleteDaemonRegistrationIfExpected,
+    unlinkDaemonSocket,
     classifyDaemonRegistration,
     startInvokeServer,
     countRemainingCurationWork: LOCAL_DAEMON_CAPABILITIES.countRemainingCurationWork,
@@ -372,7 +382,9 @@ function heldMessage(
   )
 }
 
-function liveRegistrationMessage(registration: DaemonRegistration): string {
+function liveRegistrationMessage(
+  registration: Pick<DaemonRegistration, 'pid' | 'startedAtMs'>,
+): string {
   return (
     `agent-qa daemon is already running (pid ${registration.pid}; ` +
     `daemon registration since ${new Date(registration.startedAtMs).toISOString()})`
@@ -459,38 +471,106 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     || input.operations.spawnEmbedderWorker !== undefined
   operations.trace?.('posture-pinned')
 
-  const registrationSnapshot = readDaemonRegistration(input.agentQaRoot)
-  const registration = registrationSnapshot.kind === 'parsed'
-    ? await operations.classifyDaemonRegistration({
+  type RecoverableRegistration = Extract<
+    ClassifyDaemonRegistrationOutcome,
+    { kind: 'obsolete' | 'unreachable-lease-stale' }
+  >
+
+  const classifyRegistration = (): Promise<ClassifyDaemonRegistrationOutcome> =>
+    operations.classifyDaemonRegistration({
       agentQaRoot: input.agentQaRoot,
       knowledgeRoot: input.knowledgeRoot,
     })
+
+  /**
+   * Remove exactly the generation that was classified, and nothing else.
+   *
+   * Both arms compare before they delete, so two racing successors can no longer erase each
+   * other's registrations: a file that changed underneath is restored, not obeyed.
+   */
+  const removeClassifiedRegistration = (classified: RecoverableRegistration): boolean =>
+    classified.kind === 'obsolete'
+      ? operations.removeObsoleteDaemonRegistrationIfExpected(
+        input.agentQaRoot,
+        classified.registration,
+      )
+      : operations.removeRegistrationIfOwned(
+        input.agentQaRoot,
+        classified.registration.instanceId,
+      )
+
+  const recordRegistrationRecovered = (classified: RecoverableRegistration): void => {
+    // The removal above proved this registration's bytes, so its recorded address is the only
+    // socket this host may unlink. A live successor's socket is a different string by construction.
+    const socketPath = classified.registration.socketPath
+    let socketRemoved = false
+    try {
+      socketRemoved = operations.unlinkDaemonSocket(socketPath)
+    } catch (error) {
+      logger.error(
+        `agent-qa daemon stale socket cleanup failed (${socketPath}): `
+        + (error instanceof Error ? error.message : String(error)),
+      )
+    }
+    recordDaemonEvent({
+      kind: 'registration-recovered',
+      classification: classified.kind,
+      pid: classified.registration.pid,
+      ...('instanceId' in classified.registration
+        ? { instanceId: classified.registration.instanceId }
+        : {}),
+      socketPath,
+      socketRemoved,
+    })
+  }
+
+  /** Refusals for a classification this host must not overwrite. Absent means nothing to refuse. */
+  const refuseRegistration = (
+    outcome: ClassifyDaemonRegistrationOutcome,
+  ): boolean => {
+    if (outcome.kind === 'live-confirmed') {
+      logger.error(liveRegistrationMessage(outcome.registration))
+      return true
+    }
+    if (outcome.kind === 'malformed') {
+      logger.error('agent-qa daemon registration is malformed; refusing to overwrite it')
+      return true
+    }
+    if (outcome.kind === 'unreachable-lease-fresh') {
+      logger.error(heldMessage(outcome.holder))
+      return true
+    }
+    return false
+  }
+
+  const registrationSnapshot = readDaemonRegistration(input.agentQaRoot)
+  const registration = registrationSnapshot.kind === 'parsed'
+    ? await classifyRegistration()
     : registrationSnapshot
-  if (registration.kind === 'live-confirmed') {
-    logger.error(liveRegistrationMessage(registration.registration))
-    return 1
-  }
-  if (registration.kind === 'malformed') {
-    logger.error('agent-qa daemon registration is malformed; refusing to overwrite it')
-    return 1
-  }
-  if (registration.kind === 'unreachable-lease-fresh') {
-    logger.error(heldMessage(registration.holder))
-    return 1
-  }
+  if (refuseRegistration(registration)) return 1
   if (
     registration.kind === 'obsolete'
     || registration.kind === 'unreachable-lease-stale'
   ) {
-    operations.removeDaemonRegistration(input.agentQaRoot)
-    recordDaemonEvent({
-      kind: 'registration-recovered',
-      classification: registration.kind,
-      pid: registration.registration.pid,
-      ...('instanceId' in registration.registration
-        ? { instanceId: registration.registration.instanceId }
-        : {}),
-    })
+    if (removeClassifiedRegistration(registration)) {
+      recordRegistrationRecovered(registration)
+    } else {
+      // The registration changed between classification and cleanup. Never guess at a file this
+      // host has not seen: look once more, and fail closed rather than re-race a third writer.
+      const reclassified = await classifyRegistration()
+      if (refuseRegistration(reclassified)) return 1
+      if (
+        reclassified.kind === 'obsolete'
+        || reclassified.kind === 'unreachable-lease-stale'
+      ) {
+        if (removeClassifiedRegistration(reclassified)) {
+          recordRegistrationRecovered(reclassified)
+        } else {
+          logger.error(liveRegistrationMessage(reclassified.registration))
+          return 1
+        }
+      }
+    }
   }
 
   const acquired = operations.acquireWriterLease(input.knowledgeRoot)

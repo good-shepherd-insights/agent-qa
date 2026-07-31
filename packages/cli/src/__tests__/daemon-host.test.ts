@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -43,6 +44,7 @@ import {
   DAEMON_SOCKET_PATH_BUDGET_BYTES,
   daemonSocketPath,
   startInvokeServer,
+  unlinkDaemonSocket,
 } from '../daemon/server.js'
 import {
   DAEMON_REGISTRATION_FILE,
@@ -268,6 +270,32 @@ async function waitUntil(
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error(message)
     await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+/**
+ * Leave a real socket inode behind with no listener, exactly as a SIGKILLed daemon does.
+ *
+ * An in-process server cannot produce this: Node unlinks the path on close. Only a listener that
+ * never got to clean up leaves the artifact stale-socket recovery actually meets.
+ */
+async function abandonSocketFile(socketPath: string): Promise<void> {
+  const child = spawn(
+    process.execPath,
+    ['-e', "require('node:net').createServer().listen(process.argv[1])", socketPath],
+    { stdio: ['ignore', 'ignore', 'inherit'] },
+  )
+  try {
+    await waitUntil(
+      () => existsSync(socketPath),
+      `abandoned socket ${socketPath} was never bound`,
+      10_000,
+    )
+    if (!lstatSync(socketPath).isSocket()) throw new Error(`${socketPath} is not a socket`)
+  } finally {
+    const exited = once(child, 'exit')
+    child.kill('SIGKILL')
+    await exited
   }
 }
 
@@ -1197,10 +1225,14 @@ describe('daemon registration recovery at boot', () => {
     const nowMs = Date.now()
     mkdirSync(paths.knowledgeRoot, { recursive: true })
     mkdirSync(paths.agentQaRoot, { recursive: true })
-    const recordedSocket = join(paths.agentQaRoot, 'recorded.sock')
-    const bystanderSocket = join(paths.agentQaRoot, 'bystander.sock')
-    writeFileSync(recordedSocket, '')
-    writeFileSync(bystanderSocket, '')
+    // Real, abandoned socket inodes under paths.root: an unlink target must be a socket, and the
+    // explicit paths have to fit inside sun_path without daemonSocketPath's fallback.
+    const recordedSocket = join(paths.root, 'r.sock')
+    const bystanderSocket = join(paths.root, 'b.sock')
+    const plainFile = join(paths.root, 'p.file')
+    await abandonSocketFile(recordedSocket)
+    await abandonSocketFile(bystanderSocket)
+    writeFileSync(plainFile, '')
     writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
       leaseId: '9d1a9e07-3fd5-4a3f-b0da-7c1a9b6bb3f8',
       pid: process.pid,
@@ -1236,16 +1268,23 @@ describe('daemon registration recovery at boot', () => {
       5_000,
     )
 
+    expect(
+      { recorded: existsSync(recordedSocket), bystander: existsSync(bystanderSocket) },
+      'cleanup must unlink the recorded socket and only the recorded socket',
+    ).toEqual({ recorded: false, bystander: true })
     expect(unconditionalRemove).not.toHaveBeenCalled()
     expect(removeOwned).toHaveBeenCalledWith(paths.agentQaRoot, HOST_INSTANCE_ID)
-    expect(existsSync(recordedSocket)).toBe(false)
-    expect(existsSync(bystanderSocket)).toBe(true)
     expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
       kind: 'registration-recovered',
       instanceId: HOST_INSTANCE_ID,
       socketPath: recordedSocket,
       socketRemoved: true,
     }))
+
+    // A recorded path that is not a socket selects no deletion at all.
+    expect(unlinkDaemonSocket(plainFile)).toBe(false)
+    expect(existsSync(plainFile)).toBe(true)
+    expect(unlinkDaemonSocket(join(paths.root, 'absent.sock'))).toBe(false)
 
     harness.signal('SIGTERM')
     await expect(running).resolves.toBe(0)

@@ -318,19 +318,22 @@ export interface RemoveRegistrationIfOwnedOptions {
 }
 
 /**
- * Atomically quarantine, verify, and remove only this exact daemon generation.
+ * Atomically quarantine, verify, and remove only the generation the caller classified.
  *
  * A mismatched quarantine is restored with a hard link so an EEXIST successor can never be
- * overwritten by an obsolete host's cleanup.
+ * overwritten by an obsolete host's cleanup. The predicate is the only thing that varies between
+ * schema shapes; the rename/verify/link algorithm is shared so neither shape can drift into a
+ * read-then-delete window.
  */
-export function removeRegistrationIfOwned(
+function removeRegistrationIfMatching(
   agentQaRoot: string,
-  instanceId: string,
-  options: RemoveRegistrationIfOwnedOptions = {},
+  tag: string,
+  matches: (outcome: ReadDaemonRegistrationOutcome) => boolean,
+  options: RemoveRegistrationIfOwnedOptions,
 ): boolean {
   const file = daemonRegistrationPath(agentQaRoot)
   const parent = dirname(file)
-  const quarantine = `${file}.remove-${instanceId}-${randomUUID()}`
+  const quarantine = `${file}.remove-${tag}-${randomUUID()}`
   const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
 
   options.beforeQuarantineRename?.()
@@ -343,11 +346,7 @@ export function removeRegistrationIfOwned(
   fsyncDirectory(parent)
   options.afterQuarantine?.(quarantine)
 
-  const outcome = readDaemonRegistrationFile(quarantine)
-  if (
-    outcome.kind === 'parsed'
-    && outcome.registration.instanceId === instanceId
-  ) {
+  if (matches(readDaemonRegistrationFile(quarantine))) {
     unlinkSync(quarantine)
     fsyncDirectory(parent)
     return true
@@ -362,6 +361,43 @@ export function removeRegistrationIfOwned(
   unlinkSync(quarantine)
   fsyncDirectory(parent)
   return false
+}
+
+export function removeRegistrationIfOwned(
+  agentQaRoot: string,
+  instanceId: string,
+  options: RemoveRegistrationIfOwnedOptions = {},
+): boolean {
+  return removeRegistrationIfMatching(
+    agentQaRoot,
+    instanceId,
+    (outcome) => outcome.kind === 'parsed' && outcome.registration.instanceId === instanceId,
+    options,
+  )
+}
+
+/**
+ * Remove an obsolete-schema registration only when its quarantined bytes still match.
+ *
+ * A pre-nonce registration carries no instance identity, so byte-equality over every field it
+ * does have is the strongest ownership evidence available. Anything else — a successor that
+ * republished in the window, a rewritten legacy file, a current-schema replacement — is restored.
+ */
+export function removeObsoleteDaemonRegistrationIfExpected(
+  agentQaRoot: string,
+  expected: LegacyDaemonRegistration,
+  options: RemoveRegistrationIfOwnedOptions = {},
+): boolean {
+  return removeRegistrationIfMatching(
+    agentQaRoot,
+    `obsolete-${expected.pid}`,
+    (outcome) => outcome.kind === 'obsolete'
+      && outcome.registration.schemaVersion === expected.schemaVersion
+      && outcome.registration.pid === expected.pid
+      && outcome.registration.socketPath === expected.socketPath
+      && outcome.registration.startedAtMs === expected.startedAtMs,
+    options,
+  )
 }
 
 /** Remove only a schema-valid registration whose pid has been proven dead. */

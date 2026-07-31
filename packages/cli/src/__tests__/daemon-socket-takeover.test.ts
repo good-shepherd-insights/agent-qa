@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { LEASE_HEARTBEAT_TTL_MS } from '@vostride/agent-qa-knowledge-local'
 import { afterAll, describe, expect, test } from 'vitest'
 
+import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
 import { DAEMON_REGISTRATION_FILE } from '../daemon/registration.js'
 import { fetchDaemonIdentity } from '../daemon/server.js'
 import { readJson } from './fencing/spawn-helpers.js'
@@ -83,12 +84,27 @@ describePosix('daemon socket takeover past a stopped predecessor', () => {
           pid: successor.child.pid,
         })
 
-        // Readiness was reached WITHOUT the predecessor's cooperation, and without evicting it.
+        // Readiness was reached WITHOUT the predecessor's cooperation, and without evicting it:
+        // no signal was sent, and the process is still stopped exactly where it was left.
         expect(processStateFromOs(predecessor.child.pid!)).toContain('T')
         expect(isAlive(predecessor.child.pid!)).toBe(true)
         expect(predecessor.child.exitCode).toBeNull()
         expect(predecessor.child.signalCode).toBeNull()
-        expect(existsSync(predecessorSocket)).toBe(true)
+
+        // The predecessor's own address was reclaimed as part of exactly removing its
+        // registration — never as a precondition for the successor to listen.
+        expect(existsSync(predecessorSocket)).toBe(false)
+        const successorEvents = readFileSync(
+          join(paths.agentQaRoot, DAEMON_EVENTS_FILE),
+          'utf8',
+        ).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+        expect(successorEvents).toContainEqual(expect.objectContaining({
+          kind: 'registration-recovered',
+          classification: 'unreachable-lease-stale',
+          instanceId: predecessorReady.instanceId,
+          socketPath: predecessorSocket,
+          socketRemoved: true,
+        }))
 
         const successorRegistrationBytes = readFileSync(
           join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE),

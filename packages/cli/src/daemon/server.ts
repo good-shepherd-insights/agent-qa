@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, mkdirSync, rmSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
 import {
   createServer,
   type IncomingMessage,
@@ -175,6 +175,52 @@ export function daemonSocketPath(
 
 function isNamedPipe(path: string): boolean {
   return process.platform === 'win32' || path.startsWith('\\\\.\\pipe\\')
+}
+
+/**
+ * A registration's recorded socket path is attacker-shaped input; it is never dialled blind.
+ *
+ * `connect()` on a POSIX path that is not a socket throws out of band on darwin (EINVAL) instead
+ * of emitting an `error` event, which crashed the classifying host. Statting first turns that into
+ * an ordinary unreachable verdict.
+ */
+function isDialableAddress(socketPath: string): boolean {
+  if (isNamedPipe(socketPath)) return true
+  try {
+    return lstatSync(socketPath).isSocket()
+  } catch {
+    return false
+  }
+}
+
+export class DaemonSocketAddressError extends Error {
+  readonly socketPath: string
+
+  constructor(socketPath: string) {
+    super(`agent-qa daemon address is not a socket: ${socketPath}`)
+    this.name = 'DaemonSocketAddressError'
+    this.socketPath = socketPath
+  }
+}
+
+/**
+ * Unlink one recovered generation's own socket file.
+ *
+ * The caller has already removed that generation's registration byte-exactly, so this path is the
+ * exact string that registration recorded. Only a real socket there is touched: registration bytes
+ * select this deletion, so a recorded path naming a regular file, a directory, or nothing at all
+ * is refused rather than obeyed.
+ */
+export function unlinkDaemonSocket(socketPath: string): boolean {
+  if (isNamedPipe(socketPath)) return false
+  try {
+    if (!lstatSync(socketPath).isSocket()) return false
+    unlinkSync(socketPath)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
 }
 
 function prepareSocketParent(socketPath: string): void {
@@ -530,6 +576,9 @@ export async function startInvokeServer(
 
 /** Read and strictly validate the identity served by a listening daemon socket. */
 export function fetchDaemonIdentity(socketPath: string): Promise<DaemonIdentity> {
+  if (!isDialableAddress(socketPath)) {
+    return Promise.reject(new DaemonSocketAddressError(socketPath))
+  }
   return new Promise((resolveIdentity, rejectIdentity) => {
     let settled = false
     const rejectOnce = (error: Error): void => {
