@@ -51,12 +51,16 @@ import type {
   BundleStoreConfig,
   PublishBundleInput,
   PublishBundleOutcome,
+  StageBundleOutcome,
 } from '../bundle-publish.js'
 import {
   resolveProductQualifiedBundleDir,
   type ProductQualifiedBundleDir,
 } from '../bundle-scan.js'
-import { projectBundleIndexRow } from '../index-rebuild.js'
+import {
+  projectBundleIndexRow,
+  projectBundleIndexRowWithinCurrentAuthority,
+} from '../index-rebuild.js'
 import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.js'
 import {
   assertEpochCurrent,
@@ -66,7 +70,10 @@ import {
 } from '../lease/writer-lease.js'
 import { assemblePromotionGateInput } from '../promotion-gate-input.js'
 import type { ClaimedCurationJob } from '../queue/curation-queue.js'
-import { writeJobState } from '../queue/job-state.js'
+import {
+  writeJobState,
+  writeJobStateWithinCurrentAuthority,
+} from '../queue/job-state.js'
 import { widenAuthoredDeltaCheckpoint } from './author-contract.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import { disposeDelta } from './disposition.js'
@@ -184,6 +191,12 @@ export interface ApplyIndexDeltaForBundleInput {
 /** Shared Plan 378-10 projection authority used by commit and journal reconciliation. */
 export function applyIndexDeltaForBundle(input: ApplyIndexDeltaForBundleInput): void {
   projectBundleIndexRow(input)
+}
+
+function applyIndexDeltaForBundleWithinCurrentAuthority(
+  input: ApplyIndexDeltaForBundleInput,
+): void {
+  projectBundleIndexRowWithinCurrentAuthority(input)
 }
 
 /** Recovery alias deliberately delegates to the same projection unit as the live tail. */
@@ -523,74 +536,56 @@ function storeConfig(
   }
 }
 
-function publishWithCurrentAuthority(
+type PreparedBundlePublication =
+  | {
+      kind: 'override'
+      publish: NonNullable<CommitCurationDependencies['operations']>['publishBundle']
+      config: BundleStoreConfig
+      input: PublishBundleInput
+    }
+  | { kind: 'canonical'; outcome: StageBundleOutcome }
+
+function prepareBundlePublication(
   deps: CommitCurationDependencies,
-  writerLeaseId: string,
   config: BundleStoreConfig,
   input: PublishBundleInput,
-): PublishBundleOutcome | Extract<
-  CommitCurationOutcome,
-  { kind: 'abandoned-stale-epoch' }
-> {
-  const authority = { leaseId: writerLeaseId, epoch: deps.epoch }
-  const hooks = {
-    ...(deps.hooks?.afterFinalAuthorityCompare === undefined
-      ? {}
-      : { afterFinalAuthorityCompare: deps.hooks.afterFinalAuthorityCompare }),
-    ...(deps.hooks?.mutationLockTakeoverMs === undefined
-      ? {}
-      : { mutationLockTakeoverMs: deps.hooks.mutationLockTakeoverMs }),
-  }
-
+): PreparedBundlePublication {
   const publishOverride = deps.operations?.publishBundle
   if (publishOverride !== undefined) {
-    try {
-      return withCurrentWriterAuthority(
-        deps.knowledgeRoot,
-        authority,
-        () => publishOverride(config, input),
-        hooks,
-      )
-    } catch (error) {
-      if (error instanceof WriterAuthorityLostError) {
-        return { kind: 'abandoned-stale-epoch', observedEpoch: error.observedEpoch }
-      }
-      throw error
-    }
+    return { kind: 'override', publish: publishOverride, config, input }
   }
+  return { kind: 'canonical', outcome: stageBundle(config, input) }
+}
 
-  const staged = stageBundle(config, input)
+function finalizePreparedPublicationWithinCurrentAuthority(
+  deps: CommitCurationDependencies,
+  writerLeaseId: string,
+  prepared: PreparedBundlePublication,
+): PublishBundleOutcome {
+  if (prepared.kind === 'override') {
+    return prepared.publish(prepared.config, prepared.input)
+  }
+  if (prepared.outcome.kind !== 'staged') return prepared.outcome
   try {
-    return withCurrentWriterAuthority(
-      deps.knowledgeRoot,
-      authority,
-      () => {
-        if (staged.kind !== 'staged') return staged
-        try {
-          return finalizeStagedBundle(staged)
-        } catch (error) {
-          if (
-            (error as NodeJS.ErrnoException).code === 'ENOENT'
-            && !existsSync(staged.stagingDir)
-          ) {
-            throw new WriterAuthorityLostError(
-              { knowledgeRoot: deps.knowledgeRoot, ...authority },
-              'mutation-lock-generation-lost',
-              readCurrentEpoch(deps.knowledgeRoot),
-            )
-          }
-          throw error
-        }
-      },
-      hooks,
-    )
+    return finalizeStagedBundle(prepared.outcome)
   } catch (error) {
-    if (staged.kind === 'staged') discardStagedBundle(staged, true)
-    if (error instanceof WriterAuthorityLostError) {
-      return { kind: 'abandoned-stale-epoch', observedEpoch: error.observedEpoch }
+    if (
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+      && !existsSync(prepared.outcome.stagingDir)
+    ) {
+      throw new WriterAuthorityLostError(
+        { knowledgeRoot: deps.knowledgeRoot, leaseId: writerLeaseId, epoch: deps.epoch },
+        'mutation-lock-generation-lost',
+        readCurrentEpoch(deps.knowledgeRoot),
+      )
     }
     throw error
   }
+}
+
+function discardPreparedPublication(prepared: PreparedBundlePublication): void {
+  if (prepared.kind !== 'canonical' || prepared.outcome.kind !== 'staged') return
+  discardStagedBundle(prepared.outcome, true)
 }
 
 function unknownEvidenceRecordIds(
@@ -655,13 +650,18 @@ function unknownDraft(
   }
 }
 
-function commitUnknownMintIntent(
+interface PreparedUnknownMintIntent {
+  intent: UnknownMintIntent
+  publication: PreparedBundlePublication
+}
+
+function prepareUnknownMintIntent(
   deps: CommitCurationDependencies,
   job: CommitCurationJob,
   checkpoint: AuthoredDeltaCheckpoint,
   intent: UnknownMintIntent,
   committedBundleId: RecordId,
-): CommitCurationOutcome | undefined {
+): PreparedUnknownMintIntent {
   const evidenceRecordIds = unknownEvidenceRecordIds(intent, committedBundleId)
   const deterministicAuthorship = {
     path: 'deterministic-fallback' as const,
@@ -677,7 +677,7 @@ function commitUnknownMintIntent(
   }
   const draft = unknownDraft(intent, evidenceRecordIds, job)
   const config = storeConfig(deps, intent.scope.key, job.leaseId)
-  const published = publishWithCurrentAuthority(deps, job.leaseId, config, {
+  const publication = prepareBundlePublication(deps, config, {
     draft,
     discriminant: discriminant(draft, delta, []),
     originClass: originClass(delta),
@@ -703,7 +703,19 @@ function commitUnknownMintIntent(
     distilledObservations: [],
     artifacts: [],
   })
-  if (published.kind === 'abandoned-stale-epoch') return published
+  return { intent, publication }
+}
+
+function commitUnknownMintIntentWithinCurrentAuthority(
+  deps: CommitCurationDependencies,
+  job: CommitCurationJob,
+  prepared: PreparedUnknownMintIntent,
+): CommitCurationOutcome | undefined {
+  const published = finalizePreparedPublicationWithinCurrentAuthority(
+    deps,
+    job.leaseId,
+    prepared.publication,
+  )
   if (published.kind === 'egress-blocked') {
     return { kind: 'withheld', reason: 'egress-blocked', detections: published.detections }
   }
@@ -714,10 +726,10 @@ function commitUnknownMintIntent(
       collisionReason: published.reason,
     }
   }
-  applyIndexDeltaForBundle({
+  applyIndexDeltaForBundleWithinCurrentAuthority({
     knowledgeRoot: deps.knowledgeRoot,
     bundleId: published.id,
-    product: intent.scope.key,
+    product: prepared.intent.scope.key,
   })
   return undefined
 }
@@ -747,7 +759,7 @@ function commitUnknownResolutionIntent(
   })
   const failure = appendFailure(appended)
   if (failure !== undefined) return failure
-  applyIndexDeltaForBundle({
+  applyIndexDeltaForBundleWithinCurrentAuthority({
     knowledgeRoot: deps.knowledgeRoot,
     bundleId: intent.targetId,
     product: target.product,
@@ -790,6 +802,27 @@ function markDone(deps: CommitCurationDependencies, job: CommitCurationJob): voi
     authority: { leaseId: job.leaseId, epoch: deps.epoch },
     lifecycle: 'done',
   })
+}
+
+function markDoneWithinCurrentAuthority(
+  deps: CommitCurationDependencies,
+  job: CommitCurationJob,
+): void {
+  if (deps.deferCompletion === true) return
+  writeJobStateWithinCurrentAuthority({
+    knowledgeRoot: deps.knowledgeRoot,
+    candidateId: job.candidateId,
+    authority: { leaseId: job.leaseId, epoch: deps.epoch },
+    lifecycle: 'done',
+  })
+}
+
+function finishCommitWithinCurrentAuthority(
+  deps: CommitCurationDependencies,
+  job: CommitCurationJob,
+): void {
+  clearCommitIntent(deps.knowledgeRoot, job.candidateId)
+  markDoneWithinCurrentAuthority(deps, job)
 }
 
 function appendFailure(
@@ -992,6 +1025,8 @@ export function commitCurationDelta(
   let bundleDir: string | undefined
   let bundleProduct = productKey
   let publishInput: PublishBundleInput | undefined
+  let preparedPublication: PreparedBundlePublication | undefined
+  let preparedUnknownMintIntents: PreparedUnknownMintIntent[] = []
   const preflightDir = join(job.candidateDir, `.commit-artifacts-${randomUUID()}`)
 
   writeJobState({
@@ -1069,6 +1104,17 @@ export function commitCurationDelta(
       bundleProduct = resolved.product
     }
 
+    if (publishInput !== undefined) {
+      preparedPublication = prepareBundlePublication(
+        deps,
+        storeConfig(deps, productKey, job.leaseId),
+        publishInput,
+      )
+    }
+    preparedUnknownMintIntents = (disposed.unknownMintIntents ?? []).map((intent) =>
+      prepareUnknownMintIntent(deps, job, checkpoint, intent, bundleId),
+    )
+
     const beforeIntent = staleEpoch(deps)
     if (beforeIntent !== undefined) return beforeIntent
     writeJobState({
@@ -1087,398 +1133,413 @@ export function commitCurationDelta(
       epoch: deps.epoch,
     })
     deps.hooks?.afterIntentWritten?.()
-    let convertedConfirm = false
-    let confirmedEventDuplicate = false
-    let measurementAppendDuplicate = false
-    let freshlyPublished = false
-    let promotionAppended = false
-    let promotionHoldReason: PromotionGateHoldReason | undefined
-    const config = storeConfig(deps, productKey, job.leaseId)
-    if (publishInput !== undefined) {
-      const published = publishWithCurrentAuthority(
-        deps,
-        job.leaseId,
-        config,
-        publishInput,
-      )
-      if (published.kind === 'abandoned-stale-epoch') return published
-      if (published.kind === 'egress-blocked') {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return { kind: 'withheld', reason: 'egress-blocked', detections: published.detections }
-      }
-      if (published.kind === 'identity-collision') {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return {
-          kind: 'failed',
-          reason: 'identity-collision',
-          collisionReason: published.reason,
-        }
-      }
-      if (published.kind === 'already-exists') {
-        const existingTarget = resolveProductQualifiedBundleDir({
-          knowledgeRoot: deps.knowledgeRoot,
-          product: productKey,
-          recordId: published.id,
-        })
-        bundleDir = existingTarget.dir
-        bundleProduct = existingTarget.product
-        const existingConfig = storeConfig(
-          deps,
-          existingTarget.product,
-          job.leaseId,
-        )
-        const capableEnrichment =
-          delta.kind === 'Add'
-          && checkpoint.authorship.path !== 'deterministic-fallback'
-          && draft !== undefined
-            ? {
-                summary: draft.summary,
-                body: draft.body,
-                authorship: checkpoint.authorship,
+    const authority = { leaseId: job.leaseId, epoch: deps.epoch }
+    const authorityHooks = {
+      ...(deps.hooks?.afterFinalAuthorityCompare === undefined
+        ? {}
+        : { afterFinalAuthorityCompare: deps.hooks.afterFinalAuthorityCompare }),
+      ...(deps.hooks?.mutationLockTakeoverMs === undefined
+        ? {}
+        : { mutationLockTakeoverMs: deps.hooks.mutationLockTakeoverMs }),
+    }
+    try {
+      return withCurrentWriterAuthority(
+        deps.knowledgeRoot,
+        authority,
+        () => {
+          let convertedConfirm = false
+          let confirmedEventDuplicate = false
+          let measurementAppendDuplicate = false
+          let freshlyPublished = false
+          let promotionAppended = false
+          let promotionHoldReason: PromotionGateHoldReason | undefined
+          const config = storeConfig(deps, productKey, job.leaseId)
+          if (preparedPublication !== undefined) {
+            const published = finalizePreparedPublicationWithinCurrentAuthority(
+              deps,
+              job.leaseId,
+              preparedPublication,
+            )
+            if (published.kind === 'egress-blocked') {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return {
+                kind: 'withheld',
+                reason: 'egress-blocked',
+                detections: published.detections,
               }
-            : undefined
-        const appended = capableEnrichment === undefined
-          ? appendOutcomeEvent(
-              existingConfig,
-              published.id,
-              confirmedEvent(job, delta),
-            )
-          : appendOutcomeEventWithEnrichment(
-              existingConfig,
-              published.id,
-              confirmedEvent(job, delta),
-              capableEnrichment,
-            )
-        const failure = appendFailure(appended)
-        if (failure !== undefined) {
-          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-          markDone(deps, job)
-          return failure
-        }
-        if (
-          appended.kind === 'duplicate'
-          && (!('enriched' in appended) || appended.enriched === false)
-        ) {
-          const hasDeterministicTail =
-            disposed.measurementAppend !== undefined
-            || (disposed.kind === 'apply' && disposed.bornActive === true)
-            || (
+            }
+            if (published.kind === 'identity-collision') {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return {
+                kind: 'failed',
+                reason: 'identity-collision',
+                collisionReason: published.reason,
+              }
+            }
+            if (published.kind === 'already-exists') {
+              const existingTarget = resolveProductQualifiedBundleDir({
+                knowledgeRoot: deps.knowledgeRoot,
+                product: productKey,
+                recordId: published.id,
+              })
+              bundleDir = existingTarget.dir
+              bundleProduct = existingTarget.product
+              const existingConfig = storeConfig(
+                deps,
+                existingTarget.product,
+                job.leaseId,
+              )
+              const capableEnrichment =
+                delta.kind === 'Add'
+                && checkpoint.authorship.path !== 'deterministic-fallback'
+                && draft !== undefined
+                  ? {
+                      summary: draft.summary,
+                      body: draft.body,
+                      authorship: checkpoint.authorship,
+                    }
+                  : undefined
+              const appended = capableEnrichment === undefined
+                ? appendOutcomeEvent(
+                    existingConfig,
+                    published.id,
+                    confirmedEvent(job, delta),
+                  )
+                : appendOutcomeEventWithEnrichment(
+                    existingConfig,
+                    published.id,
+                    confirmedEvent(job, delta),
+                    capableEnrichment,
+                  )
+              const failure = appendFailure(appended)
+              if (failure !== undefined) {
+                finishCommitWithinCurrentAuthority(deps, job)
+                return failure
+              }
+              if (
+                appended.kind === 'duplicate'
+                && (!('enriched' in appended) || appended.enriched === false)
+              ) {
+                const hasDeterministicTail =
+                  disposed.measurementAppend !== undefined
+                  || (disposed.kind === 'apply' && disposed.bornActive === true)
+                  || (
+                    deps.profile.mode === 'drain-to-active'
+                    && !(disposed.kind === 'apply' && disposed.bornActive === true)
+                  )
+                  || (disposed.unknownMintIntents?.length ?? 0) > 0
+                  || (disposed.unknownResolutionIntents?.length ?? 0) > 0
+                if (!hasDeterministicTail) {
+                  finishCommitWithinCurrentAuthority(deps, job)
+                  return { kind: 'noop', reason: 'evidence-token-consumed' }
+                }
+                confirmedEventDuplicate = true
+              }
+              convertedConfirm = true
+            } else {
+              bundleDir = published.dir
+              bundleProduct = productKey
+              freshlyPublished = true
+            }
+
+            if (
               deps.profile.mode === 'drain-to-active'
               && !(disposed.kind === 'apply' && disposed.bornActive === true)
+            ) {
+              /**
+               * D-16: candidate is the exception bucket, not a waiting room. Admission
+               * always writes candidate first; this immediate stricter re-check makes
+               * clean facts active in the same drain. D-02 is flat: propose-only never
+               * reaches this branch, and promote() re-evaluates posture at call time.
+               */
+              const promotionBundleDir = bundleDir
+              const loaded = promotionBundleDir === undefined
+                ? { kind: 'not-found' as const }
+                : loadBundle(promotionBundleDir)
+              if (loaded.kind !== 'loaded' || promotionBundleDir === undefined) {
+                finishCommitWithinCurrentAuthority(deps, job)
+                return { kind: 'failed', reason: 'append-failed' }
+              }
+              const gate = evaluatePromotionGate(assemblePromotionGateInput({
+                knowledgeRoot: deps.knowledgeRoot,
+                bundleDir: promotionBundleDir,
+                bundle: loaded.bundle,
+              }))
+              if (gate.verdict === 'promote') {
+                const promoted = appendOutcomeEvent(config, published.id, {
+                  type: 'promoted',
+                  evidenceToken: derivePromotedEvidenceToken(job.payload.evidenceToken),
+                  curationJobId: job.candidateId,
+                  buildOrdinal: job.payload.buildOrdinal,
+                })
+                const promotedFailure = appendFailure(promoted)
+                if (promotedFailure !== undefined) {
+                  finishCommitWithinCurrentAuthority(deps, job)
+                  return promotedFailure
+                }
+                promotionAppended = promoted.kind === 'appended'
+              } else {
+                promotionHoldReason = gate.reason
+              }
+            }
+
+            const measurementValue = numericMeasurementSeed(job)
+            if (
+              draft?.kind === 'fact'
+              && draft.subtype === 'measurement'
+              && measurementValue !== undefined
+            ) {
+              const baselineFailure = appendFailure(
+                writeMeasurementBaseline(config, published.id, {
+                  mu0: measurementValue,
+                  sigma0: 0,
+                  n0: 1,
+                  openedAtOrdinal: job.payload.buildOrdinal,
+                }),
+              )
+              if (baselineFailure !== undefined) {
+                finishCommitWithinCurrentAuthority(deps, job)
+                return baselineFailure
+              }
+            }
+
+            if (disposed.kind === 'apply' && disposed.bornActive === true) {
+              if (delta.kind !== 'Supersede') {
+                throw new TypeError('born-active disposition requires a Supersede delta')
+              }
+              // §5.5.5 carve-out: a deterministic drift Supersede is exempt from candidate-gating
+              // and born active. Only drain-to-active disposition can set this D-02 marker.
+              const promotedFailure = appendFailure(
+                appendOutcomeEvent(config, published.id, {
+                  type: 'promoted',
+                  evidenceToken: derivePromotedEvidenceToken(delta.evidenceToken),
+                  curationJobId: job.candidateId,
+                  buildOrdinal: job.payload.buildOrdinal,
+                }),
+              )
+              if (promotedFailure !== undefined) {
+                finishCommitWithinCurrentAuthority(deps, job)
+                return promotedFailure
+              }
+            }
+            if (freshlyPublished) deps.hooks?.afterBundlePublished?.(published.id)
+            if (disposed.kind === 'apply' && disposed.bornActive === true) {
+              applyIndexDeltaForBundleWithinCurrentAuthority({
+                knowledgeRoot: deps.knowledgeRoot,
+                bundleId: published.id,
+                product: bundleProduct,
+                lexicalInput: embedGate.redactedLexicalInput,
+                suppressDense: embedGate.suppressDense,
+              })
+            }
+          } else if (delta.kind === 'Confirm') {
+            const target = existingTargets.get(delta.targetId)
+            if (target === undefined) {
+              throw new Error(`bundle target ${delta.targetId} was not resolved during preflight`)
+            }
+            const targetConfig = storeConfig(
+              deps,
+              target.product,
+              job.leaseId,
             )
-            || (disposed.unknownMintIntents?.length ?? 0) > 0
-            || (disposed.unknownResolutionIntents?.length ?? 0) > 0
-          if (!hasDeterministicTail) {
-            clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-            markDone(deps, job)
+            const appended = appendOutcomeEvent(
+              targetConfig,
+              delta.targetId,
+              confirmedEvent(job, delta, delta.evidenceToken),
+            )
+            const failure = appendFailure(appended)
+            if (failure !== undefined) {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return failure
+            }
+            if (appended.kind === 'duplicate') {
+              if (disposed.measurementAppend === undefined) {
+                finishCommitWithinCurrentAuthority(deps, job)
+                return { kind: 'noop', reason: 'evidence-token-consumed' }
+              }
+              confirmedEventDuplicate = true
+            }
+          } else if (delta.kind === 'Deprecate') {
+            const target = existingTargets.get(delta.targetId)
+            if (target === undefined) {
+              throw new Error(`bundle target ${delta.targetId} was not resolved during preflight`)
+            }
+            const targetConfig = storeConfig(
+              deps,
+              target.product,
+              job.leaseId,
+            )
+            const appended = appendOutcomeEvent(targetConfig, delta.targetId, {
+              type: 'deprecated',
+              evidenceToken: asEvidenceToken(job.payload.evidenceToken),
+              curationJobId: job.candidateId,
+              buildOrdinal: job.payload.buildOrdinal,
+              reason: delta.reason,
+            })
+            const failure = appendFailure(appended)
+            if (failure !== undefined) {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return failure
+            }
+          }
+
+          if (disposed.measurementAppend !== undefined) {
+            const { victimId, observation } = disposed.measurementAppend
+            const victim = existingTargets.get(victimId)
+            if (victim === undefined) {
+              throw new Error(`bundle target ${victimId} was not resolved during preflight`)
+            }
+            const measurementConfig = storeConfig(
+              deps,
+              victim.product,
+              job.leaseId,
+            )
+            const appended = appendMeasurementObservationOnce(
+              measurementConfig,
+              victim,
+              observation,
+            )
+            const failure = appendFailure(appended)
+            if (failure !== undefined) {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return failure
+            }
+            measurementAppendDuplicate = appended.kind === 'duplicate'
+          }
+
+          const canonicalConfig = storeConfig(
+            deps,
+            bundleProduct,
+            job.leaseId,
+          )
+          for (const relation of relationRows) {
+            const failure = appendFailure(appendRelation(canonicalConfig, bundleId, relation))
+            if (failure !== undefined) {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return failure
+            }
+          }
+
+          if (delta.kind === 'Supersede') {
+            const victim = existingTargets.get(delta.victimId)
+            if (victim === undefined) {
+              throw new Error(`bundle target ${delta.victimId} was not resolved during preflight`)
+            }
+            const victimConfig = storeConfig(
+              deps,
+              victim.product,
+              job.leaseId,
+            )
+            const superseded = appendOutcomeEvent(victimConfig, delta.victimId, {
+              type: 'superseded',
+              evidenceToken: delta.evidenceToken,
+              curationJobId: job.candidateId,
+              buildOrdinal: job.payload.buildOrdinal,
+              byRecordId: bundleId,
+            })
+            const supersededFailure = appendFailure(superseded)
+            if (supersededFailure !== undefined) {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return supersededFailure
+            }
+            const closeToken = asEvidenceToken(
+              sha256hex(canonicalJson({ token: delta.evidenceToken, event: 'window-close' })),
+            )
+            const closed = appendOutcomeEvent(victimConfig, delta.victimId, {
+              type: 'window-close',
+              evidenceToken: closeToken,
+              curationJobId: job.candidateId,
+              buildOrdinal: job.payload.buildOrdinal,
+              closedAtOrdinal: job.payload.buildOrdinal,
+            })
+            const closeFailure = appendFailure(closed)
+            if (closeFailure !== undefined) {
+              finishCommitWithinCurrentAuthority(deps, job)
+              return closeFailure
+            }
+            applyIndexDeltaForBundleWithinCurrentAuthority({
+              knowledgeRoot: deps.knowledgeRoot,
+              bundleId: delta.victimId,
+              product: victim.product,
+            })
+          }
+
+          applyIndexDeltaForBundleWithinCurrentAuthority({
+            knowledgeRoot: deps.knowledgeRoot,
+            bundleId,
+            product: bundleProduct,
+            ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
+            ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
+          })
+
+          if (disposed.firstSeenRegistration !== undefined) {
+            recordFirstSeenBundle(deps.drainState, disposed.firstSeenRegistration, bundleId)
+          }
+
+          for (const prepared of preparedUnknownMintIntents) {
+            const failure = commitUnknownMintIntentWithinCurrentAuthority(deps, job, prepared)
+            if (failure !== undefined) return failure
+          }
+          for (const intent of disposed.unknownResolutionIntents ?? []) {
+            const target = existingTargets.get(intent.targetId)
+            if (target === undefined) {
+              throw new Error(`bundle target ${intent.targetId} was not resolved during preflight`)
+            }
+            const failure = commitUnknownResolutionIntent(deps, job, intent, target)
+            if (failure !== undefined) return failure
+          }
+          deps.hooks?.afterIndexApplied?.(bundleId)
+          finishCommitWithinCurrentAuthority(deps, job)
+
+          if (confirmedEventDuplicate && measurementAppendDuplicate) {
             return { kind: 'noop', reason: 'evidence-token-consumed' }
           }
-          confirmedEventDuplicate = true
-        }
-        convertedConfirm = true
-      } else {
-        bundleDir = published.dir
-        bundleProduct = productKey
-        freshlyPublished = true
-      }
-
-      if (
-        deps.profile.mode === 'drain-to-active'
-        && !(disposed.kind === 'apply' && disposed.bornActive === true)
-      ) {
-        /**
-         * D-16: candidate is the exception bucket, not a waiting room. Admission
-         * always writes candidate first; this immediate stricter re-check makes
-         * clean facts active in the same drain. D-02 is flat: propose-only never
-         * reaches this branch, and promote() re-evaluates posture at call time.
-         */
-        const promotionBundleDir = bundleDir
-        const loaded = promotionBundleDir === undefined
-          ? { kind: 'not-found' as const }
-          : loadBundle(promotionBundleDir)
-        if (loaded.kind !== 'loaded' || promotionBundleDir === undefined) {
-          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-          markDone(deps, job)
-          return { kind: 'failed', reason: 'append-failed' }
-        }
-        const gate = evaluatePromotionGate(assemblePromotionGateInput({
-          knowledgeRoot: deps.knowledgeRoot,
-          bundleDir: promotionBundleDir,
-          bundle: loaded.bundle,
-        }))
-        if (gate.verdict === 'promote') {
-          const promoted = appendOutcomeEvent(config, published.id, {
-            type: 'promoted',
-            evidenceToken: derivePromotedEvidenceToken(job.payload.evidenceToken),
-            curationJobId: job.candidateId,
-            buildOrdinal: job.payload.buildOrdinal,
-          })
-          const promotedFailure = appendFailure(promoted)
-          if (promotedFailure !== undefined) {
-            clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-            markDone(deps, job)
-            return promotedFailure
+          if (
+            confirmedEventDuplicate
+            && disposed.measurementAppend === undefined
+            && !promotionAppended
+            && !(disposed.kind === 'apply' && disposed.bornActive === true)
+            && (disposed.unknownMintIntents?.length ?? 0) === 0
+            && (disposed.unknownResolutionIntents?.length ?? 0) === 0
+          ) {
+            return { kind: 'noop', reason: 'evidence-token-consumed' }
           }
-          promotionAppended = promoted.kind === 'appended'
-        } else {
-          promotionHoldReason = gate.reason
-        }
-      }
 
-      const measurementValue = numericMeasurementSeed(job)
-      if (
-        draft?.kind === 'fact'
-        && draft.subtype === 'measurement'
-        && measurementValue !== undefined
-      ) {
-        const baselineFailure = appendFailure(
-          writeMeasurementBaseline(config, published.id, {
-            mu0: measurementValue,
-            sigma0: 0,
-            n0: 1,
-            openedAtOrdinal: job.payload.buildOrdinal,
-          }),
-        )
-        if (baselineFailure !== undefined) {
-          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-          markDone(deps, job)
-          return baselineFailure
-        }
-      }
-
-      if (disposed.kind === 'apply' && disposed.bornActive === true) {
-        if (delta.kind !== 'Supersede') {
-          throw new TypeError('born-active disposition requires a Supersede delta')
-        }
-        // §5.5.5 carve-out: a deterministic drift Supersede is exempt from candidate-gating
-        // and born active. Only drain-to-active disposition can set this D-02 marker.
-        const promotedFailure = appendFailure(
-          appendOutcomeEvent(config, published.id, {
-            type: 'promoted',
-            evidenceToken: derivePromotedEvidenceToken(delta.evidenceToken),
-            curationJobId: job.candidateId,
-            buildOrdinal: job.payload.buildOrdinal,
-          }),
-        )
-        if (promotedFailure !== undefined) {
-          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-          markDone(deps, job)
-          return promotedFailure
-        }
-      }
-      if (freshlyPublished) deps.hooks?.afterBundlePublished?.(published.id)
-      if (disposed.kind === 'apply' && disposed.bornActive === true) {
-        applyIndexDeltaForBundle({
-          knowledgeRoot: deps.knowledgeRoot,
-          bundleId: published.id,
-          product: bundleProduct,
-          lexicalInput: embedGate.redactedLexicalInput,
-          suppressDense: embedGate.suppressDense,
-        })
-      }
-    } else if (delta.kind === 'Confirm') {
-      const target = existingTargets.get(delta.targetId)
-      if (target === undefined) {
-        throw new Error(`bundle target ${delta.targetId} was not resolved during preflight`)
-      }
-      const targetConfig = storeConfig(
-        deps,
-        target.product,
-        job.leaseId,
+          const result: CommittedBundleResult = {
+            bundleId,
+            bundleDir: bundleDir ?? '',
+            deltaKind: delta.kind,
+            ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
+          }
+          if (injectionRestricted) {
+            return {
+              kind: 'withheld',
+              reason: 'injection-restricted',
+              bundleId: result.bundleId,
+              bundleDir: result.bundleDir,
+              ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
+            }
+          }
+          if (convertedConfirm) return { kind: 'converted-confirm', ...result }
+          return disposed.kind === 'downgraded'
+            ? { kind: 'downgraded', reason: disposed.reason, ...result }
+            : { kind: 'applied', ...result }
+        },
+        authorityHooks,
       )
-      const appended = appendOutcomeEvent(
-        targetConfig,
-        delta.targetId,
-        confirmedEvent(job, delta, delta.evidenceToken),
-      )
-      const failure = appendFailure(appended)
-      if (failure !== undefined) {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return failure
+    } catch (error) {
+      if (error instanceof WriterAuthorityLostError) {
+        return { kind: 'abandoned-stale-epoch', observedEpoch: error.observedEpoch }
       }
-      if (appended.kind === 'duplicate') {
-        if (disposed.measurementAppend === undefined) {
-          clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-          markDone(deps, job)
-          return { kind: 'noop', reason: 'evidence-token-consumed' }
-        }
-        confirmedEventDuplicate = true
-      }
-    } else if (delta.kind === 'Deprecate') {
-      const target = existingTargets.get(delta.targetId)
-      if (target === undefined) {
-        throw new Error(`bundle target ${delta.targetId} was not resolved during preflight`)
-      }
-      const targetConfig = storeConfig(
-        deps,
-        target.product,
-        job.leaseId,
-      )
-      const appended = appendOutcomeEvent(targetConfig, delta.targetId, {
-        type: 'deprecated',
-        evidenceToken: asEvidenceToken(job.payload.evidenceToken),
-        curationJobId: job.candidateId,
-        buildOrdinal: job.payload.buildOrdinal,
-        reason: delta.reason,
-      })
-      const failure = appendFailure(appended)
-      if (failure !== undefined) {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return failure
-      }
+      throw error
     }
-
-    if (disposed.measurementAppend !== undefined) {
-      const { victimId, observation } = disposed.measurementAppend
-      const victim = existingTargets.get(victimId)
-      if (victim === undefined) {
-        throw new Error(`bundle target ${victimId} was not resolved during preflight`)
-      }
-      const measurementConfig = storeConfig(
-        deps,
-        victim.product,
-        job.leaseId,
-      )
-      const appended = appendMeasurementObservationOnce(
-        measurementConfig,
-        victim,
-        observation,
-      )
-      const failure = appendFailure(appended)
-      if (failure !== undefined) {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return failure
-      }
-      measurementAppendDuplicate = appended.kind === 'duplicate'
-    }
-
-    const canonicalConfig = storeConfig(
-      deps,
-      bundleProduct,
-      job.leaseId,
-    )
-    for (const relation of relationRows) {
-      const failure = appendFailure(appendRelation(canonicalConfig, bundleId, relation))
-      if (failure !== undefined) {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return failure
-      }
-    }
-
-    if (delta.kind === 'Supersede') {
-      const victim = existingTargets.get(delta.victimId)
-      if (victim === undefined) {
-        throw new Error(`bundle target ${delta.victimId} was not resolved during preflight`)
-      }
-      const victimConfig = storeConfig(
-        deps,
-        victim.product,
-        job.leaseId,
-      )
-      const superseded = appendOutcomeEvent(victimConfig, delta.victimId, {
-        type: 'superseded',
-        evidenceToken: delta.evidenceToken,
-        curationJobId: job.candidateId,
-        buildOrdinal: job.payload.buildOrdinal,
-        byRecordId: bundleId,
-      })
-      const supersededFailure = appendFailure(superseded)
-      if (supersededFailure !== undefined) {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return supersededFailure
-      }
-      const closeToken = asEvidenceToken(
-        sha256hex(canonicalJson({ token: delta.evidenceToken, event: 'window-close' })),
-      )
-      const closed = appendOutcomeEvent(victimConfig, delta.victimId, {
-        type: 'window-close',
-        evidenceToken: closeToken,
-        curationJobId: job.candidateId,
-        buildOrdinal: job.payload.buildOrdinal,
-        closedAtOrdinal: job.payload.buildOrdinal,
-      })
-      const closeFailure = appendFailure(closed)
-      if (closeFailure !== undefined) {
-        clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-        markDone(deps, job)
-        return closeFailure
-      }
-      applyIndexDeltaForBundle({
-        knowledgeRoot: deps.knowledgeRoot,
-        bundleId: delta.victimId,
-        product: victim.product,
-      })
-    }
-
-    applyIndexDeltaForBundle({
-      knowledgeRoot: deps.knowledgeRoot,
-      bundleId,
-      product: bundleProduct,
-      ...(draft === undefined ? {} : { lexicalInput: embedGate.redactedLexicalInput }),
-      ...(draft === undefined ? {} : { suppressDense: embedGate.suppressDense }),
-    })
-
-    if (disposed.firstSeenRegistration !== undefined) {
-      recordFirstSeenBundle(deps.drainState, disposed.firstSeenRegistration, bundleId)
-    }
-
-    for (const intent of disposed.unknownMintIntents ?? []) {
-      const failure = commitUnknownMintIntent(deps, job, checkpoint, intent, bundleId)
-      if (failure !== undefined) return failure
-    }
-    for (const intent of disposed.unknownResolutionIntents ?? []) {
-      const target = existingTargets.get(intent.targetId)
-      if (target === undefined) {
-        throw new Error(`bundle target ${intent.targetId} was not resolved during preflight`)
-      }
-      const failure = commitUnknownResolutionIntent(deps, job, intent, target)
-      if (failure !== undefined) return failure
-    }
-    deps.hooks?.afterIndexApplied?.(bundleId)
-    clearCommitIntent(deps.knowledgeRoot, job.candidateId)
-    markDone(deps, job)
-
-    if (confirmedEventDuplicate && measurementAppendDuplicate) {
-      return { kind: 'noop', reason: 'evidence-token-consumed' }
-    }
-    if (
-      confirmedEventDuplicate
-      && disposed.measurementAppend === undefined
-      && !promotionAppended
-      && !(disposed.kind === 'apply' && disposed.bornActive === true)
-      && (disposed.unknownMintIntents?.length ?? 0) === 0
-      && (disposed.unknownResolutionIntents?.length ?? 0) === 0
-    ) {
-      return { kind: 'noop', reason: 'evidence-token-consumed' }
-    }
-
-    const result: CommittedBundleResult = {
-      bundleId,
-      bundleDir: bundleDir ?? '',
-      deltaKind: delta.kind,
-      ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
-    }
-    if (injectionRestricted) {
-      return {
-        kind: 'withheld',
-        reason: 'injection-restricted',
-        bundleId: result.bundleId,
-        bundleDir: result.bundleDir,
-        ...(promotionHoldReason === undefined ? {} : { promotionHoldReason }),
-      }
-    }
-    if (convertedConfirm) return { kind: 'converted-confirm', ...result }
-    return disposed.kind === 'downgraded'
-      ? { kind: 'downgraded', reason: disposed.reason, ...result }
-      : { kind: 'applied', ...result }
   } finally {
+    if (preparedPublication !== undefined) {
+      discardPreparedPublication(preparedPublication)
+    }
+    for (const prepared of preparedUnknownMintIntents) {
+      discardPreparedPublication(prepared.publication)
+    }
     rmSync(preflightDir, { recursive: true, force: true })
   }
 }

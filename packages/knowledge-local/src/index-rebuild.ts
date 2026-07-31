@@ -705,6 +705,20 @@ function applyProjectionSafety(
  * either orchestration layer.
  */
 export function projectBundleIndexRow(opts: ProjectBundleIndexRowOptions): void {
+  projectBundleIndexRowWithAuthority(opts)
+}
+
+/** @internal Caller already owns the current writer-authority section. */
+export function projectBundleIndexRowWithinCurrentAuthority(
+  opts: ProjectBundleIndexRowOptions,
+): void {
+  projectBundleIndexRowWithAuthority(opts, { withinHeldAuthority: true })
+}
+
+function projectBundleIndexRowWithAuthority(
+  opts: ProjectBundleIndexRowOptions,
+  authority?: MutationAuthorityContext,
+): void {
   const target = resolveProductQualifiedBundleDir({
     knowledgeRoot: opts.knowledgeRoot,
     recordId: opts.bundleId,
@@ -730,16 +744,22 @@ export function projectBundleIndexRow(opts: ProjectBundleIndexRowOptions): void 
   const writer = openIndexWriter(opts.knowledgeRoot)
   const activeProfile = resolveActiveProfile(writer.db)
   try {
-    projectBundle(writer.db, writer.vec, projected, activeProfile)
-    emitRelationEdges(writer.db, [projected])
+    projectBundle(writer.db, writer.vec, projected, activeProfile, authority)
+    emitRelationEdges(writer.db, [projected], authority)
     const scanIssues: string[] = []
-    emitObservationEdges(writer.db, opts.knowledgeRoot, [projected], scanIssues)
+    emitObservationEdges(
+      writer.db,
+      opts.knowledgeRoot,
+      [projected],
+      scanIssues,
+      authority,
+    )
     if (scanIssues.length > 0) {
       throw new Error(`bundle ${opts.bundleId} observation projection failed: ${scanIssues.join('; ')}`)
     }
-    emitEquivalentToBridges(writer.db)
-    removeOrphanGraphNodes(writer.db)
-    refreshContextualRenderings(writer.db, writer.renderingEpochStale)
+    emitEquivalentToBridges(writer.db, authority)
+    removeOrphanGraphNodes(writer.db, authority)
+    refreshContextualRenderings(writer.db, writer.renderingEpochStale, authority)
     if (opts.lexicalInput !== undefined || opts.suppressDense === true) {
       applyProjectionSafety(
         writer.db,
@@ -748,9 +768,10 @@ export function projectBundleIndexRow(opts: ProjectBundleIndexRowOptions): void 
         activeProfile,
         opts.lexicalInput ?? projected.bundle.manifest.embeddingInput,
         opts.suppressDense === true,
+        authority,
       )
     }
-    writer.completeRenderingEpoch()
+    withMutationAuthority(authority, () => writer.completeRenderingEpoch())
   } finally {
     writer.close()
   }

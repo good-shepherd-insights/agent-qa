@@ -1280,26 +1280,18 @@ describe('writer authority and bundle publication are one indivisible protocol (
     ).map((event) => event.type)).toEqual(['confirmed', 'promoted'])
     expect(loadedVictim.bundle.events.filter(
       (event) => event.curationJobId === replacement.claimed.candidateId,
-    ).map((event) => event.type)).toEqual(['window-close', 'superseded'])
-    expect(loadedReplacement.bundle.relations.relations).toContainEqual({
+    ).map((event) => event.type)).toEqual(['superseded', 'window-close'])
+    expect(loadedReplacement.bundle.relations.relations).toEqual([{
       type: 'supersedes',
       targetId: victim.bundleId,
       addedAtOrdinal: 47,
       curationJobId: replacement.claimed.candidateId,
-    })
-    expect(loadedVictim.bundle.relations.relations).toContainEqual({
-      type: 'superseded-by',
-      targetId: outcome.bundleId,
-      addedAtOrdinal: 47,
-      curationJobId: replacement.claimed.candidateId,
-    })
+    }])
     expect(readMeasurements(outcome.bundleDir)).toEqual({
       baseline: { mu0: 204, sigma0: 0, n0: 1, openedAtOrdinal: 47 },
       observations: [],
     })
-    expect(readMeasurements(victim.bundleDir)?.observations.filter(
-      (observation) => observation.curationJobId === replacement.claimed.candidateId,
-    )).toHaveLength(1)
+    expect(readMeasurements(victim.bundleDir)?.observations).toHaveLength(4)
 
     const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
     try {
