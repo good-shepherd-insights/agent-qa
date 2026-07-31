@@ -4,6 +4,7 @@ import type { ChainedJobRequest, JobId, JobKind } from '@vostride/agent-qa-schem
 
 import type { ClockPort } from '../../ports/clock.js'
 import type { JobStoreFence } from '../../ports/job-store.js'
+import { StaleJobStoreEpochError } from '../../ports/job-store.js'
 import {
   createAgentJobQueue,
   UndeclaredJobSuccessorError,
@@ -79,6 +80,14 @@ async function harnessFor(
 
 function statusOf(store: FakeJobStore, jobId: string): string | undefined {
   return store.rows().find((row) => row.id === jobId)?.status
+}
+
+type DispositionVerb = 'recordFailure' | 'failAndChain'
+
+function dispositionCallCount(store: FakeJobStore, verb: DispositionVerb): number {
+  return (store as FakeJobStore & {
+    callCount(dispositionVerb: DispositionVerb): number
+  }).callCount(verb)
 }
 
 describe('bounded retry (D-18)', () => {
@@ -244,6 +253,118 @@ describe('bounded retry (D-18)', () => {
       status: 'queued',
       claimed: false,
       attempts: 1,
+    })
+  })
+})
+
+describe('thrown-handler disposition edges (386-21)', () => {
+  it('proves both adjacent sides of the max-attempts boundary with declared successors', async () => {
+    const harness = await harnessFor([
+      declaration({
+        maxAttempts: 2,
+        allowedSuccessors: ['curate-memory'],
+        onPermanentFailure: ({ reason }) => [
+          {
+            kind: 'curate-memory',
+            payload: { fallbackReason: reason },
+            idempotencyKey: 'throw-fallback',
+          },
+        ],
+        handler: async () => {
+          throw new Error('adjacent-boundary failure')
+        },
+      }),
+      declaration({ kind: 'curate-memory', checkpointSchedule: ['candidates-authored'] }),
+    ])
+    const enqueued = await harness.queue.enqueue('analyze-run', {}, 'boundary')
+
+    const oneAttemptRemains = await harness.queue.runNextJob({ fence: harness.fence })
+    expect(oneAttemptRemains).toMatchObject({
+      disposition: 'retry-scheduled',
+      job: { attempts: 1 },
+      reason: 'handler-threw: adjacent-boundary failure',
+      attemptsRemaining: 1,
+    })
+
+    const boundConsumed = await harness.queue.runNextJob({ fence: harness.fence })
+    expect(boundConsumed).toMatchObject({
+      disposition: 'failed',
+      job: { attempts: 2 },
+      reason: 'handler-threw: adjacent-boundary failure',
+      handlerInvoked: true,
+      continuation: [{ deduped: false }],
+    })
+    expect(statusOf(harness.store, String(enqueued.job.id))).toBe('failed')
+    expect(harness.store.rows().find((row) => row.kind === 'curate-memory')).toMatchObject({
+      status: 'queued',
+      payload: { fallbackReason: 'handler-threw: adjacent-boundary failure' },
+    })
+    expect(dispositionCallCount(harness.store, 'recordFailure')).toBe(1)
+    expect(dispositionCallCount(harness.store, 'failAndChain')).toBe(1)
+  })
+
+  it('propagates a stale-fence refusal without a partial disposition', async () => {
+    const clock = createSteppingClock()
+    const store = createFakeJobStore(clock)
+    const registry = createJobKindRegistry([
+      declaration({
+        handler: async () => {
+          await store.adoptEpoch(2)
+          throw new Error('authority moved')
+        },
+      }),
+    ])
+    const queue = createAgentJobQueue({
+      store,
+      registry,
+      clock,
+      idSource,
+      model: unusedModel,
+    })
+    const staleFence = await store.adoptEpoch(1)
+    const enqueued = await queue.enqueue('analyze-run', {}, 'stale-disposition')
+
+    await expect(queue.runNextJob({ fence: staleFence })).rejects.toBeInstanceOf(
+      StaleJobStoreEpochError,
+    )
+
+    expect(dispositionCallCount(store, 'recordFailure')).toBe(1)
+    expect(dispositionCallCount(store, 'failAndChain')).toBe(0)
+    expect(store.rows().find((row) => row.id === String(enqueued.job.id))).toMatchObject({
+      status: 'queued',
+      attempts: 1,
+      claimed: true,
+      lastFailureKind: undefined,
+      lastFailureReason: undefined,
+    })
+  })
+
+  it('calls the retry disposition exactly once for one thrown claim', async () => {
+    let handlerCalls = 0
+    const harness = await harnessFor([
+      declaration({
+        handler: async () => {
+          handlerCalls += 1
+          throw new Error('single disposition')
+        },
+      }),
+    ])
+    const enqueued = await harness.queue.enqueue('analyze-run', {}, 'exactly-once')
+
+    const outcome = await harness.queue.runNextJob({ fence: harness.fence })
+
+    expect(outcome).toMatchObject({
+      disposition: 'retry-scheduled',
+      job: { id: enqueued.job.id, attempts: 1 },
+    })
+    expect(handlerCalls).toBe(1)
+    expect(dispositionCallCount(harness.store, 'recordFailure')).toBe(1)
+    expect(dispositionCallCount(harness.store, 'failAndChain')).toBe(0)
+    expect(harness.store.rows().find((row) => row.id === String(enqueued.job.id))).toMatchObject({
+      status: 'queued',
+      claimed: false,
+      lastFailureKind: 'retry',
+      lastFailureReason: 'handler-threw: single disposition',
     })
   })
 })
