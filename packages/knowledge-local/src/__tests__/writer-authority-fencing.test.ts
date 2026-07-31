@@ -31,6 +31,7 @@ import {
   LEASE_HEARTBEAT_TTL_MS,
   MUTATION_LOCK_TAKEOVER_MS,
   readCurrentEpoch,
+  releaseLease,
   WriterAuthorityLostError,
 } from '../lease/writer-lease.js'
 import {
@@ -75,10 +76,19 @@ type AcquireWithDeadline = (
   },
 ) => ReturnType<typeof acquireWriterLease>
 
+type AcquireWithClaimHook = (
+  knowledgeRoot: string,
+  hooks: {
+    afterMutationLockClaimed?: (generationToken: string) => void
+    mutationLockTakeoverMs?: number
+  },
+) => ReturnType<typeof acquireWriterLease>
+
 const expectedSurface = publicSurface as typeof publicSurface
   & ExpectedAuthoritySurface
   & ExpectedCorruptEpochSurface
 const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
+const acquireWithClaimHook = acquireWriterLease as AcquireWithClaimHook
 const acquireFailClosed = acquireWriterLease as (
   knowledgeRoot: string,
 ) => ExpectedAcquireOutcome
@@ -330,6 +340,69 @@ describe('writer authority and bundle publication are one indivisible protocol (
     } finally {
       verifier.close()
     }
+  })
+
+  it('fails a stale expected-token CAS closed without changing the replacement owner row', () => {
+    let releasedOwnerToken = ''
+    const first = acquireWithClaimHook(knowledgeRoot, {
+      afterMutationLockClaimed: (generationToken) => {
+        releasedOwnerToken = generationToken
+      },
+    })
+    expect(first.kind).toBe('acquired')
+    if (first.kind !== 'acquired') throw new Error('expected first owner')
+    expect(releaseLease({
+      knowledgeRoot,
+      leaseId: first.leaseId,
+    })).toEqual({ kind: 'released' })
+
+    let replacementToken = ''
+    let staleCasChanges: number | bigint | undefined
+    let rowBefore: Record<string, unknown> | undefined
+    let rowAfter: Record<string, unknown> | undefined
+    const second = acquireWithClaimHook(knowledgeRoot, {
+      afterMutationLockClaimed: (generationToken) => {
+        replacementToken = generationToken
+        const staleContender = new DatabaseSync(
+          join(knowledgeRoot, '.writer-authority.sqlite'),
+          { timeout: 5 },
+        )
+        try {
+          rowBefore = staleContender
+            .prepare('SELECT * FROM mutation_lock WHERE id = 1')
+            .get()
+          staleCasChanges = staleContender.prepare(`
+            UPDATE mutation_lock
+            SET generation_token = ?, pid = ?, acquired_at_ms = ?
+            WHERE id = 1 AND generation_token = ?
+          `).run(
+            'stale-contender-generation',
+            process.pid,
+            Date.now(),
+            releasedOwnerToken,
+          ).changes
+          rowAfter = staleContender
+            .prepare('SELECT * FROM mutation_lock WHERE id = 1')
+            .get()
+        } finally {
+          staleContender.close()
+        }
+      },
+    })
+
+    expect(second.kind).toBe('acquired')
+    if (second.kind !== 'acquired') throw new Error('expected replacement owner')
+    expect(replacementToken).not.toBe(releasedOwnerToken)
+    expect(staleCasChanges).toBe(0)
+    expect(rowAfter).toEqual(rowBefore)
+    expect(rowAfter).toMatchObject({ generation_token: replacementToken })
+
+    expect(releaseLease({
+      knowledgeRoot,
+      leaseId: second.leaseId,
+    })).toEqual({ kind: 'released' })
+    const third = acquireWriterLease(knowledgeRoot)
+    expect(third).toMatchObject({ kind: 'acquired', epoch: 3 })
   })
 
   it('exports the pinned production mutation-lock takeover bound without a config seam', () => {
