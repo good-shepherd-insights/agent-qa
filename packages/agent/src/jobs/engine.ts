@@ -514,7 +514,31 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         if (error instanceof JobCancelledError && String(error.jobId) === String(job.id)) {
           return landCancelled(honoredAtCheckpoint ?? error.checkpointId)
         }
-        throw error
+
+        const reason = `handler-threw: ${error instanceof Error ? error.message : String(error)}`
+        if (job.attempts < declaration.maxAttempts) {
+          await store.recordFailure(job.id, { kind: 'retry', reason }, fence)
+          return {
+            ran: true,
+            disposition: 'retry-scheduled',
+            job,
+            checkpointsPublished: published,
+            handlerInvoked: true,
+            reason,
+            retryDelayMs: retryDelayMs(declaration.backoff, job.attempts),
+            attemptsRemaining: declaration.maxAttempts - job.attempts,
+          }
+        }
+
+        return failPermanently({
+          job,
+          payload: claim.payload,
+          declaration,
+          reason,
+          handlerInvoked: true,
+          published,
+          fence,
+        })
       }
 
       // The handler returned normally — but if a boundary refused along the way it swallowed
