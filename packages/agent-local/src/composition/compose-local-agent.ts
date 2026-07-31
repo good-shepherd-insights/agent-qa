@@ -44,6 +44,8 @@ import {
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
+  embedderWorkerProcessIsAlive,
+  embedderWorkerSocketPath,
   enqueueCurationCandidateProjection,
   foldRunOutcomes,
   heartbeatLease,
@@ -52,6 +54,7 @@ import {
   listQueuedCandidates,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
+  probeEmbedderWorkerSocket,
   purgeRecord,
   readCanonicalBundleAnchors,
   readEmbedderWorkerRegistration,
@@ -68,7 +71,7 @@ import {
   rollbackCurationJob,
   runMaintenanceTail,
   RUN_OUTCOMES_PROJECTION_VERSION,
-  type EmbedderWorkerRegistration,
+  type OwnedEmbedderWorkerRegistration,
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
@@ -175,9 +178,12 @@ export interface LocalDaemonCapabilities {
   readonly runMaintenanceTail: typeof runMaintenanceTail
   readonly resolveEmbedderWorkerEntryPath: () => string
   readonly readEmbedderWorkerRegistration: typeof readEmbedderWorkerRegistration
+  readonly embedderWorkerProcessIsAlive: typeof embedderWorkerProcessIsAlive
+  readonly embedderWorkerSocketPath: typeof embedderWorkerSocketPath
+  readonly probeEmbedderWorkerSocket: typeof probeEmbedderWorkerSocket
   readonly removeEmbedderWorkerRegistration: (
     agentQaRoot: string,
-    expected: EmbedderWorkerRegistration,
+    expected: OwnedEmbedderWorkerRegistration,
   ) => ReturnType<typeof removeEmbedderWorkerRegistration>
   readonly resetEmbedderCapability: () => void
   readonly loadDefaultGuardrailPolicy: () => ReturnType<typeof loadGuardrailPolicy>
@@ -207,6 +213,9 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   runMaintenanceTail,
   resolveEmbedderWorkerEntryPath,
   readEmbedderWorkerRegistration,
+  embedderWorkerProcessIsAlive,
+  embedderWorkerSocketPath,
+  probeEmbedderWorkerSocket,
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability: () => resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE),
   loadDefaultGuardrailPolicy: () => loadGuardrailPolicy(defaultGuardrailPolicyInput),

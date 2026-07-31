@@ -219,6 +219,9 @@ export {
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
+  embedderWorkerProcessIsAlive,
+  embedderWorkerSocketPath,
+  probeEmbedderWorkerSocket,
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
   writeEmbedderWorkerRegistration,
@@ -226,6 +229,8 @@ export {
 export type {
   EmbedderWorkerTimeoutPhase,
   EmbedderWorkerRegistration,
+  LegacyEmbedderWorkerRegistration,
+  OwnedEmbedderWorkerRegistration,
   ReadEmbedderWorkerRegistrationOutcome,
 } from './embedder-worker/worker-registration.js'
 export {

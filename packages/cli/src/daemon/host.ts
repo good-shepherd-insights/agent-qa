@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { rmSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
@@ -92,6 +94,12 @@ export type EmbedderWorkerRegistration = Extract<
   ReturnType<typeof LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration>,
   { kind: 'parsed' }
 >['registration']
+type ReadEmbedderWorkerRegistrationOutcome = ReturnType<
+  typeof LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration
+>
+type OwnedEmbedderWorkerRegistration = Parameters<
+  typeof LOCAL_DAEMON_CAPABILITIES.removeEmbedderWorkerRegistration
+>[1]
 
 /** Run-scoped daemon captures; raw child streams never enter daemon-events.jsonl. */
 export const RUN_CHILD_STDOUT_FILE = 'run-child.stdout.log'
@@ -176,9 +184,20 @@ export interface DaemonHostOperations {
     instanceId: string,
     signal: AbortSignal,
   ): Promise<EmbedderWorkerRegistration>
+  readEmbedderWorkerRegistration(agentQaRoot: string): ReadEmbedderWorkerRegistrationOutcome
+  embedderWorkerProcessIsAlive(pid: number): boolean
+  embedderWorkerSocketPath(
+    agentQaRoot: string,
+    projectRoot: string,
+    instanceId: string,
+  ): string
+  probeEmbedderWorkerSocket(socketPath: string): Promise<boolean>
+  signalEmbedderWorkerProcess(pid: number, signal: NodeJS.Signals): boolean
+  waitForEmbedderWorkerProcessExit(pid: number, timeoutMs: number): Promise<boolean>
+  unlinkEmbedderWorkerSocket(socketPath: string): void
   removeEmbedderWorkerRegistration(
     agentQaRoot: string,
-    expected: EmbedderWorkerRegistration,
+    expected: OwnedEmbedderWorkerRegistration,
   ): boolean
   resetEmbedderCapability(): void
   randomUUID(): string
@@ -250,6 +269,28 @@ async function waitForEmbedderWorkerReady(
   throw signal.reason
 }
 
+function signalEmbedderWorkerProcess(pid: number, signal: NodeJS.Signals): boolean {
+  try {
+    process.kill(pid, signal)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
+}
+
+async function waitForEmbedderWorkerProcessExit(
+  pid: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (LOCAL_DAEMON_CAPABILITIES.embedderWorkerProcessIsAlive(pid)) {
+    if (Date.now() >= deadline) return false
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+  }
+  return true
+}
+
 function defaultOperations(): DaemonHostOperations {
   return {
     setInterval: (callback, intervalMs) => setInterval(callback, intervalMs),
@@ -291,6 +332,13 @@ function defaultOperations(): DaemonHostOperations {
       },
     ),
     waitForEmbedderWorkerReady,
+    readEmbedderWorkerRegistration: LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration,
+    embedderWorkerProcessIsAlive: LOCAL_DAEMON_CAPABILITIES.embedderWorkerProcessIsAlive,
+    embedderWorkerSocketPath: LOCAL_DAEMON_CAPABILITIES.embedderWorkerSocketPath,
+    probeEmbedderWorkerSocket: LOCAL_DAEMON_CAPABILITIES.probeEmbedderWorkerSocket,
+    signalEmbedderWorkerProcess,
+    waitForEmbedderWorkerProcessExit,
+    unlinkEmbedderWorkerSocket: (socketPath) => rmSync(socketPath, { force: true }),
     removeEmbedderWorkerRegistration:
       LOCAL_DAEMON_CAPABILITIES.removeEmbedderWorkerRegistration,
     resetEmbedderCapability: LOCAL_DAEMON_CAPABILITIES.resetEmbedderCapability,
@@ -468,19 +516,23 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let authorPromise: Promise<CuratorAuthor> | undefined
   let embedderWorkerIdleTimer: ReturnType<typeof setTimeout> | undefined
 
-  type EmbedderWorkerExitReason = 'idle' | 'crash' | 'daemon-stop' | 'start-error'
+  type EmbedderWorkerExitReason = 'idle' | 'crash' | 'daemon-stop' | 'start-error' | 'replace'
   interface EmbedderWorkerRuntime {
-    readonly child: ChildProcess
+    readonly mode: 'spawned' | 'adopted'
+    readonly child?: ChildProcess
     readonly sessionId: string
-    readonly stdout: CapturedWorkerOutput
-    readonly stderr: CapturedWorkerOutput
+    readonly stdout?: CapturedWorkerOutput
+    readonly stderr?: CapturedWorkerOutput
     readonly exit: Promise<void>
     readonly resolveExit: () => void
+    ready: Promise<void>
     registration?: EmbedderWorkerRegistration
     stopReason?: Exclude<EmbedderWorkerExitReason, 'crash'>
+    finished: boolean
   }
 
   let embedderWorker: EmbedderWorkerRuntime | undefined
+  let embedderWorkerEnsure: Promise<EmbedderWorkerRuntime> | undefined
 
   const completion = new Promise<number>((resolve) => {
     resolveCompletion = resolve
@@ -499,6 +551,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     code: number | null,
     signal: NodeJS.Signals | null,
   ): void => {
+    if (runtime.finished) return
+    runtime.finished = true
     if (embedderWorker === runtime) {
       clearEmbedderWorkerIdleTimer()
       embedderWorker = undefined
@@ -515,6 +569,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           `Embedder worker registration cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
+      try {
+        operations.unlinkEmbedderWorkerSocket(runtime.registration.socketPath)
+      } catch (error) {
+        logger.error(
+          `Embedder worker socket cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
     }
     try {
       operations.resetEmbedderCapability()
@@ -528,13 +589,16 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       recordDaemonEvent({
         kind: 'embedder-worker-exit',
         sessionId: runtime.sessionId,
-        pid: runtime.child.pid,
+        pid: runtime.registration?.pid ?? runtime.child?.pid,
+        mode: runtime.mode,
         code,
         signal,
         reason: runtime.stopReason ?? 'crash',
-        stdout: runtime.stdout.read(),
-        stderr: runtime.stderr.read(),
-        outputTruncated: runtime.stdout.wasTruncated() || runtime.stderr.wasTruncated(),
+        stdout: runtime.stdout?.read() ?? '',
+        stderr: runtime.stderr?.read() ?? '',
+        outputTruncated:
+          (runtime.stdout?.wasTruncated() ?? false)
+          || (runtime.stderr?.wasTruncated() ?? false),
       })
     } catch (error) {
       logger.error(
@@ -570,33 +634,189 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     clearEmbedderWorkerIdleTimer()
     runtime.stopReason ??= reason
 
-    if (runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
+    if (runtime.mode === 'adopted') {
+      const registration = runtime.registration
+      if (registration === undefined) {
+        throw new Error('Adopted embedder worker is missing its retained registration')
+      }
+      const termWasSent = operations.signalEmbedderWorkerProcess(registration.pid, 'SIGTERM')
+      if (
+        await operations.waitForEmbedderWorkerProcessExit(
+          registration.pid,
+          EMBEDDER_WORKER_TERM_GRACE_MS,
+        )
+      ) {
+        finishEmbedderWorkerExit(runtime, null, termWasSent ? 'SIGTERM' : null)
+        return
+      }
+
+      recordDaemonEvent({
+        kind: 'embedder-worker-terminate-escalated',
+        sessionId: runtime.sessionId,
+        pid: registration.pid,
+        instanceId: registration.instanceId,
+        mode: runtime.mode,
+        signal: 'SIGKILL',
+        reason,
+      })
+      const killWasSent = operations.signalEmbedderWorkerProcess(registration.pid, 'SIGKILL')
+      if (
+        await operations.waitForEmbedderWorkerProcessExit(
+          registration.pid,
+          EMBEDDER_WORKER_TERM_GRACE_MS,
+        )
+      ) {
+        finishEmbedderWorkerExit(runtime, null, killWasSent ? 'SIGKILL' : null)
+        return
+      }
+      throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
+    }
+
+    const child = runtime.child
+    if (child === undefined) throw new Error('Spawned embedder worker is missing its child handle')
+
+    if (child.exitCode !== null || child.signalCode !== null) {
       if (await waitForEmbedderWorkerExit(runtime, EMBEDDER_WORKER_TERM_GRACE_MS)) return
       throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
     }
 
-    runtime.child.kill('SIGTERM')
+    child.kill('SIGTERM')
     if (await waitForEmbedderWorkerExit(runtime, EMBEDDER_WORKER_TERM_GRACE_MS)) return
 
     recordDaemonEvent({
       kind: 'embedder-worker-terminate-escalated',
       sessionId: runtime.sessionId,
-      pid: runtime.child.pid,
+      pid: child.pid,
+      mode: runtime.mode,
       signal: 'SIGKILL',
       reason,
     })
-    runtime.child.kill('SIGKILL')
+    child.kill('SIGKILL')
     if (await waitForEmbedderWorkerExit(runtime, EMBEDDER_WORKER_TERM_GRACE_MS)) return
     throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
   }
 
-  const ensureEmbedderWorker = async (sessionId: string): Promise<EmbedderWorkerRuntime> => {
-    while (embedderWorker?.stopReason !== undefined) await embedderWorker.exit
-    if (embedderWorker !== undefined) {
-      clearEmbedderWorkerIdleTimer()
-      return embedderWorker
+  const cleanOwnedEmbedderWorkerResources = (
+    registration: OwnedEmbedderWorkerRegistration,
+  ): void => {
+    operations.removeEmbedderWorkerRegistration(input.agentQaRoot, registration)
+    if (registration.schemaVersion === 2) {
+      operations.unlinkEmbedderWorkerSocket(registration.socketPath)
+    }
+    operations.resetEmbedderCapability()
+  }
+
+  const terminateRegisteredEmbedderWorker = async (
+    registration: EmbedderWorkerRegistration,
+    sessionId: string,
+  ): Promise<void> => {
+    operations.signalEmbedderWorkerProcess(registration.pid, 'SIGTERM')
+    if (
+      await operations.waitForEmbedderWorkerProcessExit(
+        registration.pid,
+        EMBEDDER_WORKER_TERM_GRACE_MS,
+      )
+    ) return
+
+    recordDaemonEvent({
+      kind: 'embedder-worker-terminate-escalated',
+      sessionId,
+      pid: registration.pid,
+      instanceId: registration.instanceId,
+      mode: 'orphan-replacement',
+      signal: 'SIGKILL',
+      reason: 'replace',
+    })
+    operations.signalEmbedderWorkerProcess(registration.pid, 'SIGKILL')
+    if (
+      await operations.waitForEmbedderWorkerProcessExit(
+        registration.pid,
+        EMBEDDER_WORKER_TERM_GRACE_MS,
+      )
+    ) return
+    throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
+  }
+
+  type EmbedderWorkerPreflight =
+    | { readonly kind: 'adopt'; readonly registration: EmbedderWorkerRegistration }
+    | {
+        readonly kind: 'spawn'
+        readonly outcome: 'fresh' | 'replaced' | 'stale-recovered'
+        readonly replacedRegistration?: EmbedderWorkerRegistration
+      }
+
+  const classifyEmbedderWorkerBeforeSpawn = async (
+    sessionId: string,
+  ): Promise<EmbedderWorkerPreflight> => {
+    const projectRoot = dirname(input.agentQaRoot)
+    const outcome = operations.readEmbedderWorkerRegistration(input.agentQaRoot)
+    if (outcome.kind === 'absent') return { kind: 'spawn', outcome: 'fresh' }
+    if (outcome.kind === 'malformed') {
+      throw new Error('Embedder worker registration is malformed; refusing to overwrite it')
+    }
+    if (outcome.kind === 'stale-recoverable') {
+      cleanOwnedEmbedderWorkerResources(outcome.registration)
+      return { kind: 'spawn', outcome: 'stale-recovered' }
     }
 
+    const registration = outcome.registration
+    const expectedSocketPath = operations.embedderWorkerSocketPath(
+      input.agentQaRoot,
+      projectRoot,
+      registration.instanceId,
+    )
+    if (registration.socketPath !== expectedSocketPath) {
+      throw new Error('Embedder worker registration names a non-owned socket path')
+    }
+
+    // The socket probe intentionally precedes every possible signal delivery. A schema-valid file
+    // narrows the pid-reuse hazard to the one registered pid; ESRCH confirmation bounds the stop.
+    const socketAnswers = await operations.probeEmbedderWorkerSocket(registration.socketPath)
+    const processIsAlive = operations.embedderWorkerProcessIsAlive(registration.pid)
+    const profileMatches = isDeepStrictEqual(registration.profile, DEFAULT_EMBEDDING_PROFILE)
+    if (socketAnswers && processIsAlive && profileMatches) {
+      return { kind: 'adopt', registration }
+    }
+
+    if (processIsAlive) await terminateRegisteredEmbedderWorker(registration, sessionId)
+    cleanOwnedEmbedderWorkerResources(registration)
+    return { kind: 'spawn', outcome: 'replaced', replacedRegistration: registration }
+  }
+
+  const adoptEmbedderWorker = (
+    sessionId: string,
+    registration: EmbedderWorkerRegistration,
+  ): EmbedderWorkerRuntime => {
+    let resolveExit = (): void => undefined
+    const exit = new Promise<void>((resolve) => {
+      resolveExit = resolve
+    })
+    const runtime: EmbedderWorkerRuntime = {
+      mode: 'adopted',
+      sessionId,
+      exit,
+      resolveExit,
+      ready: Promise.resolve(),
+      registration,
+      finished: false,
+    }
+    embedderWorker = runtime
+    recordDaemonEvent({
+      kind: 'embedder-worker-start',
+      sessionId,
+      pid: registration.pid,
+      instanceId: registration.instanceId,
+      modelId: registration.profile.model_id,
+      mode: runtime.mode,
+      outcome: 'adopted',
+    })
+    return runtime
+  }
+
+  const spawnFreshEmbedderWorker = async (
+    sessionId: string,
+    preflight: Extract<EmbedderWorkerPreflight, { kind: 'spawn' }>,
+  ): Promise<EmbedderWorkerRuntime> => {
     const projectRoot = dirname(input.agentQaRoot)
     const entryPath = operations.resolveEmbedderWorkerEntryPath()
     const workerInstanceId = operations.randomUUID()
@@ -622,12 +842,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       resolveExit = resolve
     })
     const runtime: EmbedderWorkerRuntime = {
+      mode: 'spawned',
       child,
       sessionId,
       stdout: captureWorkerOutput(child.stdout),
       stderr: captureWorkerOutput(child.stderr),
       exit,
       resolveExit,
+      ready: Promise.resolve(),
+      finished: false,
     }
     embedderWorker = runtime
     child.once('error', (error) => {
@@ -635,13 +858,18 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     })
     child.once('close', (code, signal) => finishEmbedderWorkerExit(runtime, code, signal))
 
-    try {
+    runtime.ready = (async () => {
       recordDaemonEvent({
         kind: 'embedder-worker-start',
         sessionId,
         pid: child.pid,
         instanceId: workerInstanceId,
         modelId: DEFAULT_EMBEDDING_PROFILE.model_id,
+        mode: runtime.mode,
+        outcome: preflight.outcome,
+        ...(preflight.replacedRegistration === undefined
+          ? {}
+          : { replacedInstanceId: preflight.replacedRegistration.instanceId }),
       })
       const startAbort = new AbortController()
       const startTimeout = operations.setTimeout(() => {
@@ -651,7 +879,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       }, EMBEDDER_WORKER_START_TIMEOUT_MS)
       startTimeout.unref?.()
       try {
-        runtime.registration = await Promise.race([
+        const registration = await Promise.race([
           operations.waitForEmbedderWorkerReady(
             input.agentQaRoot,
             child.pid,
@@ -662,16 +890,82 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
             throw new Error('Embedder worker exited before publishing its registration')
           }),
         ])
+        const expectedSocketPath = operations.embedderWorkerSocketPath(
+          input.agentQaRoot,
+          projectRoot,
+          workerInstanceId,
+        )
+        if (
+          registration.socketPath !== expectedSocketPath
+          || !isDeepStrictEqual(registration.profile, DEFAULT_EMBEDDING_PROFILE)
+        ) {
+          throw new Error('Embedder worker published a registration outside its owned generation')
+        }
+        runtime.registration = registration
       } finally {
         operations.clearTimeout(startTimeout)
         if (!startAbort.signal.aborted) startAbort.abort()
       }
+    })()
+    try {
+      await runtime.ready
     } catch (error) {
       runtime.stopReason ??= 'start-error'
       await stopEmbedderWorker('start-error')
       throw error
     }
     return runtime
+  }
+
+  const initializeEmbedderWorker = async (
+    sessionId: string,
+  ): Promise<EmbedderWorkerRuntime> => {
+    const preflight = await classifyEmbedderWorkerBeforeSpawn(sessionId)
+    return preflight.kind === 'adopt'
+      ? adoptEmbedderWorker(sessionId, preflight.registration)
+      : spawnFreshEmbedderWorker(sessionId, preflight)
+  }
+
+  const ensureEmbedderWorker = async (sessionId: string): Promise<EmbedderWorkerRuntime> => {
+    while (true) {
+      const current = embedderWorker
+      if (current !== undefined) {
+        if (current.stopReason !== undefined) {
+          await current.exit
+          continue
+        }
+        clearEmbedderWorkerIdleTimer()
+        await current.ready
+        if (current.mode === 'adopted') {
+          const registration = current.registration
+          if (registration === undefined) {
+            throw new Error('Adopted embedder worker is missing its retained registration')
+          }
+          const socketAnswers = await operations.probeEmbedderWorkerSocket(
+            registration.socketPath,
+          )
+          const processIsAlive = operations.embedderWorkerProcessIsAlive(registration.pid)
+          if (socketAnswers && processIsAlive) return current
+          if (processIsAlive) {
+            await stopEmbedderWorker('replace')
+          } else {
+            current.stopReason = 'replace'
+            finishEmbedderWorkerExit(current, null, null)
+          }
+          continue
+        }
+        return current
+      }
+
+      if (embedderWorkerEnsure !== undefined) return embedderWorkerEnsure
+      const pending = initializeEmbedderWorker(sessionId)
+      embedderWorkerEnsure = pending
+      try {
+        return await pending
+      } finally {
+        if (embedderWorkerEnsure === pending) embedderWorkerEnsure = undefined
+      }
+    }
   }
 
   const acquireRequiredEmbedder = () => operations.acquireEmbedder({

@@ -177,7 +177,7 @@ describe.sequential('embedder worker discovery', () => {
     await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
   })
 
-  it('round-trips schema v2 instance identity and classifies v1 as stale-recoverable', () => {
+  it('round-trips v2 identity and atomically recovers a stale v1 registration', () => {
     const projectRoot = temporaryProject('registration-v2')
     const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
     const instanceId = '00000000-0000-4000-8000-000000000101'
@@ -201,17 +201,20 @@ describe.sequential('embedder worker discovery', () => {
       registration: expected,
     })
 
-    writeFileSync(embedderWorkerRegistrationPath(agentQaRoot), `${JSON.stringify({
+    const legacy = {
       schemaVersion: 1,
       pid: process.pid,
       socketPath,
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
       startedAtMs: expected.startedAtMs,
-    })}\n`)
+    } as const
+    writeFileSync(embedderWorkerRegistrationPath(agentQaRoot), `${JSON.stringify(legacy)}\n`)
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
       kind: 'stale-recoverable',
       registration: { schemaVersion: 1 },
     })
+    expect(removeEmbedderWorkerRegistration(agentQaRoot, legacy)).toBe(true)
+    expect(removeEmbedderWorkerRegistration(agentQaRoot, legacy)).toBe(false)
   })
 
   it('derives distinct bounded socket paths for concurrent worker instances', () => {

@@ -95,6 +95,9 @@ export type EmbedderWorkerRegistration = z.infer<typeof embedderWorkerRegistrati
 export type LegacyEmbedderWorkerRegistration = z.infer<
   typeof legacyEmbedderWorkerRegistrationSchema
 >
+export type OwnedEmbedderWorkerRegistration =
+  | EmbedderWorkerRegistration
+  | LegacyEmbedderWorkerRegistration
 
 export type ReadEmbedderWorkerRegistrationOutcome =
   | { kind: 'absent' }
@@ -290,11 +293,17 @@ export function embedderWorkerProcessIsAlive(pid: number): boolean {
 }
 
 function sameRegistration(
-  left: EmbedderWorkerRegistration,
-  right: EmbedderWorkerRegistration,
+  left: OwnedEmbedderWorkerRegistration,
+  right: OwnedEmbedderWorkerRegistration,
 ): boolean {
-  return left.instanceId === right.instanceId
-    && left.pid === right.pid
+  if (left.schemaVersion !== right.schemaVersion) return false
+  if (left.schemaVersion === 2 && right.schemaVersion === 2) {
+    return left.instanceId === right.instanceId
+      && left.pid === right.pid
+      && left.startedAtMs === right.startedAtMs
+      && left.socketPath === right.socketPath
+  }
+  return left.pid === right.pid
     && left.startedAtMs === right.startedAtMs
     && left.socketPath === right.socketPath
 }
@@ -309,12 +318,15 @@ export interface RemoveEmbedderWorkerRegistrationOptions {
 /** Atomically quarantine and remove only the exact registration owned by the caller. */
 export function removeEmbedderWorkerRegistration(
   agentQaRoot: string,
-  expected: EmbedderWorkerRegistration,
+  expected: OwnedEmbedderWorkerRegistration,
   options: RemoveEmbedderWorkerRegistrationOptions = {},
 ): boolean {
   const file = embedderWorkerRegistrationPath(agentQaRoot)
   const parent = dirname(file)
-  const quarantine = `${file}.remove-${expected.instanceId}-${randomUUID()}`
+  const ownerDiscriminator = expected.schemaVersion === 2
+    ? expected.instanceId
+    : `legacy-${expected.pid}-${expected.startedAtMs}`
+  const quarantine = `${file}.remove-${ownerDiscriminator}-${randomUUID()}`
   const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
 
   try {
@@ -327,9 +339,13 @@ export function removeEmbedderWorkerRegistration(
   options.afterQuarantine?.(quarantine)
 
   const outcome = readEmbedderWorkerRegistrationFile(quarantine)
+  const quarantinedRegistration = outcome.kind === 'parsed'
+    || outcome.kind === 'stale-recoverable'
+    ? outcome.registration
+    : undefined
   if (
-    outcome.kind === 'parsed'
-    && sameRegistration(outcome.registration, expected)
+    quarantinedRegistration !== undefined
+    && sameRegistration(quarantinedRegistration, expected)
   ) {
     unlinkSync(quarantine)
     fsyncDirectory(parent)

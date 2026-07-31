@@ -61,7 +61,7 @@ const roots: string[] = []
 
 function orphanRegistration(
   instanceId = ORPHAN_INSTANCE_ID,
-  profile = DEFAULT_EMBEDDING_PROFILE,
+  profile: EmbedderWorkerRegistration['profile'] = DEFAULT_EMBEDDING_PROFILE,
 ): EmbedderWorkerRegistration {
   return {
     schemaVersion: 2,
@@ -368,6 +368,13 @@ function startHarness(
       }
       return true
     },
+    embedderWorkerSocketPath: (
+      _agentQaRoot: string,
+      _projectRoot: string,
+      instanceId: string,
+    ) => instanceId === overrides.orphanRegistration?.instanceId
+      ? overrides.orphanRegistration.socketPath
+      : join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
     embedderWorkerProcessIsAlive: (pid: number) => livePids.has(pid),
     signalEmbedderWorkerProcess: (pid: number, signal: NodeJS.Signals) => {
       processSignals.push({ pid, signal })
