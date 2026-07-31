@@ -1,5 +1,6 @@
 import {
   closeSync,
+  existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -52,26 +53,54 @@ export interface AppendDrainSessionReceiptOptions {
   readonly fsyncDirectory?: (directory: string) => void
 }
 
-/** Append one daemon-owned drain provenance record without rewriting earlier sessions. */
+/** Best-effort directory durability; a platform that cannot fsync a directory is not an error. */
+function bestEffortFsyncDirectory(directory: string): void {
+  let descriptor: number | undefined
+  try {
+    descriptor = openSync(directory, 'r')
+    fsyncSync(descriptor)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (
+      code !== 'ENOENT'
+      && code !== 'EINVAL'
+      && code !== 'EISDIR'
+      && code !== 'EPERM'
+      && code !== 'ENOTSUP'
+    ) {
+      throw error
+    }
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+  }
+}
+
+/**
+ * Append one daemon-owned drain provenance record without rewriting earlier sessions.
+ *
+ * WR-03: fsyncing the file makes its bytes durable, but on the append that CREATES the ledger
+ * the directory entry pointing at those bytes is not. A crash in that window loses the whole
+ * chain even though the append returned success, and a client waiting on the first receipt of a
+ * session then times out or repeats work it cannot see was done. Later appends touch no
+ * directory entry, so they pay nothing.
+ */
 export function appendDrainSessionReceipt(
   agentQaRoot: string,
   receipt: DrainSessionReceipt,
   options: AppendDrainSessionReceiptOptions = {},
 ): void {
-  void options
   const validated = drainSessionReceiptSchema.parse(receipt)
   mkdirSync(agentQaRoot, { recursive: true, mode: 0o700 })
-  const descriptor = openSync(
-    join(agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE),
-    'a',
-    0o600,
-  )
+  const file = join(agentQaRoot, DRAIN_SESSION_RECEIPTS_FILE)
+  const created = !existsSync(file)
+  const descriptor = openSync(file, 'a', 0o600)
   try {
     writeFileSync(descriptor, `${JSON.stringify(validated)}\n`, 'utf8')
     fsyncSync(descriptor)
   } finally {
     closeSync(descriptor)
   }
+  if (created) (options.fsyncDirectory ?? bestEffortFsyncDirectory)(agentQaRoot)
 }
 
 /**
