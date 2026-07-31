@@ -23,9 +23,20 @@ import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import type { EmbedderPort } from '../embedder-port.js'
+import { resolveProcessIncarnation } from '../lease/writer-lease.js'
 
 export const EMBEDDER_WORKER_REGISTRATION_FILE = 'embedder-worker.json'
-export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 2
+export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 3
+
+/**
+ * What a worker records when it cannot attribute its own process.
+ *
+ * The field is required rather than optional on purpose: an absent incarnation would let a forged
+ * registration opt out of the check entirely. A worker that genuinely cannot resolve its own start
+ * time says so explicitly, and the host reads that as `unverifiable` — which withholds every
+ * signal, exactly as an unresolvable pid does.
+ */
+export const EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION = 'unresolved'
 export const EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION = 1
 export const EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES = 100
 export const MAX_EMBEDDER_WORKER_BODY_BYTES = 4_194_304
@@ -70,9 +81,29 @@ export const embeddingProfileSchema = z
   })
   .strict()
 
-const legacyEmbedderWorkerRegistrationSchema = z
+const v1EmbedderWorkerRegistrationSchema = z
   .object({
     schemaVersion: z.literal(1),
+    pid: z.number().int().positive(),
+    socketPath: z.string().min(1),
+    profile: embeddingProfileSchema,
+    startedAtMs: z.number().int().nonnegative(),
+  })
+  .strict()
+
+/**
+ * v2 predates the incarnation field, so it can never be adopted — only recovered.
+ *
+ * There is no upgrade shim by design (the v2-rewrite no-shims rule): a resident v2 worker carries
+ * no proof of which process it is, and the one thing this plan forbids is signalling a pid on
+ * evidence weaker than an OS-anchored identity. Demoting v2 to stale-recoverable is the only
+ * reading that keeps that promise — the registration is quarantined, the pid is left alone, and a
+ * fresh v3 generation starts on its own socket.
+ */
+const v2EmbedderWorkerRegistrationSchema = z
+  .object({
+    schemaVersion: z.literal(2),
+    instanceId: z.string().uuid(),
     pid: z.number().int().positive(),
     socketPath: z.string().min(1),
     profile: embeddingProfileSchema,
@@ -88,13 +119,15 @@ export const embedderWorkerRegistrationSchema = z
     socketPath: z.string().min(1),
     profile: embeddingProfileSchema,
     startedAtMs: z.number().int().nonnegative(),
+    /** The registering process's own OS-anchored start-time token, or the unverifiable sentinel. */
+    incarnation: z.string().min(1),
   })
   .strict()
 
 export type EmbedderWorkerRegistration = z.infer<typeof embedderWorkerRegistrationSchema>
-export type LegacyEmbedderWorkerRegistration = z.infer<
-  typeof legacyEmbedderWorkerRegistrationSchema
->
+export type LegacyEmbedderWorkerRegistration =
+  | z.infer<typeof v1EmbedderWorkerRegistrationSchema>
+  | z.infer<typeof v2EmbedderWorkerRegistrationSchema>
 export type OwnedEmbedderWorkerRegistration =
   | EmbedderWorkerRegistration
   | LegacyEmbedderWorkerRegistration
@@ -106,6 +139,9 @@ export type ReadEmbedderWorkerRegistrationOutcome =
   | { kind: 'parsed'; registration: EmbedderWorkerRegistration }
 
 export type ProcessIsAlive = (pid: number) => boolean
+
+/** Three-valued because the third value is a refusal, never a permissive default. */
+export type EmbedderWorkerIncarnationVerdict = 'match' | 'mismatch' | 'unverifiable'
 
 const singleEmbeddingRequestSchema = z.discriminatedUnion('method', [
   z
@@ -264,7 +300,11 @@ function readEmbedderWorkerRegistrationFile(
     const parsedJson = JSON.parse(raw) as unknown
     const parsed = embedderWorkerRegistrationSchema.safeParse(parsedJson)
     if (parsed.success) return { kind: 'parsed', registration: parsed.data }
-    const legacy = legacyEmbedderWorkerRegistrationSchema.safeParse(parsedJson)
+    const superseded = v2EmbedderWorkerRegistrationSchema.safeParse(parsedJson)
+    if (superseded.success) {
+      return { kind: 'stale-recoverable', registration: superseded.data }
+    }
+    const legacy = v1EmbedderWorkerRegistrationSchema.safeParse(parsedJson)
     return legacy.success
       ? { kind: 'stale-recoverable', registration: legacy.data }
       : { kind: 'malformed' }
@@ -297,15 +337,43 @@ function sameRegistration(
   right: OwnedEmbedderWorkerRegistration,
 ): boolean {
   if (left.schemaVersion !== right.schemaVersion) return false
-  if (left.schemaVersion === 2 && right.schemaVersion === 2) {
-    return left.instanceId === right.instanceId
-      && left.pid === right.pid
-      && left.startedAtMs === right.startedAtMs
-      && left.socketPath === right.socketPath
-  }
-  return left.pid === right.pid
+  const sharedFieldsMatch = left.pid === right.pid
     && left.startedAtMs === right.startedAtMs
     && left.socketPath === right.socketPath
+  if (left.schemaVersion === 3 && right.schemaVersion === 3) {
+    return sharedFieldsMatch
+      && left.instanceId === right.instanceId
+      && left.incarnation === right.incarnation
+  }
+  if (left.schemaVersion === 2 && right.schemaVersion === 2) {
+    return sharedFieldsMatch && left.instanceId === right.instanceId
+  }
+  return sharedFieldsMatch
+}
+
+/**
+ * Compare the registration's recorded incarnation against the pid's CURRENT occupant.
+ *
+ * CR-05: a schema-valid registration naming a live pid whose socket has stopped answering is not
+ * proof that the worker is still there. Once the worker died, the kernel is free to hand its pid to
+ * a stranger, and every decision keyed on that number alone targets whoever holds it now. The one
+ * fact that separates them is assigned by the OS and cannot be forged from inside the file: when
+ * the process at that pid started.
+ *
+ * `mismatch` means the registered worker is provably gone; `unverifiable` means we cannot say, and
+ * that is a refusal rather than a default-allow. Neither may be signalled — and neither needs to
+ * be, because generation-specific sockets (Plan 24) let a fresh worker take a clean address without
+ * the old pid ever being touched.
+ */
+export function verifyEmbedderWorkerIncarnation(
+  registration: EmbedderWorkerRegistration,
+): EmbedderWorkerIncarnationVerdict {
+  if (registration.incarnation === EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION) {
+    return 'unverifiable'
+  }
+  const occupant = resolveProcessIncarnation(registration.pid)
+  if (occupant === undefined) return 'unverifiable'
+  return occupant === registration.incarnation ? 'match' : 'mismatch'
 }
 
 export interface RemoveEmbedderWorkerRegistrationOptions {
@@ -323,9 +391,9 @@ export function removeEmbedderWorkerRegistration(
 ): boolean {
   const file = embedderWorkerRegistrationPath(agentQaRoot)
   const parent = dirname(file)
-  const ownerDiscriminator = expected.schemaVersion === 2
-    ? expected.instanceId
-    : `legacy-${expected.pid}-${expected.startedAtMs}`
+  const ownerDiscriminator = expected.schemaVersion === 1
+    ? `legacy-${expected.pid}-${expected.startedAtMs}`
+    : expected.instanceId
   const quarantine = `${file}.remove-${ownerDiscriminator}-${randomUUID()}`
   const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
 

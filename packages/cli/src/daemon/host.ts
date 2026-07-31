@@ -204,6 +204,8 @@ export interface DaemonHostOperations {
     instanceId: string,
   ): string
   probeEmbedderWorkerSocket(socketPath: string): Promise<boolean>
+  verifyEmbedderWorkerIncarnation:
+    typeof LOCAL_DAEMON_CAPABILITIES.verifyEmbedderWorkerIncarnation
   signalEmbedderWorkerProcess(pid: number, signal: NodeJS.Signals): boolean
   waitForEmbedderWorkerProcessExit(pid: number, timeoutMs: number): Promise<boolean>
   unlinkEmbedderWorkerSocket(socketPath: string): void
@@ -349,6 +351,8 @@ function defaultOperations(): DaemonHostOperations {
     embedderWorkerProcessIsAlive: LOCAL_DAEMON_CAPABILITIES.embedderWorkerProcessIsAlive,
     embedderWorkerSocketPath: LOCAL_DAEMON_CAPABILITIES.embedderWorkerSocketPath,
     probeEmbedderWorkerSocket: LOCAL_DAEMON_CAPABILITIES.probeEmbedderWorkerSocket,
+    verifyEmbedderWorkerIncarnation:
+      LOCAL_DAEMON_CAPABILITIES.verifyEmbedderWorkerIncarnation,
     signalEmbedderWorkerProcess,
     waitForEmbedderWorkerProcessExit,
     unlinkEmbedderWorkerSocket: (socketPath) => rmSync(socketPath, { force: true }),
@@ -654,6 +658,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       if (registration === undefined) {
         throw new Error('Adopted embedder worker is missing its retained registration')
       }
+      // An adopted worker can die between adoption and shutdown, and its pid can be recycled in
+      // that window — the same CR-05 hazard, one layer later. A proven mismatch means there is
+      // nothing left to terminate, so the exit finishes without a signal. 'unverifiable'
+      // deliberately still signals: unlike replacement, shutdown has no other way to reap the
+      // worker, and refusing there would leak the process on every host with no incarnation source.
+      if (operations.verifyEmbedderWorkerIncarnation(registration) === 'mismatch') {
+        finishEmbedderWorkerExit(runtime, null, null)
+        return
+      }
       const termWasSent = operations.signalEmbedderWorkerProcess(registration.pid, 'SIGTERM')
       if (
         await operations.waitForEmbedderWorkerProcessExit(
@@ -715,12 +728,19 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     registration: OwnedEmbedderWorkerRegistration,
   ): void => {
     operations.removeEmbedderWorkerRegistration(input.agentQaRoot, registration)
-    if (registration.schemaVersion === 2) {
+    // Only the current schema reaches cleanup through a generation-path validation, so only its
+    // socket is provably ours to unlink. Superseded schemas get their registration quarantined and
+    // their named path left alone, exactly as Plan 24 decided for v1.
+    if (registration.schemaVersion === 3) {
       operations.unlinkEmbedderWorkerSocket(registration.socketPath)
     }
     operations.resetEmbedderCapability()
   }
 
+  /**
+   * CR-05: the ONLY signal path for a registered worker pid, and it is unreachable without a
+   * verified 'match' incarnation verdict at its single call site below.
+   */
   const terminateRegisteredEmbedderWorker = async (
     registration: EmbedderWorkerRegistration,
     sessionId: string,
@@ -758,6 +778,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         readonly kind: 'spawn'
         readonly outcome: 'fresh' | 'replaced' | 'stale-recovered'
         readonly replacedRegistration?: EmbedderWorkerRegistration
+        /** True when a live registered pid was left alone because it could not be attributed. */
+        readonly signalWithheld?: boolean
+        readonly incarnationVerdict?: 'mismatch' | 'unverifiable'
       }
 
   const classifyEmbedderWorkerBeforeSpawn = async (
@@ -784,8 +807,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       throw new Error('Embedder worker registration names a non-owned socket path')
     }
 
-    // The socket probe intentionally precedes every possible signal delivery. A schema-valid file
-    // narrows the pid-reuse hazard to the one registered pid; ESRCH confirmation bounds the stop.
+    // An answering generation socket is stronger evidence than pid identity could ever be: the
+    // worker responded on the exact address only its own generation binds. Adoption therefore
+    // never consults the incarnation, and never signals.
     const socketAnswers = await operations.probeEmbedderWorkerSocket(registration.socketPath)
     const processIsAlive = operations.embedderWorkerProcessIsAlive(registration.pid)
     const profileMatches = isDeepStrictEqual(registration.profile, DEFAULT_EMBEDDING_PROFILE)
@@ -793,9 +817,30 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return { kind: 'adopt', registration }
     }
 
-    if (processIsAlive) await terminateRegisteredEmbedderWorker(registration, sessionId)
+    // CR-05: liveness plus a dead socket says the WORKER is gone, not who holds its pid now. The
+    // OS-anchored incarnation is the only thing that can tell those apart, and without a 'match'
+    // the daemon replaces the worker without touching that process at all — which it can afford to
+    // do because the fresh generation binds its own socket and cannot collide with the occupant.
+    let signalWithheld = false
+    let incarnationVerdict: 'match' | 'mismatch' | 'unverifiable' | undefined
+    if (processIsAlive) {
+      incarnationVerdict = operations.verifyEmbedderWorkerIncarnation(registration)
+      if (incarnationVerdict === 'match') {
+        await terminateRegisteredEmbedderWorker(registration, sessionId)
+      } else {
+        signalWithheld = true
+      }
+    }
     cleanOwnedEmbedderWorkerResources(registration)
-    return { kind: 'spawn', outcome: 'replaced', replacedRegistration: registration }
+    return {
+      kind: 'spawn',
+      outcome: 'replaced',
+      replacedRegistration: registration,
+      signalWithheld,
+      ...(incarnationVerdict === 'mismatch' || incarnationVerdict === 'unverifiable'
+        ? { incarnationVerdict }
+        : {}),
+    }
   }
 
   const adoptEmbedderWorker = (
@@ -884,7 +929,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         outcome: preflight.outcome,
         ...(preflight.replacedRegistration === undefined
           ? {}
-          : { replacedInstanceId: preflight.replacedRegistration.instanceId }),
+          : {
+            replacedInstanceId: preflight.replacedRegistration.instanceId,
+            // The refusal is a durable fact, not a silent one: an operator reading the event log
+            // can see that a live registered pid was deliberately left unsignalled and why.
+            signalWithheld: preflight.signalWithheld === true,
+            ...(preflight.incarnationVerdict === undefined
+              ? {}
+              : { incarnationVerdict: preflight.incarnationVerdict }),
+          }),
       })
       const startAbort = new AbortController()
       const startTimeout = operations.setTimeout(() => {

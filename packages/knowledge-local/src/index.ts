@@ -216,17 +216,21 @@ export type { EmbedderPort } from './embedder-port.js'
 export {
   EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
   EMBEDDER_WORKER_REGISTRATION_FILE,
+  EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
+  EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
   EmbedderWorkerTimeoutError,
   embedderWorkerProcessIsAlive,
   embedderWorkerSocketPath,
   probeEmbedderWorkerSocket,
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
+  verifyEmbedderWorkerIncarnation,
   writeEmbedderWorkerRegistration,
 } from './embedder-worker/worker-registration.js'
 export type {
+  EmbedderWorkerIncarnationVerdict,
   EmbedderWorkerTimeoutPhase,
   EmbedderWorkerRegistration,
   LegacyEmbedderWorkerRegistration,

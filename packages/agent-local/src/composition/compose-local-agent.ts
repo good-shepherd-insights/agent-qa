@@ -64,6 +64,7 @@ import {
   releaseLease,
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability,
+  verifyEmbedderWorkerIncarnation,
   resolvePurgeAffectedSet,
   resolveRollbackAffectedSet,
   rollbackAffectedSetFingerprint,
@@ -181,6 +182,8 @@ export interface LocalDaemonCapabilities {
   readonly embedderWorkerProcessIsAlive: typeof embedderWorkerProcessIsAlive
   readonly embedderWorkerSocketPath: typeof embedderWorkerSocketPath
   readonly probeEmbedderWorkerSocket: typeof probeEmbedderWorkerSocket
+  /** CR-05: no surface may signal a registered worker pid without this verdict returning 'match'. */
+  readonly verifyEmbedderWorkerIncarnation: typeof verifyEmbedderWorkerIncarnation
   readonly removeEmbedderWorkerRegistration: (
     agentQaRoot: string,
     expected: OwnedEmbedderWorkerRegistration,
@@ -216,6 +219,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   embedderWorkerProcessIsAlive,
   embedderWorkerSocketPath,
   probeEmbedderWorkerSocket,
+  verifyEmbedderWorkerIncarnation,
   removeEmbedderWorkerRegistration,
   resetEmbedderCapability: () => resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE),
   loadDefaultGuardrailPolicy: () => loadGuardrailPolicy(defaultGuardrailPolicyInput),
