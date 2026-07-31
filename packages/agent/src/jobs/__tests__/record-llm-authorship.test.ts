@@ -302,7 +302,9 @@ describe('recordLlmAuthorship through the engine (D-10 across a host boundary)',
     const fence = await store.adoptEpoch(1)
     const authored: unknown[] = []
 
-    // Host one: authors, then dies before it can complete the job.
+    // Host one: authors, then its handler throws before it can complete the job. The engine
+    // lands that exception as a retry, releasing the claim while keeping the authored
+    // checkpoint durable for a fresh host.
     const first = countingModel('model-a')
     const hostOne = queueOver(
       store,
@@ -313,11 +315,13 @@ describe('recordLlmAuthorship through the engine (D-10 across a host boundary)',
       }),
     )
     await hostOne.enqueue('analyze-run', {}, 'run-1')
-    await expect(hostOne.runNextJob({ fence })).rejects.toThrow('the host died')
+    await expect(hostOne.runNextJob({ fence })).resolves.toMatchObject({
+      disposition: 'retry-scheduled',
+      reason: 'handler-threw: the host died after the model answered',
+    })
     expect(first.invocations()).toBe(1)
     expect(store.checkpoints()).toHaveLength(1)
-
-    await hostOne.recoverAbandonedClaims({ fence })
+    expect(store.rows()[0]).toMatchObject({ status: 'queued', claimed: false, attempts: 1 })
 
     // Host two shares nothing with host one but the store: a new engine, a new registry, a new
     // handler closure, and a model whose counter starts at zero. That last one is the whole

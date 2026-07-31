@@ -85,9 +85,7 @@ function statusOf(store: FakeJobStore, jobId: string): string | undefined {
 type DispositionVerb = 'recordFailure' | 'failAndChain'
 
 function dispositionCallCount(store: FakeJobStore, verb: DispositionVerb): number {
-  return (store as FakeJobStore & {
-    callCount(dispositionVerb: DispositionVerb): number
-  }).callCount(verb)
+  return store.callCount(verb)
 }
 
 describe('bounded retry (D-18)', () => {
@@ -330,13 +328,14 @@ describe('thrown-handler disposition edges (386-21)', () => {
 
     expect(dispositionCallCount(store, 'recordFailure')).toBe(1)
     expect(dispositionCallCount(store, 'failAndChain')).toBe(0)
-    expect(store.rows().find((row) => row.id === String(enqueued.job.id))).toMatchObject({
+    const row = store.rows().find((candidate) => candidate.id === String(enqueued.job.id))
+    expect(row).toMatchObject({
       status: 'queued',
       attempts: 1,
       claimed: true,
-      lastFailureKind: undefined,
-      lastFailureReason: undefined,
     })
+    expect(row).not.toHaveProperty('lastFailureKind')
+    expect(row).not.toHaveProperty('lastFailureReason')
   })
 
   it('calls the retry disposition exactly once for one thrown claim', async () => {

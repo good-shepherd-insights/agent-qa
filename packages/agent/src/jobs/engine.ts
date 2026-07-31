@@ -514,6 +514,10 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         if (error instanceof JobCancelledError && String(error.jobId) === String(job.id)) {
           return landCancelled(honoredAtCheckpoint ?? error.checkpointId)
         }
+        // Declaration refusals are engine invariants, not handler failures. Turning one into
+        // a retry would hide a programming error behind backoff and make an impossible
+        // checkpoint look transient.
+        if (error instanceof UndeclaredJobCheckpointError) throw error
 
         const reason = `handler-threw: ${error instanceof Error ? error.message : String(error)}`
         if (job.attempts < declaration.maxAttempts) {

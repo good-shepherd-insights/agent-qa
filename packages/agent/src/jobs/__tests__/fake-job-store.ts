@@ -49,6 +49,7 @@ interface Row {
 export interface FakeJobStore extends JobStorePort {
   rows(): readonly Row[]
   checkpoints(): readonly { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[]
+  callCount(verb: 'recordFailure' | 'failAndChain'): number
 }
 
 /** The three statuses a job never leaves. A cancel arriving at one of them changes nothing. */
@@ -57,6 +58,10 @@ const TERMINAL_STATUSES: readonly Job['status'][] = ['done', 'failed', 'cancelle
 export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   const rows = new Map<string, Row>()
   const published: { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[] = []
+  const callCounts = {
+    recordFailure: 0,
+    failAndChain: 0,
+  }
   let epoch = 0
 
   function requireFence(fence: JobStoreFence): void {
@@ -122,6 +127,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   return {
     rows: () => [...rows.values()].map((row) => ({ ...row })),
     checkpoints: () => published.map((entry) => ({ ...entry })),
+    callCount: (verb) => callCounts[verb],
 
     async adoptEpoch(next: number): Promise<JobStoreFence> {
       if (next < epoch) throw new StaleJobStoreEpochError(next, epoch)
@@ -170,6 +176,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       next: readonly JobInsert[],
       fence: JobStoreFence,
     ): Promise<JobFailAndChainOutcome> {
+      callCounts.failAndChain += 1
       requireFence(fence)
       const now = clock.now()
       return atomically(() => {
@@ -189,6 +196,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       disposition: JobFailureDisposition,
       fence: JobStoreFence,
     ): Promise<void> {
+      callCounts.recordFailure += 1
       requireFence(fence)
       const row = requireRow(jobId)
       row.claimed = false
