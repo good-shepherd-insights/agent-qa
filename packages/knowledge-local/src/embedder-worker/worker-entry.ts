@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { chmodSync, rmSync } from 'node:fs'
 import {
   createServer,
@@ -201,6 +202,8 @@ async function acquireProcessLocalEmbedder(profile: EmbeddingProfile): Promise<E
 export interface RunEmbedderWorkerOptions {
   readonly projectRoot: string
   readonly profile: EmbeddingProfile
+  /** Host-minted generation identity; standalone workers mint their own nonce. */
+  readonly instanceId?: string
 }
 
 export interface EmbedderWorkerHandle {
@@ -214,7 +217,8 @@ export async function runEmbedderWorker(
 ): Promise<EmbedderWorkerHandle> {
   const projectRoot = resolve(options.projectRoot)
   const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
-  const socketPath = embedderWorkerSocketPath(agentQaRoot, projectRoot)
+  const instanceId = options.instanceId ?? randomUUID()
+  const socketPath = embedderWorkerSocketPath(agentQaRoot, projectRoot, instanceId)
   const embedder = await acquireProcessLocalEmbedder(options.profile)
   const server = createEmbedderServer(embedder)
   prepareEmbedderWorkerSocketParent(socketPath)
@@ -222,6 +226,7 @@ export async function runEmbedderWorker(
 
   const registration: EmbedderWorkerRegistration = {
     schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
+    instanceId,
     pid: process.pid,
     socketPath,
     profile: options.profile,
@@ -242,9 +247,15 @@ export async function runEmbedderWorker(
     registration,
     close() {
       closePromise ??= (async () => {
-        await closeServer(server)
-        removeEmbedderWorkerRegistration(agentQaRoot, registration)
-        if (process.platform !== 'win32') rmSync(socketPath, { force: true })
+        try {
+          await closeServer(server)
+        } finally {
+          try {
+            removeEmbedderWorkerRegistration(agentQaRoot, registration)
+          } finally {
+            if (process.platform !== 'win32') rmSync(socketPath, { force: true })
+          }
+        }
       })()
       return closePromise
     },
@@ -262,6 +273,7 @@ async function main(): Promise<void> {
   const handle = await runEmbedderWorker({
     projectRoot,
     profile: parseProfile(process.argv[3]),
+    ...(process.argv[4] === undefined ? {} : { instanceId: process.argv[4] }),
   })
 
   let stopping = false

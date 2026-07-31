@@ -88,6 +88,11 @@ export const EMBEDDER_WORKER_OUTPUT_CAP_BYTES = 65_536
 
 export { EMBEDDER_WORKER_START_TIMEOUT_MS, EMBEDDER_WORKER_TERM_GRACE_MS }
 
+export type EmbedderWorkerRegistration = Extract<
+  ReturnType<typeof LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration>,
+  { kind: 'parsed' }
+>['registration']
+
 /** Run-scoped daemon captures; raw child streams never enter daemon-events.jsonl. */
 export const RUN_CHILD_STDOUT_FILE = 'run-child.stdout.log'
 export const RUN_CHILD_STDERR_FILE = 'run-child.stderr.log'
@@ -168,9 +173,13 @@ export interface DaemonHostOperations {
   waitForEmbedderWorkerReady(
     agentQaRoot: string,
     pid: number | undefined,
+    instanceId: string,
     signal: AbortSignal,
-  ): Promise<void>
-  removeEmbedderWorkerRegistration(agentQaRoot: string): boolean
+  ): Promise<EmbedderWorkerRegistration>
+  removeEmbedderWorkerRegistration(
+    agentQaRoot: string,
+    expected: EmbedderWorkerRegistration,
+  ): boolean
   resetEmbedderCapability(): void
   randomUUID(): string
   trace?(step: DaemonHostTraceStep): void
@@ -210,15 +219,17 @@ const DEFAULT_LOGGER: DaemonHostLogger = {
 async function waitForEmbedderWorkerReady(
   agentQaRoot: string,
   pid: number | undefined,
+  instanceId: string,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<EmbedderWorkerRegistration> {
   while (!signal.aborted) {
     const outcome = LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration(agentQaRoot)
     if (
       outcome.kind === 'parsed'
       && (pid === undefined || outcome.registration.pid === pid)
+      && outcome.registration.instanceId === instanceId
     ) {
-      return
+      return outcome.registration
     }
     if (outcome.kind === 'malformed') {
       throw new Error('Embedder worker registration is malformed')
@@ -465,6 +476,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     readonly stderr: CapturedWorkerOutput
     readonly exit: Promise<void>
     readonly resolveExit: () => void
+    registration?: EmbedderWorkerRegistration
     stopReason?: Exclude<EmbedderWorkerExitReason, 'crash'>
   }
 
@@ -492,12 +504,17 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       embedderWorker = undefined
     }
 
-    try {
-      operations.removeEmbedderWorkerRegistration(input.agentQaRoot)
-    } catch (error) {
-      logger.error(
-        `Embedder worker registration cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
+    if (runtime.registration !== undefined) {
+      try {
+        operations.removeEmbedderWorkerRegistration(
+          input.agentQaRoot,
+          runtime.registration,
+        )
+      } catch (error) {
+        logger.error(
+          `Embedder worker registration cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
     }
     try {
       operations.resetEmbedderCapability()
@@ -582,12 +599,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
     const projectRoot = dirname(input.agentQaRoot)
     const entryPath = operations.resolveEmbedderWorkerEntryPath()
+    const workerInstanceId = operations.randomUUID()
     const spawnOptions: EmbedderWorkerSpawnOptions = {
       command: process.execPath,
       args: [
         entryPath,
         projectRoot,
         JSON.stringify(DEFAULT_EMBEDDING_PROFILE),
+        workerInstanceId,
       ],
       cwd: projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -621,6 +640,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         kind: 'embedder-worker-start',
         sessionId,
         pid: child.pid,
+        instanceId: workerInstanceId,
         modelId: DEFAULT_EMBEDDING_PROFILE.model_id,
       })
       const startAbort = new AbortController()
@@ -631,10 +651,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       }, EMBEDDER_WORKER_START_TIMEOUT_MS)
       startTimeout.unref?.()
       try {
-        await Promise.race([
+        runtime.registration = await Promise.race([
           operations.waitForEmbedderWorkerReady(
             input.agentQaRoot,
             child.pid,
+            workerInstanceId,
             startAbort.signal,
           ),
           runtime.exit.then(() => {

@@ -73,15 +73,19 @@ async function eventually(
 function registration(
   projectRoot: string,
   overrides: Partial<{
+    instanceId: string
     pid: number
     socketPath: string
   }> = {},
 ): void {
   const agentQaRoot = join(projectRoot, '.agent-qa')
+  const instanceId = overrides.instanceId ?? '00000000-0000-4000-8000-000000000100'
   writeEmbedderWorkerRegistration(agentQaRoot, {
     schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
+    instanceId,
     pid: overrides.pid ?? process.pid,
-    socketPath: overrides.socketPath ?? embedderWorkerSocketPath(agentQaRoot, projectRoot),
+    socketPath:
+      overrides.socketPath ?? embedderWorkerSocketPath(agentQaRoot, projectRoot, instanceId),
     profile: STATIC_FLOOR_EMBEDDING_PROFILE,
     startedAtMs: Date.now(),
   })
@@ -342,7 +346,11 @@ describe.sequential('embedder worker discovery', () => {
     const agentQaRoot = join(projectRoot, '.agent-qa')
     process.chdir(projectRoot)
     registration(projectRoot, {
-      socketPath: embedderWorkerSocketPath(agentQaRoot, projectRoot),
+      socketPath: embedderWorkerSocketPath(
+        agentQaRoot,
+        projectRoot,
+        '00000000-0000-4000-8000-000000000100',
+      ),
     })
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({ kind: 'parsed' })
 

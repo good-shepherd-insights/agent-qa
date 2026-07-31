@@ -4,12 +4,14 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { request, type IncomingMessage } from 'node:http'
@@ -23,9 +25,8 @@ import { z } from 'zod'
 import type { EmbedderPort } from '../embedder-port.js'
 
 export const EMBEDDER_WORKER_REGISTRATION_FILE = 'embedder-worker.json'
-export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 1
+export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 2
 export const EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION = 1
-export const EMBEDDER_WORKER_SOCKET_FILE = 'embedder-worker.sock'
 export const EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES = 100
 export const MAX_EMBEDDER_WORKER_BODY_BYTES = 4_194_304
 
@@ -69,9 +70,20 @@ export const embeddingProfileSchema = z
   })
   .strict()
 
+const legacyEmbedderWorkerRegistrationSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    pid: z.number().int().positive(),
+    socketPath: z.string().min(1),
+    profile: embeddingProfileSchema,
+    startedAtMs: z.number().int().nonnegative(),
+  })
+  .strict()
+
 export const embedderWorkerRegistrationSchema = z
   .object({
     schemaVersion: z.literal(EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION),
+    instanceId: z.string().uuid(),
     pid: z.number().int().positive(),
     socketPath: z.string().min(1),
     profile: embeddingProfileSchema,
@@ -80,10 +92,14 @@ export const embedderWorkerRegistrationSchema = z
   .strict()
 
 export type EmbedderWorkerRegistration = z.infer<typeof embedderWorkerRegistrationSchema>
+export type LegacyEmbedderWorkerRegistration = z.infer<
+  typeof legacyEmbedderWorkerRegistrationSchema
+>
 
 export type ReadEmbedderWorkerRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
+  | { kind: 'stale-recoverable'; registration: LegacyEmbedderWorkerRegistration }
   | { kind: 'parsed'; registration: EmbedderWorkerRegistration }
 
 export type ProcessIsAlive = (pid: number) => boolean
@@ -139,18 +155,31 @@ export function embedderWorkerRegistrationPath(agentQaRoot: string): string {
   return join(agentQaRoot, EMBEDDER_WORKER_REGISTRATION_FILE)
 }
 
-/** Resolve a project-scoped UDS path without crossing conservative POSIX sun_path limits. */
-export function embedderWorkerSocketPath(agentQaRoot: string, projectRoot: string): string {
+function instanceDiscriminator(instanceId: string): string {
+  const validated = z.string().uuid().parse(instanceId)
+  return createHash('sha256').update(validated).digest('hex').slice(0, 12)
+}
+
+/** Resolve an instance-scoped UDS path without crossing conservative POSIX sun_path limits. */
+export function embedderWorkerSocketPath(
+  agentQaRoot: string,
+  projectRoot: string,
+  instanceId: string,
+): string {
   const hash = projectHash(projectRoot)
-  if (process.platform === 'win32') return `\\\\.\\pipe\\agent-qa-embedder-${hash}`
+  const instance = instanceDiscriminator(instanceId)
+  if (process.platform === 'win32') {
+    return `\\\\.\\pipe\\agent-qa-embedder-${hash}-${instance}`
+  }
 
   const canonicalAgentQaRoot = join(realpathSync(dirname(agentQaRoot)), basename(agentQaRoot))
-  const projectLocal = join(canonicalAgentQaRoot, EMBEDDER_WORKER_SOCKET_FILE)
+  const socketFile = `embedder-worker-${instance}.sock`
+  const projectLocal = join(canonicalAgentQaRoot, socketFile)
   if (Buffer.byteLength(projectLocal) <= EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES) {
     return projectLocal
   }
 
-  const fallback = join(tmpdir(), `agent-qa-${hash}`, EMBEDDER_WORKER_SOCKET_FILE)
+  const fallback = join(tmpdir(), `agent-qa-${hash}`, `${instance}.sock`)
   if (Buffer.byteLength(fallback) > EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES) {
     throw new Error(
       `OS temporary directory is too deep for an agent-qa embedder socket: ${fallback}`,
@@ -218,10 +247,9 @@ export function writeEmbedderWorkerRegistration(
   )
 }
 
-export function readEmbedderWorkerRegistration(
-  agentQaRoot: string,
+function readEmbedderWorkerRegistrationFile(
+  file: string,
 ): ReadEmbedderWorkerRegistrationOutcome {
-  const file = embedderWorkerRegistrationPath(agentQaRoot)
   let raw: string
   try {
     raw = readFileSync(file, 'utf8')
@@ -230,13 +258,22 @@ export function readEmbedderWorkerRegistration(
   }
 
   try {
-    const parsed = embedderWorkerRegistrationSchema.safeParse(JSON.parse(raw))
-    return parsed.success
-      ? { kind: 'parsed', registration: parsed.data }
+    const parsedJson = JSON.parse(raw) as unknown
+    const parsed = embedderWorkerRegistrationSchema.safeParse(parsedJson)
+    if (parsed.success) return { kind: 'parsed', registration: parsed.data }
+    const legacy = legacyEmbedderWorkerRegistrationSchema.safeParse(parsedJson)
+    return legacy.success
+      ? { kind: 'stale-recoverable', registration: legacy.data }
       : { kind: 'malformed' }
   } catch {
     return { kind: 'malformed' }
   }
+}
+
+export function readEmbedderWorkerRegistration(
+  agentQaRoot: string,
+): ReadEmbedderWorkerRegistrationOutcome {
+  return readEmbedderWorkerRegistrationFile(embedderWorkerRegistrationPath(agentQaRoot))
 }
 
 /** Signal-zero liveness probe: EPERM proves existence; only ESRCH proves a stale pid. */
@@ -256,28 +293,58 @@ function sameRegistration(
   left: EmbedderWorkerRegistration,
   right: EmbedderWorkerRegistration,
 ): boolean {
-  return left.pid === right.pid
+  return left.instanceId === right.instanceId
+    && left.pid === right.pid
     && left.startedAtMs === right.startedAtMs
     && left.socketPath === right.socketPath
 }
 
-/** Remove only the registration still owned by the caller; never unlink a replacement worker. */
+export interface RemoveEmbedderWorkerRegistrationOptions {
+  /** Test-only barrier after quarantine publication and before ownership verification. */
+  readonly afterQuarantine?: (quarantinePath: string) => void
+  /** Focused durability seam; production uses the best-effort platform fsync helper. */
+  readonly fsyncDirectory?: (directory: string) => void
+}
+
+/** Atomically quarantine and remove only the exact registration owned by the caller. */
 export function removeEmbedderWorkerRegistration(
   agentQaRoot: string,
-  expected?: EmbedderWorkerRegistration,
+  expected: EmbedderWorkerRegistration,
+  options: RemoveEmbedderWorkerRegistrationOptions = {},
 ): boolean {
   const file = embedderWorkerRegistrationPath(agentQaRoot)
-  if (expected !== undefined) {
-    const current = readEmbedderWorkerRegistration(agentQaRoot)
-    if (current.kind !== 'parsed' || !sameRegistration(current.registration, expected)) {
-      return false
-    }
+  const parent = dirname(file)
+  const quarantine = `${file}.remove-${expected.instanceId}-${randomUUID()}`
+  const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
+
+  try {
+    renameSync(file, quarantine)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+  fsyncDirectory(parent)
+  options.afterQuarantine?.(quarantine)
+
+  const outcome = readEmbedderWorkerRegistrationFile(quarantine)
+  if (
+    outcome.kind === 'parsed'
+    && sameRegistration(outcome.registration, expected)
+  ) {
+    unlinkSync(quarantine)
+    fsyncDirectory(parent)
+    return true
   }
 
-  const existed = existsSync(file)
-  rmSync(file, { force: true })
-  if (existed) bestEffortFsyncDirectory(dirname(file))
-  return existed
+  try {
+    linkSync(quarantine, file)
+    fsyncDirectory(parent)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+  unlinkSync(quarantine)
+  fsyncDirectory(parent)
+  return false
 }
 
 export function probeEmbedderWorkerSocket(socketPath: string): Promise<boolean> {

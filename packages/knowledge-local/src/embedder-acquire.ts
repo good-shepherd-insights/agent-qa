@@ -164,7 +164,11 @@ export async function discoverEmbedderWorker(
   const { registration } = outcome
   let expectedSocketPath: string
   try {
-    expectedSocketPath = embedderWorkerSocketPath(agentQaRoot, projectRoot)
+    expectedSocketPath = embedderWorkerSocketPath(
+      agentQaRoot,
+      projectRoot,
+      registration.instanceId,
+    )
   } catch {
     return { kind: 'no-worker' }
   }

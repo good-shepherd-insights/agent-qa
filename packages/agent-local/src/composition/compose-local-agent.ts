@@ -68,6 +68,7 @@ import {
   rollbackCurationJob,
   runMaintenanceTail,
   RUN_OUTCOMES_PROJECTION_VERSION,
+  type EmbedderWorkerRegistration,
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
@@ -176,6 +177,7 @@ export interface LocalDaemonCapabilities {
   readonly readEmbedderWorkerRegistration: typeof readEmbedderWorkerRegistration
   readonly removeEmbedderWorkerRegistration: (
     agentQaRoot: string,
+    expected: EmbedderWorkerRegistration,
   ) => ReturnType<typeof removeEmbedderWorkerRegistration>
   readonly resetEmbedderCapability: () => void
   readonly loadDefaultGuardrailPolicy: () => ReturnType<typeof loadGuardrailPolicy>
@@ -205,9 +207,7 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   runMaintenanceTail,
   resolveEmbedderWorkerEntryPath,
   readEmbedderWorkerRegistration,
-  removeEmbedderWorkerRegistration: (agentQaRoot: string) => (
-    removeEmbedderWorkerRegistration(agentQaRoot)
-  ),
+  removeEmbedderWorkerRegistration,
   resetEmbedderCapability: () => resetEmbedderCapability(DEFAULT_EMBEDDING_PROFILE),
   loadDefaultGuardrailPolicy: () => loadGuardrailPolicy(defaultGuardrailPolicyInput),
   pinLocalHeadlessExecutionContext: () => {

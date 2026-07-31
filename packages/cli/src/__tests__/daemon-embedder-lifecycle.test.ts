@@ -19,6 +19,7 @@ import type {
   JobRecoveryHost,
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
+import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -32,6 +33,7 @@ import {
   EMBEDDER_WORKER_TERM_GRACE_MS,
   runDaemonHost,
   type DaemonHostOperations,
+  type EmbedderWorkerRegistration,
   type EmbedderWorkerSpawnOptions,
 } from '../daemon/host.js'
 
@@ -160,8 +162,9 @@ function startHarness(
     waitForEmbedderWorkerReady: (
       agentQaRoot: string,
       pid: number | undefined,
+      instanceId: string,
       signal: AbortSignal,
-    ) => Promise<void>
+    ) => Promise<EmbedderWorkerRegistration>
     workerIgnoresTerm: boolean
   }> = {},
 ): LifecycleHarness {
@@ -176,6 +179,7 @@ function startHarness(
   const intervals = new Map<number, { callback: () => void; intervalMs: number }>()
   const timeouts = new Map<number, ScheduledTimeout>()
   const workers: StubWorker[] = []
+  const workerRegistrations = new Map<number, EmbedderWorkerRegistration>()
   const spawnRequests: EmbedderWorkerSpawnOptions[] = []
   const events: Array<Record<string, unknown>> = []
   const errors: string[] = []
@@ -268,14 +272,49 @@ function startHarness(
       spawnRequests.push(request)
       const worker = new StubWorker(7_100 + workers.length, overrides.workerIgnoresTerm)
       workers.push(worker)
+      const instanceId = request.args[3]
+      if (instanceId === undefined) throw new Error('Worker instance id was not passed')
+      const registration: EmbedderWorkerRegistration = {
+        schemaVersion: 2,
+        instanceId,
+        pid: worker.pid,
+        socketPath: join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
+        profile: DEFAULT_EMBEDDING_PROFILE,
+        startedAtMs: Date.now(),
+      }
+      workerRegistrations.set(worker.pid, registration)
       mkdirSync(agentQaRoot, { recursive: true })
-      writeFileSync(workerRegistrationPath, '{}\n')
+      writeFileSync(workerRegistrationPath, `${JSON.stringify(registration)}\n`)
       return worker.asChildProcess()
     },
     waitForEmbedderWorkerReady:
-      overrides.waitForEmbedderWorkerReady ?? (() => Promise.resolve()),
-    removeEmbedderWorkerRegistration: () => {
+      overrides.waitForEmbedderWorkerReady ?? ((_agentQaRoot, pid, instanceId) => {
+        const registration = pid === undefined ? undefined : workerRegistrations.get(pid)
+        if (registration === undefined || registration.instanceId !== instanceId) {
+          return Promise.reject(new Error('Expected matching worker registration'))
+        }
+        return Promise.resolve(registration)
+      }),
+    removeEmbedderWorkerRegistration: (
+      _agentQaRoot: string,
+      expected: EmbedderWorkerRegistration,
+    ) => {
+      let current: unknown
+      try {
+        current = JSON.parse(readFileSync(workerRegistrationPath, 'utf8')) as unknown
+      } catch {
+        return false
+      }
+      if (
+        typeof current !== 'object'
+        || current === null
+        || !('instanceId' in current)
+        || current.instanceId !== expected.instanceId
+      ) {
+        return false
+      }
       rmSync(workerRegistrationPath, { force: true })
+      return true
     },
     resetEmbedderCapability: resetCapability,
   } as unknown as Partial<DaemonHostOperations>
@@ -360,7 +399,12 @@ describe('daemon embedder-worker lifecycle', () => {
       'start-timeout',
       [drainReport(1, 0)],
       {
-        waitForEmbedderWorkerReady: (_agentQaRoot, _pid, signal) => new Promise(
+        waitForEmbedderWorkerReady: (
+          _agentQaRoot,
+          _pid,
+          _instanceId,
+          signal,
+        ) => new Promise(
           (_resolve, reject) => signal.addEventListener('abort', () => {
             observedStartRefusal = signal.reason
             reject(signal.reason)
