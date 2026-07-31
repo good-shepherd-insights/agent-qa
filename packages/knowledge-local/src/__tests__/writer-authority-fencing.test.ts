@@ -36,7 +36,6 @@ import {
 } from '../lease/writer-lease.js'
 import {
   makeBundleDraftFixture,
-  makeDiscriminantFixture,
 } from './fixtures/bundle-fixture.js'
 
 interface ExpectedAuthoritySurface {
@@ -84,11 +83,29 @@ type AcquireWithClaimHook = (
   },
 ) => ReturnType<typeof acquireWriterLease>
 
+type RebuildMutationFamily =
+  | 'project-bundle'
+  | 'checkpoint-passive'
+  | 'remove-missing-bundles'
+  | 'complete-rendering-epoch'
+  | 'clear-rebuild-request'
+
+type RebuildWithMutationHooks = (
+  options: Omit<publicSurface.RebuildIndexOptions, 'hooks'> & {
+    hooks?: {
+      beforeTransactionCommit?: () => void
+      beforeMutationAuthority?: (family: RebuildMutationFamily) => void
+      insideMutationAuthority?: (family: RebuildMutationFamily) => void
+    }
+  },
+) => ReturnType<typeof publicSurface.rebuildIndex>
+
 const expectedSurface = publicSurface as typeof publicSurface
   & ExpectedAuthoritySurface
   & ExpectedCorruptEpochSurface
 const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
 const acquireWithClaimHook = acquireWriterLease as AcquireWithClaimHook
+const rebuildWithMutationHooks = publicSurface.rebuildIndex as RebuildWithMutationHooks
 const acquireFailClosed = acquireWriterLease as (
   knowledgeRoot: string,
 ) => ExpectedAcquireOutcome
@@ -148,7 +165,12 @@ describe('writer authority and bundle publication are one indivisible protocol (
   }
 
   function input(label: string): PublishBundleInput {
+    const key = slugBranch(label)
     const draft = makeBundleDraftFixture({
+      anchors: [
+        { t: 'el', role: 'Button', name: label },
+        { t: 'page', route: `/${key}` },
+      ],
       scope: { tier: 'product', key: PRODUCT },
       summary: `${label} checkout control`,
       body: `${label} is the currently verified checkout control.`,
@@ -156,7 +178,11 @@ describe('writer authority and bundle publication are one indivisible protocol (
     })
     return {
       draft,
-      discriminant: makeDiscriminantFixture(),
+      discriminant: {
+        kind: 'fact',
+        subtype: 'selector',
+        elementRef: { role: 'Button', name: label },
+      },
       originClass: 'agent-verified',
       createdAtOrdinal: 42,
       screenStates: [],
@@ -171,6 +197,62 @@ describe('writer authority and bundle publication are one indivisible protocol (
       provenance: { mode: 'standalone', sourceDescription: `${label} authority fixture` },
       artifacts: [],
       evidenceMarkdown: `${label} authority evidence.\n`,
+    }
+  }
+
+  function publishIndexFixture(label: string): Extract<
+    ReturnType<typeof publishBundle>,
+    { kind: 'published' }
+  > {
+    const published = publishBundle(
+      config({ leaseId: 'fixture-writer', epoch: 0 }),
+      input(label),
+    )
+    expect(published.kind).toBe('published')
+    if (published.kind !== 'published') throw new Error('expected published index fixture')
+    return published
+  }
+
+  function readIndexMeta(key: string): string | undefined {
+    const db = new DatabaseSync(publicSurface.indexDbPath(knowledgeRoot), {
+      readOnly: true,
+    })
+    try {
+      return db.prepare('SELECT v FROM meta WHERE k = ?').get(key)?.v as
+        | string
+        | undefined
+    } finally {
+      db.close()
+    }
+  }
+
+  function writeIndexMeta(key: string, value: string): void {
+    const db = new DatabaseSync(publicSurface.indexDbPath(knowledgeRoot))
+    try {
+      db.prepare('UPDATE meta SET v = ? WHERE k = ?').run(value, key)
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } finally {
+      db.close()
+    }
+  }
+
+  function indexRecordExists(bundleId: string): boolean {
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      return reader.db
+        .prepare('SELECT 1 FROM records WHERE bundle_id = ?')
+        .get(bundleId) !== undefined
+    } finally {
+      reader.db.close()
+    }
+  }
+
+  function indexRecordCount(): number {
+    const reader = publicSurface.openIndexReaderConnection(knowledgeRoot)
+    try {
+      return Number(reader.db.prepare('SELECT COUNT(*) AS count FROM records').get()?.count)
+    } finally {
+      reader.db.close()
     }
   }
 
@@ -342,6 +424,292 @@ describe('writer authority and bundle publication are one indivisible protocol (
     } finally {
       reader.db.close()
     }
+  })
+
+  it('refuses takeover before rendering-epoch completion without stamping it current', async () => {
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    const staleRenderingEpoch = String(publicSurface.INDEX_RENDERING_SCHEMA_VERSION - 1)
+    writeIndexMeta('rendering_schema_version', staleRenderingEpoch)
+    const authority = acquireAuthority()
+    let targetCalls = 0
+
+    await expect(rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        beforeMutationAuthority: (family) => {
+          if (family !== 'complete-rendering-epoch') return
+          targetCalls += 1
+          makeStale()
+          expect(acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })).toMatchObject({ kind: 'acquired', epoch: authority.epoch + 1 })
+        },
+      },
+    })).rejects.toBeInstanceOf(WriterAuthorityLostError)
+
+    expect(targetCalls).toBe(1)
+    expect(readIndexMeta('rendering_schema_version')).toBe(staleRenderingEpoch)
+  })
+
+  it('holds authority while rendering-epoch completion stamps the current version', async () => {
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    writeIndexMeta(
+      'rendering_schema_version',
+      String(publicSurface.INDEX_RENDERING_SCHEMA_VERSION - 1),
+    )
+    const authority = acquireAuthority()
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+
+    await rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        insideMutationAuthority: (family) => {
+          if (family !== 'complete-rendering-epoch') return
+          makeStale()
+          contender = acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
+        },
+      },
+    })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(readIndexMeta('rendering_schema_version')).toBe(
+      String(publicSurface.INDEX_RENDERING_SCHEMA_VERSION),
+    )
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+  })
+
+  it('refuses takeover before rebuild-request removal and preserves the marker', async () => {
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    publicSurface.requestRebuild({
+      knowledgeRoot,
+      reason: 'corrupt',
+      detail: 'authority refusal must retain this rebuild request',
+    })
+    const authority = acquireAuthority()
+    let targetCalls = 0
+
+    await expect(rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        beforeMutationAuthority: (family) => {
+          if (family !== 'clear-rebuild-request') return
+          targetCalls += 1
+          makeStale()
+          expect(acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })).toMatchObject({ kind: 'acquired', epoch: authority.epoch + 1 })
+        },
+      },
+    })).rejects.toBeInstanceOf(WriterAuthorityLostError)
+
+    expect(targetCalls).toBe(1)
+    expect(publicSurface.readRebuildRequest(knowledgeRoot).present).toBe(true)
+  })
+
+  it('holds authority while rebuild-request removal consumes the marker', async () => {
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    publicSurface.requestRebuild({
+      knowledgeRoot,
+      reason: 'corrupt',
+      detail: 'authority hold must cover rebuild request removal',
+    })
+    const authority = acquireAuthority()
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+
+    await rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        insideMutationAuthority: (family) => {
+          if (family !== 'clear-rebuild-request') return
+          makeStale()
+          contender = acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
+        },
+      },
+    })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(publicSurface.readRebuildRequest(knowledgeRoot)).toEqual({ present: false })
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+  })
+
+  it('refuses takeover before checkpointPassive and retains every indexed row', async () => {
+    const bundleCount = publicSurface.CHECKPOINT_EVERY_N_BUNDLES
+    for (let index = 0; index < bundleCount; index += 1) {
+      publishIndexFixture(`checkpoint-refusal-${index}`)
+    }
+    expect(await publicSurface.rebuildIndex({ knowledgeRoot })).toMatchObject({
+      projected: bundleCount,
+    })
+    const authority = acquireAuthority()
+    let targetCalls = 0
+
+    await expect(rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        beforeMutationAuthority: (family) => {
+          if (family !== 'checkpoint-passive') return
+          targetCalls += 1
+          makeStale()
+          expect(acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })).toMatchObject({ kind: 'acquired', epoch: authority.epoch + 1 })
+        },
+      },
+    })).rejects.toBeInstanceOf(WriterAuthorityLostError)
+
+    expect(targetCalls).toBe(1)
+    expect(indexRecordCount()).toBe(bundleCount)
+  })
+
+  it('holds authority through checkpointPassive and releases it before later units', async () => {
+    const bundleCount = publicSurface.CHECKPOINT_EVERY_N_BUNDLES
+    for (let index = 0; index < bundleCount; index += 1) {
+      publishIndexFixture(`checkpoint-held-${index}`)
+    }
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    const authority = acquireAuthority()
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+
+    const report = await rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        insideMutationAuthority: (family) => {
+          if (family !== 'checkpoint-passive') return
+          makeStale()
+          contender = acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
+        },
+      },
+    })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(report).toMatchObject({ projected: 0, removed: 0 })
+    expect(indexRecordCount()).toBe(bundleCount)
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+  })
+
+  it('refuses takeover before removeMissingBundles and preserves the stale row', async () => {
+    const published = publishIndexFixture('remove-missing-refusal')
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    rmSync(published.dir, { recursive: true, force: true })
+    const authority = acquireAuthority()
+    let targetCalls = 0
+
+    await expect(rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        beforeMutationAuthority: (family) => {
+          if (family !== 'remove-missing-bundles') return
+          targetCalls += 1
+          makeStale()
+          expect(acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })).toMatchObject({ kind: 'acquired', epoch: authority.epoch + 1 })
+        },
+      },
+    })).rejects.toBeInstanceOf(WriterAuthorityLostError)
+
+    expect(targetCalls).toBe(1)
+    expect(indexRecordExists(published.id)).toBe(true)
+  })
+
+  it('holds authority through removeMissingBundles and commits the stale-row deletion', async () => {
+    const published = publishIndexFixture('remove-missing-held')
+    await publicSurface.rebuildIndex({ knowledgeRoot })
+    rmSync(published.dir, { recursive: true, force: true })
+    const authority = acquireAuthority()
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+
+    const report = await rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        insideMutationAuthority: (family) => {
+          if (family !== 'remove-missing-bundles') return
+          makeStale()
+          contender = acquireWithDeadline(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
+        },
+      },
+    })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(report).toMatchObject({ projected: 0, removed: 1 })
+    expect(indexRecordExists(published.id)).toBe(false)
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: authority.epoch + 1,
+    })
+  })
+
+  it('releases authority between multi-bundle projection units and stays idempotent', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      publishIndexFixture(`between-unit-heartbeat-${index}`)
+    }
+    const authority = acquireAuthority()
+    let projectBoundaries = 0
+    const heartbeatOutcomes: ReturnType<typeof heartbeatLease>[] = []
+
+    const first = await rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+      hooks: {
+        beforeMutationAuthority: (family) => {
+          if (family !== 'project-bundle') return
+          projectBoundaries += 1
+          if (projectBoundaries === 1) return
+          heartbeatOutcomes.push(heartbeatLease({
+            knowledgeRoot,
+            leaseId: authority.leaseId,
+          }))
+        },
+      },
+    })
+
+    expect(first).toMatchObject({ projected: 3, removed: 0 })
+    expect(projectBoundaries).toBe(3)
+    expect(heartbeatOutcomes).toHaveLength(2)
+    expect(heartbeatOutcomes.every(({ kind }) => kind === 'heartbeated')).toBe(true)
+
+    const second = await rebuildWithMutationHooks({
+      knowledgeRoot,
+      writerAuthority: { knowledgeRoot, ...authority },
+    })
+    expect(second).toMatchObject({ projected: 0, removed: 0 })
   })
 
   it('does not replace a live lock row when a fresh holder re-enters acquisition', () => {
