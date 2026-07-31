@@ -64,6 +64,7 @@ let root: string
 let knowledgeRoot: string
 let auditBaseDir: string
 let epoch: number
+let leaseId: string
 let writerAuthority: WriterLeaseAuthority
 let jobSerial: number
 
@@ -80,6 +81,7 @@ beforeEach(() => {
     leaseId: lease.leaseId,
     epoch: lease.epoch,
   }
+  leaseId = lease.leaseId
   jobSerial = 0
 })
 
@@ -201,7 +203,7 @@ function claimedJob(generation: number, buildOrdinal: number, label: string): Co
   return {
     kind: 'claimed',
     candidateId: payload.candidateId,
-    leaseId: 'rollback-lineage-fixture-lease',
+    leaseId,
     payload,
     candidateDir,
     payloadPath: join(candidateDir, 'payload.json'),

@@ -37,7 +37,7 @@ import {
   BundleTargetResolutionError,
   resolveProductQualifiedBundleDir,
 } from '../bundle-scan.js'
-import { readCurrentEpoch } from '../lease/writer-lease.js'
+import { readCurrentEpoch, readWriterLease } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
@@ -70,6 +70,14 @@ export interface CreateLocalKnowledgeStoreConfig {
   executionContext: ExecutionContext
   /** The holder's fresh lease epoch. Defaults to a fresh disk read for composition roots. */
   epoch?: number
+  /**
+   * The holder's lease id, paired with `epoch` and defaulting the same way.
+   *
+   * CR-01: canonical mutation now requires the exact live identity, so this bridge can no longer
+   * synthesize one. When the caller supplies nothing the currently published holder is adopted;
+   * if no holder is published the fence refuses by name instead of laundering a fabricated id.
+   */
+  leaseId?: string
   policy?: GuardrailPolicy
   /** Port calls lack a run ordinal; callers with run context should supply it. */
   sourceBuildOrdinal?: number
@@ -251,6 +259,15 @@ function syntheticAuthorship(
   }
 }
 
+/** Path-safe stand-in used only when no holder is published; the fence then refuses by name. */
+const UNHELD_BRIDGE_LEASE_ID = 'knowledge-port'
+
+function bridgeLeaseId(config: CreateLocalKnowledgeStoreConfig): string {
+  if (config.leaseId !== undefined) return config.leaseId
+  const current = readWriterLease(config.knowledgeRoot)
+  return current.kind === 'parsed' ? current.lease.leaseId : UNHELD_BRIDGE_LEASE_ID
+}
+
 function bridgeDelta(
   config: CreateLocalKnowledgeStoreConfig,
   delta: Delta,
@@ -268,7 +285,7 @@ function bridgeDelta(
     ?? (observedOrdinals.length === 0 ? 0 : Math.max(...observedOrdinals) + 1)
   const fields = addressFields(config, delta, targetTruth, buildOrdinal)
   const candidateId = candidateContentAddress(fields)
-  const leaseId = 'knowledge-port'
+  const leaseId = bridgeLeaseId(config)
   const candidateDir = claimedCandidateDir(config.knowledgeRoot, leaseId, candidateId)
   const artifactsDir = join(candidateDir, 'artifacts')
   const payload: CurationCandidatePayload = { candidateId, ...fields }

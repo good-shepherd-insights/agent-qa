@@ -73,6 +73,7 @@ let root: string
 let knowledgeRoot: string
 let auditBaseDir: string
 let epoch: number
+let leaseId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-thrash-guard-'))
@@ -81,6 +82,7 @@ beforeEach(() => {
   const lease = acquireWriterLease(knowledgeRoot)
   if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
   epoch = lease.epoch
+  leaseId = lease.leaseId
 })
 
 afterEach(() => {
@@ -203,7 +205,7 @@ function job(generation: number, buildOrdinal: number): CommitCurationJob {
   return {
     kind: 'claimed',
     candidateId: payload.candidateId,
-    leaseId: 'thrash-fixture-lease',
+    leaseId,
     payload,
     candidateDir,
     payloadPath: join(candidateDir, 'payload.json'),
@@ -473,7 +475,7 @@ function burstJob(index: number, buildOrdinal: number): CommitCurationJob {
   return {
     kind: 'claimed',
     candidateId: payload.candidateId,
-    leaseId: 'burst-fixture-lease',
+    leaseId,
     payload,
     candidateDir,
     payloadPath: join(candidateDir, 'payload.json'),

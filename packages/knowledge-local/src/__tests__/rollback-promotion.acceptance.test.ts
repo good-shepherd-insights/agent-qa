@@ -66,6 +66,7 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
   let knowledgeRoot: string
   let auditBaseDir: string
   let epoch: number
+  let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-rollback-promotion-'))
@@ -75,6 +76,7 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
     epoch = lease.epoch
+    leaseId = lease.leaseId
   })
 
   afterEach(() => {
@@ -153,7 +155,7 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     return {
       kind: 'claimed',
       candidateId: payload.candidateId,
-      leaseId: 'rollback-promotion-fixture-lease',
+      leaseId,
       payload,
       candidateDir,
       payloadPath: join(candidateDir, 'payload.json'),

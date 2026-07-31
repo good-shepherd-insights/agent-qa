@@ -62,8 +62,6 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
   let root: string
   let knowledgeRoot: string
   let auditBaseDir: string
-  let epoch: number
-
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-canary-disposition-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
@@ -71,10 +69,23 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
     scaffoldKnowledgeRoot(knowledgeRoot)
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
-    epoch = lease.epoch
     const released = releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
     if (released.kind !== 'released') throw new Error('expected writer lease release')
   })
+
+  /**
+   * CR-01: the port bridge can no longer synthesize an identity, so a store handed to a test
+   * must hold the genuine published lease. drainQueue acquires its own, which is why beforeEach
+   * still leaves the root unheld.
+   */
+  function portAuthority(): { leaseId: string; epoch: number } {
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind === 'acquired') return { leaseId: lease.leaseId, epoch: lease.epoch }
+    if (lease.kind === 'held') {
+      return { leaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
+    }
+    throw new Error('expected writer authority for the knowledge port')
+  }
 
   afterEach(() => {
     rmSync(root, { recursive: true, force: true })
@@ -168,7 +179,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
       executionContext: 'local-interactive',
       sourceBuildOrdinal: 43,
       sourceRunId: 'run-canary-disposition',
-      epoch,
+      ...portAuthority(),
       policy,
     })
   }

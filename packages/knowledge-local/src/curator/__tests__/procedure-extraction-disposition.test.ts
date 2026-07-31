@@ -19,6 +19,7 @@ import {
   ARTIFACT_STEP_CAP_BYTES,
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
+  acquireWriterLease,
   candidateContentAddress,
   commitCurationDelta,
   disposeDelta,
@@ -449,7 +450,8 @@ describe('procedure extraction commit path — artifact cap & egress backstop (A
   function commitProcedureWithArtifacts(artifacts: HarnessArtifact[]) {
     const knowledgeDir = join(root, 'agent-qa-knowledge')
     mkdirSync(knowledgeDir, { recursive: true })
-    writeFileSync(join(knowledgeDir, '.epoch'), '1\n', 'utf8')
+    const lease = acquireWriterLease(knowledgeDir)
+    if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
     const draft = makeProcedureBundleDraftFixture()
     const screenStates = makeProcedureScreenStateSequenceFixture()
     const rows = artifacts.map((artifact) => ({
@@ -508,7 +510,7 @@ describe('procedure extraction commit path — artifact cap & egress backstop (A
     const job: CommitCurationJob = {
       kind: 'claimed',
       candidateId,
-      leaseId: 'procedure-disposition-lease',
+      leaseId: lease.leaseId,
       payload: { candidateId, ...fields },
       candidateDir,
       payloadPath: join(candidateDir, 'payload.json'),
@@ -519,7 +521,7 @@ describe('procedure extraction commit path — artifact cap & egress backstop (A
     const dependencies: CommitCurationDependencies = {
       knowledgeRoot: knowledgeDir,
       auditBaseDir: join(root, '.agent-qa'),
-      epoch: 1,
+      epoch: lease.epoch,
       profile: { mode: 'drain-to-active' },
       drainState: { supersedesSeenByAnchorKey: new Map() },
       policy,

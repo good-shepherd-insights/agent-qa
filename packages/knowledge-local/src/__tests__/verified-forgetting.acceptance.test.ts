@@ -69,6 +69,7 @@ vi.mock('../embedder-acquire.js', async (importOriginal) => {
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
+  acquireWriterLease,
   artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
@@ -123,13 +124,18 @@ const DEPRECATION_ORDINAL = 105
 let root: string
 let knowledgeRoot: string
 let auditBaseDir: string
+let epoch: number
+let leaseId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-verified-forgetting-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
   auditBaseDir = join(root, '.agent-qa')
   scaffoldKnowledgeRoot(knowledgeRoot)
-  writeFileSync(join(knowledgeRoot, '.epoch'), '1\n', 'utf8')
+  const lease = acquireWriterLease(knowledgeRoot)
+  if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
+  epoch = lease.epoch
+  leaseId = lease.leaseId
 })
 
 afterEach(() => {
@@ -277,7 +283,7 @@ function deprecationJob(identity: string): CommitCurationJob {
   return {
     kind: 'claimed',
     candidateId: payload.candidateId,
-    leaseId: `verified-forgetting-${identity}-lease`,
+    leaseId,
     payload,
     candidateDir,
     payloadPath: join(candidateDir, 'payload.json'),
@@ -325,7 +331,7 @@ function dependencies(
   return {
     knowledgeRoot,
     auditBaseDir,
-    epoch: 1,
+    epoch,
     profile: { mode: 'drain-to-active' },
     drainState: { supersedesSeenByAnchorKey: new Map() },
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),

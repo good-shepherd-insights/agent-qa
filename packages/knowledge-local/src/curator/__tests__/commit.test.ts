@@ -88,6 +88,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
   let knowledgeRoot: string
   let auditBaseDir: string
   let epoch: number
+  let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-curator-commit-'))
@@ -96,6 +97,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     const lease = acquireWriterLease(knowledgeRoot)
     if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
     epoch = lease.epoch
+    leaseId = lease.leaseId
   })
 
   afterEach(() => {
@@ -154,7 +156,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     return {
       kind: 'claimed',
       candidateId: payload.candidateId,
-      leaseId: 'lease-fixture',
+      leaseId,
       payload,
       candidateDir,
       payloadPath: join(candidateDir, 'payload.json'),

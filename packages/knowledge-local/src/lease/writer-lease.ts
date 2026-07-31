@@ -767,6 +767,26 @@ export function withCurrentWriterAuthority<T>(
           observedEpoch,
         )
       }
+      /**
+       * CR-01: the epoch alone is guessable, and release deliberately never advances it, so an
+       * epoch-only guard admits both a fabricated identity and a holder that already released.
+       * The lease is therefore read INSIDE the held transaction — the same serialization boundary
+       * as the epoch and generation checks — and must match the supplied authority exactly. This
+       * is heartbeatLease's presence/id/epoch ladder, applied where mutation actually happens.
+       */
+      const current = readWriterLease(knowledgeRoot)
+      if (current.kind === 'absent') {
+        throw new WriterAuthorityLostError(fullAuthority, 'lease-missing', observedEpoch)
+      }
+      if (current.kind === 'malformed') {
+        throw new WriterAuthorityLostError(fullAuthority, 'lease-malformed', observedEpoch)
+      }
+      if (current.lease.leaseId !== authority.leaseId) {
+        throw new WriterAuthorityLostError(fullAuthority, 'lease-id-mismatch', observedEpoch)
+      }
+      if (current.lease.epoch !== authority.epoch) {
+        throw new WriterAuthorityLostError(fullAuthority, 'stale-epoch', observedEpoch)
+      }
       hooks.afterFinalAuthorityCompare?.()
       if (!mutationLockGenerationIsCurrent(db, generationToken)) {
         throw new WriterAuthorityLostError(

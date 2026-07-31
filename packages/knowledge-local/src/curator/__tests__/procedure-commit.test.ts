@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  acquireWriterLease,
   candidateContentAddress,
   commitCurationDelta,
   enumerateBundleDirs,
@@ -33,13 +34,18 @@ describe('D-02 procedure-kind commit mint contract', () => {
   let root: string
   let knowledgeRoot: string
   let auditBaseDir: string
+  let epoch: number
+  let leaseId: string
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'knowledge-procedure-commit-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
     auditBaseDir = join(root, '.agent-qa')
     mkdirSync(knowledgeRoot, { recursive: true })
-    writeFileSync(join(knowledgeRoot, '.epoch'), '1\n', 'utf8')
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
+    epoch = lease.epoch
+    leaseId = lease.leaseId
   })
 
   afterEach(() => {
@@ -176,7 +182,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
     const job: CommitCurationJob = {
       kind: 'claimed',
       candidateId,
-      leaseId: 'procedure-lease',
+      leaseId,
       payload: { candidateId, ...fields },
       candidateDir,
       payloadPath: join(candidateDir, 'payload.json'),
@@ -205,7 +211,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
     const dependencies: CommitCurationDependencies = {
       knowledgeRoot,
       auditBaseDir,
-      epoch: 1,
+      epoch,
       profile: { mode: 'drain-to-active' },
       drainState: { supersedesSeenByAnchorKey: new Map() },
       policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),

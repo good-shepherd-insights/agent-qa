@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  acquireWriterLease,
   artifactFreeCaptureReceipt,
   candidateContentAddress,
   commitCurationDelta,
@@ -65,13 +66,18 @@ const NEW_ANCHORS = [NEW_ELEMENT, PAGE, SELECTOR] as const
 let root: string
 let knowledgeRoot: string
 let auditBaseDir: string
+let epoch: number
+let leaseId: string
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'knowledge-rename-bridge-'))
   knowledgeRoot = join(root, 'agent-qa-knowledge')
   auditBaseDir = join(root, '.agent-qa')
   mkdirSync(knowledgeRoot, { recursive: true })
-  writeFileSync(join(knowledgeRoot, '.epoch'), '1\n', 'utf8')
+  const lease = acquireWriterLease(knowledgeRoot)
+  if (lease.kind !== 'acquired') throw new Error('expected a fresh writer lease')
+  epoch = lease.epoch
+  leaseId = lease.leaseId
 })
 
 afterEach(() => {
@@ -207,7 +213,7 @@ function replacementJob(): CommitCurationJob {
   return {
     kind: 'claimed',
     candidateId: payload.candidateId,
-    leaseId: 'rename-bridge-lease',
+    leaseId,
     payload,
     candidateDir,
     payloadPath: join(candidateDir, 'payload.json'),
@@ -259,7 +265,7 @@ function dependencies(): CommitCurationDependencies {
   return {
     knowledgeRoot,
     auditBaseDir,
-    epoch: 1,
+    epoch,
     profile: { mode: 'drain-to-active' },
     drainState: { supersedesSeenByAnchorKey: new Map() },
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),

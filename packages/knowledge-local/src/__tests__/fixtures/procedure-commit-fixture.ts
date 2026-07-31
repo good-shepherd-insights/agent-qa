@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { BundleDraft, Delta } from '@vostride/agent-qa-schema'
@@ -10,6 +10,7 @@ import {
 
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
+  acquireWriterLease,
   candidateContentAddress,
   commitCurationDelta,
   type AuthoredDeltaCheckpoint,
@@ -41,6 +42,20 @@ export interface CommitFixtureProcedureOptions {
  * a content-addressed claimed candidate with per-step artifacts, a capture receipt, and an
  * authored Add delta, driven through `commitCurationDelta`.
  */
+/**
+ * CR-01: the commit fence now requires the exact published holder, so this fixture holds a real
+ * lease instead of naming one. An existing holder is adopted so a suite that already acquired
+ * keeps its own identity rather than being fenced out by its own fixture.
+ */
+function fixtureWriterAuthority(knowledgeRoot: string): { leaseId: string; epoch: number } {
+  const lease = acquireWriterLease(knowledgeRoot)
+  if (lease.kind === 'acquired') return { leaseId: lease.leaseId, epoch: lease.epoch }
+  if (lease.kind === 'held') {
+    return { leaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
+  }
+  throw new Error(`expected writer authority for the procedure fixture: ${lease.reason}`)
+}
+
 export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
   const draft = options.draft ?? makeProcedureBundleDraftFixture()
   const sourceRunId = options.sourceRunId ?? 'run-procedure-commit'
@@ -50,9 +65,7 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
     options.attributingObservationId ?? 'run-procedure-commit:test-sign-in:step-0'
 
   mkdirSync(options.knowledgeRoot, { recursive: true })
-  if (!existsSync(join(options.knowledgeRoot, '.epoch'))) {
-    writeFileSync(join(options.knowledgeRoot, '.epoch'), '1\n', 'utf8')
-  }
+  const authority = fixtureWriterAuthority(options.knowledgeRoot)
 
   const screenStates = makeProcedureScreenStateSequenceFixture()
   const artifacts = screenStates.map((_, stepIndex) => {
@@ -146,7 +159,7 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
   const job: CommitCurationJob = {
     kind: 'claimed',
     candidateId,
-    leaseId: 'procedure-lease',
+    leaseId: authority.leaseId,
     payload: { candidateId, ...fields },
     candidateDir,
     payloadPath: join(candidateDir, 'payload.json'),
@@ -175,7 +188,7 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
   const dependencies: CommitCurationDependencies = {
     knowledgeRoot: options.knowledgeRoot,
     auditBaseDir: options.auditBaseDir,
-    epoch: 1,
+    epoch: authority.epoch,
     profile: { mode: 'drain-to-active' },
     drainState: { supersedesSeenByAnchorKey: new Map() },
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
