@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +16,7 @@ import {
   acquireWriterLease,
   readWriterLease,
   releaseLease,
+  withCurrentWriterAuthority,
 } from '@vostride/agent-qa-knowledge-local';
 import type { ConfigReaderPort } from '@vostride/agent-qa-agent';
 import { describe, expect, it } from 'vitest';
@@ -23,11 +31,16 @@ const FIXTURE_ROLE = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROLE;
 const FIXTURE_ROOT = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROOT;
 const FIXTURE_MARKER = process.env.AGENT_QA_HEARTBEAT_FIXTURE_MARKER;
 const FIXTURE_REPORT = process.env.AGENT_QA_HEARTBEAT_FIXTURE_REPORT;
+const FIXTURE_TAKEOVER_MS = process.env.AGENT_QA_HEARTBEAT_FIXTURE_TAKEOVER_MS;
 const PACKAGE_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const VITEST_BIN = join(PACKAGE_ROOT, 'node_modules', 'vitest', 'vitest.mjs');
 const THIS_TEST_FILE = fileURLToPath(import.meta.url);
 const BLOCK_MARGIN_MS = 20_000;
 const RECLAIM_MARGIN_MS = 1_000;
+/** The governed mutation must still be open when a contender arrives past the lease TTL. */
+const MUTATION_HOLD_MS = LEASE_HEARTBEAT_TTL_MS + 10_000;
+const MUTATION_CONTENDER_DELAY_MS = LEASE_HEARTBEAT_TTL_MS + 2_000;
+const MUTATION_RECORD_FILE = 'mutation-record.log';
 
 const daemonConfig: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
@@ -84,12 +97,13 @@ interface FixtureChild {
 }
 
 function startFixture(
-  role: 'busy-daemon' | 'stopped-daemon' | 'contender' | 'cwd-supervisor',
+  role: 'busy-daemon' | 'stopped-daemon' | 'contender' | 'cwd-supervisor' | 'mutating-daemon',
   values: {
     root: string;
     marker?: string;
     report?: string;
     cwd?: string;
+    takeoverMs?: number;
   },
 ): FixtureChild {
   const child = spawn(
@@ -111,6 +125,9 @@ function startFixture(
         AGENT_QA_HEARTBEAT_FIXTURE_ROOT: values.root,
         AGENT_QA_HEARTBEAT_FIXTURE_MARKER: values.marker,
         AGENT_QA_HEARTBEAT_FIXTURE_REPORT: values.report,
+        AGENT_QA_HEARTBEAT_FIXTURE_TAKEOVER_MS: values.takeoverMs === undefined
+          ? undefined
+          : String(values.takeoverMs),
         NODE_PATH: role === 'cwd-supervisor' ? '' : process.env.NODE_PATH,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -147,9 +164,78 @@ if (FIXTURE_ROLE === 'contender') {
       const root = requiredFixtureValue(FIXTURE_ROOT, 'fixture root');
       const report = requiredFixtureValue(FIXTURE_REPORT, 'fixture report');
       const attemptedAtMs = Date.now();
-      const result = acquireWriterLease(root);
+      const result = FIXTURE_TAKEOVER_MS === undefined || FIXTURE_TAKEOVER_MS.length === 0
+        ? acquireWriterLease(root)
+        : acquireWriterLease(root, { mutationLockTakeoverMs: Number(FIXTURE_TAKEOVER_MS) });
       writeFileSync(report, JSON.stringify({ attemptedAtMs, result }), 'utf8');
     });
+  });
+} else if (FIXTURE_ROLE === 'mutating-daemon') {
+  describe('daemon governed-mutation fixture', () => {
+    it(
+      'holds one governed writer mutation open beyond the lease TTL',
+      async () => {
+        const root = requiredFixtureValue(FIXTURE_ROOT, 'fixture root');
+        const marker = requiredFixtureValue(FIXTURE_MARKER, 'fixture marker');
+        const report = requiredFixtureValue(FIXTURE_REPORT, 'fixture report');
+        const mutationRecord = join(root, MUTATION_RECORD_FILE);
+        const expectedError = 'mutating-daemon-fixture-complete';
+
+        await expect(
+          runDaemonHost({
+            agentQaRoot: join(root, '.agent-qa'),
+            knowledgeRoot: root,
+            config: daemonConfig,
+            model: async () => {
+              const published = readWriterLease(root);
+              if (published.kind !== 'parsed') {
+                throw new Error(`Expected a published daemon lease, received ${published.kind}`);
+              }
+              const startedAtWallMs = Date.now();
+              let authorityError: string | undefined;
+              try {
+                withCurrentWriterAuthority(
+                  root,
+                  { leaseId: published.lease.leaseId, epoch: published.lease.epoch },
+                  () => {
+                    writeFileSync(marker, JSON.stringify({ startedAtWallMs }), 'utf8');
+                    const startedAtMonotonicMs = performance.now();
+                    while (performance.now() - startedAtMonotonicMs < MUTATION_HOLD_MS) {
+                      // Keep one governed authority transaction open past the lease TTL.
+                    }
+                    appendFileSync(mutationRecord, 'mutated\n');
+                  },
+                );
+              } catch (error) {
+                authorityError = error instanceof Error ? error.name : String(error);
+              }
+
+              // The next strong heartbeat after the transaction commits must refresh the lease.
+              let leaseHeartbeatAtMs: number | undefined;
+              const refreshDeadline = Date.now() + LEASE_HEARTBEAT_TTL_MS;
+              while (Date.now() < refreshDeadline) {
+                const observed = readWriterLease(root);
+                if (
+                  observed.kind === 'parsed'
+                  && observed.lease.heartbeatAtMs > startedAtWallMs
+                ) {
+                  leaseHeartbeatAtMs = observed.lease.heartbeatAtMs;
+                  break;
+                }
+                await delay(100);
+              }
+              writeFileSync(
+                report,
+                JSON.stringify({ startedAtWallMs, authorityError, leaseHeartbeatAtMs }),
+                'utf8',
+              );
+              throw new Error(expectedError);
+            },
+          }),
+        ).rejects.toThrow(expectedError);
+      },
+      MUTATION_HOLD_MS + LEASE_HEARTBEAT_TTL_MS + 30_000,
+    );
   });
 } else if (FIXTURE_ROLE === 'cwd-supervisor') {
   describe('daemon heartbeat unrelated-cwd fixture', () => {
@@ -329,6 +415,67 @@ if (FIXTURE_ROLE === 'contender') {
         }),
       });
     });
+
+    it(
+      'keeps the writer lease held while the daemon holds one governed mutation past TTL',
+      async () => {
+        const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-mutating-'));
+        const marker = join(root, 'mutation-started.json');
+        const daemonReport = join(root, 'mutation-complete.json');
+        const contenderReport = join(root, 'contender.json');
+        const mutationRecord = join(root, MUTATION_RECORD_FILE);
+        const daemon = startFixture('mutating-daemon', {
+          root,
+          marker,
+          report: daemonReport,
+        });
+
+        try {
+          await waitForFile(marker, daemon);
+          const initialLease = readWriterLease(root);
+          if (initialLease.kind !== 'parsed') {
+            throw new Error(`Expected parsed initial lease, received ${initialLease.kind}`);
+          }
+
+          await delay(MUTATION_CONTENDER_DELAY_MS);
+          const contender = startFixture('contender', {
+            root,
+            report: contenderReport,
+            takeoverMs: 0,
+          });
+          const contenderExit = await contender.exit;
+          expect(contenderExit, contenderExit.output).toMatchObject({ code: 0, signal: null });
+
+          const contenderPayload = JSON.parse(readFileSync(contenderReport, 'utf8')) as {
+            attemptedAtMs: number;
+            result: ReturnType<typeof acquireWriterLease>;
+          };
+          expect(contenderPayload.result).toEqual({
+            kind: 'held',
+            holder: expect.objectContaining({
+              leaseId: initialLease.lease.leaseId,
+              epoch: initialLease.lease.epoch,
+            }),
+          });
+
+          const daemonExit = await daemon.exit;
+          expect(daemonExit, daemonExit.output).toMatchObject({ code: 0, signal: null });
+          expect(readFileSync(mutationRecord, 'utf8')).toBe('mutated\n');
+          const mutationPayload = JSON.parse(readFileSync(daemonReport, 'utf8')) as {
+            startedAtWallMs: number;
+            authorityError?: string;
+            leaseHeartbeatAtMs?: number;
+          };
+          expect(mutationPayload.authorityError).toBeUndefined();
+          expect(mutationPayload.leaseHeartbeatAtMs).toBeGreaterThan(
+            mutationPayload.startedAtWallMs,
+          );
+        } finally {
+          await stopFixture(daemon);
+        }
+      },
+      MUTATION_HOLD_MS + LEASE_HEARTBEAT_TTL_MS + 60_000,
+    );
 
     it(
       'keeps the writer lease held while only the daemon main loop is blocked past TTL',

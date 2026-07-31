@@ -691,3 +691,197 @@ describe('writer lease mutation lock ownership', () => {
     })
   }, 10_000)
 })
+
+/**
+ * CR-03: renewal must not contend with the governed mutation it protects.
+ *
+ * The sidecar name is written as a literal here on purpose: these cases pin the on-disk contract
+ * a contending process reads, independently of whatever symbol the module chooses to export.
+ */
+const RENEWAL_SIDECAR_FILE = '.lease-renewal'
+
+describe('writer lease renewal sidecar under authority contention (CR-03)', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-renewal-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function leaseOnDisk(): WriterLease {
+    return JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')) as WriterLease
+  }
+
+  function makeLeaseStale(ageMs = LEASE_HEARTBEAT_TTL_MS + 5_000): WriterLease {
+    const stale = { ...leaseOnDisk(), heartbeatAtMs: Date.now() - ageMs }
+    writeFileSync(join(knowledgeRoot, LEASE_FILE), `${JSON.stringify(stale)}\n`, 'utf8')
+    return stale
+  }
+
+  function writeRenewalSidecar(leaseId: string, heartbeatAtMs: number): void {
+    writeFileSync(
+      join(knowledgeRoot, RENEWAL_SIDECAR_FILE),
+      `${JSON.stringify({ leaseId, heartbeatAtMs })}\n`,
+      'utf8',
+    )
+  }
+
+  function readRenewalSidecar(): { leaseId: string; heartbeatAtMs: number } {
+    return JSON.parse(
+      readFileSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE), 'utf8'),
+    ) as { leaseId: string; heartbeatAtMs: number }
+  }
+
+  /** Occupy the authority database exactly as a long governed mutation does. */
+  function holdAuthorityTransaction(): () => void {
+    const db = new DatabaseSync(join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE))
+    db.exec('PRAGMA busy_timeout = 250')
+    db.exec('BEGIN IMMEDIATE')
+    return () => {
+      try {
+        db.exec('ROLLBACK')
+      } finally {
+        db.close()
+      }
+    }
+  }
+
+  it('reports a stale-lease holder as held while its renewal sidecar is fresh', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const stale = makeLeaseStale()
+    writeRenewalSidecar(acquired.leaseId, Date.now())
+
+    expect(acquireWriterLease(knowledgeRoot)).toEqual({ kind: 'held', holder: stale })
+  })
+
+  it('ignores a renewal sidecar naming a superseded lease id', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const stale = makeLeaseStale()
+    writeRenewalSidecar('00000000-0000-4000-8000-000000000000', Date.now())
+
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: stale.epoch + 1,
+      reclaimed: stale,
+    })
+  })
+
+  it('ignores a renewal sidecar older than the heartbeat TTL', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const stale = makeLeaseStale()
+    writeRenewalSidecar(acquired.leaseId, Date.now() - LEASE_HEARTBEAT_TTL_MS - 1)
+
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: stale.epoch + 1,
+      reclaimed: stale,
+    })
+  })
+
+  it('defers heartbeat renewal to the sidecar while the authority transaction is held', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const beforeMs = Date.now()
+    const release = holdAuthorityTransaction()
+    try {
+      expect(heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
+        kind: 'deferred',
+        reason: 'mutation-lock-busy',
+      })
+    } finally {
+      release()
+    }
+
+    const sidecar = readRenewalSidecar()
+    expect(sidecar.leaseId).toBe(acquired.leaseId)
+    expect(sidecar.heartbeatAtMs).toBeGreaterThanOrEqual(beforeMs)
+  }, 15_000)
+
+  it('refuses instead of deferring when the on-disk lease id no longer matches', () => {
+    const superseded = acquireWriterLease(knowledgeRoot)
+    if (superseded.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    expect(releaseLease({ knowledgeRoot, leaseId: superseded.leaseId })).toEqual({
+      kind: 'released',
+    })
+    const replacement = acquireWriterLease(knowledgeRoot)
+    if (replacement.kind !== 'acquired') throw new Error('expected a replacement writer lease')
+
+    const release = holdAuthorityTransaction()
+    try {
+      expect(heartbeatLease({ knowledgeRoot, leaseId: superseded.leaseId })).toMatchObject({
+        kind: 'refused',
+        reason: 'lease-id-mismatch',
+      })
+    } finally {
+      release()
+    }
+
+    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
+  }, 15_000)
+
+  it('clears a superseded renewal sidecar when a new lease is acquired', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    makeLeaseStale()
+    writeRenewalSidecar('00000000-0000-4000-8000-000000000000', Date.now())
+
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({ kind: 'acquired' })
+    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
+  })
+
+  it('removes the renewal sidecar when the matching holder releases', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    writeRenewalSidecar(acquired.leaseId, Date.now())
+
+    expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
+      kind: 'released',
+    })
+    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
+  })
+
+  it('refuses to kill a held-section owner whose renewal sidecar is fresh', async () => {
+    const permitFile = join(root, 'renewing-holder.permit')
+    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
+    const holderExit = observeExit(holder)
+    await waitForOutput(holder, 'inside\n')
+    const stale = makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
+    writeRenewalSidecar(stale.leaseId, Date.now())
+
+    const contender = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { pid: holder.pid, leaseId: stale.leaseId, epoch: 1 },
+    })
+    expect(holder.exitCode).toBeNull()
+    expect(holder.signalCode).toBeNull()
+
+    writeFileSync(permitFile, 'resume\n', 'utf8')
+    expect(await holderExit).toMatchObject({ code: 0, signal: null })
+  }, 15_000)
+
+  it('still kills a held-section owner whose renewal sidecar names a superseded lease', async () => {
+    const permitFile = join(root, 'superseded-holder.permit')
+    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
+    const holderExit = observeExit(holder)
+    await waitForOutput(holder, 'inside\n')
+    makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
+    writeRenewalSidecar('00000000-0000-4000-8000-000000000000', Date.now())
+
+    const contenderChild = spawnLeaseAcquirer(knowledgeRoot, 0, 0)
+    const contenderExit = waitForExit(contenderChild)
+    expect(await holderExit).toMatchObject({ code: null, signal: 'SIGKILL' })
+    await contenderExit
+
+    expect(leaseOnDisk()).toMatchObject({ pid: contenderChild.pid, epoch: 2 })
+  }, 15_000)
+})
