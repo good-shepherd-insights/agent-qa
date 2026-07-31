@@ -19,7 +19,8 @@ import { z } from 'zod'
 export const INVOKE_ENVELOPE_SCHEMA_VERSION = 1
 export const DAEMON_IDENTITY_SCHEMA_VERSION = 1
 export const DAEMON_IDENTITY_TIMEOUT_MS = 1_000
-export const DAEMON_SOCKET_FILE = 'daemon.sock'
+/** The pre-generation fixed name. Retained only so one-time recovery can unlink what it left. */
+export const LEGACY_DAEMON_SOCKET_FILE = 'daemon.sock'
 export const STREAM_END_EVENT = 'stream-end'
 export const STREAM_ERROR_EVENT = 'stream-error'
 
@@ -136,15 +137,34 @@ function projectHash(projectRoot: string): string {
   return createHash('sha256').update(resolve(projectRoot)).digest('hex').slice(0, 12)
 }
 
-/** Resolve the project-scoped IPC address, falling back before POSIX silently truncates it. */
-export function daemonSocketPath(agentQaRoot: string, projectRoot: string): string {
-  const hash = projectHash(projectRoot)
-  if (process.platform === 'win32') return `\\\\.\\pipe\\agent-qa-${hash}`
+function instanceDiscriminator(instanceId: string): string {
+  const validated = z.string().uuid().parse(instanceId)
+  return createHash('sha256').update(validated).digest('hex').slice(0, 12)
+}
 
-  const projectLocal = join(agentQaRoot, DAEMON_SOCKET_FILE)
+/**
+ * Resolve the generation-scoped IPC address, falling back before POSIX silently truncates it.
+ *
+ * The instance discriminator is the whole point: a daemon generation must never be able to bind
+ * — or be blocked by — an address another generation owns. An uncooperative predecessor (stopped,
+ * wedged, or merely slow to close) keeps its own kernel object and gates nothing. Consumers do not
+ * recompute this: every client dials the `socketPath` its registration recorded, so discovery
+ * follows the registration automatically.
+ */
+export function daemonSocketPath(
+  agentQaRoot: string,
+  projectRoot: string,
+  instanceId: string,
+): string {
+  const hash = projectHash(projectRoot)
+  const instance = instanceDiscriminator(instanceId)
+  if (process.platform === 'win32') return `\\\\.\\pipe\\agent-qa-${hash}-${instance}`
+
+  const socketFile = `daemon-${instance}.sock`
+  const projectLocal = join(agentQaRoot, socketFile)
   if (Buffer.byteLength(projectLocal) <= DAEMON_SOCKET_PATH_BUDGET_BYTES) return projectLocal
 
-  const fallback = join(tmpdir(), `agent-qa-${hash}`, DAEMON_SOCKET_FILE)
+  const fallback = join(tmpdir(), `agent-qa-${hash}`, socketFile)
   if (Buffer.byteLength(fallback) > DAEMON_SOCKET_PATH_BUDGET_BYTES) {
     throw new Error(
       `OS temporary directory is too deep for an agent-qa daemon socket: ${fallback}`,

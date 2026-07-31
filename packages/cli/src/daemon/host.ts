@@ -1633,6 +1633,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const socketPath = input.socketPath ?? daemonSocketPath(
       input.agentQaRoot,
       dirname(input.agentQaRoot),
+      instanceId,
     )
     const startedServer = await operations.startInvokeServer({
       socketPath,
