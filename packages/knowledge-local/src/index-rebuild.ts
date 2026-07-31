@@ -61,7 +61,6 @@ import {
 } from './index-open.js'
 import type { VecCapability } from './index-open.js'
 import {
-  refreshWriterLeaseAuthority,
   withCurrentWriterAuthority,
   type WriterLeaseAuthority,
 } from './lease/writer-lease.js'
@@ -154,31 +153,50 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-type MutationGuard = () => void
+type MutationAuthorityContext =
+  | { hold: WriterLeaseAuthority }
+  | { withinHeldAuthority: true }
+
+/**
+ * The hold form owns one authority-store transaction for the operation. The within-held form is
+ * deliberately raw: its caller already owns that outer transaction and must not re-enter the
+ * non-reentrant authority primitive.
+ */
+function withMutationAuthority<T>(
+  authority: MutationAuthorityContext | undefined,
+  operation: () => T,
+): T {
+  if (authority !== undefined && 'hold' in authority) {
+    return withCurrentWriterAuthority(
+      authority.hold.knowledgeRoot,
+      authority.hold,
+      operation,
+    )
+  }
+  return operation()
+}
 
 function transaction(
   db: DatabaseSync,
   operation: () => void,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
   beforeCommit?: () => void,
 ): void {
-  beforeMutation?.()
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    operation()
-    beforeCommit?.()
-    // Synchronous projection can block the event loop past the lease TTL. Re-fence the exact
-    // holder after all DML but before COMMIT so a competitor reclaim rolls this unit back.
-    beforeMutation?.()
-    db.exec('COMMIT')
-  } catch (error) {
+  withMutationAuthority(authority, () => {
+    db.exec('BEGIN IMMEDIATE')
     try {
-      db.exec('ROLLBACK')
-    } catch {
-      // Preserve the projection error that caused the rollback.
+      operation()
+      beforeCommit?.()
+      db.exec('COMMIT')
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // Preserve the projection error that caused the rollback.
+      }
+      throw error
     }
-    throw error
-  }
+  })
 }
 
 function embeddingBuffer(vector: Float32Array, activeProfile: EmbeddingProfile): Buffer {
@@ -560,7 +578,7 @@ function projectBundle(
   vec: VecCapability,
   projected: ProjectedBundle,
   activeProfile: EmbeddingProfile,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
   beforeCommit?: () => void,
 ): void {
   transaction(db, () => {
@@ -588,7 +606,7 @@ function projectBundle(
     `).run(EMBED_STATUS_PENDING, recordRowid, EMBED_STATUS_SCRUBBED)
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
-  }, beforeMutation, beforeCommit)
+  }, authority, beforeCommit)
 }
 
 function applyProjectionSafety(
@@ -598,6 +616,7 @@ function applyProjectionSafety(
   activeProfile: EmbeddingProfile,
   lexicalInput: string,
   suppressDense: boolean,
+  authority?: MutationAuthorityContext,
 ): void {
   const row = db
     .prepare('SELECT record_rowid, status FROM records WHERE bundle_id = ?')
@@ -636,7 +655,7 @@ function applyProjectionSafety(
       db.prepare(`DELETE FROM ${vecTableName(activeProfile)} WHERE record_rowid = ?`)
         .run(BigInt(recordRowid))
     }
-  })
+  }, authority)
 }
 
 /**
@@ -705,7 +724,7 @@ export function projectBundleIndexRow(opts: ProjectBundleIndexRowOptions): void 
 function emitRelationEdges(
   db: DatabaseSync,
   relationSources: readonly ProjectedBundle[],
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): void {
   transaction(db, () => {
     for (const { bundle, product } of relationSources) {
@@ -744,7 +763,7 @@ function emitRelationEdges(
         })
       }
     }
-  }, beforeMutation)
+  }, authority)
 }
 
 function safeObservationPath(
@@ -831,7 +850,7 @@ function emitObservationEdges(
   knowledgeRoot: string,
   sources: readonly ProjectedBundle[],
   scanIssues: string[],
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): void {
   const prepared: GraphDerivation[] = []
   const recordRowids: number[] = []
@@ -864,7 +883,7 @@ function emitObservationEdges(
   transaction(db, () => {
     for (const recordRowid of recordRowids) deleteObservationEdges(db, recordRowid)
     for (const projection of prepared) insertGraphDerivation(db, projection)
-  }, beforeMutation)
+  }, authority)
 }
 
 interface UsesEdgeRow {
@@ -929,7 +948,7 @@ function accumulatedUsesEdges(db: DatabaseSync): {
 
 function emitEquivalentToBridges(
   db: DatabaseSync,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): void {
   const accumulated = accumulatedUsesEdges(db)
   const bridges = deriveEquivalentToBridges(accumulated.nodes, accumulated.edges)
@@ -949,23 +968,23 @@ function emitEquivalentToBridges(
         )
     `)
     for (const edge of bridges) insertGraphEdge(db, edge)
-  }, beforeMutation)
+  }, authority)
 }
 
 function removeOrphanGraphNodes(
   db: DatabaseSync,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): void {
   transaction(db, () => {
     deleteOrphanGraphNodes(db)
-  }, beforeMutation)
+  }, authority)
 }
 
 /** Recompute graph-derived prose only after every graph-producing pass has converged. */
 function refreshContextualRenderings(
   db: DatabaseSync,
   force = false,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): number {
   const rows = db.prepare(`
     SELECT record_rowid, embedding_input, contextual_rendering, status
@@ -1028,7 +1047,7 @@ function refreshContextualRenderings(
         String(row.embedding_input),
         situatingLine,
       )
-    }, beforeMutation)
+    }, authority)
     refreshed += 1
   }
   return refreshed
@@ -1055,7 +1074,7 @@ function deleteRecordProjectionRows(
 function removeMissingBundles(
   db: DatabaseSync,
   seenBundleIds: ReadonlySet<string>,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): number {
   const missing = db
     .prepare('SELECT record_rowid, bundle_id, kind FROM records ORDER BY record_rowid')
@@ -1072,7 +1091,7 @@ function removeMissingBundles(
         row.kind as LoadedBundle['frontmatter']['kind'],
       )
     }
-  }, beforeMutation)
+  }, authority)
 
   return missing.length
 }
@@ -1114,7 +1133,7 @@ export function removeBundleProjectionRows(
         for (const row of found) {
           deleteRecordProjectionRows(writer.db, row.recordRowid, row.bundleId, row.kind)
         }
-      })
+      }, { withinHeldAuthority: true })
     })
     return found.length
   } finally {
@@ -1128,7 +1147,7 @@ async function backfillPendingEmbeddings(
   embedder: EmbedderPort | undefined,
   activeProfile: EmbeddingProfile,
   newlyProjectedBundleIds: ReadonlySet<string>,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): Promise<number> {
   if (embedder === undefined) return 0
 
@@ -1152,7 +1171,7 @@ async function backfillPendingEmbeddings(
         vector,
         activeProfile,
       )
-    }, beforeMutation)
+    }, authority)
     // Keep RebuildReport.backfilled's established meaning: rows carried pending into this rebuild.
     if (!newlyProjectedBundleIds.has(String(row.bundle_id))) backfilled += 1
   }
@@ -1163,7 +1182,7 @@ function reconcileVecRows(
   db: DatabaseSync,
   vec: VecCapability,
   activeProfile: EmbeddingProfile,
-  beforeMutation?: MutationGuard,
+  authority?: MutationAuthorityContext,
 ): void {
   if (vec !== 'vec0') return
   const tableName = vecTableName(activeProfile)
@@ -1239,7 +1258,7 @@ function reconcileVecRows(
         updateMetadata.run(scopeTier, scopeKey, status, BigInt(recordRowid))
       }
     }
-  }, beforeMutation)
+  }, authority)
 }
 
 /** Hash-selected projection plus the independent D-02 backfill and D-10 reconciliation passes. */
@@ -1251,17 +1270,17 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
   ) {
     throw new TypeError('rebuild writerAuthority must belong to knowledgeRoot')
   }
-  const beforeMutation = writerAuthority === undefined
+  const authority: MutationAuthorityContext | undefined = writerAuthority === undefined
     ? undefined
-    : () => {
-        refreshWriterLeaseAuthority(writerAuthority)
-      }
-  beforeMutation?.()
-  const writer = openIndexWriter(
-    opts.knowledgeRoot,
-    opts.vecLoadablePath === undefined
-      ? {}
-      : { vecLoadablePath: opts.vecLoadablePath },
+    : { hold: writerAuthority }
+  const writer = withMutationAuthority(
+    authority,
+    () => openIndexWriter(
+      opts.knowledgeRoot,
+      opts.vecLoadablePath === undefined
+        ? {}
+        : { vecLoadablePath: opts.vecLoadablePath },
+    ),
   )
   const activeProfile = resolveActiveProfile(writer.db)
   const report: RebuildReport = {
@@ -1312,8 +1331,7 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       processedBundles += 1
       if (current?.mutable_state_hash === outcome.bundle.manifest.mutableStateHash) {
         if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
-          beforeMutation?.()
-          writer.checkpointPassive()
+          withMutationAuthority(authority, () => writer.checkpointPassive())
         }
         continue
       }
@@ -1323,48 +1341,45 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         writer.vec,
         item,
         activeProfile,
-        beforeMutation,
+        authority,
         opts.hooks?.beforeTransactionCommit,
       )
       projected.push(item)
       report.projected += 1
       if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
-        beforeMutation?.()
-        writer.checkpointPassive()
+        withMutationAuthority(authority, () => writer.checkpointPassive())
       }
     }
 
-    report.removed = removeMissingBundles(writer.db, seenBundleIds, beforeMutation)
-    emitRelationEdges(writer.db, relationSources, beforeMutation)
+    report.removed = removeMissingBundles(writer.db, seenBundleIds, authority)
+    emitRelationEdges(writer.db, relationSources, authority)
     emitObservationEdges(
       writer.db,
       opts.knowledgeRoot,
       relationSources,
       report.scanIssues,
-      beforeMutation,
+      authority,
     )
-    emitEquivalentToBridges(writer.db, beforeMutation)
-    removeOrphanGraphNodes(writer.db, beforeMutation)
-    refreshContextualRenderings(writer.db, writer.renderingEpochStale, beforeMutation)
+    emitEquivalentToBridges(writer.db, authority)
+    removeOrphanGraphNodes(writer.db, authority)
+    refreshContextualRenderings(writer.db, writer.renderingEpochStale, authority)
     report.backfilled = await backfillPendingEmbeddings(
       writer.db,
       writer.vec,
       opts.embedder,
       activeProfile,
       new Set(projected.map(({ bundle }) => bundle.manifest.id)),
-      beforeMutation,
+      authority,
     )
-    reconcileVecRows(writer.db, writer.vec, activeProfile, beforeMutation)
-    beforeMutation?.()
-    writer.completeRenderingEpoch()
+    reconcileVecRows(writer.db, writer.vec, activeProfile, authority)
+    withMutationAuthority(authority, () => writer.completeRenderingEpoch())
     report.pendingEmbeddings = selectPendingEmbeddingRows(writer.db).length
     report.maintenanceRemaining =
       report.pendingEmbeddings > 0
       || writer.renderingEpochStale
       || !isEmbeddingVecCleanupCurrent(writer.db)
     if (!report.maintenanceRemaining) {
-      beforeMutation?.()
-      clearRebuildRequest(opts.knowledgeRoot)
+      withMutationAuthority(authority, () => clearRebuildRequest(opts.knowledgeRoot))
     }
     return report
   } finally {

@@ -202,7 +202,7 @@ describe('IDX-01 derived-index rebuild projection', () => {
     return { knowledgeRoot, leaseId: acquired.leaseId, epoch: acquired.epoch }
   }
 
-  function forceCompetingEpoch(): knowledgeLocal.WriterLeaseAuthority {
+  function expireLease(): void {
     const leasePath = join(knowledgeRoot, LEASE_FILE)
     const holder = JSON.parse(readFileSync(leasePath, 'utf8')) as Record<string, unknown>
     writeFileSync(
@@ -213,6 +213,10 @@ describe('IDX-01 derived-index rebuild projection', () => {
       })}\n`,
       'utf8',
     )
+  }
+
+  function forceCompetingEpoch(): knowledgeLocal.WriterLeaseAuthority {
+    expireLease()
     return acquireAuthority()
   }
 
@@ -234,31 +238,41 @@ describe('IDX-01 derived-index rebuild projection', () => {
     expect(readRebuildRequest(knowledgeRoot).present).toBe(true)
   })
 
-  it('rolls back synchronous projection when authority is reclaimed before commit', async () => {
+  it('commits synchronous projection before a contender can reclaim authority', async () => {
     const published = publishNamed('Commit Fence Product', 'Commit fence')
     const authority = acquireAuthority()
     let hookCalls = 0
+    let contenderDuringCommit: ReturnType<typeof knowledgeLocal.acquireWriterLease> | undefined
 
-    await expect(rebuildApi().rebuildIndex({
+    const report = await rebuildApi().rebuildIndex({
       knowledgeRoot,
       writerAuthority: authority,
       hooks: {
         beforeTransactionCommit: () => {
           hookCalls += 1
-          forceCompetingEpoch()
+          expireLease()
+          contenderDuringCommit = knowledgeLocal.acquireWriterLease(knowledgeRoot, {
+            mutationLockTakeoverMs: 0,
+          })
         },
       },
-    })).rejects.toBeInstanceOf(knowledgeLocal.WriterAuthorityLostError)
+    })
 
     expect(hookCalls).toBe(1)
+    expect(contenderDuringCommit).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(report.projected).toBe(1)
     const reader = openReader()
     try {
       expect(
         reader.db.prepare('SELECT 1 FROM records WHERE bundle_id = ?').get(published.id),
-      ).toBeUndefined()
+      ).toEqual({ '1': 1 })
     } finally {
       reader.db.close()
     }
+    expect(forceCompetingEpoch()).toMatchObject({ epoch: authority.epoch + 1 })
   })
 
   it('refuses the next vector mutation after a competing epoch appears during embedding', async () => {

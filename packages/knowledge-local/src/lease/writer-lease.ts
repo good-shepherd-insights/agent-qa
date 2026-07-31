@@ -835,11 +835,12 @@ export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutco
 }
 
 /**
- * Refresh one exact maintenance writer immediately before a mutation boundary.
+ * Refresh one exact maintenance writer at a non-mutating boundary.
  *
  * The epoch reads deliberately bracket the heartbeat: the first rejects an already-reclaimed
- * holder, while the second closes a reclaim race after the lease rewrite. Callers may mutate only
- * after this function returns.
+ * holder, while the second detects a reclaim race after the lease rewrite. The authority-store
+ * transaction is released before this function returns, so this is NOT a mutation fence. Any
+ * irreversible mutation must instead run inside `withCurrentWriterAuthority`.
  */
 export function refreshWriterLeaseAuthority(
   authority: WriterLeaseAuthority,
