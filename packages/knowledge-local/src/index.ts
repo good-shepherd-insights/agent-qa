@@ -415,6 +415,7 @@ export {
   readWriterLease,
   refreshWriterLeaseAuthority,
   releaseLease,
+  resolveProcessIncarnation,
   withCurrentWriterAuthority,
   WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,

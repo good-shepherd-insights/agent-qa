@@ -5,6 +5,7 @@
  * journal reconciliation around these lease decisions. Lease and epoch replacements are each
  * file-fsync'd and atomically renamed so a process kill can expose only old or new bytes.
  */
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import {
   closeSync,
@@ -239,6 +240,84 @@ interface MutationLockOwner {
   pid: number
   acquiredAtMs: number
   generationToken: string
+  /** OS-reported start-time token of the process that created this row; absent when unresolvable. */
+  incarnation?: string
+}
+
+/**
+ * Opaque process-incarnation token for one pid, anchored OUTSIDE any value this module writes.
+ *
+ * CR-04: a durable row's pid is not an identity. Once the recorded process dies, the kernel is
+ * free to hand that number to a stranger, and every later decision keyed on the number alone
+ * (above all `SIGKILL`) targets whoever holds it now. The one fact that distinguishes them is
+ * assigned by the OS and cannot be forged from inside the store: when the process at that pid
+ * started.
+ *
+ * Linux reads field 22 (`starttime`) of `/proc/<pid>/stat`, counted from the LAST `)` because the
+ * `comm` field is parenthesised and may itself contain spaces and parentheses. Other POSIX hosts
+ * read `ps -p <pid> -o lstart=`. Windows has no equivalent builtin, so it resolves to `undefined`
+ * and every incarnation check there fails closed.
+ *
+ * Returns `undefined` — never throws — whenever the pid cannot be attributed. `undefined` means
+ * "do not signal", never "safe to signal".
+ *
+ * 386-32 consumes this same helper for the embedder-worker signal path, so both kill paths speak
+ * one incarnation vocabulary.
+ */
+export function resolveProcessIncarnation(pid: number): string | undefined {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
+  try {
+    if (process.platform === 'win32') return undefined
+    return process.platform === 'linux'
+      ? resolveLinuxProcessIncarnation(pid)
+      : resolvePosixProcessIncarnation(pid)
+  } catch {
+    return undefined
+  }
+}
+
+function resolveLinuxProcessIncarnation(pid: number): string | undefined {
+  let raw: string
+  try {
+    raw = readFileSync(`/proc/${pid}/stat`, 'utf8')
+  } catch {
+    return undefined
+  }
+  const commEnd = raw.lastIndexOf(')')
+  if (commEnd < 0) return undefined
+  // The first field after `comm` is `state` (field 3), so `starttime` (field 22) sits at index 19.
+  const startTime = raw.slice(commEnd + 1).trim().split(/\s+/)[19]
+  return startTime !== undefined && /^\d+$/.test(startTime)
+    ? `proc-starttime:${startTime}`
+    : undefined
+}
+
+function resolvePosixProcessIncarnation(pid: number): string | undefined {
+  const observed = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  if (observed.error !== undefined || observed.status !== 0) return undefined
+  const lstart = (observed.stdout ?? '').trim()
+  return lstart === '' ? undefined : `ps-lstart:${lstart}`
+}
+
+const OWN_INCARNATION_UNRESOLVED = Symbol('own-incarnation-unresolved')
+let ownIncarnation: string | undefined | typeof OWN_INCARNATION_UNRESOLVED =
+  OWN_INCARNATION_UNRESOLVED
+
+/**
+ * This process's own incarnation, resolved once.
+ *
+ * A pid's start time is fixed for the life of the process, and this process is alive by
+ * definition, so the value cannot go stale. Memoising it keeps the per-claim cost off the hot
+ * mutation path (the POSIX arm shells out to `ps`).
+ */
+function ownProcessIncarnation(): string | undefined {
+  if (ownIncarnation === OWN_INCARNATION_UNRESOLVED) {
+    ownIncarnation = resolveProcessIncarnation(process.pid)
+  }
+  return ownIncarnation
 }
 
 export interface MutationLockOptions {
@@ -308,7 +387,8 @@ function openWriterAuthorityDb(knowledgeRoot: string): DatabaseSync {
         id INTEGER PRIMARY KEY CHECK (id = 1),
         generation_token TEXT NOT NULL,
         pid INTEGER NOT NULL CHECK (pid > 0),
-        acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0)
+        acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+        incarnation TEXT
       ) STRICT
     `)
     return db
@@ -333,15 +413,20 @@ function parseMutationLockOwner(value: unknown): MutationLockOwner | undefined {
         pid: row.pid,
         acquiredAtMs: row.acquired_at_ms,
         generationToken: row.generation_token,
+        // A row written before the incarnation column existed, or by a claimant that could not
+        // resolve its own start time, is deliberately left unattributed rather than guessed at.
+        ...(typeof row.incarnation === 'string' && row.incarnation !== ''
+          ? { incarnation: row.incarnation }
+          : {}),
       }
     : undefined
 }
 
 function readMutationLockOwner(db: DatabaseSync): MutationLockOwner | undefined {
+  // `SELECT *` so a store that predates the incarnation column still reads through a read-only
+  // connection, which has no opportunity to upgrade the schema.
   return parseMutationLockOwner(db.prepare(`
-    SELECT generation_token, pid, acquired_at_ms
-    FROM mutation_lock
-    WHERE id = 1
+    SELECT * FROM mutation_lock WHERE id = 1
   `).get())
 }
 
@@ -378,12 +463,13 @@ function compareAndSwapMutationLock(
 ): boolean {
   const result = db.prepare(`
     UPDATE mutation_lock
-    SET generation_token = ?, pid = ?, acquired_at_ms = ?
+    SET generation_token = ?, pid = ?, acquired_at_ms = ?, incarnation = ?
     WHERE id = 1 AND generation_token = ?
   `).run(
     replacement.generationToken,
     replacement.pid,
     replacement.acquiredAtMs,
+    replacement.incarnation ?? null,
     expected.generationToken,
   )
   return result.changes === 1
@@ -403,8 +489,41 @@ function waitForVerifiedProcessExit(pid: number): boolean {
   return true
 }
 
+type MutationLockOwnerIdentity = 'match' | 'mismatch' | 'unverifiable'
+
+/**
+ * Compare the row's recorded incarnation against the pid's CURRENT occupant.
+ *
+ * An unattributed row (legacy bytes, or a claimant that could not resolve its own start time) and
+ * an unresolvable pid both answer `unverifiable`, which is a refusal to signal — never a licence.
+ */
+function verifyMutationLockOwnerIdentity(owner: MutationLockOwner): MutationLockOwnerIdentity {
+  if (owner.incarnation === undefined) return 'unverifiable'
+  const occupant = resolveProcessIncarnation(owner.pid)
+  if (occupant === undefined) return 'unverifiable'
+  return occupant === owner.incarnation ? 'match' : 'mismatch'
+}
+
+/**
+ * CR-04: the generation token authenticates the ROW, not the process now occupying its pid.
+ *
+ * The pid's current incarnation is therefore re-resolved immediately before the signal, and the
+ * three answers are genuinely different outcomes:
+ *
+ *   match        the process that created this row is still there — SIGKILL and confirm ESRCH,
+ *                exactly the Plan 20 verified-termination semantics.
+ *   mismatch     the recorded process is gone and a stranger inherited its pid. A reused pid is
+ *                EVIDENCE OF DEATH, not a target: report success so the caller's generation
+ *                re-read and CAS reclaim the row with no signal delivered at all.
+ *   unverifiable fail closed. Refusing escalation can wedge a contender until the occupant really
+ *                exits (T-386-31-02); signalling an unattributable pid is local arbitrary-process
+ *                termination. Only one of those is recoverable.
+ */
 function terminateExactMutationLockOwner(owner: MutationLockOwner): boolean {
   if (owner.pid === process.pid) return false
+  const identity = verifyMutationLockOwnerIdentity(owner)
+  if (identity === 'unverifiable') return false
+  if (identity === 'mismatch') return true
   try {
     process.kill(owner.pid, 'SIGKILL')
   } catch (error) {
@@ -440,7 +559,14 @@ function tryEscalatedMutationLockTakeover(
 
   const observedAfterTermination = readMutationLockOwner(db)
   if (observedAfterTermination?.generationToken !== expected.generationToken) return false
-  return compareAndSwapMutationLock(db, expected, replacement)
+  try {
+    return compareAndSwapMutationLock(db, expected, replacement)
+  } catch (error) {
+    // A mismatched incarnation reclaims without killing anything, so the write lock can still be
+    // held by whoever made the store busy. That is an ordinary retry, not a failure to surface.
+    if (isSqliteBusy(error)) return false
+    throw error
+  }
 }
 
 function claimMutationLock(
@@ -451,10 +577,15 @@ function claimMutationLock(
 ): void {
   try {
     const inserted = db.prepare(`
-      INSERT INTO mutation_lock (id, generation_token, pid, acquired_at_ms)
-      VALUES (1, ?, ?, ?)
+      INSERT INTO mutation_lock (id, generation_token, pid, acquired_at_ms, incarnation)
+      VALUES (1, ?, ?, ?, ?)
       ON CONFLICT(id) DO NOTHING
-    `).run(owner.generationToken, owner.pid, owner.acquiredAtMs)
+    `).run(
+      owner.generationToken,
+      owner.pid,
+      owner.acquiredAtMs,
+      owner.incarnation ?? null,
+    )
     if (inserted.changes === 1) return
   } catch (error) {
     if (!isSqliteBusy(error)) throw error
@@ -529,10 +660,14 @@ function withMutationLock<T>(
     }
     throw error
   }
+  const claimantIncarnation = ownProcessIncarnation()
   const owner: MutationLockOwner = {
     pid: process.pid,
     acquiredAtMs: mutationLockNowMs(),
     generationToken: randomUUID(),
+    // A claimant that cannot prove its own incarnation records none, accepting that its row may
+    // then only ever be reclaimed after it really dies. Never a fabricated token.
+    ...(claimantIncarnation === undefined ? {} : { incarnation: claimantIncarnation }),
   }
   const takeoverMs = options.mutationLockTakeoverMs ?? MUTATION_LOCK_TAKEOVER_MS
   let claimed = false
