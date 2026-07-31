@@ -13,7 +13,7 @@ import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 
 import { resolveEmbedderCapability } from '../embedder-acquire.js'
 import type { EmbedderPort } from '../embedder-port.js'
-import { resolveProcessIncarnation } from '../lease/writer-lease.js'
+import { ownEmbedderWorkerIncarnation } from './worker-incarnation.js'
 import {
   asEmbeddingProfile,
   embedderWorkerAgentQaRoot,
@@ -21,7 +21,6 @@ import {
   embedderWorkerSocketPath,
   EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
   EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
-  EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
   embeddingProfileSchema,
   MAX_EMBEDDER_WORKER_BODY_BYTES,
   prepareEmbedderWorkerSocketParent,
@@ -233,12 +232,7 @@ export async function runEmbedderWorker(
     socketPath,
     profile: options.profile,
     startedAtMs: Date.now(),
-    // The worker attributes ITSELF: it is the only party that can say, without a race, which
-    // process incarnation this registration belongs to. A worker that cannot resolve its own start
-    // time records the sentinel rather than a fabricated token, accepting that it will then be
-    // replaced without a signal instead of terminated.
-    incarnation:
-      resolveProcessIncarnation(process.pid) ?? EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
+    incarnation: ownEmbedderWorkerIncarnation(),
   }
   try {
     if (process.platform !== 'win32') chmodSync(socketPath, 0o600)

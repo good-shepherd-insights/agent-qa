@@ -226,9 +226,9 @@ export {
   probeEmbedderWorkerSocket,
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
-  verifyEmbedderWorkerIncarnation,
   writeEmbedderWorkerRegistration,
 } from './embedder-worker/worker-registration.js'
+export { verifyEmbedderWorkerIncarnation } from './embedder-worker/worker-incarnation.js'
 export type {
   EmbedderWorkerIncarnationVerdict,
   EmbedderWorkerTimeoutPhase,

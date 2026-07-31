@@ -23,7 +23,10 @@ import {
   resolveEmbedderCapability,
 } from '../embedder-acquire.js'
 import { createFloorEmbedder } from '../embedder-floor.js'
-import { resolveProcessIncarnation } from '../lease/writer-lease.js'
+import {
+  resolveProcessIncarnation,
+  verifyEmbedderWorkerIncarnation,
+} from '../embedder-worker/worker-incarnation.js'
 import {
   EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
   EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
@@ -38,7 +41,6 @@ import {
   embedderWorkerSocketPath,
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
-  verifyEmbedderWorkerIncarnation,
   writeEmbedderWorkerRegistration,
 } from '../embedder-worker/worker-registration.js'
 import {

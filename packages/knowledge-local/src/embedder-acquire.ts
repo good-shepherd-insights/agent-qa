@@ -329,7 +329,14 @@ async function probeCapability({
     if (workerPolicy === 'required') {
       return { kind: 'deferred', reason: 'worker-unavailable' }
     }
-    if (availableMemory() < EMBEDDER_MIN_AVAILABLE_BYTES) {
+    // The budget gate exists to stop the ONNX runtime loading on a host that cannot hold it. The
+    // static floor loads a shipped deterministic asset and constructs no runtime, so applying the
+    // same gate refuses the one rung that exists FOR a host with no memory to spare — and takes the
+    // embedder worker, which asks for this profile by name, down with it at startup.
+    if (
+      preferredProfile.backend !== 'static'
+      && availableMemory() < EMBEDDER_MIN_AVAILABLE_BYTES
+    ) {
       return { kind: 'deferred', reason: 'ram-budget' }
     }
   } catch {

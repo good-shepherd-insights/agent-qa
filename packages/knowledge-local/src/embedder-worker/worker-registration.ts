@@ -23,7 +23,6 @@ import type { EmbeddingProfile } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import type { EmbedderPort } from '../embedder-port.js'
-import { resolveProcessIncarnation } from '../lease/writer-lease.js'
 
 export const EMBEDDER_WORKER_REGISTRATION_FILE = 'embedder-worker.json'
 export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 3
@@ -349,31 +348,6 @@ function sameRegistration(
     return sharedFieldsMatch && left.instanceId === right.instanceId
   }
   return sharedFieldsMatch
-}
-
-/**
- * Compare the registration's recorded incarnation against the pid's CURRENT occupant.
- *
- * CR-05: a schema-valid registration naming a live pid whose socket has stopped answering is not
- * proof that the worker is still there. Once the worker died, the kernel is free to hand its pid to
- * a stranger, and every decision keyed on that number alone targets whoever holds it now. The one
- * fact that separates them is assigned by the OS and cannot be forged from inside the file: when
- * the process at that pid started.
- *
- * `mismatch` means the registered worker is provably gone; `unverifiable` means we cannot say, and
- * that is a refusal rather than a default-allow. Neither may be signalled — and neither needs to
- * be, because generation-specific sockets (Plan 24) let a fresh worker take a clean address without
- * the old pid ever being touched.
- */
-export function verifyEmbedderWorkerIncarnation(
-  registration: EmbedderWorkerRegistration,
-): EmbedderWorkerIncarnationVerdict {
-  if (registration.incarnation === EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION) {
-    return 'unverifiable'
-  }
-  const occupant = resolveProcessIncarnation(registration.pid)
-  if (occupant === undefined) return 'unverifiable'
-  return occupant === registration.incarnation ? 'match' : 'mismatch'
 }
 
 export interface RemoveEmbedderWorkerRegistrationOptions {
