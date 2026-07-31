@@ -1215,19 +1215,20 @@ describe('daemon heartbeat authority and cadence', () => {
     expect(acquire).toHaveBeenCalledTimes(1)
     expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
     expect(readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8')).toBe(replacementBytes)
-    expect(
-      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-lost').at(-1),
-    ).toMatchObject({
+    const events = readEvents(paths.agentQaRoot)
+    const leaseLostIndex = events.findIndex((event) => event.kind === 'lease-lost')
+    expect(events[leaseLostIndex]).toMatchObject({
       kind: 'lease-lost',
       reason: 'lease-id-mismatch',
       observedEpoch: 2,
     })
+    expect(events.filter((event) => event.kind === 'lease-lost')).toHaveLength(1)
     expect(
-      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-lost'),
-    ).toHaveLength(1)
-    expect(
-      readEvents(paths.agentQaRoot).filter((event) => event.kind === 'daemon-stopped'),
-    ).toEqual([expect.objectContaining({ exitCode: 1, reason: 'lease-lost' })])
+      events.slice(leaseLostIndex + 1).filter((event) => event.kind === 'lease-acquired'),
+    ).toHaveLength(0)
+    expect(events.filter((event) => event.kind === 'daemon-stopped')).toEqual([
+      expect.objectContaining({ exitCode: 1, reason: 'lease-lost' }),
+    ])
   })
 
   it('treats an unexpected supervisor crash as one authority-loss shutdown', async () => {
