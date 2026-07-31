@@ -66,6 +66,7 @@ const daemonHarness = vi.hoisted(() => ({
   nudgeCalls: [] as string[],
   nudgeCallTimes: [] as number[],
   nudgeOptions: [] as Array<{
+    knowledgeRoot?: string
     deadlineMs?: number
     requireReceipt?: boolean
     signal?: AbortSignal
@@ -73,7 +74,12 @@ const daemonHarness = vi.hoisted(() => ({
   nudgeHook: undefined as (
     | ((
       agentQaRoot: string,
-      options?: { deadlineMs?: number; requireReceipt?: boolean; signal?: AbortSignal },
+      options?: {
+        knowledgeRoot?: string
+        deadlineMs?: number
+        requireReceipt?: boolean
+        signal?: AbortSignal
+      },
     ) =>
       | Promise<{ sessionId: string } | undefined>
       | { sessionId: string }
@@ -164,7 +170,12 @@ vi.mock('../daemon/client.js', async (importOriginal) => {
     ...actual,
     nudgeDaemon: vi.fn(async (
       agentQaRoot: string,
-      options?: { deadlineMs?: number; requireReceipt?: boolean; signal?: AbortSignal },
+      options?: {
+        knowledgeRoot?: string
+        deadlineMs?: number
+        requireReceipt?: boolean
+        signal?: AbortSignal
+      },
     ) => {
       daemonHarness.nudgeCalls.push(agentQaRoot)
       daemonHarness.nudgeCallTimes.push(Date.now())
@@ -741,6 +752,7 @@ describe('knowledge maintenance commands', () => {
     expect(nudgeStartedAtMs).toBeTypeOf('number')
     const expectedDeadlineMs = nudgeStartedAtMs! + 120_000
     expect(daemonHarness.nudgeOptions).toEqual([{
+      knowledgeRoot: workspace.knowledgeRoot,
       deadlineMs: expectedDeadlineMs,
       requireReceipt: true,
     }])
