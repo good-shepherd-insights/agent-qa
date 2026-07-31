@@ -205,13 +205,40 @@ export function startHeartbeatSupervisor(
     resolveExited = resolve
   })
 
-  const finishStop = (): void => {
+  let rejectStop: ((error: unknown) => void) | undefined
+
+  const settleStop = (): void => {
     if (stopTimer !== undefined) {
       clearTimeout(stopTimer)
       stopTimer = undefined
     }
-    resolveStop?.()
     resolveStop = undefined
+    rejectStop = undefined
+  }
+
+  const finishStop = (): void => {
+    const resolve = resolveStop
+    settleStop()
+    resolve?.()
+  }
+
+  const failStop = (error: unknown): void => {
+    const reject = rejectStop
+    settleStop()
+    reject?.(error)
+  }
+
+  /**
+   * CR-10: the graceful window elapsing is not permission to return. Authority is only safe to
+   * release once no beat can still land, so the escalation resolves from the terminate settlement
+   * or the exit event — whichever the thread reaches first — and a failed terminate is propagated
+   * rather than swallowed, so shutdown records it as a named stage failure.
+   */
+  const escalateStop = (): void => {
+    worker.terminate().then(
+      () => finishStop(),
+      (error: unknown) => failStop(error),
+    )
   }
 
   const reportUnexpected = (error: Error): void => {
@@ -227,18 +254,19 @@ export function startHeartbeatSupervisor(
       stopping = true
       if (exited) return Promise.resolve()
 
-      stopPromise = new Promise<void>((resolve) => {
+      stopPromise = new Promise<void>((resolve, reject) => {
         resolveStop = resolve
-        stopTimer = setTimeout(() => {
-          void worker.terminate().catch(() => undefined)
-          finishStop()
-        }, stopTimeoutMs)
+        rejectStop = reject
+        stopTimer = setTimeout(escalateStop, stopTimeoutMs)
         stopTimer.unref?.()
         try {
           worker.postMessage({ kind: 'stop' })
         } catch {
-          void worker.terminate().catch(() => undefined)
-          finishStop()
+          if (stopTimer !== undefined) {
+            clearTimeout(stopTimer)
+            stopTimer = undefined
+          }
+          escalateStop()
         }
       })
       return stopPromise
