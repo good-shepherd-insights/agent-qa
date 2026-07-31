@@ -23,16 +23,22 @@ import {
 import { createFloorEmbedder } from '../embedder-floor.js'
 import {
   EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
+  EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
   EmbedderWorkerTimeoutError,
+  createEmbedderWorkerPort,
   embedderWorkerAgentQaRoot,
   embedderWorkerRegistrationPath,
   embedderWorkerSocketPath,
   readEmbedderWorkerRegistration,
   writeEmbedderWorkerRegistration,
 } from '../embedder-worker/worker-registration.js'
+import {
+  runEmbedderWorker,
+  type EmbedderWorkerHandle,
+} from '../embedder-worker/worker-entry.js'
 
 const packageRoot = fileURLToPath(new URL('../..', import.meta.url))
 const roots: string[] = []
@@ -162,6 +168,105 @@ describe.sequential('embedder worker discovery', () => {
     process.chdir(projectRoot)
 
     await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
+  })
+
+  it('round-trips schema v2 instance identity and classifies v1 as stale-recoverable', () => {
+    const projectRoot = temporaryProject('registration-v2')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const instanceId = '00000000-0000-4000-8000-000000000101'
+    const socketPath = (embedderWorkerSocketPath as (
+      root: string,
+      project: string,
+      instance: string,
+    ) => string)(agentQaRoot, projectRoot, instanceId)
+    const expected = {
+      schemaVersion: 2,
+      instanceId,
+      pid: process.pid,
+      socketPath,
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: Date.now(),
+    }
+
+    writeEmbedderWorkerRegistration(agentQaRoot, expected as never)
+    expect(readEmbedderWorkerRegistration(agentQaRoot)).toEqual({
+      kind: 'parsed',
+      registration: expected,
+    })
+
+    writeFileSync(embedderWorkerRegistrationPath(agentQaRoot), `${JSON.stringify({
+      schemaVersion: 1,
+      pid: process.pid,
+      socketPath,
+      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      startedAtMs: expected.startedAtMs,
+    })}\n`)
+    expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
+      kind: 'stale-recoverable',
+      registration: { schemaVersion: 1 },
+    })
+  })
+
+  it('derives distinct bounded socket paths for concurrent worker instances', () => {
+    const projectRoot = temporaryProject('generation-sockets')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const derive = embedderWorkerSocketPath as (
+      root: string,
+      project: string,
+      instance: string,
+    ) => string
+    const first = derive(
+      agentQaRoot,
+      projectRoot,
+      '00000000-0000-4000-8000-000000000102',
+    )
+    const second = derive(
+      agentQaRoot,
+      projectRoot,
+      '00000000-0000-4000-8000-000000000103',
+    )
+
+    expect(first).not.toBe(second)
+    expect(Buffer.byteLength(first)).toBeLessThanOrEqual(
+      EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
+    )
+    expect(Buffer.byteLength(second)).toBeLessThanOrEqual(
+      EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
+    )
+  })
+
+  it('keeps successor registration bytes and socket serving after delayed predecessor close', async () => {
+    const projectRoot = temporaryProject('delayed-close')
+    const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
+    const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
+    let first: EmbedderWorkerHandle | undefined
+    let successor: EmbedderWorkerHandle | undefined
+
+    try {
+      first = await runEmbedderWorker({
+        projectRoot,
+        profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      })
+      successor = await runEmbedderWorker({
+        projectRoot,
+        profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+      })
+      const successorBytes = readFileSync(registrationPath)
+
+      await first.close()
+
+      expect(readFileSync(registrationPath)).toEqual(successorBytes)
+      const port = createEmbedderWorkerPort(
+        successor.registration.socketPath,
+        successor.registration.profile.dim,
+      )
+      await expect(port.embedQuery('successor remains live')).resolves.toBeInstanceOf(
+        Float32Array,
+      )
+    } finally {
+      await successor?.close().catch(() => undefined)
+      await first?.close().catch(() => undefined)
+    }
   })
 
   it('removes a dead-pid registration and returns no-worker', async () => {

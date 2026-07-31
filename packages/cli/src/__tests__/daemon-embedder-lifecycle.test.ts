@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -537,6 +538,23 @@ describe('daemon embedder-worker lifecycle', () => {
         .filter((event) => event.kind === 'embedder-worker-exit')
         .map((event) => event.reason),
     ).toEqual(['crash', 'daemon-stop'])
+  })
+
+  it('keeps successor registration bytes when predecessor exit callback crosses the publish barrier', async () => {
+    const harness = startHarness('exit-callback-barrier', [drainReport(1, 0)])
+    await waitUntil(() => harness.isStarted(), 'daemon did not start')
+    harness.fireInterval(CURATION_QUEUE_POLL_MS)
+    await waitUntil(() => harness.workers.length === 1, 'predecessor worker did not spawn')
+
+    const successorBytes = Buffer.from('{"schemaVersion":2,"successor":true}\n')
+    writeFileSync(harness.workerRegistrationPath, successorBytes)
+    harness.workers[0]!.crash()
+    await waitUntil(() => harness.resetCapability.mock.calls.length === 1, 'exit not handled')
+
+    expect(readFileSync(harness.workerRegistrationPath)).toEqual(successorBytes)
+
+    harness.signal('SIGTERM')
+    await expect(harness.running).resolves.toBe(0)
   })
 
   it('bounds wedged-worker shutdown with TERM then KILL and reaps before lease release', async () => {
