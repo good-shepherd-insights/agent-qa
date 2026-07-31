@@ -83,29 +83,11 @@ type AcquireWithClaimHook = (
   },
 ) => ReturnType<typeof acquireWriterLease>
 
-type RebuildMutationFamily =
-  | 'project-bundle'
-  | 'checkpoint-passive'
-  | 'remove-missing-bundles'
-  | 'complete-rendering-epoch'
-  | 'clear-rebuild-request'
-
-type RebuildWithMutationHooks = (
-  options: Omit<publicSurface.RebuildIndexOptions, 'hooks'> & {
-    hooks?: {
-      beforeTransactionCommit?: () => void
-      beforeMutationAuthority?: (family: RebuildMutationFamily) => void
-      insideMutationAuthority?: (family: RebuildMutationFamily) => void
-    }
-  },
-) => ReturnType<typeof publicSurface.rebuildIndex>
-
 const expectedSurface = publicSurface as typeof publicSurface
   & ExpectedAuthoritySurface
   & ExpectedCorruptEpochSurface
 const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
 const acquireWithClaimHook = acquireWriterLease as AcquireWithClaimHook
-const rebuildWithMutationHooks = publicSurface.rebuildIndex as RebuildWithMutationHooks
 const acquireFailClosed = acquireWriterLease as (
   knowledgeRoot: string,
 ) => ExpectedAcquireOutcome
@@ -433,7 +415,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let targetCalls = 0
 
-    await expect(rebuildWithMutationHooks({
+    await expect(publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -461,7 +443,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let contender: ReturnType<typeof acquireWriterLease> | undefined
 
-    await rebuildWithMutationHooks({
+    await publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -498,7 +480,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let targetCalls = 0
 
-    await expect(rebuildWithMutationHooks({
+    await expect(publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -527,7 +509,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let contender: ReturnType<typeof acquireWriterLease> | undefined
 
-    await rebuildWithMutationHooks({
+    await publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -563,7 +545,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let targetCalls = 0
 
-    await expect(rebuildWithMutationHooks({
+    await expect(publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -591,7 +573,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let contender: ReturnType<typeof acquireWriterLease> | undefined
 
-    const report = await rebuildWithMutationHooks({
+    const report = await publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -624,7 +606,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let targetCalls = 0
 
-    await expect(rebuildWithMutationHooks({
+    await expect(publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -650,7 +632,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     let contender: ReturnType<typeof acquireWriterLease> | undefined
 
-    const report = await rebuildWithMutationHooks({
+    const report = await publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -684,7 +666,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     let projectBoundaries = 0
     const heartbeatOutcomes: ReturnType<typeof heartbeatLease>[] = []
 
-    const first = await rebuildWithMutationHooks({
+    const first = await publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
       hooks: {
@@ -705,7 +687,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(heartbeatOutcomes).toHaveLength(2)
     expect(heartbeatOutcomes.every(({ kind }) => kind === 'heartbeated')).toBe(true)
 
-    const second = await rebuildWithMutationHooks({
+    const second = await publicSurface.rebuildIndex({
       knowledgeRoot,
       writerAuthority: { knowledgeRoot, ...authority },
     })

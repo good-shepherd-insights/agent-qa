@@ -77,15 +77,28 @@ export interface RebuildReport {
   maintenanceRemaining: boolean
 }
 
+export type RebuildMutationFamily =
+  | 'project-bundle'
+  | 'checkpoint-passive'
+  | 'remove-missing-bundles'
+  | 'complete-rendering-epoch'
+  | 'clear-rebuild-request'
+
+export interface RebuildIndexHooks {
+  /** Test/chaos seam after synchronous DML and immediately before the final commit fence. */
+  beforeTransactionCommit?: () => void
+  /** Test/chaos seam immediately before one named authority unit acquires its hold. */
+  beforeMutationAuthority?: (family: RebuildMutationFamily) => void
+  /** Test/chaos seam after authority is held and before the named mutation begins. */
+  insideMutationAuthority?: (family: RebuildMutationFamily) => void
+}
+
 export interface RebuildIndexOptions {
   knowledgeRoot: string
   embedder?: EmbedderPort
   vecLoadablePath?: string
   writerAuthority?: WriterLeaseAuthority
-  hooks?: {
-    /** Test/chaos seam after synchronous DML and immediately before the final commit fence. */
-    beforeTransactionCommit?: () => void
-  }
+  hooks?: RebuildIndexHooks
 }
 
 export interface ProjectBundleIndexRowOptions {
@@ -176,13 +189,30 @@ function withMutationAuthority<T>(
   return operation()
 }
 
+function withNamedMutationAuthority<T>(
+  authority: MutationAuthorityContext | undefined,
+  family: RebuildMutationFamily,
+  hooks: RebuildIndexHooks | undefined,
+  operation: () => T,
+): T {
+  hooks?.beforeMutationAuthority?.(family)
+  return withMutationAuthority(authority, () => {
+    hooks?.insideMutationAuthority?.(family)
+    return operation()
+  })
+}
+
 function transaction(
   db: DatabaseSync,
   operation: () => void,
   authority?: MutationAuthorityContext,
   beforeCommit?: () => void,
+  namedMutation?: {
+    family: RebuildMutationFamily
+    hooks: RebuildIndexHooks | undefined
+  },
 ): void {
-  withMutationAuthority(authority, () => {
+  const transact = (): void => {
     db.exec('BEGIN IMMEDIATE')
     try {
       operation()
@@ -196,7 +226,17 @@ function transaction(
       }
       throw error
     }
-  })
+  }
+  if (namedMutation === undefined) {
+    withMutationAuthority(authority, transact)
+    return
+  }
+  withNamedMutationAuthority(
+    authority,
+    namedMutation.family,
+    namedMutation.hooks,
+    transact,
+  )
 }
 
 function embeddingBuffer(vector: Float32Array, activeProfile: EmbeddingProfile): Buffer {
@@ -580,6 +620,7 @@ function projectBundle(
   activeProfile: EmbeddingProfile,
   authority?: MutationAuthorityContext,
   beforeCommit?: () => void,
+  hooks?: RebuildIndexHooks,
 ): void {
   transaction(db, () => {
     const { recordRowid, status } = upsertRecord(
@@ -606,7 +647,7 @@ function projectBundle(
     `).run(EMBED_STATUS_PENDING, recordRowid, EMBED_STATUS_SCRUBBED)
     refreshVecMetadata(db, vec, recordRowid, activeProfile)
     replaceAnchorGraph(db, projected.bundle, projected.product, recordRowid)
-  }, authority, beforeCommit)
+  }, authority, beforeCommit, { family: 'project-bundle', hooks })
 }
 
 function applyProjectionSafety(
@@ -1075,6 +1116,7 @@ function removeMissingBundles(
   db: DatabaseSync,
   seenBundleIds: ReadonlySet<string>,
   authority?: MutationAuthorityContext,
+  hooks?: RebuildIndexHooks,
 ): number {
   const missing = db
     .prepare('SELECT record_rowid, bundle_id, kind FROM records ORDER BY record_rowid')
@@ -1091,7 +1133,7 @@ function removeMissingBundles(
         row.kind as LoadedBundle['frontmatter']['kind'],
       )
     }
-  }, authority)
+  }, authority, undefined, { family: 'remove-missing-bundles', hooks })
 
   return missing.length
 }
@@ -1331,7 +1373,12 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       processedBundles += 1
       if (current?.mutable_state_hash === outcome.bundle.manifest.mutableStateHash) {
         if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
-          withMutationAuthority(authority, () => writer.checkpointPassive())
+          withNamedMutationAuthority(
+            authority,
+            'checkpoint-passive',
+            opts.hooks,
+            () => writer.checkpointPassive(),
+          )
         }
         continue
       }
@@ -1343,15 +1390,26 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         activeProfile,
         authority,
         opts.hooks?.beforeTransactionCommit,
+        opts.hooks,
       )
       projected.push(item)
       report.projected += 1
       if (processedBundles % CHECKPOINT_EVERY_N_BUNDLES === 0) {
-        withMutationAuthority(authority, () => writer.checkpointPassive())
+        withNamedMutationAuthority(
+          authority,
+          'checkpoint-passive',
+          opts.hooks,
+          () => writer.checkpointPassive(),
+        )
       }
     }
 
-    report.removed = removeMissingBundles(writer.db, seenBundleIds, authority)
+    report.removed = removeMissingBundles(
+      writer.db,
+      seenBundleIds,
+      authority,
+      opts.hooks,
+    )
     emitRelationEdges(writer.db, relationSources, authority)
     emitObservationEdges(
       writer.db,
@@ -1372,14 +1430,24 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       authority,
     )
     reconcileVecRows(writer.db, writer.vec, activeProfile, authority)
-    withMutationAuthority(authority, () => writer.completeRenderingEpoch())
+    withNamedMutationAuthority(
+      authority,
+      'complete-rendering-epoch',
+      opts.hooks,
+      () => writer.completeRenderingEpoch(),
+    )
     report.pendingEmbeddings = selectPendingEmbeddingRows(writer.db).length
     report.maintenanceRemaining =
       report.pendingEmbeddings > 0
       || writer.renderingEpochStale
       || !isEmbeddingVecCleanupCurrent(writer.db)
     if (!report.maintenanceRemaining) {
-      withMutationAuthority(authority, () => clearRebuildRequest(opts.knowledgeRoot))
+      withNamedMutationAuthority(
+        authority,
+        'clear-rebuild-request',
+        opts.hooks,
+        () => clearRebuildRequest(opts.knowledgeRoot),
+      )
     }
     return report
   } finally {

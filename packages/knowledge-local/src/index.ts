@@ -120,7 +120,12 @@ export type { RetrievalQuery, RetrievalQueryInput } from './query-helper.js'
 export { retrieve } from './retrieve.js'
 export type { RetrieveOptions, RetrieveResult } from './retrieve.js'
 export { rebuildIndex } from './index-rebuild.js'
-export type { RebuildIndexOptions, RebuildReport } from './index-rebuild.js'
+export type {
+  RebuildIndexHooks,
+  RebuildIndexOptions,
+  RebuildMutationFamily,
+  RebuildReport,
+} from './index-rebuild.js'
 export { readLatestBuildOrdinal } from './build-ordinal-read.js'
 export {
   applyRunOutcomes,
