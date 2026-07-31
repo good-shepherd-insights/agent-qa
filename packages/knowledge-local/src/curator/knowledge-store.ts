@@ -64,6 +64,19 @@ import type {
   CommitCurationOutcome,
 } from './commit.js'
 
+/**
+ * CR-02 takeover barriers. Test-only seams naming the three points at which a canary flow is
+ * about to make canonical state durable; production callers omit them.
+ */
+export interface CanaryAuthorityHooks {
+  /** Before the negative arm's contradicted append. */
+  beforeNegativeAppend?: () => void
+  /** Before the promoted append that finalizes a positive canary. */
+  beforePromotionAppend?: () => void
+  /** Before the negative arm's index projection. */
+  beforeIndexProjection?: () => void
+}
+
 export interface CreateLocalKnowledgeStoreConfig {
   knowledgeRoot: string
   auditBaseDir: string
@@ -77,12 +90,14 @@ export interface CreateLocalKnowledgeStoreConfig {
    * synthesize one. When the caller supplies nothing the currently published holder is adopted;
    * if no holder is published the fence refuses by name instead of laundering a fabricated id.
    */
-  leaseId?: string
+  writerLeaseId?: string
   policy?: GuardrailPolicy
   /** Port calls lack a run ordinal; callers with run context should supply it. */
   sourceBuildOrdinal?: number
   sourceRunId?: string
   screenStates?: readonly ScreenState[]
+  /** Fault-injection seam; production callers must omit it. */
+  canaryAuthorityHooks?: CanaryAuthorityHooks
   operations?: {
     /** Test/chaos seam; production always uses commitCurationDelta. */
     commitCurationDelta?: typeof commitCurationDelta
@@ -263,7 +278,7 @@ function syntheticAuthorship(
 const UNHELD_BRIDGE_LEASE_ID = 'knowledge-port'
 
 function bridgeLeaseId(config: CreateLocalKnowledgeStoreConfig): string {
-  if (config.leaseId !== undefined) return config.leaseId
+  if (config.writerLeaseId !== undefined) return config.writerLeaseId
   const current = readWriterLease(config.knowledgeRoot)
   return current.kind === 'parsed' ? current.lease.leaseId : UNHELD_BRIDGE_LEASE_ID
 }
@@ -453,6 +468,7 @@ export function createLocalKnowledgeStore(
             writerLeaseId: 'knowledge-port',
             policy,
           }
+          config.canaryAuthorityHooks?.beforeNegativeAppend?.()
           const appended = appendOutcomeEvent(appendConfig, outcome.candidateId, {
             type: 'contradicted',
             evidenceToken,
@@ -472,6 +488,7 @@ export function createLocalKnowledgeStore(
           if (appended.kind === 'not-found') {
             throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
           }
+          config.canaryAuthorityHooks?.beforeIndexProjection?.()
           applyIndexDeltaForBundle({
             knowledgeRoot: config.knowledgeRoot,
             bundleId: outcome.candidateId,
@@ -580,6 +597,7 @@ export function createLocalKnowledgeStore(
       if (gate.verdict === 'hold') {
         throw new KnowledgePromotionError(candidateId, gate.reason)
       }
+      config.canaryAuthorityHooks?.beforePromotionAppend?.()
       const appended = appendOutcomeEvent(appendConfig, candidateId, {
         type: 'promoted',
         evidenceToken: derivePromotedEvidenceToken(candidateId),

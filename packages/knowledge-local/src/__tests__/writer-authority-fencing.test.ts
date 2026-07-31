@@ -1696,6 +1696,34 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(heldTail).toContain('finalizePreparedPublicationWithinCurrentAuthority(')
   })
 
+  /**
+   * CR-02: the knowledge port used to name a writer identity it did not hold. The filter drops
+   * comment lines so the token's surviving provenance uses (hash source, error text, attribution
+   * prefixes) are deliberately out of scope — only identity positions are banned.
+   */
+  it('names no fabricated writer identity anywhere in the knowledge store (CR-02)', () => {
+    const source = readFileSync(new URL('../curator/knowledge-store.ts', import.meta.url), 'utf8')
+    const identityAssignments = source
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .filter((line) => /[Ll]easeId\s*[:=]\s*'knowledge-port'/.test(line))
+
+    expect(identityAssignments).toEqual([])
+    expect(source).not.toContain('UNHELD_BRIDGE_LEASE_ID')
+    // The same token remains legitimate provenance/attribution metadata.
+    expect(source).toContain("source: 'knowledge-port'")
+  })
+
+  it('projects every canary canonical mutation from inside a held section (CR-02)', () => {
+    const source = readFileSync(new URL('../curator/knowledge-store.ts', import.meta.url), 'utf8')
+
+    expect(source).toContain('withCurrentWriterAuthority(')
+    // The unfenced projection alias opens its own transaction; inside a held section it
+    // deadlocks, so its absence is what makes the canary tail one section.
+    expect(source).not.toContain('applyIndexDeltaForBundle(')
+    expect(source).toContain('applyIndexDeltaForBundleWithinCurrentAuthority(')
+  })
+
   it('keeps the unfenced compatibility publisher out of the public and commit surfaces', () => {
     const source = readFileSync(new URL('../curator/commit.ts', import.meta.url), 'utf8')
 

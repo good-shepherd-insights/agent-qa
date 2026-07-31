@@ -80,6 +80,7 @@ import {
 import type { DispositionDrainState } from './disposition.js'
 import { constructFallbackDeltas } from './fallback.js'
 import { createLocalKnowledgeStore } from './knowledge-store.js'
+import type { CanaryAuthorityHooks } from './knowledge-store.js'
 import {
   runMaintenanceTail,
   type GcPassReport,
@@ -193,6 +194,8 @@ export interface DrainOperations extends MaintenanceOperations {
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
   applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
   deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
+  /** CR-02 takeover barriers for the canary branch; production omits them. */
+  canaryAuthorityHooks?: CanaryAuthorityHooks
 }
 
 export interface DrainOptions {
@@ -928,6 +931,9 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             sourceBuildOrdinal: canaryOutcome.buildOrdinal,
             sourceRunId: canaryOutcome.runId,
             policy: options.policy,
+            ...(operations.canaryAuthorityHooks === undefined
+              ? {}
+              : { canaryAuthorityHooks: operations.canaryAuthorityHooks }),
           })
           await store.recordCanaryOutcome(canaryOutcome)
           operations.writeJobState({

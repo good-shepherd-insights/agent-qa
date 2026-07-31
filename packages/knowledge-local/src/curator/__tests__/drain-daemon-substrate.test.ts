@@ -14,6 +14,7 @@ import { join, relative } from 'node:path'
 import {
   asRecordId,
   canonicalJson,
+  type CanaryOutcome,
   type CurationAuthorship,
   type Delta,
   type ExecutionContext,
@@ -36,6 +37,7 @@ import * as knowledgeLocal from '../../index.js'
 import {
   acquireWriterLease,
   LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
   releaseLease,
   WriterAuthorityLostError,
 } from '../../lease/writer-lease.js'
@@ -58,6 +60,10 @@ import {
   type CurationDrainLifecycleEvent,
   type DrainOperations,
 } from '../drain.js'
+import {
+  createLocalKnowledgeStore,
+  type CanaryAuthorityHooks,
+} from '../knowledge-store.js'
 
 const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
 const NO_INDEX_MAINTENANCE = {
@@ -1083,6 +1089,309 @@ describe('drainQueue daemon substrate', () => {
     ).rejects.toBeInstanceOf(WriterAuthorityLostError)
     expect(releaseLease({ knowledgeRoot, leaseId: current.leaseId })).toEqual({
       kind: 'released',
+    })
+  })
+
+  /**
+   * CR-02: canary evidence is trust/status currency, so every canary mutation must sit inside the
+   * same exact-authority section as the terminal job-state write. Each barrier below names one
+   * point at which a takeover either completes (and must find nothing landed) or is blocked (and
+   * must observe the tail's holder), which is the only way "one held section" is executable.
+   */
+  describe('canary tail authority barriers (CR-02)', () => {
+    type AcquireWithDeadline = (
+      knowledgeRoot: string,
+      hooks?: { mutationLockTakeoverMs?: number },
+    ) => ReturnType<typeof acquireWriterLease>
+    const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
+
+    function acquireAuthority(): { leaseId: string; epoch: number } {
+      const outcome = acquireWriterLease(knowledgeRoot)
+      if (outcome.kind !== 'acquired') throw new Error('expected acquired canary authority')
+      return { leaseId: outcome.leaseId, epoch: outcome.epoch }
+    }
+
+    function makeStale(): void {
+      const file = join(knowledgeRoot, LEASE_FILE)
+      const holder = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+      writeFileSync(
+        file,
+        `${JSON.stringify({
+          ...holder,
+          heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+        })}\n`,
+        'utf8',
+      )
+    }
+
+    function takeOver(): { leaseId: string; epoch: number } {
+      makeStale()
+      const successor = acquireWithDeadline(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+      if (successor.kind !== 'acquired') throw new Error('expected successor takeover')
+      return { leaseId: successor.leaseId, epoch: successor.epoch }
+    }
+
+    /** Canonical canary state: the outcome log, the manifest fold, and the projected rows. */
+    function canarySnapshot(): unknown {
+      return canonicalJson({
+        bundles: enumerateBundleDirs(knowledgeRoot).map(({ product, dir }) => ({
+          product,
+          outcomes: readFileSync(join(dir, 'evidence/outcomes.jsonl'), 'utf8'),
+          manifest: readFileSync(join(dir, 'manifest.json'), 'utf8'),
+        })),
+        logicalIndex: orderedLogicalIndexDump(),
+      })
+    }
+
+    function onlyBundle() {
+      const dirs = enumerateBundleDirs(knowledgeRoot)
+      expect(dirs).toHaveLength(1)
+      const loaded = loadBundle(dirs[0]!.dir)
+      if (loaded.kind !== 'loaded') throw new Error('expected one loaded canary target')
+      return { bundle: loaded.bundle, trust: deriveBundleTrust(loaded.bundle) }
+    }
+
+    function eventTypes(): string[] {
+      return onlyBundle().bundle.events.map(({ type }) => type)
+    }
+
+    function indexRowStatus(bundleId: string): string | undefined {
+      const reader = knowledgeLocal.openIndexReaderConnection(knowledgeRoot)
+      try {
+        const row = reader.db
+          .prepare('SELECT status FROM records WHERE bundle_id = ?')
+          .get(bundleId) as { status: string } | undefined
+        return row?.status
+      } finally {
+        reader.db.close()
+      }
+    }
+
+    /** Drains one propose-only candidate so a real canonical bundle exists to canary. */
+    async function seedCanaryTarget(seed: string): Promise<string> {
+      enqueue(seed, 'ci')
+      const report = await drainQueue({
+        knowledgeRoot,
+        auditBaseDir,
+        author: scriptedAuthor(),
+        executionContext: 'ci',
+        policy,
+        maintenance: 'skip',
+        operations: maintenanceFreeOperations(),
+      })
+      expect(report).toMatchObject({ kind: 'drained', committed: 1, failures: 0 })
+      const seeded = onlyBundle()
+      expect(seeded.trust.status).toBe('candidate')
+      return seeded.bundle.manifest.id
+    }
+
+    function canaryOutcome(
+      bundleId: string,
+      seed: string,
+      runOutcome: CanaryOutcome['runOutcome'],
+    ): CanaryOutcome {
+      return {
+        candidateId: asRecordId(bundleId),
+        runOutcome,
+        runId: `run-canary-${seed}`,
+        testId: `canary::${seed}`,
+        testIndex: 0,
+        buildOrdinal: 43,
+        stepIndex: 0,
+        briefDigest: `canary-${seed}`,
+        attribution: `run-canary-${seed}:canary::${seed}:0`,
+        exercisedAnchor: { t: 'page', route: `/${seed}` },
+      }
+    }
+
+    async function drainCanary(
+      lease: { leaseId: string; epoch: number },
+      canaryAuthorityHooks?: CanaryAuthorityHooks,
+    ) {
+      return drainQueue({
+        knowledgeRoot,
+        auditBaseDir,
+        author: scriptedAuthor(),
+        executionContext: 'local-interactive',
+        policy,
+        maintenance: 'skip',
+        lease,
+        operations: {
+          ...maintenanceFreeOperations(),
+          ...(canaryAuthorityHooks === undefined ? {} : { canaryAuthorityHooks }),
+        },
+      })
+    }
+
+    const authorityLostFailure = [
+      expect.objectContaining({
+        stage: 'commit',
+        message: expect.stringContaining('writer authority lost'),
+      }),
+    ]
+
+    it('refuses a fabricated store identity at its first canonical canary mutation', async () => {
+      const bundleId = await seedCanaryTarget('fabricated-store')
+      const lease = acquireAuthority()
+      const before = canarySnapshot()
+
+      const store = createLocalKnowledgeStore({
+        knowledgeRoot,
+        auditBaseDir,
+        executionContext: 'local-interactive',
+        epoch: lease.epoch,
+        writerLeaseId: 'fabricated-canary-writer',
+        sourceBuildOrdinal: 43,
+        sourceRunId: 'run-canary-fabricated-store',
+        policy,
+      })
+
+      await expect(
+        store.recordCanaryOutcome(canaryOutcome(bundleId, 'fabricated-store', 'negative')),
+      ).rejects.toMatchObject({
+        name: 'WriterAuthorityLostError',
+        reason: 'lease-id-mismatch',
+      })
+
+      expect(eventTypes()).not.toContain('contradicted')
+      expect(canarySnapshot()).toEqual(before)
+      expect(releaseLease({ knowledgeRoot, leaseId: lease.leaseId })).toEqual({
+        kind: 'released',
+      })
+    })
+
+    it('lands no negative canary evidence behind a takeover completed before its held section', async () => {
+      const seed = 'negative-barrier'
+      const bundleId = await seedCanaryTarget(seed)
+      const enqueued = enqueueCanaryOutcome(
+        knowledgeRoot,
+        canaryOutcome(bundleId, seed, 'negative'),
+      )
+      const lease = acquireAuthority()
+      const before = canarySnapshot()
+      let successor: { leaseId: string; epoch: number } | undefined
+      let snapshotAtPause: unknown
+
+      const report = await drainCanary(lease, {
+        beforeNegativeAppend: () => {
+          snapshotAtPause = canarySnapshot()
+          successor = takeOver()
+        },
+      })
+
+      expect(successor).toMatchObject({ epoch: lease.epoch + 1 })
+      expect(snapshotAtPause).toEqual(before)
+      expect(report).toMatchObject({
+        kind: 'drained',
+        jobsProcessed: 1,
+        committed: 0,
+        failures: 1,
+        failureDetails: authorityLostFailure,
+      })
+      expect(eventTypes()).not.toContain('contradicted')
+      expect(canarySnapshot()).toEqual(before)
+      expect(readJobState(knowledgeRoot, enqueued.entryId).kind).toBe('absent')
+    })
+
+    it('lands no canary promotion behind a takeover completed before its held section', async () => {
+      const seed = 'promotion-barrier'
+      const bundleId = await seedCanaryTarget(seed)
+      enqueueCanaryOutcome(knowledgeRoot, canaryOutcome(bundleId, seed, 'positive'))
+      const lease = acquireAuthority()
+      let successor: { leaseId: string; epoch: number } | undefined
+      let snapshotAtPause: unknown
+
+      const report = await drainCanary(lease, {
+        beforePromotionAppend: () => {
+          snapshotAtPause = canarySnapshot()
+          successor = takeOver()
+        },
+      })
+
+      expect(successor).toMatchObject({ epoch: lease.epoch + 1 })
+      expect(report).toMatchObject({
+        kind: 'drained',
+        jobsProcessed: 1,
+        committed: 0,
+        failures: 1,
+        failureDetails: authorityLostFailure,
+      })
+      // The durable Confirm the paused writer already committed stays valid replay evidence,
+      // and nothing of the promotion arm landed on top of it.
+      expect(eventTypes()).not.toContain('promoted')
+      expect(onlyBundle().trust.counters.confirmed).toBeGreaterThan(0)
+      expect(onlyBundle().trust.status).toBe('candidate')
+      expect(indexRowStatus(bundleId)).toBe('candidate')
+      expect(canarySnapshot()).toEqual(snapshotAtPause)
+    })
+
+    it('completes a canary promotion refused mid-takeover exactly once under the successor', async () => {
+      const seed = 'promotion-replay'
+      const bundleId = await seedCanaryTarget(seed)
+      enqueueCanaryOutcome(knowledgeRoot, canaryOutcome(bundleId, seed, 'positive'))
+      const lease = acquireAuthority()
+      let successor: { leaseId: string; epoch: number } | undefined
+
+      await drainCanary(lease, {
+        beforePromotionAppend: () => {
+          successor = takeOver()
+        },
+      })
+      expect(eventTypes()).not.toContain('promoted')
+      if (successor === undefined) throw new Error('expected a successor takeover')
+
+      const replay = await drainCanary(successor)
+
+      expect(replay).toMatchObject({
+        kind: 'drained',
+        jobsProcessed: 1,
+        committed: 1,
+        failures: 0,
+      })
+      expect(eventTypes().filter((type) => type === 'promoted')).toEqual(['promoted'])
+      expect(onlyBundle().trust.status).toBe('active')
+      expect(indexRowStatus(bundleId)).toBe('active')
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+      const afterReplay = canarySnapshot()
+
+      const second = await drainCanary(successor)
+
+      expect(second).toMatchObject({ kind: 'drained', jobsProcessed: 0, failures: 0 })
+      expect(canarySnapshot()).toEqual(afterReplay)
+    })
+
+    it('blocks a contender between the canary append and its index projection', async () => {
+      const seed = 'projection-barrier'
+      const bundleId = await seedCanaryTarget(seed)
+      enqueueCanaryOutcome(knowledgeRoot, canaryOutcome(bundleId, seed, 'negative'))
+      const lease = acquireAuthority()
+      let contender: ReturnType<typeof acquireWriterLease> | undefined
+
+      const report = await drainCanary(lease, {
+        beforeIndexProjection: () => {
+          makeStale()
+          contender = acquireWithDeadline(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+        },
+      })
+
+      // In-section: the tail owns the mutation lock, so the contender is told who holds it
+      // rather than being handed the lease mid-append.
+      expect(contender).toMatchObject({
+        kind: 'held',
+        holder: { leaseId: lease.leaseId, epoch: lease.epoch },
+      })
+      expect(report).toMatchObject({
+        kind: 'drained',
+        jobsProcessed: 1,
+        committed: 1,
+        failures: 0,
+      })
+      expect(eventTypes()).toContain('contradicted')
+      expect(indexRowStatus(bundleId)).toBe('candidate')
+      expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
+      expect(releaseLease({ knowledgeRoot, leaseId: lease.leaseId })).toEqual({
+        kind: 'released',
+      })
     })
   })
 })

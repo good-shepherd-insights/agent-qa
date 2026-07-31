@@ -78,11 +78,11 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
    * must hold the genuine published lease. drainQueue acquires its own, which is why beforeEach
    * still leaves the root unheld.
    */
-  function portAuthority(): { leaseId: string; epoch: number } {
+  function portAuthority(): { writerLeaseId: string; epoch: number } {
     const lease = acquireWriterLease(knowledgeRoot)
-    if (lease.kind === 'acquired') return { leaseId: lease.leaseId, epoch: lease.epoch }
+    if (lease.kind === 'acquired') return { writerLeaseId: lease.leaseId, epoch: lease.epoch }
     if (lease.kind === 'held') {
-      return { leaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
+      return { writerLeaseId: lease.holder.leaseId, epoch: lease.holder.epoch }
     }
     throw new Error('expected writer authority for the knowledge port')
   }
