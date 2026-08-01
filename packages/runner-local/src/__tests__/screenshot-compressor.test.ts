@@ -60,6 +60,10 @@ describe('SharpScreenshotCompressor.compress', () => {
     const result = await compressor.compress(png, { effectiveResolution: 2048, maxBytes: 5000, actionSpaceWidth: 1920 })
     expect(result.buffer[0]).toBe(0xff)
     expect(result.buffer[1]).toBe(0xd8)
+    // The only case here that re-encodes a full 1920x1080 frame repeatedly, walking JPEG quality
+    // down until it fits 5000 bytes. Sub-second locally; it blew the old 5s default on a 2-core
+    // runner paying libvips init cold (second automatic CI run, 2026-08-02). Covered by the
+    // package-level testTimeout rather than a per-case one.
     expect(result.buffer.length).toBeGreaterThan(0)
   })
 
