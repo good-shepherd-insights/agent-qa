@@ -30,11 +30,14 @@ import {
   isLeaseStale,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_BUSY_TIMEOUT_MS,
   MUTATION_LOCK_TAKEOVER_MS,
   readCurrentEpoch,
+  readWriterLease,
   refreshWriterLeaseAuthority,
   releaseLease,
   resolveProcessIncarnation,
+  withCurrentWriterAuthority,
   WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
   type WriterAuthorityLostReason,
@@ -2478,4 +2481,284 @@ describe('writer lease public export surface (IN-04)', () => {
     expect(surface.acquireWriterLease).toBeTypeOf('function')
     expect(surface.deriveWriterLeaseFreshness).toBeTypeOf('function')
   })
+})
+
+/**
+ * Round-5 CR-01: the sibling authority file gets the third value the epoch file already has.
+ *
+ * `.epoch` cannot be read -> `CorruptEpochStateError('unreadable')` -> `{kind:'unknown'}` -> every
+ * consumer refuses. `.lease` could not be read, and answered `malformed` — the value a file full
+ * of garbage bytes produces, which every consumer reads as *"nobody holds authority"*. The verifier
+ * ran the difference as a controlled two-process differential and one leg ended with a live,
+ * healthy, transaction-holding process dead of SIGKILL. That differential is this block.
+ *
+ * The corpus is drawn from OUTSIDE the guard's own assumption in the exact way the sibling-input
+ * law names: the `chmod 0o000` primitive was already in this file six times and every one of them
+ * targeted `EPOCH_FILE`. Here it targets `LEASE_FILE`.
+ */
+describe('the unreadable lease read and every consumer that names it (round-5 CR-01)', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  /** chmod is advisory for uid 0, so the unreadable-lease input domain cannot be produced there. */
+  const canMakeFilesUnreadable = process.platform !== 'win32' && process.getuid?.() !== 0
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-unreadable-lease-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+  })
+
+  afterEach(() => {
+    try {
+      chmodSync(join(knowledgeRoot, LEASE_FILE), 0o600)
+    } catch {
+      // The leg either never made it unreadable or already restored it.
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function leaseFile(): string {
+    return join(knowledgeRoot, LEASE_FILE)
+  }
+
+  function epochFile(): string {
+    return join(knowledgeRoot, EPOCH_FILE)
+  }
+
+  function leaseOnDisk(): WriterLease {
+    return JSON.parse(readFileSync(leaseFile(), 'utf8')) as WriterLease
+  }
+
+  interface LiveHolder {
+    readonly child: ChildProcessWithoutNullStreams
+    readonly pid: number
+    readonly exit: ReturnType<typeof observeExit>
+    readonly permitFile: string
+    readonly lease: WriterLease
+  }
+
+  /**
+   * A real second OS process, inside `withCurrentWriterAuthority`, holding the mutation lock.
+   *
+   * Freshness is asserted BEFORE the discriminator is applied, so neither leg of the differential
+   * can be explained by an aged-out or epoch-invalid lease: the two legs see the same bytes, the
+   * same holder and the same verdict, and differ only in whether one file can be opened.
+   */
+  async function startLiveHolder(name: string): Promise<LiveHolder> {
+    const permitFile = join(root, `${name}.permit`)
+    const child = spawnAuthorityHolder(knowledgeRoot, permitFile)
+    const exit = observeExit(child)
+    await waitForOutput(child, 'inside\n')
+    if (child.pid === undefined) throw new Error('holder never started')
+    const lease = leaseOnDisk()
+    expect(deriveWriterLeaseFreshness(knowledgeRoot, lease, Date.now())).toEqual({ kind: 'fresh' })
+    return { child, pid: child.pid, exit, permitFile, lease }
+  }
+
+  function releaseLiveHolder(holder: LiveHolder): ReturnType<typeof observeExit> {
+    writeFileSync(holder.permitFile, 'resume\n', 'utf8')
+    return holder.exit
+  }
+
+  /**
+   * The read itself, at the boundary the derivation's own W-01 note puts the guard at.
+   *
+   * ENOENT is the only read failure that is evidence of absence; bytes that WERE read and failed
+   * to parse are still `malformed`; everything else is `unreadable` and carries its errno. The
+   * `existsSync` fallback the previous implementation used is what degraded an EMFILE read into
+   * `absent` under fd exhaustion — the file handle it needs is the one that just ran out.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'answers unreadable with its errno for a lease file that exists and cannot be opened',
+    () => {
+      expect(readWriterLease(knowledgeRoot)).toEqual({ kind: 'absent' })
+
+      const acquired = acquireWriterLease(knowledgeRoot)
+      if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+      // Accepting control: the same bytes, readable.
+      expect(readWriterLease(knowledgeRoot)).toMatchObject({ kind: 'parsed' })
+
+      chmodSync(leaseFile(), 0o000)
+      const unreadable = readWriterLease(knowledgeRoot)
+      expect(unreadable.kind).toBe('unreadable')
+      expect(unreadable.kind).not.toBe('malformed')
+      expect(unreadable.kind).not.toBe('absent')
+      if (unreadable.kind !== 'unreadable') throw new Error('expected an unreadable lease read')
+      expect(unreadable.code).toBe('EACCES')
+      chmodSync(leaseFile(), 0o600)
+
+      // Read-and-failed-to-parse stays malformed: the two are different facts about the same file.
+      writeFileSync(leaseFile(), 'not-json\n', 'utf8')
+      expect(readWriterLease(knowledgeRoot)).toEqual({ kind: 'malformed' })
+      writeFileSync(leaseFile(), `${JSON.stringify({ nope: true })}\n`, 'utf8')
+      expect(readWriterLease(knowledgeRoot)).toEqual({ kind: 'malformed' })
+    },
+  )
+
+  /**
+   * Leg A — the accepting control, and it is a control that can fail.
+   *
+   * A guard that refused every contender would satisfy leg B on its own. This leg proves the
+   * fixture reaches a real answer: the same second-process holder, the same zero takeover bound,
+   * the same deadline, answering `held` with the owner untouched.
+   */
+  it('answers held for a readable-lease second-process holder and leaves it alive (leg A)', async () => {
+    const holder = await startLiveHolder('differential-leg-a')
+    const epochBefore = readFileSync(epochFile())
+
+    const contender = acquireWriterLease(knowledgeRoot, {
+      mutationLockTakeoverMs: 0,
+      acquireDeadlineMs: 4_000,
+    })
+
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: holder.lease.leaseId, epoch: holder.lease.epoch },
+    })
+    expect(readFileSync(epochFile())).toEqual(epochBefore)
+    expect(processIsAliveInTest(holder.pid)).toBe(true)
+    expect(holder.child.signalCode).toBeNull()
+
+    expect(await releaseLiveHolder(holder)).toMatchObject({ code: 0, signal: null })
+  }, 25_000)
+
+  /**
+   * Leg B — the rejecting direction, discriminated from leg A by exactly one `chmod`.
+   *
+   * Round 5 observed `{kind:'acquired', epoch:2}` here (spot-check 2) and, at the escalation
+   * surface, the owner dead of SIGKILL (spot-check 3b). Both consequences are asserted against:
+   * the typed refusal, `.epoch` byte-identical (nothing was minted), and the owner exiting on its
+   * own release permit with no signal.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'refuses by name and leaves an unreadable-lease second-process holder untouched (leg B)',
+    async () => {
+      const holder = await startLiveHolder('differential-leg-b')
+      const epochBefore = readFileSync(epochFile())
+      const leaseBytesBefore = readFileSync(leaseFile())
+
+      chmodSync(leaseFile(), 0o000)
+      const startedAtNs = process.hrtime.bigint()
+      try {
+        const contender = acquireWriterLease(knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+          acquireDeadlineMs: 4_000,
+        })
+        const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6
+        expect(contender).toMatchObject({
+          kind: 'refused',
+          reason: 'unreadable-lease-state',
+          code: 'EACCES',
+        })
+        /**
+         * The PRE-LOCK gate specifically, and not merely the outcome a deeper gate would also
+         * produce. A contender that reaches the mutation lock at all pays the store's busy timeout
+         * before it can be turned away, so refusing inside that bound is the evidence that this
+         * one never reached the contention surface — and therefore never reached the escalation
+         * gate underneath it. The bound is the module's own constant rather than a tuned number,
+         * so retuning the timeout cannot silently make this vacuous.
+         *
+         * The obvious alternative — counting `onProcessIncarnationResolved` — was written first
+         * and measured vacuous: `ownProcessIncarnation` memoises process-wide, so by the time this
+         * leg runs in a full-file suite the hook can never fire again. It reddened under `m3` when
+         * run alone and not when run with its siblings, which is a control that reports the order
+         * tests happen to execute in rather than the property under test.
+         */
+        expect(elapsedMs).toBeLessThan(MUTATION_LOCK_BUSY_TIMEOUT_MS)
+        expect(readFileSync(epochFile())).toEqual(epochBefore)
+        expect(processIsAliveInTest(holder.pid)).toBe(true)
+        expect(holder.child.signalCode).toBeNull()
+      } finally {
+        chmodSync(leaseFile(), 0o600)
+      }
+
+      expect(readFileSync(leaseFile())).toEqual(leaseBytesBefore)
+      expect(await releaseLiveHolder(holder)).toMatchObject({ code: 0, signal: null })
+    },
+    25_000,
+  )
+
+  /**
+   * The escalation veto, PINNED — WINDOWS #46 inverted into a reachable failing case.
+   *
+   * 386-43 removed this veto entirely and reddened 0 of 111 cases, because every corpus contender
+   * reached escalation through `acquireWriterLease`, whose pre-check dominates it. The
+   * production-reachable path that does NOT pass through that pre-check is a fenced-out writer
+   * retrying its commit: `withCurrentWriterAuthority` claims the mutation lock before it reads any
+   * lease at all. Under a chmod-000 `.lease` that contender is one `leasePermitsEscalation`
+   * verdict away from SIGKILLing a live holder, so the veto is the last lease guard on this path
+   * and this leg is what makes it evidence.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'never signals a live mutation-lock owner reached without the acquisition pre-check (veto pin)',
+    async () => {
+      const holder = await startLiveHolder('escalation-veto-pin')
+
+      chmodSync(leaseFile(), 0o000)
+      let thrown: unknown
+      try {
+        withCurrentWriterAuthority(
+          knowledgeRoot,
+          { leaseId: holder.lease.leaseId, epoch: holder.lease.epoch },
+          () => 'committed',
+          { mutationLockTakeoverMs: 0 },
+        )
+      } catch (error) {
+        thrown = error
+      } finally {
+        chmodSync(leaseFile(), 0o600)
+      }
+
+      expect(thrown).toBeInstanceOf(WriterAuthorityLostError)
+      expect(processIsAliveInTest(holder.pid)).toBe(true)
+      expect(holder.child.signalCode).toBeNull()
+      expect(await releaseLiveHolder(holder)).toMatchObject({ code: 0, signal: null })
+    },
+    25_000,
+  )
+
+  /**
+   * The fail-safe consumers the type change flushes out.
+   *
+   * None of them may write, and none of them may remove, a file it could not read. The evidence is
+   * the bytes: `.lease` is byte-identical after all three refusals.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'refuses an unreadable-lease beat, release and authority re-read by name and writes nothing',
+    () => {
+      const acquired = acquireWriterLease(knowledgeRoot)
+      if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+      const bytesBefore = readFileSync(leaseFile())
+
+      chmodSync(leaseFile(), 0o000)
+      try {
+        expect(heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })).toMatchObject({
+          kind: 'refused',
+          reason: 'lease-unreadable',
+        })
+        expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toMatchObject({
+          kind: 'refused',
+          reason: 'lease-unreadable',
+        })
+
+        let thrown: unknown
+        try {
+          withCurrentWriterAuthority(
+            knowledgeRoot,
+            { leaseId: acquired.leaseId, epoch: acquired.epoch },
+            () => 'committed',
+          )
+        } catch (error) {
+          thrown = error
+        }
+        expect(thrown).toBeInstanceOf(WriterAuthorityLostError)
+        expect((thrown as WriterAuthorityLostError).reason).toBe('lease-unreadable')
+      } finally {
+        chmodSync(leaseFile(), 0o600)
+      }
+
+      expect(existsSync(leaseFile())).toBe(true)
+      expect(readFileSync(leaseFile())).toEqual(bytesBefore)
+    },
+  )
 })
