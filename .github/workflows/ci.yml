@@ -1,0 +1,117 @@
+name: CI
+
+# Continuous verification on every push and PR.
+#
+# Why this file exists: until 2026-08-02 every workflow in this repo was
+# `workflow_dispatch:` only, so nothing ran automatically and `Release` — the only
+# workflow containing `pnpm test` — had never been run once. Every "suite green"
+# claim rested on a local developer run. That also quietly weakened the phase
+# prohibition sets, where a `test`-tier statement asserts "a suite enforces this",
+# which is only true if something runs the suite. (WINDOWS #50.)
+
+on:
+  push:
+    branches: [main, version-0.2]
+  pull_request:
+    branches: [main, version-0.2]
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an in-flight run. Release workflows are
+# deliberately NOT in this group — they use their own non-cancelling concurrency.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    name: Full workspace (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # pnpm version comes from package.json `packageManager` (pnpm@10.6.1).
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # turbo resolves ordering itself — `typecheck` dependsOn `^build` and `test`
+      # dependsOn `build` — but building first keeps the log readable and fails
+      # fast on a compile break rather than midway through a suite.
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Validate skills
+        run: pnpm run validate:skills
+
+      - name: Validate agent instructions
+        run: pnpm run validate:agents
+
+      - name: Validate publish surface
+        run: pnpm run validate:publish
+
+  ps-hosts:
+    name: ps-host legs (macos)
+    runs-on: macos-latest
+    timeout-minutes: 40
+
+    # Scoped deliberately to the two daemon/lease packages rather than the full
+    # workspace: macOS runner minutes bill at 10x on private repos, and the legs
+    # that CANNOT run on ubuntu are concentrated here.
+    #
+    # `resolveProcessIncarnation` reads /proc/<pid>/stat on Linux and forks `ps`
+    # everywhere else POSIX (D-44-04), so every leg gated on
+    # `platform !== 'win32' && platform !== 'linux'` is `it.skip` on ubuntu — and
+    # `it.skip` reports green. That is currently all three of 386-47's round-6
+    # regression legs plus 386-44's WR-04 legs, in
+    # knowledge-local/src/__tests__/writer-lease.test.ts. (WINDOWS #51.)
+    #
+    # `agent-qa` (the cli package) is included because the daemon suites exercise
+    # UDS sockets, process signalling and fs semantics that differ meaningfully
+    # between Linux and BSD — the exact surfaces this project's lease/fencing work
+    # depends on.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # turbo builds the dependency closure automatically: `test` dependsOn
+      # `build`, `build` dependsOn `^build`.
+      - name: Test daemon and lease packages
+        run: >-
+          pnpm exec turbo test
+          --filter=@vostride/agent-qa-knowledge-local
+          --filter=agent-qa
+
+      - name: Typecheck daemon and lease packages
+        run: >-
+          pnpm exec turbo typecheck
+          --filter=@vostride/agent-qa-knowledge-local
+          --filter=agent-qa
