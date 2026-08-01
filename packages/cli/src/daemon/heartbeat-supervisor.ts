@@ -97,7 +97,6 @@ if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
 
 const { LOCAL_DAEMON_CAPABILITIES } = require(agentLocalEntryPath)
 const authority = { knowledgeRoot, leaseId }
-const busyRetryDelayMs = Math.max(25, Math.min(250, Math.floor(intervalMs / 20)))
 let timer
 let loopHalted = false
 let closing = false
@@ -147,12 +146,10 @@ function heartbeat() {
       observedEpoch: outcome.observedEpoch,
     })
   } catch (error) {
-    // Contention never halts the loop: heartbeatLease resolves it to a deferred renewal, and any
-    // residual lock-busy throw is retried rather than treated as lease-unsafe.
-    if (error instanceof Error && error.name === 'MutationLockBusyError') {
-      schedule(busyRetryDelayMs)
-      return
-    }
+    // I-02: contention is not handled here, because it never arrives here. heartbeatLease owns the
+    // conversion of a busy mutation lock to the 'deferred' outcome above, so anything that reaches
+    // this catch is a genuine failure and halts the loop. A retry branch for the throw that cannot
+    // cross this boundary was a second, silent contention policy sitting beside the real one.
     loopHalted = true
     parentPort.postMessage({
       kind: 'error',
