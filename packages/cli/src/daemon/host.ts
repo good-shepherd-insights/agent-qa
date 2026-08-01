@@ -663,10 +663,24 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     embedderWorkerIdleTimer = undefined
   }
 
+  /**
+   * How the adopted arm resolved its identity question, carried onto the exit record.
+   *
+   * The shutdown leak is only acceptable while it is observable, so the verdict that produced it
+   * travels with the fact rather than being reconstructed from timing.
+   */
+  interface EmbedderWorkerShutdownAttribution {
+    readonly signalWithheld: boolean
+    readonly incarnationVerdict: ReturnType<
+      DaemonHostOperations['verifyEmbedderWorkerIncarnation']
+    >
+  }
+
   const finishEmbedderWorkerExit = (
     runtime: EmbedderWorkerRuntime,
     code: number | null,
     signal: NodeJS.Signals | null,
+    attribution?: EmbedderWorkerShutdownAttribution,
   ): void => {
     if (runtime.finished) return
     runtime.finished = true
@@ -716,6 +730,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         outputTruncated:
           (runtime.stdout?.wasTruncated() ?? false)
           || (runtime.stderr?.wasTruncated() ?? false),
+        ...(attribution ?? {}),
       })
     } catch (error) {
       logger.error(
@@ -756,15 +771,28 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       if (registration === undefined) {
         throw new Error('Adopted embedder worker is missing its retained registration')
       }
-      // An adopted worker can die between adoption and shutdown, and its pid can be recycled in
-      // that window — the same CR-05 hazard, one layer later. A proven mismatch means there is
-      // nothing left to terminate, so the exit finishes without a signal. 'unverifiable'
-      // deliberately still signals: unlike replacement, shutdown has no other way to reap the
-      // worker, and refusing there would leak the process on every host with no incarnation source.
-      if (operations.verifyEmbedderWorkerIncarnation(registration) === 'mismatch') {
-        finishEmbedderWorkerExit(runtime, null, null)
+      // V-03: an adopted worker can die between adoption and shutdown, and its pid can be recycled
+      // in that window — the same CR-05 hazard, one layer later. So the same law applies on this
+      // kill path as on replacement: only a verified 'match' may be signalled. `mismatch` means the
+      // worker is provably gone; `unverifiable` means we cannot say, and a pid we cannot attribute
+      // is exactly the pid we must not signal. That is `worker-incarnation.ts`'s own contract
+      // ("Neither may be signalled") and 386-32 prohibition #1, now true on both paths.
+      //
+      // The ratified trade, deliberately NOT the other way round: on a host with no incarnation
+      // source every adopted worker is unverifiable, so daemon shutdown leaves it running. That
+      // leak is recoverable (one local process, reclaimable by reboot or an operator) and it is
+      // observable — the exit record below names `signalWithheld` and the verdict. Signalling an
+      // unattributable pid is unrecoverable: the victim is some other program. Do not "fix" the
+      // asymmetry by restoring the signal; the leak is the cheaper half of the trade.
+      const incarnationVerdict = operations.verifyEmbedderWorkerIncarnation(registration)
+      if (incarnationVerdict !== 'match') {
+        finishEmbedderWorkerExit(runtime, null, null, {
+          signalWithheld: true,
+          incarnationVerdict,
+        })
         return
       }
+      const attribution = { signalWithheld: false, incarnationVerdict } as const
       const termWasSent = operations.signalEmbedderWorkerProcess(registration.pid, 'SIGTERM')
       if (
         await operations.waitForEmbedderWorkerProcessExit(
@@ -772,7 +800,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           EMBEDDER_WORKER_TERM_GRACE_MS,
         )
       ) {
-        finishEmbedderWorkerExit(runtime, null, termWasSent ? 'SIGTERM' : null)
+        finishEmbedderWorkerExit(runtime, null, termWasSent ? 'SIGTERM' : null, attribution)
         return
       }
 
@@ -784,6 +812,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         mode: runtime.mode,
         signal: 'SIGKILL',
         reason,
+        ...attribution,
       })
       const killWasSent = operations.signalEmbedderWorkerProcess(registration.pid, 'SIGKILL')
       if (
@@ -792,7 +821,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           EMBEDDER_WORKER_TERM_GRACE_MS,
         )
       ) {
-        finishEmbedderWorkerExit(runtime, null, killWasSent ? 'SIGKILL' : null)
+        finishEmbedderWorkerExit(runtime, null, killWasSent ? 'SIGKILL' : null, attribution)
         return
       }
       throw new EmbedderWorkerTimeoutError('terminate', EMBEDDER_WORKER_TERM_GRACE_MS)
