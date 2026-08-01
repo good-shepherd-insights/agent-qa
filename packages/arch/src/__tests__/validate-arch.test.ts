@@ -245,7 +245,10 @@ describe('validate:arch (LINT-01..05)', () => {
     )
 
     expect(offenders).toEqual([])
-  })
+    // Walks and scans every contract-bearing package in the workspace, so its cost tracks
+    // workspace size rather than anything this case controls. ~1.5s on a developer machine,
+    // over the 5s default on a 2-core CI runner (first automatic CI run, 2026-08-02).
+  }, 30_000)
 })
 
 describe('validate:arch held-out fixtures', () => {
