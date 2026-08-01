@@ -456,8 +456,21 @@ function startHarness(
     // Production liveness, incarnation, and signal delivery. Only the daemon's surroundings stay
     // stubbed, so "the surrogate is still alive" is a claim about the OS, not about a fake.
     delete operations.embedderWorkerProcessIsAlive
-    delete operations.signalEmbedderWorkerProcess
     delete operations.waitForEmbedderWorkerProcessExit
+    // Signal delivery stays production (`process.kill` with the ESRCH reading, verbatim), but the
+    // DECISION is still recorded: a `processSignals` assertion that only holds because the
+    // recorder was deleted measures the harness, not the daemon.
+    operations.signalEmbedderWorkerProcess = (pid: number, signal: NodeJS.Signals) => {
+      processSignals.push({ pid, signal })
+      order.push(`signal:${pid}:${signal}`)
+      try {
+        process.kill(pid, signal)
+        return true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+        throw error
+      }
+    }
     if (overrides.incarnationVerdict === undefined) {
       delete operations.verifyEmbedderWorkerIncarnation
     }
@@ -983,6 +996,113 @@ describe('daemon embedder-worker lifecycle', () => {
 
       harness.signal('SIGTERM')
       await expect(harness.running).resolves.toBe(0)
+    },
+    20_000,
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'withholds every shutdown signal from an adopted worker it cannot attribute (V-03)',
+    async () => {
+      // The other half of 386-32 prohibition #1. Replacement already refuses to signal a pid it
+      // cannot attribute; shutdown did not, and its own module's docstring says neither verdict
+      // may be signalled. The registered pid here belongs to an unrelated live process, exactly
+      // as it would after an adopted worker died and the kernel recycled its number.
+      const surrogate = spawnSurrogate()
+      const orphan = orphanRegistration(ORPHAN_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
+        pid: surrogate.pid!,
+      })
+      const harness = startHarness(
+        'adopted-unverifiable-shutdown',
+        [drainReport(1, 0)],
+        {
+          orphanRegistration: orphan,
+          orphanSocketAnswers: true,
+          orphanProcessAlive: true,
+          acquireFromRegistration: true,
+          realProcessControl: true,
+          incarnationVerdict: 'unverifiable',
+        },
+      )
+      await waitUntil(() => harness.isStarted(), 'adopting daemon did not start')
+
+      harness.fireInterval(CURATION_QUEUE_POLL_MS)
+      await waitUntil(
+        () => harness.drainQueue.mock.calls.length === 1,
+        'adopted drain did not finish',
+      )
+      // Adoption really happened — an answering generation socket, no spawn, no signal.
+      expect(harness.spawnRequests).toHaveLength(0)
+      expect(harness.processSignals).toEqual([])
+
+      harness.signal('SIGTERM')
+      await expect(harness.running).resolves.toBe(0)
+
+      // The unattributable process survives its own daemon's shutdown, unsignalled.
+      expect(isSurrogateAlive(surrogate)).toBe(true)
+      expect(surrogate.signalCode).toBeNull()
+      expect(harness.processSignals).toEqual([])
+
+      // Withholding the signal does not withhold the cleanup: the registration and the worker's
+      // generation socket are still reclaimed, so nothing is left to mislead a successor.
+      expect(existsSync(harness.workerRegistrationPath)).toBe(false)
+      expect(harness.unlinkedSockets).toContain(orphan.socketPath)
+
+      // And the leak is on the record rather than silent — this is the observable residual the
+      // tighten direction accepts in exchange for never killing an unattributable pid.
+      expect(harness.events).toContainEqual(expect.objectContaining({
+        kind: 'embedder-worker-exit',
+        mode: 'adopted',
+        pid: orphan.pid,
+        signalWithheld: true,
+        incarnationVerdict: 'unverifiable',
+      }))
+    },
+    20_000,
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'still terminates an adopted worker whose shutdown incarnation matches (V-03 control)',
+    async () => {
+      // The accepting direction, against the production signal path. A predicate that refused
+      // everything would pass the leg above and fail here, and the exit record must say so.
+      const owner = spawnSurrogate()
+      const orphan = orphanRegistration(ORPHAN_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
+        pid: owner.pid!,
+      })
+      const harness = startHarness(
+        'adopted-match-shutdown',
+        [drainReport(1, 0)],
+        {
+          orphanRegistration: orphan,
+          orphanSocketAnswers: true,
+          orphanProcessAlive: true,
+          acquireFromRegistration: true,
+          realProcessControl: true,
+          incarnationVerdict: 'match',
+        },
+      )
+      await waitUntil(() => harness.isStarted(), 'adopting daemon did not start')
+
+      harness.fireInterval(CURATION_QUEUE_POLL_MS)
+      await waitUntil(
+        () => harness.drainQueue.mock.calls.length === 1,
+        'adopted drain did not finish',
+      )
+      expect(harness.spawnRequests).toHaveLength(0)
+
+      harness.signal('SIGTERM')
+      await expect(harness.running).resolves.toBe(0)
+
+      expect(harness.processSignals).toEqual([{ pid: orphan.pid, signal: 'SIGTERM' }])
+      expect(isSurrogateAlive(owner)).toBe(false)
+      expect(owner.signalCode).toBe('SIGTERM')
+      expect(harness.events).toContainEqual(expect.objectContaining({
+        kind: 'embedder-worker-exit',
+        mode: 'adopted',
+        pid: orphan.pid,
+        signalWithheld: false,
+        incarnationVerdict: 'match',
+      }))
     },
     20_000,
   )
