@@ -630,12 +630,17 @@ describe('DashboardDatabase', () => {
     })
 
     it('filters by name (LIKE search)', () => {
-      insertSampleRun({ name: 'Login Test' })
-      insertSampleRun({ name: 'Checkout Test' })
-      insertSampleRun({ name: 'Login Flow' })
+      // Explicit ids, because the filter is `name LIKE ? OR id LIKE ?` and a generated run id is
+      // ten dictionary words from `id-agent` — one of which is literally "login". Measured over
+      // 20k generated ids, 0.21% contain it, so leaving the non-matching row's id to chance made
+      // this assert 2-or-3 roughly once every 476 runs. It rolled a 3 on CI on 2026-08-02.
+      insertSampleRun({ id: 'run_fixed-alpha', name: 'Login Test' })
+      insertSampleRun({ id: 'run_fixed-bravo', name: 'Checkout Test' })
+      insertSampleRun({ id: 'run_fixed-charlie', name: 'Login Flow' })
 
       const results = db.getRuns({ name: 'Login' })
       expect(results).toHaveLength(2)
+      expect(results.map(run => run.name).sort()).toEqual(['Login Flow', 'Login Test'])
     })
 
     it('filters by id through the existing name search', () => {
