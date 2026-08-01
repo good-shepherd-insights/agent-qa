@@ -3112,3 +3112,203 @@ describe('the writer-authority DB as an unreadable authority input (386-47)', ()
     30_000,
   )
 })
+
+/**
+ * CR-03's containment ARGUMENT, executed rather than asserted in prose (386-42 UAT item 4).
+ *
+ * `heartbeatLease` no longer takes the mutation lock, and its docstring concedes that dropping it
+ * opens exactly one race: a holder resuming from a >=TTL wedge can land its read-check-write
+ * astride a contender's reclaim and clobber the successor's lease. The docstring then claims the
+ * race is CONTAINED — not prevented — by the epoch fence, because a reclaim rewrites `.epoch`
+ * strictly BEFORE it publishes `.lease`, both inside the lock, so any lease clobbered afterwards
+ * names a superseded epoch and every classifier reads it as recovery input.
+ *
+ * Until these two cases the whole invariant rested on the adjacency of two lines a refactor could
+ * reverse with every other case staying green. A real lock was replaced by a written argument, and
+ * the argument had never been run.
+ *
+ * Both interleavings a beat can have with a reclaim's publication window are driven here without
+ * any timing dependence and without any production change:
+ *
+ *   - the beat's ladder BEFORE the reclaim and its write AFTER it (the clobber), driven through
+ *     the `Date.now()` stamp that `heartbeatLease` takes between its last check and its only
+ *     write — already a spied seam in this file;
+ *   - the beat's whole ladder INSIDE the window, driven through the production `afterEpochRewrite`
+ *     seam that fires between the reclaim's two rewrites.
+ *
+ * Both cases redden when `atomicRewrite(.epoch)` and `atomicRewrite(.lease)` are swapped, which is
+ * the only reason either of them is evidence for the ordering the argument rests on.
+ */
+describe('the lock-free beat astride a reclaim: CR-03 containment by the epoch fence (386-42)', () => {
+  let root: string
+  let knowledgeRoot: string
+  let now: ReturnType<typeof vi.spyOn>
+
+  const WEDGE_NOW = 3_000_000
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-clobber-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    now = vi.spyOn(Date, 'now').mockReturnValue(WEDGE_NOW)
+  })
+
+  afterEach(() => {
+    now.mockRestore()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function leaseOnDisk(): WriterLease {
+    return JSON.parse(
+      readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'),
+    ) as WriterLease
+  }
+
+  /** The >=TTL wedge itself: a holder that stopped beating long enough to become a target. */
+  function wedgeHolderPastTtl(): WriterLease {
+    const wedged = { ...leaseOnDisk(), heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS }
+    writeFileSync(join(knowledgeRoot, LEASE_FILE), `${JSON.stringify(wedged)}\n`, 'utf8')
+    return wedged
+  }
+
+  it('contains a beat that clobbers the successor: the clobbered lease names a superseded epoch', () => {
+    const incumbent = acquireWriterLease(knowledgeRoot)
+    if (incumbent.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const wedged = wedgeHolderPastTtl()
+
+    let successor: ReturnType<typeof acquireWriterLease> | undefined
+    let epochWhenReclaimBeganPublishing: number | undefined
+    let resumed = false
+
+    /**
+     * The interleaving seam, and why this exact instant is the race.
+     *
+     * `heartbeatLease` completes its whole presence/id/epoch ladder against `.lease` and `.epoch`
+     * BEFORE it stamps `heartbeatAtMs`, and that stamp is the only `Date.now()` on its path —
+     * `readWriterLease` and `readEpoch` take no clock. So resuming the world here puts the wedged
+     * holder in precisely the state the docstring describes: ladder already passed against epoch 1,
+     * its single write not yet issued.
+     */
+    now.mockImplementation(() => {
+      if (!resumed) {
+        resumed = true
+        successor = acquireWithEpochSeam(knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+          afterEpochRewrite: () => {
+            /**
+             * The reclaim is mid-publication: one of its two files is written, the other is not.
+             * This is the EARLIEST instant at which the pending clobber could land, so it is the
+             * instant at which the fence has to be up already. Reading it here is what makes the
+             * case sensitive to the ordering of the two rewrites rather than to their outcome.
+             */
+            epochWhenReclaimBeganPublishing = readCurrentEpoch(knowledgeRoot)
+          },
+        })
+      }
+      return WEDGE_NOW
+    })
+
+    const beat = heartbeatLease({ knowledgeRoot, leaseId: incumbent.leaseId })
+
+    /**
+     * The interleaving is self-verifying, so this case cannot silently decay into a weaker one:
+     * `heartbeated` is only reachable if the ladder ran BEFORE the reclaim (a ladder run after it
+     * meets epoch 2 and refuses `stale-epoch`), and the clobber below is only reachable if the
+     * write ran AFTER it.
+     */
+    expect(beat).toMatchObject({ kind: 'heartbeated' })
+    if (successor?.kind !== 'acquired') throw new Error('expected the contender to reclaim')
+    expect(successor.epoch).toBe(2)
+    expect(successor.reclaimed).toEqual(wedged)
+
+    // THE CLOBBER. The successor's freshly published lease is gone, overwritten by a holder that
+    // believed it was renewing its own — the loss the lock used to prevent.
+    const clobbered = leaseOnDisk()
+    expect(clobbered.leaseId).toBe(incumbent.leaseId)
+    expect(clobbered.leaseId).not.toBe(successor.leaseId)
+    expect(clobbered.heartbeatAtMs).toBe(WEDGE_NOW)
+    expect(clobbered.heartbeatAtMs).toBeGreaterThan(wedged.heartbeatAtMs)
+
+    /**
+     * THE CONTAINMENT, and the two adjacent lines it rests on. Because `atomicRewrite(.epoch)`
+     * strictly precedes `atomicRewrite(.lease)` inside the lock, the fence was already up at the
+     * reclaim's FIRST published byte — the earliest moment the pending clobber could have landed —
+     * so the clobber could not name a current epoch no matter where in the window it fell.
+     */
+    expect(epochWhenReclaimBeganPublishing).toBe(2)
+    expect(epochWhenReclaimBeganPublishing).toBeGreaterThan(clobbered.epoch)
+    expect(readCurrentEpoch(knowledgeRoot)).toBe(2)
+    expect(clobbered.epoch).toBe(1)
+
+    /**
+     * And the fence is the ONLY thing standing here: the clobber carries a freshly stamped beat, so
+     * no TTL sweep will ever age it out. Without the epoch it would be the immortal phantom holder
+     * — fresh forever, matching disk, reclaimed by nobody.
+     */
+    expect(isLeaseStale(clobbered, Date.now())).toBe(false)
+    expect(deriveWriterLeaseFreshness(knowledgeRoot, clobbered, Date.now())).toEqual({
+      kind: 'reclaimable',
+    })
+
+    // Every classifier therefore reads the clobber as recovery input, never as a live holder.
+    expect(heartbeatLease({ knowledgeRoot, leaseId: incumbent.leaseId })).toMatchObject({
+      kind: 'refused',
+      reason: 'stale-epoch',
+      observedEpoch: 2,
+    })
+    const bounced = (() => {
+      try {
+        withCurrentWriterAuthority(
+          knowledgeRoot,
+          { leaseId: successor.leaseId, epoch: successor.epoch },
+          () => 'must not mutate under a clobbered lease',
+        )
+      } catch (error) {
+        return error
+      }
+      return undefined
+    })()
+    expect(bounced).toBeInstanceOf(WriterAuthorityLostError)
+    expect(bounced).toMatchObject({ reason: 'lease-id-mismatch', observedEpoch: 2 })
+
+    // One successor bounce, then a fresh acquisition reclaims at the next epoch. A liveness
+    // hiccup, never minted authority: the worst case the docstring claims, read off disk.
+    const recovery = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+    expect(recovery).toMatchObject({ kind: 'acquired', epoch: 3, reclaimed: clobbered })
+  }, 15_000)
+
+  it('refuses a beat that runs entirely inside the reclaim window, by epoch and not by identity', () => {
+    const incumbent = acquireWriterLease(knowledgeRoot)
+    if (incumbent.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    wedgeHolderPastTtl()
+
+    let beatInsideWindow: ReturnType<typeof heartbeatLease> | undefined
+    let leaseInsideWindow: WriterLease | undefined
+
+    const successor = acquireWithEpochSeam(knowledgeRoot, {
+      mutationLockTakeoverMs: 0,
+      afterEpochRewrite: () => {
+        leaseInsideWindow = leaseOnDisk()
+        beatInsideWindow = heartbeatLease({ knowledgeRoot, leaseId: incumbent.leaseId })
+      },
+    })
+
+    if (successor.kind !== 'acquired') throw new Error('expected the contender to reclaim')
+
+    /**
+     * Inside the window the incumbent's own lease is still the published one, so identity cannot
+     * be what stops this beat — the id matches. The epoch is already 2 and the lease still says 1,
+     * so the fence is what refuses it, by name. Reverse the two rewrites and this same instant
+     * carries the successor's lease instead, and the refusal changes to `lease-id-mismatch`:
+     * accidental, dependent on a fresh uuid rather than on the fence.
+     */
+    expect(leaseInsideWindow?.leaseId).toBe(incumbent.leaseId)
+    expect(beatInsideWindow).toMatchObject({
+      kind: 'refused',
+      reason: 'stale-epoch',
+      observedEpoch: 2,
+    })
+
+    // A refused beat writes nothing, so the reclaim's publication survives it intact.
+    expect(leaseOnDisk()).toMatchObject({ leaseId: successor.leaseId, epoch: 2 })
+  }, 15_000)
+})
