@@ -35,9 +35,13 @@ import {
 import type { CuratorAuthor } from '@vostride/agent-qa-agent-local'
 import {
   defaultGuardrailPolicyInput,
+  evaluate,
   getActiveExecutionContext,
   loadGuardrailPolicy,
+  resolveExecutionContext,
+  setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
+import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -658,6 +662,127 @@ describe('runDaemonHost — standing leaseholder tracer', () => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     }
   }, 60_000)
+})
+
+/**
+ * D-09 (386-04 #2): the daemon's posture pin, tested against a DIFFERING ambient answer.
+ *
+ * The pre-existing assertion (`:510`) could not fail. `execution-context.ts` ships
+ * `local-headless` as its module default, and the ambient resolver `safety-local` installs reads
+ * `process.std{in,out}.isTTY`, which vitest leaves false — so the ambient answer already WAS the
+ * pinned answer and deleting `host.ts`'s pin left the whole suite green. A gate whose fixture
+ * cannot produce the value under test is a failed control, not a passing test.
+ *
+ * These cases install production's own `resolveExecutionContext` over the signal set a human at a
+ * terminal produces (`isTty: true, ciMarkers: false` -> `local-interactive`) and assert the
+ * ambient/pinned divergence BEFORE running the host. That control is the point: if the fixture
+ * ever stops producing a differing value it reddens here rather than passing silently.
+ *
+ * `local-interactive` is also the ONE context in which `requiresFailClosed` is false, which is
+ * what makes the statement's second clause — "never sits on an interactive ask" — expressible at
+ * all. Without the pin an ask-tier action would reach `confirm`; with it, it is denied by name.
+ */
+describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
+  /** An ask-tier action: `recognized` floors it at mutating-local, the declaration raises it. */
+  const ASK_TIER_ACTION: RiskActionDescriptor = {
+    name: 'knowledge_publish_bundle',
+    recognized: true,
+    declaredTier: 'mutating-shared',
+  }
+
+  /**
+   * Run `body` with an ambient resolver that answers `local-interactive`.
+   *
+   * The resolver is production's `resolveExecutionContext` — only `readSignals`' env/TTY read is
+   * replaced, and by the exact signal pair the detector would hand it at a terminal. Restoring
+   * the module default (`execution-context.ts:19`) rather than the detector keeps this fixture
+   * from leaking a TTY-shaped ambient into any later case in this file.
+   */
+  async function withInteractiveAmbient<T>(body: () => Promise<T>): Promise<T> {
+    setActiveExecutionContextResolver(() =>
+      resolveExecutionContext({ isTty: true, ciMarkers: false }))
+    try {
+      // The control. A green run of the cases below is only evidence if this holds first.
+      expect(getActiveExecutionContext()).toBe('local-interactive')
+      return await body()
+    } finally {
+      setActiveExecutionContextResolver(() => 'local-headless')
+    }
+  }
+
+  it('pins local-headless over an ambient resolver that answers local-interactive', async () => {
+    await withInteractiveAmbient(async () => {
+      const paths = makePaths('posture-pin-tty')
+      const harness = hostHarness()
+      const running = runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        operations: harness.operations,
+        logger: { info: vi.fn(), error: vi.fn() },
+      })
+      await waitUntil(
+        () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+        'daemon registration was not written',
+      )
+
+      expect(getActiveExecutionContext()).toBe('local-headless')
+
+      harness.signal('SIGTERM')
+      await expect(running).resolves.toBe(0)
+      // The pin outlives the host: nothing in shutdown hands the posture back to the ambient.
+      expect(getActiveExecutionContext()).toBe('local-headless')
+    })
+  })
+
+  it('denies an ask-tier action by name under the pin instead of prompting a TTY', async () => {
+    await withInteractiveAmbient(async () => {
+      const paths = makePaths('posture-pin-ask')
+      const harness = hostHarness()
+      const confirm = vi.fn(() => Promise.resolve(true))
+
+      // Control: the ambient posture WOULD prompt. Without this the denial below proves nothing.
+      const ambient = await evaluate(
+        ASK_TIER_ACTION,
+        getActiveExecutionContext(),
+        {},
+        { confirm },
+      )
+      expect(ambient).toMatchObject({ verdict: 'allow' })
+      expect(confirm).toHaveBeenCalledTimes(1)
+      confirm.mockClear()
+
+      const running = runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+        operations: harness.operations,
+        logger: { info: vi.fn(), error: vi.fn() },
+      })
+      await waitUntil(
+        () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+        'daemon registration was not written',
+      )
+
+      const underPin = await evaluate(
+        ASK_TIER_ACTION,
+        getActiveExecutionContext(),
+        {},
+        { confirm },
+      )
+
+      expect(confirm).not.toHaveBeenCalled()
+      expect(underPin.verdict).toBe('deny')
+      expect(underPin.riskTier).toBe('mutating-shared')
+      expect(underPin.reason).toContain('fail-closed: ask in local-headless without trust')
+
+      harness.signal('SIGTERM')
+      await expect(running).resolves.toBe(0)
+    })
+  })
 })
 
 describe('daemon status and stop operator controls', () => {
