@@ -1038,9 +1038,12 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
     const beforeMs = Date.now()
     const release = holdAuthorityTransaction()
     try {
-      expect(heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
+      // 386-36 widened the deferred outcome with the wedged/progressing discriminator, so this
+      // asserts the arm it always asserted plus the absence of a false stall on a first deferral.
+      expect(heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })).toMatchObject({
         kind: 'deferred',
         reason: 'mutation-lock-busy',
+        stalled: false,
       })
     } finally {
       release()
@@ -1115,6 +1118,40 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
     expect(await holderExit).toMatchObject({ code: 0, signal: null })
   }, 15_000)
 
+  /**
+   * The admit control for the new bound, at the process level.
+   *
+   * The protected CR-03 proof above writes a TWO-FIELD sidecar, which after 386-36 is the legacy
+   * shape production never writes again — so it exercises the unstamped early return and would
+   * keep passing even against a bound that fires for every stamped holder. A mutation probe
+   * confirmed exactly that. This is the same schedule in the shape a live daemon now produces.
+   */
+  it('never kills a held-section owner whose stamped sidecar shows progress (W-02)', async () => {
+    const permitFile = join(root, 'progressing-holder.permit')
+    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
+    const holderExit = observeExit(holder)
+    await waitForOutput(holder, 'inside\n')
+    const stale = makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
+
+    for (const generation of ['generation-a', 'generation-b', 'generation-c']) {
+      writeStampedRenewalSidecar({
+        leaseId: stale.leaseId,
+        heartbeatAtMs: Date.now(),
+        mutationGeneration: generation,
+        deferredSinceMs: Date.now(),
+      })
+      expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })).toMatchObject({
+        kind: 'held',
+        holder: { pid: holder.pid, leaseId: stale.leaseId, epoch: stale.epoch },
+      })
+      expect(holder.exitCode).toBeNull()
+      expect(holder.signalCode).toBeNull()
+    }
+
+    writeFileSync(permitFile, 'resume\n', 'utf8')
+    expect(await holderExit).toMatchObject({ code: 0, signal: null })
+  }, 25_000)
+
   it('escalates against a held-section owner wedged past the takeover deadline (W-02)', async () => {
     const permitFile = join(root, 'wedged-holder.permit')
     const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
@@ -1122,9 +1159,10 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
     await waitForOutput(holder, 'inside\n')
     const stale = makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
 
-    // Byte-for-byte the protected "refuses to kill a renewing holder" schedule above, except that
-    // the sidecar records one unchanged generation deferring since before the takeover deadline.
-    // That single fact is what separates a healthy busy holder from a wedged one.
+    // The protected "still kills a superseded-sidecar holder" schedule below, run against a
+    // sidecar that names the CURRENT lease and is genuinely fresh. Under 386-29 that combination
+    // was permanently unescalatable; the only new fact is one unchanged generation deferring
+    // since before the takeover deadline, which is what separates wedged from busy.
     writeStampedRenewalSidecar({
       leaseId: stale.leaseId,
       heartbeatAtMs: Date.now(),
@@ -1132,10 +1170,12 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
       deferredSinceMs: Date.now() - MUTATION_LOCK_TAKEOVER_MS - 1,
     })
 
-    const contender = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+    const contenderChild = spawnLeaseAcquirer(knowledgeRoot, 0, 0)
+    const contenderExit = waitForExit(contenderChild)
+    expect(await holderExit).toMatchObject({ code: null, signal: 'SIGKILL' })
+    await contenderExit
 
-    expect(contender).toMatchObject({ kind: 'acquired', epoch: stale.epoch + 1 })
-    expect(await holderExit).toMatchObject({ signal: 'SIGKILL' })
+    expect(leaseOnDisk()).toMatchObject({ pid: contenderChild.pid, epoch: stale.epoch + 1 })
 
     writeFileSync(permitFile, 'resume\n', 'utf8')
   }, 25_000)

@@ -96,6 +96,25 @@ const leaseRenewalSchema = z
   .object({
     leaseId: z.string().uuid(),
     heartbeatAtMs: z.number().int().nonnegative(),
+    /**
+     * W-02: the generation token of the mutation this renewal is waiting behind.
+     *
+     * Freshness alone cannot tell a holder that is renewing WHILE PROGRESSING from one renewing
+     * WHILE STUCK, and 386-29 made the latter immortal — a ticking heartbeat thread removed
+     * MUTATION_LOCK_TAKEOVER_MS for every live holder. The token is the discriminator, and it is
+     * read from the committed mutation-lock row rather than derived from anything this file says
+     * about itself.
+     *
+     * Optional because it is not always resolvable (the store may be mid-creation, or the owner
+     * may have committed a release between the busy throw and this read). An unresolvable token
+     * is treated as UNCHANGED, never as progress — the bound must fail closed toward bounding.
+     */
+    mutationGeneration: z.string().min(1).optional(),
+    /**
+     * Wall-clock instant of the FIRST deferral against `mutationGeneration`, carried forward
+     * unchanged while that token holds and reset only on a proven change of token.
+     */
+    deferredSinceMs: z.number().int().nonnegative().optional(),
   })
   .strict()
 
@@ -150,7 +169,23 @@ export interface LeaseOperationOptions {
 
 export type HeartbeatLeaseOutcome =
   | { kind: 'heartbeated'; holder: WriterLease }
-  | { kind: 'deferred'; reason: 'mutation-lock-busy' }
+  | {
+      kind: 'deferred'
+      reason: 'mutation-lock-busy'
+      /** The in-flight mutation this renewal is queued behind; absent when unresolvable. */
+      mutationGeneration?: string
+      /** First deferral against that mutation, carried across deferrals on one generation. */
+      deferredSinceMs?: number
+      /**
+       * Whether this deferral has been stuck on one unchanged generation past the takeover
+       * deadline — a wedged holder rather than a busy one.
+       *
+       * Derived HERE, beside `MUTATION_LOCK_TAKEOVER_MS` and beside the writer that stamps
+       * `deferredSinceMs`, so the daemon's ledger mapping stays a pure rename of a fact it was
+       * handed rather than a second, driftable copy of the same threshold in another package.
+       */
+      stalled: boolean
+    }
   | {
       kind: 'refused'
       reason:
@@ -1020,7 +1055,8 @@ export function isLeaseStale(lease: unknown, nowMs: number): boolean {
 }
 
 /**
- * Composite freshness: the lease file itself, OR a renewal sidecar bound to this exact holder.
+ * Composite freshness: the lease file itself, OR a renewal sidecar bound to this exact holder,
+ * and in both cases only while the lease still names the CURRENT epoch.
  *
  * CR-03: a holder inside a long governed mutation cannot refresh `.lease`, because publishing it
  * requires the very transaction the mutation is holding. Its renewal lands in the sidecar instead,
@@ -1028,17 +1064,36 @@ export function isLeaseStale(lease: unknown, nowMs: number): boolean {
  * lease's id — a superseded holder's leftover sidecar extends nothing — and only while it is
  * itself within `LEASE_HEARTBEAT_TTL_MS`, so a stopped process (which writes no sidecar at all)
  * still ages out and remains legitimately reclaimable.
+ *
+ * W-01: the epoch conjunct lives HERE, in the derivation, and not at the consumers. Three surfaces
+ * classify recoverability from this predicate — `leasePermitsEscalation`, the acquisition
+ * pre-check, and `classifyDaemonRegistration` in the CLI — and a fix applied consumer by consumer
+ * is a list that the next surface joins without joining the guard. A lease naming a superseded
+ * epoch is recovery input no matter how fresh its bytes are: nobody can still be inside a
+ * transaction for an epoch that has already been replaced.
+ *
+ * W-02: the sidecar's honour is additionally bounded by how long the SAME in-flight mutation has
+ * been deferring. Past `MUTATION_LOCK_TAKEOVER_MS` on one unchanged generation the holder is
+ * wedged rather than busy, and the takeover deadline 386-29 removed exists again. The bound is
+ * measured against the caller's wall clock and the generation token, never against a relation
+ * among the sidecar's own fields.
  */
 export function isWriterLeaseFresh(
   knowledgeRoot: string,
   lease: WriterLease,
   nowMs: number,
 ): boolean {
+  if (!leaseEpochIsCurrent(knowledgeRoot, lease)) return false
   if (!isLeaseStale(lease, nowMs)) return true
   if (!Number.isFinite(nowMs)) return false
   const renewal = readLeaseRenewal(knowledgeRoot)
   if (renewal.kind !== 'parsed' || renewal.renewal.leaseId !== lease.leaseId) return false
-  return nowMs - renewal.renewal.heartbeatAtMs < LEASE_HEARTBEAT_TTL_MS
+  if (nowMs - renewal.renewal.heartbeatAtMs >= LEASE_HEARTBEAT_TTL_MS) return false
+  const { deferredSinceMs } = renewal.renewal
+  // An unstamped sidecar predates this build and can only be honoured under the freshness rule it
+  // was written for; it cannot say how long the mutation behind it has been stuck.
+  if (deferredSinceMs === undefined) return true
+  return nowMs - deferredSinceMs <= MUTATION_LOCK_TAKEOVER_MS
 }
 
 /**
@@ -1058,14 +1113,13 @@ function leaseEpochIsCurrent(knowledgeRoot: string, lease: WriterLease): boolean
   }
 }
 
-function isCurrentHolder(
-  knowledgeRoot: string,
-  lease: WriterLease,
-  nowMs: number,
-): boolean {
-  return isWriterLeaseFresh(knowledgeRoot, lease, nowMs)
-    && leaseEpochIsCurrent(knowledgeRoot, lease)
-}
+/**
+ * 386-36 removed the former `isCurrentHolder` wrapper.
+ *
+ * It existed to AND `isWriterLeaseFresh` with `leaseEpochIsCurrent` at the one caller that needed
+ * both. Now that the epoch conjunct is inside the composite, the wrapper is an alias, and an alias
+ * is the next place a consumer forgets to use. The composite is the single derivation.
+ */
 
 /** Return a live holder or atomically mint a new, monotonically fenced writer identity. */
 export function acquireWriterLease(
@@ -1084,7 +1138,7 @@ export function acquireWriterLease(
   const beforeLock = readWriterLease(knowledgeRoot)
   if (
     beforeLock.kind === 'parsed'
-    && isCurrentHolder(knowledgeRoot, beforeLock.lease, mutationLockNowMs())
+    && isWriterLeaseFresh(knowledgeRoot, beforeLock.lease, mutationLockNowMs())
   ) {
     return { kind: 'held', holder: beforeLock.lease }
   }
@@ -1281,11 +1335,90 @@ export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutco
     if (current.lease.leaseId !== opts.leaseId) {
       return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
     }
-    writeLeaseRenewal(opts.knowledgeRoot, {
-      leaseId: opts.leaseId,
-      heartbeatAtMs: Date.now(),
-    })
-    return { kind: 'deferred', reason: 'mutation-lock-busy' }
+    /**
+     * W-01: the same epoch ladder the locked sibling runs, before anything is published.
+     *
+     * Contention is not a licence to skip the identity checks: a holder whose epoch has already
+     * been superseded is not renewing, it is a leftover, and publishing freshness on its behalf
+     * manufactures exactly the immortal phantom holder a contender can never reclaim.
+     */
+    let observedEpoch: number
+    try {
+      observedEpoch = readEpoch(opts.knowledgeRoot)
+    } catch (epochError) {
+      if (epochError instanceof CorruptEpochStateError) {
+        return {
+          kind: 'refused',
+          reason: 'corrupt-epoch-state',
+          holder: current.lease,
+          error: epochError,
+        }
+      }
+      throw epochError
+    }
+    if (current.lease.epoch !== observedEpoch) {
+      return {
+        kind: 'refused',
+        reason: 'stale-epoch',
+        holder: current.lease,
+        observedEpoch,
+      }
+    }
+
+    const renewal = stampRenewal(opts.knowledgeRoot, opts.leaseId, Date.now())
+    writeLeaseRenewal(opts.knowledgeRoot, renewal)
+    return {
+      kind: 'deferred',
+      reason: 'mutation-lock-busy',
+      ...(renewal.mutationGeneration === undefined
+        ? {}
+        : { mutationGeneration: renewal.mutationGeneration }),
+      ...(renewal.deferredSinceMs === undefined
+        ? {}
+        : { deferredSinceMs: renewal.deferredSinceMs }),
+      stalled: renewal.deferredSinceMs !== undefined
+        && Date.now() - renewal.deferredSinceMs > MUTATION_LOCK_TAKEOVER_MS,
+    }
+  }
+}
+
+/**
+ * Attribute this deferral to the mutation it is waiting behind, carrying the stuck-since clock.
+ *
+ * The reset rule is deliberately asymmetric: `deferredSinceMs` restarts only on PROOF that the
+ * mutation moved on — two tokens that are both readable and different. An unreadable token on
+ * either side counts as unchanged, so an observation gap can never launder a wedged holder into a
+ * progressing one. The opposite default (reset whenever the tokens are not provably equal) makes
+ * the bound unreachable again the moment the store is momentarily unreadable, which is precisely
+ * when a holder is most likely to be wedged.
+ */
+function stampRenewal(
+  knowledgeRoot: string,
+  leaseId: string,
+  nowMs: number,
+): LeaseRenewal {
+  let observedGeneration: string | undefined
+  try {
+    observedGeneration = readCommittedMutationLockOwner(knowledgeRoot)?.generationToken
+  } catch {
+    // An unreadable authority store is an unknown token, which the rule below treats as unchanged.
+    observedGeneration = undefined
+  }
+  const previous = readLeaseRenewal(knowledgeRoot)
+  const carried = previous.kind === 'parsed' && previous.renewal.leaseId === leaseId
+    ? previous.renewal
+    : undefined
+  const provenProgress = observedGeneration !== undefined
+    && carried?.mutationGeneration !== undefined
+    && carried.mutationGeneration !== observedGeneration
+  const deferredSinceMs = provenProgress || carried?.deferredSinceMs === undefined
+    ? nowMs
+    : carried.deferredSinceMs
+  return {
+    leaseId,
+    heartbeatAtMs: nowMs,
+    ...(observedGeneration === undefined ? {} : { mutationGeneration: observedGeneration }),
+    deferredSinceMs,
   }
 }
 
