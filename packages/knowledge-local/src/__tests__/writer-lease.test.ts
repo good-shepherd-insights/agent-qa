@@ -1352,3 +1352,269 @@ describe('mutation-lock owner process incarnation (CR-04)', () => {
     expect(await surrogateExit).toMatchObject({ code: 0, signal: null })
   }, 25_000)
 })
+
+/**
+ * V-02: the acquisition retry loop must end, and the bound must be anchored OUTSIDE the lease
+ * vocabulary it is arbitrating.
+ *
+ * The verifier reproduced an unbounded synchronous spin here with two probes. Both are converted
+ * below into rejecting tests, and both keep their adversary ALIVE for the entire observation
+ * window — a probe whose blocker dies early proves nothing about a bound. The contender runs in a
+ * child process so a still-defective build fails as "no outcome within the watchdog" rather than
+ * hanging the suite, which is exactly how the verifier had to observe it (SIGKILL at 25 s / 100 s).
+ */
+describe('writer lease acquisition deadline against an unreclaimable owner (V-02)', () => {
+  let root: string
+  let knowledgeRoot: string
+  const spawned: ChildProcessWithoutNullStreams[] = []
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-deadline-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+  })
+
+  afterEach(() => {
+    for (const child of spawned.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+        try {
+          process.kill(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone; the leg's own assertions own the outcome.
+        }
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function track(child: ChildProcessWithoutNullStreams): ChildProcessWithoutNullStreams {
+    spawned.push(child)
+    return child
+  }
+
+  interface ContenderOutcome {
+    kind: string
+    reason?: string
+    message?: string
+    attempts?: number
+    waitedMs?: number
+    elapsedMs: number
+  }
+
+  /**
+   * Acquire in a child so an unbounded build is observable as a watchdog miss.
+   *
+   * The child reports the acquisition's own diagnostics AND its independently measured wall-clock
+   * elapsed time, so "returned" and "returned within the bound" are separate assertions rather
+   * than one claim resting on the module's own accounting.
+   */
+  function spawnBoundedContender(
+    acquireDeadlineMs: number,
+  ): ChildProcessWithoutNullStreams {
+    const source = `
+      const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+      const startedAtNs = process.hrtime.bigint();
+      const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
+        acquireDeadlineMs: Number(process.env.AGENT_QA_LEASE_TEST_DEADLINE_MS),
+      });
+      const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
+      process.stdout.write(JSON.stringify({
+        kind: outcome.kind,
+        reason: outcome.reason,
+        message: outcome.error === undefined ? undefined : outcome.error.message,
+        attempts: outcome.attempts,
+        waitedMs: outcome.waitedMs,
+        elapsedMs,
+      }) + '\\n');
+    `
+    return track(spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      {
+        env: {
+          ...process.env,
+          AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+          AGENT_QA_LEASE_TEST_DEADLINE_MS: String(acquireDeadlineMs),
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    ))
+  }
+
+  /** Fail as a missed watchdog rather than as a suite hang when the loop is still unbounded. */
+  function awaitContenderOutcome(
+    child: ChildProcessWithoutNullStreams,
+    watchdogMs: number,
+  ): Promise<ContenderOutcome> {
+    return new Promise((resolve, reject) => {
+      let stdout = ''
+      let stderr = ''
+      const timer = setTimeout(() => {
+        reject(new Error(
+          `contender produced no acquisition outcome within ${watchdogMs}ms `
+          + '(the retry loop is unbounded)',
+        ))
+      }, watchdogMs)
+      timer.unref()
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+        stdout += chunk
+        if (!stdout.includes('\n')) return
+        clearTimeout(timer)
+        resolve(JSON.parse(stdout.split('\n')[0] ?? '') as ContenderOutcome)
+      })
+      child.once('error', reject)
+      child.once('exit', (code) => {
+        if (stdout.includes('\n')) return
+        clearTimeout(timer)
+        reject(new Error(`contender exited ${code} with no outcome: ${stderr}`))
+      })
+    })
+  }
+
+  function authorityDbPath(): string {
+    return join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+  }
+
+  function seedUnattributedMutationLockRow(pid: number): void {
+    const db = new DatabaseSync(authorityDbPath())
+    try {
+      db.exec('PRAGMA journal_mode = WAL')
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mutation_lock (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          generation_token TEXT NOT NULL,
+          pid INTEGER NOT NULL CHECK (pid > 0),
+          acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+          incarnation TEXT
+        ) STRICT
+      `)
+      db.prepare(`
+        INSERT OR REPLACE INTO mutation_lock
+          (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, ?, ?, ?, NULL)
+      `).run('unattributable-generation', pid, Date.now())
+    } finally {
+      db.close()
+    }
+  }
+
+  /** Keep the sidecar genuinely fresh from another process for the whole observation window. */
+  function spawnRenewalWriter(leaseId: string): ChildProcessWithoutNullStreams {
+    const source = `
+      const { writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const file = join(process.env.AGENT_QA_LEASE_TEST_ROOT, '.lease-renewal');
+      const leaseId = process.env.AGENT_QA_LEASE_TEST_LEASE_ID;
+      const write = () => writeFileSync(
+        file,
+        JSON.stringify({ leaseId, heartbeatAtMs: Date.now() }) + '\\n',
+        'utf8',
+      );
+      write();
+      process.stdout.write('renewing\\n');
+      setInterval(write, 200);
+    `
+    return track(spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      {
+        env: {
+          ...process.env,
+          AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+          AGENT_QA_LEASE_TEST_LEASE_ID: leaseId,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    ))
+  }
+
+  it('refuses by name within the deadline against an unattributable live lock owner (Probe A)', async () => {
+    const startPermit = join(root, 'probe-a.start')
+    const releasePermit = join(root, 'probe-a.release')
+    const blocker = track(spawnAuthorityDbBlocker(authorityDbPath(), startPermit, releasePermit))
+    if (blocker.pid === undefined) throw new Error('probe A blocker never started')
+
+    // A NULL-incarnation row naming the live blocker: unattributable, so escalation must refuse,
+    // and no lease file exists, so the busy-catch has no `held` exit either.
+    seedUnattributedMutationLockRow(blocker.pid)
+    writeFileSync(startPermit, 'go\n', 'utf8')
+    await waitForOutput(blocker, 'blocking\n')
+
+    const contender = spawnBoundedContender(2_000)
+    const outcome = await awaitContenderOutcome(contender, 30_000)
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'mutation-lock-unreclaimable',
+    })
+    expect(outcome.message).toContain('mutation-lock-unreclaimable')
+    expect(outcome.attempts).toBeGreaterThan(0)
+    expect(outcome.elapsedMs).toBeGreaterThanOrEqual(2_000)
+    expect(outcome.elapsedMs).toBeLessThan(25_000)
+    // The whole point of refusing rather than escalating: the unattributable owner is untouched.
+    expect(blocker.exitCode).toBeNull()
+    expect(blocker.signalCode).toBeNull()
+    expect(processIsAliveInTest(blocker.pid)).toBe(true)
+
+    writeFileSync(releasePermit, 'release\n', 'utf8')
+  }, 60_000)
+
+  it('refuses by name within the deadline against a sidecar-fresh epoch-invalid lease (Probe B)', async () => {
+    const permitFile = join(root, 'probe-b.permit')
+    const holder = track(spawnAuthorityHolder(knowledgeRoot, permitFile))
+    await waitForOutput(holder, 'inside\n')
+    if (holder.pid === undefined) throw new Error('probe B holder never started')
+
+    const lease = JSON.parse(
+      readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'),
+    ) as WriterLease
+    // The verifier's decisive shape: the published lease names a superseded epoch while a live
+    // writer keeps its renewal sidecar fresh, so composite freshness reports a holder that the
+    // epoch-strict busy-catch will never accept as `held`.
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), `${lease.epoch + 1}\n`, 'utf8')
+    const renewer = spawnRenewalWriter(lease.leaseId)
+    await waitForOutput(renewer, 'renewing\n')
+
+    const contender = spawnBoundedContender(2_000)
+    const outcome = await awaitContenderOutcome(contender, 30_000)
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'mutation-lock-unreclaimable',
+    })
+    expect(outcome.elapsedMs).toBeGreaterThanOrEqual(2_000)
+    expect(outcome.elapsedMs).toBeLessThan(25_000)
+    // Both adversaries held the state for the entire window and neither was signalled.
+    expect(holder.exitCode).toBeNull()
+    expect(holder.signalCode).toBeNull()
+    expect(renewer.exitCode).toBeNull()
+    expect(renewer.signalCode).toBeNull()
+    expect(processIsAliveInTest(holder.pid)).toBe(true)
+
+    writeFileSync(permitFile, 'resume\n', 'utf8')
+  }, 60_000)
+
+  it('still acquires when the blocking owner releases before the deadline (accepting control)', async () => {
+    const startPermit = join(root, 'control.start')
+    const releasePermit = join(root, 'control.release')
+    // No unattributable row here: the owner is merely SLOW, not unreclaimable. This is the exact
+    // schedule of Probe A minus the one fact that makes escalation impossible.
+    const blocker = track(spawnAuthorityDbBlocker(authorityDbPath(), startPermit, releasePermit))
+    writeFileSync(startPermit, 'go\n', 'utf8')
+    await waitForOutput(blocker, 'blocking\n')
+
+    const contender = spawnBoundedContender(20_000)
+    const releaseTimer = setTimeout(() => {
+      writeFileSync(releasePermit, 'release\n', 'utf8')
+    }, 1_500)
+    releaseTimer.unref()
+
+    const outcome = await awaitContenderOutcome(contender, 40_000)
+
+    // The deadline is an exit for the unreclaimable case only; a bound that refuses a recoverable
+    // owner would be a blanket refusal, which is the wrong fix wearing the right shape.
+    expect(outcome.kind).toBe('acquired')
+    expect(outcome.elapsedMs).toBeLessThan(20_000)
+  }, 60_000)
+})
