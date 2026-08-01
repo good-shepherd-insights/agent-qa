@@ -64,6 +64,7 @@ import type {
   ClassifyDaemonRegistrationInput,
   ClassifyDaemonRegistrationOutcome,
   LegacyDaemonRegistration,
+  RemoveRegistrationOutcome,
 } from './registration.js'
 import type { DaemonRegistration } from './registration.js'
 import {
@@ -180,11 +181,11 @@ export interface DaemonHostOperations {
   appendDaemonEvent(agentQaRoot: string, event: DaemonEvent): void
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeDaemonRegistration(agentQaRoot: string): void
-  removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): boolean
+  removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): RemoveRegistrationOutcome
   removeObsoleteDaemonRegistrationIfExpected(
     agentQaRoot: string,
     expected: LegacyDaemonRegistration,
-  ): boolean
+  ): RemoveRegistrationOutcome
   unlinkDaemonSocket(socketPath: string, ownership: DaemonSocketOwnership): boolean
   classifyDaemonRegistration(
     input: ClassifyDaemonRegistrationInput,
@@ -489,8 +490,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
    * Both arms compare before they delete, so two racing successors can no longer erase each
    * other's registrations: a file that changed underneath is restored, not obeyed.
    */
-  const removeClassifiedRegistration = (classified: RecoverableRegistration): boolean =>
-    classified.kind === 'obsolete'
+  const removeClassifiedRegistration = (classified: RecoverableRegistration): boolean => {
+    const outcome = classified.kind === 'obsolete'
       ? operations.removeObsoleteDaemonRegistrationIfExpected(
         input.agentQaRoot,
         classified.registration,
@@ -499,6 +500,18 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         input.agentQaRoot,
         classified.registration.instanceId,
       )
+    // A registration that changed mid-removal leaves its predecessor's bytes in quarantine on
+    // purpose. Saying so is the whole point of the widened outcome: a stranded file nobody names
+    // is indistinguishable from a file that was never there.
+    if (outcome.kind === 'changed-under-removal') {
+      logger.error(
+        `agent-qa daemon registration changed while it was being removed; a newer publication `
+        + `holds ${outcome.registrationPath} and the classified generation's bytes are preserved `
+        + `at ${outcome.quarantinePath}`,
+      )
+    }
+    return outcome.kind === 'removed'
+  }
 
   const recordRegistrationRecovered = (classified: RecoverableRegistration): void => {
     // V-01: the removal above proved this registration's BYTES — not that the address those bytes
@@ -1561,7 +1574,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
               input.agentQaRoot,
               instanceId,
             )
-            if (removed) operations.trace?.('registration-removed')
+            if (removed.kind === 'removed') operations.trace?.('registration-removed')
           })
         }
         runSyncCleanup('signals.detach', detachSignals)

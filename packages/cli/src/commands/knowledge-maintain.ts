@@ -53,6 +53,7 @@ import {
   removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   type ClassifyDaemonRegistrationOutcome,
+  type RemoveRegistrationOutcome,
 } from '../daemon/registration.js'
 
 // The eleven maintenance verbs, taken off the local host's curation capabilities rather than
@@ -537,7 +538,7 @@ function classifyDrainHost(
 function removeClassifiedDrainRegistration(
   paths: KnowledgePaths,
   classified: RecoverableDaemonRegistration,
-): boolean {
+): RemoveRegistrationOutcome {
   return classified.kind === 'obsolete'
     ? removeObsoleteDaemonRegistrationIfExpected(paths.runtimeRoot, classified.registration)
     : removeRegistrationIfOwned(paths.runtimeRoot, classified.registration.instanceId)
@@ -616,7 +617,8 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
     return
   }
 
-  if (!removeClassifiedDrainRegistration(paths, classified)) {
+  const removal = removeClassifiedDrainRegistration(paths, classified)
+  if (removal.kind !== 'removed') {
     // The registration changed between classification and removal. Look once more rather than
     // act on a file this command never classified, and fail closed rather than race a third
     // writer.
@@ -626,17 +628,29 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
       return
     }
     if (refuseDrainRouting(reclassified, options)) return
-    if (
-      reclassified.kind !== 'absent'
-      && !removeClassifiedDrainRegistration(paths, reclassified)
-    ) {
+    const retry = reclassified.kind === 'absent'
+      ? undefined
+      : removeClassifiedDrainRegistration(paths, reclassified)
+    if (retry !== undefined && retry.kind !== 'removed') {
+      // Name the quarantined evidence if either attempt left any: a predecessor's bytes parked
+      // under a name nobody reads is exactly the thing an operator has to be told about.
+      const stranded = [removal, retry]
+        .filter((outcome) => outcome.kind === 'changed-under-removal')
+        .map((outcome) => (outcome as { quarantinePath: string }).quarantinePath)
       if (options.json === true) {
-        emitJson({ mode: 'refused', reason: 'registration-contended' })
+        emitJson({
+          mode: 'refused',
+          reason: 'registration-contended',
+          ...(stranded.length > 0 ? { quarantined: stranded } : {}),
+        })
       }
       emitHuman(
         pc.red(
           'knowledge drain: refusal [registration-contended]: the daemon registration changed '
-          + 'twice while it was being classified; rerun the command',
+          + 'twice while it was being classified; rerun the command'
+          + (stranded.length > 0
+            ? `; the classified generation's bytes are preserved at ${stranded.join(', ')}`
+            : ''),
         ),
         'stderr',
       )

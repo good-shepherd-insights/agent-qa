@@ -116,7 +116,7 @@ const SUCCESSOR_INSTANCE_ID = '22222222-2222-4222-8222-222222222222'
  */
 const REMOVAL_SEAMS = ['beforeQuarantineRename', 'afterQuarantine', 'afterVerify'] as const
 type RemovalSeam = typeof REMOVAL_SEAMS[number]
-type RemovalSeamOptions = { [K in RemovalSeam]?: (path: string) => void }
+type RemovalSeamOptions = { [K in RemovalSeam]?: () => void }
 
 function makePaths(label: string): {
   root: string

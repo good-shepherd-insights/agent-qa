@@ -3,7 +3,6 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
-  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -323,61 +322,121 @@ export interface RemoveRegistrationIfOwnedOptions {
   readonly beforeQuarantineRename?: () => void
   /** Test-only barrier after quarantine publication and before ownership verification. */
   readonly afterQuarantine?: (quarantinePath: string) => void
+  /** Test-only barrier after re-verification and before the unlink or the restore. */
+  readonly afterVerify?: (quarantinePath: string) => void
   /** Focused durability seam; production uses the best-effort platform fsync helper. */
   readonly fsyncDirectory?: (directory: string) => void
 }
 
 /**
- * Atomically quarantine, verify, and remove only the generation the caller classified.
+ * What a removal attempt did, rather than merely whether it succeeded.
  *
- * A mismatched quarantine is restored with a hard link so an EEXIST successor can never be
- * overwritten by an obsolete host's cleanup. The predicate is the only thing that varies between
- * schema shapes; the rename/verify/link algorithm is shared so neither shape can drift into a
- * read-then-delete window.
+ * `unmatched` and `changed-under-removal` are both "did not remove", but only one of them leaves
+ * bytes parked under a name nobody routinely reads. Collapsing them into `false` is how a
+ * stranded registration becomes invisible, so the difference is in the type.
+ */
+export type RemoveRegistrationOutcome =
+  | { readonly kind: 'removed' }
+  | { readonly kind: 'unmatched' }
+  | {
+    readonly kind: 'changed-under-removal'
+    readonly registrationPath: string
+    readonly quarantinePath: string
+  }
+
+/** A quarantined registration that could not be put back, naming both paths involved. */
+export class DaemonRegistrationRestoreError extends Error {
+  readonly registrationPath: string
+  readonly quarantinePath: string
+
+  constructor(registrationPath: string, quarantinePath: string, cause: unknown) {
+    super(
+      `agent-qa daemon registration could not be restored from ${quarantinePath} `
+      + `to ${registrationPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+    this.name = 'DaemonRegistrationRestoreError'
+    this.registrationPath = registrationPath
+    this.quarantinePath = quarantinePath
+    this.cause = cause
+  }
+}
+
+/**
+ * Compare first, then quarantine, verify, and remove only the generation the caller classified.
+ *
+ * The order is the contract. A candidate that fails the predicate is rejected from a plain read,
+ * with zero filesystem mutations — the previous algorithm renamed to quarantine BEFORE comparing,
+ * so a crash inside the window could leave a registration that was never this caller's parked
+ * under a name no reader looks at (W-03).
+ *
+ * The quarantine step is NOT gone, and must not be "simplified" away: once the predicate has
+ * matched, renaming out of the way before unlinking is what keeps the final delete from racing a
+ * successor that publishes in the gap — a read-then-delete would delete whatever arrived. The
+ * pre-read does not weaken that; it only stops the non-deleting path from mutating at all. So the
+ * quarantined bytes are re-verified, because between the read and the rename another writer may
+ * have won the path, and the bytes now in quarantine may be theirs.
+ *
+ * Restore is a rename, never a hard link: `linkSync` demands a filesystem that supports them, and
+ * the old code's non-EEXIST link failure threw before the quarantine was cleaned up. Rename is
+ * atomic and total, so at every seam of this routine the bytes exist under exactly one of the two
+ * names. It clobbers, though, which is why the original name's vacancy is checked first and a
+ * successor that already holds it wins outright: its registration is never overwritten by a
+ * predecessor's cleanup. The predecessor's bytes are then left in quarantine as evidence and both
+ * paths are named in the outcome, rather than being silently unlinked as they were before.
+ *
+ * Residual, deliberately recorded: `existsSync` then `renameSync` is not one atomic step, so a
+ * publisher that arrives inside those few microseconds can still be clobbered. Closing it needs a
+ * no-clobber rename primitive Node does not expose (`RENAME_NOREPLACE`); it is strictly smaller
+ * than the whole-window exposure it replaces.
  */
 function removeRegistrationIfMatching(
   agentQaRoot: string,
   tag: string,
   matches: (outcome: ReadDaemonRegistrationOutcome) => boolean,
   options: RemoveRegistrationIfOwnedOptions,
-): boolean {
+): RemoveRegistrationOutcome {
   const file = daemonRegistrationPath(agentQaRoot)
   const parent = dirname(file)
   const quarantine = `${file}.remove-${tag}-${randomUUID()}`
   const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
 
+  if (!matches(readDaemonRegistrationFile(file))) return { kind: 'unmatched' }
+
   options.beforeQuarantineRename?.()
   try {
     renameSync(file, quarantine)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'unmatched' }
     throw error
   }
   fsyncDirectory(parent)
   options.afterQuarantine?.(quarantine)
 
-  if (matches(readDaemonRegistrationFile(quarantine))) {
+  const verified = matches(readDaemonRegistrationFile(quarantine))
+  options.afterVerify?.(quarantine)
+  if (verified) {
     unlinkSync(quarantine)
     fsyncDirectory(parent)
-    return true
+    return { kind: 'removed' }
   }
 
-  try {
-    linkSync(quarantine, file)
-    fsyncDirectory(parent)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  if (existsSync(file)) {
+    return { kind: 'changed-under-removal', registrationPath: file, quarantinePath: quarantine }
   }
-  unlinkSync(quarantine)
+  try {
+    renameSync(quarantine, file)
+  } catch (error) {
+    throw new DaemonRegistrationRestoreError(file, quarantine, error)
+  }
   fsyncDirectory(parent)
-  return false
+  return { kind: 'unmatched' }
 }
 
 export function removeRegistrationIfOwned(
   agentQaRoot: string,
   instanceId: string,
   options: RemoveRegistrationIfOwnedOptions = {},
-): boolean {
+): RemoveRegistrationOutcome {
   return removeRegistrationIfMatching(
     agentQaRoot,
     instanceId,
@@ -397,7 +456,7 @@ export function removeObsoleteDaemonRegistrationIfExpected(
   agentQaRoot: string,
   expected: LegacyDaemonRegistration,
   options: RemoveRegistrationIfOwnedOptions = {},
-): boolean {
+): RemoveRegistrationOutcome {
   return removeRegistrationIfMatching(
     agentQaRoot,
     `obsolete-${expected.pid}`,
