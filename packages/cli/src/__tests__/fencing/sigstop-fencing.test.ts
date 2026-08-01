@@ -32,7 +32,6 @@ import {
   killIfRunning,
   makeRoot,
   processStateChar,
-  readReconcileReports,
   sendSignalWhileAlive,
   startChild,
   startPausedDrainer,
@@ -40,6 +39,7 @@ import {
   waitForChildTermination,
   waitForDaemonEvent,
   waitForMarker,
+  waitForReconcilePasses,
   writeDurableJson,
   type FencingPaths,
 } from './spawn-helpers.js'
@@ -674,7 +674,12 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
         })
 
         // The inherited intent named a bundle no successor can find: requeued, never projected.
-        const [reconcile] = readReconcileReports(paths)
+        const [reconcile] = await waitForReconcilePasses(
+          daemon,
+          paths,
+          1,
+          "the successor's reconcile pass",
+        )
         expect(reconcile).toMatchObject({
           intentsDiscarded: 1,
           intentsReplayed: 0,
@@ -760,7 +765,12 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
         )
 
         // REPLAY: the inherited generation's intent was projected, then cleared — not quarantined.
-        const [replayPass] = readReconcileReports(paths)
+        const [replayPass] = await waitForReconcilePasses(
+          daemon,
+          paths,
+          1,
+          "the successor's first reconcile pass",
+        )
         expect(replayPass).toMatchObject({
           intentsReplayed: 1,
           intentsCleared: 1,
@@ -795,7 +805,15 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
           'second drain pass completing its candidate',
         )
 
-        const quarantinePass = readReconcileReports(paths)[1]
+        // Exactly two passes, so the quarantine verdict below is unambiguously the second one's.
+        const passes = await waitForReconcilePasses(
+          daemon,
+          paths,
+          2,
+          "the successor's second reconcile pass",
+        )
+        expect(passes).toHaveLength(2)
+        const quarantinePass = passes[1]
         expect(quarantinePass).toMatchObject({
           intentsQuarantinedStale: 1,
           intentsReplayed: 0,

@@ -277,12 +277,54 @@ export async function waitForDaemonEvent(
   }
 }
 
-/** Every reconcile report the reclaiming daemon's drain passes produced, in pass order. */
+/**
+ * Every reconcile report the reclaiming daemon's drain passes produced, in pass order.
+ *
+ * A trailing line that does not parse is a read that landed mid-append, not a malformed report:
+ * the writer is another process appending while this one polls. It is dropped rather than thrown
+ * on, so the caller simply has not seen that pass yet.
+ */
 export function readReconcileReports(paths: FencingPaths): Record<string, unknown>[] {
   if (!existsSync(paths.reconcileLog)) return []
-  return readFileSync(paths.reconcileLog, 'utf8').split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
+  const reports: Record<string, unknown>[] = []
+  for (const line of readFileSync(paths.reconcileLog, 'utf8').split('\n').filter(Boolean)) {
+    try {
+      reports.push(JSON.parse(line) as Record<string, unknown>)
+    } catch {
+      break
+    }
+  }
+  return reports
+}
+
+/**
+ * Wait for the reclaiming daemon to have COMPLETED `count` reconcile passes.
+ *
+ * The daemon's job-lifecycle events are emitted from inside `drainQueue`, while its reconcile
+ * report is recorded when that same call returns — so a leg that keyed off `job-completed` was
+ * reading the log strictly before the pass it wanted could have been written. That window is
+ * invisible on an idle machine and reliably open under a loaded suite.
+ */
+export async function waitForReconcilePasses(
+  running: RunningChild,
+  paths: FencingPaths,
+  count: number,
+  selector: string,
+): Promise<Record<string, unknown>[]> {
+  const deadline = Date.now() + MARKER_TIMEOUT_MS
+  while (true) {
+    const reports = readReconcileReports(paths)
+    if (reports.length >= count) return reports
+    if (running.child.exitCode !== null || running.child.signalCode !== null) {
+      throw new Error(`fencing child exited before ${selector}:\n${running.output()}`)
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `timed out waiting for ${selector} (${reports.length}/${count}):\n${running.output()}`,
+      )
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
 }
 
 export async function killIfRunning(child: ChildProcess): Promise<void> {
