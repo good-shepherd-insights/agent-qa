@@ -2338,6 +2338,233 @@ describe('budget-capped process-incarnation resolution on the escalation path (W
     },
     90_000,
   )
+
+  /**
+   * The OWN-pid fork, which round 5 found still spending the deadline on a bare constant.
+   *
+   * The three legs below are all driven from a CHILD process, deliberately and not for isolation
+   * hygiene: `ownProcessIncarnation` memoises at module scope, so in this suite's own process the
+   * question "did this claim fork `ps`?" has already been answered by whichever leg ran first.
+   * 386-46 measured exactly that trap (its deviation 2) and left the finding at
+   * `writer-lease.test.ts`'s leg-B comment. A fresh child is the only fixture that can still
+   * produce the value under test, so every assertion here reads a first-claim/second-claim pair
+   * inside one child rather than a count accumulated across sibling tests.
+   *
+   * What is read is the on-disk `mutation_lock` row's `incarnation` column, sampled at
+   * `afterMutationLockClaimed` (the claim is committed and the held transaction has not begun),
+   * because that column is the artifact a contender's `verifyMutationLockOwnerIdentity` actually
+   * consults. An assertion about the memo would be an assertion about this module's bookkeeping;
+   * an assertion about the row is an assertion about whether this daemon stays escalatable.
+   */
+  const OWN_INCARNATION_CHILD_PRELUDE = `
+    const { existsSync } = await import('node:fs');
+    const { DatabaseSync } = await import('node:sqlite');
+    const {
+      acquireWriterLease,
+      withCurrentWriterAuthority,
+    } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const root = process.env.AGENT_QA_LEASE_TEST_ROOT;
+    const dbPath = process.env.AGENT_QA_LEASE_TEST_DB;
+    const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    const readLockIncarnation = () => {
+      const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 0 });
+      try {
+        const row = db.prepare(
+          'SELECT pid, incarnation FROM mutation_lock WHERE id = 1'
+        ).get();
+        if (row === undefined) return null;
+        return { pid: Number(row.pid), incarnation: row.incarnation ?? null };
+      } finally {
+        db.close();
+      }
+    };
+    const awaitPermit = () => {
+      while (!existsSync(process.env.AGENT_QA_LEASE_TEST_PERMIT)) {
+        Atomics.wait(wait, 0, 0, 10);
+      }
+    };
+  `
+
+  interface OwnIncarnationChildReport {
+    readonly pid: number
+    readonly row1: { pid: number; incarnation: string | null } | null
+    readonly row2: { pid: number; incarnation: string | null } | null
+    readonly phase1Resolutions?: number[]
+    readonly phase2Resolutions?: number[]
+    readonly claimedElapsedMs?: number
+    readonly kind?: string
+  }
+
+  /**
+   * Spawn the child, resolve its incarnation with the REAL `ps` while it is still alive, release it.
+   *
+   * The parent's own `ps` is untouched by the shadow, so the expected token is an OS fact obtained
+   * without going through the code under test — which is what makes "a real token" checkable
+   * rather than merely "some non-null string" (the prohibition forbids a fabricated or default
+   * token, and only an externally-anchored comparison can see the difference).
+   */
+  async function runOwnIncarnationChild(source: string): Promise<{
+    report: OwnIncarnationChildReport
+    expectedIncarnation: string
+  }> {
+    const permitFile = join(root, 'own-incarnation.permit')
+    const child = spawnWithShadowedPs(source, {
+      AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+      AGENT_QA_LEASE_TEST_DB: authorityDbPath(),
+      AGENT_QA_LEASE_TEST_PERMIT: permitFile,
+      AGENT_QA_LEASE_TEST_REAL_PATH: process.env.PATH ?? '',
+    })
+    const output = collectStdout(child)
+    await waitForOutput(child, 'started\n')
+    if (child.pid === undefined) throw new Error('child never started')
+    const expectedIncarnation = resolveProcessIncarnation(child.pid)
+    if (expectedIncarnation === undefined) {
+      throw new Error(`child pid ${child.pid} is not attributable to the parent's ps`)
+    }
+    writeFileSync(permitFile, 'go\n', 'utf8')
+    expect(await observeExit(child)).toMatchObject({ code: 0, signal: null })
+    return {
+      report: lastJsonLine(output()) as OwnIncarnationChildReport,
+      expectedIncarnation,
+    }
+  }
+
+  itOnPsHosts(
+    'retries a timed-out own-pid resolution on a later claim and attributes the row (round-5 regression 2)',
+    async () => {
+      // Phase 1's rejecting input: a process table that will not answer inside the cap, so the
+      // claimant genuinely cannot prove its own incarnation and writes an unattributed row.
+      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      const source = `${OWN_INCARNATION_CHILD_PRELUDE}
+        process.stdout.write('started\\n');
+        awaitPermit();
+        let row1 = null;
+        let row2 = null;
+        const acquired = acquireWriterLease(root, {
+          afterMutationLockClaimed: () => { row1 = readLockIncarnation(); },
+        });
+        if (acquired.kind !== 'acquired') {
+          throw new Error('phase 1 did not acquire: ' + acquired.kind);
+        }
+        // The process table recovers. Nothing else about this process changed — same pid, same
+        // start time, same module instance — so a second incarnation-less row can only mean the
+        // first miss was remembered as an answer.
+        process.env.PATH = process.env.AGENT_QA_LEASE_TEST_REAL_PATH;
+        withCurrentWriterAuthority(
+          root,
+          { leaseId: acquired.leaseId, epoch: acquired.epoch },
+          () => {},
+          { afterMutationLockClaimed: () => { row2 = readLockIncarnation(); } },
+        );
+        process.stdout.write(JSON.stringify({ pid: process.pid, row1, row2 }) + '\\n');
+      `
+      const { report, expectedIncarnation } = await runOwnIncarnationChild(source)
+
+      // Phase 1 is the premise, not the property: the miss really happened.
+      expect(report.row1).toEqual({ pid: report.pid, incarnation: null })
+      // Phase 2 is the property. On the unmodified tree this is still `null` for the rest of the
+      // process's life, and every one of its rows is `unverifiable` to every contender.
+      expect(report.row2).toEqual({ pid: report.pid, incarnation: expectedIncarnation })
+      // Anchored to the OS, so a retry that invented or defaulted a token would fail here rather
+      // than pass a non-null check (the plan's prohibition, asserted).
+      expect(expectedIncarnation.startsWith('ps-lstart:')).toBe(true)
+    },
+    90_000,
+  )
+
+  itOnPsHosts(
+    'caps the own-pid fork with the acquisition budget rather than the bare constant (round-5 regression 1)',
+    async () => {
+      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      // 400 ms is below PROCESS_INCARNATION_PS_TIMEOUT_MS and above PROCESS_INCARNATION_PS_FLOOR_MS,
+      // so the clamp is the caller's remainder and nothing else. The bound asserted below is 2x
+      // that deadline: the bare constant cannot fit inside it, the clamped cap cannot exceed it.
+      const source = `${OWN_INCARNATION_CHILD_PRELUDE}
+        process.stdout.write('started\\n');
+        awaitPermit();
+        let row1 = null;
+        let claimedElapsedMs = null;
+        const startedAtNs = process.hrtime.bigint();
+        const outcome = acquireWriterLease(root, {
+          acquireDeadlineMs: 400,
+          afterMutationLockClaimed: () => {
+            claimedElapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
+            row1 = readLockIncarnation();
+          },
+        });
+        process.stdout.write(JSON.stringify({
+          pid: process.pid,
+          kind: outcome.kind,
+          claimedElapsedMs,
+          row1,
+          row2: null,
+        }) + '\\n');
+      `
+      const { report } = await runOwnIncarnationChild(source)
+
+      expect(report.kind).toBe('acquired')
+      expect(report.claimedElapsedMs).toBeLessThan(800)
+      // Fail-closed, and stated as an assertion rather than left implicit: an expired cap buys no
+      // permission. The row records no incarnation, so this claimant's own row is unescalatable
+      // until it can prove its identity — which the leg above shows it may later do.
+      expect(report.row1).toEqual({ pid: report.pid, incarnation: null })
+    },
+    90_000,
+  )
+
+  itOnPsHosts(
+    'still memoises a RESOLVED own incarnation and forks once per process (accepting control)',
+    async () => {
+      // The same PATH shadow and the same two claims, differing only in whether the process table
+      // answers. A retryable sentinel that also retried the hit path would pay a `ps` fork on every
+      // governed mutation for the life of the daemon; this is the leg that would catch it.
+      shadowPs(`#!/bin/sh\nexec ${realPsPath()} "$@"\n`)
+      const source = `${OWN_INCARNATION_CHILD_PRELUDE}
+        process.stdout.write('started\\n');
+        awaitPermit();
+        let row1 = null;
+        let row2 = null;
+        const resolved = [];
+        const observe = (pid) => { resolved.push(pid); };
+        const acquired = acquireWriterLease(root, {
+          onProcessIncarnationResolved: observe,
+          afterMutationLockClaimed: () => { row1 = readLockIncarnation(); },
+        });
+        if (acquired.kind !== 'acquired') {
+          throw new Error('phase 1 did not acquire: ' + acquired.kind);
+        }
+        const phase1Resolutions = resolved.splice(0);
+        withCurrentWriterAuthority(
+          root,
+          { leaseId: acquired.leaseId, epoch: acquired.epoch },
+          () => {},
+          {
+            onProcessIncarnationResolved: observe,
+            afterMutationLockClaimed: () => { row2 = readLockIncarnation(); },
+          },
+        );
+        const phase2Resolutions = resolved.splice(0);
+        process.stdout.write(JSON.stringify({
+          pid: process.pid,
+          row1,
+          row2,
+          phase1Resolutions,
+          phase2Resolutions,
+        }) + '\\n');
+      `
+      const { report, expectedIncarnation } = await runOwnIncarnationChild(source)
+
+      // The observer is honest here precisely because the module state is fresh: the first claim
+      // pays exactly one own-pid fork...
+      expect(report.phase1Resolutions).toEqual([report.pid])
+      // ...and the second pays none, which is the memo still doing its job on the hit path.
+      expect(report.phase2Resolutions).toEqual([])
+      // A control that reaches a real answer, not one satisfiable by a resolver that gives up.
+      expect(report.row1).toEqual({ pid: report.pid, incarnation: expectedIncarnation })
+      expect(report.row2).toEqual({ pid: report.pid, incarnation: expectedIncarnation })
+    },
+    90_000,
+  )
 })
 
 /**
