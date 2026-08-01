@@ -434,9 +434,12 @@ let ownIncarnation: string | undefined | typeof OWN_INCARNATION_UNRESOLVED =
  * definition, so the value cannot go stale. Memoising it keeps the per-claim cost off the hot
  * mutation path (the POSIX arm shells out to `ps`).
  */
-function ownProcessIncarnation(): string | undefined {
+function ownProcessIncarnation(escalation: MutationEscalationContext = {}): string | undefined {
   if (ownIncarnation === OWN_INCARNATION_UNRESOLVED) {
     ownIncarnation = resolveProcessIncarnation(process.pid)
+    // Reported only on the miss: the memo means later claims cost nothing, and an observer that
+    // counted the cached reads would over-report the shell forks production actually pays.
+    escalation.onIncarnationResolved?.(process.pid)
   }
   return ownIncarnation
 }
@@ -448,6 +451,30 @@ export interface MutationLockOptions {
   /** Test/chaos seam inside acquisition, after the epoch rewrite and before lease publication. */
   afterEpochRewrite?: () => void
   mutationLockTakeoverMs?: number
+  /**
+   * Test-only observation of every process-incarnation resolution the escalation path performs.
+   *
+   * Purely an observer, never a replacement: the production resolver still runs, so what a test
+   * counts is what a daemon pays. It exists because the cost being bounded (a `ps` fork per
+   * resolution, on the caller's main thread) is invisible to any assertion about outcomes.
+   */
+  onProcessIncarnationResolved?: (pid: number) => void
+}
+
+/**
+ * The caller's remaining budget and observation hooks, threaded down the escalation path.
+ *
+ * W-05: the escalation is reached from `acquireWriterLease`, which owns a deadline; every wait it
+ * performs is therefore spending someone else's time. Passing that fact down — rather than letting
+ * each wait consult its own pinned constant — is what makes the deadline a real bound instead of
+ * an approximate one. The relationship must hold structurally: the current constants happen to
+ * satisfy it arithmetically (45 s takeover + 5 s termination < 60 s deadline), but an assertion
+ * that rests on that coincidence would survive any retuning that broke it.
+ */
+interface MutationEscalationContext {
+  /** Absolute monotonic instant past which no escalation wait may continue; absent = no budget. */
+  readonly deadlineAtNs?: bigint
+  readonly onIncarnationResolved?: (pid: number) => void
 }
 
 export interface AcquireWriterLeaseOptions extends MutationLockOptions {
@@ -549,13 +576,32 @@ function openWriterAuthorityDb(knowledgeRoot: string): DatabaseSync {
  * plan: an inherited row keeps a NULL incarnation and is therefore unattributed, which fails the
  * signal check closed. That is the correct reading — nothing on disk can say which process wrote
  * a row that predates the column.
+ *
+ * W-06: the check and the ALTER are not one transaction and cannot be, because the ALTER is itself
+ * the schema change every reader would have to serialize behind. Two daemons starting against one
+ * legacy store therefore both decide the column is missing, and the loser's ALTER — which blocks on
+ * the winner's write lock and then re-prepares against the new schema — fails with
+ * `duplicate column name`. `isSqliteBusy` does not match that message, so it used to escape as a
+ * raw SqliteError and kill a starting daemon over a race whose OUTCOME WAS ALREADY CORRECT: the
+ * column exists, which is the entire postcondition. Losing this race is success, so it is reported
+ * as success. Every other error still propagates.
  */
 function upgradeMutationLockSchema(db: DatabaseSync): void {
   const columns = db.prepare(`
     SELECT name FROM pragma_table_info('mutation_lock')
   `).all() as { name: string }[]
   if (columns.some((column) => column.name === 'incarnation')) return
-  db.exec('ALTER TABLE mutation_lock ADD COLUMN incarnation TEXT')
+  try {
+    db.exec('ALTER TABLE mutation_lock ADD COLUMN incarnation TEXT')
+  } catch (error) {
+    if (!isDuplicateMutationLockColumn(error)) throw error
+  }
+}
+
+/** Classified by message beside `isMissingMutationLockTable`, which node:sqlite likewise untypes. */
+function isDuplicateMutationLockColumn(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ERR_SQLITE_ERROR'
+    && /duplicate column name/i.test((error as Error).message)
 }
 
 function parseMutationLockOwner(value: unknown): MutationLockOwner | undefined {
@@ -646,10 +692,39 @@ function compareAndSwapMutationLock(
   return result.changes === 1
 }
 
-function waitForVerifiedProcessExit(pid: number): boolean {
-  const deadline = mutationLockNowMs() + MUTATION_LOCK_TERMINATION_TIMEOUT_MS
+/** What the caller has left of its acquisition budget, or `undefined` when it declared none. */
+function remainingEscalationBudgetMs(escalation: MutationEscalationContext): number | undefined {
+  if (escalation.deadlineAtNs === undefined) return undefined
+  return Math.max(Number(escalation.deadlineAtNs - process.hrtime.bigint()) / 1e6, 0)
+}
+
+/**
+ * Poll a signalled owner's disappearance, bounded by the CALLER'S remaining budget (W-05).
+ *
+ * The wait is synchronous on the caller's main thread, so its cost is charged to whoever asked for
+ * the lock. Bounding it by MUTATION_LOCK_TERMINATION_TIMEOUT_MS alone let an acquisition overrun
+ * its own deadline by that whole window, and the overrun was not hypothetical: SIGKILL cannot be
+ * survived, but a killed child of a process that never returns to its event loop is never reaped,
+ * so `kill(pid, 0)` keeps answering "alive" indefinitely. A daemon spinning synchronously on its
+ * main thread is exactly the V-02 shape this phase reproduced, and its children are exactly those.
+ *
+ * The bound is therefore the MINIMUM of the pinned window and the time the caller has left. An
+ * exhausted budget waits not at all and reports that the exit was NOT confirmed — a refusal to
+ * reclaim, never a licence to CAS over an owner whose death was never observed. Elapsed time is
+ * measured from `process.hrtime.bigint()` for the same reason the acquisition deadline is: a wall
+ * clock can be stepped, and this loop's only exit must not be steppable.
+ */
+function waitForVerifiedProcessExit(
+  pid: number,
+  escalation: MutationEscalationContext,
+): boolean {
+  const startedAtNs = process.hrtime.bigint()
+  const remainingMs = remainingEscalationBudgetMs(escalation)
+  const boundMs = remainingMs === undefined
+    ? MUTATION_LOCK_TERMINATION_TIMEOUT_MS
+    : Math.min(MUTATION_LOCK_TERMINATION_TIMEOUT_MS, remainingMs)
   while (processIsAlive(pid)) {
-    if (mutationLockNowMs() >= deadline) return false
+    if (monotonicElapsedMs(startedAtNs) >= boundMs) return false
     Atomics.wait(
       MUTATION_LOCK_TERMINATION_WAIT,
       0,
@@ -668,9 +743,13 @@ type MutationLockOwnerIdentity = 'match' | 'mismatch' | 'unverifiable'
  * An unattributed row (legacy bytes, or a claimant that could not resolve its own start time) and
  * an unresolvable pid both answer `unverifiable`, which is a refusal to signal — never a licence.
  */
-function verifyMutationLockOwnerIdentity(owner: MutationLockOwner): MutationLockOwnerIdentity {
+function verifyMutationLockOwnerIdentity(
+  owner: MutationLockOwner,
+  escalation: MutationEscalationContext,
+): MutationLockOwnerIdentity {
   if (owner.incarnation === undefined) return 'unverifiable'
   const occupant = resolveProcessIncarnation(owner.pid)
+  escalation.onIncarnationResolved?.(owner.pid)
   if (occupant === undefined) return 'unverifiable'
   return occupant === owner.incarnation ? 'match' : 'mismatch'
 }
@@ -690,9 +769,12 @@ function verifyMutationLockOwnerIdentity(owner: MutationLockOwner): MutationLock
  *                exits (T-386-31-02); signalling an unattributable pid is local arbitrary-process
  *                termination. Only one of those is recoverable.
  */
-function terminateExactMutationLockOwner(owner: MutationLockOwner): boolean {
+function terminateExactMutationLockOwner(
+  owner: MutationLockOwner,
+  escalation: MutationEscalationContext,
+): boolean {
   if (owner.pid === process.pid) return false
-  const identity = verifyMutationLockOwnerIdentity(owner)
+  const identity = verifyMutationLockOwnerIdentity(owner, escalation)
   if (identity === 'unverifiable') return false
   if (identity === 'mismatch') return true
   try {
@@ -704,7 +786,7 @@ function terminateExactMutationLockOwner(owner: MutationLockOwner): boolean {
       throw error
     }
   }
-  return waitForVerifiedProcessExit(owner.pid)
+  return waitForVerifiedProcessExit(owner.pid, escalation)
 }
 
 function leasePermitsEscalation(knowledgeRoot: string, owner: MutationLockOwner): boolean {
@@ -723,10 +805,16 @@ function tryEscalatedMutationLockTakeover(
   expected: MutationLockOwner,
   replacement: MutationLockOwner,
   takeoverMs: number,
+  escalation: MutationEscalationContext,
 ): boolean {
   if (mutationLockNowMs() - expected.acquiredAtMs < takeoverMs) return false
   if (!leasePermitsEscalation(knowledgeRoot, expected)) return false
-  if (processIsAlive(expected.pid) && !terminateExactMutationLockOwner(expected)) return false
+  if (
+    processIsAlive(expected.pid)
+    && !terminateExactMutationLockOwner(expected, escalation)
+  ) {
+    return false
+  }
 
   const observedAfterTermination = readMutationLockOwner(db)
   if (observedAfterTermination?.generationToken !== expected.generationToken) return false
@@ -745,6 +833,7 @@ function claimMutationLock(
   knowledgeRoot: string,
   owner: MutationLockOwner,
   takeoverMs: number,
+  escalation: MutationEscalationContext,
 ): void {
   try {
     const inserted = db.prepare(`
@@ -769,6 +858,7 @@ function claimMutationLock(
         current,
         owner,
         takeoverMs,
+        escalation,
       )
     ) {
       return
@@ -799,6 +889,7 @@ function claimMutationLock(
         current,
         owner,
         takeoverMs,
+        escalation,
       )
     ) {
       return
@@ -819,7 +910,20 @@ function withMutationLock<T>(
   knowledgeRoot: string,
   mutate: (generationToken: string, db: DatabaseSync) => T,
   options: MutationLockOptions = {},
+  /**
+   * The caller's acquisition deadline, when it has one.
+   *
+   * Only `acquireWriterLease` does: a heartbeat or a governed mutation is not racing a bound, so
+   * omitting it leaves those paths on the pinned termination window exactly as before.
+   */
+  deadlineAtNs?: bigint,
 ): T {
+  const escalation: MutationEscalationContext = {
+    ...(deadlineAtNs === undefined ? {} : { deadlineAtNs }),
+    ...(options.onProcessIncarnationResolved === undefined
+      ? {}
+      : { onIncarnationResolved: options.onProcessIncarnationResolved }),
+  }
   let db: DatabaseSync
   try {
     db = openWriterAuthorityDb(knowledgeRoot)
@@ -831,7 +935,7 @@ function withMutationLock<T>(
     }
     throw error
   }
-  const claimantIncarnation = ownProcessIncarnation()
+  const claimantIncarnation = ownProcessIncarnation(escalation)
   const owner: MutationLockOwner = {
     pid: process.pid,
     acquiredAtMs: mutationLockNowMs(),
@@ -844,7 +948,7 @@ function withMutationLock<T>(
   let claimed = false
   let transactionOpen = false
   try {
-    claimMutationLock(db, knowledgeRoot, owner, takeoverMs)
+    claimMutationLock(db, knowledgeRoot, owner, takeoverMs, escalation)
     claimed = true
     options.afterMutationLockClaimed?.(owner.generationToken)
     try {
@@ -1145,6 +1249,15 @@ export function acquireWriterLease(
 
   const deadlineMs = hooks?.acquireDeadlineMs ?? ACQUIRE_WRITER_LEASE_DEADLINE_MS
   const startedAtNs = process.hrtime.bigint()
+  /**
+   * W-05: the same instant the loop's own exit is measured against, handed to everything that
+   * waits beneath it.
+   *
+   * Escalation waits are spent on this budget, not beside it. Deriving the instant once here and
+   * threading it down means no wait can be extended by retuning a constant it happens to sit
+   * under, and none of them needs to know what the others cost.
+   */
+  const deadlineAtNs = startedAtNs + BigInt(Math.round(deadlineMs * 1e6))
   let attempts = 0
 
   while (true) {
@@ -1190,7 +1303,7 @@ export function acquireWriterLease(
           epoch: holder.epoch,
           ...(reclaimed === undefined ? {} : { reclaimed }),
         }
-      }, hooks)
+      }, hooks, deadlineAtNs)
     } catch (error) {
       if (!(error instanceof MutationLockBusyError)) throw error
       /**
