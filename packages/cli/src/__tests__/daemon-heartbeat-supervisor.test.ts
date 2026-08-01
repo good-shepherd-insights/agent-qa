@@ -545,6 +545,58 @@ if (FIXTURE_ROLE === 'contender') {
       }
     }, 30_000);
 
+    /**
+     * I-02: the supervisor carried a `MutationLockBusyError` retry branch that could not run.
+     *
+     * `heartbeatLease` has owned the conversion of lock contention to the `deferred` outcome since
+     * 386-29, so the throw the branch waited for never crossed the worker boundary. Deleting dead
+     * escalation logic beside live escalation logic is the point, but the PREMISE has to stay
+     * checked: this leg drives a real wedged store and asserts contention still arrives as a
+     * deferred beat and never as an error message. If a future change lets the busy throw escape
+     * `heartbeatLease` again, this reddens — which is exactly when the deleted branch would have
+     * been needed, and exactly when silently retrying it would hide the regression.
+     */
+    it('converts lock contention to a deferred beat, never to a busy throw (I-02)', async () => {
+      const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-contention-'));
+      const acquired = acquireWriterLease(root);
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
+      }
+      const wedge = new DatabaseSync(join(root, WRITER_AUTHORITY_DB_FILE));
+      wedge.exec('PRAGMA busy_timeout = 250');
+      wedge.exec('BEGIN IMMEDIATE');
+
+      try {
+        const messages: HeartbeatSupervisorMessage[] = [];
+        const unexpected: Error[] = [];
+        const supervisor = await startHeartbeatSupervisor({
+          knowledgeRoot: root,
+          leaseId: acquired.leaseId,
+          intervalMs: 25,
+          stopTimeoutMs: 500,
+          onMessage: (message) => messages.push(message),
+          onUnexpectedExit: (error) => unexpected.push(error),
+        });
+
+        try {
+          await waitForCondition(
+            () => messages.some((message) => message.kind !== 'heartbeated'),
+            'a non-heartbeat outcome under contention',
+            20_000,
+          );
+        } finally {
+          await supervisor.stop();
+        }
+
+        expect(messages.filter((message) => message.kind === 'error')).toEqual([]);
+        expect(messages.some((message) => message.kind === 'deferred')).toBe(true);
+        expect(unexpected).toEqual([]);
+      } finally {
+        wedge.exec('ROLLBACK');
+        wedge.close();
+      }
+    }, 60_000);
+
     it(
       'keeps the writer lease held while only the daemon main loop is blocked past TTL',
       async () => {
