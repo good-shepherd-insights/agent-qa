@@ -1658,6 +1658,44 @@ describe('mutation-lock owner process incarnation (CR-04)', () => {
     expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 }).kind).not.toBe('refused')
   }, 40_000)
 
+  /**
+   * The other half of W-06, and the one the duplicate-column case cannot reach: the catch must be
+   * a CLASSIFIER, not a swallow.
+   *
+   * Found by probing my own control — a `catch { }` that discards every ALTER failure passes the
+   * race case above, because that case only ever asks whether the benign error was tolerated. Here
+   * the upgrade fails for a reason that is NOT benign (the write lock is held past the whole
+   * acquisition budget), and the difference is observable: keeping the error's meaning yields the
+   * typed unreclaimable refusal, while discarding it lets the flow proceed onto a table that still
+   * has no `incarnation` column and die there with a raw SQL logic error.
+   */
+  it('keeps a non-duplicate upgrade failure meaningful instead of swallowing it (W-06)', () => {
+    seedMutationLockRow({
+      pid: process.pid,
+      acquiredAtMs: Date.now() - 600_000,
+      generationToken: 'unupgradable-generation',
+      legacyShape: true,
+    })
+    expect(mutationLockColumnNames()).not.toContain('incarnation')
+
+    const blocker = new DatabaseSync(authorityDbPath())
+    blocker.exec('PRAGMA busy_timeout = 250')
+    blocker.exec('BEGIN IMMEDIATE')
+    try {
+      expect(
+        acquireWithIncarnationObserver(knowledgeRoot, {
+          acquireDeadlineMs: 3_000,
+          mutationLockTakeoverMs: 0,
+        }),
+      ).toMatchObject({ kind: 'refused', reason: 'mutation-lock-unreclaimable' })
+      // The upgrade genuinely did not happen, and the flow reported that rather than assuming it.
+      expect(mutationLockColumnNames()).not.toContain('incarnation')
+    } finally {
+      blocker.exec('ROLLBACK')
+      blocker.close()
+    }
+  }, 40_000)
+
   /** A repeated upgrade over an already-upgraded store stays a no-op (the cheap half of W-06). */
   it('leaves an already-upgraded store untouched when the upgrade runs again (W-06)', () => {
     seedMutationLockRow({
