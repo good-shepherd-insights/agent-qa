@@ -47,6 +47,7 @@ import {
   readDrainSessionReceipts,
   type DrainSessionReceipt,
 } from '../daemon/drain-receipts.js'
+import { appendDaemonEvent } from '../daemon/events.js'
 import { DRAIN_WAIT_TIMEOUT_MS } from '../daemon/host.js'
 import {
   classifyDaemonRegistration,
@@ -55,6 +56,7 @@ import {
   type ClassifyDaemonRegistrationOutcome,
   type RemoveRegistrationOutcome,
 } from '../daemon/registration.js'
+import { daemonSocketOwnershipFor, unlinkDaemonSocket } from '../daemon/server.js'
 
 // The eleven maintenance verbs, taken off the local host's curation capabilities rather than
 // imported from the knowledge package directly (D-14). Bound once here so every call site below is
@@ -545,6 +547,47 @@ function removeClassifiedDrainRegistration(
 }
 
 /**
+ * Reclaim the exactly-removed generation's own address, through startup's gate and no other.
+ *
+ * 386-34 left this socket on disk (WINDOWS #39) because the client had no way to prove a recorded
+ * path was safe to delete; 386-38 built that proof and made it `unlinkDaemonSocket`'s own
+ * precondition. So this is not a second, drain-local rule — it is the same function, given the
+ * same scope, derived by the same helper the daemon's startup recovery uses. A refusal is not an
+ * error: the registration is already compare-deleted and the drain has work to finish, so the
+ * refusal is recorded as `socketRemoved: false` on the same `registration-recovered` record
+ * startup writes, rather than raised or invented as a new event kind.
+ */
+function reclaimDrainRecoveredSocket(
+  paths: KnowledgePaths,
+  classified: RecoverableDaemonRegistration,
+): void {
+  const socketPath = classified.registration.socketPath
+  let socketRemoved = false
+  try {
+    socketRemoved = unlinkDaemonSocket(
+      socketPath,
+      daemonSocketOwnershipFor(paths.runtimeRoot, classified.registration),
+    )
+  } catch (error) {
+    emitHuman(
+      pc.yellow(`knowledge drain: stale socket cleanup failed (${socketPath}): `
+        + errorMessage(error)),
+      'stderr',
+    )
+  }
+  appendDaemonEvent(paths.runtimeRoot, {
+    kind: 'registration-recovered',
+    classification: classified.kind,
+    pid: classified.registration.pid,
+    ...('instanceId' in classified.registration
+      ? { instanceId: classified.registration.instanceId }
+      : {}),
+    socketPath,
+    socketRemoved,
+  })
+}
+
+/**
  * Refusals for a host this command must not recover from, and must not guess about.
  *
  * D-14's law in one place: a fresh holder keeps its lease and gets named; registration bytes
@@ -657,6 +700,11 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
       process.exitCode = 1
       return
     }
+    if (retry !== undefined) {
+      reclaimDrainRecoveredSocket(paths, reclassified as RecoverableDaemonRegistration)
+    }
+  } else {
+    reclaimDrainRecoveredSocket(paths, classified)
   }
   await drainInline(paths, options)
 }

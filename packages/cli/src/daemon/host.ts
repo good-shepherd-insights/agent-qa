@@ -44,6 +44,7 @@ import { appendDaemonEvent } from './events.js'
 import type { DaemonEvent } from './events.js'
 import {
   DAEMON_IDENTITY_SCHEMA_VERSION,
+  daemonSocketOwnershipFor,
   daemonSocketPath,
   startInvokeServer,
   unlinkDaemonSocket,
@@ -527,13 +528,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     // sibling embedder check (`registration names a non-owned socket path`, below) throws instead
     // because it runs BEFORE its own cleanup and has a fresh worker to fall back on.
     const socketPath = classified.registration.socketPath
-    const ownership: DaemonSocketOwnership = {
-      agentQaRoot: input.agentQaRoot,
-      projectRoot: dirname(input.agentQaRoot),
-      ...('instanceId' in classified.registration
-        ? { instanceId: classified.registration.instanceId }
-        : {}),
-    }
+    const ownership = daemonSocketOwnershipFor(input.agentQaRoot, classified.registration)
     let socketRemoved = false
     try {
       socketRemoved = operations.unlinkDaemonSocket(socketPath, ownership)

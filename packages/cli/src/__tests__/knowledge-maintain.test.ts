@@ -829,6 +829,40 @@ describe('knowledge maintenance commands', () => {
     )
   }, 20_000)
 
+  it('refuses an in-container address that is not the recorded instance\'s own (W-07)', async () => {
+    const workspace = fixtureWorkspace(roots)
+    // The input that separates the drain's gate from a weaker one: a real socket in the very
+    // directory this project's addresses live in, which containment would happily delete and
+    // exactness must refuse. Without this case, degrading the nonce arm to containment passes
+    // the whole corpus — the bystander in the reclaim case is not this proof, because only the
+    // ONE recorded path is ever a deletion candidate.
+    const sibling = daemonSocketPath(
+      workspace.runtimeRoot,
+      workspace.root,
+      SIBLING_INSTANCE_ID,
+    )
+    await abandonSocketFile(sibling)
+    roots.push(dirname(sibling))
+    plantDaemonRegistration(workspace, 2_000_000_000, sibling)
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
+    expect(
+      existsSync(sibling),
+      'a live sibling generation\'s address is not this registration\'s to delete',
+    ).toBe(true)
+    expect(readDaemonEventLedger(workspace.runtimeRoot).events).toContainEqual(
+      expect.objectContaining({
+        kind: 'registration-recovered',
+        socketPath: sibling,
+        socketRemoved: false,
+      }),
+    )
+  }, 20_000)
+
   it('byte-compares an obsolete-schema registration before removing it', async () => {
     const workspace = fixtureWorkspace(roots)
     writeFileSync(

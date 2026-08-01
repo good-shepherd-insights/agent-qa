@@ -247,6 +247,27 @@ export function isOwnedDaemonSocketPath(
 }
 
 /**
+ * Derive the ownership scope a recorded registration must be judged against.
+ *
+ * Factored because two independent reclaim paths need it — the daemon's own startup recovery and
+ * the drain command's — and each deriving its own scope is how one of them ends up judging a
+ * candidate against a container the other would have rejected. The project root is the runtime
+ * root's parent by construction (`<project>/.agent-qa`), and `instanceId` is present exactly when
+ * the registration is current-schema, which is the whole reason `isOwnedDaemonSocketPath` has two
+ * arms rather than one weakened rule.
+ */
+export function daemonSocketOwnershipFor(
+  agentQaRoot: string,
+  registration: { readonly socketPath: string; readonly instanceId?: string },
+): DaemonSocketOwnership {
+  return {
+    agentQaRoot,
+    projectRoot: dirname(agentQaRoot),
+    ...(registration.instanceId === undefined ? {} : { instanceId: registration.instanceId }),
+  }
+}
+
+/**
  * A registration's recorded socket path is attacker-shaped input; it is never dialled blind.
  *
  * `connect()` on a POSIX path that is not a socket throws out of band on darwin (EINVAL) instead
