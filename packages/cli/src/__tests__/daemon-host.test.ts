@@ -1314,6 +1314,92 @@ describe('daemon registration recovery at boot', () => {
     },
   )
 
+  /**
+   * The sibling of the leg above, on the file round 5 found the same defect in.
+   *
+   * `readWriterLease` answered `malformed` for a `.lease` that merely could not be opened, and
+   * `classifyDaemonRegistration` short-circuited to `unreachable-lease-stale` above its own
+   * carefully-argued `unknown` arm — which `runDaemonHost` executes as `removeClassifiedRegistration`
+   * plus socket unlink against a daemon that is still running and still holds the lease. The pin
+   * runs the whole path through PRODUCTION operations and asserts the two artifacts that survive
+   * or do not: `daemon.json` and the socket file.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'classifies an unreadable lease over a fresh holder as lease-fresh and removes nothing (CR-01)',
+    async () => {
+      const paths = makePaths('boot-unreadable-lease-fresh-holder')
+      const nowMs = Date.now()
+      const leaseFile = join(paths.knowledgeRoot, LEASE_FILE)
+      const epochFile = join(paths.knowledgeRoot, EPOCH_FILE)
+      const socketPath = daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID)
+      mkdirSync(paths.knowledgeRoot, { recursive: true })
+      mkdirSync(paths.agentQaRoot, { recursive: true })
+      writeFileSync(leaseFile, `${JSON.stringify({
+        leaseId: 'c2a41d5e-7b60-4a19-9f31-2c8de0a4f7b1',
+        pid: process.pid,
+        epoch: 4,
+        heartbeatAtMs: nowMs - 24,
+      })}\n`)
+      // A real file at the registered address, so "the socket survives" is an observable fact
+      // rather than the absence of a path nothing would have unlinked. Nothing listens on it, so
+      // the identity handshake still fails through production code.
+      mkdirSync(dirname(socketPath), { recursive: true })
+      writeFileSync(socketPath, '')
+      writeDaemonRegistration(paths.agentQaRoot, {
+        schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+        instanceId: HOST_INSTANCE_ID,
+        pid: process.pid,
+        socketPath,
+        startedAtMs: nowMs - 5_000,
+      })
+
+      // Control: the same state with a READABLE lease and a bumped epoch is genuinely recovery
+      // input. Without it, a classifier that answered lease-fresh for everything would pass.
+      writeFileSync(epochFile, '5\n')
+      await expect(classifyDaemonRegistration({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+      })).resolves.toMatchObject({
+        kind: 'unreachable-lease-stale',
+        identityFailure: 'unreachable',
+      })
+
+      writeFileSync(epochFile, '4\n')
+      chmodSync(leaseFile, 0o000)
+      const acquire = vi.fn()
+      const errors: string[] = []
+      try {
+        await expect(classifyDaemonRegistration({
+          agentQaRoot: paths.agentQaRoot,
+          knowledgeRoot: paths.knowledgeRoot,
+        })).resolves.toMatchObject({
+          kind: 'unreachable-lease-fresh',
+          lease: { kind: 'unreadable', code: 'EACCES' },
+          identityFailure: 'unreachable',
+        })
+
+        // The host's own handling of that verdict, through production operations: a refusal that
+        // acquires nothing, deletes nothing and unlinks nothing.
+        await expect(runDaemonHost({
+          agentQaRoot: paths.agentQaRoot,
+          knowledgeRoot: paths.knowledgeRoot,
+          config: TEST_CONFIG,
+          model: () => TEST_MODEL,
+          operations: { acquireWriterLease: acquire as never },
+          logger: { info: vi.fn(), error: (message) => errors.push(message) },
+        })).resolves.toBe(1)
+      } finally {
+        chmodSync(leaseFile, 0o600)
+      }
+
+      expect(acquire).not.toHaveBeenCalled()
+      // The refusal names the lease-read errno rather than a holder pid it could not read.
+      expect(errors).toEqual([expect.stringContaining('EACCES')])
+      expect(readDaemonRegistration(paths.agentQaRoot).kind).toBe('parsed')
+      expect(existsSync(socketPath)).toBe(true)
+    },
+  )
+
   it('recovers an alive-pid registration with no listener once its writer lease is stale', async () => {
     const paths = makePaths('boot-alive-no-listener-stale-lease')
     const nowMs = Date.now()
