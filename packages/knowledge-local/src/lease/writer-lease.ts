@@ -29,20 +29,6 @@ import { z } from 'zod'
 export const LEASE_FILE = '.lease'
 export const EPOCH_FILE = '.epoch'
 
-/**
- * Lock-free renewal sidecar for the current holder (CR-03).
- *
- * Renewal must not queue behind the governed mutation it exists to protect: `heartbeatLease`
- * enters the same `withMutationLock` primitive as every fenced write, so a long valid mutation
- * would otherwise starve its own heartbeat, cross the TTL, and become takeover-eligible. When
- * renewal loses that race it publishes freshness here instead, without the lock.
- *
- * The file is safe unserialized because it carries no authority: it is honoured only when its
- * `leaseId` equals the CURRENT on-disk lease's id and it is itself within the heartbeat TTL. A
- * superseded holder's sidecar therefore extends nothing, and a stopped process writes none at all.
- */
-export const LEASE_RENEWAL_FILE = '.lease-renewal'
-
 /** Provisional writer-heartbeat TTL; retune from operational evidence without adding config. */
 export const LEASE_HEARTBEAT_TTL_MS = 30_000
 
@@ -92,40 +78,6 @@ const writerLeaseSchema = z
 
 export type WriterLease = z.infer<typeof writerLeaseSchema>
 
-const leaseRenewalSchema = z
-  .object({
-    leaseId: z.string().uuid(),
-    heartbeatAtMs: z.number().int().nonnegative(),
-    /**
-     * W-02: the generation token of the mutation this renewal is waiting behind.
-     *
-     * Freshness alone cannot tell a holder that is renewing WHILE PROGRESSING from one renewing
-     * WHILE STUCK, and 386-29 made the latter immortal — a ticking heartbeat thread removed
-     * MUTATION_LOCK_TAKEOVER_MS for every live holder. The token is the discriminator, and it is
-     * read from the committed mutation-lock row rather than derived from anything this file says
-     * about itself.
-     *
-     * Optional because it is not always resolvable (the store may be mid-creation, or the owner
-     * may have committed a release between the busy throw and this read). An unresolvable token
-     * is treated as UNCHANGED, never as progress — the bound must fail closed toward bounding.
-     */
-    mutationGeneration: z.string().min(1).optional(),
-    /**
-     * Wall-clock instant of the FIRST deferral against `mutationGeneration`, carried forward
-     * unchanged while that token holds and reset only on a proven change of token.
-     */
-    deferredSinceMs: z.number().int().nonnegative().optional(),
-  })
-  .strict()
-
-/** Advisory freshness for one exact lease id; never epoch or identity authority. */
-export type LeaseRenewal = z.infer<typeof leaseRenewalSchema>
-
-export type ReadLeaseRenewalOutcome =
-  | { kind: 'absent' }
-  | { kind: 'malformed' }
-  | { kind: 'parsed'; renewal: LeaseRenewal }
-
 /** What the contender could observe about the owner it gave up on; never an authority claim. */
 export interface UnreclaimableMutationLockOwner {
   pid: number
@@ -169,23 +121,6 @@ export interface LeaseOperationOptions {
 
 export type HeartbeatLeaseOutcome =
   | { kind: 'heartbeated'; holder: WriterLease }
-  | {
-      kind: 'deferred'
-      reason: 'mutation-lock-busy'
-      /** The in-flight mutation this renewal is queued behind; absent when unresolvable. */
-      mutationGeneration?: string
-      /** First deferral against that mutation, carried across deferrals on one generation. */
-      deferredSinceMs?: number
-      /**
-       * Whether this deferral has been stuck on one unchanged generation past the takeover
-       * deadline — a wedged holder rather than a busy one.
-       *
-       * Derived HERE, beside `MUTATION_LOCK_TAKEOVER_MS` and beside the writer that stamps
-       * `deferredSinceMs`, so the daemon's ledger mapping stays a pure rename of a fact it was
-       * handed rather than a second, driftable copy of the same threshold in another package.
-       */
-      stalled: boolean
-    }
   | {
       kind: 'refused'
       reason:
@@ -326,10 +261,6 @@ function leasePath(knowledgeRoot: string): string {
 
 function epochPath(knowledgeRoot: string): string {
   return join(knowledgeRoot, EPOCH_FILE)
-}
-
-function leaseRenewalPath(knowledgeRoot: string): string {
-  return join(knowledgeRoot, LEASE_RENEWAL_FILE)
 }
 
 function writerAuthorityDbPath(knowledgeRoot: string): string {
@@ -789,14 +720,22 @@ function terminateExactMutationLockOwner(
   return waitForVerifiedProcessExit(owner.pid, escalation)
 }
 
+/**
+ * Escalation ends in SIGKILL, so this consumer names `unknown` as a refusal.
+ *
+ * A wrong kill is unrecoverable; a contender that declines to kill is not. `reclaimable` is the
+ * only verdict that permits, which means a live holder is escalated against exactly when its lease
+ * has genuinely aged out or names a superseded epoch — never because the epoch could not be read.
+ */
 function leasePermitsEscalation(knowledgeRoot: string, owner: MutationLockOwner): boolean {
   if (!processIsAlive(owner.pid)) return true
   const lease = readWriterLease(knowledgeRoot)
-  // CR-03: a holder still renewing through the sidecar is healthy, not wedged. Escalation here
-  // ends in SIGKILL, so a renewing holder must never reach it just because the mutation it is
-  // performing is the reason its lease file cannot be rewritten.
-  return lease.kind !== 'parsed'
-    || !isWriterLeaseFresh(knowledgeRoot, lease.lease, mutationLockNowMs())
+  if (lease.kind !== 'parsed') return true
+  return deriveWriterLeaseFreshness(
+    knowledgeRoot,
+    lease.lease,
+    mutationLockNowMs(),
+  ).kind === 'reclaimable'
 }
 
 function tryEscalatedMutationLockTakeover(
@@ -1062,42 +1001,6 @@ export function readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome {
   }
 }
 
-/** Read the advisory renewal sidecar; an unreadable or invalid file is simply no renewal. */
-export function readLeaseRenewal(knowledgeRoot: string): ReadLeaseRenewalOutcome {
-  const file = leaseRenewalPath(knowledgeRoot)
-  let raw: string
-  try {
-    raw = readFileSync(file, 'utf8')
-  } catch {
-    return existsSync(file) ? { kind: 'malformed' } : { kind: 'absent' }
-  }
-
-  try {
-    const parsed = leaseRenewalSchema.safeParse(JSON.parse(raw))
-    return parsed.success ? { kind: 'parsed', renewal: parsed.data } : { kind: 'malformed' }
-  } catch {
-    return { kind: 'malformed' }
-  }
-}
-
-/**
- * Publish freshness for one lease id without entering the mutation lock.
- *
- * The caller has already verified that `leaseId` is the current on-disk holder; this write is
- * deliberately unserialized because a torn or lost sidecar can only ever make a live holder look
- * older than it is, never younger.
- */
-function writeLeaseRenewal(knowledgeRoot: string, renewal: LeaseRenewal): void {
-  atomicRewrite(
-    leaseRenewalPath(knowledgeRoot),
-    `${JSON.stringify(leaseRenewalSchema.parse(renewal))}\n`,
-  )
-}
-
-function clearLeaseRenewal(knowledgeRoot: string): void {
-  rmSync(leaseRenewalPath(knowledgeRoot), { force: true })
-}
-
 function previewEpochState(raw: string): string {
   const preview = raw.slice(0, 64).replaceAll('\r', '\\r').replaceAll('\n', '\\n')
   return preview === '' ? '<empty>' : preview
@@ -1159,71 +1062,55 @@ export function isLeaseStale(lease: unknown, nowMs: number): boolean {
 }
 
 /**
- * Composite freshness: the lease file itself, OR a renewal sidecar bound to this exact holder,
- * and in both cases only while the lease still names the CURRENT epoch.
+ * The one freshness answer, and it has three values rather than two.
  *
- * CR-03: a holder inside a long governed mutation cannot refresh `.lease`, because publishing it
- * requires the very transaction the mutation is holding. Its renewal lands in the sidecar instead,
- * so takeover classification must read both. The sidecar is honoured only when it names THIS
- * lease's id — a superseded holder's leftover sidecar extends nothing — and only while it is
- * itself within `LEASE_HEARTBEAT_TTL_MS`, so a stopped process (which writes no sidecar at all)
- * still ages out and remains legitimately reclaimable.
+ * CR-01: the previous derivation returned a boolean, so every way of failing to READ the epoch
+ * collapsed into the same value a genuinely expired lease produces. `readEpoch` raises
+ * `CorruptEpochStateError(…, 'unreadable', …)` for EACCES, EIO, EMFILE and ENFILE, not only for
+ * corrupt bytes, and fd exhaustion produces both that failure and the daemon identity-handshake
+ * failure at once. A live, healthy holder therefore became de-registrable and SIGKILL-eligible on
+ * a transient read error.
  *
- * W-01: the epoch conjunct lives HERE, in the derivation, and not at the consumers. Three surfaces
- * classify recoverability from this predicate — `leasePermitsEscalation`, the acquisition
+ * `unknown` is deliberately NOT resolved to either boolean here. Resolving it toward "fresh" makes
+ * a permanently unreadable epoch an immortal phantom holder no contender can ever reclaim;
+ * resolving it toward "reclaimable" is the kill this closes. It is returned to the consumers so
+ * each of them names what it does with it, and so a fourth consumer added later cannot inherit a
+ * default it never chose.
+ *
+ * W-01: the epoch conjunct lives HERE, in the derivation, not at the consumers. Three surfaces
+ * classify recoverability from this verdict — `leasePermitsEscalation`, the acquisition
  * pre-check, and `classifyDaemonRegistration` in the CLI — and a fix applied consumer by consumer
  * is a list that the next surface joins without joining the guard. A lease naming a superseded
  * epoch is recovery input no matter how fresh its bytes are: nobody can still be inside a
  * transaction for an epoch that has already been replaced.
  *
- * W-02: the sidecar's honour is additionally bounded by how long the SAME in-flight mutation has
- * been deferring. Past `MUTATION_LOCK_TAKEOVER_MS` on one unchanged generation the holder is
- * wedged rather than busy, and the takeover deadline 386-29 removed exists again. The bound is
- * measured against the caller's wall clock and the generation token, never against a relation
- * among the sidecar's own fields.
+ * WR-04: a crash between the epoch rewrite and the lease rewrite leaves a lease naming the
+ * previous epoch. Reporting that lease as held manufactures a phantom holder no TTL sweep ever
+ * reclaims, so an epoch-invalid lease is recovery input rather than an answer.
+ *
+ * The inputs are the disk epoch and the lease value, and nothing else. There is no second
+ * freshness channel and no further conjunct: three conjuncts produced three defects.
  */
-export function isWriterLeaseFresh(
+export type WriterLeaseFreshness =
+  | { kind: 'fresh' }
+  | { kind: 'reclaimable' }
+  | { kind: 'unknown'; error: CorruptEpochStateError }
+
+export function deriveWriterLeaseFreshness(
   knowledgeRoot: string,
   lease: WriterLease,
   nowMs: number,
-): boolean {
-  if (!leaseEpochIsCurrent(knowledgeRoot, lease)) return false
-  if (!isLeaseStale(lease, nowMs)) return true
-  if (!Number.isFinite(nowMs)) return false
-  const renewal = readLeaseRenewal(knowledgeRoot)
-  if (renewal.kind !== 'parsed' || renewal.renewal.leaseId !== lease.leaseId) return false
-  if (nowMs - renewal.renewal.heartbeatAtMs >= LEASE_HEARTBEAT_TTL_MS) return false
-  const { deferredSinceMs } = renewal.renewal
-  // An unstamped sidecar predates this build and can only be honoured under the freshness rule it
-  // was written for; it cannot say how long the mutation behind it has been stuck.
-  if (deferredSinceMs === undefined) return true
-  return nowMs - deferredSinceMs <= MUTATION_LOCK_TAKEOVER_MS
-}
-
-/**
- * A published holder counts as current only when its recorded epoch still equals the disk epoch.
- *
- * WR-04: a crash between the epoch rewrite and the lease rewrite leaves a lease naming the previous
- * epoch. Reporting that lease as `held` manufactures a phantom holder no TTL sweep ever reclaims,
- * so an epoch-invalid lease is recovery input rather than an answer.
- */
-function leaseEpochIsCurrent(knowledgeRoot: string, lease: WriterLease): boolean {
+): WriterLeaseFreshness {
+  let observedEpoch: number
   try {
-    return lease.epoch === readEpoch(knowledgeRoot)
+    observedEpoch = readEpoch(knowledgeRoot)
   } catch (error) {
-    // Corrupt epoch bytes are never an answer; the in-lock read returns the typed refusal.
-    if (error instanceof CorruptEpochStateError) return false
+    if (error instanceof CorruptEpochStateError) return { kind: 'unknown', error }
     throw error
   }
+  if (lease.epoch !== observedEpoch) return { kind: 'reclaimable' }
+  return isLeaseStale(lease, nowMs) ? { kind: 'reclaimable' } : { kind: 'fresh' }
 }
-
-/**
- * 386-36 removed the former `isCurrentHolder` wrapper.
- *
- * It existed to AND `isWriterLeaseFresh` with `leaseEpochIsCurrent` at the one caller that needed
- * both. Now that the epoch conjunct is inside the composite, the wrapper is an alias, and an alias
- * is the next place a consumer forgets to use. The composite is the single derivation.
- */
 
 /** Return a live holder or atomically mint a new, monotonically fenced writer identity. */
 export function acquireWriterLease(
@@ -1231,20 +1118,30 @@ export function acquireWriterLease(
   hooks?: AcquireWriterLeaseOptions,
 ): AcquireWriterLeaseOutcome {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
-  try {
-    readEpoch(knowledgeRoot)
-  } catch (error) {
-    if (error instanceof CorruptEpochStateError) {
-      return { kind: 'refused', reason: 'corrupt-epoch-state', error }
-    }
-    throw error
-  }
   const beforeLock = readWriterLease(knowledgeRoot)
-  if (
-    beforeLock.kind === 'parsed'
-    && isWriterLeaseFresh(knowledgeRoot, beforeLock.lease, mutationLockNowMs())
-  ) {
-    return { kind: 'held', holder: beforeLock.lease }
+  if (beforeLock.kind === 'parsed') {
+    // This consumer names `unknown` as the typed refusal it already had for corrupt epoch bytes:
+    // an authority state that cannot be read is not a licence to mint a new one.
+    const verdict = deriveWriterLeaseFreshness(
+      knowledgeRoot,
+      beforeLock.lease,
+      mutationLockNowMs(),
+    )
+    if (verdict.kind === 'unknown') {
+      return { kind: 'refused', reason: 'corrupt-epoch-state', error: verdict.error }
+    }
+    if (verdict.kind === 'fresh') return { kind: 'held', holder: beforeLock.lease }
+  } else {
+    // With no lease to derive from, the epoch is still read before any acquisition: unreadable or
+    // corrupt authority state refuses here exactly as it does through the verdict above.
+    try {
+      readEpoch(knowledgeRoot)
+    } catch (error) {
+      if (error instanceof CorruptEpochStateError) {
+        return { kind: 'refused', reason: 'corrupt-epoch-state', error }
+      }
+      throw error
+    }
   }
 
   const deadlineMs = hooks?.acquireDeadlineMs ?? ACQUIRE_WRITER_LEASE_DEADLINE_MS
@@ -1275,12 +1172,18 @@ export function acquireWriterLease(
         }
         const current = readWriterLease(knowledgeRoot)
         const nowMs = Date.now()
-        if (
-          current.kind === 'parsed'
-          && isWriterLeaseFresh(knowledgeRoot, current.lease, nowMs)
-          && current.lease.epoch === observedEpoch
-        ) {
-          return { kind: 'held', holder: current.lease }
+        if (current.kind === 'parsed') {
+          const verdict = deriveWriterLeaseFreshness(knowledgeRoot, current.lease, nowMs)
+          if (verdict.kind === 'unknown') {
+            return {
+              kind: 'refused' as const,
+              reason: 'corrupt-epoch-state' as const,
+              error: verdict.error,
+            }
+          }
+          if (verdict.kind === 'fresh' && current.lease.epoch === observedEpoch) {
+            return { kind: 'held', holder: current.lease }
+          }
         }
         const reclaimed = current.kind === 'parsed' ? current.lease : undefined
 
@@ -1294,8 +1197,6 @@ export function acquireWriterLease(
         atomicRewrite(epochPath(knowledgeRoot), `${epoch}\n`)
         hooks?.afterEpochRewrite?.()
         sweepStagedEpochsBefore(knowledgeRoot, epoch)
-        // The reclaimed holder's renewal can no longer speak for this root.
-        clearLeaseRenewal(knowledgeRoot)
         atomicRewrite(leasePath(knowledgeRoot), `${JSON.stringify(holder)}\n`)
         return {
           kind: 'acquired',
@@ -1313,10 +1214,25 @@ export function acquireWriterLease(
        * (a paused drainer must be reported as holding, not stolen from). An epoch-mismatched
        * lease is different in kind — nobody can still be inside a transaction for a superseded
        * epoch — so it is recovery input and the loop keeps waiting for the lock.
+       *
+       * An epoch that cannot be READ is a third case and no longer hides inside the mismatch arm:
+       * the contender surfaces the typed refusal by name instead of spinning silently to its
+       * deadline over an authority state nobody can evaluate.
        */
       const current = readWriterLease(knowledgeRoot)
-      if (current.kind === 'parsed' && leaseEpochIsCurrent(knowledgeRoot, current.lease)) {
-        return { kind: 'held', holder: current.lease }
+      if (current.kind === 'parsed') {
+        let observedEpoch: number
+        try {
+          observedEpoch = readEpoch(knowledgeRoot)
+        } catch (epochError) {
+          if (epochError instanceof CorruptEpochStateError) {
+            return { kind: 'refused', reason: 'corrupt-epoch-state', error: epochError }
+          }
+          throw epochError
+        }
+        if (current.lease.epoch === observedEpoch) {
+          return { kind: 'held', holder: current.lease }
+        }
       }
       /**
        * The outermost exit, and the only one anchored outside this module's own vocabulary.
@@ -1429,150 +1345,74 @@ export function withCurrentWriterAuthority<T>(
 }
 
 /**
- * Refresh the matching current-epoch holder; reclaim races return a typed refusal.
+ * Refresh the matching current-epoch holder without entering the mutation lock.
  *
- * CR-03: renewal shares `withMutationLock` with every governed mutation, so the holder's own
- * long-running write can lock it out of its own heartbeat. Contention is therefore not a failure
- * — it falls back to the lock-free renewal sidecar and reports `deferred`. Identity is still
- * proven first: only a lease file that parses AND names this exact holder may be extended.
+ * CR-03 dissolves here rather than being worked around. The beat used to share
+ * `withMutationLock` with every governed write, and it runs in a worker THREAD, so the daemon's
+ * long synchronous mutation on the main thread held the lock while the worker blocked on it: the
+ * holder starved its own heartbeat, crossed the TTL and became a takeover target. Writing `.lease`
+ * directly means a governed mutation of any length cannot starve the beat at all, so heartbeat
+ * independence is structural instead of a fallback that has to be maintained beside the real path.
+ *
+ * What the lock used to buy was check-then-write atomicity of the identity/epoch ladder below
+ * against a concurrent reclaim, and dropping it opens exactly one race: a holder resuming from a
+ * >=TTL wedge can land its read-check-write astride a contender's reclaim and clobber the
+ * successor's lease. That is contained rather than prevented, and the containment is the epoch
+ * fence: a reclaim rewrites `.epoch` strictly BEFORE it publishes its lease, both inside the lock,
+ * so any lease clobbered afterwards names a superseded epoch. Every classifier reads it as
+ * recovery input, no store write is admitted under it (the epoch fence at the store verbs), and
+ * the successor's next authority check surfaces WriterAuthorityLostError, after which a fresh
+ * acquisition reclaims at the next epoch. The worst case is one successor bounce in a microsecond
+ * window after a 30 s wedge — a liveness hiccup, never minted authority. During the exact schedule
+ * this lock-free write exists for (the holder's own mutation in flight) no contender can be
+ * mid-reclaim at all, because a reclaim requires the very lock that mutation is holding.
+ *
+ * 2026-08-01 W-02 re-scope: `MUTATION_LOCK_TAKEOVER_MS` now governs reclaim from DEAD and
+ * whole-process-STOPPED owners, which write no beats and cross the TTL. Auto-takeover of a LIVE
+ * holder whose beat thread is still ticking is deliberately impossible; a wedged-forever live
+ * daemon surfaces at every contender as the typed `mutation-lock-unreclaimable` refusal naming its
+ * pid. That is an operator kill rather than an automated one, which is this module's own law: a
+ * wrong kill is unrecoverable, a wedged contender is not.
+ *
+ * Identity is still proven first, and every refusal below leaves `.lease` byte-identical.
  */
 export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutcome {
   assertAbsoluteKnowledgeRoot(opts.knowledgeRoot)
+  const current = readWriterLease(opts.knowledgeRoot)
+  if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
+  if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
+  if (current.lease.leaseId !== opts.leaseId) {
+    return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
+  }
+  let observedEpoch: number
   try {
-    return heartbeatLeaseUnderMutationLock(opts)
+    observedEpoch = readEpoch(opts.knowledgeRoot)
   } catch (error) {
-    if (!(error instanceof MutationLockBusyError)) throw error
-    const current = readWriterLease(opts.knowledgeRoot)
-    if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
-    if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
-    if (current.lease.leaseId !== opts.leaseId) {
-      return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
-    }
-    /**
-     * W-01: the same epoch ladder the locked sibling runs, before anything is published.
-     *
-     * Contention is not a licence to skip the identity checks: a holder whose epoch has already
-     * been superseded is not renewing, it is a leftover, and publishing freshness on its behalf
-     * manufactures exactly the immortal phantom holder a contender can never reclaim.
-     */
-    let observedEpoch: number
-    try {
-      observedEpoch = readEpoch(opts.knowledgeRoot)
-    } catch (epochError) {
-      if (epochError instanceof CorruptEpochStateError) {
-        return {
-          kind: 'refused',
-          reason: 'corrupt-epoch-state',
-          holder: current.lease,
-          error: epochError,
-        }
-      }
-      throw epochError
-    }
-    if (current.lease.epoch !== observedEpoch) {
+    if (error instanceof CorruptEpochStateError) {
       return {
         kind: 'refused',
-        reason: 'stale-epoch',
+        reason: 'corrupt-epoch-state',
         holder: current.lease,
-        observedEpoch,
+        error,
       }
     }
-
-    const renewal = stampRenewal(opts.knowledgeRoot, opts.leaseId, Date.now())
-    writeLeaseRenewal(opts.knowledgeRoot, renewal)
+    throw error
+  }
+  if (current.lease.epoch !== observedEpoch) {
     return {
-      kind: 'deferred',
-      reason: 'mutation-lock-busy',
-      ...(renewal.mutationGeneration === undefined
-        ? {}
-        : { mutationGeneration: renewal.mutationGeneration }),
-      ...(renewal.deferredSinceMs === undefined
-        ? {}
-        : { deferredSinceMs: renewal.deferredSinceMs }),
-      stalled: renewal.deferredSinceMs !== undefined
-        && Date.now() - renewal.deferredSinceMs > MUTATION_LOCK_TAKEOVER_MS,
+      kind: 'refused',
+      reason: 'stale-epoch',
+      holder: current.lease,
+      observedEpoch,
     }
   }
-}
 
-/**
- * Attribute this deferral to the mutation it is waiting behind, carrying the stuck-since clock.
- *
- * The reset rule is deliberately asymmetric: `deferredSinceMs` restarts only on PROOF that the
- * mutation moved on — two tokens that are both readable and different. An unreadable token on
- * either side counts as unchanged, so an observation gap can never launder a wedged holder into a
- * progressing one. The opposite default (reset whenever the tokens are not provably equal) makes
- * the bound unreachable again the moment the store is momentarily unreadable, which is precisely
- * when a holder is most likely to be wedged.
- */
-function stampRenewal(
-  knowledgeRoot: string,
-  leaseId: string,
-  nowMs: number,
-): LeaseRenewal {
-  let observedGeneration: string | undefined
-  try {
-    observedGeneration = readCommittedMutationLockOwner(knowledgeRoot)?.generationToken
-  } catch {
-    // An unreadable authority store is an unknown token, which the rule below treats as unchanged.
-    observedGeneration = undefined
-  }
-  const previous = readLeaseRenewal(knowledgeRoot)
-  const carried = previous.kind === 'parsed' && previous.renewal.leaseId === leaseId
-    ? previous.renewal
-    : undefined
-  const provenProgress = observedGeneration !== undefined
-    && carried?.mutationGeneration !== undefined
-    && carried.mutationGeneration !== observedGeneration
-  const deferredSinceMs = provenProgress || carried?.deferredSinceMs === undefined
-    ? nowMs
-    : carried.deferredSinceMs
-  return {
-    leaseId,
-    heartbeatAtMs: nowMs,
-    ...(observedGeneration === undefined ? {} : { mutationGeneration: observedGeneration }),
-    deferredSinceMs,
-  }
-}
-
-function heartbeatLeaseUnderMutationLock(opts: LeaseOperationOptions): HeartbeatLeaseOutcome {
-  return withMutationLock(opts.knowledgeRoot, () => {
-    const current = readWriterLease(opts.knowledgeRoot)
-    if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
-    if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
-    if (current.lease.leaseId !== opts.leaseId) {
-      return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
-    }
-    let observedEpoch: number
-    try {
-      observedEpoch = readEpoch(opts.knowledgeRoot)
-    } catch (error) {
-      if (error instanceof CorruptEpochStateError) {
-        return {
-          kind: 'refused',
-          reason: 'corrupt-epoch-state',
-          holder: current.lease,
-          error,
-        }
-      }
-      throw error
-    }
-    if (current.lease.epoch !== observedEpoch) {
-      return {
-        kind: 'refused',
-        reason: 'stale-epoch',
-        holder: current.lease,
-        observedEpoch,
-      }
-    }
-
-    const holder = writerLeaseSchema.parse({
-      ...current.lease,
-      heartbeatAtMs: Date.now(),
-    })
-    atomicRewrite(leasePath(opts.knowledgeRoot), `${JSON.stringify(holder)}\n`)
-    return { kind: 'heartbeated', holder }
+  const holder = writerLeaseSchema.parse({
+    ...current.lease,
+    heartbeatAtMs: Date.now(),
   })
+  atomicRewrite(leasePath(opts.knowledgeRoot), `${JSON.stringify(holder)}\n`)
+  return { kind: 'heartbeated', holder }
 }
 
 /**
@@ -1631,8 +1471,6 @@ export function releaseLease(opts: LeaseOperationOptions): ReleaseLeaseOutcome {
     }
 
     rmSync(leasePath(opts.knowledgeRoot), { force: true })
-    // A released holder must not keep extending its own freshness through the sidecar.
-    clearLeaseRenewal(opts.knowledgeRoot)
     bestEffortFsyncDirectory(opts.knowledgeRoot)
     return { kind: 'released' }
   })

@@ -4,6 +4,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -23,10 +24,10 @@ import {
   acquireWriterLease,
   assertEpochCurrent,
   CorruptEpochStateError,
+  deriveWriterLeaseFreshness,
   EPOCH_FILE,
   heartbeatLease,
   isLeaseStale,
-  isWriterLeaseFresh,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   MUTATION_LOCK_TAKEOVER_MS,
@@ -855,58 +856,46 @@ describe('writer lease mutation lock ownership', () => {
 })
 
 /**
- * CR-03: renewal must not contend with the governed mutation it protects.
+ * CR-01 + CR-03: one three-valued freshness derivation, and a beat the mutation lock cannot starve.
  *
- * The sidecar name is written as a literal here on purpose: these cases pin the on-disk contract
- * a contending process reads, independently of whatever symbol the module chooses to export.
+ * The two live together because they are the same mechanism change: freshness is derived from the
+ * disk epoch and the lease TTL alone, and the heartbeat writes `.lease` directly. There is no
+ * second freshness channel for an unreadable epoch to be laundered through, and no contention
+ * state for the beat to diverge into.
  */
-const RENEWAL_SIDECAR_FILE = '.lease-renewal'
-
-describe('writer lease renewal sidecar under authority contention (CR-03)', () => {
+describe('three-valued freshness and the lock-free heartbeat (CR-01/CR-03)', () => {
   let root: string
   let knowledgeRoot: string
 
+  /** chmod is advisory for uid 0, so the unreadable-epoch input domain cannot be produced there. */
+  const canMakeFilesUnreadable = process.platform !== 'win32' && process.getuid?.() !== 0
+
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-renewal-'))
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-tristate-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
   })
 
   afterEach(() => {
+    try {
+      chmodSync(join(knowledgeRoot, EPOCH_FILE), 0o600)
+    } catch {
+      // The leg either never made it unreadable or already restored it.
+    }
     rmSync(root, { recursive: true, force: true })
   })
 
+  function leaseFile(): string {
+    return join(knowledgeRoot, LEASE_FILE)
+  }
+
   function leaseOnDisk(): WriterLease {
-    return JSON.parse(readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8')) as WriterLease
+    return JSON.parse(readFileSync(leaseFile(), 'utf8')) as WriterLease
   }
 
-  function makeLeaseStale(ageMs = LEASE_HEARTBEAT_TTL_MS + 5_000): WriterLease {
-    const stale = { ...leaseOnDisk(), heartbeatAtMs: Date.now() - ageMs }
-    writeFileSync(join(knowledgeRoot, LEASE_FILE), `${JSON.stringify(stale)}\n`, 'utf8')
-    return stale
-  }
-
-  function writeRenewalSidecar(leaseId: string, heartbeatAtMs: number): void {
-    writeFileSync(
-      join(knowledgeRoot, RENEWAL_SIDECAR_FILE),
-      `${JSON.stringify({ leaseId, heartbeatAtMs })}\n`,
-      'utf8',
-    )
-  }
-
-  function readRenewalSidecar(): {
-    leaseId: string
-    heartbeatAtMs: number
-    mutationGeneration?: string
-    deferredSinceMs?: number
-  } {
-    return JSON.parse(
-      readFileSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE), 'utf8'),
-    ) as {
-      leaseId: string
-      heartbeatAtMs: number
-      mutationGeneration?: string
-      deferredSinceMs?: number
-    }
+  function ageLeaseOnDisk(ageMs: number): WriterLease {
+    const aged = { ...leaseOnDisk(), heartbeatAtMs: Date.now() - ageMs }
+    writeFileSync(leaseFile(), `${JSON.stringify(aged)}\n`, 'utf8')
+    return aged
   }
 
   /** Occupy the authority database exactly as a long governed mutation does. */
@@ -923,184 +912,91 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
     }
   }
 
-  function writeStampedRenewalSidecar(renewal: {
-    leaseId: string
-    heartbeatAtMs: number
-    mutationGeneration?: string
-    deferredSinceMs?: number
-  }): void {
-    writeFileSync(
-      join(knowledgeRoot, RENEWAL_SIDECAR_FILE),
-      `${JSON.stringify(renewal)}\n`,
-      'utf8',
-    )
-  }
-
   /**
-   * W-01: composite freshness is the ONE derivation every takeover consumer reads.
+   * The CR-01 rejecting corpus, drawn from OUTSIDE the guard's own assumption.
    *
-   * `leasePermitsEscalation` and `classifyDaemonRegistration` both call it rather than the lease
-   * file, so the epoch predicate is asserted here, at the derivation, instead of once per consumer.
-   * A closure written as a list of call sites is the failure mode this phase keeps re-learning.
+   * The previous derivation only ever answered a boolean, so an unreadable `.epoch` — EACCES, EIO,
+   * EMFILE, not corrupt bytes — produced the same value a genuinely expired lease produces. Both
+   * directions of that collapse are asserted here: over a fresh lease AND over a TTL-stale one the
+   * answer is `unknown`, so nothing inside the derivation resolves it toward either boolean.
    */
-  it('never reports a lease fresh when its recorded epoch is not the disk epoch (W-01)', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const lease = leaseOnDisk()
-    const nowMs = Date.now()
+  it.runIf(canMakeFilesUnreadable)(
+    'answers unknown for an unreadable epoch over both a fresh and a stale lease (CR-01)',
+    () => {
+      const acquired = acquireWriterLease(knowledgeRoot)
+      if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+      const lease = leaseOnDisk()
+      const nowMs = Date.now()
 
-    // Accepting direction: the same lease, same freshness, matching epoch.
-    expect(isWriterLeaseFresh(knowledgeRoot, lease, nowMs)).toBe(true)
-
-    // Rejecting direction: only the disk epoch moves. This is the exact state that fed Probe B.
-    writeFileSync(join(knowledgeRoot, EPOCH_FILE), `${lease.epoch + 1}\n`, 'utf8')
-    expect(isWriterLeaseFresh(knowledgeRoot, lease, nowMs)).toBe(false)
-
-    // And it stays false when a sidecar vouches for it, which is how the epoch used to be lost.
-    writeStampedRenewalSidecar({ leaseId: lease.leaseId, heartbeatAtMs: nowMs })
-    expect(isWriterLeaseFresh(knowledgeRoot, lease, nowMs)).toBe(false)
-  })
-
-  it('refuses a superseded-epoch holder in the busy fallback and writes no sidecar (W-01)', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const lease = leaseOnDisk()
-    writeFileSync(join(knowledgeRoot, EPOCH_FILE), `${lease.epoch + 1}\n`, 'utf8')
-
-    const release = holdAuthorityTransaction()
-    try {
-      // The locked sibling already refuses this by name; the lock-busy fallback did not, and
-      // published freshness for a holder nobody can still be inside a transaction for.
-      expect(heartbeatLease({ knowledgeRoot, leaseId: lease.leaseId })).toMatchObject({
-        kind: 'refused',
-        reason: 'stale-epoch',
-        observedEpoch: lease.epoch + 1,
+      // Accepting control: the same lease, the same clock, a readable epoch.
+      expect(deriveWriterLeaseFreshness(knowledgeRoot, lease, nowMs)).toMatchObject({
+        kind: 'fresh',
       })
-    } finally {
-      release()
-    }
 
-    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
-  }, 15_000)
+      chmodSync(join(knowledgeRoot, EPOCH_FILE), 0o000)
 
-  /**
-   * W-02: MUTATION_LOCK_TAKEOVER_MS has to be reachable again without re-opening CR-03.
-   *
-   * The discriminator is the in-flight mutation's generation token: a holder whose generation
-   * keeps changing is progressing and keeps its sidecar honoured forever, while a holder stuck on
-   * ONE generation past the takeover deadline stops being honoured. Both directions are asserted
-   * because a guard that only ever admits, or only ever rejects, is satisfied by a wrong build.
-   */
-  it('stops honouring a sidecar stuck on one generation past the takeover deadline (W-02)', () => {
+      const overFresh = deriveWriterLeaseFreshness(knowledgeRoot, lease, nowMs)
+      expect(overFresh.kind).toBe('unknown')
+      expect(overFresh.kind).not.toBe('fresh')
+      expect(overFresh.kind).not.toBe('reclaimable')
+      if (overFresh.kind !== 'unknown') throw new Error('expected an unknown verdict')
+      expect(overFresh.error).toBeInstanceOf(CorruptEpochStateError)
+      expect(overFresh.error.reason).toBe('unreadable')
+
+      // The immortal-phantom-holder shape the falsification table rejects: an unreadable epoch
+      // must not fall through to the TTL rule in EITHER direction.
+      const stale = { ...lease, heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS - 1 }
+      const overStale = deriveWriterLeaseFreshness(knowledgeRoot, stale, nowMs)
+      expect(overStale.kind).toBe('unknown')
+      expect(overStale.kind).not.toBe('fresh')
+      expect(overStale.kind).not.toBe('reclaimable')
+    },
+  )
+
+  it('names a superseded epoch and an aged-out lease reclaimable, and neither of them fresh', () => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const stale = makeLeaseStale()
+    const lease = leaseOnDisk()
     const nowMs = Date.now()
 
-    // Wedged: the sidecar is being rewritten fresh, but always against the same generation, and
-    // the first deferral against it is older than the takeover deadline.
-    writeStampedRenewalSidecar({
-      leaseId: stale.leaseId,
-      heartbeatAtMs: nowMs,
-      mutationGeneration: 'generation-a',
-      deferredSinceMs: nowMs - MUTATION_LOCK_TAKEOVER_MS - 1,
-    })
-    expect(isWriterLeaseFresh(knowledgeRoot, stale, nowMs)).toBe(false)
+    expect(deriveWriterLeaseFreshness(knowledgeRoot, lease, nowMs)).toEqual({ kind: 'fresh' })
+    expect(deriveWriterLeaseFreshness(
+      knowledgeRoot,
+      { ...lease, heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS },
+      nowMs,
+    )).toEqual({ kind: 'reclaimable' })
 
-    // Progressing: same freshness, same wall clock, but the mutation has moved on.
-    writeStampedRenewalSidecar({
-      leaseId: stale.leaseId,
-      heartbeatAtMs: nowMs,
-      mutationGeneration: 'generation-b',
-      deferredSinceMs: nowMs - 1_000,
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), `${lease.epoch + 1}\n`, 'utf8')
+    expect(deriveWriterLeaseFreshness(knowledgeRoot, lease, nowMs)).toEqual({
+      kind: 'reclaimable',
     })
-    expect(isWriterLeaseFresh(knowledgeRoot, stale, nowMs)).toBe(true)
   })
 
-  it('carries deferredSinceMs across deferrals and resets it only on proven progress (W-02)', () => {
+  /**
+   * The beat is independent of hosted work BY CONSTRUCTION, and the evidence is file bytes.
+   *
+   * The old renewal path answered a third outcome here and published freshness somewhere else, so
+   * a contender reading `.lease` saw a holder ageing out while the module reported it healthy.
+   * Asserting the on-disk heartbeat rules that divergence out: there is one place freshness lives.
+   */
+  it('heartbeats a held-transaction root without entering the mutation lock (CR-03)', () => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const before = ageLeaseOnDisk(5_000)
 
     const release = holdAuthorityTransaction()
-    let first: { mutationGeneration?: string; deferredSinceMs?: number }
-    let second: { mutationGeneration?: string; deferredSinceMs?: number }
     try {
-      const firstOutcome = heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })
-      if (firstOutcome.kind !== 'deferred') throw new Error('expected a deferred renewal')
-      first = readRenewalSidecar()
-      const secondOutcome = heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })
-      if (secondOutcome.kind !== 'deferred') throw new Error('expected a second deferred renewal')
-      second = readRenewalSidecar()
-      expect(secondOutcome.deferredSinceMs).toBe(first.deferredSinceMs)
-    } finally {
-      release()
-    }
-
-    // The generation did not change between the two deferrals, so the clock the contender reads
-    // must not have been restarted — a writer that restamps every deferral is unbounded again.
-    expect(first.deferredSinceMs).toBeTypeOf('number')
-    expect(second.deferredSinceMs).toBe(first.deferredSinceMs)
-    expect(second.mutationGeneration).toBe(first.mutationGeneration)
-  }, 20_000)
-
-  it('reports a stale-lease holder as held while its renewal sidecar is fresh', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const stale = makeLeaseStale()
-    writeRenewalSidecar(acquired.leaseId, Date.now())
-
-    expect(acquireWriterLease(knowledgeRoot)).toEqual({ kind: 'held', holder: stale })
-  })
-
-  it('ignores a renewal sidecar naming a superseded lease id', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const stale = makeLeaseStale()
-    writeRenewalSidecar('00000000-0000-4000-8000-000000000000', Date.now())
-
-    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
-      kind: 'acquired',
-      epoch: stale.epoch + 1,
-      reclaimed: stale,
-    })
-  })
-
-  it('ignores a renewal sidecar older than the heartbeat TTL', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const stale = makeLeaseStale()
-    writeRenewalSidecar(acquired.leaseId, Date.now() - LEASE_HEARTBEAT_TTL_MS - 1)
-
-    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
-      kind: 'acquired',
-      epoch: stale.epoch + 1,
-      reclaimed: stale,
-    })
-  })
-
-  it('defers heartbeat renewal to the sidecar while the authority transaction is held', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    const beforeMs = Date.now()
-    const release = holdAuthorityTransaction()
-    try {
-      // 386-36 widened the deferred outcome with the wedged/progressing discriminator, so this
-      // asserts the arm it always asserted plus the absence of a false stall on a first deferral.
       expect(heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })).toMatchObject({
-        kind: 'deferred',
-        reason: 'mutation-lock-busy',
-        stalled: false,
+        kind: 'heartbeated',
       })
     } finally {
       release()
     }
 
-    const sidecar = readRenewalSidecar()
-    expect(sidecar.leaseId).toBe(acquired.leaseId)
-    expect(sidecar.heartbeatAtMs).toBeGreaterThanOrEqual(beforeMs)
+    expect(leaseOnDisk().heartbeatAtMs).toBeGreaterThan(before.heartbeatAtMs)
   }, 15_000)
 
-  it('refuses instead of deferring when the on-disk lease id no longer matches', () => {
+  it('refuses a foreign lease id under a held transaction and writes nothing (CR-03)', () => {
     const superseded = acquireWriterLease(knowledgeRoot)
     if (superseded.kind !== 'acquired') throw new Error('expected an acquired writer lease')
     expect(releaseLease({ knowledgeRoot, leaseId: superseded.leaseId })).toEqual({
@@ -1108,6 +1004,7 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
     })
     const replacement = acquireWriterLease(knowledgeRoot)
     if (replacement.kind !== 'acquired') throw new Error('expected a replacement writer lease')
+    const bytesBefore = readFileSync(leaseFile())
 
     const release = holdAuthorityTransaction()
     try {
@@ -1119,128 +1016,101 @@ describe('writer lease renewal sidecar under authority contention (CR-03)', () =
       release()
     }
 
-    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
+    expect(readFileSync(leaseFile())).toEqual(bytesBefore)
   }, 15_000)
 
-  it('clears a superseded renewal sidecar when a new lease is acquired', () => {
+  it('refuses a superseded-epoch holder under a held transaction and writes nothing (W-01)', () => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    makeLeaseStale()
-    writeRenewalSidecar('00000000-0000-4000-8000-000000000000', Date.now())
+    const lease = leaseOnDisk()
+    writeFileSync(join(knowledgeRoot, EPOCH_FILE), `${lease.epoch + 1}\n`, 'utf8')
+    const bytesBefore = readFileSync(leaseFile())
 
-    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({ kind: 'acquired' })
-    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
-  })
-
-  it('removes the renewal sidecar when the matching holder releases', () => {
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
-    writeRenewalSidecar(acquired.leaseId, Date.now())
-
-    expect(releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })).toEqual({
-      kind: 'released',
-    })
-    expect(existsSync(join(knowledgeRoot, RENEWAL_SIDECAR_FILE))).toBe(false)
-  })
-
-  it('refuses to kill a held-section owner whose renewal sidecar is fresh', async () => {
-    const permitFile = join(root, 'renewing-holder.permit')
-    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
-    const holderExit = observeExit(holder)
-    await waitForOutput(holder, 'inside\n')
-    const stale = makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
-    writeRenewalSidecar(stale.leaseId, Date.now())
-
-    const contender = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
-
-    expect(contender).toMatchObject({
-      kind: 'held',
-      holder: { pid: holder.pid, leaseId: stale.leaseId, epoch: 1 },
-    })
-    expect(holder.exitCode).toBeNull()
-    expect(holder.signalCode).toBeNull()
-
-    writeFileSync(permitFile, 'resume\n', 'utf8')
-    expect(await holderExit).toMatchObject({ code: 0, signal: null })
-  }, 15_000)
-
-  /**
-   * The admit control for the new bound, at the process level.
-   *
-   * The protected CR-03 proof above writes a TWO-FIELD sidecar, which after 386-36 is the legacy
-   * shape production never writes again — so it exercises the unstamped early return and would
-   * keep passing even against a bound that fires for every stamped holder. A mutation probe
-   * confirmed exactly that. This is the same schedule in the shape a live daemon now produces.
-   */
-  it('never kills a held-section owner whose stamped sidecar shows progress (W-02)', async () => {
-    const permitFile = join(root, 'progressing-holder.permit')
-    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
-    const holderExit = observeExit(holder)
-    await waitForOutput(holder, 'inside\n')
-    const stale = makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
-
-    for (const generation of ['generation-a', 'generation-b', 'generation-c']) {
-      writeStampedRenewalSidecar({
-        leaseId: stale.leaseId,
-        heartbeatAtMs: Date.now(),
-        mutationGeneration: generation,
-        deferredSinceMs: Date.now(),
+    const release = holdAuthorityTransaction()
+    try {
+      expect(heartbeatLease({ knowledgeRoot, leaseId: lease.leaseId })).toMatchObject({
+        kind: 'refused',
+        reason: 'stale-epoch',
+        observedEpoch: lease.epoch + 1,
       })
-      expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })).toMatchObject({
-        kind: 'held',
-        holder: { pid: holder.pid, leaseId: stale.leaseId, epoch: stale.epoch },
-      })
-      expect(holder.exitCode).toBeNull()
-      expect(holder.signalCode).toBeNull()
+    } finally {
+      release()
     }
 
-    writeFileSync(permitFile, 'resume\n', 'utf8')
-    expect(await holderExit).toMatchObject({ code: 0, signal: null })
-  }, 25_000)
-
-  it('escalates against a held-section owner wedged past the takeover deadline (W-02)', async () => {
-    const permitFile = join(root, 'wedged-holder.permit')
-    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
-    const holderExit = observeExit(holder)
-    await waitForOutput(holder, 'inside\n')
-    const stale = makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
-
-    // The protected "still kills a superseded-sidecar holder" schedule below, run against a
-    // sidecar that names the CURRENT lease and is genuinely fresh. Under 386-29 that combination
-    // was permanently unescalatable; the only new fact is one unchanged generation deferring
-    // since before the takeover deadline, which is what separates wedged from busy.
-    writeStampedRenewalSidecar({
-      leaseId: stale.leaseId,
-      heartbeatAtMs: Date.now(),
-      mutationGeneration: 'wedged-generation',
-      deferredSinceMs: Date.now() - MUTATION_LOCK_TAKEOVER_MS - 1,
-    })
-
-    const contenderChild = spawnLeaseAcquirer(knowledgeRoot, 0, 0)
-    const contenderExit = waitForExit(contenderChild)
-    expect(await holderExit).toMatchObject({ code: null, signal: 'SIGKILL' })
-    await contenderExit
-
-    expect(leaseOnDisk()).toMatchObject({ pid: contenderChild.pid, epoch: stale.epoch + 1 })
-
-    writeFileSync(permitFile, 'resume\n', 'utf8')
-  }, 25_000)
-
-  it('still kills a held-section owner whose renewal sidecar names a superseded lease', async () => {
-    const permitFile = join(root, 'superseded-holder.permit')
-    const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
-    const holderExit = observeExit(holder)
-    await waitForOutput(holder, 'inside\n')
-    makeLeaseStale(LEASE_HEARTBEAT_TTL_MS)
-    writeRenewalSidecar('00000000-0000-4000-8000-000000000000', Date.now())
-
-    const contenderChild = spawnLeaseAcquirer(knowledgeRoot, 0, 0)
-    const contenderExit = waitForExit(contenderChild)
-    expect(await holderExit).toMatchObject({ code: null, signal: 'SIGKILL' })
-    await contenderExit
-
-    expect(leaseOnDisk()).toMatchObject({ pid: contenderChild.pid, epoch: 2 })
+    expect(readFileSync(leaseFile())).toEqual(bytesBefore)
   }, 15_000)
+
+  it.runIf(canMakeFilesUnreadable)(
+    'refuses an unreadable-epoch beat by name and writes nothing (CR-01)',
+    () => {
+      const acquired = acquireWriterLease(knowledgeRoot)
+      if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+      const bytesBefore = readFileSync(leaseFile())
+      chmodSync(join(knowledgeRoot, EPOCH_FILE), 0o000)
+
+      expect(heartbeatLease({ knowledgeRoot, leaseId: acquired.leaseId })).toMatchObject({
+        kind: 'refused',
+        reason: 'corrupt-epoch-state',
+        error: { reason: 'unreadable' },
+      })
+      expect(readFileSync(leaseFile())).toEqual(bytesBefore)
+    },
+  )
+
+  /**
+   * The decisive CR-01 direction at the escalation gate, driven at the process level.
+   *
+   * An unreadable `.epoch` used to collapse to "not fresh", which is the same value a genuinely
+   * expired lease produces, so a healthy holder inside its own governed mutation became a SIGKILL
+   * target on a read error. The refusal must be typed and the holder must be untouched: no signal,
+   * no lease rewrite, no epoch rewrite.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'refuses instead of escalating when the epoch turns unreadable over a live holder (CR-01)',
+    async () => {
+      const permitFile = join(root, 'unreadable-epoch-holder.permit')
+      const holder = spawnAuthorityHolder(knowledgeRoot, permitFile)
+      const holderExit = observeExit(holder)
+      await waitForOutput(holder, 'inside\n')
+      if (holder.pid === undefined) throw new Error('holder never started')
+      const leaseBytesBefore = readFileSync(leaseFile())
+      chmodSync(join(knowledgeRoot, EPOCH_FILE), 0o000)
+
+      try {
+        expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })).toMatchObject({
+          kind: 'refused',
+          reason: 'corrupt-epoch-state',
+        })
+        expect(holder.exitCode).toBeNull()
+        expect(holder.signalCode).toBeNull()
+        expect(processIsAliveInTest(holder.pid)).toBe(true)
+        expect(readFileSync(leaseFile())).toEqual(leaseBytesBefore)
+      } finally {
+        chmodSync(join(knowledgeRoot, EPOCH_FILE), 0o600)
+      }
+
+      writeFileSync(permitFile, 'resume\n', 'utf8')
+      expect(await holderExit).toMatchObject({ code: 0, signal: null })
+    },
+    25_000,
+  )
+
+  /**
+   * The accepting control for the leg above: the same escalation schedule, minus the one fact that
+   * makes the epoch unreadable. A guard that refused every contender would satisfy the rejecting
+   * direction on its own.
+   */
+  it('still reclaims a TTL-stale epoch-valid holder with no lock contention (accepting control)', () => {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
+    const stale = ageLeaseOnDisk(LEASE_HEARTBEAT_TTL_MS + 5_000)
+
+    expect(acquireWriterLease(knowledgeRoot)).toMatchObject({
+      kind: 'acquired',
+      epoch: stale.epoch + 1,
+      reclaimed: stale,
+    })
+  })
 })
 
 /**
@@ -2064,20 +1934,24 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
     }
   }
 
-  /** Keep the sidecar genuinely fresh from another process for the whole observation window. */
-  function spawnRenewalWriter(leaseId: string): ChildProcessWithoutNullStreams {
+  /** Keep the published lease genuinely fresh from another process for the observation window. */
+  function spawnLeaseBeater(leaseId: string): ChildProcessWithoutNullStreams {
     const source = `
-      const { writeFileSync } = await import('node:fs');
+      const { readFileSync, writeFileSync } = await import('node:fs');
       const { join } = await import('node:path');
-      const file = join(process.env.AGENT_QA_LEASE_TEST_ROOT, '.lease-renewal');
+      const file = join(process.env.AGENT_QA_LEASE_TEST_ROOT, '.lease');
       const leaseId = process.env.AGENT_QA_LEASE_TEST_LEASE_ID;
-      const write = () => writeFileSync(
-        file,
-        JSON.stringify({ leaseId, heartbeatAtMs: Date.now() }) + '\\n',
-        'utf8',
-      );
+      const write = () => {
+        const lease = JSON.parse(readFileSync(file, 'utf8'));
+        if (lease.leaseId !== leaseId) return;
+        writeFileSync(
+          file,
+          JSON.stringify({ ...lease, heartbeatAtMs: Date.now() }) + '\\n',
+          'utf8',
+        );
+      };
       write();
-      process.stdout.write('renewing\\n');
+      process.stdout.write('beating\\n');
       setInterval(write, 200);
     `
     return track(spawn(
@@ -2125,7 +1999,7 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
     writeFileSync(releasePermit, 'release\n', 'utf8')
   }, 60_000)
 
-  it('refuses by name within the deadline against a sidecar-fresh epoch-invalid lease (Probe B)', async () => {
+  it('refuses by name within the deadline against a beaten epoch-invalid lease (Probe B)', async () => {
     const permitFile = join(root, 'probe-b.permit')
     const holder = track(spawnAuthorityHolder(knowledgeRoot, permitFile))
     await waitForOutput(holder, 'inside\n')
@@ -2134,12 +2008,12 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
     const lease = JSON.parse(
       readFileSync(join(knowledgeRoot, LEASE_FILE), 'utf8'),
     ) as WriterLease
-    // The verifier's decisive shape: the published lease names a superseded epoch while a live
-    // writer keeps its renewal sidecar fresh, so composite freshness reports a holder that the
-    // epoch-strict busy-catch will never accept as `held`.
+    // The verifier's decisive shape, carried across the mechanism change: the published lease
+    // names a superseded epoch while a live writer keeps beating it, so the epoch-strict
+    // busy-catch will never accept it as `held` and only the deadline can end the wait.
     writeFileSync(join(knowledgeRoot, EPOCH_FILE), `${lease.epoch + 1}\n`, 'utf8')
-    const renewer = spawnRenewalWriter(lease.leaseId)
-    await waitForOutput(renewer, 'renewing\n')
+    const renewer = spawnLeaseBeater(lease.leaseId)
+    await waitForOutput(renewer, 'beating\n')
 
     const contender = spawnBoundedContender(2_000)
     const outcome = await awaitContenderOutcome(contender, 30_000)
