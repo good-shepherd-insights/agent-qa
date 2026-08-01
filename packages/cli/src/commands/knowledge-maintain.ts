@@ -100,6 +100,14 @@ interface PurgeOptions {
 export interface DrainOptions {
   status?: boolean
   json?: boolean
+  /**
+   * Quarantined registration paths a routing attempt left behind (WR-03). NOT a CLI flag.
+   *
+   * It rides the options object because that is the one value every drain exit already receives:
+   * a router that computed the evidence next to a single `return` is how three of the four exits
+   * came to report nothing, and re-deriving it at each exit would reproduce that by hand.
+   */
+  quarantined?: readonly string[]
 }
 
 interface DrainRunReceiptStatus {
@@ -401,7 +409,7 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
   const remaining = remainingTotal(remainingWork)
   recordInlineDrainSession(paths, report, remaining, seenCandidateIds, inlineAuthority)
   if (options.json === true) {
-    emitJson({ ...report, remaining, remainingWork })
+    emitJson({ ...report, remaining, remainingWork, ...strandedJsonField(options) })
   } else if (report.kind === 'drained') {
     emitHuman([
       pc.green(pc.bold('Knowledge curation queue drained inline')),
@@ -469,6 +477,7 @@ export async function drainViaDaemon(
             receipt,
             remaining,
             remainingWork,
+            ...strandedJsonField(options),
           })
         }
         emitHuman(
@@ -491,6 +500,7 @@ export async function drainViaDaemon(
             receipt,
             remaining,
             remainingWork,
+            ...strandedJsonField(options),
           })
         }
         return
@@ -506,6 +516,7 @@ export async function drainViaDaemon(
           unresponsive: true,
           remaining,
           remainingWork,
+          ...strandedJsonField(options),
         })
       }
       emitHuman(
@@ -587,11 +598,67 @@ function reclaimDrainRecoveredSocket(
   })
 }
 
+/** The stranded-evidence names this exit must carry, or an empty list when nothing was parked. */
+function strandedQuarantine(options: DrainOptions): readonly string[] {
+  return options.quarantined ?? []
+}
+
+/**
+ * `{ quarantinedRegistrations: [...] }` for a JSON summary; absent when there is no evidence.
+ *
+ * NOT `quarantined`: that key already means "how many curation CANDIDATES were quarantined" on the
+ * drain report and on every drain-session receipt, and the inline exit's summary spreads the
+ * report — so the shorter name silently replaced a count with a path list. The registration
+ * evidence therefore says what it is.
+ */
+function strandedJsonField(
+  options: DrainOptions,
+): { quarantinedRegistrations?: readonly string[] } {
+  const stranded = strandedQuarantine(options)
+  return stranded.length > 0 ? { quarantinedRegistrations: stranded } : {}
+}
+
+/** The one sentence every exit appends; empty when nothing was parked. */
+function strandedHumanSuffix(options: DrainOptions): string {
+  const stranded = strandedQuarantine(options)
+  return stranded.length > 0
+    ? `; the classified generation's bytes are preserved at ${stranded.join(', ')}`
+    : ''
+}
+
+/**
+ * Name stranded evidence on the exits whose own summary is not a refusal line.
+ *
+ * Written to stderr unconditionally, mirroring the contended exit: stdout stays parseable JSON in
+ * `--json` mode, and the operator is told either way. Bytes parked under a name nobody reads are
+ * the thing that has to be pointed at, whichever route the router finally took.
+ */
+function reportStrandedQuarantine(options: DrainOptions): void {
+  const stranded = strandedQuarantine(options)
+  if (stranded.length === 0) return
+  emitHuman(
+    pc.yellow(
+      `knowledge drain: a registration removal attempt was contended${strandedHumanSuffix(options)}`,
+    ),
+    'stderr',
+  )
+}
+
+/** Accumulate the quarantine path of a removal attempt that parked bytes; ignore the others. */
+function collectStrandedQuarantine(
+  stranded: string[],
+  outcome: RemoveRegistrationOutcome | undefined,
+): void {
+  if (outcome?.kind === 'changed-under-removal') stranded.push(outcome.quarantinePath)
+}
+
 /**
  * Refusals for a host this command must not recover from, and must not guess about.
  *
  * D-14's law in one place: a fresh holder keeps its lease and gets named; registration bytes
- * this command cannot parse select nothing at all.
+ * this command cannot parse select nothing at all. Either refusal also names any quarantined
+ * evidence a prior removal attempt left behind (WR-03) — the refusal is the operator's only
+ * output on these paths, so it is the only place the parked bytes can be reported.
  */
 function refuseDrainRouting(
   outcome: ClassifyDaemonRegistrationOutcome,
@@ -602,12 +669,17 @@ function refuseDrainRouting(
 > {
   if (outcome.kind === 'malformed') {
     if (options.json === true) {
-      emitJson({ mode: 'refused', reason: 'registration-malformed' })
+      emitJson({
+        mode: 'refused',
+        reason: 'registration-malformed',
+        ...strandedJsonField(options),
+      })
     }
     emitHuman(
       pc.red(
         'knowledge drain: refusal [registration-malformed]: the daemon registration cannot be '
-        + 'parsed, so no drain mode can be chosen from it; inspect .agent-qa/daemon.json',
+        + 'parsed, so no drain mode can be chosen from it; inspect .agent-qa/daemon.json'
+        + strandedHumanSuffix(options),
       ),
       'stderr',
     )
@@ -623,6 +695,7 @@ function refuseDrainRouting(
         holder: outcome.holder,
         identityFailure: outcome.identityFailure,
         registrationPid: outcome.registration.pid,
+        ...strandedJsonField(options),
       })
     }
     emitHuman(
@@ -631,7 +704,8 @@ function refuseDrainRouting(
         + `pid ${outcome.holder.pid}, lease ${outcome.holder.leaseId}, `
         + `epoch ${outcome.holder.epoch}, last renewed ${ageMs}ms ago; `
         + `the registered daemon (pid ${outcome.registration.pid}) did not answer its identity `
-        + `handshake [${outcome.identityFailure}]`,
+        + `handshake [${outcome.identityFailure}]`
+        + strandedHumanSuffix(options),
       ),
       'stderr',
     )
@@ -660,40 +734,47 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
     return
   }
 
+  /**
+   * WR-03: the evidence ledger, hoisted above every exit that can follow a removal attempt.
+   *
+   * A predecessor's bytes parked under a name nobody reads is a fact about the SYSTEM, not about
+   * whichever branch the router happened to take next — so it is accumulated once here and read by
+   * the delegate, the two refusals, the contended exit and the inline drain alike.
+   */
+  const stranded: string[] = []
+  const routed = (): DrainOptions => ({ ...options, quarantined: [...stranded] })
+
   const removal = removeClassifiedDrainRegistration(paths, classified)
+  collectStrandedQuarantine(stranded, removal)
   if (removal.kind !== 'removed') {
     // The registration changed between classification and removal. Look once more rather than
     // act on a file this command never classified, and fail closed rather than race a third
     // writer.
     const reclassified = await classifyDrainHost(paths)
     if (reclassified.kind === 'live-confirmed') {
-      await drainViaDaemon(paths, options)
+      const delegated = routed()
+      reportStrandedQuarantine(delegated)
+      await drainViaDaemon(paths, delegated)
       return
     }
-    if (refuseDrainRouting(reclassified, options)) return
+    if (refuseDrainRouting(reclassified, routed())) return
     const retry = reclassified.kind === 'absent'
       ? undefined
       : removeClassifiedDrainRegistration(paths, reclassified)
+    collectStrandedQuarantine(stranded, retry)
     if (retry !== undefined && retry.kind !== 'removed') {
-      // Name the quarantined evidence if either attempt left any: a predecessor's bytes parked
-      // under a name nobody reads is exactly the thing an operator has to be told about.
-      const stranded = [removal, retry]
-        .filter((outcome) => outcome.kind === 'changed-under-removal')
-        .map((outcome) => (outcome as { quarantinePath: string }).quarantinePath)
       if (options.json === true) {
         emitJson({
           mode: 'refused',
           reason: 'registration-contended',
-          ...(stranded.length > 0 ? { quarantined: stranded } : {}),
+          ...strandedJsonField(routed()),
         })
       }
       emitHuman(
         pc.red(
           'knowledge drain: refusal [registration-contended]: the daemon registration changed '
           + 'twice while it was being classified; rerun the command'
-          + (stranded.length > 0
-            ? `; the classified generation's bytes are preserved at ${stranded.join(', ')}`
-            : ''),
+          + strandedHumanSuffix(routed()),
         ),
         'stderr',
       )
@@ -706,7 +787,9 @@ async function routeDrain(paths: KnowledgePaths, options: DrainOptions): Promise
   } else {
     reclaimDrainRecoveredSocket(paths, classified)
   }
-  await drainInline(paths, options)
+  const inline = routed()
+  reportStrandedQuarantine(inline)
+  await drainInline(paths, inline)
 }
 
 function reportDrainError(error: unknown): void {

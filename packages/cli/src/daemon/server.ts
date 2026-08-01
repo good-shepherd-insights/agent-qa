@@ -9,7 +9,7 @@ import {
 } from 'node:http'
 import { connect, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
@@ -176,6 +176,41 @@ function isNamedPipe(path: string): boolean {
 }
 
 /**
+ * The instance discriminator's exact shape: `sha256(uuid)` hex, truncated to twelve characters.
+ *
+ * Pinned as a literal rather than derived at match time because the match has no instance to
+ * derive from — that absence is the pre-nonce arm's whole premise. It is anchored to
+ * `instanceDiscriminator` by construction and by the accepting controls in `daemon-host.test.ts`,
+ * which feed it a real `daemonSocketPath` output.
+ */
+const DAEMON_SOCKET_INSTANCE_PATTERN = '[0-9a-f]{12}'
+const GENERATED_DAEMON_SOCKET_FILE = new RegExp(
+  `^daemon-${DAEMON_SOCKET_INSTANCE_PATTERN}\\.sock$`,
+)
+const GENERATED_DAEMON_PIPE_TAIL = new RegExp(`^-${DAEMON_SOCKET_INSTANCE_PATTERN}$`)
+
+/**
+ * The legacy project-local default (`registration.ts`'s `daemonRegistrationSocketPath`), which a
+ * pre-nonce registration is the only thing that can still be recording.
+ */
+const LEGACY_DAEMON_SOCKET_FILE = 'daemon.sock'
+
+/**
+ * Can a daemon of this project ever have BOUND this address?
+ *
+ * WR-06: containment alone answers "is this inside a directory we own", which is a strictly weaker
+ * question — the runtime root and the hashed tmpdir directory hold this project's OTHER live
+ * sockets too. An embedder worker binds `embedder-worker-<instance>.sock` in the same runtime root
+ * and `<instance>.sock` in the same hashed tmpdir directory, so a stale or forged pre-nonce
+ * `daemon.json` naming one of them selected a live socket for deletion. A daemon only ever binds
+ * two filename shapes, so requiring one of them removes every other live socket in the project
+ * from the blast radius without touching what a real generation records.
+ */
+function isBindableDaemonSocketFile(file: string): boolean {
+  return file === LEGACY_DAEMON_SOCKET_FILE || GENERATED_DAEMON_SOCKET_FILE.test(file)
+}
+
+/**
  * Everything needed to decide whether a recorded address is one this project may delete.
  *
  * `instanceId` is present for every current-schema registration and absent only for the pre-nonce
@@ -212,11 +247,17 @@ function isWithin(candidateParent: string, container: string): boolean {
  * - a registration naming an `instanceId` must record the exact address that instance is required
  *   to bind, so the check is equality against `daemonSocketPath` — containment would still admit
  *   another generation's live socket, and every real generation binds the computed address;
- * - the pre-nonce arm names no instance, so the strongest available proof is containment in this
- *   project's own runtime root or the hashed tmpdir directory `daemonSocketPath` falls back to.
- *   The PARENT directory is realpath'd, because a symlink planted inside the root would otherwise
- *   launder an arbitrary path into it (the socket itself is not resolved: a socket inode is not a
- *   symlink, and realpath on a missing path answers nothing).
+ * - the pre-nonce arm names no instance, so it proves two independent things instead: containment
+ *   in this project's own runtime root or the hashed tmpdir directory `daemonSocketPath` falls
+ *   back to, AND a filename a daemon can actually bind (WR-06 — containment alone still admitted
+ *   this project's OTHER live sockets, above all the embedder worker's). The PARENT directory is
+ *   realpath'd, because a symlink planted inside the root would otherwise launder an arbitrary
+ *   path into it (the socket itself is not resolved: a socket inode is not a symlink, and realpath
+ *   on a missing path answers nothing).
+ *
+ * The named-pipe arm carries the same narrowing in the shape pipes have: no filename tail exists
+ * there, so the bound is the generated name in full — the project prefix followed by the instance
+ * discriminator, which is exactly what `daemonSocketPath`'s win32 branch constructs.
  *
  * Exported because it is the single deletion gate: `unlinkDaemonSocket` consumes it, and so must
  * every other reclaim path that ever selects a daemon socket from recorded bytes.
@@ -239,8 +280,12 @@ export function isOwnedDaemonSocketPath(
   }
 
   const projectPipePrefix = `\\\\.\\pipe\\agent-qa-${projectHash(ownership.projectRoot)}`
-  if (isNamedPipe(candidate)) return candidate.startsWith(projectPipePrefix)
+  if (isNamedPipe(candidate)) {
+    return candidate.startsWith(projectPipePrefix)
+      && GENERATED_DAEMON_PIPE_TAIL.test(candidate.slice(projectPipePrefix.length))
+  }
 
+  if (!isBindableDaemonSocketFile(basename(candidate))) return false
   const parent = containerPath(dirname(resolve(candidate)))
   return isWithin(parent, ownership.agentQaRoot)
     || isWithin(parent, join(tmpdir(), `agent-qa-${projectHash(ownership.projectRoot)}`))

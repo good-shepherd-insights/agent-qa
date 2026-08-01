@@ -17,14 +17,16 @@ import {
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
 } from '@vostride/agent-qa-knowledge-local'
-import { afterAll, afterEach, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, describe, expect, test, vi } from 'vitest'
 
-import { readDrainSessionReceipts } from '../daemon/drain-receipts.js'
+import { appendDrainSessionReceipt, readDrainSessionReceipts } from '../daemon/drain-receipts.js'
 import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   daemonRegistrationPath,
   writeDaemonRegistration,
+  type RemoveRegistrationOutcome,
 } from '../daemon/registration.js'
+import { startInvokeServer } from '../daemon/server.js'
 import {
   enqueueRealCandidate,
   invokeDrain,
@@ -39,6 +41,40 @@ import {
   startDaemonChild,
   waitForMarker,
 } from './socket-takeover/spawn-helpers.js'
+
+/**
+ * WR-03 seam: force the FIRST registration-removal attempt to report `changed-under-removal`.
+ *
+ * That outcome is reachable in production only through a window a few microseconds wide — the
+ * predicate must match a registration's bytes, a third writer must replace those bytes before the
+ * quarantine rename, and yet another must republish the original name before the verify — so no
+ * deterministic schedule reaches it and the router's evidence reporting was consequently never
+ * tested on three of its four exits. The removal FUNCTIONS are therefore doubled at the module
+ * boundary while everything else in these legs stays real: the classification, the routing, the
+ * emission, the inline drain and the daemon handshake are all the shipped code.
+ *
+ * Default is pure passthrough, so the four pre-existing e2e legs in this file are unaffected.
+ */
+let nextRemovalOverride: (() => RemoveRegistrationOutcome) | undefined
+
+vi.mock('../daemon/registration.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../daemon/registration.js')>()
+  const takeOverride = (): RemoveRegistrationOutcome | undefined => {
+    const override = nextRemovalOverride
+    nextRemovalOverride = undefined
+    return override?.()
+  }
+  return {
+    ...actual,
+    removeRegistrationIfOwned: (
+      ...args: Parameters<typeof actual.removeRegistrationIfOwned>
+    ): RemoveRegistrationOutcome => takeOverride() ?? actual.removeRegistrationIfOwned(...args),
+    removeObsoleteDaemonRegistrationIfExpected: (
+      ...args: Parameters<typeof actual.removeObsoleteDaemonRegistrationIfExpected>
+    ): RemoveRegistrationOutcome =>
+      takeOverride() ?? actual.removeObsoleteDaemonRegistrationIfExpected(...args),
+  }
+})
 
 const describePosix = process.platform === 'win32' ? describe.skip : describe
 
@@ -317,6 +353,226 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
       expect(result.stdout).toContain('remaining 0')
       expect(existsSync(daemonRegistrationPath(paths.agentQaRoot))).toBe(false)
       expect(readEpoch(paths.knowledgeRoot)).toBe(3)
+    },
+    RECOVERY_LEG_TIMEOUT_MS,
+  )
+})
+
+/**
+ * WR-03: quarantined registration bytes are named on EVERY drain exit, not only the contended one.
+ *
+ * Bytes parked under `daemon.json.remove-<tag>-<uuid>` are a fact about the system: nothing reads
+ * that name, so an operator who is not told about it never learns the file exists. Before this,
+ * three of the four exits reported nothing — the naming lived inside the contended branch, next to
+ * the one `return` that happened to be written last.
+ *
+ * Each leg drives a REAL `knowledge drain` through the shipped router and asserts on what the
+ * command actually printed; only the removal outcome is forced (see the module double above).
+ */
+describePosix('stranded quarantine evidence on every drain exit (WR-03)', () => {
+  const servers: Server[] = []
+  const socketDirs: string[] = []
+  const acceptedSockets: Socket[] = []
+
+  afterEach(async () => {
+    nextRemovalOverride = undefined
+    // net.Server has no closeAllConnections, so an unanswered accept would hang close() forever.
+    for (const socket of acceptedSockets.splice(0)) socket.destroy()
+    for (const server of servers.splice(0)) {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+    for (const dir of socketDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  afterAll(cleanupTakeoverRoots)
+
+  /** A quarantine file with the exact name and bytes a real contended removal would leave. */
+  function plantQuarantine(agentQaRoot: string, tag: string): string {
+    const quarantinePath = `${daemonRegistrationPath(agentQaRoot)}.remove-${tag}-${randomUUID()}`
+    writeFileSync(quarantinePath, '{"schemaVersion":2}\n', 'utf8')
+    return quarantinePath
+  }
+
+  function plantStaleRegistration(paths: { agentQaRoot: string }, socketPath: string): string {
+    const instanceId = randomUUID()
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId,
+      pid: process.pid,
+      socketPath,
+      startedAtMs: Date.now() - 600_000,
+    })
+    return instanceId
+  }
+
+  test(
+    'names the quarantine path on the inline-drain exit',
+    async () => {
+      const paths = makeRoot('wr03-inline')
+      const configPath = writeWorkspaceConfig(paths.root)
+      plantStaleRegistration(paths, join(paths.agentQaRoot, 'daemon.sock'))
+      plantLease(paths.knowledgeRoot, {
+        leaseId: randomUUID(),
+        pid: process.pid,
+        epoch: 2,
+        heartbeatAtMs: Date.now() - (LEASE_HEARTBEAT_TTL_MS * 4),
+      })
+      enqueueRealCandidate(paths.knowledgeRoot, 'wr03-inline-remainder')
+      const quarantinePath = plantQuarantine(paths.agentQaRoot, 'inline')
+      nextRemovalOverride = () => ({
+        kind: 'changed-under-removal',
+        registrationPath: daemonRegistrationPath(paths.agentQaRoot),
+        quarantinePath,
+      })
+
+      const result = await invokeDrain(configPath, ['--json'])
+
+      // The exit itself is unchanged — the drain still ran inline and still finished the work.
+      const summary = JSON.parse(result.stdout) as {
+        quarantinedRegistrations?: string[]
+        quarantined: number
+        remaining: number
+      }
+      expect(summary.remaining).toBe(0)
+      // The report's own candidate count keeps its key; the registration evidence has its own.
+      expect(summary.quarantined).toBe(0)
+      expect(summary.quarantinedRegistrations).toEqual([quarantinePath])
+      expect(result.stderr).toContain(quarantinePath)
+      expect(existsSync(quarantinePath)).toBe(true)
+    },
+    RECOVERY_LEG_TIMEOUT_MS,
+  )
+
+  test(
+    'names the quarantine path on the writer-lease-held refusal exit',
+    async () => {
+      const paths = makeRoot('wr03-refuse')
+      const configPath = writeWorkspaceConfig(paths.root)
+      const { dir, socketPath, server } = bindUnansweringSocket(acceptedSockets)
+      socketDirs.push(dir)
+      servers.push(server)
+      await new Promise<void>((resolve) => server.listen(socketPath, resolve))
+
+      plantStaleRegistration(paths, socketPath)
+      const leaseId = randomUUID()
+      plantLease(paths.knowledgeRoot, {
+        leaseId,
+        pid: process.pid,
+        epoch: 3,
+        heartbeatAtMs: Date.now() - (LEASE_HEARTBEAT_TTL_MS * 4),
+      })
+      enqueueRealCandidate(paths.knowledgeRoot, 'wr03-refuse-remainder')
+      const quarantinePath = plantQuarantine(paths.agentQaRoot, 'refuse')
+      // The holder came back between the two classifications — the shape that makes the second
+      // look refuse rather than recover, with the first attempt's bytes already parked.
+      nextRemovalOverride = () => {
+        plantLease(paths.knowledgeRoot, {
+          leaseId,
+          pid: process.pid,
+          epoch: 3,
+          heartbeatAtMs: Date.now(),
+        })
+        return {
+          kind: 'changed-under-removal',
+          registrationPath: daemonRegistrationPath(paths.agentQaRoot),
+          quarantinePath,
+        }
+      }
+
+      const result = await invokeDrain(configPath, ['--json'])
+
+      expect(result.exitCode).toBe(1)
+      const summary = JSON.parse(result.stdout) as {
+        reason: string
+        quarantinedRegistrations?: string[]
+      }
+      expect(summary.reason).toBe('writer-lease-held')
+      expect(summary.quarantinedRegistrations).toEqual([quarantinePath])
+      expect(result.stderr).toContain('writer-lease-held')
+      expect(result.stderr).toContain(quarantinePath)
+    },
+    RECOVERY_LEG_TIMEOUT_MS,
+  )
+
+  test(
+    'names the quarantine path on the live-confirmed delegate exit',
+    async () => {
+      const paths = makeRoot('wr03-delegate')
+      const configPath = writeWorkspaceConfig(paths.root)
+      const dir = mkdtempSync(join(tmpdir(), 'aq-w3d-'))
+      socketDirs.push(dir)
+      const successorSocket = join(dir, 'd.sock')
+      const successorInstanceId = randomUUID()
+      let nudged = 0
+      // A successor daemon that really answers the identity handshake and really receipts a drain
+      // session. `drainViaDaemon` is the shipped delegate path; nothing about it is stubbed.
+      const successor = await startInvokeServer({
+        socketPath: successorSocket,
+        registry: {} as never,
+        identity: {
+          schemaVersion: 1,
+          instanceId: successorInstanceId,
+          pid: process.pid,
+        },
+        onNudge: () => {
+          nudged += 1
+          const sessionId = randomUUID()
+          appendDrainSessionReceipt(paths.agentQaRoot, {
+            ts: new Date().toISOString(),
+            sessionId,
+            holderPid: process.pid,
+            epoch: 2,
+            candidateIds: [],
+            remainingAfter: 0,
+            outcome: 'completed',
+            failures: 0,
+            quarantined: 0,
+          })
+          return { sessionId }
+        },
+      })
+
+      try {
+        plantStaleRegistration(paths, join(paths.agentQaRoot, 'daemon.sock'))
+        plantLease(paths.knowledgeRoot, {
+          leaseId: randomUUID(),
+          pid: process.pid,
+          epoch: 2,
+          heartbeatAtMs: Date.now() - (LEASE_HEARTBEAT_TTL_MS * 4),
+        })
+        const quarantinePath = plantQuarantine(paths.agentQaRoot, 'delegate')
+        // The removal is contended because a successor published in the window — so it publishes
+        // one, and the second classification finds a daemon that answers for itself.
+        nextRemovalOverride = () => {
+          writeDaemonRegistration(paths.agentQaRoot, {
+            schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+            instanceId: successorInstanceId,
+            pid: process.pid,
+            socketPath: successorSocket,
+            startedAtMs: Date.now(),
+          })
+          return {
+            kind: 'changed-under-removal',
+            registrationPath: daemonRegistrationPath(paths.agentQaRoot),
+            quarantinePath,
+          }
+        }
+
+        const result = await invokeDrain(configPath, ['--json'])
+
+        expect(nudged).toBe(1)
+        const summary = JSON.parse(result.stdout) as {
+          mode: string
+          quarantinedRegistrations?: string[]
+        }
+        expect(summary.mode).toBe('daemon')
+        expect(summary.quarantinedRegistrations).toEqual([quarantinePath])
+        expect(result.stderr).toContain(quarantinePath)
+        expect(existsSync(quarantinePath)).toBe(true)
+      } finally {
+        await successor.close()
+      }
     },
     RECOVERY_LEG_TIMEOUT_MS,
   )

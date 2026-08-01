@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import {
   chmodSync,
@@ -15,13 +16,14 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
+  embedderWorkerSocketPath,
   EPOCH_FILE,
   heartbeatLease,
   LEASE_FILE,
@@ -67,6 +69,7 @@ import {
   DAEMON_REGISTRATION_FILE,
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   classifyDaemonRegistration,
+  daemonRegistrationSocketPath,
   inspectDaemonRegistration,
   readDaemonRegistration,
   removeObsoleteDaemonRegistrationIfExpected,
@@ -106,6 +109,8 @@ export async function resolve(specifier, context, nextResolve) {
 const temporaryRoots: string[] = []
 const HOST_INSTANCE_ID = '11111111-1111-4111-8111-111111111111'
 const SUCCESSOR_INSTANCE_ID = '22222222-2222-4222-8222-222222222222'
+/** A live embedder worker of the same project — the WR-06 rejecting case's real neighbour. */
+const EMBEDDER_INSTANCE_ID = '33333333-3333-4333-8333-333333333333'
 
 /**
  * Every point at which a crash can interrupt the registration-removal sequence.
@@ -1737,7 +1742,9 @@ describe('daemon registration recovery at boot', () => {
     // is exactly the arbitrary-deletion input the guard now refuses.
     const recordedSocket = daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID)
     const bystanderSocket = join(paths.root, 'b.sock')
-    const plainFile = join(paths.agentQaRoot, 'p.file')
+    // WR-06: a BINDABLE filename, so the ownership gate admits it and the lstat guard is the
+    // only thing left standing between this path and an unlink.
+    const plainFile = join(paths.agentQaRoot, 'daemon.sock')
     mkdirSync(dirname(recordedSocket), { recursive: true })
     await abandonSocketFile(recordedSocket)
     await abandonSocketFile(bystanderSocket)
@@ -1792,7 +1799,10 @@ describe('daemon registration recovery at boot', () => {
     const ownedScope = { agentQaRoot: paths.agentQaRoot, projectRoot: paths.root }
     expect(unlinkDaemonSocket(plainFile, ownedScope)).toBe(false)
     expect(existsSync(plainFile)).toBe(true)
-    expect(unlinkDaemonSocket(join(paths.agentQaRoot, 'absent.sock'), ownedScope)).toBe(false)
+    expect(unlinkDaemonSocket(
+      join(paths.agentQaRoot, 'daemon-000000000000.sock'),
+      ownedScope,
+    )).toBe(false)
 
     harness.signal('SIGTERM')
     await expect(running).resolves.toBe(0)
@@ -1861,6 +1871,113 @@ describe('daemon registration recovery at boot', () => {
     expect(server.unlinkDaemonSocket(owned, nonce)).toBe(true)
     expect(existsSync(owned)).toBe(false)
   })
+
+  it('admits only addresses a daemon can bind on the pre-nonce arm (WR-06)', async () => {
+    const server = await import('../daemon/server.js')
+    const paths = makePaths('wr06-bindable')
+    const agentQaRoot = paths.agentQaRoot
+    const projectRoot = paths.root
+    mkdirSync(agentQaRoot, { recursive: true })
+    const obsolete = { agentQaRoot, projectRoot }
+    const nonce = { agentQaRoot, projectRoot, instanceId: HOST_INSTANCE_ID }
+
+    /**
+     * THE REJECTING CASE — a LIVE embedder-worker socket sitting in a directory this arm admits.
+     *
+     * The FILENAME is taken from the shipped `embedderWorkerSocketPath`, never invented. The
+     * DIRECTORY is the daemon's own hashed tmpdir fallback, which is where the embedder's
+     * equivalent fallback lands in any project whose root needs no symlink resolution — the two
+     * helpers hash `resolve(projectRoot)` and `realpathSync(projectRoot)` respectively, and those
+     * agree everywhere except under a symlinked temp root like this suite's. Building the
+     * collision explicitly is what stops this leg from passing on containment, which is the
+     * vacuity it exists to avoid: `daemonSibling` proves the directory really is admitted.
+     */
+    const projectHash12 = createHash('sha256').update(resolve(projectRoot)).digest('hex').slice(0, 12)
+    const daemonFallbackDir = join(tmpdir(), `agent-qa-${projectHash12}`)
+    mkdirSync(daemonFallbackDir, { recursive: true })
+    temporaryRoots.push(daemonFallbackDir)
+    const embedderName = basename(
+      embedderWorkerSocketPath(agentQaRoot, projectRoot, EMBEDDER_INSTANCE_ID),
+    )
+    const embedderSocket = join(daemonFallbackDir, embedderName)
+    await abandonSocketFile(embedderSocket)
+
+    // Containment genuinely cannot separate them: a daemon-shaped sibling in the SAME directory is
+    // admitted, so the filename is the only thing carrying the refusal.
+    const daemonSibling = join(
+      daemonFallbackDir,
+      basename(daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID)),
+    )
+    expect(server.isOwnedDaemonSocketPath(daemonSibling, obsolete)).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(embedderSocket, obsolete)).toBe(false)
+    // The gate IS the deletion precondition, so the live socket survives a recovery pass over a
+    // registration naming it — the fact the operator cares about, not the boolean.
+    expect(server.unlinkDaemonSocket(embedderSocket, obsolete)).toBe(false)
+    expect(existsSync(embedderSocket)).toBe(true)
+    expect(lstatSync(embedderSocket).isSocket()).toBe(true)
+
+    // Both embedder shapes, built from the same discriminator formula, so the refusal does not
+    // depend on which one a given project root's path budget produces.
+    const embedderInstanceHash = createHash('sha256').update(EMBEDDER_INSTANCE_ID)
+      .digest('hex').slice(0, 12)
+    expect(server.isOwnedDaemonSocketPath(
+      join(agentQaRoot, `embedder-worker-${embedderInstanceHash}.sock`),
+      obsolete,
+    )).toBe(false)
+    expect(server.isOwnedDaemonSocketPath(
+      join(daemonFallbackDir, `${embedderInstanceHash}.sock`),
+      obsolete,
+    )).toBe(false)
+
+    // ACCEPTING CONTROLS — every address a daemon generation actually records, so the narrowing
+    // is proven not to be a blanket refusal.
+    expect(server.isOwnedDaemonSocketPath(daemonRegistrationSocketPath(agentQaRoot), obsolete))
+      .toBe(true)
+    expect(server.isOwnedDaemonSocketPath(
+      daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID),
+      obsolete,
+    )).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(
+      join(
+        tmpdir(),
+        `agent-qa-${createHash('sha256').update(resolve(projectRoot)).digest('hex').slice(0, 12)}`,
+        basename(daemonSocketPath(agentQaRoot, projectRoot, SUCCESSOR_INSTANCE_ID)),
+      ),
+      obsolete,
+    )).toBe(true)
+
+    // The nonce arm is untouched: exact equality against the address that instance must bind, and
+    // the narrowing may not weaken it into a filename-shape check.
+    expect(server.isOwnedDaemonSocketPath(
+      daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID),
+      nonce,
+    )).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(
+      daemonSocketPath(agentQaRoot, projectRoot, SUCCESSOR_INSTANCE_ID),
+      nonce,
+    )).toBe(false)
+    expect(server.isOwnedDaemonSocketPath(daemonRegistrationSocketPath(agentQaRoot), nonce))
+      .toBe(false)
+
+    // The named-pipe arm's equivalent, reachable from any platform because `isNamedPipe` keys off
+    // the prefix. The embedder's pipe was already outside the project prefix; the pipe this arm
+    // used to admit unconditionally is anything sharing that prefix.
+    const projectPipeHash = createHash('sha256').update(resolve(projectRoot)).digest('hex')
+      .slice(0, 12)
+    const instancePipeHash = createHash('sha256').update(HOST_INSTANCE_ID).digest('hex').slice(0, 12)
+    expect(server.isOwnedDaemonSocketPath(
+      `\\\\.\\pipe\\agent-qa-${projectPipeHash}-${instancePipeHash}`,
+      obsolete,
+    )).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(
+      `\\\\.\\pipe\\agent-qa-${projectPipeHash}-not-an-instance`,
+      obsolete,
+    )).toBe(false)
+    expect(server.isOwnedDaemonSocketPath(
+      `\\\\.\\pipe\\agent-qa-embedder-${projectPipeHash}-${instancePipeHash}`,
+      obsolete,
+    )).toBe(false)
+  }, 30_000)
 
   it('leaves a recovered registration\'s foreign socket in place (V-01)', async () => {
     const paths = makePaths('v01-foreign')
