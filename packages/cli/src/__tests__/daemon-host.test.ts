@@ -2147,6 +2147,57 @@ describe('daemon shutdown and reclaim post-mortem', () => {
     ).toHaveLength(1)
   })
 
+  it('records a wedged renewing daemon distinguishably from a healthy busy one', async () => {
+    const paths = makePaths('renewal-stalled')
+    const harness = hostHarness()
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: harness.operations,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(() => harness.signals.has('SIGTERM'), 'daemon did not start')
+
+    // Healthy: renewal rode the sidecar, but the mutation behind it is inside the deadline.
+    harness.fireHeartbeat({
+      kind: 'deferred',
+      reason: 'mutation-lock-busy',
+      mutationGeneration: 'generation-a',
+      deferredSinceMs: 1_700_000_000_000,
+      stalled: false,
+    })
+    // Wedged: one unchanged generation, stuck past the takeover deadline.
+    harness.fireHeartbeat({
+      kind: 'deferred',
+      reason: 'mutation-lock-busy',
+      mutationGeneration: 'generation-b',
+      deferredSinceMs: 1_699_999_900_000,
+      stalled: true,
+    })
+
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+
+    const events = readEvents(paths.agentQaRoot)
+    const deferred = events.filter((event) => event.kind === 'lease-renewal-deferred')
+    const stalled = events.filter((event) => event.kind === 'lease-renewal-stalled')
+
+    // The rejecting direction matters as much as the admitting one: a mapping that records the
+    // stalled kind for every deferral would satisfy the assertion below on its own.
+    expect(deferred).toHaveLength(1)
+    expect(deferred[0]).toMatchObject({
+      reason: 'mutation-lock-busy',
+      mutationGeneration: 'generation-a',
+    })
+    expect(stalled).toHaveLength(1)
+    expect(stalled[0]).toMatchObject({
+      mutationGeneration: 'generation-b',
+      deferredSinceMs: 1_699_999_900_000,
+    })
+  })
+
   it('clears the armed grace timer so clean shutdown cannot hard-exit afterward', async () => {
     const paths = makePaths('shutdown-grace-clear')
     const harness = hostHarness()
