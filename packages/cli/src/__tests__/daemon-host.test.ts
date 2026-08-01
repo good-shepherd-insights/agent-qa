@@ -1069,6 +1069,52 @@ describe('daemon registration instance ownership and readiness', () => {
     expect(readFileSync(file)).toEqual(thirdBytes)
   })
 
+  it('binds no unconditional daemon-registration removal anywhere on the host surface (I-01)', async () => {
+    // The behavioural corpus above proves what the compare-delete does; this pins that the
+    // unconditional delete is not merely uncalled but INEXPRESSIBLE — the shape Plan 22
+    // prohibited, which survived as an injectable operation with zero production call sites and
+    // could therefore be reached again by one line of a future edit.
+    const registrationModule = await import('../daemon/registration.js')
+    expect(Object.keys(registrationModule)).not.toContain('removeDaemonRegistration')
+    // The compare-delete pair is still exported, so an empty/renamed module cannot satisfy this.
+    expect(Object.keys(registrationModule)).toEqual(expect.arrayContaining([
+      'removeRegistrationIfOwned',
+      'removeObsoleteDaemonRegistrationIfExpected',
+    ]))
+
+    const hostSource = readFileSync(new URL('../daemon/host.ts', import.meta.url), 'utf8')
+    const surface = hostSource.slice(
+      hostSource.indexOf('export interface DaemonHostOperations {'),
+      hostSource.indexOf('function defaultOperations(): DaemonHostOperations {'),
+    )
+    const bindings = hostSource.slice(
+      hostSource.indexOf('function defaultOperations(): DaemonHostOperations {'),
+      hostSource.indexOf('export async function runDaemonHost('),
+    )
+    // Both slices are pinned non-empty AND pinned to still carry the members that belong there:
+    // a marker that drifts would otherwise make every assertion below vacuously true.
+    for (const [label, region] of [['surface', surface], ['bindings', bindings]] as const) {
+      expect(region.length, `${label} slice must not be empty`).toBeGreaterThan(0)
+      expect(region, `${label} must still carry the compare-delete members`)
+        .toContain('removeRegistrationIfOwned')
+      expect(region).toContain('removeObsoleteDaemonRegistrationIfExpected')
+      expect(region, `${label} must not express an unconditional removal`)
+        .not.toContain('removeDaemonRegistration')
+    }
+
+    const registrationSource = readFileSync(
+      new URL('../daemon/registration.ts', import.meta.url),
+      'utf8',
+    )
+    expect(registrationSource).not.toContain('function removeDaemonRegistration')
+    // W-03's other half: the removal routine restores by rename, never by hard link. `\b` is
+    // load-bearing — `unlinkSync` contains the substring `linkSync`, so a plain `not.toContain`
+    // would fail on code that is already correct.
+    expect(registrationSource).not.toMatch(/\blinkSync\(/)
+    expect(registrationSource, 'the unlink and rename it does use must still be there')
+      .toMatch(/\bunlinkSync\(/)
+  })
+
   it('publishes registration only after the invoke socket has finished listening', async () => {
     const paths = makePaths('registration-after-listen')
     const harness = hostHarness()

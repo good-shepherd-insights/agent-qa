@@ -1,7 +1,10 @@
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -11,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -248,17 +251,20 @@ import {
   appendDrainSessionReceipt,
 } from '../daemon/drain-receipts.js'
 import * as drainReceipts from '../daemon/drain-receipts.js'
+import { readDaemonEventLedger } from '../daemon/events.js'
 import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   daemonRegistrationPath,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
+import { daemonSocketPath } from '../daemon/server.js'
 
 const PRODUCT = 'maintenance-storefront'
 const CURATION_JOB_ID = 'maintenance-curation-job'
 const BUILD_ORDINAL = 12
 const LIVE_LEASE_ID = '11111111-1111-4111-8111-111111111111'
 const DAEMON_INSTANCE_ID = '44444444-4444-4444-8444-444444444444'
+const SIBLING_INSTANCE_ID = '55555555-5555-4555-8555-555555555555'
 const FIRST_CANDIDATE_ID = 'a'.repeat(64)
 const SECOND_CANDIDATE_ID = 'b'.repeat(64)
 const FIRST_SESSION_ID = '22222222-2222-4222-8222-222222222222'
@@ -506,14 +512,46 @@ function plantLiveWriterLease(workspace: FixtureWorkspace): void {
   )
 }
 
-function plantDaemonRegistration(workspace: FixtureWorkspace, pid = process.pid): void {
+function plantDaemonRegistration(
+  workspace: FixtureWorkspace,
+  pid = process.pid,
+  socketPath = join(workspace.runtimeRoot, 'daemon.sock'),
+): void {
   writeDaemonRegistration(workspace.runtimeRoot, {
     schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
     instanceId: DAEMON_INSTANCE_ID,
     pid,
-    socketPath: join(workspace.runtimeRoot, 'daemon.sock'),
+    socketPath,
     startedAtMs: Date.now(),
   })
+}
+
+/**
+ * Leave a real socket inode behind with no listener, exactly as a SIGKILLed daemon does.
+ *
+ * An in-process `net.Server` unlinks its own path on close, which would make "the socket is
+ * gone" true for reasons that have nothing to do with the code under test. Only a listener that
+ * never got to clean up leaves the artifact drain recovery actually meets.
+ */
+async function abandonSocketFile(socketPath: string): Promise<void> {
+  mkdirSync(dirname(socketPath), { recursive: true })
+  const child = spawn(
+    process.execPath,
+    ['-e', "require('node:net').createServer().listen(process.argv[1])", socketPath],
+    { stdio: ['ignore', 'ignore', 'inherit'] },
+  )
+  try {
+    const deadline = Date.now() + 10_000
+    while (!existsSync(socketPath)) {
+      if (Date.now() > deadline) throw new Error(`abandoned socket ${socketPath} was never bound`)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    if (!lstatSync(socketPath).isSocket()) throw new Error(`${socketPath} is not a socket`)
+  } finally {
+    const exited = once(child, 'exit')
+    child.kill('SIGKILL')
+    await exited
+  }
 }
 
 /**
@@ -720,6 +758,76 @@ describe('knowledge maintenance commands', () => {
     expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
     expect(commandHarness.drainQueueCalls).toBe(1)
   })
+
+  it('unlinks the drain-recovered generation\'s own socket (W-07)', async () => {
+    const workspace = fixtureWorkspace(roots)
+    // The address the recorded instance is REQUIRED to bind. 386-38's nonce arm demands exactly
+    // this, so a fixture that records some other in-root path measures the refusal, not the
+    // reclaim — which is how 386-33's exactness fixture came to lock a hazard in.
+    const owned = daemonSocketPath(
+      workspace.runtimeRoot,
+      workspace.root,
+      DAEMON_INSTANCE_ID,
+    )
+    await abandonSocketFile(owned)
+    // The sharpest available bystander: a SIBLING generation's address, in the same directory,
+    // for the same project — refused because it is not the instance the registration names.
+    // Containment would delete it; exactness does not.
+    const bystander = daemonSocketPath(
+      workspace.runtimeRoot,
+      workspace.root,
+      SIBLING_INSTANCE_ID,
+    )
+    await abandonSocketFile(bystander)
+    roots.push(dirname(owned), dirname(bystander))
+    plantDaemonRegistration(workspace, 2_000_000_000, owned)
+
+    const result = await invoke(workspace, ['drain'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
+    expect(
+      { recovered: existsSync(owned), bystander: existsSync(bystander) },
+      'the drain must reclaim the removed generation\'s address and nothing else',
+    ).toEqual({ recovered: false, bystander: true })
+    expect(readDaemonEventLedger(workspace.runtimeRoot).events).toContainEqual(
+      expect.objectContaining({
+        kind: 'registration-recovered',
+        instanceId: DAEMON_INSTANCE_ID,
+        socketPath: owned,
+        socketRemoved: true,
+      }),
+    )
+  }, 20_000)
+
+  it('leaves a recorded socket path the drain cannot prove it owns (W-07)', async () => {
+    const workspace = fixtureWorkspace(roots)
+    // Drawn from OUTSIDE the ownership precondition: a real socket in its own directory, named
+    // by registration bytes that are `z.string().min(1)` and therefore attacker-shaped. Obeying
+    // them would make the drain a local arbitrary-socket-deletion primitive.
+    const foreignDir = mkdtempSync(join(tmpdir(), 'agent-qa-foreign-'))
+    roots.push(foreignDir)
+    const foreign = join(foreignDir, 'victim.sock')
+    await abandonSocketFile(foreign)
+    plantDaemonRegistration(workspace, 2_000_000_000, foreign)
+
+    const result = await invoke(workspace, ['drain'])
+
+    // The refusal must not cost the drain its work: the registration is compare-deleted and the
+    // queue is still drained inline. Only the deletion the guard cannot justify is skipped.
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toContain('Knowledge curation queue drained inline')
+    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
+    expect(existsSync(foreign), 'a socket the drain cannot prove it owns must survive').toBe(true)
+    expect(readDaemonEventLedger(workspace.runtimeRoot).events).toContainEqual(
+      expect.objectContaining({
+        kind: 'registration-recovered',
+        socketPath: foreign,
+        socketRemoved: false,
+      }),
+    )
+  }, 20_000)
 
   it('byte-compares an obsolete-schema registration before removing it', async () => {
     const workspace = fixtureWorkspace(roots)
