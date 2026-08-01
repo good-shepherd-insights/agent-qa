@@ -1400,6 +1400,124 @@ describe('daemon registration recovery at boot', () => {
     },
   )
 
+  /**
+   * The fourth and last member of the authority input set: `daemon.json` itself (386-47).
+   *
+   * The two legs above make `.epoch` and `.lease` unreadable. This one makes the REGISTRATION file
+   * unreadable, which is the remaining same-class file this boot path reads, and it is the member
+   * with the largest blast radius if it resolved the wrong way: `runDaemonHost` executes two of the
+   * four classifications as `removeClassifiedRegistration` plus socket unlink, so a read failure
+   * that collapsed toward "obsolete" or "stale" would de-register and un-address a live daemon.
+   *
+   * `readDaemonRegistrationFile` already answers `malformed` for a file that exists and cannot be
+   * opened (registration.ts:187), and `malformed` is a REFUSAL here rather than recovery input —
+   * `refuseRegistration` returns before anything is removed and before the lease is even reached.
+   * That is the property this leg pins. It is a pin, not a defect closure, so it has no RED: its
+   * evidence is the no-op mutation probe recorded in the summary, which makes the `chmod` a no-op
+   * and reddens this leg alone.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'refuses an unreadable daemon.json without removing the registration or the socket (386-47)',
+    async () => {
+      const paths = makePaths('boot-unreadable-registration')
+      const nowMs = Date.now()
+      const registrationFile = join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)
+      const socketPath = daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID)
+      mkdirSync(paths.knowledgeRoot, { recursive: true })
+      mkdirSync(paths.agentQaRoot, { recursive: true })
+      // A STALE lease, so the readable direction is genuinely recovery input and the control below
+      // really does reach the destructive branch. Without that, "nothing was removed" would be
+      // satisfied by a fixture nothing would ever have removed anything from.
+      writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+        leaseId: 'd83b7c11-4f6a-4b58-9a02-6e1c5f0d7a93',
+        pid: process.pid,
+        epoch: 2,
+        heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS * 4,
+      })}\n`)
+      writeFileSync(join(paths.knowledgeRoot, EPOCH_FILE), '2\n')
+
+      // A real live process at the registered pid, so "no pid was signalled" is an OS fact.
+      const registrant = spawn(
+        process.execPath,
+        ['-e', "process.stdout.write('alive\\n'); setInterval(() => {}, 1000)"],
+        { stdio: ['ignore', 'pipe', 'inherit'] },
+      )
+      try {
+        await once(registrant.stdout, 'data')
+        if (registrant.pid === undefined) throw new Error('registrant never started')
+
+        const registration: DaemonRegistration = {
+          schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+          instanceId: HOST_INSTANCE_ID,
+          pid: registrant.pid,
+          socketPath,
+          startedAtMs: nowMs - 5_000,
+        }
+        const refuseAcquire = (): never => ({
+          kind: 'refused',
+          reason: 'mutation-lock-unreclaimable',
+          error: new Error('control stops the host after registration recovery'),
+        }) as never
+
+        // Control — the accepting direction, run FIRST and through production `runDaemonHost`: a
+        // readable registration in exactly this state IS recovered, and both artifacts go.
+        mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 })
+        await abandonSocketFile(socketPath)
+        writeDaemonRegistration(paths.agentQaRoot, registration)
+        const controlAcquire = vi.fn(refuseAcquire)
+        await expect(runDaemonHost({
+          agentQaRoot: paths.agentQaRoot,
+          knowledgeRoot: paths.knowledgeRoot,
+          config: TEST_CONFIG,
+          model: () => TEST_MODEL,
+          operations: { acquireWriterLease: controlAcquire as never },
+          logger: { info: vi.fn(), error: vi.fn() },
+        })).resolves.toBe(1)
+        expect(controlAcquire).toHaveBeenCalled()
+        expect(readDaemonRegistration(paths.agentQaRoot).kind).toBe('absent')
+        expect(existsSync(socketPath)).toBe(false)
+
+        // The rejecting direction: the same fixture, restored, discriminated by one chmod.
+        await abandonSocketFile(socketPath)
+        writeDaemonRegistration(paths.agentQaRoot, registration)
+        const bytesBefore = readFileSync(registrationFile)
+
+        chmodSync(registrationFile, 0o000)
+        const acquire = vi.fn()
+        const errors: string[] = []
+        try {
+          expect(readDaemonRegistration(paths.agentQaRoot)).toEqual({ kind: 'malformed' })
+          await expect(runDaemonHost({
+            agentQaRoot: paths.agentQaRoot,
+            knowledgeRoot: paths.knowledgeRoot,
+            config: TEST_CONFIG,
+            model: () => TEST_MODEL,
+            operations: { acquireWriterLease: acquire as never },
+            logger: { info: vi.fn(), error: (message) => errors.push(message) },
+          })).resolves.toBe(1)
+        } finally {
+          chmodSync(registrationFile, 0o600)
+        }
+
+        expect(errors).toEqual([expect.stringContaining('malformed')])
+        // Nothing removed, nothing unlinked, no lease even reached.
+        expect(acquire).not.toHaveBeenCalled()
+        expect(existsSync(registrationFile)).toBe(true)
+        expect(readFileSync(registrationFile)).toEqual(bytesBefore)
+        expect(readDaemonRegistration(paths.agentQaRoot).kind).toBe('parsed')
+        expect(existsSync(socketPath)).toBe(true)
+        // ...and nobody was signalled.
+        expect(registrant.exitCode).toBeNull()
+        expect(registrant.signalCode).toBeNull()
+      } finally {
+        const exited = once(registrant, 'exit')
+        registrant.kill('SIGKILL')
+        await exited
+      }
+    },
+    60_000,
+  )
+
   it('recovers an alive-pid registration with no listener once its writer lease is stale', async () => {
     const paths = makePaths('boot-alive-no-listener-stale-lease')
     const nowMs = Date.now()

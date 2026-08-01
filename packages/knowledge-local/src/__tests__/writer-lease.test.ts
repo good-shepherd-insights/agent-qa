@@ -2989,3 +2989,126 @@ describe('the unreadable lease read and every consumer that names it (round-5 CR
     },
   )
 })
+
+/**
+ * The third member of the authority input set: the writer-authority DB itself.
+ *
+ * Round 5's headline lesson is that a guard reading N files of the same class needs its
+ * fault-injection primitive applied to EVERY member, not to whichever one the round happened to be
+ * reasoning about. `chmod 0o000` had been applied to `EPOCH_FILE` six times and to `LEASE_FILE`
+ * never, and the gap was the defect. The remaining members of the set this module reads on the
+ * authority path are the SQLite store under `WRITER_AUTHORITY_DB_FILE` (here) and the CLI's
+ * `daemon.json` (in `packages/cli/src/__tests__/daemon-host.test.ts`).
+ *
+ * The store is a different KIND of input from the two text files: it is not parsed by this module
+ * at all, it is opened by SQLite, so the question is not "what value does the read return" but
+ * "what does an open failure do to a contender that was about to mint authority". The fail-safe
+ * direction is the assertion — refusal or a thrown error, never `{kind:'acquired'}` — rather than
+ * a specific arm, because the honest answer today is a rethrow (`isSqliteBusy` matches only
+ * locked/busy, and an unopenable file is neither) and pinning the arm rather than the direction
+ * would convert a future typed refusal into a test failure for no reason.
+ */
+describe('the writer-authority DB as an unreadable authority input (386-47)', () => {
+  let root: string
+  let knowledgeRoot: string
+  const spawnedHere: ChildProcessWithoutNullStreams[] = []
+
+  /** chmod is advisory for uid 0, so the unopenable-store input domain cannot be produced there. */
+  const canMakeFilesUnreadable = process.platform !== 'win32' && process.getuid?.() !== 0
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-unreadable-db-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+  })
+
+  afterEach(() => {
+    try {
+      chmodSync(authorityDbFile(), 0o600)
+    } catch {
+      // The leg either never made it unreadable or already restored it.
+    }
+    for (const child of spawnedHere.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+        try {
+          process.kill(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone; the leg's own assertions own the outcome.
+        }
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function authorityDbFile(): string {
+    return join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+  }
+
+  it.runIf(canMakeFilesUnreadable)(
+    'never mints authority over a live holder when the writer-authority DB cannot be opened',
+    async () => {
+      // Create the store and the epoch through production, then hand the published lease to a real
+      // second process and age it out. The contender therefore has genuine recovery input: its only
+      // remaining obstacle is a store it cannot open.
+      const seeded = acquireWriterLease(knowledgeRoot)
+      if (seeded.kind !== 'acquired') throw new Error(`seed did not acquire: ${seeded.kind}`)
+      expect(existsSync(authorityDbFile())).toBe(true)
+
+      const exitPermit = join(root, 'surrogate.exit')
+      const holder = spawnIdleSurrogate(exitPermit)
+      spawnedHere.push(holder)
+      await waitForOutput(holder, 'surrogate-alive\n')
+      if (holder.pid === undefined) throw new Error('holder never started')
+
+      const leaseFile = join(knowledgeRoot, LEASE_FILE)
+      const epochFile = join(knowledgeRoot, EPOCH_FILE)
+      writeFileSync(leaseFile, `${JSON.stringify({
+        leaseId: seeded.leaseId,
+        pid: holder.pid,
+        epoch: seeded.epoch,
+        heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS * 10,
+      })}\n`, 'utf8')
+      const epochBefore = readFileSync(epochFile)
+      const leaseBytesBefore = readFileSync(leaseFile)
+
+      chmodSync(authorityDbFile(), 0o000)
+      let outcome: unknown
+      let thrown: unknown
+      try {
+        outcome = acquireWriterLease(knowledgeRoot, {
+          mutationLockTakeoverMs: 0,
+          acquireDeadlineMs: 4_000,
+        })
+      } catch (error) {
+        thrown = error
+      } finally {
+        chmodSync(authorityDbFile(), 0o600)
+      }
+
+      // The direction, not the arm: whichever way it resolves, it is not an acquisition.
+      expect(outcome).not.toMatchObject({ kind: 'acquired' })
+      expect(thrown).toBeInstanceOf(Error)
+      expect((thrown as NodeJS.ErrnoException).code).toBe('ERR_SQLITE_ERROR')
+      expect((thrown as Error).message).toMatch(/unable to open database file/i)
+
+      // Nothing was minted and nobody was signalled — the two consequences a wrong answer here
+      // would have produced, read as OS facts rather than as the module's account of itself.
+      expect(readFileSync(epochFile)).toEqual(epochBefore)
+      expect(readFileSync(leaseFile)).toEqual(leaseBytesBefore)
+      expect(processIsAliveInTest(holder.pid)).toBe(true)
+      expect(processState(holder.pid)).not.toBe('Z')
+      expect(holder.signalCode).toBeNull()
+
+      // The accepting control, on the same fixture discriminated only by the chmod that was just
+      // reverted: this state IS recovery input, so a guard that refused everything would fail here.
+      const readable = acquireWriterLease(knowledgeRoot, {
+        mutationLockTakeoverMs: 0,
+        acquireDeadlineMs: 4_000,
+      })
+      expect(readable).toMatchObject({ kind: 'acquired', epoch: seeded.epoch + 1 })
+
+      writeFileSync(exitPermit, 'go\n', 'utf8')
+    },
+    30_000,
+  )
+})
