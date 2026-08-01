@@ -69,6 +69,7 @@ import {
   inspectDaemonRegistration,
   readDaemonRegistration,
   removeDaemonRegistration,
+  removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
@@ -105,6 +106,17 @@ export async function resolve(specifier, context, nextResolve) {
 const temporaryRoots: string[] = []
 const HOST_INSTANCE_ID = '11111111-1111-4111-8111-111111111111'
 const SUCCESSOR_INSTANCE_ID = '22222222-2222-4222-8222-222222222222'
+
+/**
+ * Every point at which a crash can interrupt the registration-removal sequence.
+ *
+ * Enumerated rather than sampled: the crash-recoverability invariant is only worth anything if
+ * it is pinned at all of them, and a new seam added later without a case here is the exact edit
+ * this list exists to catch.
+ */
+const REMOVAL_SEAMS = ['beforeQuarantineRename', 'afterQuarantine', 'afterVerify'] as const
+type RemovalSeam = typeof REMOVAL_SEAMS[number]
+type RemovalSeamOptions = { [K in RemovalSeam]?: (path: string) => void }
 
 function makePaths(label: string): {
   root: string
@@ -839,7 +851,7 @@ describe('daemon registration instance ownership and readiness', () => {
         writeDaemonRegistration(paths.agentQaRoot, successor)
         successorBytes = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
       },
-    })).toBe(false)
+    })).toEqual({ kind: 'unmatched' })
     expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(
       successorBytes,
     )
@@ -858,20 +870,24 @@ describe('daemon registration instance ownership and readiness', () => {
 
     expect(removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID, {
       fsyncDirectory,
-    })).toBe(true)
+    })).toEqual({ kind: 'removed' })
     expect(existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
     expect(fsyncDirectory).toHaveBeenCalledWith(paths.agentQaRoot)
     expect(fsyncDirectory.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('drops a mismatched quarantine when a third registration already occupies the path', () => {
+  it('removes exactly the classified generation when a third publishes into the vacated path', () => {
+    // Compare-first moved this schedule: the mismatch is now caught before the rename, so the
+    // only way to reach the third-occupant branch is for the QUARANTINE to hold this host's own
+    // bytes. It does, so the removal completes and the newest publisher keeps the path — and the
+    // quarantine is still consumed, never left behind.
     const paths = makePaths('registration-mismatch-restore')
     writeDaemonRegistration(paths.agentQaRoot, {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
-      instanceId: SUCCESSOR_INSTANCE_ID,
-      pid: process.pid + 1,
-      socketPath: join(paths.agentQaRoot, 'successor.sock'),
-      startedAtMs: 1_700_000_001_000,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'host.sock'),
+      startedAtMs: 1_700_000_000_000,
     })
     const third: DaemonRegistration = {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
@@ -887,11 +903,170 @@ describe('daemon registration instance ownership and readiness', () => {
         writeDaemonRegistration(paths.agentQaRoot, third)
         thirdBytes = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
       },
-    })).toBe(false)
+    })).toEqual({ kind: 'removed' })
     expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(thirdBytes)
     expect(
       readdirSync(paths.agentQaRoot).filter((name) => name.includes('.remove-')),
     ).toEqual([])
+  })
+
+  it('rejects a non-matching candidate without a single filesystem mutation (W-03)', () => {
+    // Both predicate arms, because a corpus fed only to the nonce arm is drawn from the interior
+    // of one arm's assumption. The two injected seams ARE the measurement: the quarantine rename
+    // and the directory fsync are the only writes this routine can perform, so neither firing is
+    // exactly "nothing was mutated". The old code renamed first and compared afterwards, so it
+    // mutated on the way to every rejection it ever made.
+    const nonce = makePaths('registration-mismatch-no-mutation')
+    const nonceFile = join(nonce.agentQaRoot, DAEMON_REGISTRATION_FILE)
+    writeDaemonRegistration(nonce.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: SUCCESSOR_INSTANCE_ID,
+      pid: process.pid + 1,
+      socketPath: join(nonce.agentQaRoot, 'successor.sock'),
+      startedAtMs: 1_700_000_001_000,
+    })
+    const nonceBefore = readFileSync(nonceFile)
+    const nonceStatBefore = statSync(nonceFile, { bigint: true })
+    const nonceEntriesBefore = readdirSync(nonce.agentQaRoot).sort()
+    const nonceRename = vi.fn()
+    const nonceFsync = vi.fn()
+
+    // The mutation assertions come FIRST, deliberately: if the outcome-shape assertion led, it
+    // would be the thing that reddens and the zero-mutation property would never be measured.
+    const nonceOutcome = removeRegistrationIfOwned(nonce.agentQaRoot, HOST_INSTANCE_ID, {
+      beforeQuarantineRename: nonceRename,
+      fsyncDirectory: nonceFsync,
+    })
+    expect(nonceRename, 'a rejected candidate must never reach the quarantine rename')
+      .not.toHaveBeenCalled()
+    expect(nonceFsync, 'a rejected candidate must never durably change the directory')
+      .not.toHaveBeenCalled()
+    expect(readFileSync(nonceFile)).toEqual(nonceBefore)
+    expect({
+      ino: statSync(nonceFile, { bigint: true }).ino,
+      ctimeNs: statSync(nonceFile, { bigint: true }).ctimeNs,
+    }).toEqual({ ino: nonceStatBefore.ino, ctimeNs: nonceStatBefore.ctimeNs })
+    expect(readdirSync(nonce.agentQaRoot).sort()).toEqual(nonceEntriesBefore)
+    expect(nonceOutcome).toEqual({ kind: 'unmatched' })
+
+    const obsolete = makePaths('registration-obsolete-no-mutation')
+    const obsoleteFile = join(obsolete.agentQaRoot, DAEMON_REGISTRATION_FILE)
+    // The pre-nonce arm's rejection: a current-schema file where a legacy one was expected.
+    writeDaemonRegistration(obsolete.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: SUCCESSOR_INSTANCE_ID,
+      pid: process.pid + 1,
+      socketPath: join(obsolete.agentQaRoot, 'successor.sock'),
+      startedAtMs: 1_700_000_001_000,
+    })
+    const obsoleteBefore = readFileSync(obsoleteFile)
+    const obsoleteStatBefore = statSync(obsoleteFile, { bigint: true })
+    const obsoleteRename = vi.fn()
+    const obsoleteFsync = vi.fn()
+
+    const obsoleteOutcome = removeObsoleteDaemonRegistrationIfExpected(
+      obsolete.agentQaRoot,
+      {
+        schemaVersion: 1,
+        pid: process.pid,
+        socketPath: join(obsolete.agentQaRoot, 'daemon.sock'),
+        startedAtMs: 1_700_000_000_000,
+      },
+      { beforeQuarantineRename: obsoleteRename, fsyncDirectory: obsoleteFsync },
+    )
+    expect(obsoleteRename).not.toHaveBeenCalled()
+    expect(obsoleteFsync).not.toHaveBeenCalled()
+    expect(readFileSync(obsoleteFile)).toEqual(obsoleteBefore)
+    expect(statSync(obsoleteFile, { bigint: true }).ctimeNs).toBe(obsoleteStatBefore.ctimeNs)
+    expect(
+      readdirSync(obsolete.agentQaRoot).filter((name) => name.includes('.remove-')),
+    ).toEqual([])
+    expect(obsoleteOutcome).toEqual({ kind: 'unmatched' })
+  })
+
+  it.each(REMOVAL_SEAMS)(
+    'keeps the classified bytes under exactly one recoverable name when removal dies at %s (W-03)',
+    (seam) => {
+      // The seams are ENUMERATED, not sampled: every point at which the routine can be
+      // interrupted is armed in turn, and the invariant is the same at all of them — the bytes
+      // exist under exactly one of the original or quarantine names, and a reader can still find
+      // them there. Rename is what buys this; a link/unlink pair has an instant with two names
+      // and a failure mode with the bytes only under the name nobody looks at.
+      const paths = makePaths(`registration-seam-${seam}`)
+      writeDaemonRegistration(paths.agentQaRoot, {
+        schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+        instanceId: HOST_INSTANCE_ID,
+        pid: process.pid,
+        socketPath: join(paths.agentQaRoot, 'host.sock'),
+        startedAtMs: 1_700_000_000_000,
+      })
+      const bytes = readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))
+      const crash = new Error(`process died at ${seam}`)
+      const options: RemovalSeamOptions = {}
+      options[seam] = () => { throw crash }
+
+      expect(() => removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID, options))
+        .toThrow(crash)
+
+      const names = readdirSync(paths.agentQaRoot).filter(
+        (name) => name === DAEMON_REGISTRATION_FILE || name.includes('.remove-'),
+      )
+      expect(names, `seam ${seam} must leave exactly one recoverable name`).toHaveLength(1)
+      expect(readFileSync(join(paths.agentQaRoot, names[0]!))).toEqual(bytes)
+    },
+  )
+
+  it('preserves the quarantined predecessor and names both paths when restore is refused (W-03)', () => {
+    // The schedule the old algorithm lost data in: a successor publishes between the compare and
+    // the rename (so the quarantine holds bytes that are NOT ours), and a third publishes into the
+    // vacated path before the restore. The old code link-restored, hit EEXIST, swallowed it, and
+    // then unlinked the quarantine — destroying the successor's registration outright and
+    // returning a bare `false` that named nothing.
+    const paths = makePaths('registration-restore-refused')
+    const file = join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: join(paths.agentQaRoot, 'host.sock'),
+      startedAtMs: 1_700_000_000_000,
+    })
+    let successorBytes: Buffer | undefined
+    let thirdBytes: Buffer | undefined
+
+    const outcome = removeRegistrationIfOwned(paths.agentQaRoot, HOST_INSTANCE_ID, {
+      beforeQuarantineRename: () => {
+        writeDaemonRegistration(paths.agentQaRoot, {
+          schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+          instanceId: SUCCESSOR_INSTANCE_ID,
+          pid: process.pid + 1,
+          socketPath: join(paths.agentQaRoot, 'successor.sock'),
+          startedAtMs: 1_700_000_001_000,
+        })
+        successorBytes = readFileSync(file)
+      },
+      afterQuarantine: () => {
+        writeDaemonRegistration(paths.agentQaRoot, {
+          schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+          instanceId: '33333333-3333-4333-8333-333333333333',
+          pid: process.pid + 2,
+          socketPath: join(paths.agentQaRoot, 'third.sock'),
+          startedAtMs: 1_700_000_002_000,
+        })
+        thirdBytes = readFileSync(file)
+      },
+    })
+
+    expect(outcome).toEqual({
+      kind: 'changed-under-removal',
+      registrationPath: file,
+      quarantinePath: expect.stringContaining(`${DAEMON_REGISTRATION_FILE}.remove-`),
+    })
+    const quarantinePath = (outcome as { quarantinePath: string }).quarantinePath
+    // Nothing was lost: the bytes the routine moved are still readable under the name it names.
+    expect(readFileSync(quarantinePath)).toEqual(successorBytes)
+    // And the newest publisher keeps the registration path — the successor never wins it back.
+    expect(readFileSync(file)).toEqual(thirdBytes)
   })
 
   it('publishes registration only after the invoke socket has finished listening', async () => {
@@ -1691,7 +1866,7 @@ describe('daemon registration recovery at boot', () => {
           startedAtMs: number
         },
         options?: { beforeQuarantineRename?: () => void },
-      ): boolean
+      ): { kind: string }
     }
     expect(typeof registrationModule.removeObsoleteDaemonRegistrationIfExpected).toBe('function')
 
@@ -1711,7 +1886,7 @@ describe('daemon registration recovery at boot', () => {
     expect(registrationModule.removeObsoleteDaemonRegistrationIfExpected(
       matchPaths.agentQaRoot,
       legacy,
-    )).toBe(true)
+    )).toEqual({ kind: 'removed' })
     expect(existsSync(join(matchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
 
     const mismatchPaths = makePaths('obsolete-mismatch')
@@ -1746,7 +1921,7 @@ describe('daemon registration recovery at boot', () => {
           )
         },
       },
-    )).toBe(false)
+    )).toEqual({ kind: 'unmatched' })
     expect(readFileSync(join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE)))
       .toEqual(successorBytes)
     expect(
