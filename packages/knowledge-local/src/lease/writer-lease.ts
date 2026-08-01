@@ -102,6 +102,19 @@ export type AcquireWriterLeaseOutcome =
       error: CorruptEpochStateError
     }
   | {
+      /**
+       * CR-01 (round 5): the lease file's own sibling of `corrupt-epoch-state`.
+       *
+       * `code` is the raw errno so an operator sees EACCES rather than a contender that silently
+       * spun to its deadline over an authority state nobody can evaluate; `error` keeps this arm
+       * inside the union's stated contract that every refusal is rethrowable.
+       */
+      kind: 'refused'
+      reason: 'unreadable-lease-state'
+      code: string
+      error: UnreadableWriterLeaseStateError
+    }
+  | {
       kind: 'refused'
       reason: 'mutation-lock-unreclaimable'
       /**
@@ -132,6 +145,8 @@ export type HeartbeatLeaseOutcome =
       reason:
         | 'lease-missing'
         | 'lease-malformed'
+        /** CR-01: the lease exists and could not be opened — never write over what you cannot read. */
+        | 'lease-unreadable'
         | 'lease-id-mismatch'
         | 'stale-epoch'
         | 'corrupt-epoch-state'
@@ -144,7 +159,7 @@ export type ReleaseLeaseOutcome =
   | { kind: 'released' }
   | {
       kind: 'refused'
-      reason: 'lease-missing' | 'lease-malformed' | 'lease-id-mismatch'
+      reason: 'lease-missing' | 'lease-malformed' | 'lease-unreadable' | 'lease-id-mismatch'
       holder?: WriterLease
     }
 
@@ -250,9 +265,43 @@ export class WriterLeaseUnreclaimableError extends Error {
   }
 }
 
+/**
+ * The lease file's sibling of `CorruptEpochStateError`, for a read that produced no throwable.
+ *
+ * `readFileSync` threw, but the value that reaches a consumer is a kinded outcome rather than an
+ * exception, and `AcquireWriterLeaseOutcome`'s own contract is that EVERY refusal arm carries a
+ * thrown-shaped `error` — three call sites rethrow or render it without knowing which arm they
+ * hold (`drain.ts:842` among them). A refusal that carried only an errno string would have made
+ * that contract a list of call sites to keep in step, which is the failure mode this module keeps
+ * rediscovering. Deliberately not re-exported from the package index (IN-04): the refusal is fully
+ * legible from `reason`, `code` and `error.message`.
+ */
+export class UnreadableWriterLeaseStateError extends Error {
+  override readonly name = 'UnreadableWriterLeaseStateError'
+  readonly path: string
+  readonly code: string
+
+  constructor(path: string, code: string) {
+    super(`writer lease state is unreadable (${code}) at ${path}`)
+    this.path = path
+    this.code = code
+  }
+}
+
+/**
+ * The authority-file read verdict, and it has four values rather than three.
+ *
+ * Round-5 CR-01: `unreadable` is the sibling of the epoch read's
+ * `CorruptEpochStateError(…, 'unreadable', …)`. A file that EXISTS and could not be opened is a
+ * different fact from a file that is not there and from a file whose bytes were read and failed to
+ * parse, and the previous three arms had nowhere to put it — so EACCES, EIO, EMFILE and ENFILE all
+ * landed on `malformed`, which every consumer reads as "nobody holds authority". `code` carries
+ * the errno so the refusal that follows can name the cause to an operator.
+ */
 export type ReadWriterLeaseOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
+  | { kind: 'unreadable'; code: string }
   | { kind: 'parsed'; lease: WriterLease }
 
 function assertAbsoluteKnowledgeRoot(knowledgeRoot: string): void {
@@ -787,21 +836,42 @@ function terminateExactMutationLockOwner(
 }
 
 /**
- * Escalation ends in SIGKILL, so this consumer names `unknown` as a refusal.
+ * Escalation ends in SIGKILL, so this consumer names `unknown` AND `unreadable` as refusals.
  *
  * A wrong kill is unrecoverable; a contender that declines to kill is not. `reclaimable` is the
  * only verdict that permits, which means a live holder is escalated against exactly when its lease
- * has genuinely aged out or names a superseded epoch — never because the epoch could not be read.
+ * has genuinely aged out or names a superseded epoch — never because the epoch could not be read,
+ * and never because the lease could not be read.
+ *
+ * CR-01 (round 5): the read arms are an exhaustive ladder rather than a `!== 'parsed'`
+ * short-circuit. That short-circuit was a fourth conjunct sitting one line ABOVE the derivation
+ * the same round moved the third conjunct INTO, and it permitted the kill for the one input class
+ * the derivation exists to refuse. `absent` and `malformed` still permit — a lease file that is
+ * missing, or whose bytes were read and are not a lease, is recovery input — but a file that
+ * exists and could not be opened is no evidence at all.
+ *
+ * This veto is the LAST lease guard on the governed-mutation contention path: a contender that
+ * enters through `withCurrentWriterAuthority` (a fenced-out writer retrying its commit) claims the
+ * mutation lock before it reads any lease, so `acquireWriterLease`'s pre-check never runs for it.
+ * That path is what makes this gate reachable, and it is pinned by a corpus case that reddens when
+ * the veto is removed (WINDOWS #46).
  */
 function leasePermitsEscalation(knowledgeRoot: string, owner: MutationLockOwner): boolean {
   if (!processIsAlive(owner.pid)) return true
   const lease = readWriterLease(knowledgeRoot)
-  if (lease.kind !== 'parsed') return true
-  return deriveWriterLeaseFreshness(
-    knowledgeRoot,
-    lease.lease,
-    mutationLockNowMs(),
-  ).kind === 'reclaimable'
+  switch (lease.kind) {
+    case 'absent':
+    case 'malformed':
+      return true
+    case 'unreadable':
+      return false
+    case 'parsed':
+      return deriveWriterLeaseFreshness(
+        knowledgeRoot,
+        lease.lease,
+        mutationLockNowMs(),
+      ).kind === 'reclaimable'
+  }
 }
 
 function tryEscalatedMutationLockTakeover(
@@ -1049,14 +1119,29 @@ function atomicRewrite(file: string, text: string): void {
   }
 }
 
-/** Read and strictly validate current writer authority without acquiring or refreshing it. */
+/**
+ * Read and strictly validate current writer authority without acquiring or refreshing it.
+ *
+ * CR-01 (round 5): ENOENT is the only read failure that is evidence of absence, and NO read
+ * failure is evidence of corruption. This is `readEpoch`'s rule applied to the file it was not
+ * applied to — the derivation's own W-01 note says the guard belongs at the READ, so that
+ * consumers inherit it rather than each re-deriving it, and this read has three consumers that
+ * select SIGKILL, epoch minting and registration deletion from its answer.
+ *
+ * The `existsSync` fallback that used to sit here is deleted rather than kept beside the errno
+ * test: under fd exhaustion it fails for the same reason the open did, so it degraded an EMFILE
+ * read from `malformed` to `absent` — the strongest possible statement that nobody holds the
+ * lease, produced by the weakest possible evidence.
+ */
 export function readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome {
   const file = leasePath(knowledgeRoot)
   let raw: string
   try {
     raw = readFileSync(file, 'utf8')
-  } catch {
-    return existsSync(file) ? { kind: 'malformed' } : { kind: 'absent' }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return { kind: 'absent' }
+    return { kind: 'unreadable', code: code ?? 'unknown-read-error' }
   }
 
   try {
@@ -1197,6 +1282,16 @@ export function acquireWriterLease(
       return { kind: 'refused', reason: 'corrupt-epoch-state', error: verdict.error }
     }
     if (verdict.kind === 'fresh') return { kind: 'held', holder: beforeLock.lease }
+  } else if (beforeLock.kind === 'unreadable') {
+    // CR-01: a lease that exists and cannot be opened is not a licence to mint over it. Refusing
+    // here is what keeps the loop below — and therefore the escalation surface underneath it —
+    // out of reach for this input class entirely.
+    return {
+      kind: 'refused',
+      reason: 'unreadable-lease-state',
+      code: beforeLock.code,
+      error: new UnreadableWriterLeaseStateError(leasePath(knowledgeRoot), beforeLock.code),
+    }
   } else {
     // With no lease to derive from, the epoch is still read before any acquisition: unreadable or
     // corrupt authority state refuses here exactly as it does through the verdict above.
@@ -1238,6 +1333,16 @@ export function acquireWriterLease(
         }
         const current = readWriterLease(knowledgeRoot)
         const nowMs = Date.now()
+        if (current.kind === 'unreadable') {
+          // The in-lock repeat of the pre-lock arm: a lease that turned unopenable while this
+          // contender waited for the lock is still not evidence that nobody holds it.
+          return {
+            kind: 'refused' as const,
+            reason: 'unreadable-lease-state' as const,
+            code: current.code,
+            error: new UnreadableWriterLeaseStateError(leasePath(knowledgeRoot), current.code),
+          }
+        }
         if (current.kind === 'parsed') {
           const verdict = deriveWriterLeaseFreshness(knowledgeRoot, current.lease, nowMs)
           if (verdict.kind === 'unknown') {
@@ -1286,6 +1391,17 @@ export function acquireWriterLease(
        * deadline over an authority state nobody can evaluate.
        */
       const current = readWriterLease(knowledgeRoot)
+      if (current.kind === 'unreadable') {
+        // A lease that cannot be READ is a fourth case here for the same reason an unreadable
+        // epoch is a third one: the contender surfaces it by name instead of spinning to its
+        // deadline over an authority state nobody can evaluate.
+        return {
+          kind: 'refused',
+          reason: 'unreadable-lease-state',
+          code: current.code,
+          error: new UnreadableWriterLeaseStateError(leasePath(knowledgeRoot), current.code),
+        }
+      }
       if (current.kind === 'parsed') {
         let observedEpoch: number
         try {
@@ -1379,6 +1495,11 @@ export function withCurrentWriterAuthority<T>(
       if (current.kind === 'malformed') {
         throw new WriterAuthorityLostError(fullAuthority, 'lease-malformed', observedEpoch)
       }
+      // CR-01: authority that cannot be re-read inside the transaction is authority that cannot be
+      // proven, and this is the fence that keeps a fenced-out writer from committing.
+      if (current.kind === 'unreadable') {
+        throw new WriterAuthorityLostError(fullAuthority, 'lease-unreadable', observedEpoch)
+      }
       if (current.lease.leaseId !== authority.leaseId) {
         throw new WriterAuthorityLostError(fullAuthority, 'lease-id-mismatch', observedEpoch)
       }
@@ -1447,6 +1568,8 @@ export function heartbeatLease(opts: LeaseOperationOptions): HeartbeatLeaseOutco
   const current = readWriterLease(opts.knowledgeRoot)
   if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
   if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
+  // CR-01: a beat that cannot read the lease cannot prove it owns it, so it may not rewrite it.
+  if (current.kind === 'unreadable') return { kind: 'refused', reason: 'lease-unreadable' }
   if (current.lease.leaseId !== opts.leaseId) {
     return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
   }
@@ -1532,6 +1655,9 @@ export function releaseLease(opts: LeaseOperationOptions): ReleaseLeaseOutcome {
     const current = readWriterLease(opts.knowledgeRoot)
     if (current.kind === 'absent') return { kind: 'refused', reason: 'lease-missing' }
     if (current.kind === 'malformed') return { kind: 'refused', reason: 'lease-malformed' }
+    // CR-01: release is a deletion. An unreadable lease could belong to anybody, including a
+    // successor that reclaimed while this caller was away, so it is never removed unseen.
+    if (current.kind === 'unreadable') return { kind: 'refused', reason: 'lease-unreadable' }
     if (current.lease.leaseId !== opts.leaseId) {
       return { kind: 'refused', reason: 'lease-id-mismatch', holder: current.lease }
     }
