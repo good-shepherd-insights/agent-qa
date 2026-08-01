@@ -34,6 +34,7 @@ import {
   readCurrentEpoch,
   refreshWriterLeaseAuthority,
   releaseLease,
+  resolveProcessIncarnation,
   WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
   type WriterAuthorityLostReason,
@@ -2056,4 +2057,425 @@ describe('writer lease acquisition deadline against an unreclaimable owner (V-02
     expect(outcome.kind).toBe('acquired')
     expect(outcome.elapsedMs).toBeLessThan(20_000)
   }, 60_000)
+})
+
+/**
+ * WR-04: the `ps` fork on the pre-signal path is the last wait beneath the acquisition deadline
+ * that could outlive it.
+ *
+ * The guard-REJECTING input domain is a process table that will not answer: these legs shadow `ps`
+ * on the child's PATH with a script that sleeps far past any budget, which is the one input class
+ * the cap exists to refuse. The accepting control shadows `ps` with a pass-through to the real
+ * binary, so the only difference between "no signal" and "SIGKILL" is whether the resolution
+ * returned inside its cap.
+ *
+ * Platform bound, stated rather than hidden: `resolveProcessIncarnation` reads `/proc/<pid>/stat`
+ * on Linux and forks `ps` everywhere else POSIX. The residual being closed therefore only EXISTS
+ * on the `ps` hosts, and so does its rejecting corpus. Windows resolves to `undefined` outright.
+ */
+const runsPsIncarnation = process.platform !== 'win32' && process.platform !== 'linux'
+const itOnPsHosts = runsPsIncarnation ? it : it.skip
+
+describe('budget-capped process-incarnation resolution on the escalation path (WR-04)', () => {
+  let root: string
+  let knowledgeRoot: string
+  let shadowDir: string
+  const spawnedHere: ChildProcessWithoutNullStreams[] = []
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-ps-cap-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    shadowDir = join(root, 'shadow-bin')
+    mkdirSync(knowledgeRoot, { recursive: true })
+    mkdirSync(shadowDir, { recursive: true })
+  })
+
+  afterEach(() => {
+    for (const child of spawnedHere.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+        try {
+          process.kill(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone; the leg's own assertions own the outcome.
+        }
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function track(child: ChildProcessWithoutNullStreams): ChildProcessWithoutNullStreams {
+    spawnedHere.push(child)
+    return child
+  }
+
+  /** Put a `ps` of our choosing first on the child's PATH; the parent keeps the real one. */
+  function shadowPs(body: string): void {
+    const file = join(shadowDir, 'ps')
+    writeFileSync(file, body, 'utf8')
+    chmodSync(file, 0o755)
+  }
+
+  function realPsPath(): string {
+    return execFileSync('sh', ['-c', 'command -v ps'], { encoding: 'utf8' }).trim()
+  }
+
+  function spawnWithShadowedPs(
+    source: string,
+    env: Record<string, string>,
+  ): ChildProcessWithoutNullStreams {
+    return track(spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', source],
+      {
+        env: {
+          ...process.env,
+          ...env,
+          PATH: `${shadowDir}:${process.env.PATH ?? ''}`,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    ))
+  }
+
+  function authorityDbPath(): string {
+    return join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+  }
+
+  /** Seed a lock row naming `pid` with the incarnation the REAL `ps` reports for it right now. */
+  function seedAttributedOwnerRow(pid: number, generationToken: string): void {
+    const incarnation = resolveProcessIncarnation(pid)
+    if (incarnation === undefined) throw new Error(`pid ${pid} is not attributable`)
+    const db = new DatabaseSync(authorityDbPath())
+    try {
+      db.exec('PRAGMA journal_mode = WAL')
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mutation_lock (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          generation_token TEXT NOT NULL,
+          pid INTEGER NOT NULL CHECK (pid > 0),
+          acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+          incarnation TEXT
+        ) STRICT
+      `)
+      db.prepare(`
+        INSERT OR REPLACE INTO mutation_lock
+          (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, ?, ?, ?, ?)
+      `).run(generationToken, pid, Date.now() - 600_000, incarnation)
+    } finally {
+      db.close()
+    }
+  }
+
+  /** Occupy the store's write transaction so the claim is forced onto the escalation path. */
+  function holdAuthorityTransaction(): () => void {
+    const db = new DatabaseSync(authorityDbPath())
+    db.exec('PRAGMA busy_timeout = 250')
+    db.exec('BEGIN IMMEDIATE')
+    let open = true
+    return () => {
+      if (!open) return
+      open = false
+      try {
+        db.exec('ROLLBACK')
+      } finally {
+        db.close()
+      }
+    }
+  }
+
+  const CONTENDER_SOURCE = `
+    const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+    const startedAtNs = process.hrtime.bigint();
+    const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
+      acquireDeadlineMs: 4000,
+      mutationLockTakeoverMs: 0,
+    });
+    const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
+    process.stdout.write(JSON.stringify({
+      kind: outcome.kind,
+      reason: outcome.reason,
+      elapsedMs,
+    }) + '\\n');
+  `
+
+  itOnPsHosts(
+    'caps one ps fork at the budget it was handed and reports the pid unverifiable (WR-04)',
+    async () => {
+      // The rejecting input: a process table that never answers. Without the cap this fork runs to
+      // completion and the caller's whole deadline is spent inside a single resolution.
+      shadowPs('#!/bin/sh\nexec sleep 30\n')
+      const source = `
+        const { resolveProcessIncarnation } = await import(
+          ${JSON.stringify(WRITER_LEASE_MODULE_URL)}
+        );
+        const startedAtNs = process.hrtime.bigint();
+        const resolved = resolveProcessIncarnation(Number(process.env.AGENT_QA_LEASE_TEST_PID), 250);
+        const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
+        process.stdout.write(JSON.stringify({ resolved: resolved ?? null, elapsedMs }) + '\\n');
+      `
+      const child = spawnWithShadowedPs(source, {
+        AGENT_QA_LEASE_TEST_PID: String(process.pid),
+      })
+      const output = collectStdout(child)
+      expect(await observeExit(child)).toMatchObject({ code: 0, signal: null })
+
+      const observed = lastJsonLine(output()) as { resolved: string | null; elapsedMs: number }
+      // Fail-closed through the SAME funnel every other failure uses: no default token, no retry.
+      expect(observed.resolved).toBeNull()
+      expect(observed.elapsedMs).toBeLessThan(500)
+    },
+    60_000,
+  )
+
+  itOnPsHosts(
+    'delivers no signal when the process table cannot answer inside the budget (WR-04)',
+    async () => {
+      const exitPermit = join(root, 'surrogate.exit')
+      const surrogate = track(spawnIdleSurrogate(exitPermit))
+      await waitForOutput(surrogate, 'surrogate-alive\n')
+      if (surrogate.pid === undefined) throw new Error('surrogate never started')
+
+      // Attributed with the REAL ps, so the row is escalatable by every other measure: the only
+      // thing standing between this owner and a SIGKILL is whether its identity can be re-read.
+      seedAttributedOwnerRow(surrogate.pid, 'ps-timeout-generation')
+      const releaseBlockingWrite = holdAuthorityTransaction()
+      shadowPs('#!/bin/sh\nexec sleep 30\n')
+
+      try {
+        const contender = spawnWithShadowedPs(CONTENDER_SOURCE, {
+          AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+        })
+        const output = collectStdout(contender)
+        expect(await observeExit(contender)).toMatchObject({ code: 0, signal: null })
+        const outcome = lastJsonLine(output()) as { kind: string; elapsedMs: number }
+
+        expect(outcome).toMatchObject({ kind: 'refused', reason: 'mutation-lock-unreclaimable' })
+        // The refusal arrived on the caller's own budget rather than on the shadow's 30 s sleep.
+        expect(outcome.elapsedMs).toBeLessThan(15_000)
+        // And the owner it could not verify was never a target — an OS fact, read with the real ps.
+        expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+        expect(processState(surrogate.pid)).not.toBe('Z')
+        expect(surrogate.exitCode).toBeNull()
+        expect(surrogate.signalCode).toBeNull()
+      } finally {
+        releaseBlockingWrite()
+        writeFileSync(exitPermit, 'go\n', 'utf8')
+      }
+    },
+    90_000,
+  )
+
+  itOnPsHosts(
+    'withholds the signal on an exhausted budget too, where the cap sits on its floor (WR-04)',
+    async () => {
+      const exitPermit = join(root, 'surrogate.exit')
+      const surrogate = track(spawnIdleSurrogate(exitPermit))
+      await waitForOutput(surrogate, 'surrogate-alive\n')
+      if (surrogate.pid === undefined) throw new Error('surrogate never started')
+
+      seedAttributedOwnerRow(surrogate.pid, 'ps-floor-generation')
+      const releaseBlockingWrite = holdAuthorityTransaction()
+      shadowPs('#!/bin/sh\nexec sleep 30\n')
+
+      try {
+        // A deadline shorter than the store's own busy timeout, so the claim spends the ENTIRE
+        // budget before escalation begins and the cap can only be its pinned floor. The floor is
+        // an allowance to look, never a licence to signal — this is its rejecting case.
+        const source = CONTENDER_SOURCE.replace('acquireDeadlineMs: 4000', 'acquireDeadlineMs: 900')
+        const contender = spawnWithShadowedPs(source, {
+          AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+        })
+        const output = collectStdout(contender)
+        expect(await observeExit(contender)).toMatchObject({ code: 0, signal: null })
+
+        expect(lastJsonLine(output())).toMatchObject({
+          kind: 'refused',
+          reason: 'mutation-lock-unreclaimable',
+        })
+        expect(processIsAliveInTest(surrogate.pid)).toBe(true)
+        expect(processState(surrogate.pid)).not.toBe('Z')
+        expect(surrogate.signalCode).toBeNull()
+      } finally {
+        releaseBlockingWrite()
+        writeFileSync(exitPermit, 'go\n', 'utf8')
+      }
+    },
+    90_000,
+  )
+
+  itOnPsHosts(
+    'still resolves and kills the exact owner through a pass-through ps shadow (accepting control)',
+    async () => {
+      const exitPermit = join(root, 'surrogate.exit')
+      const surrogate = track(spawnIdleSurrogate(exitPermit))
+      await waitForOutput(surrogate, 'surrogate-alive\n')
+      if (surrogate.pid === undefined) throw new Error('surrogate never started')
+
+      seedAttributedOwnerRow(surrogate.pid, 'ps-passthrough-generation')
+      const releaseBlockingWrite = holdAuthorityTransaction()
+      // The same PATH shadow, the same escalation, the same row — differing only in whether the
+      // process table answers. A cap that refused this input would be a blanket refusal.
+      shadowPs(`#!/bin/sh\nexec ${realPsPath()} "$@"\n`)
+      const surrogateExited = observeExit(surrogate)
+
+      try {
+        const contender = spawnWithShadowedPs(CONTENDER_SOURCE, {
+          AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot,
+        })
+        const output = collectStdout(contender)
+        expect(await observeExit(contender)).toMatchObject({ code: 0, signal: null })
+        expect(lastJsonLine(output())).toMatchObject({ kind: 'refused' })
+
+        expect(await surrogateExited).toMatchObject({ code: null, signal: 'SIGKILL' })
+      } finally {
+        releaseBlockingWrite()
+        writeFileSync(exitPermit, 'go\n', 'utf8')
+      }
+    },
+    90_000,
+  )
+})
+
+/**
+ * WR-05: store contention on the owner read is a typed absence, not daemon death.
+ *
+ * The rejecting input is a store nobody can read: `readCommittedMutationLockOwner` opens read-only
+ * with `timeout: 0`, and both of its callers publish its answer as part of a promise — the
+ * busy-catch's `MutationLockBusyError`, and the acquisition deadline's typed
+ * `mutation-lock-unreclaimable` refusal. A raw `SqliteError` from that read reached neither: it
+ * propagated straight out of `acquireWriterLease`.
+ */
+describe('store contention during acquisition diagnostics (WR-05)', () => {
+  let root: string
+  let knowledgeRoot: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-busy-read-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  /**
+   * Create the authority store in ROLLBACK-JOURNAL mode, which is the shape that can lock readers
+   * out at all: `openWriterAuthorityDb` sets WAL, but it must first reach a store it can write to,
+   * and a store created before that pragma landed (or by a contender that lost the race to it) is
+   * still journalled. Under `BEGIN EXCLUSIVE` every reader — including a read-only connection —
+   * gets `SQLITE_BUSY`.
+   */
+  function seedJournalledAuthorityStore(): string {
+    const dbPath = join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+    const db = new DatabaseSync(dbPath)
+    try {
+      db.exec('PRAGMA journal_mode = DELETE')
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mutation_lock (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          generation_token TEXT NOT NULL,
+          pid INTEGER NOT NULL CHECK (pid > 0),
+          acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+          incarnation TEXT
+        ) STRICT
+      `)
+    } finally {
+      db.close()
+    }
+    return dbPath
+  }
+
+  it('refuses by name instead of throwing when the authority store is too busy to read (WR-05)', () => {
+    const dbPath = seedJournalledAuthorityStore()
+    const blocker = new DatabaseSync(dbPath)
+    blocker.exec('PRAGMA busy_timeout = 0')
+    blocker.exec('BEGIN EXCLUSIVE')
+
+    try {
+      const outcome = acquireWriterLease(knowledgeRoot, {
+        acquireDeadlineMs: 500,
+        mutationLockTakeoverMs: 0,
+      })
+
+      // The promise both callers already publish: a busy store is no attributable owner, and the
+      // refusal is the typed one by name rather than an uncaught SqliteError.
+      expect(outcome).toMatchObject({
+        kind: 'refused',
+        reason: 'mutation-lock-unreclaimable',
+      })
+      if (outcome.kind !== 'refused' || outcome.reason !== 'mutation-lock-unreclaimable') {
+        throw new Error(`expected an unreclaimable refusal, received ${outcome.kind}`)
+      }
+      expect(outcome.observedOwner).toBeUndefined()
+      expect(outcome.error.message).toContain('no mutation-lock owner was readable')
+    } finally {
+      blocker.exec('ROLLBACK')
+      blocker.close()
+    }
+  }, 60_000)
+
+  it('still reads the committed owner once the store is readable again (accepting control)', () => {
+    const dbPath = seedJournalledAuthorityStore()
+    const seeded = new DatabaseSync(dbPath)
+    try {
+      seeded.prepare(`
+        INSERT OR REPLACE INTO mutation_lock
+          (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, ?, ?, ?, ?)
+      `).run('readable-owner-generation', process.pid, Date.now(), null)
+    } finally {
+      seeded.close()
+    }
+    // Contended in exactly the same place, but by a transaction readers may cross: the diagnostics
+    // must name the owner here, or the busy classification above would be indistinguishable from
+    // an unconditional `undefined`.
+    const blocker = new DatabaseSync(dbPath)
+    blocker.exec('PRAGMA busy_timeout = 0')
+    blocker.exec('BEGIN IMMEDIATE')
+
+    try {
+      const outcome = acquireWriterLease(knowledgeRoot, {
+        acquireDeadlineMs: 500,
+        mutationLockTakeoverMs: 60_000,
+      })
+
+      expect(outcome).toMatchObject({
+        kind: 'refused',
+        reason: 'mutation-lock-unreclaimable',
+      })
+      if (outcome.kind !== 'refused' || outcome.reason !== 'mutation-lock-unreclaimable') {
+        throw new Error(`expected an unreclaimable refusal, received ${outcome.kind}`)
+      }
+      expect(outcome.observedOwner).toMatchObject({
+        pid: process.pid,
+        generationToken: 'readable-owner-generation',
+        incarnationAttributed: false,
+      })
+    } finally {
+      blocker.exec('ROLLBACK')
+      blocker.close()
+    }
+  }, 60_000)
+})
+
+/**
+ * IN-04: the lease module's public export surface carries no fallow symbols.
+ *
+ * A symbol exported from the package index and imported by nobody is a claim the package makes
+ * about its own contract that no consumer has ever tested. The two named residuals are checked
+ * from OUTSIDE the module that defines them — through the package index itself — so the assertion
+ * is about the surface rather than about the file.
+ */
+describe('writer lease public export surface (IN-04)', () => {
+  it('publishes no unreachable acquisition-refusal symbols', () => {
+    const surface = publicWriterSurface as unknown as Record<string, unknown>
+    expect(surface.ACQUIRE_WRITER_LEASE_DEADLINE_MS).toBeUndefined()
+    expect(surface.WriterLeaseUnreclaimableError).toBeUndefined()
+    // ...and the refusal is still fully legible without them: the outcome carries the error
+    // instance and its `reason` literal, which is what every rendering call site reads.
+    expect(surface.acquireWriterLease).toBeTypeOf('function')
+    expect(surface.deriveWriterLeaseFreshness).toBeTypeOf('function')
+  })
 })

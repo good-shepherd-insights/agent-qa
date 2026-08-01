@@ -404,8 +404,15 @@ export type {
   MaintenanceTailResult,
   RunMaintenanceTailOptions,
 } from './curator/maintenance.js'
+/**
+ * IN-04: `ACQUIRE_WRITER_LEASE_DEADLINE_MS` and `WriterLeaseUnreclaimableError` are deliberately
+ * NOT re-exported here. Nothing outside `lease/writer-lease.ts` imported either one, and the CLI —
+ * the only surface that renders the refusal — reaches this package through `agent-local`'s
+ * composition edge, so binding them would have meant widening a second package's surface to keep a
+ * symbol company. The refusal is still fully legible to consumers: `AcquireWriterLeaseOutcome`
+ * carries the error instance and its `reason` literal, which is what every call site renders.
+ */
 export {
-  ACQUIRE_WRITER_LEASE_DEADLINE_MS,
   acquireWriterLease,
   CorruptEpochStateError,
   deriveWriterLeaseFreshness,
@@ -423,7 +430,6 @@ export {
   withCurrentWriterAuthority,
   WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
-  WriterLeaseUnreclaimableError,
 } from './lease/writer-lease.js'
 export type {
   AcquireWriterLeaseOptions,

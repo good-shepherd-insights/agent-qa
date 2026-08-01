@@ -61,6 +61,12 @@ export const MUTATION_LOCK_BUSY_TIMEOUT_MS = 2_000
  */
 export const ACQUIRE_WRITER_LEASE_DEADLINE_MS = 60_000
 
+/** Provisional cap on one `ps` incarnation fork; retune from operational evidence without config. */
+const PROCESS_INCARNATION_PS_TIMEOUT_MS = 1_000
+
+/** Provisional floor for that cap — the bounded overshoot argued for at `psIncarnationCapMs`. */
+const PROCESS_INCARNATION_PS_FLOOR_MS = 250
+
 const MUTATION_LOCK_TERMINATION_POLL_MS = 10
 const MUTATION_LOCK_TERMINATION_TIMEOUT_MS = 5_000
 const MUTATION_LOCK_TERMINATION_WAIT = new Int32Array(
@@ -313,16 +319,25 @@ interface MutationLockOwner {
  * Returns `undefined` — never throws — whenever the pid cannot be attributed. `undefined` means
  * "do not signal", never "safe to signal".
  *
+ * WR-04: `timeoutMs` bounds the POSIX arm's `ps` fork, which is the last wait beneath the
+ * acquisition deadline that used to be able to outlive it — a wedged or PATH-shadowed `ps` never
+ * returns, and this resolution sits directly on the pre-signal path. A cap that expires resolves
+ * through the SAME funnel every other failure uses (`undefined`), so a timed-out resolution is
+ * unverifiable and therefore signal-ineligible. Callers with no budget of their own omit it.
+ *
  * 386-32 consumes this same helper for the embedder-worker signal path, so both kill paths speak
  * one incarnation vocabulary.
  */
-export function resolveProcessIncarnation(pid: number): string | undefined {
+export function resolveProcessIncarnation(
+  pid: number,
+  timeoutMs?: number,
+): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
   try {
     if (process.platform === 'win32') return undefined
     return process.platform === 'linux'
       ? resolveLinuxProcessIncarnation(pid)
-      : resolvePosixProcessIncarnation(pid)
+      : resolvePosixProcessIncarnation(pid, timeoutMs)
   } catch {
     return undefined
   }
@@ -344,10 +359,15 @@ function resolveLinuxProcessIncarnation(pid: number): string | undefined {
     : undefined
 }
 
-function resolvePosixProcessIncarnation(pid: number): string | undefined {
+function resolvePosixProcessIncarnation(
+  pid: number,
+  timeoutMs?: number,
+): string | undefined {
   const observed = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], {
     encoding: 'utf8',
     windowsHide: true,
+    // `spawnSync` reads 0 as "no timeout", so an exhausted budget must never arrive here as 0.
+    ...(timeoutMs === undefined ? {} : { timeout: Math.max(1, Math.ceil(timeoutMs)) }),
   })
   if (observed.error !== undefined || observed.status !== 0) return undefined
   const lstart = (observed.stdout ?? '').trim()
@@ -367,7 +387,9 @@ let ownIncarnation: string | undefined | typeof OWN_INCARNATION_UNRESOLVED =
  */
 function ownProcessIncarnation(escalation: MutationEscalationContext = {}): string | undefined {
   if (ownIncarnation === OWN_INCARNATION_UNRESOLVED) {
-    ownIncarnation = resolveProcessIncarnation(process.pid)
+    // The bare cap, not the caller's remainder: this resolution is once per process and happens
+    // before any lock is claimed, so it is not spending an escalation budget.
+    ownIncarnation = resolveProcessIncarnation(process.pid, PROCESS_INCARNATION_PS_TIMEOUT_MS)
     // Reported only on the miss: the memo means later claims cost nothing, and an observer that
     // counted the cached reads would over-report the shell forks production actually pays.
     escalation.onIncarnationResolved?.(process.pid)
@@ -567,6 +589,18 @@ function readMutationLockOwner(db: DatabaseSync): MutationLockOwner | undefined 
   `).get())
 }
 
+/**
+ * Read the committed lock owner as a TYPED ABSENCE, never as a throw.
+ *
+ * Contract: every reason the owner cannot be read answers `undefined` — absent store, table not
+ * created yet, and (WR-05) a store too busy to answer. Both callers already read `undefined` as
+ * "no attributable owner": the busy-catch in `withMutationLock` puts it on a
+ * `MutationLockBusyError`, and the acquisition deadline puts it on the typed
+ * `mutation-lock-unreclaimable` refusal. A raw `SqliteError` escaping here therefore reached
+ * neither of those promises — it propagated out of `acquireWriterLease` uncaught and killed a
+ * starting daemon over contention, which is exactly the state the refusal exists to name.
+ * Every other error still propagates.
+ */
 function readCommittedMutationLockOwner(
   knowledgeRoot: string,
 ): MutationLockOwner | undefined {
@@ -588,6 +622,10 @@ function readCommittedMutationLockOwner(
     // window arrives here and used to crash the daemon with a raw SQL logic error instead of
     // reporting contention.
     if (isMissingMutationLockTable(error)) return undefined
+    // A store whose write lock is held by someone else answers nothing about who committed a
+    // claim. `timeout: 0` is deliberate — this read is diagnostics on a path that has already
+    // decided to refuse, so waiting on it would spend budget to learn a detail.
+    if (isSqliteBusy(error)) return undefined
     throw error
   }
 }
@@ -669,17 +707,45 @@ function waitForVerifiedProcessExit(
 type MutationLockOwnerIdentity = 'match' | 'mismatch' | 'unverifiable'
 
 /**
+ * The `ps` fork's share of the caller's remaining budget (WR-04).
+ *
+ * The caller's remainder is the ceiling, which is what stops one fork from spending a deadline it
+ * does not own. The FLOOR is the part that had to be argued for, because it is the one place this
+ * cap can overshoot: an acquisition whose busy-timeout already consumed the whole deadline arrives
+ * here with nothing left, and a zero-length cap would mean the identity of a genuinely stale owner
+ * can never be re-read at all — turning "the wait is budgeted" (W-05) into "the verified kill is
+ * cancelled", which is a different decision and one 386-40 pinned in the other direction.
+ *
+ * So the fork always gets one short, PINNED allowance: the overshoot is bounded by that constant
+ * rather than by however long a wedged `ps` feels like taking, which is the whole subject of WR-04.
+ * A zero-length cap would also be worse than useless mechanically — `spawnSync` reads 0 as "no
+ * timeout" and would UNBOUND the fork entirely.
+ *
+ * What the floor does NOT do is buy permission: an expired cap still answers `undefined`, which
+ * still answers `unverifiable`, which is still a refusal to signal. No default token, no retry.
+ */
+function psIncarnationCapMs(escalation: MutationEscalationContext): number {
+  const remainingMs = remainingEscalationBudgetMs(escalation)
+  return Math.max(PROCESS_INCARNATION_PS_FLOOR_MS, Math.min(
+    PROCESS_INCARNATION_PS_TIMEOUT_MS,
+    remainingMs ?? PROCESS_INCARNATION_PS_TIMEOUT_MS,
+  ))
+}
+
+/**
  * Compare the row's recorded incarnation against the pid's CURRENT occupant.
  *
  * An unattributed row (legacy bytes, or a claimant that could not resolve its own start time) and
  * an unresolvable pid both answer `unverifiable`, which is a refusal to signal — never a licence.
+ * WR-04: a pid the process table will not report on INSIDE the caller's budget joins that second
+ * class rather than extending the deadline, because the resolution sits on the pre-signal path.
  */
 function verifyMutationLockOwnerIdentity(
   owner: MutationLockOwner,
   escalation: MutationEscalationContext,
 ): MutationLockOwnerIdentity {
   if (owner.incarnation === undefined) return 'unverifiable'
-  const occupant = resolveProcessIncarnation(owner.pid)
+  const occupant = resolveProcessIncarnation(owner.pid, psIncarnationCapMs(escalation))
   escalation.onIncarnationResolved?.(owner.pid)
   if (occupant === undefined) return 'unverifiable'
   return occupant === owner.incarnation ? 'match' : 'mismatch'
