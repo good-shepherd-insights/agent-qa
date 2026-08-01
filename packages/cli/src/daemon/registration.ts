@@ -310,13 +310,6 @@ export async function classifyDaemonRegistration(
   }
 }
 
-export function removeDaemonRegistration(agentQaRoot: string): void {
-  const file = daemonRegistrationPath(agentQaRoot)
-  const existed = existsSync(file)
-  rmSync(file, { force: true })
-  if (existed) bestEffortFsyncDirectory(dirname(file))
-}
-
 export interface RemoveRegistrationIfOwnedOptions {
   /** Test-only barrier immediately before the atomic quarantine rename. */
   readonly beforeQuarantineRename?: () => void

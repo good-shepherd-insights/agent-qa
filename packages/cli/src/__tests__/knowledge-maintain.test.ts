@@ -98,7 +98,6 @@ const daemonHarness = vi.hoisted(() => ({
     | undefined
   ),
   classifyCalls: 0,
-  unconditionalRemovals: 0,
   ownedRemovals: [] as string[],
   obsoleteRemovals: 0,
   ownedRemovalHook: undefined as (((instanceId: string) => boolean | undefined) | undefined),
@@ -215,12 +214,6 @@ vi.mock('../daemon/registration.js', async (importOriginal) => {
           ? {}
           : { operations: { fetchIdentity: daemonHarness.identityHook } }),
       })
-    }),
-    // Plan 22's prohibition, recorded rather than asserted by grep: no client path may reach
-    // the unconditional delete.
-    removeDaemonRegistration: vi.fn((agentQaRoot: string) => {
-      daemonHarness.unconditionalRemovals += 1
-      actual.removeDaemonRegistration(agentQaRoot)
     }),
     removeRegistrationIfOwned: vi.fn((
       agentQaRoot: string,
@@ -668,7 +661,6 @@ describe('knowledge maintenance commands', () => {
     daemonHarness.nudgeHook = undefined
     daemonHarness.identityHook = undefined
     daemonHarness.classifyCalls = 0
-    daemonHarness.unconditionalRemovals = 0
     daemonHarness.ownedRemovals.splice(0)
     daemonHarness.obsoleteRemovals = 0
     daemonHarness.ownedRemovalHook = undefined
@@ -728,6 +720,14 @@ describe('knowledge maintenance commands', () => {
     )
     expect(source).toContain('classifyDaemonRegistration')
     expect(source).not.toContain('recoverStaleDaemonRegistration')
+    // Plan 22's prohibition, and I-01's closure. This replaced a `unconditionalRemovals === 0`
+    // counter on a module mock: the counter could only ever say "not called on these schedules",
+    // while the surface itself no longer exists to be called on any schedule at all.
+    expect(source).not.toContain('removeDaemonRegistration')
+    // Pinned non-vacuous: the compare-delete pair this command DOES use must still be here, so a
+    // renamed or emptied file cannot satisfy the assertion above.
+    expect(source).toContain('removeRegistrationIfOwned')
+    expect(source).toContain('removeObsoleteDaemonRegistrationIfExpected')
   })
 
   it('refuses to guess a drain mode from a malformed daemon registration', async () => {
@@ -754,7 +754,6 @@ describe('knowledge maintenance commands', () => {
     expect(result.exitCode).toBeUndefined()
     expect(result.stdout).toContain('Knowledge curation queue drained inline')
     expect(daemonHarness.ownedRemovals).toEqual([DAEMON_INSTANCE_ID])
-    expect(daemonHarness.unconditionalRemovals).toBe(0)
     expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
     expect(commandHarness.drainQueueCalls).toBe(1)
   })
@@ -881,7 +880,6 @@ describe('knowledge maintenance commands', () => {
     expect(result.exitCode).toBeUndefined()
     expect(result.stdout).toContain('Knowledge curation queue drained inline')
     expect(daemonHarness.obsoleteRemovals).toBe(1)
-    expect(daemonHarness.unconditionalRemovals).toBe(0)
     expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
     expect(commandHarness.drainQueueCalls).toBe(1)
   })
@@ -938,7 +936,6 @@ describe('knowledge maintenance commands', () => {
     expect(result.stderr).toContain(LIVE_LEASE_ID)
     expect(commandHarness.drainQueueCalls).toBe(0)
     expect(daemonHarness.ownedRemovals).toEqual([])
-    expect(daemonHarness.unconditionalRemovals).toBe(0)
     expect(readFileSync(daemonRegistrationPath(workspace.runtimeRoot)))
       .toEqual(registrationBefore)
     expect(readFileSync(join(workspace.knowledgeRoot, '.lease'))).toEqual(leaseBefore)

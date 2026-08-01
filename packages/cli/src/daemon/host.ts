@@ -56,7 +56,6 @@ import {
   classifyDaemonRegistration,
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   readDaemonRegistration,
-  removeDaemonRegistration,
   removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
@@ -181,7 +180,6 @@ export interface DaemonHostOperations {
   composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   appendDaemonEvent(agentQaRoot: string, event: DaemonEvent): void
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
-  removeDaemonRegistration(agentQaRoot: string): void
   removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): RemoveRegistrationOutcome
   removeObsoleteDaemonRegistrationIfExpected(
     agentQaRoot: string,
@@ -337,7 +335,6 @@ function defaultOperations(): DaemonHostOperations {
     composeLocalAgent,
     appendDaemonEvent,
     writeDaemonRegistration,
-    removeDaemonRegistration,
     removeRegistrationIfOwned,
     removeObsoleteDaemonRegistrationIfExpected,
     unlinkDaemonSocket,

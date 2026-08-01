@@ -341,7 +341,6 @@ function startHarness(
       close: () => Promise.resolve(),
     }),
     writeDaemonRegistration: vi.fn(),
-    removeDaemonRegistration: vi.fn(),
     appendDrainSessionReceipt: vi.fn(),
     appendDaemonEvent: (_agentQaRoot: string, event: Record<string, unknown>) => {
       events.push(event)

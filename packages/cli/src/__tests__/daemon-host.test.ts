@@ -68,7 +68,6 @@ import {
   classifyDaemonRegistration,
   inspectDaemonRegistration,
   readDaemonRegistration,
-  removeDaemonRegistration,
   removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
@@ -1083,18 +1082,26 @@ describe('daemon registration instance ownership and readiness', () => {
     ]))
 
     const hostSource = readFileSync(new URL('../daemon/host.ts', import.meta.url), 'utf8')
-    const surface = hostSource.slice(
-      hostSource.indexOf('export interface DaemonHostOperations {'),
-      hostSource.indexOf('function defaultOperations(): DaemonHostOperations {'),
-    )
-    const bindings = hostSource.slice(
-      hostSource.indexOf('function defaultOperations(): DaemonHostOperations {'),
-      hostSource.indexOf('export async function runDaemonHost('),
-    )
-    // Both slices are pinned non-empty AND pinned to still carry the members that belong there:
-    // a marker that drifts would otherwise make every assertion below vacuously true.
-    for (const [label, region] of [['surface', surface], ['bindings', bindings]] as const) {
-      expect(region.length, `${label} slice must not be empty`).toBeGreaterThan(0)
+    // Markers are RESOLVED before they are used. `indexOf` answers -1 for a marker that has
+    // drifted, and `slice(start, -1)` then hands back most of the file — a region that still
+    // contains the members the positive pins look for and still lacks the one the negative pin
+    // forbids. The gate would pass while measuring the wrong thing entirely.
+    const at = (marker: string): number => {
+      const index = hostSource.indexOf(marker)
+      expect(index, `host.ts no longer contains the marker \`${marker}\``).toBeGreaterThan(-1)
+      return index
+    }
+    const surfaceStart = at('export interface DaemonHostOperations {')
+    const bindingsStart = at('function defaultOperations(): DaemonHostOperations {')
+    const bindingsEnd = at('export async function runDaemonHost(')
+    expect(surfaceStart).toBeLessThan(bindingsStart)
+    expect(bindingsStart).toBeLessThan(bindingsEnd)
+
+    const regions = [
+      ['operations surface', hostSource.slice(surfaceStart, bindingsStart)],
+      ['default bindings', hostSource.slice(bindingsStart, bindingsEnd)],
+    ] as const
+    for (const [label, region] of regions) {
       expect(region, `${label} must still carry the compare-delete members`)
         .toContain('removeRegistrationIfOwned')
       expect(region).toContain('removeObsoleteDaemonRegistrationIfExpected')
@@ -1438,7 +1445,6 @@ describe('daemon registration recovery at boot', () => {
       operations: {
         ...harness.operations,
         acquireWriterLease: acquire,
-        removeDaemonRegistration,
       },
       logger: { info: vi.fn(), error: vi.fn() },
     })
@@ -1603,7 +1609,6 @@ describe('daemon registration recovery at boot', () => {
     const acquire = vi.fn(() => {
       throw new Error('startup contended for authority against a live successor')
     })
-    const unconditionalRemove = vi.fn(removeDaemonRegistration)
     const errors: string[] = []
     let outcome: unknown
 
@@ -1616,7 +1621,6 @@ describe('daemon registration recovery at boot', () => {
         operations: {
           classifyDaemonRegistration: classify,
           acquireWriterLease: acquire as never,
-          removeDaemonRegistration: unconditionalRemove,
         },
         logger: { info: vi.fn(), error: (message) => errors.push(message) },
       }).catch((error: unknown) => error)
@@ -1631,7 +1635,6 @@ describe('daemon registration recovery at boot', () => {
       'the late starter deleted a registration it never classified',
     ).toBe(true)
     expect(readFileSync(registrationFile)).toEqual(successorBytes)
-    expect(unconditionalRemove).not.toHaveBeenCalled()
     expect(acquire).not.toHaveBeenCalled()
     expect(classify.mock.calls.length).toBe(2)
     expect(errors).toEqual([expect.stringContaining('daemon registration since')])
@@ -1690,7 +1693,6 @@ describe('daemon registration recovery at boot', () => {
     })
     const harness = hostHarness(nowMs)
     const removeOwned = vi.fn(removeRegistrationIfOwned)
-    const unconditionalRemove = vi.fn(removeDaemonRegistration)
 
     const running = runDaemonHost({
       agentQaRoot: paths.agentQaRoot,
@@ -1700,7 +1702,6 @@ describe('daemon registration recovery at boot', () => {
       operations: {
         ...harness.operations,
         removeRegistrationIfOwned: removeOwned,
-        removeDaemonRegistration: unconditionalRemove,
       },
       logger: { info: vi.fn(), error: vi.fn() },
     })
@@ -1714,7 +1715,6 @@ describe('daemon registration recovery at boot', () => {
       { recorded: existsSync(recordedSocket), bystander: existsSync(bystanderSocket) },
       'cleanup must unlink the recorded socket and only the recorded socket',
     ).toEqual({ recorded: false, bystander: true })
-    expect(unconditionalRemove).not.toHaveBeenCalled()
     expect(removeOwned).toHaveBeenCalledWith(paths.agentQaRoot, HOST_INSTANCE_ID)
     expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
       kind: 'registration-recovered',
