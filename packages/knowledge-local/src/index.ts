@@ -405,6 +405,7 @@ export type {
   RunMaintenanceTailOptions,
 } from './curator/maintenance.js'
 export {
+  ACQUIRE_WRITER_LEASE_DEADLINE_MS,
   acquireWriterLease,
   CorruptEpochStateError,
   heartbeatLease,
@@ -423,9 +424,12 @@ export {
   withCurrentWriterAuthority,
   WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
+  WriterLeaseUnreclaimableError,
 } from './lease/writer-lease.js'
 export type {
+  AcquireWriterLeaseOptions,
   AcquireWriterLeaseOutcome,
+  UnreclaimableMutationLockOwner,
   CorruptEpochStateReason,
   CurrentWriterAuthority,
   CurrentWriterAuthorityHooks,

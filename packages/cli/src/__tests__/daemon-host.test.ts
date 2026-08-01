@@ -14,6 +14,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -23,6 +24,7 @@ import {
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
   releaseLease,
+  WRITER_AUTHORITY_DB_FILE,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
 import type { CuratorAuthor } from '@vostride/agent-qa-agent-local'
@@ -1263,6 +1265,61 @@ describe('daemon registration recovery at boot', () => {
     expect(errors[0]).toContain(`pid ${process.pid}`)
     expect(readFileSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toEqual(before)
   })
+
+  it('exits non-zero naming the refusal when the writer lease is unreclaimable (V-02)', async () => {
+    const paths = makePaths('boot-unreclaimable')
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    const dbPath = join(paths.knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+
+    // The verifier's Probe A shape reached through the real daemon entry point: an unattributable
+    // mutation-lock row (escalation can never fire) plus a genuinely held write transaction.
+    const seed = new DatabaseSync(dbPath)
+    try {
+      seed.exec('PRAGMA journal_mode = WAL')
+      seed.exec(`
+        CREATE TABLE IF NOT EXISTS mutation_lock (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          generation_token TEXT NOT NULL,
+          pid INTEGER NOT NULL CHECK (pid > 0),
+          acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+          incarnation TEXT
+        ) STRICT
+      `)
+      seed.prepare(`
+        INSERT OR REPLACE INTO mutation_lock
+          (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, 'wedged-generation', ?, ?, NULL)
+      `).run(process.pid, Date.now())
+    } finally {
+      seed.close()
+    }
+
+    const blocker = new DatabaseSync(dbPath)
+    blocker.exec('PRAGMA busy_timeout = 250')
+    blocker.exec('BEGIN IMMEDIATE')
+    const errors: string[] = []
+    try {
+      await expect(runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        config: TEST_CONFIG,
+        model: () => TEST_MODEL,
+        operations: {
+          acquireWriterLease: (knowledgeRoot) => acquireWriterLease(knowledgeRoot, {
+            acquireDeadlineMs: 1_500,
+          }),
+        },
+        logger: { info: vi.fn(), error: (message) => errors.push(message) },
+      })).resolves.toBe(1)
+    } finally {
+      blocker.exec('ROLLBACK')
+      blocker.close()
+    }
+
+    expect(errors.join('\n')).toContain('mutation-lock-unreclaimable')
+    expect(errors.join('\n')).toContain(`pid ${process.pid}`)
+    expect(errors.join('\n')).toContain('unattributed')
+  }, 30_000)
 
   it('keeps a successor registration published between classification and cleanup', async () => {
     // Short label: the successor's socket path is explicit here and must stay inside the

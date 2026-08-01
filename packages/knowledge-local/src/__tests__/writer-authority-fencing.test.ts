@@ -1189,6 +1189,11 @@ describe('writer authority and bundle publication are one indivisible protocol (
     if (outcome.kind !== 'refused') throw new Error('corrupt epoch acquisition was not refused')
     expect(expectedSurface.CorruptEpochStateError).toBeTypeOf('function')
     expect(outcome).toMatchObject({ reason: 'corrupt-epoch-state' })
+    // 386-36 added a second `refused` reason, so the arm is narrowed before its payload is read.
+    // Every assertion below is the one this case always made.
+    if (outcome.reason !== 'corrupt-epoch-state') {
+      throw new Error(`corrupt epoch acquisition refused for the wrong reason: ${outcome.reason}`)
+    }
     expect(outcome.error).toBeInstanceOf(expectedSurface.CorruptEpochStateError)
     expect(outcome.error).toMatchObject({ path: file, reason })
     expect(outcome.error.rawPreview.length).toBeGreaterThan(0)

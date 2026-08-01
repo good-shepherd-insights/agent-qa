@@ -60,6 +60,21 @@ export const WRITER_AUTHORITY_DB_FILE = '.writer-authority.sqlite'
  */
 export const MUTATION_LOCK_BUSY_TIMEOUT_MS = 2_000
 
+/**
+ * Provisional acquisition deadline; retune from operational evidence without adding config.
+ *
+ * V-02: the retry loop's only exits used to be facts about the lease and the lock, and a state the
+ * phase itself models — an epoch-invalid lease kept fresh by a renewal sidecar while a live owner
+ * holds the authority transaction — satisfies none of them. A contender then spins on the caller's
+ * main thread forever, which is what `agent-qa daemon` startup and `agent-qa knowledge drain` do.
+ *
+ * The bound is therefore anchored OUTSIDE that vocabulary: a monotonic clock reading taken at loop
+ * entry plus an attempt counter, neither of which any on-disk value can influence. Deliberately
+ * greater than MUTATION_LOCK_TAKEOVER_MS so a legitimate escalated takeover still fits inside the
+ * budget and the deadline never pre-empts a reclaim that was going to succeed.
+ */
+export const ACQUIRE_WRITER_LEASE_DEADLINE_MS = 60_000
+
 const MUTATION_LOCK_TERMINATION_POLL_MS = 10
 const MUTATION_LOCK_TERMINATION_TIMEOUT_MS = 5_000
 const MUTATION_LOCK_TERMINATION_WAIT = new Int32Array(
@@ -92,6 +107,15 @@ export type ReadLeaseRenewalOutcome =
   | { kind: 'malformed' }
   | { kind: 'parsed'; renewal: LeaseRenewal }
 
+/** What the contender could observe about the owner it gave up on; never an authority claim. */
+export interface UnreclaimableMutationLockOwner {
+  pid: number
+  acquiredAtMs: number
+  generationToken: string
+  /** False when the row carries no incarnation, which is why escalation could never fire. */
+  incarnationAttributed: boolean
+}
+
 export type AcquireWriterLeaseOutcome =
   | { kind: 'held'; holder: WriterLease }
   | { kind: 'acquired'; leaseId: string; epoch: number; reclaimed?: WriterLease }
@@ -99,6 +123,24 @@ export type AcquireWriterLeaseOutcome =
       kind: 'refused'
       reason: 'corrupt-epoch-state'
       error: CorruptEpochStateError
+    }
+  | {
+      kind: 'refused'
+      reason: 'mutation-lock-unreclaimable'
+      /**
+       * Both refusal arms carry a thrown-shaped `error` ON PURPOSE.
+       *
+       * Every caller of this union already renders `refused` as `[reason]: error.message` or
+       * rethrows it, so a new arm that also carries one is surfaced by name at every entry point —
+       * including any added later — without a list of call sites to keep in step. Naming the
+       * refusal is the requirement; enumerating the callers who must name it is the failure mode
+       * this phase keeps rediscovering.
+       */
+      error: WriterLeaseUnreclaimableError
+      attempts: number
+      waitedMs: number
+      observedOwner?: UnreclaimableMutationLockOwner
+      observedLease?: WriterLease
     }
 
 export interface LeaseOperationOptions {
@@ -185,6 +227,50 @@ export class CorruptEpochStateError extends Error {
     this.path = path
     this.reason = reason
     this.rawPreview = rawPreview
+  }
+}
+
+/**
+ * Fail-closed acquisition refusal after the deadline; carries why the wait could not end well.
+ *
+ * A contender that gives up is reporting a fact about the SYSTEM, not about itself, so the
+ * diagnostics travel with the error: the owner it kept losing to, whether that owner was even
+ * attributable (an unattributed row can never be escalated against, which is usually the whole
+ * story), and the lease it kept reading. `agent-qa daemon` prints this and exits non-zero where it
+ * previously hung with no output at all.
+ */
+export class WriterLeaseUnreclaimableError extends Error {
+  override readonly name = 'WriterLeaseUnreclaimableError'
+  readonly reason = 'mutation-lock-unreclaimable' as const
+  readonly attempts: number
+  readonly waitedMs: number
+  readonly observedOwner?: UnreclaimableMutationLockOwner
+  readonly observedLease?: WriterLease
+
+  constructor(
+    attempts: number,
+    waitedMs: number,
+    observedOwner?: UnreclaimableMutationLockOwner,
+    observedLease?: WriterLease,
+  ) {
+    super(
+      `writer lease acquisition refused (mutation-lock-unreclaimable) after ${attempts} `
+      + `attempts over ${Math.round(waitedMs)}ms; `
+      + (observedOwner === undefined
+        ? 'no mutation-lock owner was readable'
+        : `mutation lock held by pid ${observedOwner.pid} (generation `
+          + `${observedOwner.generationToken}, incarnation `
+          + `${observedOwner.incarnationAttributed ? 'attributed' : 'unattributed'})`)
+      + '; '
+      + (observedLease === undefined
+        ? 'no parseable lease on disk'
+        : `lease ${observedLease.leaseId} at epoch ${observedLease.epoch} held by pid `
+          + `${observedLease.pid}`),
+    )
+    this.attempts = attempts
+    this.waitedMs = waitedMs
+    if (observedOwner !== undefined) this.observedOwner = observedOwner
+    if (observedLease !== undefined) this.observedLease = observedLease
   }
 }
 
@@ -329,6 +415,17 @@ export interface MutationLockOptions {
   mutationLockTakeoverMs?: number
 }
 
+export interface AcquireWriterLeaseOptions extends MutationLockOptions {
+  /**
+   * Test/chaos seam for the pinned acquisition deadline; production never sets it.
+   *
+   * The same shape as `mutationLockTakeoverMs` and the heartbeat supervisor's `stopTimeoutMs`: a
+   * real unreclaimable wait is 60 s, which no test can afford to sit through, and shortening the
+   * window is the only way to reach the refusal branch (D-15 — a seam, never a config key).
+   */
+  acquireDeadlineMs?: number
+}
+
 export interface CurrentWriterAuthority {
   leaseId: string
   epoch: number
@@ -355,6 +452,17 @@ class MutationLockGenerationLostError extends Error {
 
 function mutationLockNowMs(): number {
   return new Date().getTime()
+}
+
+/**
+ * Elapsed milliseconds from a `process.hrtime.bigint()` reading, immune to wall-clock movement.
+ *
+ * The acquisition deadline must not be extendable by anything the contended state can influence,
+ * and a wall clock can be stepped backwards by NTP or by a test's own `Date.now` stub. This is the
+ * external anchor the bound is measured against.
+ */
+function monotonicElapsedMs(startedAtNs: bigint): number {
+  return Number(process.hrtime.bigint() - startedAtNs) / 1e6
 }
 
 function processIsAlive(pid: number): boolean {
@@ -462,8 +570,19 @@ function readCommittedMutationLockOwner(
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    // A store file whose `mutation_lock` table does not exist yet reads exactly like an absent
+    // store: nobody has committed a claim. This is reachable — `openWriterAuthorityDb` creates
+    // the store file before `CREATE TABLE`, so a contender that loses the write lock in that
+    // window arrives here and used to crash the daemon with a raw SQL logic error instead of
+    // reporting contention.
+    if (isMissingMutationLockTable(error)) return undefined
     throw error
   }
+}
+
+function isMissingMutationLockTable(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ERR_SQLITE_ERROR'
+    && /no such table: mutation_lock/i.test((error as Error).message)
 }
 
 function mutationLockGenerationIsCurrent(
@@ -951,7 +1070,7 @@ function isCurrentHolder(
 /** Return a live holder or atomically mint a new, monotonically fenced writer identity. */
 export function acquireWriterLease(
   knowledgeRoot: string,
-  hooks?: MutationLockOptions,
+  hooks?: AcquireWriterLeaseOptions,
 ): AcquireWriterLeaseOutcome {
   assertAbsoluteKnowledgeRoot(knowledgeRoot)
   try {
@@ -970,7 +1089,12 @@ export function acquireWriterLease(
     return { kind: 'held', holder: beforeLock.lease }
   }
 
+  const deadlineMs = hooks?.acquireDeadlineMs ?? ACQUIRE_WRITER_LEASE_DEADLINE_MS
+  const startedAtNs = process.hrtime.bigint()
+  let attempts = 0
+
   while (true) {
+    attempts += 1
     try {
       return withMutationLock(knowledgeRoot, () => {
         let observedEpoch: number
@@ -1026,6 +1150,38 @@ export function acquireWriterLease(
       const current = readWriterLease(knowledgeRoot)
       if (current.kind === 'parsed' && leaseEpochIsCurrent(knowledgeRoot, current.lease)) {
         return { kind: 'held', holder: current.lease }
+      }
+      /**
+       * The outermost exit, and the only one anchored outside this module's own vocabulary.
+       *
+       * It is checked AFTER the `held` narrow above, so a contender that could have answered
+       * `held` always does; the deadline never converts a good answer into a refusal. It is also
+       * strictly larger than MUTATION_LOCK_TAKEOVER_MS, so a reclaim that was going to happen has
+       * already had its chance by the time this fires.
+       */
+      const waitedMs = monotonicElapsedMs(startedAtNs)
+      if (waitedMs >= deadlineMs) {
+        const observedOwner = readCommittedMutationLockOwner(knowledgeRoot)
+        const error = new WriterLeaseUnreclaimableError(
+          attempts,
+          waitedMs,
+          observedOwner === undefined ? undefined : {
+            pid: observedOwner.pid,
+            acquiredAtMs: observedOwner.acquiredAtMs,
+            generationToken: observedOwner.generationToken,
+            incarnationAttributed: observedOwner.incarnation !== undefined,
+          },
+          current.kind === 'parsed' ? current.lease : undefined,
+        )
+        return {
+          kind: 'refused',
+          reason: 'mutation-lock-unreclaimable',
+          error,
+          attempts,
+          waitedMs,
+          ...(error.observedOwner === undefined ? {} : { observedOwner: error.observedOwner }),
+          ...(error.observedLease === undefined ? {} : { observedLease: error.observedLease }),
+        }
       }
       Atomics.wait(
         MUTATION_LOCK_TERMINATION_WAIT,
