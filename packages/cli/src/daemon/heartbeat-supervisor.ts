@@ -22,22 +22,13 @@ type HeartbeatSupervisorRefusalReason = Extract<
   { kind: 'refused' }
 >['reason']
 
+/**
+ * Exactly three payload kinds cross the thread boundary: a beat landed, a beat was refused by
+ * name, or the beat threw. There is no contention kind, because the beat no longer takes the
+ * mutation lock and so cannot be contended by hosted work.
+ */
 export type HeartbeatSupervisorMessage =
   | { readonly kind: 'heartbeated'; readonly holder: HeartbeatSupervisorHolder }
-  | {
-      readonly kind: 'deferred'
-      readonly reason: 'mutation-lock-busy'
-      /**
-       * The wedged/busy discriminator, forwarded verbatim from the heartbeat outcome.
-       *
-       * The worker is a courier here, not a judge: the threshold lives beside
-       * MUTATION_LOCK_TAKEOVER_MS in the lease module, so a second copy of it cannot drift into
-       * this package. What crosses the thread boundary is the fact, already decided.
-       */
-      readonly mutationGeneration?: string
-      readonly deferredSinceMs?: number
-      readonly stalled?: boolean
-    }
   | {
       readonly kind: 'refused'
       readonly reason: HeartbeatSupervisorRefusalReason
@@ -124,20 +115,9 @@ function heartbeat() {
       schedule(intervalMs)
       return
     }
-    // CR-03: a renewal deferred to the lock-free sidecar is a healthy beat, not a failure. The
-    // recurrence stays armed at its normal cadence so the next strong beat lands as soon as the
-    // governed mutation commits. Only a typed refusal is authority loss.
-    if (outcome.kind === 'deferred') {
-      parentPort.postMessage({
-        kind: 'deferred',
-        reason: outcome.reason,
-        mutationGeneration: outcome.mutationGeneration,
-        deferredSinceMs: outcome.deferredSinceMs,
-        stalled: outcome.stalled,
-      })
-      schedule(intervalMs)
-      return
-    }
+    // CR-03: the beat writes the lease file directly and never enters the mutation lock, so a
+    // governed mutation of any length cannot starve it and there is no contention outcome to
+    // forward. Only a typed refusal is authority loss.
     loopHalted = true
     parentPort.postMessage({
       kind: 'refused',
@@ -146,10 +126,10 @@ function heartbeat() {
       observedEpoch: outcome.observedEpoch,
     })
   } catch (error) {
-    // I-02: contention is not handled here, because it never arrives here. heartbeatLease owns the
-    // conversion of a busy mutation lock to the 'deferred' outcome above, so anything that reaches
-    // this catch is a genuine failure and halts the loop. A retry branch for the throw that cannot
-    // cross this boundary was a second, silent contention policy sitting beside the real one.
+    // I-02: contention is not handled here, because it never arrives here. The beat takes no lock
+    // to be contended for, so anything that reaches this catch is a genuine failure and halts the
+    // loop. A retry branch for a throw that cannot cross this boundary was a second, silent
+    // contention policy sitting beside the real one.
     loopHalted = true
     parentPort.postMessage({
       kind: 'error',
@@ -173,7 +153,6 @@ function isWorkerMessage(value: unknown): value is WorkerMessage {
   return kind === 'ready'
     || kind === 'stopped'
     || kind === 'heartbeated'
-    || kind === 'deferred'
     || kind === 'refused'
     || kind === 'error'
 }

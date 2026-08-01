@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path'
 import type {
   ReadWriterLeaseOutcome,
   WriterLease,
+  WriterLeaseFreshness,
 } from '@vostride/agent-qa-agent-local'
 import { LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { z } from 'zod'
@@ -86,13 +87,18 @@ export interface DaemonRegistrationClassificationOperations {
   fetchIdentity(registration: DaemonRegistration): Promise<DaemonIdentity>
   readWriterLease(knowledgeRoot: string): ReadWriterLeaseOutcome
   /**
-   * Composite freshness (386-29), never the lease file alone.
+   * The three-valued freshness verdict, never the lease file alone.
    *
-   * A daemon inside a long governed mutation cannot rewrite its own lease — that is precisely
-   * the schedule the renewal sidecar exists for — so classifying on the file would call a
-   * healthy holder recoverable and hand its work to a thief.
+   * Recoverability is not a boolean: the epoch a holder is judged against can be unreadable, and
+   * that is a different fact from an expired lease. This classifier drives registration deletion
+   * and socket unlink, so it names the third value explicitly below rather than letting it
+   * collapse into whichever boolean happened to be convenient.
    */
-  isWriterLeaseFresh(knowledgeRoot: string, lease: WriterLease, nowMs: number): boolean
+  deriveWriterLeaseFreshness(
+    knowledgeRoot: string,
+    lease: WriterLease,
+    nowMs: number,
+  ): WriterLeaseFreshness
   now(): number
   setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>
   clearTimeout(timer: ReturnType<typeof setTimeout>): void
@@ -232,7 +238,7 @@ class DaemonIdentityHandshakeTimeoutError extends Error {
 const DEFAULT_CLASSIFICATION_OPERATIONS: DaemonRegistrationClassificationOperations = {
   fetchIdentity: (registration) => fetchDaemonIdentity(registration.socketPath),
   readWriterLease: LOCAL_DAEMON_CAPABILITIES.readWriterLease,
-  isWriterLeaseFresh: LOCAL_DAEMON_CAPABILITIES.isWriterLeaseFresh,
+  deriveWriterLeaseFreshness: LOCAL_DAEMON_CAPABILITIES.deriveWriterLeaseFreshness,
   now: () => Date.now(),
   setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
   clearTimeout: (timer) => clearTimeout(timer),
@@ -291,22 +297,39 @@ export async function classifyDaemonRegistration(
   }
 
   const lease = operations.readWriterLease(input.knowledgeRoot)
-  if (
-    lease.kind === 'parsed'
-    && operations.isWriterLeaseFresh(input.knowledgeRoot, lease.lease, operations.now())
-  ) {
-    return {
-      kind: 'unreachable-lease-fresh',
-      registration: outcome.registration,
-      holder: lease.lease,
-      identityFailure,
-    }
-  }
-  return {
+  const staleOutcome: ClassifyDaemonRegistrationOutcome = {
     kind: 'unreachable-lease-stale',
     registration: outcome.registration,
     lease,
     identityFailure,
+  }
+  if (lease.kind !== 'parsed') return staleOutcome
+
+  const verdict = operations.deriveWriterLeaseFreshness(
+    input.knowledgeRoot,
+    lease.lease,
+    operations.now(),
+  )
+  switch (verdict.kind) {
+    case 'fresh':
+    /**
+     * CR-01: `unknown` answers held, with the same holder payload as `fresh`.
+     *
+     * This verdict selects registration deletion and socket unlink, and the two preconditions
+     * are correlated rather than independent — fd exhaustion produces both the failed identity
+     * handshake and the unreadable epoch at once. Treating "I could not read the authority
+     * state" as "nobody holds it" therefore de-registers a live, healthy daemon precisely when
+     * the host is under stress. The refusal is the only recoverable answer.
+     */
+    case 'unknown':
+      return {
+        kind: 'unreachable-lease-fresh',
+        registration: outcome.registration,
+        holder: lease.lease,
+        identityFailure,
+      }
+    case 'reclaimable':
+      return staleOutcome
   }
 }
 

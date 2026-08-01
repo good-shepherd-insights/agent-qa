@@ -1609,27 +1609,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       })
       return
     }
-    // CR-03: the lease is still ours; renewal simply rode the sidecar because a governed mutation
-    // held the authority transaction. Record the fact and keep serving — this is not lease loss.
-    //
-    // W-02: still not lease loss, but no longer one undifferentiated fact. A holder stuck on ONE
-    // generation past the takeover deadline is wedged, and 386-29 made that state both invisible
-    // and unrecoverable. It stays recoverable through the composite's bound; this makes it
-    // legible to whoever reads daemon-events.jsonl afterwards (D-04).
-    if (heartbeat.kind === 'deferred') {
-      recordDaemonEvent({
-        kind: heartbeat.stalled === true ? 'lease-renewal-stalled' : 'lease-renewal-deferred',
-        reason: heartbeat.reason,
-        ...(heartbeat.mutationGeneration === undefined
-          ? {}
-          : { mutationGeneration: heartbeat.mutationGeneration }),
-        ...(heartbeat.deferredSinceMs === undefined
-          ? {}
-          : { deferredSinceMs: heartbeat.deferredSinceMs }),
-      })
-      return
-    }
-
     const failAuthority = (): void => {
       if (shutdownPromise !== undefined) return
       if (heartbeat.kind === 'refused') {
@@ -1723,28 +1702,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       kind: 'epoch-bump',
       epoch: acquired.epoch,
     })
-    if (initialHeartbeat.kind === 'deferred') {
-      // The lease we just acquired is fresh by construction; renewal only rode the sidecar
-      // because a governed mutation already held the authority transaction. A stall inherited
-      // from a predecessor's in-flight mutation is still worth recording as one.
-      recordDaemonEvent({
-        kind: initialHeartbeat.stalled ? 'lease-renewal-stalled' : 'lease-renewal-deferred',
-        reason: initialHeartbeat.reason,
-        ...(initialHeartbeat.mutationGeneration === undefined
-          ? {}
-          : { mutationGeneration: initialHeartbeat.mutationGeneration }),
-        ...(initialHeartbeat.deferredSinceMs === undefined
-          ? {}
-          : { deferredSinceMs: initialHeartbeat.deferredSinceMs }),
-      })
-    } else {
-      recordDaemonEvent({
-        kind: 'lease-heartbeated',
-        pid: initialHeartbeat.holder.pid,
-        epoch: initialHeartbeat.holder.epoch,
-        heartbeatAtMs: initialHeartbeat.holder.heartbeatAtMs,
-      })
-    }
+    // The initial beat is heartbeated or refused only; the refusal already shut the host down
+    // above, so reaching here means the lease we just acquired was refreshed on disk.
+    recordDaemonEvent({
+      kind: 'lease-heartbeated',
+      pid: initialHeartbeat.holder.pid,
+      epoch: initialHeartbeat.holder.epoch,
+      heartbeatAtMs: initialHeartbeat.holder.heartbeatAtMs,
+    })
 
     const model = await input.model()
     recovery = operations.composeJobRecovery({

@@ -145,6 +145,7 @@ export type {
   ReadWriterLeaseOutcome,
   ReleaseLeaseOutcome,
   WriterLease,
+  WriterLeaseFreshness,
 } from './composition/compose-local-agent.js'
 
 // A standing host adopts the durable queue through this recovery entry before it opens the

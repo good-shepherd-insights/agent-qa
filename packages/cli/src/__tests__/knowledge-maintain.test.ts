@@ -570,19 +570,6 @@ function armForeignDaemonIdentity(): void {
   })
 }
 
-function plantRenewalSidecar(
-  workspace: FixtureWorkspace,
-  leaseId: string,
-  heartbeatAtMs: number,
-): void {
-  mkdirSync(workspace.knowledgeRoot, { recursive: true })
-  writeFileSync(
-    join(workspace.knowledgeRoot, '.lease-renewal'),
-    `${JSON.stringify({ leaseId, heartbeatAtMs })}\n`,
-    'utf8',
-  )
-}
-
 function seedPendingCandidate(workspace: FixtureWorkspace, candidateId: string): string {
   const dir = queuedCandidateDir(workspace.knowledgeRoot, candidateId)
   mkdirSync(dir, { recursive: true })
@@ -902,14 +889,14 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.drainQueueCalls).toBe(1)
   })
 
-  it('fails closed naming the holder when an unreachable daemon is still renewing', async () => {
-    // Real timers: the sidecar's freshness IS the subject, so a clock this test advances would
-    // age out the very fact the case exists to honour.
+  it('fails closed naming the holder when an unreachable daemon is still beating', async () => {
+    // Real timers: the holder's freshness IS the subject, so a clock this test advances would age
+    // out the very fact the case exists to honour.
     const nowMs = Date.now()
     const workspace = fixtureWorkspace(roots)
     seedPendingCandidate(workspace, FIRST_CANDIDATE_ID)
-    // The lease FILE has aged out because the holder's own governed mutation owns the lock;
-    // 386-29's sidecar is what proves it is still alive.
+    // The holder is inside a long governed mutation, and its beat is independent of that work, so
+    // the lease FILE it publishes is what proves it is still alive.
     mkdirSync(join(workspace.knowledgeRoot, 'memory', 'index'), { recursive: true })
     writeFileSync(join(workspace.knowledgeRoot, '.epoch'), '7\n', 'utf8')
     writeFileSync(
@@ -918,11 +905,10 @@ describe('knowledge maintenance commands', () => {
         leaseId: LIVE_LEASE_ID,
         pid: 4242,
         epoch: 7,
-        heartbeatAtMs: nowMs - 90_000,
+        heartbeatAtMs: nowMs,
       })}\n`,
       'utf8',
     )
-    plantRenewalSidecar(workspace, LIVE_LEASE_ID, nowMs)
     plantDaemonRegistration(workspace)
     armForeignDaemonIdentity()
     const registrationBefore = readFileSync(daemonRegistrationPath(workspace.runtimeRoot))

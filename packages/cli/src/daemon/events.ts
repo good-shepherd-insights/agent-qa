@@ -21,8 +21,6 @@ export const DAEMON_EVENT_KINDS = [
   'lease-acquired',
   'lease-reclaimed',
   'lease-heartbeated',
-  'lease-renewal-deferred',
-  'lease-renewal-stalled',
   'lease-lost',
   'epoch-bump',
   'registration-recovered',

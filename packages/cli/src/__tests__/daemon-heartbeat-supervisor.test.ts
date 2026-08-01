@@ -548,15 +548,14 @@ if (FIXTURE_ROLE === 'contender') {
     /**
      * I-02: the supervisor carried a `MutationLockBusyError` retry branch that could not run.
      *
-     * `heartbeatLease` has owned the conversion of lock contention to the `deferred` outcome since
-     * 386-29, so the throw the branch waited for never crossed the worker boundary. Deleting dead
-     * escalation logic beside live escalation logic is the point, but the PREMISE has to stay
-     * checked: this leg drives a real wedged store and asserts contention still arrives as a
-     * deferred beat and never as an error message. If a future change lets the busy throw escape
-     * `heartbeatLease` again, this reddens — which is exactly when the deleted branch would have
-     * been needed, and exactly when silently retrying it would hide the regression.
+     * The premise still has to stay checked, and it is now stronger than it was: the beat takes no
+     * mutation lock at all, so a store whose write transaction is held by someone else is not a
+     * contended beat but an ordinary one. This leg drives a real wedged store and asserts the beat
+     * lands — never an error message, and never a third outcome. If a future change routes the
+     * beat back through the lock, this reddens, which is exactly when the deleted retry branch
+     * would have been needed and exactly when silently retrying would hide the regression.
      */
-    it('converts lock contention to a deferred beat, never to a busy throw (I-02)', async () => {
+    it('takes an ordinary beat against a wedged store, never a busy throw (I-02)', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-contention-'));
       const acquired = acquireWriterLease(root);
       if (acquired.kind !== 'acquired') {
@@ -580,8 +579,8 @@ if (FIXTURE_ROLE === 'contender') {
 
         try {
           await waitForCondition(
-            () => messages.some((message) => message.kind !== 'heartbeated'),
-            'a non-heartbeat outcome under contention',
+            () => messages.length >= 2,
+            'two beats against the wedged store',
             20_000,
           );
         } finally {
@@ -589,7 +588,8 @@ if (FIXTURE_ROLE === 'contender') {
         }
 
         expect(messages.filter((message) => message.kind === 'error')).toEqual([]);
-        expect(messages.some((message) => message.kind === 'deferred')).toBe(true);
+        expect(messages.filter((message) => message.kind === 'refused')).toEqual([]);
+        expect(messages.every((message) => message.kind === 'heartbeated')).toBe(true);
         expect(unexpected).toEqual([]);
       } finally {
         wedge.exec('ROLLBACK');

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import {
+  chmodSync,
   existsSync,
   fstatSync,
   lstatSync,
@@ -1245,6 +1246,69 @@ describe('daemon socket addressing per generation', () => {
 })
 
 describe('daemon registration recovery at boot', () => {
+  /** chmod is advisory for uid 0, so the unreadable-epoch input domain cannot be produced there. */
+  const canMakeFilesUnreadable = process.platform !== 'win32' && process.getuid?.() !== 0
+
+  /**
+   * The decisive CR-01 consumer probe, inverted into a permanent pin.
+   *
+   * The verifier ran exactly this state through the production classifier — a live registration
+   * whose identity handshake fails, a lease heartbeated milliseconds ago, and an unreadable
+   * `.epoch` — and watched it answer `unreachable-lease-stale`, which `runDaemonHost` executes as
+   * registration deletion plus socket unlink against a daemon that is still running and still
+   * holds the lease. An epoch nobody can read must read as HELD, never as recoverable: the
+   * classifier's `unknown` arm is refusal-equivalent.
+   */
+  it.runIf(canMakeFilesUnreadable)(
+    'classifies an unreadable epoch over a fresh holder as lease-fresh (CR-01)',
+    async () => {
+      const paths = makePaths('boot-unreadable-epoch-fresh-lease')
+      const nowMs = Date.now()
+      const epochFile = join(paths.knowledgeRoot, EPOCH_FILE)
+      mkdirSync(paths.knowledgeRoot, { recursive: true })
+      writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+        leaseId: 'b1f0d1a6-9d21-4f2c-8f7b-1d0a9c3e5b74',
+        pid: process.pid,
+        epoch: 4,
+        heartbeatAtMs: nowMs - 24,
+      })}\n`)
+      writeDaemonRegistration(paths.agentQaRoot, {
+        schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+        instanceId: HOST_INSTANCE_ID,
+        pid: process.pid,
+        // No listener ever binds here, so the identity handshake fails through production code.
+        socketPath: join(paths.agentQaRoot, 'no-listener.sock'),
+        startedAtMs: nowMs - 5_000,
+      })
+
+      // Control: the same state with a READABLE, bumped epoch is genuinely recovery input. Without
+      // it, a classifier that answered lease-fresh for everything would satisfy the pin below.
+      writeFileSync(epochFile, '5\n')
+      await expect(classifyDaemonRegistration({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+      })).resolves.toMatchObject({
+        kind: 'unreachable-lease-stale',
+        identityFailure: 'unreachable',
+      })
+
+      writeFileSync(epochFile, '4\n')
+      chmodSync(epochFile, 0o000)
+      try {
+        await expect(classifyDaemonRegistration({
+          agentQaRoot: paths.agentQaRoot,
+          knowledgeRoot: paths.knowledgeRoot,
+        })).resolves.toMatchObject({
+          kind: 'unreachable-lease-fresh',
+          holder: { pid: process.pid, epoch: 4 },
+          identityFailure: 'unreachable',
+        })
+      } finally {
+        chmodSync(epochFile, 0o600)
+      }
+    },
+  )
+
   it('recovers an alive-pid registration with no listener once its writer lease is stale', async () => {
     const paths = makePaths('boot-alive-no-listener-stale-lease')
     const nowMs = Date.now()
@@ -2547,8 +2611,17 @@ describe('daemon shutdown and reclaim post-mortem', () => {
     ).toHaveLength(1)
   })
 
-  it('records a wedged renewing daemon distinguishably from a healthy busy one', async () => {
-    const paths = makePaths('renewal-stalled')
+  /**
+   * Beats keep landing while a governed mutation owns the authority transaction.
+   *
+   * The daemon used to record a distinct renewal-deferral fact here, derived from a channel that
+   * the verifier proved reported healthy daemons as wedged. There is nothing to discriminate any
+   * more: the beat does not queue behind hosted work, so a held mutation produces the ordinary
+   * heartbeat record and the ledger has one fewer way to be wrong. The real `heartbeatLease` runs
+   * (fireHeartbeat with no argument), so this is the production beat under real contention.
+   */
+  it('keeps recording heartbeats while a governed mutation holds the authority store', async () => {
+    const paths = makePaths('beat-under-held-mutation')
     const harness = hostHarness()
     const running = runDaemonHost({
       agentQaRoot: paths.agentQaRoot,
@@ -2560,42 +2633,40 @@ describe('daemon shutdown and reclaim post-mortem', () => {
     })
     await waitUntil(() => harness.signals.has('SIGTERM'), 'daemon did not start')
 
-    // Healthy: renewal rode the sidecar, but the mutation behind it is inside the deadline.
-    harness.fireHeartbeat({
-      kind: 'deferred',
-      reason: 'mutation-lock-busy',
-      mutationGeneration: 'generation-a',
-      deferredSinceMs: 1_700_000_000_000,
-      stalled: false,
-    })
-    // Wedged: one unchanged generation, stuck past the takeover deadline.
-    harness.fireHeartbeat({
-      kind: 'deferred',
-      reason: 'mutation-lock-busy',
-      mutationGeneration: 'generation-b',
-      deferredSinceMs: 1_699_999_900_000,
-      stalled: true,
+    const wedge = new DatabaseSync(join(paths.knowledgeRoot, WRITER_AUTHORITY_DB_FILE))
+    wedge.exec('PRAGMA busy_timeout = 250')
+    wedge.exec('BEGIN IMMEDIATE')
+    let heartbeatsUnderWedge = 0
+    let leaseUnderWedge: WriterLease | undefined
+    try {
+      harness.fireHeartbeat()
+      harness.fireHeartbeat()
+      heartbeatsUnderWedge = readEvents(paths.agentQaRoot)
+        .filter((event) => event.kind === 'lease-heartbeated').length
+      leaseUnderWedge = JSON.parse(
+        readFileSync(join(paths.knowledgeRoot, LEASE_FILE), 'utf8'),
+      ) as WriterLease
+    } finally {
+      wedge.exec('ROLLBACK')
+      wedge.close()
+    }
+
+    // The initial beat plus the two taken while the transaction was held.
+    expect(heartbeatsUnderWedge).toBe(3)
+    // The on-disk lease is the only place freshness lives, so the record must match the file that
+    // a contender would read — a beat recorded without advancing those bytes is the divergence
+    // the deleted channel produced.
+    const beatsUnderWedge = readEvents(paths.agentQaRoot)
+      .filter((event) => event.kind === 'lease-heartbeated')
+    expect(beatsUnderWedge[beatsUnderWedge.length - 1]).toMatchObject({
+      heartbeatAtMs: leaseUnderWedge?.heartbeatAtMs,
+      epoch: leaseUnderWedge?.epoch,
     })
 
     harness.signal('SIGTERM')
     await expect(running).resolves.toBe(0)
 
-    const events = readEvents(paths.agentQaRoot)
-    const deferred = events.filter((event) => event.kind === 'lease-renewal-deferred')
-    const stalled = events.filter((event) => event.kind === 'lease-renewal-stalled')
-
-    // The rejecting direction matters as much as the admitting one: a mapping that records the
-    // stalled kind for every deferral would satisfy the assertion below on its own.
-    expect(deferred).toHaveLength(1)
-    expect(deferred[0]).toMatchObject({
-      reason: 'mutation-lock-busy',
-      mutationGeneration: 'generation-a',
-    })
-    expect(stalled).toHaveLength(1)
-    expect(stalled[0]).toMatchObject({
-      mutationGeneration: 'generation-b',
-      deferredSinceMs: 1_699_999_900_000,
-    })
+    expect(readEvents(paths.agentQaRoot).filter((event) => event.kind === 'lease-lost')).toEqual([])
   })
 
   it('clears the armed grace timer so clean shutdown cannot hard-exit afterward', async () => {

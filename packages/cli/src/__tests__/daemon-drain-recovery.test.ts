@@ -16,7 +16,6 @@ import { join } from 'node:path'
 import {
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
-  LEASE_RENEWAL_FILE,
 } from '@vostride/agent-qa-knowledge-local'
 import { afterAll, afterEach, describe, expect, test } from 'vitest'
 
@@ -232,14 +231,15 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
   )
 
   test(
-    'refuses to recover a daemon whose renewal sidecar is fresh and names the holder instead',
+    'refuses to recover a daemon whose writer lease is fresh and names the holder instead',
     async () => {
       const paths = makeRoot('fresh')
       const configPath = writeWorkspaceConfig(paths.root)
       mkdirSync(paths.agentQaRoot, { recursive: true })
 
       // A daemon inside a long governed mutation: its socket accepts the connection but its
-      // blocked loop never answers the identity handshake, and its lease FILE has aged out.
+      // blocked loop never answers the identity handshake. Its beat is independent of that work,
+      // so the lease it publishes stays current and the registration is not recoverable.
       const { dir, socketPath, server } = bindUnansweringSocket(acceptedSockets)
       socketDirs.push(dir)
       servers.push(server)
@@ -251,14 +251,8 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
         leaseId,
         pid: holderPid,
         epoch: 9,
-        heartbeatAtMs: Date.now() - (LEASE_HEARTBEAT_TTL_MS * 2),
+        heartbeatAtMs: Date.now(),
       })
-      // 386-29's sidecar: renewal is alive even though the lease file could not be rewritten.
-      writeFileSync(
-        join(paths.knowledgeRoot, LEASE_RENEWAL_FILE),
-        `${JSON.stringify({ leaseId, heartbeatAtMs: Date.now() })}\n`,
-        'utf8',
-      )
       writeDaemonRegistration(paths.agentQaRoot, {
         schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
         instanceId: randomUUID(),
@@ -287,9 +281,9 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
   )
 
   test(
-    'still recovers when the renewal sidecar names a superseded lease',
+    'still recovers when the writer lease has aged past the heartbeat TTL',
     async () => {
-      const paths = makeRoot('sidecar')
+      const paths = makeRoot('aged-lease')
       const configPath = writeWorkspaceConfig(paths.root)
       mkdirSync(paths.agentQaRoot, { recursive: true })
 
@@ -304,13 +298,8 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
         epoch: 2,
         heartbeatAtMs: Date.now() - (LEASE_HEARTBEAT_TTL_MS * 2),
       })
-      // Drawn from OUTSIDE the freshness precondition: a leftover sidecar from an older lease
-      // extends nothing, so this registration stays recoverable.
-      writeFileSync(
-        join(paths.knowledgeRoot, LEASE_RENEWAL_FILE),
-        `${JSON.stringify({ leaseId: randomUUID(), heartbeatAtMs: Date.now() })}\n`,
-        'utf8',
-      )
+      // Drawn from OUTSIDE the freshness precondition: the accepting control for the leg above,
+      // differing only in the one fact that makes the holder recoverable.
       writeDaemonRegistration(paths.agentQaRoot, {
         schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
         instanceId: randomUUID(),
@@ -318,7 +307,7 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
         socketPath,
         startedAtMs: Date.now() - 60_000,
       })
-      enqueueRealCandidate(paths.knowledgeRoot, 'superseded-sidecar-remainder')
+      enqueueRealCandidate(paths.knowledgeRoot, 'aged-lease-remainder')
 
       const result = await invokeDrain(configPath)
 

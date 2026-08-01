@@ -40,6 +40,7 @@ import {
   acquireWriterLease,
   countPendingCurationJobs,
   countRemainingCurationWork,
+  deriveWriterLeaseFreshness,
   drainQueue,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
@@ -51,7 +52,6 @@ import {
   heartbeatLease,
   inspectDrainableCurationWork,
   isLeaseStale,
-  isWriterLeaseFresh,
   listQueuedCandidates,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
@@ -149,6 +149,7 @@ export type {
   RollbackReport,
   WriterLease,
   WriterLeaseAuthority,
+  WriterLeaseFreshness,
 } from '@vostride/agent-qa-knowledge-local'
 
 // Surface hosts reach worker lifecycle vocabulary through this one legal composition edge.
@@ -172,12 +173,13 @@ export interface LocalDaemonCapabilities {
   readonly readWriterLease: typeof readWriterLease
   readonly isLeaseStale: typeof isLeaseStale
   /**
-   * CR-03/CR-08: lease-file freshness OR a renewal sidecar naming the current lease.
+   * CR-01/CR-08: the one three-valued freshness verdict — fresh, reclaimable, or unknown.
    *
    * Any surface that classifies a holder as recoverable must read this and not the lease file
-   * alone, or a daemon renewing through its own governed mutation looks reclaimable.
+   * alone, and must name what it does with `unknown` rather than inheriting a boolean it never
+   * chose. An authority state that cannot be read is not evidence that nobody holds it.
    */
-  readonly isWriterLeaseFresh: typeof isWriterLeaseFresh
+  readonly deriveWriterLeaseFreshness: typeof deriveWriterLeaseFreshness
   readonly countPendingCurationJobs: typeof countPendingCurationJobs
   readonly countRemainingCurationWork: typeof countRemainingCurationWork
   readonly inspectDrainableCurationWork: typeof inspectDrainableCurationWork
@@ -214,8 +216,8 @@ export const LOCAL_DAEMON_CAPABILITIES: LocalDaemonCapabilities = Object.freeze(
   heartbeatLease,
   releaseLease,
   readWriterLease,
+  deriveWriterLeaseFreshness,
   isLeaseStale,
-  isWriterLeaseFresh,
   countPendingCurationJobs,
   countRemainingCurationWork,
   inspectDrainableCurationWork,
