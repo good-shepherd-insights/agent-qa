@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -62,9 +63,11 @@ import {
   heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  MUTATION_LOCK_BUSY_TIMEOUT_MS,
   MUTATION_LOCK_TAKEOVER_MS,
   readCurrentEpoch,
   releaseLease,
+  WRITER_AUTHORITY_DB_FILE,
   WriterAuthorityLostError,
   type WriterAuthorityLostReason,
 } from '../lease/writer-lease.js'
@@ -132,6 +135,20 @@ const expectedSurface = publicSurface as typeof publicSurface
   & ExpectedCorruptEpochSurface
 const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
 const acquireWithClaimHook = acquireWriterLease as AcquireWithClaimHook
+/**
+ * The acquisition-deadline seam (D-15: a seam, never a config key).
+ *
+ * Needed by the contention cases below, which drive the busy-catch with a deadline that is
+ * ALREADY spent by the time it runs — the only way to observe whether the `held` narrow is
+ * evaluated before the deadline exit or after it.
+ */
+const acquireContending = acquireWriterLease as (
+  knowledgeRoot: string,
+  hooks: {
+    acquireDeadlineMs?: number
+    mutationLockTakeoverMs?: number
+  },
+) => ReturnType<typeof acquireWriterLease>
 const acquireFailClosed = acquireWriterLease as (
   knowledgeRoot: string,
 ) => ExpectedAcquireOutcome
@@ -1035,6 +1052,15 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(second).toMatchObject({ projected: 0, removed: 0 })
   })
 
+  /**
+   * NOTE (386-20 #2 audit): this case proves the PRE-LOCK short-circuit and nothing more.
+   *
+   * Its contender's lease is fresh, so `acquireWriterLease` answers `held` at
+   * `writer-lease.ts:1308` and returns before `.writer-authority.sqlite` is ever opened. The
+   * `before`/`after` bracket therefore spans a call that provably cannot write, which is a
+   * tautology rather than a proof. It is kept as the short-circuit control; the no-write
+   * invariant itself is carried by the stale-contender case immediately below it.
+   */
   it('does not replace a live lock row when a fresh holder re-enters acquisition', () => {
     const authority = acquireAuthority()
     const dbFile = join(knowledgeRoot, '.writer-authority.sqlite')
@@ -1066,6 +1092,157 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(mutationCount).toBe(1)
     expect(before).toEqual(after)
     expect(before).toMatchObject({ pid: process.pid })
+  })
+
+  /**
+   * 386-20 #2, non-vacuously: a contender that REACHES the authority store and is refused there
+   * leaves every byte of lock state alone — the row, and the file identity a rename-based
+   * takeover would change.
+   *
+   * `makeStale()` is the whole difference from the control above. It is the only way past the
+   * pre-lock `fresh` narrow, so this contender genuinely opens `.writer-authority.sqlite`, is
+   * denied the write lock by the holder's open transaction, and answers out of the busy-catch at
+   * `writer-lease.ts:1439`. A stale lease cannot answer `held` anywhere else in the primitive:
+   * the in-lock narrow at `:1370` requires `verdict.kind === 'fresh'`. The elapsed-time floor is
+   * the positive evidence that the refusal was paid for inside SQLite rather than short-circuited
+   * before it — an unblocked path returns in single-digit milliseconds.
+   *
+   * The takeover bound stays at its production value on purpose. Driving it to 0 would push this
+   * contender into the escalation ladder, where the only thing standing between the assertion and
+   * a CAS is the self-PID veto — borrowing redness from the escalated-takeover prohibitions
+   * instead of proving this one.
+   */
+  it('refuses a stale contender inside the authority store without writing a byte of lock state', () => {
+    const authority = acquireAuthority()
+    const dbFile = join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+    const identity = (): { ino: number | bigint; size: number } => {
+      const stats = statSync(dbFile)
+      return { ino: stats.ino, size: stats.size }
+    }
+    let before: Record<string, unknown> | undefined
+    let after: Record<string, unknown> | undefined
+    let beforeIdentity: { ino: number | bigint; size: number } | undefined
+    let afterIdentity: { ino: number | bigint; size: number } | undefined
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+    let waitedMs = 0
+    let mutationCount = 0
+
+    expectedSurface.withCurrentWriterAuthority(
+      knowledgeRoot,
+      authority,
+      () => ++mutationCount,
+      {
+        afterMutationLockAcquired: () => {
+          makeStale()
+          const reader = new DatabaseSync(dbFile, { readOnly: true })
+          try {
+            before = reader.prepare('SELECT * FROM mutation_lock WHERE id = 1').get()
+            beforeIdentity = identity()
+            const startedAtMs = Date.now()
+            contender = acquireContending(knowledgeRoot, {})
+            waitedMs = Date.now() - startedAtMs
+            after = reader.prepare('SELECT * FROM mutation_lock WHERE id = 1').get()
+            afterIdentity = identity()
+          } finally {
+            reader.close()
+          }
+        },
+      },
+    )
+
+    expect(mutationCount).toBe(1)
+    // Refused AT the store: a stale lease reaches this answer only through the busy-catch.
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+    expect(waitedMs).toBeGreaterThanOrEqual(MUTATION_LOCK_BUSY_TIMEOUT_MS / 2)
+    expect(before).toMatchObject({ pid: process.pid })
+    expect(after).toEqual(before)
+    // Identity, not just content: a takeover that moved a replacement file into place would
+    // satisfy the row comparison above and change the inode here.
+    expect(afterIdentity).toEqual(beforeIdentity)
+  })
+
+  /**
+   * 386-36 #2, rescoped from source text to the semantics that text was protecting.
+   *
+   * The original statement froze 386-27's busy-catch "byte-for-byte", named a grep sentinel that
+   * was only ever a one-shot plan step, and was already false: 386-42 and 386-46 both edited the
+   * block. Both edits added fail-closed exits and left the contention criterion alone, so the
+   * thing worth guarding was never the bytes — it is that the criterion stays EPOCH-ONLY, and
+   * that the acquisition deadline wraps the retry loop without reordering it.
+   *
+   * The pair below is the differential. Both legs contend for a genuinely busy lock with an
+   * acquisition deadline that is already spent by the time the busy-catch runs; they differ in
+   * one variable, the published lease's epoch, and they must answer differently because of it.
+   */
+  it('answers held from the busy-catch for a stale but epoch-current lease past a spent deadline', () => {
+    const authority = acquireAuthority()
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+    let mutationCount = 0
+
+    expectedSurface.withCurrentWriterAuthority(
+      knowledgeRoot,
+      authority,
+      () => ++mutationCount,
+      {
+        afterMutationLockAcquired: () => {
+          // Staleness deliberately does NOT disqualify a holder here: the lock is busy, so the
+          // published holder is inside its own serialized section and a paused drainer must be
+          // reported as holding, not stolen from.
+          makeStale()
+          contender = acquireContending(knowledgeRoot, { acquireDeadlineMs: 1 })
+        },
+      },
+    )
+
+    expect(mutationCount).toBe(1)
+    // The deadline is spent many times over by the busy wait alone, yet it never converts a good
+    // answer into a refusal — the `held` narrow is evaluated first.
+    expect(contender).toMatchObject({
+      kind: 'held',
+      holder: { leaseId: authority.leaseId, epoch: authority.epoch },
+    })
+  })
+
+  it('refuses instead of holding when the same busy contention sees a superseded lease epoch', () => {
+    const authority = acquireAuthority()
+    const leaseFile = join(knowledgeRoot, LEASE_FILE)
+    let contender: ReturnType<typeof acquireWriterLease> | undefined
+    let mutationCount = 0
+
+    expectedSurface.withCurrentWriterAuthority(
+      knowledgeRoot,
+      authority,
+      () => ++mutationCount,
+      {
+        afterMutationLockAcquired: () => {
+          const published = readFileSync(leaseFile)
+          const holder = JSON.parse(published.toString('utf8')) as Record<string, unknown>
+          // The single variable. Nobody can still be inside a transaction for a superseded epoch,
+          // so an epoch-mismatched lease is recovery input, never a holder to report.
+          writeFileSync(
+            leaseFile,
+            `${JSON.stringify({ ...holder, epoch: authority.epoch + 1 })}\n`,
+            'utf8',
+          )
+          try {
+            contender = acquireContending(knowledgeRoot, { acquireDeadlineMs: 1 })
+          } finally {
+            // Restore before the holder's own in-transaction authority compare runs.
+            writeFileSync(leaseFile, published)
+          }
+        },
+      },
+    )
+
+    expect(mutationCount).toBe(1)
+    expect(contender).toMatchObject({
+      kind: 'refused',
+      reason: 'mutation-lock-unreclaimable',
+    })
+    expect(contender).not.toMatchObject({ kind: 'held' })
   })
 
   it('recovers a dead-PID mutation-lock owner immediately without waiting for the deadline', () => {
