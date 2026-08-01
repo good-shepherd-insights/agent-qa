@@ -1504,9 +1504,10 @@ describe('daemon registration recovery at boot', () => {
 
     // A recorded path that is not a socket selects no deletion at all — proven on OWNED paths, so
     // the lstat guard is what is being measured rather than V-01's ownership refusal.
-    expect(unlinkDaemonSocket(plainFile)).toBe(false)
+    const ownedScope = { agentQaRoot: paths.agentQaRoot, projectRoot: paths.root }
+    expect(unlinkDaemonSocket(plainFile, ownedScope)).toBe(false)
     expect(existsSync(plainFile)).toBe(true)
-    expect(unlinkDaemonSocket(join(paths.agentQaRoot, 'absent.sock'))).toBe(false)
+    expect(unlinkDaemonSocket(join(paths.agentQaRoot, 'absent.sock'), ownedScope)).toBe(false)
 
     harness.signal('SIGTERM')
     await expect(running).resolves.toBe(0)

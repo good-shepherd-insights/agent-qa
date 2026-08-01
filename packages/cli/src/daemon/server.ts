@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, lstatSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs'
 import {
   createServer,
   type IncomingMessage,
@@ -9,7 +9,7 @@ import {
 } from 'node:http'
 import { connect, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
@@ -176,6 +176,77 @@ function isNamedPipe(path: string): boolean {
 }
 
 /**
+ * Everything needed to decide whether a recorded address is one this project may delete.
+ *
+ * `instanceId` is present for every current-schema registration and absent only for the pre-nonce
+ * arm, which records no instance at all — that absence is the whole reason the two arms differ.
+ */
+export interface DaemonSocketOwnership {
+  readonly agentQaRoot: string
+  readonly projectRoot: string
+  readonly instanceId?: string
+}
+
+/** Resolve a container for comparison; an absent directory can hold nothing, so `resolve` is safe. */
+function containerPath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+function isWithin(candidateParent: string, container: string): boolean {
+  const root = containerPath(container)
+  return candidateParent === root || candidateParent.startsWith(root + sep)
+}
+
+/**
+ * Prove a recorded socket address belongs to this project before anything deletes it.
+ *
+ * A registration's `socketPath` is `z.string().min(1)`: a forged, corrupted or merely stale
+ * `daemon.json` can name any path on the machine, and removing that registration byte-exactly
+ * proves only what the file said — never that the address it recorded is one this host owns.
+ *
+ * Two arms, because the two schema shapes carry different evidence:
+ * - a registration naming an `instanceId` must record the exact address that instance is required
+ *   to bind, so the check is equality against `daemonSocketPath` — containment would still admit
+ *   another generation's live socket, and every real generation binds the computed address;
+ * - the pre-nonce arm names no instance, so the strongest available proof is containment in this
+ *   project's own runtime root or the hashed tmpdir directory `daemonSocketPath` falls back to.
+ *   The PARENT directory is realpath'd, because a symlink planted inside the root would otherwise
+ *   launder an arbitrary path into it (the socket itself is not resolved: a socket inode is not a
+ *   symlink, and realpath on a missing path answers nothing).
+ *
+ * Exported because it is the single deletion gate: `unlinkDaemonSocket` consumes it, and so must
+ * every other reclaim path that ever selects a daemon socket from recorded bytes.
+ */
+export function isOwnedDaemonSocketPath(
+  candidate: string,
+  ownership: DaemonSocketOwnership,
+): boolean {
+  if (candidate.length === 0) return false
+  if (ownership.instanceId !== undefined) {
+    try {
+      return candidate === daemonSocketPath(
+        ownership.agentQaRoot,
+        ownership.projectRoot,
+        ownership.instanceId,
+      )
+    } catch {
+      return false
+    }
+  }
+
+  const projectPipePrefix = `\\\\.\\pipe\\agent-qa-${projectHash(ownership.projectRoot)}`
+  if (isNamedPipe(candidate)) return candidate.startsWith(projectPipePrefix)
+
+  const parent = containerPath(dirname(resolve(candidate)))
+  return isWithin(parent, ownership.agentQaRoot)
+    || isWithin(parent, join(tmpdir(), `agent-qa-${projectHash(ownership.projectRoot)}`))
+}
+
+/**
  * A registration's recorded socket path is attacker-shaped input; it is never dialled blind.
  *
  * `connect()` on a POSIX path that is not a socket throws out of band on darwin (EINVAL) instead
@@ -202,14 +273,19 @@ export class DaemonSocketAddressError extends Error {
 }
 
 /**
- * Unlink one recovered generation's own socket file.
+ * Unlink one recovered generation's own socket file, and nothing else.
  *
- * The caller has already removed that generation's registration byte-exactly, so this path is the
- * exact string that registration recorded. Only a real socket there is touched: registration bytes
- * select this deletion, so a recorded path naming a regular file, a directory, or nothing at all
- * is refused rather than obeyed.
+ * V-01: removing a registration byte-exactly proves what its bytes SAID, not that the address they
+ * record is this project's to delete — so the ownership proof is this function's own precondition
+ * rather than a habit its callers are trusted to keep. A path that fails it selects no deletion at
+ * all and is reported as such; on top of that, only a real socket is ever touched, so a recorded
+ * path naming a regular file, a directory, or nothing is refused rather than obeyed.
  */
-export function unlinkDaemonSocket(socketPath: string): boolean {
+export function unlinkDaemonSocket(
+  socketPath: string,
+  ownership: DaemonSocketOwnership,
+): boolean {
+  if (!isOwnedDaemonSocketPath(socketPath, ownership)) return false
   if (isNamedPipe(socketPath)) return false
   try {
     if (!lstatSync(socketPath).isSocket()) return false

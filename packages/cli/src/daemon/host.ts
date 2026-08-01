@@ -47,6 +47,7 @@ import {
   daemonSocketPath,
   startInvokeServer,
   unlinkDaemonSocket,
+  type DaemonSocketOwnership,
   type InvokeServerHandle,
   type StartInvokeServerOptions,
 } from './server.js'
@@ -184,7 +185,7 @@ export interface DaemonHostOperations {
     agentQaRoot: string,
     expected: LegacyDaemonRegistration,
   ): boolean
-  unlinkDaemonSocket(socketPath: string): boolean
+  unlinkDaemonSocket(socketPath: string, ownership: DaemonSocketOwnership): boolean
   classifyDaemonRegistration(
     input: ClassifyDaemonRegistrationInput,
   ): Promise<ClassifyDaemonRegistrationOutcome>
@@ -500,12 +501,29 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       )
 
   const recordRegistrationRecovered = (classified: RecoverableRegistration): void => {
-    // The removal above proved this registration's bytes, so its recorded address is the only
-    // socket this host may unlink. A live successor's socket is a different string by construction.
+    // V-01: the removal above proved this registration's BYTES — not that the address those bytes
+    // record is one this host may delete. `socketPath` is `z.string().min(1)`, so a forged or
+    // corrupted daemon.json can name any path on the machine, and obeying it would be a local
+    // arbitrary-socket-deletion primitive driven by a file in the runtime root. So the address
+    // must also pass `unlinkDaemonSocket`'s ownership proof — the exact generation address when
+    // the record names an instance, containment in this project's runtime root or hashed tmpdir
+    // fallback for the pre-nonce arm, which names none.
+    //
+    // A refusal is recorded as `socketRemoved: false`, never thrown: the registration file is
+    // already gone, so failing here would strand a recovery that has otherwise succeeded. The
+    // sibling embedder check (`registration names a non-owned socket path`, below) throws instead
+    // because it runs BEFORE its own cleanup and has a fresh worker to fall back on.
     const socketPath = classified.registration.socketPath
+    const ownership: DaemonSocketOwnership = {
+      agentQaRoot: input.agentQaRoot,
+      projectRoot: dirname(input.agentQaRoot),
+      ...('instanceId' in classified.registration
+        ? { instanceId: classified.registration.instanceId }
+        : {}),
+    }
     let socketRemoved = false
     try {
-      socketRemoved = operations.unlinkDaemonSocket(socketPath)
+      socketRemoved = operations.unlinkDaemonSocket(socketPath, ownership)
     } catch (error) {
       logger.error(
         `agent-qa daemon stale socket cleanup failed (${socketPath}): `
