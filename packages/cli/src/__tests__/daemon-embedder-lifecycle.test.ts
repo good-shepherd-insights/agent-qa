@@ -1107,6 +1107,40 @@ describe('daemon embedder-worker lifecycle', () => {
     20_000,
   )
 
+  it('keeps every adopted-shutdown signal below the verified-match gate (V-03)', () => {
+    // The behavioural legs prove the current predicate; this pins the SHAPE that makes it hold.
+    // TERM-then-KILL escalation is two calls by construction, so "one call site" is not the
+    // available property — "no call site is reachable without a match" is, and it is what a later
+    // edit could silently break by hoisting a signal above the gate.
+    const source = readFileSync(
+      new URL('../daemon/host.ts', import.meta.url),
+      'utf8',
+    )
+    const arm = source.slice(
+      source.indexOf('const stopEmbedderWorker = async ('),
+      source.indexOf('const cleanOwnedEmbedderWorkerResources = ('),
+    )
+    expect(arm.length).toBeGreaterThan(0)
+
+    const gate = arm.indexOf("if (incarnationVerdict !== 'match') {")
+    expect(gate, 'the adopted arm must withhold on every non-match verdict').toBeGreaterThan(-1)
+    expect(
+      arm.split("operations.verifyEmbedderWorkerIncarnation(").length - 1,
+      'one verdict, read once, for the whole arm',
+    ).toBe(1)
+
+    const signalSites: number[] = []
+    for (
+      let at = arm.indexOf('operations.signalEmbedderWorkerProcess(');
+      at !== -1;
+      at = arm.indexOf('operations.signalEmbedderWorkerProcess(', at + 1)
+    ) {
+      signalSites.push(at)
+    }
+    expect(signalSites.length, 'the adopted arm signals only via TERM then KILL').toBe(2)
+    for (const site of signalSites) expect(site).toBeGreaterThan(gate)
+  })
+
   it('serializes concurrent ensure calls until one fresh worker registration is ready', async () => {
     let publishRegistration: (() => void) | undefined
     const harness = startHarness(
