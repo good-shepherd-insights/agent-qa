@@ -114,6 +114,7 @@
     "@vostride/agent-qa-arch": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
     "glob": "13.0.6",
+    "jiti": "2.6.1",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3",
     "vitest": "~4.1.5"
