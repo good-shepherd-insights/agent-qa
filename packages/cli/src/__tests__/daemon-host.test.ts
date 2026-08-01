@@ -10,10 +10,11 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 
@@ -1442,11 +1443,14 @@ describe('daemon registration recovery at boot', () => {
     const nowMs = Date.now()
     mkdirSync(paths.knowledgeRoot, { recursive: true })
     mkdirSync(paths.agentQaRoot, { recursive: true })
-    // Real, abandoned socket inodes under paths.root: an unlink target must be a socket, and the
-    // explicit paths have to fit inside sun_path without daemonSocketPath's fallback.
-    const recordedSocket = join(paths.root, 'r.sock')
+    // Real, abandoned socket inodes: an unlink target must be a socket. The recorded path is this
+    // generation's OWN address, because after V-01 a recorded path the daemon cannot prove it owns
+    // selects no deletion — the previous fixture recorded a bare path under the project root, which
+    // is exactly the arbitrary-deletion input the guard now refuses.
+    const recordedSocket = daemonSocketPath(paths.agentQaRoot, paths.root, HOST_INSTANCE_ID)
     const bystanderSocket = join(paths.root, 'b.sock')
-    const plainFile = join(paths.root, 'p.file')
+    const plainFile = join(paths.agentQaRoot, 'p.file')
+    mkdirSync(dirname(recordedSocket), { recursive: true })
     await abandonSocketFile(recordedSocket)
     await abandonSocketFile(bystanderSocket)
     writeFileSync(plainFile, '')
@@ -1498,10 +1502,178 @@ describe('daemon registration recovery at boot', () => {
       socketRemoved: true,
     }))
 
-    // A recorded path that is not a socket selects no deletion at all.
+    // A recorded path that is not a socket selects no deletion at all — proven on OWNED paths, so
+    // the lstat guard is what is being measured rather than V-01's ownership refusal.
     expect(unlinkDaemonSocket(plainFile)).toBe(false)
     expect(existsSync(plainFile)).toBe(true)
-    expect(unlinkDaemonSocket(join(paths.root, 'absent.sock'))).toBe(false)
+    expect(unlinkDaemonSocket(join(paths.agentQaRoot, 'absent.sock'))).toBe(false)
+
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+  })
+
+  it('proves ownership of a recovered socket path before any unlink (V-01)', async () => {
+    // The predicate is the deletion gate itself, so it is measured directly and in BOTH
+    // directions. `unlinkDaemonSocket` consumes it, which is what stops the obligation from
+    // decaying into a list of call sites that later plans must remember to keep in step.
+    const server = await import('../daemon/server.js') as unknown as {
+      isOwnedDaemonSocketPath(
+        candidate: string,
+        ownership: { agentQaRoot: string; projectRoot: string; instanceId?: string },
+      ): boolean
+      unlinkDaemonSocket(
+        socketPath: string,
+        ownership: { agentQaRoot: string; projectRoot: string; instanceId?: string },
+      ): boolean
+    }
+    expect(typeof server.isOwnedDaemonSocketPath).toBe('function')
+
+    const paths = makePaths('v01-predicate')
+    const agentQaRoot = paths.agentQaRoot
+    const projectRoot = paths.root
+    mkdirSync(agentQaRoot, { recursive: true })
+    const nonce = { agentQaRoot, projectRoot, instanceId: HOST_INSTANCE_ID }
+    const obsolete = { agentQaRoot, projectRoot }
+    const owned = daemonSocketPath(agentQaRoot, projectRoot, HOST_INSTANCE_ID)
+
+    // Nonce arm: the exact generation address, never mere containment. A registration carrying an
+    // instanceId can always be checked against the address that instance is required to bind.
+    expect(server.isOwnedDaemonSocketPath(owned, nonce)).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(join(agentQaRoot, 'daemon.sock'), nonce)).toBe(false)
+    expect(server.isOwnedDaemonSocketPath(
+      daemonSocketPath(agentQaRoot, projectRoot, SUCCESSOR_INSTANCE_ID),
+      nonce,
+    )).toBe(false)
+
+    // Obsolete arm: a pre-nonce record carries no instanceId, so its address can only be checked
+    // for containment in this project's own runtime root or its hashed tmpdir fallback.
+    expect(server.isOwnedDaemonSocketPath(join(agentQaRoot, 'daemon.sock'), obsolete)).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(owned, obsolete)).toBe(true)
+    expect(server.isOwnedDaemonSocketPath(join(projectRoot, 'r.sock'), obsolete)).toBe(false)
+    expect(server.isOwnedDaemonSocketPath(
+      join(tmpdir(), 'agent-qa-000000000000', 'daemon.sock'),
+      obsolete,
+    )).toBe(false)
+    expect(server.isOwnedDaemonSocketPath(join(agentQaRoot, '..', 'escape.sock'), obsolete))
+      .toBe(false)
+    expect(server.isOwnedDaemonSocketPath('', obsolete)).toBe(false)
+
+    // A symlink planted inside the runtime root must not launder a path out of it.
+    const outside = mkdtempSync(join(tmpdir(), 'agent-qa-v01-outside-'))
+    temporaryRoots.push(outside)
+    symlinkSync(outside, join(agentQaRoot, 'hop'))
+    expect(server.isOwnedDaemonSocketPath(join(agentQaRoot, 'hop', 'daemon.sock'), obsolete))
+      .toBe(false)
+
+    // And the refusal is the unlink's own precondition: a real foreign socket survives the call.
+    const foreignSocket = join(outside, 'f.sock')
+    await abandonSocketFile(foreignSocket)
+    mkdirSync(dirname(owned), { recursive: true })
+    await abandonSocketFile(owned)
+    expect(server.unlinkDaemonSocket(foreignSocket, obsolete)).toBe(false)
+    expect(existsSync(foreignSocket)).toBe(true)
+    expect(server.unlinkDaemonSocket(owned, nonce)).toBe(true)
+    expect(existsSync(owned)).toBe(false)
+  })
+
+  it('leaves a recovered registration\'s foreign socket in place (V-01)', async () => {
+    const paths = makePaths('v01-foreign')
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    // The pre-nonce arm, whose recorded address names a live socket belonging to something else
+    // entirely. `socketPath` is `z.string().min(1)`, so these bytes are attacker-shaped: before
+    // V-01 they selected an unconditional `unlink` of whatever they named.
+    const outside = mkdtempSync(join(tmpdir(), 'agent-qa-v01-victim-'))
+    temporaryRoots.push(outside)
+    const foreignSocket = join(outside, 'f.sock')
+    await abandonSocketFile(foreignSocket)
+    writeFileSync(
+      join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        pid: 2_147_483_647,
+        socketPath: foreignSocket,
+        startedAtMs: 1_700_000_000_000,
+      })}\n`,
+      'utf8',
+    )
+    const harness = hostHarness()
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: harness.operations,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'obsolete registration recovery never reached readiness',
+      5_000,
+    )
+
+    // Recovery of the REGISTRATION still completes — refusing the unlink must not resurrect a file
+    // that was already compare-deleted — and the refusal is on the record, not silent.
+    expect(existsSync(foreignSocket), 'a socket this daemon cannot prove it owns must survive')
+      .toBe(true)
+    expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
+      kind: 'registration-recovered',
+      classification: 'obsolete',
+      socketPath: foreignSocket,
+      socketRemoved: false,
+    }))
+
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+  })
+
+  it('refuses an in-root path that is not this generation\'s own address (V-01)', async () => {
+    const paths = makePaths('v01-nonce')
+    const nowMs = Date.now()
+    mkdirSync(paths.knowledgeRoot, { recursive: true })
+    mkdirSync(paths.agentQaRoot, { recursive: true })
+    // Containment alone is not ownership when the record names an instance: this socket sits
+    // inside the runtime root and is still not the address HOST_INSTANCE_ID is required to bind.
+    const inRootSocket = join(paths.agentQaRoot, 'x.sock')
+    await abandonSocketFile(inRootSocket)
+    writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
+      leaseId: '1c0c9d2e-6f5b-4a1d-8f9e-2b7c4d6a1e30',
+      pid: process.pid,
+      epoch: 1,
+      heartbeatAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })}\n`)
+    writeDaemonRegistration(paths.agentQaRoot, {
+      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+      instanceId: HOST_INSTANCE_ID,
+      pid: process.pid,
+      socketPath: inRootSocket,
+      startedAtMs: nowMs - LEASE_HEARTBEAT_TTL_MS,
+    })
+    const harness = hostHarness(nowMs)
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: harness.operations,
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => harness.signals.has('SIGTERM'),
+      'nonce-arm registration recovery never reached readiness',
+      5_000,
+    )
+
+    expect(existsSync(inRootSocket), 'the nonce arm demands the exact address, not containment')
+      .toBe(true)
+    expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
+      kind: 'registration-recovered',
+      instanceId: HOST_INSTANCE_ID,
+      socketPath: inRootSocket,
+      socketRemoved: false,
+    }))
 
     harness.signal('SIGTERM')
     await expect(running).resolves.toBe(0)
