@@ -52,8 +52,54 @@ type AcquireWithEpochSeam = (
 
 const acquireWithEpochSeam = acquireWriterLease as AcquireWithEpochSeam
 
+/**
+ * W-05 observation seam: report every process-incarnation resolution the escalation path performs.
+ *
+ * Mirrors the `mutationLockTakeoverMs` / `acquireDeadlineMs` idiom — a test-only observer that
+ * never replaces the production resolver, so the count being asserted is the count production pays.
+ */
+type AcquireWithIncarnationObserver = (
+  knowledgeRoot: string,
+  hooks: {
+    acquireDeadlineMs?: number
+    mutationLockTakeoverMs?: number
+    onProcessIncarnationResolved?: (pid: number) => void
+  },
+) => ReturnType<typeof acquireWriterLease>
+
+const acquireWithIncarnationObserver = acquireWriterLease as AcquireWithIncarnationObserver
+
 function elapsedMs(startedAtNs: bigint): number {
   return Number(process.hrtime.bigint() - startedAtNs) / 1e6
+}
+
+/** The kernel's own view of a pid's state, read without going through the module under test. */
+function processState(pid: number): string {
+  try {
+    return execFileSync('ps', ['-p', String(pid), '-o', 'state='], {
+      encoding: 'utf8',
+    }).trim().charAt(0)
+  } catch {
+    return ''
+  }
+}
+
+async function waitForConditionInTest(
+  predicate: () => boolean,
+  timeoutMs: number,
+  describeWhat = 'condition',
+): Promise<void> {
+  const startedAtNs = process.hrtime.bigint()
+  while (!predicate()) {
+    if (elapsedMs(startedAtNs) >= timeoutMs) {
+      throw new Error(`${describeWhat} not reached within ${timeoutMs}ms`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+function waitForFileInTest(file: string, timeoutMs: number): Promise<void> {
+  return waitForConditionInTest(() => existsSync(file), timeoutMs, `file ${file}`)
 }
 
 function spawnLeaseAcquirer(
@@ -1547,6 +1593,291 @@ describe('mutation-lock owner process incarnation (CR-04)', () => {
     writeFileSync(exitPermit, 'exit\n', 'utf8')
     expect(await surrogateExit).toMatchObject({ code: 0, signal: null })
   }, 25_000)
+
+  /**
+   * W-06: the schema upgrade is an unserialized check-then-ALTER, so two daemons starting against
+   * one legacy store can both decide the column is missing.
+   *
+   * The race is driven deterministically rather than hoped for: the winner holds the write
+   * transaction, this process enters the upgrade and blocks inside `ALTER` (its busy timeout is
+   * 2 s), and the winner adds the column and commits INSIDE that window. The loser then wakes,
+   * re-prepares against the new schema, and gets `duplicate column name` — an error `isSqliteBusy`
+   * does not match, so before the fix it escaped as a raw SqliteError and killed a starting daemon.
+   *
+   * The `elapsedMs` assertion is the leg's own precondition, not decoration: an upgrade that
+   * returned promptly never blocked, which means the window was missed and the case proved nothing.
+   */
+  it('completes a schema upgrade that loses the ALTER race to another connection (W-06)', async () => {
+    seedMutationLockRow({
+      pid: process.pid,
+      acquiredAtMs: Date.now() - 600_000,
+      generationToken: 'pre-upgrade-generation',
+      legacyShape: true,
+    })
+    expect(mutationLockColumnNames()).not.toContain('incarnation')
+
+    const winnerHoldMs = 1_500
+    const winner = track(spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', `
+        const { DatabaseSync } = await import('node:sqlite');
+        const { writeFileSync } = await import('node:fs');
+        const db = new DatabaseSync(process.env.AGENT_QA_LEASE_TEST_DB);
+        db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('BEGIN IMMEDIATE');
+        writeFileSync(process.env.AGENT_QA_LEASE_TEST_HOLD_MARKER, 'holding\\n', 'utf8');
+        const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+        Atomics.wait(wait, 0, 0, Number(process.env.AGENT_QA_LEASE_TEST_HOLD_MS));
+        db.exec('ALTER TABLE mutation_lock ADD COLUMN incarnation TEXT');
+        db.exec('COMMIT');
+        db.close();
+      `],
+      {
+        env: {
+          ...process.env,
+          AGENT_QA_LEASE_TEST_DB: authorityDbPath(),
+          AGENT_QA_LEASE_TEST_HOLD_MARKER: join(root, 'upgrade-winner.holding'),
+          AGENT_QA_LEASE_TEST_HOLD_MS: String(winnerHoldMs),
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    ))
+    const winnerExit = observeExit(winner)
+    await waitForFileInTest(join(root, 'upgrade-winner.holding'), 15_000)
+
+    const startedAtNs = process.hrtime.bigint()
+    const loser = acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 })
+    const blockedForMs = elapsedMs(startedAtNs)
+
+    expect(blockedForMs).toBeGreaterThan(winnerHoldMs * 0.6)
+    expect(loser.kind).not.toBe('refused')
+    expect(mutationLockColumnNames()).toContain('incarnation')
+    expect(await winnerExit).toMatchObject({ code: 0, signal: null })
+
+    // The postcondition the upgrade exists for: both connections now transact normally.
+    expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 }).kind).not.toBe('refused')
+  }, 40_000)
+
+  /** A repeated upgrade over an already-upgraded store stays a no-op (the cheap half of W-06). */
+  it('leaves an already-upgraded store untouched when the upgrade runs again (W-06)', () => {
+    seedMutationLockRow({
+      pid: process.pid,
+      acquiredAtMs: Date.now() - 600_000,
+      generationToken: 'already-upgraded-generation',
+      incarnation: null,
+    })
+    expect(mutationLockColumnNames()).toContain('incarnation')
+
+    for (let round = 0; round < 3; round += 1) {
+      expect(acquireWriterLease(knowledgeRoot, { mutationLockTakeoverMs: 0 }).kind).not.toBe(
+        'refused',
+      )
+    }
+    expect(mutationLockColumnNames().filter((name) => name === 'incarnation')).toHaveLength(1)
+  }, 25_000)
+})
+
+/**
+ * W-05: what an escalated takeover COSTS the caller that asked for the lock.
+ *
+ * Both legs use the one shape that makes the post-signal wait genuinely run: an owner whose parent
+ * never reaps it. `SIGKILL` cannot be survived, but a killed child of a process that never returns
+ * to its event loop stays an unreaped zombie, and `kill(pid, 0)` keeps answering "alive" for as
+ * long as that parent lives. This is not a contrived shape — a daemon spinning synchronously on its
+ * main thread is precisely the V-02 finding this phase reproduced, and its children are precisely
+ * these zombies.
+ */
+describe('escalation cost and budget on the acquisition hot path (W-05)', () => {
+  let root: string
+  let knowledgeRoot: string
+  const spawned: ChildProcessWithoutNullStreams[] = []
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'knowledge-writer-escalation-'))
+    knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+  })
+
+  afterEach(() => {
+    for (const child of spawned.splice(0)) {
+      if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+        try {
+          process.kill(child.pid, 'SIGKILL')
+        } catch {
+          // Already gone; the leg's own assertions own the outcome.
+        }
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function track(child: ChildProcessWithoutNullStreams): ChildProcessWithoutNullStreams {
+    spawned.push(child)
+    return child
+  }
+
+  function authorityDbPath(): string {
+    return join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
+  }
+
+  /**
+   * Spawn a mutation-lock owner whose parent will never reap it.
+   *
+   * The nanny blocks in `Atomics.wait` forever, so libuv never runs the loop iteration that would
+   * `waitpid` the dead grandchild. Returns the grandchild's pid — the owner the lock row names.
+   */
+  async function spawnNonReapingOwner(): Promise<number> {
+    const pidFile = join(root, 'orphan.pid')
+    track(spawn(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '--eval', `
+        const { spawn } = await import('node:child_process');
+        const { writeFileSync } = await import('node:fs');
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+          stdio: 'ignore',
+        });
+        writeFileSync(process.env.AGENT_QA_LEASE_TEST_PID_FILE, String(child.pid), 'utf8');
+        const wait = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+        Atomics.wait(wait, 0, 0, 300000);
+      `],
+      {
+        env: { ...process.env, AGENT_QA_LEASE_TEST_PID_FILE: pidFile },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    ))
+    await waitForFileInTest(pidFile, 15_000)
+    const pid = Number(readFileSync(pidFile, 'utf8').trim())
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`bad orphan pid: ${pid}`)
+    // The owner must be attributable, or the escalation refuses and never reaches the wait at all.
+    await waitForConditionInTest(() => processState(pid) === 'S' || processState(pid) === 'R', 15_000)
+    return pid
+  }
+
+  /** Seed a lock row naming `pid` with the incarnation the pid genuinely reports right now. */
+  function seedAttributedOwnerRow(pid: number, generationToken: string): void {
+    const resolve = (publicWriterSurface as unknown as Record<string, unknown>)
+      .resolveProcessIncarnation as (candidate: number) => string | undefined
+    const incarnation = resolve(pid)
+    if (incarnation === undefined) throw new Error(`pid ${pid} is not attributable`)
+    const db = new DatabaseSync(authorityDbPath())
+    try {
+      db.exec('PRAGMA journal_mode = WAL')
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS mutation_lock (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          generation_token TEXT NOT NULL,
+          pid INTEGER NOT NULL CHECK (pid > 0),
+          acquired_at_ms INTEGER NOT NULL CHECK (acquired_at_ms >= 0),
+          incarnation TEXT
+        ) STRICT
+      `)
+      db.prepare(`
+        INSERT OR REPLACE INTO mutation_lock
+          (id, generation_token, pid, acquired_at_ms, incarnation)
+        VALUES (1, ?, ?, ?, ?)
+      `).run(generationToken, pid, Date.now() - 600_000, incarnation)
+    } finally {
+      db.close()
+    }
+  }
+
+  /** Occupy the store's write transaction so the claim is forced onto the escalation path. */
+  function holdAuthorityTransaction(): () => void {
+    const db = new DatabaseSync(authorityDbPath())
+    db.exec('PRAGMA busy_timeout = 250')
+    db.exec('BEGIN IMMEDIATE')
+    let open = true
+    return () => {
+      if (!open) return
+      open = false
+      try {
+        db.exec('ROLLBACK')
+      } finally {
+        db.close()
+      }
+    }
+  }
+
+  it.runIf(process.platform !== 'win32')(
+    'charges the post-signal exit wait to the acquisition budget instead of adding to it (W-05)',
+    async () => {
+      const orphanPid = await spawnNonReapingOwner()
+      seedAttributedOwnerRow(orphanPid, 'never-reaped-generation')
+      const releaseBlockingWrite = holdAuthorityTransaction()
+
+      try {
+        const source = `
+          const { acquireWriterLease } = await import(${JSON.stringify(WRITER_LEASE_MODULE_URL)});
+          const startedAtNs = process.hrtime.bigint();
+          const outcome = acquireWriterLease(process.env.AGENT_QA_LEASE_TEST_ROOT, {
+            acquireDeadlineMs: 2000,
+            mutationLockTakeoverMs: 0,
+          });
+          const elapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6;
+          process.stdout.write(JSON.stringify({
+            kind: outcome.kind,
+            reason: outcome.reason,
+            attempts: outcome.attempts,
+            elapsedMs,
+          }) + '\\n');
+        `
+        const contender = track(spawn(
+          process.execPath,
+          ['--experimental-strip-types', '--input-type=module', '--eval', source],
+          {
+            env: { ...process.env, AGENT_QA_LEASE_TEST_ROOT: knowledgeRoot },
+            stdio: ['pipe', 'pipe', 'pipe'],
+          },
+        ))
+        const contenderStdout = collectStdout(contender)
+        expect(await observeExit(contender)).toMatchObject({ code: 0, signal: null })
+        const outcome = lastJsonLine(contenderStdout()) as { kind: string; elapsedMs: number }
+
+        expect(outcome).toMatchObject({ kind: 'refused', reason: 'mutation-lock-unreclaimable' })
+        // The escalation genuinely reached the signal AND the target genuinely never exited: an
+        // external kernel fact, not the module's own account of what it did.
+        expect(processState(orphanPid)).toBe('Z')
+        // The refusal must arrive on the caller's budget. An unbudgeted wait adds the full
+        // MUTATION_LOCK_TERMINATION_TIMEOUT_MS (5 s) on top of the 2 s deadline.
+        expect(outcome.elapsedMs).toBeLessThan(5_000)
+      } finally {
+        releaseBlockingWrite()
+      }
+    },
+    90_000,
+  )
+
+  it.runIf(process.platform !== 'win32')(
+    'resolves the owner incarnation once per escalated attempt, never inside the exit wait (W-05)',
+    async () => {
+      const orphanPid = await spawnNonReapingOwner()
+      seedAttributedOwnerRow(orphanPid, 'resolution-count-generation')
+      const releaseBlockingWrite = holdAuthorityTransaction()
+
+      try {
+        const resolvedPids: number[] = []
+        const outcome = acquireWithIncarnationObserver(knowledgeRoot, {
+          acquireDeadlineMs: 8_000,
+          mutationLockTakeoverMs: 0,
+          onProcessIncarnationResolved: (pid) => { resolvedPids.push(pid) },
+        })
+
+        if (outcome.kind !== 'refused' || outcome.reason !== 'mutation-lock-unreclaimable') {
+          throw new Error(`expected an unreclaimable refusal, received ${outcome.kind}`)
+        }
+        expect(processState(orphanPid)).toBe('Z')
+        const ownerResolutions = resolvedPids.filter((pid) => pid === orphanPid)
+        // The 386-31 mandate: the identity is re-read immediately before every signal decision.
+        expect(ownerResolutions.length).toBeGreaterThanOrEqual(1)
+        // ...and nowhere else. The exit wait polls kill(pid, 0); moving incarnation resolution
+        // into that loop turns one shell fork per attempt into one per 10 ms poll.
+        expect(ownerResolutions.length).toBeLessThanOrEqual(outcome.attempts)
+      } finally {
+        releaseBlockingWrite()
+      }
+    },
+    90_000,
+  )
 })
 
 /**
