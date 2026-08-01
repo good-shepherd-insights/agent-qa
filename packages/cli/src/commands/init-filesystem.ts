@@ -468,6 +468,33 @@ function cleanUpTemporaryWithoutMasking(
 interface DurableTemporary {
   temporary: string
   confirmed?: { dev: number, ino: number }
+  /**
+   * The temporary's descriptor, held open until publication has been confirmed, and closed by
+   * the publisher's `finally`.
+   *
+   * `confirmed` proves publication linked the inode whose mode was confirmed, by comparing
+   * `{ dev, ino }`. That comparison is only sound while the confirmed inode CANNOT be handed to
+   * anyone else: ext4 reuses an inode number immediately on unlink-then-create in the same
+   * directory, so a substituted temporary carrying exactly the requested mode used to satisfy
+   * every arm of the check and publish attacker bytes as a confirmed credential file. POSIX will
+   * not free an inode while an open descriptor references it, so pinning it here denies that
+   * reuse and forces any substitute to a different inode, which the check then catches.
+   *
+   * Only held when `confirmed` is set (POSIX with a requested mode). Windows never sets it —
+   * `MODE_ENFORCEMENT_SUPPORTED` is false there — so no open handle can block its `rename`/`link`.
+   */
+  pin?: number
+}
+
+/** Close a pinned temporary descriptor. Never masks the publisher's own error. */
+function releaseTemporaryPin(pin: number | undefined): void {
+  if (pin === undefined) return
+  try {
+    closeSync(pin)
+  } catch {
+    // The descriptor is process-local and the publication verdict is already decided; a close
+    // failure cannot change it and must not replace it.
+  }
 }
 
 function writeDurableTemporary(
@@ -495,9 +522,16 @@ function writeDurableTemporary(
     }
     writeFileSync(fd, plan.content)
     fsyncSync(fd)
-    closeSync(fd)
+    if (confirmed === undefined) {
+      closeSync(fd)
+      fd = undefined
+      return { temporary }
+    }
+    // Deliberately NOT closed here: the descriptor pins the confirmed inode against reuse until
+    // publication has been confirmed. Ownership transfers to the publisher's `finally`.
+    const pin = fd
     fd = undefined
-    return { temporary, confirmed }
+    return { temporary, confirmed, pin }
   } catch (error) {
     if (fd !== undefined) closeSync(fd)
     unlinkIfPresent(temporary)
@@ -543,7 +577,7 @@ function publishExclusive(
 ): InitFileResult {
   const path = resolve(plan.path)
   const parent = dirname(path)
-  const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
+  const { temporary, confirmed, pin } = writeDurableTemporary(plan, hooks)
   // Built here, where the destination is known; the answer is taken at emission, so the two
   // sites below can and do differ — see the comment at each.
   const coverage = durableTemporaryCoverageProbe(path, temporary)
@@ -580,6 +614,8 @@ function publishExclusive(
     afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'created' }
   } finally {
+    // Released only here, so the confirmed inode stays pinned across link AND confirmation.
+    releaseTemporaryPin(pin)
     // COVERAGE AT THIS SITE: reached on success (a no-op) and on every failure path,
     // including one that aborted BEFORE the link. On that path the destination does not
     // exist, so a `.gitignore` publication's temporary is genuinely commit-visible here.
@@ -594,8 +630,9 @@ function replaceRegularAtomic(
   const path = resolve(plan.path)
   const parent = dirname(path)
   // The confirmed identity is consumed, not discarded: publication must prove it renamed
-  // the inode whose mode was confirmed, exactly as the exclusive path does.
-  const { temporary, confirmed } = writeDurableTemporary(plan, hooks)
+  // the inode whose mode was confirmed, exactly as the exclusive path does — and the pinned
+  // descriptor is what makes that identity unforgeable against inode reuse.
+  const { temporary, confirmed, pin } = writeDurableTemporary(plan, hooks)
   const coverage = durableTemporaryCoverageProbe(path, temporary)
   try {
     const classification = classifyInitPath(path, plan.root)
@@ -610,6 +647,8 @@ function replaceRegularAtomic(
     afterPublication(() => bestEffortFsyncDirectory(parent))
     return { path, outcome: 'updated' }
   } finally {
+    // Released only here, so the confirmed inode stays pinned across rename AND confirmation.
+    releaseTemporaryPin(pin)
     // COVERAGE AT THIS SITE: on success the rename has already consumed the temporary and
     // the unlink is a no-op. On a failure before the rename the destination still holds its
     // ORIGINAL bytes, so a `.gitignore` being amended to add the managed block answers by
