@@ -43,12 +43,22 @@ import {
 } from './intent-journal.js'
 import { recoverExpiredBundleMutations } from './bundle-mutation.js'
 
+export interface ReconcileOnDrainStartHooks {
+  /**
+   * Fires immediately before a stale intent is renamed aside. The only seam that can reproduce
+   * the race a second reconciler on another host creates: it removes the intent file between our
+   * listing and our rename.
+   */
+  beforeStaleQuarantine?(candidateId: string, epoch: number): void
+}
+
 export interface ReconcileOnDrainStartDependencies {
   knowledgeRoot: string
   writerAuthority: CurrentWriterAuthority
   hasIndexRow(bundleId: string): boolean
   applyIndexDelta(intent: CommitIntent): void
   deriveIndexRowFromBundle(bundleId: string): void
+  hooks?: ReconcileOnDrainStartHooks
 }
 
 export interface ReconcileReport {
@@ -229,6 +239,7 @@ function reconcileOnDrainStartWithinCurrentAuthority(
   const entries: ListedCommitIntent[] = []
   for (const entry of listCommitIntents(deps.knowledgeRoot)) {
     if ('parsed' in entry && entry.parsed.epoch < reconciledEpoch) {
+      deps.hooks?.beforeStaleQuarantine?.(entry.parsed.candidateId, entry.parsed.epoch)
       quarantineStaleCommitIntent(
         deps.knowledgeRoot,
         entry.parsed.candidateId,

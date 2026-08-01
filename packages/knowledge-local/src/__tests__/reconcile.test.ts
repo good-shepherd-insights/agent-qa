@@ -41,12 +41,15 @@ import {
   COMMIT_INTENT_SCHEMA_VERSION,
   JOURNAL_SUBDIR,
   listCommitIntents,
+  quarantineStaleCommitIntent,
+  readReconciledEpoch,
   writeCommitIntent,
   type CommitIntent,
 } from '../journal/intent-journal.js'
 import {
   reconcileOnDrainStart,
   type ReconcileOnDrainStartDependencies,
+  type ReconcileOnDrainStartHooks,
 } from '../journal/reconcile.js'
 import {
   publishBundle,
@@ -104,13 +107,14 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
     throw acquired.error
   }
 
-  function deps(): ReconcileOnDrainStartDependencies {
+  function deps(hooks?: ReconcileOnDrainStartHooks): ReconcileOnDrainStartDependencies {
     return {
       knowledgeRoot,
       writerAuthority: currentWriterAuthority(),
       hasIndexRow: (bundleId) => indexRows.has(bundleId),
       applyIndexDelta,
       deriveIndexRowFromBundle,
+      ...(hooks === undefined ? {} : { hooks }),
     }
   }
 
@@ -602,6 +606,166 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
 
     expect(() => reconcileOnDrainStart(deps())).toThrow()
     expect(existsSync(transactionDir)).toBe(true)
+  })
+
+  describe('stale-intent quarantine is collision-proof and crash-calm (W-08)', () => {
+    function journalDir(): string {
+      return join(knowledgeRoot, JOURNAL_SUBDIR)
+    }
+
+    function quarantinedNames(): string[] {
+      return readdirSync(journalDir())
+        .filter((name) => name.startsWith('.stale-'))
+        .sort()
+    }
+
+    function quarantinedBytes(): string[] {
+      return quarantinedNames()
+        .map((name) => readFileSync(join(journalDir(), name), 'utf8'))
+        .sort()
+    }
+
+    /** Take the lease from an expired holder, exactly as a successor daemon does. */
+    function takeOver(
+      now: ReturnType<typeof vi.spyOn<DateConstructor, 'now'>>,
+      at: number,
+    ): number {
+      now.mockReturnValue(at)
+      const acquired = acquireWriterLease(knowledgeRoot)
+      expect(acquired.kind).toBe('acquired')
+      if (acquired.kind !== 'acquired') throw new Error('expected acquired lease')
+      return acquired.epoch
+    }
+
+    /**
+     * A fenced-out writer of `epoch` reaching the journal — authored through the production
+     * entry point so the quarantine sees exactly the bytes production produces.
+     */
+    function authorAsFencedOutWriter(entry: CommitIntent): string {
+      writeCommitIntent(knowledgeRoot, entry)
+      return readFileSync(join(journalDir(), `${entry.candidateId}.intent.json`), 'utf8')
+    }
+
+    it('preserves both evidence sets when two stale intents share (epoch, candidateId)', () => {
+      const published = publishBundleTruth()
+      const staleCandidate = 'e'.repeat(64)
+      const now = vi.spyOn(Date, 'now').mockReturnValue(4_000_000)
+      expect(takeOver(now, 4_000_000)).toBe(1)
+      expect(takeOver(now, 4_000_000 + LEASE_HEARTBEAT_TTL_MS)).toBe(2)
+
+      // A completed pass at epoch 2 sets the watermark; epoch-1 intents are stale from here on.
+      expect(reconcileOnDrainStart(deps())).toMatchObject({ intentsQuarantinedStale: 0 })
+      expect(readReconciledEpoch(knowledgeRoot)).toBe(2)
+
+      const firstBytes = authorAsFencedOutWriter({
+        schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
+        candidateId: staleCandidate,
+        bundleId: published.id,
+        deltaKind: 'Add',
+        epoch: 1,
+      })
+      expect(reconcileOnDrainStart(deps())).toMatchObject({
+        intentsQuarantinedStale: 1,
+        intentsReplayed: 0,
+      })
+
+      // The same fenced-out generation reaches the journal again for the same candidate: the
+      // key is identical, so a name derived only from (epoch, candidateId) would overwrite.
+      const secondBytes = authorAsFencedOutWriter({
+        schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
+        candidateId: staleCandidate,
+        bundleId: published.id,
+        deltaKind: 'Confirm',
+        targetRecordId: published.id,
+        epoch: 1,
+      })
+      expect(secondBytes).not.toBe(firstBytes)
+      expect(reconcileOnDrainStart(deps())).toMatchObject({
+        intentsQuarantinedStale: 1,
+        intentsReplayed: 0,
+      })
+
+      const names = quarantinedNames()
+      expect(names).toHaveLength(2)
+      expect(new Set(names).size).toBe(2)
+      for (const name of names) {
+        expect(name).toMatch(
+          new RegExp(String.raw`^\.stale-1-${staleCandidate}-.+\.intent\.json$`),
+        )
+      }
+      expect(quarantinedBytes()).toEqual([firstBytes, secondBytes].sort())
+      expect(listCommitIntents(knowledgeRoot)).toEqual([])
+      expect(applyIndexDelta).not.toHaveBeenCalled()
+    })
+
+    it('completes the pass when a stale intent vanishes before its quarantine rename', () => {
+      const published = publishBundleTruth()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(5_000_000)
+      expect(takeOver(now, 5_000_000)).toBe(1)
+      expect(takeOver(now, 5_000_000 + LEASE_HEARTBEAT_TTL_MS)).toBe(2)
+
+      expect(reconcileOnDrainStart(deps())).toMatchObject({ intentsQuarantinedStale: 0 })
+      expect(readReconciledEpoch(knowledgeRoot)).toBe(2)
+
+      const staleCandidate = 'f'.repeat(64)
+      authorAsFencedOutWriter({
+        schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
+        candidateId: staleCandidate,
+        bundleId: published.id,
+        deltaKind: 'Add',
+        epoch: 1,
+      })
+      // A crash journal of the generation this pass legitimately inherits, replayed after the
+      // quarantine loop — it only reaches applyIndexDelta if the pass survives the vanished one.
+      const inherited = intent('a'.repeat(64), published.id)
+      writeCommitIntent(knowledgeRoot, inherited)
+
+      expect(takeOver(now, 5_000_000 + 2 * LEASE_HEARTBEAT_TTL_MS)).toBe(3)
+      applyIndexDelta.mockClear()
+
+      const vanished: string[] = []
+      const report = reconcileOnDrainStart(
+        deps({
+          beforeStaleQuarantine(candidateId) {
+            vanished.push(candidateId)
+            rmSync(join(journalDir(), `${candidateId}.intent.json`), { force: true })
+          },
+        }),
+      )
+
+      expect(vanished).toEqual([staleCandidate])
+      expect(report).toMatchObject({
+        intentsQuarantinedStale: 0,
+        intentsReplayed: 1,
+        intentsCleared: 1,
+        intentsDiscarded: 0,
+        malformed: 0,
+      })
+      expect(applyIndexDelta).toHaveBeenCalledOnce()
+      expect(applyIndexDelta).toHaveBeenCalledWith(inherited)
+      expect(quarantinedNames()).toEqual([])
+      expect(listCommitIntents(knowledgeRoot)).toEqual([])
+      // The pass ran to its last step: an aborted pass leaves the watermark behind.
+      expect(readReconciledEpoch(knowledgeRoot)).toBe(3)
+    })
+
+    it('classifies only a vanished source as already-gone and surfaces every other errno', () => {
+      const missing = quarantineStaleCommitIntent(knowledgeRoot, 'd'.repeat(64), 1)
+      expect(missing).toEqual({ kind: 'already-gone' })
+
+      // A journal path whose prefix is a regular file: rename fails ENOTDIR, not ENOENT.
+      const brokenRoot = join(root, 'broken-knowledge')
+      mkdirSync(join(brokenRoot, 'memory', 'queue'), { recursive: true })
+      writeFileSync(join(brokenRoot, JOURNAL_SUBDIR), 'not a directory', 'utf8')
+
+      let surfaced: NodeJS.ErrnoException | undefined
+      try {
+        quarantineStaleCommitIntent(brokenRoot, 'd'.repeat(64), 1)
+      } catch (error) {
+        surfaced = error as NodeJS.ErrnoException
+      }
+      expect(surfaced?.code).toBe('ENOTDIR')
+    })
   })
 
   it('has no author or model invocation slot in its dependency surface', () => {
