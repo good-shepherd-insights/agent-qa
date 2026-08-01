@@ -424,26 +424,50 @@ function resolvePosixProcessIncarnation(
 }
 
 const OWN_INCARNATION_UNRESOLVED = Symbol('own-incarnation-unresolved')
-let ownIncarnation: string | undefined | typeof OWN_INCARNATION_UNRESOLVED =
-  OWN_INCARNATION_UNRESOLVED
+/**
+ * Only ever a RESOLVED token or the sentinel — `undefined` is deliberately not representable here.
+ *
+ * That is the whole of round-5 regression 2 in one type: storing `undefined` made "the process
+ * table did not answer this once" indistinguishable from "the process table answered, and the
+ * answer is that there is nothing to say", and the second reading is permanent.
+ */
+let ownIncarnation: string | typeof OWN_INCARNATION_UNRESOLVED = OWN_INCARNATION_UNRESOLVED
 
 /**
- * This process's own incarnation, resolved once.
+ * This process's own incarnation, resolved once SUCCESSFULLY and retried until then.
  *
  * A pid's start time is fixed for the life of the process, and this process is alive by
- * definition, so the value cannot go stale. Memoising it keeps the per-claim cost off the hot
- * mutation path (the POSIX arm shells out to `ps`).
+ * definition, so a resolved value cannot go stale. Memoising it keeps the per-claim cost off the
+ * hot mutation path (the POSIX arm shells out to `ps`), and the accepting control in the corpus
+ * asserts the hit path still forks exactly once per process.
+ *
+ * Two things this function's previous comment stated, both of which the call site contradicted:
+ *
+ *   1. It claimed the fork "is not spending an escalation budget". It is. The sole call site is
+ *      `withMutationLock`, which `acquireWriterLease` enters under `deadlineAtNs`, so a wedged or
+ *      PATH-shadowed `ps` here spends the acquisition deadline exactly as the pre-signal fork
+ *      does. WR-04's clamp therefore applies to BOTH forks: `psIncarnationCapMs` degrades to the
+ *      same flat `PROCESS_INCARNATION_PS_TIMEOUT_MS` when the caller has no budget, so the
+ *      heartbeat and governed-mutation paths are unchanged, while a budgeted acquisition now caps
+ *      this fork at `clamp(remaining, FLOOR, TIMEOUT)` like every other wait beneath it.
+ *   2. It memoised a MISS. One timed-out fork at startup then wrote `undefined` into the memo for
+ *      the life of the process, so every `mutation_lock` row that daemon ever wrote carried no
+ *      incarnation, `verifyMutationLockOwnerIdentity` answered `unverifiable` for all of them, and
+ *      no contender could ever escalate against it. Degraded liveness forever, from one fork.
+ *
+ * A miss is now a per-call answer: `undefined` is returned, the sentinel is left in place, and the
+ * NEXT claim resolves again. There is no retry loop inside one call (that would spend the budget
+ * this change exists to protect), no alternative resolver, and no default token — only a token the
+ * OS assigned may replace the sentinel. The observer fires on every attempted resolution, because
+ * a retry is a real `ps` fork and the cost being bounded has to stay countable.
  */
 function ownProcessIncarnation(escalation: MutationEscalationContext = {}): string | undefined {
-  if (ownIncarnation === OWN_INCARNATION_UNRESOLVED) {
-    // The bare cap, not the caller's remainder: this resolution is once per process and happens
-    // before any lock is claimed, so it is not spending an escalation budget.
-    ownIncarnation = resolveProcessIncarnation(process.pid, PROCESS_INCARNATION_PS_TIMEOUT_MS)
-    // Reported only on the miss: the memo means later claims cost nothing, and an observer that
-    // counted the cached reads would over-report the shell forks production actually pays.
-    escalation.onIncarnationResolved?.(process.pid)
-  }
-  return ownIncarnation
+  if (ownIncarnation !== OWN_INCARNATION_UNRESOLVED) return ownIncarnation
+  const resolved = resolveProcessIncarnation(process.pid, psIncarnationCapMs(escalation))
+  escalation.onIncarnationResolved?.(process.pid)
+  if (resolved === undefined) return undefined
+  ownIncarnation = resolved
+  return resolved
 }
 
 export interface MutationLockOptions {
