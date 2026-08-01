@@ -27,6 +27,7 @@ import type {
   AcquireWriterLeaseOutcome,
   HeartbeatLeaseOutcome,
   LeaseOperationOptions,
+  ReadWriterLeaseOutcome,
   ReleaseLeaseOutcome,
 } from '@vostride/agent-qa-agent-local'
 import {
@@ -382,6 +383,22 @@ function heldMessage(
   )
 }
 
+/**
+ * The same refusal, for the case where the holder could not be read at all.
+ *
+ * CR-01 (round 5): `unreachable-lease-fresh` now covers an unreadable `.lease`, and there is no
+ * holder payload to name because the file that carries it is the file that would not open. Naming
+ * the errno instead is what makes the refusal actionable — the operator sees EACCES on a specific
+ * file rather than a daemon refusing to start for no stated reason.
+ */
+function unreadableLeaseMessage(lease: ReadWriterLeaseOutcome): string {
+  const cause = lease.kind === 'unreadable' ? lease.code : lease.kind
+  return (
+    `agent-qa daemon writer lease is unreadable (${cause}); refusing to overwrite a registration `
+    + `whose authority state cannot be read`
+  )
+}
+
 function liveRegistrationMessage(
   registration: Pick<DaemonRegistration, 'pid' | 'startedAtMs'>,
 ): string {
@@ -560,7 +577,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       return true
     }
     if (outcome.kind === 'unreachable-lease-fresh') {
-      logger.error(heldMessage(outcome.holder))
+      logger.error(
+        outcome.holder === undefined
+          ? unreadableLeaseMessage(outcome.lease)
+          : heldMessage(outcome.holder),
+      )
       return true
     }
     return false

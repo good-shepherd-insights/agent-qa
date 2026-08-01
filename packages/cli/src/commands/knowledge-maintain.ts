@@ -687,22 +687,31 @@ function refuseDrainRouting(
     return true
   }
   if (outcome.kind === 'unreachable-lease-fresh') {
-    const ageMs = Math.max(0, Date.now() - outcome.holder.heartbeatAtMs)
+    /**
+     * CR-01 (round 5): the holder is absent exactly when the lease bytes could not be read, so
+     * this refusal names the errno on the file instead of a pid it never saw. Same verdict, same
+     * exit code, same law (a lease that cannot be read is held, never recoverable) — the only
+     * difference is which fact the operator is given to act on.
+     */
+    const holder = outcome.holder
     if (options.json === true) {
       emitJson({
         mode: 'refused',
         reason: 'writer-lease-held',
-        holder: outcome.holder,
+        ...(holder === undefined ? { lease: outcome.lease } : { holder }),
         identityFailure: outcome.identityFailure,
         registrationPid: outcome.registration.pid,
         ...strandedJsonField(options),
       })
     }
+    const heldDetail = holder === undefined
+      ? `unreadable on disk (`
+        + `${outcome.lease.kind === 'unreadable' ? outcome.lease.code : outcome.lease.kind})`
+      : `held by pid ${holder.pid}, lease ${holder.leaseId}, epoch ${holder.epoch}, `
+        + `last renewed ${Math.max(0, Date.now() - holder.heartbeatAtMs)}ms ago`
     emitHuman(
       pc.red(
-        `knowledge drain: refusal [writer-lease-held]: writer lease is held by `
-        + `pid ${outcome.holder.pid}, lease ${outcome.holder.leaseId}, `
-        + `epoch ${outcome.holder.epoch}, last renewed ${ageMs}ms ago; `
+        `knowledge drain: refusal [writer-lease-held]: writer lease is ${heldDetail}; `
         + `the registered daemon (pid ${outcome.registration.pid}) did not answer its identity `
         + `handshake [${outcome.identityFailure}]`
         + strandedHumanSuffix(options),

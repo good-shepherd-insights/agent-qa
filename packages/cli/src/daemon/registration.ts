@@ -73,7 +73,17 @@ export type ClassifyDaemonRegistrationOutcome =
   | {
       kind: 'unreachable-lease-fresh'
       registration: DaemonRegistration
-      holder: WriterLease
+      /**
+       * Absent exactly when the lease bytes could not be READ.
+       *
+       * CR-01 (round 5): the answer to "is this registration recoverable" is `no` for an
+       * unreadable `.lease`, and there is by construction no holder payload to attach — the file
+       * that names the holder is the file that could not be opened. Making it optional is what
+       * forces every rendering surface to say so rather than print a pid it never saw.
+       */
+      holder?: WriterLease
+      /** Always present, so a refusal can name the errno that produced it. */
+      lease: ReadWriterLeaseOutcome
       identityFailure: 'mismatch' | 'timeout' | 'unreachable'
     }
   | {
@@ -303,33 +313,67 @@ export async function classifyDaemonRegistration(
     lease,
     identityFailure,
   }
-  if (lease.kind !== 'parsed') return staleOutcome
-
-  const verdict = operations.deriveWriterLeaseFreshness(
-    input.knowledgeRoot,
-    lease.lease,
-    operations.now(),
-  )
-  switch (verdict.kind) {
-    case 'fresh':
+  /**
+   * All four read kinds by name, with no bare non-parsed short-circuit above the verdict.
+   *
+   * The line this replaced was `if (lease.kind !== 'parsed') return staleOutcome`, and it made the
+   * carefully-argued `unknown` arm below unreachable for the one input class the argument was
+   * about: a `.lease` that exists and could not be opened. Round 5 reproduced the consequence —
+   * `runDaemonHost` executes `unreachable-lease-stale` as `removeClassifiedRegistration` plus
+   * socket unlink, so a live daemon lost its registration and its address while it kept running
+   * and kept holding the lease. `absent` and `malformed` keep answering stale because a missing
+   * file, and bytes that were read and are not a lease, are both genuine recovery input.
+   *
+   * No `default`, and the function has no trailing return: a fifth read kind cannot inherit the
+   * takeover direction without someone choosing it.
+   */
+  switch (lease.kind) {
+    case 'absent':
+    case 'malformed':
+      return staleOutcome
     /**
-     * CR-01: `unknown` answers held, with the same holder payload as `fresh`.
+     * The sibling of the `unknown` arm below, and the same argument.
      *
-     * This verdict selects registration deletion and socket unlink, and the two preconditions
-     * are correlated rather than independent — fd exhaustion produces both the failed identity
-     * handshake and the unreadable epoch at once. Treating "I could not read the authority
-     * state" as "nobody holds it" therefore de-registers a live, healthy daemon precisely when
-     * the host is under stress. The refusal is the only recoverable answer.
+     * An unreadable `.lease` and an unreadable `.epoch` are the same evidence class — EACCES, EIO,
+     * EMFILE — read by the same classifier on the same call path guarding the same authority. Both
+     * mean "I could not read the authority state", which is never "nobody holds it".
      */
-    case 'unknown':
+    case 'unreadable':
       return {
         kind: 'unreachable-lease-fresh',
         registration: outcome.registration,
-        holder: lease.lease,
+        lease,
         identityFailure,
       }
-    case 'reclaimable':
-      return staleOutcome
+    case 'parsed': {
+      const verdict = operations.deriveWriterLeaseFreshness(
+        input.knowledgeRoot,
+        lease.lease,
+        operations.now(),
+      )
+      switch (verdict.kind) {
+        case 'fresh':
+        /**
+         * CR-01: `unknown` answers held, with the same holder payload as `fresh`.
+         *
+         * This verdict selects registration deletion and socket unlink, and the two preconditions
+         * are correlated rather than independent — fd exhaustion produces both the failed identity
+         * handshake and the unreadable epoch at once. Treating "I could not read the authority
+         * state" as "nobody holds it" therefore de-registers a live, healthy daemon precisely when
+         * the host is under stress. The refusal is the only recoverable answer.
+         */
+        case 'unknown':
+          return {
+            kind: 'unreachable-lease-fresh',
+            registration: outcome.registration,
+            holder: lease.lease,
+            lease,
+            identityFailure,
+          }
+        case 'reclaimable':
+          return staleOutcome
+      }
+    }
   }
 }
 
