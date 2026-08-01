@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ConfigReaderPort, FunctionRegistry, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -10,6 +10,7 @@ import type {
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import {
+  acquireWriterLease,
   drainQueue,
   readWriterLease,
 } from '@vostride/agent-qa-knowledge-local'
@@ -41,6 +42,14 @@ function requiredEnv(name: string): string {
   const value = process.env[name]
   if (value === undefined || value === '') throw new Error(`missing ${name}`)
   return value
+}
+
+function optionalNumberEnv(name: string): number | undefined {
+  const value = process.env[name]
+  if (value === undefined || value === '') return undefined
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new Error(`invalid ${name}: ${value}`)
+  return parsed
 }
 
 function fakeRecovery(): JobRecoveryHost {
@@ -112,6 +121,27 @@ export async function runReclaimingDaemonFixture(): Promise<void> {
   let hostError: unknown
   const errors: string[] = []
 
+  /**
+   * The escalated-takeover seams, threaded into the daemon's OWN acquisition.
+   *
+   * `runDaemonHost` types `acquireWriterLease` as `(knowledgeRoot) => outcome`, so the options
+   * cannot arrive through the host at all — they arrive through the operations bag, which is the
+   * host's existing test-only override point. Production keeps calling the pinned constants; only
+   * a leg that sets the env vars gets a shortened takeover window, and no shipped leg does.
+   */
+  const takeoverMs = optionalNumberEnv(FENCING_ENV.takeoverMs)
+  const acquireDeadlineMs = optionalNumberEnv(FENCING_ENV.acquireDeadlineMs)
+  const reconcileLog = process.env[FENCING_ENV.reconcileLog]
+  /**
+   * Every process-incarnation resolution the escalation path performed, in order.
+   *
+   * This is the only observable that distinguishes "the successor won" from "the successor
+   * verified the exact stopped owner's incarnation and only then signalled it". A harness
+   * shortcut would produce a dead owner with this list never naming its pid.
+   */
+  const incarnationResolvedPids: number[] = []
+  let acquireElapsedMs = 0
+
   const host = runDaemonHost({
     agentQaRoot,
     knowledgeRoot,
@@ -120,7 +150,25 @@ export async function runReclaimingDaemonFixture(): Promise<void> {
     author: () => author,
     policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
     operations: {
-      drainQueue,
+      acquireWriterLease: (root: string) => {
+        const startedAtNs = process.hrtime.bigint()
+        try {
+          return acquireWriterLease(root, {
+            ...(takeoverMs === undefined ? {} : { mutationLockTakeoverMs: takeoverMs }),
+            ...(acquireDeadlineMs === undefined ? {} : { acquireDeadlineMs }),
+            onProcessIncarnationResolved: (pid) => incarnationResolvedPids.push(pid),
+          })
+        } finally {
+          acquireElapsedMs = Number(process.hrtime.bigint() - startedAtNs) / 1e6
+        }
+      },
+      drainQueue: async (options) => {
+        const result = await drainQueue(options)
+        if (reconcileLog !== undefined && result.reconcile !== undefined) {
+          appendFileSync(reconcileLog, `${JSON.stringify(result.reconcile)}\n`, 'utf8')
+        }
+        return result
+      },
       composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
       composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
     } satisfies Partial<DaemonHostOperations>,
@@ -146,6 +194,10 @@ export async function runReclaimingDaemonFixture(): Promise<void> {
     pid: process.pid,
     leaseId: acquired.lease.leaseId,
     epoch: acquired.lease.epoch,
+    incarnationResolvedPids,
+    acquireElapsedMs,
+    ...(takeoverMs === undefined ? {} : { takeoverMs }),
+    ...(acquireDeadlineMs === undefined ? {} : { acquireDeadlineMs }),
   })
 
   await waitUntil(() => {

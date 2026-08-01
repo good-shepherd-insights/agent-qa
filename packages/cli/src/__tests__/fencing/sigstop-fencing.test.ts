@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -18,6 +18,7 @@ import { DAEMON_EVENTS_FILE } from '../../daemon/events.js'
 import { inspectDaemonRegistration } from '../../daemon/registration.js'
 import {
   buildFixture,
+  enqueueFixtureBytes,
   writeFixture,
   type DualHostFixture,
 } from '../dual-host/fixtures.js'
@@ -30,11 +31,17 @@ import {
   completeChildSuccessfully,
   killIfRunning,
   makeRoot,
+  processStateChar,
+  readReconcileReports,
   sendSignalWhileAlive,
   startChild,
   startPausedDrainer,
+  startReclaimingDaemon,
+  waitForChildTermination,
+  waitForDaemonEvent,
   waitForMarker,
   writeDurableJson,
+  type FencingPaths,
 } from './spawn-helpers.js'
 
 const describePosix = process.platform === 'win32' ? describe.skip : describe
@@ -64,6 +71,107 @@ function storeDigest(knowledgeRoot: string): string {
     .update('\0')
     .update(orderedLogicalDump(knowledgeRoot))
     .digest('hex')
+}
+
+const JOURNAL_DIR = 'memory/queue/journal'
+/** The only names `listCommitIntents` returns — the live intents a reconciler will act on. */
+const LIVE_INTENT_FILE = /^([0-9a-f]{64})\.intent\.json$/
+/**
+ * The uniquified quarantine name 386-37 settled on: `.stale-<epoch>-<candidateId>-<uuid>`.
+ *
+ * Asserted as a SHAPE, never as an exact string: the per-invocation `randomUUID()` discriminator
+ * exists precisely so one candidate quarantined twice at the same epoch cannot silently overwrite
+ * its own earlier evidence, which makes any exact-name expectation unsatisfiable.
+ */
+const QUARANTINED_INTENT_FILE =
+  /^\.stale-(\d+)-([0-9a-f]{64})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.intent\.json$/
+
+/**
+ * Seam-small takeover plus a budget far below production's 60 s.
+ *
+ * The deadline is deliberately shortened rather than left at the pinned default: a leg that ran
+ * under the 60 s budget would prove only that the schedule fits in 60 s. Under 20 s the assertion
+ * that the whole escalated reclaim completes inside its budget is a real measurement, and 386-40's
+ * rule — escalation waits are SPENT from the acquisition budget, not added beside it — is what
+ * makes it hold.
+ */
+const RECLAIM_SEAMS = { mutationLockTakeoverMs: 0, acquireDeadlineMs: 20_000 } as const
+
+function journalNames(knowledgeRoot: string): string[] {
+  try {
+    return readdirSync(join(knowledgeRoot, JOURNAL_DIR)).sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+/** Read the journal directory directly: the on-disk partition, not the lister's view of it. */
+function liveIntentNames(knowledgeRoot: string): string[] {
+  return journalNames(knowledgeRoot).filter((name) => LIVE_INTENT_FILE.test(name))
+}
+
+function quarantinedIntentNames(knowledgeRoot: string): string[] {
+  return journalNames(knowledgeRoot).filter((name) => name.startsWith('.stale-'))
+}
+
+function journalBytes(knowledgeRoot: string, name: string): string {
+  return readFileSync(join(knowledgeRoot, JOURNAL_DIR, name), 'utf8')
+}
+
+function indexedBundleIds(knowledgeRoot: string): string[] {
+  const { db } = openIndexReaderConnection(knowledgeRoot)
+  try {
+    return db.prepare('SELECT bundle_id FROM records ORDER BY bundle_id')
+      .all()
+      .map((row) => String((row as { bundle_id: unknown }).bundle_id))
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * The escalated reclaim, asserted as a PATH rather than as an outcome.
+ *
+ * A harness that simply killed the stopped writer itself would satisfy "the successor won" and
+ * every state assertion downstream of it. What it could not produce is this: the successor's own
+ * acquisition resolving the stopped pid's process incarnation (386-31's verified-match gate) and
+ * only then the kernel reporting that pid dead by SIGKILL, inside the successor's acquisition
+ * budget, with the reclaim named in the daemon's event log.
+ */
+async function assertEscalatedReclaim(input: {
+  paths: FencingPaths
+  drainer: ReturnType<typeof startChild>
+  daemon: ReturnType<typeof startChild>
+  paused: Record<string, unknown>
+  ready: Record<string, unknown>
+}): Promise<void> {
+  const { paths, drainer, daemon, paused, ready } = input
+  const drainerPid = drainer.child.pid
+  expect(ready).toMatchObject({
+    ready: true,
+    pid: daemon.child.pid,
+    epoch: 2,
+    takeoverMs: RECLAIM_SEAMS.mutationLockTakeoverMs,
+    acquireDeadlineMs: RECLAIM_SEAMS.acquireDeadlineMs,
+  })
+  expect(ready.incarnationResolvedPids).toContain(drainerPid)
+  expect(Number(ready.acquireElapsedMs)).toBeLessThan(RECLAIM_SEAMS.acquireDeadlineMs)
+
+  const terminated = await waitForChildTermination(drainer, 'escalated SIGKILL of the stopped owner')
+  expect(terminated).toEqual({ code: null, signal: 'SIGKILL' })
+
+  const events = readFileSync(`${paths.agentQaRoot}/${DAEMON_EVENTS_FILE}`, 'utf8')
+    .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+  const acquiredIndex = findEventAfter(events, -1, (event) =>
+    event.kind === 'lease-acquired' && event.pid === daemon.child.pid && event.epoch === 2)
+  findEventAfter(events, acquiredIndex, (event) =>
+    event.kind === 'lease-reclaimed'
+    && event.priorHolderPid === paused.pid
+    && event.priorLeaseId === paused.leaseId
+    && event.priorEpoch === paused.oldEpoch
+    && event.newEpoch === 2)
+  expect(Number(readFileSync(`${paths.knowledgeRoot}/.epoch`, 'utf8').trim())).toBe(2)
 }
 
 function immediateWriterAttempt(knowledgeRoot: string): 'busy' | 'entered' {
@@ -499,6 +607,224 @@ describePosix('SIGSTOP writer-epoch fencing', () => {
         }
         await killIfRunning(drainer.child)
         expect(existsSync(paths.fixture)).toBe(true)
+      }
+    }, LEG_TIMEOUT_MS)
+
+    /**
+     * I-03, direction one: a writer stopped WITH a durable intent and nothing published.
+     *
+     * 386-28 moved this pause point out of the SIGSTOP schedule because a child frozen on
+     * `BEGIN IMMEDIATE` could not be reclaimed at all; the process-level suite lost the only state
+     * the intent journal exists for. This restores it through the machinery that made it possible:
+     * the whole process is stopped, so no renewal sidecar is written and the lease ages out; the
+     * successor escalates past a seam-small takeover, verifies the stopped pid's incarnation, and
+     * kills exactly it; the inherited journal then names a bundle that was never published, so
+     * reconciliation requeues the candidate instead of projecting a publication that does not
+     * exist — and the successor commits it exactly once.
+     */
+    test('reclaims a writer stopped holding a durable intent for an unpublished bundle', async () => {
+      const paths = makeRoot('durable-intent-unpublished')
+      const fixture = singleCandidateFixture()
+      const candidateId = fixture.candidates[0]!.candidateId
+      writeFixture(paths.fixture, fixture)
+
+      const drainer = startPausedDrainer(paths, 'afterIntentWritten')
+      let daemon: ReturnType<typeof startChild> | undefined
+      try {
+        const paused = await waitForMarker(drainer, paths.marker, 'afterIntentWritten marker')
+        expect(paused).toMatchObject({
+          phase: 'afterIntentWritten',
+          pid: drainer.child.pid,
+          candidateId,
+          oldEpoch: 1,
+        })
+        sendSignalWhileAlive(drainer, 'SIGSTOP')
+
+        // The premise, read from the kernel rather than from this process's bookkeeping.
+        expect(processStateChar(drainer.child.pid!)).toMatch(/^T/)
+        expect(immediateWriterAttempt(paths.knowledgeRoot)).toBe('busy')
+
+        // The state I-03 named: intent durable, transaction held, nothing published, index empty.
+        expect(liveIntentNames(paths.knowledgeRoot)).toEqual([`${candidateId}.intent.json`])
+        const inheritedIntent = JSON.parse(
+          journalBytes(paths.knowledgeRoot, `${candidateId}.intent.json`),
+        ) as Record<string, unknown>
+        expect(inheritedIntent).toMatchObject({ candidateId, epoch: 1 })
+        expect(enumerateBundleDirs(paths.knowledgeRoot)).toHaveLength(0)
+        expect(indexedBundleIds(paths.knowledgeRoot)).toEqual([])
+
+        await new Promise((resolve) => setTimeout(resolve, LEASE_HEARTBEAT_TTL_MS + 1_500))
+
+        daemon = startReclaimingDaemon(paths, RECLAIM_SEAMS)
+        const ready = await waitForMarker(daemon, paths.readyMarker, 'successor daemon readiness')
+        await assertEscalatedReclaim({ paths, drainer, daemon, paused, ready })
+
+        await nudgeDaemon(paths.agentQaRoot)
+        const committed = await waitForMarker(
+          daemon,
+          paths.committedMarker,
+          'successor commit and post-reclaim heartbeat',
+        )
+        expect(committed).toMatchObject({
+          committed: true,
+          candidateId,
+          holderPid: daemon.child.pid,
+          epoch: 2,
+          diskEpoch: 2,
+        })
+
+        // The inherited intent named a bundle no successor can find: requeued, never projected.
+        const [reconcile] = readReconcileReports(paths)
+        expect(reconcile).toMatchObject({
+          intentsDiscarded: 1,
+          intentsReplayed: 0,
+          intentsQuarantinedStale: 0,
+          malformed: 0,
+        })
+        expect(Number(reconcile?.jobsRequeued)).toBeGreaterThanOrEqual(1)
+
+        // No duplicate and no loss: exactly one record, and the journal is empty in both partitions.
+        const bundles = enumerateBundleDirs(paths.knowledgeRoot)
+        expect(bundles).toHaveLength(1)
+        expect(loadBundle(bundles[0]!.dir).kind).toBe('loaded')
+        expect(indexedBundleIds(paths.knowledgeRoot)).toHaveLength(1)
+        expect(liveIntentNames(paths.knowledgeRoot)).toEqual([])
+        expect(quarantinedIntentNames(paths.knowledgeRoot)).toEqual([])
+
+        sendSignalWhileAlive(daemon, 'SIGTERM')
+        const daemonReport = await completeChildSuccessfully(daemon, paths.daemonReport)
+        expect(daemonReport).toMatchObject({ candidateId, exitCode: 0 })
+      } finally {
+        if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
+          drainer.child.kill('SIGCONT')
+        }
+        await killIfRunning(drainer.child)
+        if (daemon !== undefined) await killIfRunning(daemon.child)
+      }
+    }, LEG_TIMEOUT_MS)
+
+    /**
+     * I-03, direction two and three: replay and quarantine, discriminated across processes.
+     *
+     * The pause is after the publish rename and before the index projection — the intent is
+     * durable, its bundle is on disk, and no row exists for it. That is the one state in which the
+     * journal's central promise is REPLAY rather than recovery, and the successor keeps it.
+     *
+     * The quarantine direction then re-plants the SAME writer-authored bytes after the successor's
+     * pass has advanced the watermark past them. Identical input, opposite verdict, decided by one
+     * fact: whether the authoring generation precedes a completed reconciliation. Nothing here is
+     * hand-authored — the stale intent is the real intent, byte for byte, which is the only way the
+     * leg is a statement about the guard rather than about the fixture that fed it.
+     */
+    test('replays an inherited intent across processes and quarantines it below the watermark', async () => {
+      const paths = makeRoot('durable-intent-replay-quarantine')
+      const fixture = singleCandidateFixture()
+      const candidateId = fixture.candidates[0]!.candidateId
+      const intentName = `${candidateId}.intent.json`
+      writeFixture(paths.fixture, fixture)
+
+      const drainer = startPausedDrainer(paths, 'afterBundlePublished')
+      let daemon: ReturnType<typeof startChild> | undefined
+      try {
+        const paused = await waitForMarker(drainer, paths.marker, 'afterBundlePublished marker')
+        expect(paused).toMatchObject({
+          phase: 'afterBundlePublished',
+          pid: drainer.child.pid,
+          candidateId,
+          oldEpoch: 1,
+        })
+        sendSignalWhileAlive(drainer, 'SIGSTOP')
+        expect(processStateChar(drainer.child.pid!)).toMatch(/^T/)
+        expect(immediateWriterAttempt(paths.knowledgeRoot)).toBe('busy')
+
+        // Intent durable, bundle published, index row still missing: the replayable state.
+        expect(liveIntentNames(paths.knowledgeRoot)).toEqual([intentName])
+        const authoredIntentBytes = journalBytes(paths.knowledgeRoot, intentName)
+        const authoredIntent = JSON.parse(authoredIntentBytes) as Record<string, unknown>
+        expect(authoredIntent).toMatchObject({ candidateId, epoch: 1 })
+        const publishedBundleId = String(authoredIntent.bundleId)
+        expect(enumerateBundleDirs(paths.knowledgeRoot)).toHaveLength(1)
+        expect(indexedBundleIds(paths.knowledgeRoot)).toEqual([])
+
+        await new Promise((resolve) => setTimeout(resolve, LEASE_HEARTBEAT_TTL_MS + 1_500))
+
+        daemon = startReclaimingDaemon(paths, RECLAIM_SEAMS)
+        const ready = await waitForMarker(daemon, paths.readyMarker, 'successor daemon readiness')
+        await assertEscalatedReclaim({ paths, drainer, daemon, paused, ready })
+
+        await nudgeDaemon(paths.agentQaRoot)
+        await waitForMarker(
+          daemon,
+          paths.committedMarker,
+          'successor commit and post-reclaim heartbeat',
+        )
+
+        // REPLAY: the inherited generation's intent was projected, then cleared — not quarantined.
+        const [replayPass] = readReconcileReports(paths)
+        expect(replayPass).toMatchObject({
+          intentsReplayed: 1,
+          intentsCleared: 1,
+          intentsQuarantinedStale: 0,
+          intentsDiscarded: 0,
+          malformed: 0,
+        })
+        expect(indexedBundleIds(paths.knowledgeRoot)).toEqual([publishedBundleId])
+        expect(liveIntentNames(paths.knowledgeRoot)).toEqual([])
+        expect(quarantinedIntentNames(paths.knowledgeRoot)).toEqual([])
+
+        // QUARANTINE: the same bytes, now authored below a watermark the successor has advanced.
+        writeFileSync(
+          join(paths.knowledgeRoot, JOURNAL_DIR, intentName),
+          authoredIntentBytes,
+          'utf8',
+        )
+        expect(liveIntentNames(paths.knowledgeRoot)).toEqual([intentName])
+
+        const second = buildFixture('mixed').candidates[1]!
+        enqueueFixtureBytes(paths.knowledgeRoot, {
+          schemaVersion: 1,
+          variant: 'mixed',
+          candidates: [second],
+          delayedCandidateId: null,
+        })
+        await nudgeDaemon(paths.agentQaRoot)
+        await waitForDaemonEvent(
+          daemon,
+          paths.agentQaRoot,
+          (event) => event.kind === 'job-completed' && event.candidateId === second.candidateId,
+          'second drain pass completing its candidate',
+        )
+
+        const quarantinePass = readReconcileReports(paths)[1]
+        expect(quarantinePass).toMatchObject({
+          intentsQuarantinedStale: 1,
+          intentsReplayed: 0,
+          intentsCleared: 0,
+          intentsDiscarded: 0,
+          malformed: 0,
+        })
+        // Renamed aside under the uniquified shape, bytes intact, never returned as a live intent.
+        const quarantined = quarantinedIntentNames(paths.knowledgeRoot)
+        expect(quarantined).toHaveLength(1)
+        const parsedName = QUARANTINED_INTENT_FILE.exec(quarantined[0]!)
+        expect(parsedName, `unexpected quarantine name: ${quarantined[0]}`).not.toBeNull()
+        expect(parsedName![1]).toBe('1')
+        expect(parsedName![2]).toBe(candidateId)
+        expect(journalBytes(paths.knowledgeRoot, quarantined[0]!)).toBe(authoredIntentBytes)
+        expect(liveIntentNames(paths.knowledgeRoot)).toEqual([])
+        // It never reached the index: the replayed row stands alone beside the second candidate's.
+        expect(indexedBundleIds(paths.knowledgeRoot)).toHaveLength(2)
+        expect(indexedBundleIds(paths.knowledgeRoot)).toContain(publishedBundleId)
+
+        sendSignalWhileAlive(daemon, 'SIGTERM')
+        expect(await completeChildSuccessfully(daemon, paths.daemonReport))
+          .toMatchObject({ candidateId, exitCode: 0 })
+      } finally {
+        if (drainer.child.exitCode === null && drainer.child.signalCode === null) {
+          drainer.child.kill('SIGCONT')
+        }
+        await killIfRunning(drainer.child)
+        if (daemon !== undefined) await killIfRunning(daemon.child)
       }
     }, LEG_TIMEOUT_MS)
 

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
 import {
   closeSync,
@@ -18,6 +18,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { expect } from 'vitest'
+
+import { DAEMON_EVENTS_FILE } from '../../daemon/events.js'
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const JITI = join(PACKAGE_ROOT, 'node_modules', '.bin', 'jiti')
@@ -42,11 +44,18 @@ export const FENCING_ENV = {
   committedMarker: 'AGENT_QA_FENCING_COMMITTED_MARKER',
   control: 'AGENT_QA_FENCING_CONTROL',
   pauseAt: 'AGENT_QA_FENCING_PAUSE_AT',
+  /** Seam-small takeover for the reclaiming daemon's own acquisition; production never sets it. */
+  takeoverMs: 'AGENT_QA_FENCING_TAKEOVER_MS',
+  /** Acquisition budget for the reclaiming daemon; the escalated reclaim must fit inside it. */
+  acquireDeadlineMs: 'AGENT_QA_FENCING_ACQUIRE_DEADLINE_MS',
+  /** JSONL of every reconcile report the reclaiming daemon's drain passes produced. */
+  reconcileLog: 'AGENT_QA_FENCING_RECONCILE_LOG',
 } as const
 
 export type FencingChildRole = 'paused-drainer' | 'reclaiming-daemon'
 export type FencingPauseAt =
   | 'beforeCommitAuthorityEntry'
+  | 'afterIntentWritten'
   | 'afterFinalAuthorityCompare'
   | 'publish-rename'
   | 'afterBundlePublished'
@@ -62,6 +71,7 @@ export interface FencingPaths {
   readonly daemonReport: string
   readonly readyMarker: string
   readonly committedMarker: string
+  readonly reconcileLog: string
 }
 
 export interface RunningChild {
@@ -86,6 +96,7 @@ export function makeRoot(label: string): FencingPaths {
     daemonReport: join(root, 'reclaiming-daemon.report.json'),
     readyMarker: join(root, 'daemon.ready.marker.json'),
     committedMarker: join(root, 'daemon.committed.marker.json'),
+    reconcileLog: join(root, 'daemon.reconcile-reports.jsonl'),
   }
 }
 
@@ -150,6 +161,7 @@ export function startChild(
         [FENCING_ENV.report]: report,
         [FENCING_ENV.readyMarker]: paths.readyMarker,
         [FENCING_ENV.committedMarker]: paths.committedMarker,
+        [FENCING_ENV.reconcileLog]: paths.reconcileLog,
         AGENT_QA_MODEL_CACHE_DIR: join(paths.root, 'empty-model-cache'),
         ...extraEnv,
       },
@@ -178,6 +190,99 @@ export function startPausedDrainer(
   return startChild('paused-drainer', paths, {
     [FENCING_ENV.pauseAt]: pauseAt,
   })
+}
+
+export interface ReclaimingDaemonSeams {
+  /** Seam-small takeover so the escalation fires without a real 45 s wait. */
+  readonly mutationLockTakeoverMs: number
+  /** Acquisition budget the whole escalated reclaim must complete inside. */
+  readonly acquireDeadlineMs: number
+}
+
+/**
+ * A reclaiming daemon whose own lease acquisition carries the seam-small takeover window.
+ *
+ * The seams reach `acquireWriterLease` through the daemon host's `operations` bag, which is a
+ * test-only override point: production still calls the pinned constants. Passing them as env
+ * rather than hard-coding them in the child keeps the shipped legs (which pass neither) on the
+ * production defaults.
+ */
+export function startReclaimingDaemon(
+  paths: FencingPaths,
+  seams: ReclaimingDaemonSeams,
+): RunningChild {
+  return startChild('reclaiming-daemon', paths, {
+    [FENCING_ENV.takeoverMs]: String(seams.mutationLockTakeoverMs),
+    [FENCING_ENV.acquireDeadlineMs]: String(seams.acquireDeadlineMs),
+  })
+}
+
+/**
+ * The kernel's own view of a pid's run state, read through `ps`.
+ *
+ * `T` is the premise every SIGSTOP leg rests on and the one fact no in-process assertion can
+ * supply: the child really is stopped, not merely slow. Read from outside this process so the
+ * answer cannot come from the harness's own bookkeeping.
+ */
+export function processStateChar(pid: number): string | undefined {
+  const observed = spawnSync('ps', ['-p', String(pid), '-o', 'state='], {
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  if (observed.error !== undefined || observed.status !== 0) return undefined
+  const state = (observed.stdout ?? '').trim()
+  return state === '' ? undefined : state
+}
+
+/** Wait for the parent to reap a child, so `signalCode` reflects who actually killed it. */
+export async function waitForChildTermination(
+  running: RunningChild,
+  selector: string,
+): Promise<{ code: number | null; signal: string | null }> {
+  const deadline = Date.now() + MARKER_TIMEOUT_MS
+  while (running.child.exitCode === null && running.child.signalCode === null) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${selector}:\n${running.output()}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return { code: running.child.exitCode, signal: running.child.signalCode }
+}
+
+export function readDaemonEvents(agentQaRoot: string): Record<string, unknown>[] {
+  const file = join(agentQaRoot, DAEMON_EVENTS_FILE)
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8').split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+export async function waitForDaemonEvent(
+  running: RunningChild,
+  agentQaRoot: string,
+  predicate: (event: Record<string, unknown>) => boolean,
+  selector: string,
+): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + MARKER_TIMEOUT_MS
+  while (true) {
+    const found = readDaemonEvents(agentQaRoot).find(predicate)
+    if (found !== undefined) return found
+    if (running.child.exitCode !== null || running.child.signalCode !== null) {
+      throw new Error(`fencing child exited before ${selector}:\n${running.output()}`)
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${selector}:\n${running.output()}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+/** Every reconcile report the reclaiming daemon's drain passes produced, in pass order. */
+export function readReconcileReports(paths: FencingPaths): Record<string, unknown>[] {
+  if (!existsSync(paths.reconcileLog)) return []
+  return readFileSync(paths.reconcileLog, 'utf8').split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 export async function killIfRunning(child: ChildProcess): Promise<void> {
