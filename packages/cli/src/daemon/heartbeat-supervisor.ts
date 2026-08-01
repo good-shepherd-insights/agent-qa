@@ -24,7 +24,20 @@ type HeartbeatSupervisorRefusalReason = Extract<
 
 export type HeartbeatSupervisorMessage =
   | { readonly kind: 'heartbeated'; readonly holder: HeartbeatSupervisorHolder }
-  | { readonly kind: 'deferred'; readonly reason: 'mutation-lock-busy' }
+  | {
+      readonly kind: 'deferred'
+      readonly reason: 'mutation-lock-busy'
+      /**
+       * The wedged/busy discriminator, forwarded verbatim from the heartbeat outcome.
+       *
+       * The worker is a courier here, not a judge: the threshold lives beside
+       * MUTATION_LOCK_TAKEOVER_MS in the lease module, so a second copy of it cannot drift into
+       * this package. What crosses the thread boundary is the fact, already decided.
+       */
+      readonly mutationGeneration?: string
+      readonly deferredSinceMs?: number
+      readonly stalled?: boolean
+    }
   | {
       readonly kind: 'refused'
       readonly reason: HeartbeatSupervisorRefusalReason
@@ -116,7 +129,13 @@ function heartbeat() {
     // recurrence stays armed at its normal cadence so the next strong beat lands as soon as the
     // governed mutation commits. Only a typed refusal is authority loss.
     if (outcome.kind === 'deferred') {
-      parentPort.postMessage({ kind: 'deferred', reason: outcome.reason })
+      parentPort.postMessage({
+        kind: 'deferred',
+        reason: outcome.reason,
+        mutationGeneration: outcome.mutationGeneration,
+        deferredSinceMs: outcome.deferredSinceMs,
+        stalled: outcome.stalled,
+      })
       schedule(intervalMs)
       return
     }

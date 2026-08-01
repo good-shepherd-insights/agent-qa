@@ -20,6 +20,7 @@ import { pathToFileURL } from 'node:url'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
   acquireWriterLease,
+  EPOCH_FILE,
   heartbeatLease,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
@@ -1120,6 +1121,11 @@ describe('daemon registration recovery at boot', () => {
     const nowMs = Date.now()
     const leaseHolderPid = process.pid + 10_000
     mkdirSync(paths.knowledgeRoot, { recursive: true })
+    // The epoch file is published BEFORE the lease by every real acquisition, and after 386-36
+    // composite freshness reads it: a lease naming an epoch the disk does not agree with is
+    // recovery input, not a fresh holder. Writing only the lease described a root no acquisition
+    // can produce, which made this leg assert freshness it was not actually demonstrating.
+    writeFileSync(join(paths.knowledgeRoot, EPOCH_FILE), '4\n')
     writeFileSync(join(paths.knowledgeRoot, LEASE_FILE), `${JSON.stringify({
       leaseId: 'd97c6375-c7b5-4581-aae8-bc0f20926bcf',
       pid: leaseHolderPid,

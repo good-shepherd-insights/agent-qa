@@ -1559,10 +1559,21 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     }
     // CR-03: the lease is still ours; renewal simply rode the sidecar because a governed mutation
     // held the authority transaction. Record the fact and keep serving — this is not lease loss.
+    //
+    // W-02: still not lease loss, but no longer one undifferentiated fact. A holder stuck on ONE
+    // generation past the takeover deadline is wedged, and 386-29 made that state both invisible
+    // and unrecoverable. It stays recoverable through the composite's bound; this makes it
+    // legible to whoever reads daemon-events.jsonl afterwards (D-04).
     if (heartbeat.kind === 'deferred') {
       recordDaemonEvent({
-        kind: 'lease-renewal-deferred',
+        kind: heartbeat.stalled === true ? 'lease-renewal-stalled' : 'lease-renewal-deferred',
         reason: heartbeat.reason,
+        ...(heartbeat.mutationGeneration === undefined
+          ? {}
+          : { mutationGeneration: heartbeat.mutationGeneration }),
+        ...(heartbeat.deferredSinceMs === undefined
+          ? {}
+          : { deferredSinceMs: heartbeat.deferredSinceMs }),
       })
       return
     }
@@ -1662,10 +1673,17 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     })
     if (initialHeartbeat.kind === 'deferred') {
       // The lease we just acquired is fresh by construction; renewal only rode the sidecar
-      // because a governed mutation already held the authority transaction.
+      // because a governed mutation already held the authority transaction. A stall inherited
+      // from a predecessor's in-flight mutation is still worth recording as one.
       recordDaemonEvent({
-        kind: 'lease-renewal-deferred',
+        kind: initialHeartbeat.stalled ? 'lease-renewal-stalled' : 'lease-renewal-deferred',
         reason: initialHeartbeat.reason,
+        ...(initialHeartbeat.mutationGeneration === undefined
+          ? {}
+          : { mutationGeneration: initialHeartbeat.mutationGeneration }),
+        ...(initialHeartbeat.deferredSinceMs === undefined
+          ? {}
+          : { deferredSinceMs: initialHeartbeat.deferredSinceMs }),
       })
     } else {
       recordDaemonEvent({

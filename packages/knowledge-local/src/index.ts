@@ -408,6 +408,7 @@ export {
   ACQUIRE_WRITER_LEASE_DEADLINE_MS,
   acquireWriterLease,
   CorruptEpochStateError,
+  EPOCH_FILE,
   heartbeatLease,
   isLeaseStale,
   isWriterLeaseFresh,
