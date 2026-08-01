@@ -627,7 +627,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
 
     /** Take the lease from an expired holder, exactly as a successor daemon does. */
     function takeOver(
-      now: ReturnType<typeof vi.spyOn<DateConstructor, 'now'>>,
+      now: { mockReturnValue(value: number): unknown },
       at: number,
     ): number {
       now.mockReturnValue(at)

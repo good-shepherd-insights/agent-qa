@@ -240,12 +240,14 @@ function reconcileOnDrainStartWithinCurrentAuthority(
   for (const entry of listCommitIntents(deps.knowledgeRoot)) {
     if ('parsed' in entry && entry.parsed.epoch < reconciledEpoch) {
       deps.hooks?.beforeStaleQuarantine?.(entry.parsed.candidateId, entry.parsed.epoch)
-      quarantineStaleCommitIntent(
+      const outcome = quarantineStaleCommitIntent(
         deps.knowledgeRoot,
         entry.parsed.candidateId,
         entry.parsed.epoch,
       )
-      report.intentsQuarantinedStale += 1
+      // An intent that vanished under us was already handled by whoever removed it; the pass
+      // must not count it and must not die on it — it is running inside the held section.
+      if (outcome.kind === 'quarantined') report.intentsQuarantinedStale += 1
       continue
     }
     entries.push(entry)

@@ -1448,11 +1448,18 @@ describe('writer authority and bundle publication are one indivisible protocol (
       jobsRequeued: 0,
     })
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
-    // The bytes survive for post-mortem under a name reconciliation never lists.
-    const quarantined = `.stale-${authority.epoch}-${seeded.candidateId}.intent.json`
-    expect(readdirSync(journalDir()).filter((name) => name.startsWith('.stale-')))
-      .toEqual([quarantined])
-    expect(readFileSync(join(journalDir(), quarantined), 'utf8')).toBe(staleBytes)
+    // The bytes survive for post-mortem under a name reconciliation never lists. The name
+    // carries a per-invocation discriminator (W-08), so it is pinned by shape, not by equality.
+    const quarantinedNames = readdirSync(journalDir()).filter((name) =>
+      name.startsWith('.stale-'),
+    )
+    expect(quarantinedNames).toHaveLength(1)
+    expect(quarantinedNames[0]).toMatch(
+      new RegExp(
+        String.raw`^\.stale-${authority.epoch}-${seeded.candidateId}-.+\.intent\.json$`,
+      ),
+    )
+    expect(readFileSync(join(journalDir(), quarantinedNames[0]!), 'utf8')).toBe(staleBytes)
     expect(durableTailSnapshot()).toEqual(before)
   })
 

@@ -137,21 +137,41 @@ export function writeReconciledEpochWithinCurrentAuthority(
   atomicRewrite(join(knowledgeRoot, RECONCILED_EPOCH_FILE), `${validated}\n`)
 }
 
+export type QuarantineStaleCommitIntentOutcome =
+  /** The bytes were preserved under `name`, which `listCommitIntents` never returns. */
+  | { kind: 'quarantined'; name: string }
+  /** The source intent no longer exists: nothing to preserve, nothing to count. */
+  | { kind: 'already-gone' }
+
 /**
  * Preserve a superseded generation's intent bytes under a name `listCommitIntents` never
  * returns. Discarding them silently would erase the only record that a fenced-out writer
  * reached the journal at all (T-386-28-03).
+ *
+ * The name carries a per-invocation discriminator because `(epoch, candidateId)` is not unique
+ * over time: one candidate can be authored more than once at the same stale epoch, and a
+ * `renameSync` onto an existing quarantine file would destroy the earlier evidence silently.
+ *
+ * ENOENT on the source is the one benign classification: the file is already gone, so no
+ * evidence can be lost and the caller's pass — which runs inside a held authority section —
+ * has nothing left to do for it. Every other errno means bytes exist and we failed to preserve
+ * them, and still propagates (386-28's contract that real failures surface).
  */
 export function quarantineStaleCommitIntent(
   knowledgeRoot: string,
   candidateId: string,
   epoch: number,
-): string {
+): QuarantineStaleCommitIntentOutcome {
   const file = intentPath(knowledgeRoot, candidateId)
-  const quarantined = `.stale-${epoch}-${candidateId}.intent.json`
-  renameSync(file, join(dirname(file), quarantined))
+  const quarantined = `.stale-${epoch}-${candidateId}-${randomUUID()}.intent.json`
+  try {
+    renameSync(file, join(dirname(file), quarantined))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    return { kind: 'already-gone' }
+  }
   bestEffortFsyncDirectory(dirname(file))
-  return quarantined
+  return { kind: 'quarantined', name: quarantined }
 }
 
 /** Clear one confirmed intent after its index projection has been applied. */
