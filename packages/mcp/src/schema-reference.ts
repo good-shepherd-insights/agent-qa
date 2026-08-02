@@ -19,7 +19,9 @@ export const AGENT_QA_SCHEMA_REFERENCES = {
     name: 'agent-qa config',
     rootKeys: ['workspace', 'services', 'registry', 'use', 'analytics'],
     services: {
-      dashboard: ['port', 'dbPath', 'artifactsDir'],
+      // `baseUrl` + `workspace` are Phase 387 D-10: where an entity card's `url` points.
+      // Both optional; with neither configured a card carries no `url` at all.
+      dashboard: ['port', 'dbPath', 'artifactsDir', 'baseUrl', 'workspace'],
       mcp: ['enabled', 'transport', 'host', 'port', 'path'],
       cache: ['dir', 'ttl'],
       logging: ['level'],
