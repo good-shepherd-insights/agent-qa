@@ -6,18 +6,108 @@
 // parity suite assert that every action any card offers actually resolves. A freeform action
 // string would have been a second capability vocabulary — the private-power drift L10 exists
 // to prevent — and there is deliberately no way to construct one here.
+//
+// EVERY id below is IMPORTED from the module that declares it, never written as a literal.
+// That is the drift proof: renaming an op's id is a compile error in this table rather than a
+// card that keeps advertising a capability nothing answers to. The one place a literal would
+// have been convenient — a table keyed by id string — is exactly where it would have been
+// wrong.
+//
+// `inputSeed` carries the entity's OWN references. A seed is a seed and may be partial (the
+// why-verb needs a step index no card knows), but every field it does set is a real field of
+// that op's input contract, filled with a value this entity actually is. What it must never be
+// is a value that ADDRESSES BY COINCIDENCE: `knowledge.record.show` is seeded with a MEM
+// entity's machine id because in this store a bundle directory's name IS the record id
+// (`listBundles` and `showRecord` both read `bundle.manifest.id`), not because the two strings
+// happen to look alike.
+//
+// One decision worth stating rather than leaving to be inferred. `runs.start` is in the
+// default spec list but binds only in a composition that supplies a `runInvocation` port, so a
+// read-only host lists it `unbound`. A TST card advertises it anyway, because D-11 says cards
+// advertise what the REGISTRY contains and `bindingStatus` exists precisely so an unbound
+// capability is VISIBLE rather than silent (D-09). Advertising is not granting: the ref still
+// crosses `invokeFunction`, which refuses an unbound id by name and gates every scope. A card
+// that hid the capability would be making a claim about the host that the card producer — which
+// receives no caller and no composition — is in no position to make.
 
-import type { ActionRef, EntityDescriptor } from '@vostride/agent-qa-schema'
+import type { ActionRef, EntityDescriptor, EntityKind } from '@vostride/agent-qa-schema'
 
 import { ENTITIES_GET_FUNCTION_ID } from '../ops/entities-ids.js'
+import { KNOWLEDGE_BRIEF_WHY_FUNCTION_ID } from '../ops/knowledge-brief-why.js'
+import { KNOWLEDGE_RECORD_SHOW_FUNCTION_ID } from '../ops/knowledge-record-show.js'
+import { RUNS_GET_FUNCTION_ID } from '../ops/runs-get.js'
+import { RUNS_START_FUNCTION_ID } from '../ops/runs-start.js'
 
-/** Every kind offers the card itself. Per-kind tables land in 387-07 Task 2. */
-export function actionsForKind(descriptor: EntityDescriptor): ActionRef[] {
-  return [
+type ActionTable = (descriptor: EntityDescriptor) => ActionRef[]
+
+/** The card itself, addressed by its own short-ID. Useful wherever a card is one of several. */
+function openCard(descriptor: EntityDescriptor): ActionRef {
+  return {
+    functionId: ENTITIES_GET_FUNCTION_ID,
+    label: 'Open card',
+    inputSeed: { ref: descriptor.shortId },
+  }
+}
+
+/**
+ * THE per-kind action table.
+ *
+ * `satisfies Record<EntityKind, …>` for the same reason the fact projections are: a seventh
+ * kind must answer what it offers rather than inheriting a fallback. There is no fallback.
+ *
+ * `BUG` advertises NOTHING, and the empty array is the honest answer rather than an oversight:
+ * D-03 reserves the family and the ledger refuses to mint into it, so there is no entity
+ * behind the address for any capability to act on. A placeholder action would have promised a
+ * next move that cannot exist.
+ */
+export const ENTITY_ACTION_TABLES = {
+  TST: (descriptor) => [
+    openCard(descriptor),
     {
-      functionId: ENTITIES_GET_FUNCTION_ID,
-      label: 'Open card',
-      inputSeed: { ref: descriptor.shortId },
+      functionId: RUNS_START_FUNCTION_ID,
+      label: 'Run this test',
+      // The variadic pattern operand `runs.start` already takes — the test's own identity.
+      inputSeed: { patterns: [descriptor.machineId] },
     },
-  ]
+  ],
+  RUN: (descriptor) => [
+    openCard(descriptor),
+    {
+      functionId: RUNS_GET_FUNCTION_ID,
+      label: 'Open run',
+      inputSeed: { runId: descriptor.machineId },
+    },
+    {
+      functionId: KNOWLEDGE_BRIEF_WHY_FUNCTION_ID,
+      label: 'Explain a step',
+      // DELIBERATELY partial: the why-verb answers about one step, and which step is the
+      // caller's question rather than the entity's fact. Seeding a step index would be the
+      // card guessing what a human meant, which is the never-guess floor in miniature.
+      inputSeed: { runId: descriptor.machineId },
+    },
+  ],
+  BUG: () => [],
+  MEM: (descriptor) => [
+    openCard(descriptor),
+    {
+      functionId: KNOWLEDGE_RECORD_SHOW_FUNCTION_ID,
+      label: 'Show record',
+      inputSeed: { recordId: descriptor.machineId },
+    },
+  ],
+  POL: (descriptor) => [openCard(descriptor)],
+  TGT: (descriptor) => [openCard(descriptor)],
+} as const satisfies Record<EntityKind, ActionTable>
+
+/** Every id this module can ever advertise — the set the resolvability assertion iterates. */
+export const ADVERTISED_FUNCTION_IDS: readonly string[] = [
+  ENTITIES_GET_FUNCTION_ID,
+  RUNS_START_FUNCTION_ID,
+  RUNS_GET_FUNCTION_ID,
+  KNOWLEDGE_BRIEF_WHY_FUNCTION_ID,
+  KNOWLEDGE_RECORD_SHOW_FUNCTION_ID,
+]
+
+export function actionsForKind(descriptor: EntityDescriptor): ActionRef[] {
+  return ENTITY_ACTION_TABLES[descriptor.kind](descriptor)
 }
