@@ -26,6 +26,7 @@ export {
 } from './functions/invoke.js'
 export type {
   ConfigReaderPort,
+  EntityDirectoryPort,
   FunctionBindingStatus,
   FunctionDeclaration,
   FunctionDeps,
@@ -43,6 +44,9 @@ export type {
 export { RunNotFoundError } from './functions/ops/runs-get.js'
 export { RunNotRecordedError } from './functions/ops/runs-start.js'
 export { StreamReplayFloorError } from './functions/ops/runs-events.js'
+// 387 ENTY-02: the caller-facing refusal for an address nothing ever minted. A permanently
+// minted address whose entity was tombstoned still resolves (D-04) — this is not that case.
+export { EntityNotFoundError } from './functions/ops/entities-get.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer
 // results as prose, and prose is the sole unmasking surface.

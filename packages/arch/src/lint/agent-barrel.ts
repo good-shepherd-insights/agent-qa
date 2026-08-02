@@ -57,10 +57,18 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * must never be, is anything that could HAND someone a model: the capability crosses this
  * barrel as a type, and the only value that ever holds one is the argument the primitive gives
  * its author callback (D-11 layer 1).
+ *
+ * 387 plan 01 adds `EntityNotFoundError` — one more caller-facing refusal, on the exact
+ * footing as `RunNotFoundError` beside it: a surface asked for one specific address, nothing
+ * was ever minted at it, and the surface needs to be able to say so. It is an error CLASS and
+ * nothing else; the two `entities.*` specs it belongs to stay inside `functions/`, so the two
+ * new capabilities remain reachable only through `invokeFunction` and this addition opens no
+ * dispatch path.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
+  'EntityNotFoundError',
   'FunctionDeniedError',
   'FunctionInputError',
   'FunctionNotBoundError',
@@ -127,6 +135,21 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  * a driver that shipped without it would have to be reopened with handlers already written
  * against it. Publishing the contract without a UI is the cheap half; retrofitting the check
  * is the expensive one.
+ *
+ * 387 plan 01 adds `EntityDirectoryPort` — the fourth REQUIRED read port on `FunctionDeps`,
+ * the contract a composition root implements to make entity addresses resolvable in its host.
+ * It joins for the same reason its three siblings are here: a composition has to be able to
+ * NAME the thing it implements, and `entities` would otherwise be the one required port whose
+ * shape a host could only satisfy by structural accident.
+ *
+ * It opens no dispatch path, and the reason is stronger than "types are erased". The port's
+ * two verbs answer questions ABOUT entities and hand back data — a descriptor union and a
+ * descriptor — with no vocabulary for a card and no way to reach the registry. Nothing on it
+ * can resolve, gate or run a capability; the only value that ever implements it is the object
+ * a composition constructs and injects, and `invokeFunction` remains the one dispatch. What
+ * would have been a violation is publishing the card producer, and it is deliberately absent
+ * from both lists: exactly one module in this package builds an `EntityCard` (ENTY-02), and
+ * putting it on this barrel would have made "one producer" a convention instead of a fact.
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
@@ -138,6 +161,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
   'CreateFunctionRegistryOptions',
+  'EntityDirectoryPort',
   'FallbackContinuationInput',
   'FallbackContinuationProducer',
   'FunctionBindingStatus',

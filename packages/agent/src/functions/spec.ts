@@ -13,6 +13,8 @@ import type { z } from 'zod'
 
 import type {
   CompletedRunHandoff,
+  EntityDescriptor,
+  EntityResolution,
   FunctionScope,
   KnowledgeBundleSummary,
   MaskedResolvedConfig,
@@ -259,6 +261,27 @@ export interface KnowledgeReaderPort {
 }
 
 /**
+ * Injected read port over the entity directory (Phase 387, ENTY-01 / D-09).
+ *
+ * Two verbs, and the split is the never-guess contract expressed as a type. `resolve` takes
+ * anything a human or a model might say and answers with a closed three-arm union, so a
+ * caller is structurally unable to receive a maybe. `get` takes an address that already
+ * exists and answers with the entity or with nothing.
+ *
+ * Descriptor-level on purpose. The port carries FACTS about an entity and never a card,
+ * which is what leaves exactly one card producer in this layer (ENTY-02): a composition
+ * cannot render, because it is handed no vocabulary in which to do so.
+ *
+ * `get` may not mint. `resolve` sights, and sighting is what assigns a permanent address
+ * (D-01); a `get` that could write would make every card render on every surface a
+ * potential mutation of the one durable store this system never rebuilds.
+ */
+export interface EntityDirectoryPort {
+  resolve(ref: string): Promise<EntityResolution>
+  get(ref: string): Promise<EntityDescriptor | undefined>
+}
+
+/**
  * Injected read port over the resolved project configuration.
  *
  * The port's name says what its security contract is: it yields a config whose
@@ -303,8 +326,15 @@ export interface StartedRun {
  * The injected-dependency record every op implementation receives. Ops are pure
  * functions of (validated input, deps) — they never reach for a host API.
  *
- * The three READ ports are required and non-partial on purpose: a composition that omits one
- * fails to typecheck. `runInvocation` is the single OPTIONAL member, and its optionality is
+ * The four READ ports are required and non-partial on purpose: a composition that omits one
+ * fails to typecheck. Phase 387 adds `entities` as the fourth, and it joins as REQUIRED
+ * rather than optional deliberately — every host that can list a capability can also resolve
+ * an address, so a host that omitted it would not be reporting a real absence, it would be
+ * reporting that somebody forgot. That is precisely the state the required/optional split
+ * exists to distinguish, and widening the optional side to cover a forgetting would have
+ * made `unbound` mean two different things.
+ *
+ * `runInvocation` is the single OPTIONAL member, and its optionality is
  * not a relaxation of that discipline but the mechanism behind it. Not every host can start
  * a run — a read-only surface, a registry built for a listing, 386's daemon before it wires
  * its own executor — and D-09 requires that state to be VISIBLE rather than a call that
@@ -316,5 +346,6 @@ export interface FunctionDeps {
   runs: RunsReaderPort
   knowledge: KnowledgeReaderPort
   config: ConfigReaderPort
+  entities: EntityDirectoryPort
   runInvocation?: RunInvocationPort
 }

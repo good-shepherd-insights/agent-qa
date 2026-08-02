@@ -26,6 +26,7 @@ import type {
   AgentJobQueue,
   ClockPort,
   ConfigReaderPort,
+  EntityDirectoryPort,
   FunctionRegistry,
   JobIdSource,
   JobKindRegistry,
@@ -36,9 +37,11 @@ import type {
   StartedRun,
 } from '@vostride/agent-qa-agent'
 import {
+  ADDRESSING_LEDGER_DB_FILE,
   acquireEmbedder,
   acquireWriterLease,
   countPendingCurationJobs,
+  createMemorySightingSource,
   countRemainingCurationWork,
   deriveWriterLeaseFreshness,
   drainQueue,
@@ -49,10 +52,12 @@ import {
   embedderWorkerSocketPath,
   enqueueCurationCandidateProjection,
   foldRunOutcomes,
+  getEntityDescriptor,
   heartbeatLease,
   inspectDrainableCurationWork,
   isLeaseStale,
   listQueuedCandidates,
+  openAddressingLedger,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
   probeEmbedderWorkerSocket,
@@ -61,6 +66,7 @@ import {
   readEmbedderWorkerRegistration,
   readWriterLease,
   rebuildIndex,
+  resolveEntityRef,
   refreshWriterLeaseAuthority,
   releaseLease,
   removeEmbedderWorkerRegistration,
@@ -74,6 +80,7 @@ import {
   runMaintenanceTail,
   RUN_OUTCOMES_PROJECTION_VERSION,
   type OwnedEmbedderWorkerRegistration,
+  type ResolveEntityRefDeps,
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
@@ -373,6 +380,64 @@ export function createKnowledgeReader(
   }
 }
 
+// ---- entities: the addressing ledger and the tier-(a) resolver (387 D-01/D-02/D-09) ----------
+
+export interface CreateEntityDirectoryInput {
+  readonly agentQaRoot: string
+  readonly resolveKnowledgeRoot: () => Promise<string> | string
+}
+
+/**
+ * Bind the entity directory over this host's durable addressing ledger.
+ *
+ * The ledger file is opened PER CALL and closed again, and both halves of that are deliberate.
+ *
+ * Opened per call, because the ledger is a durable file under the agent-qa root: opening it
+ * eagerly at composition time would bring an `entity-addresses.db` into existence in a project
+ * that has never resolved anything, and `agent-qa fn --list` is exactly such a caller. This is
+ * the same law the job store's deferred `jobs()` handle carries, expressed for a port that has
+ * no handle to defer.
+ *
+ * Closed again, because minting is LEASE-FREE by design (D-02) — the CLI must mint with no
+ * daemon running, so several processes hold this file at once and sqlite arbitrates through
+ * WAL and the busy timeout. A connection kept open for the life of a composition would hold a
+ * reader open across a caller's whole session for no gain; the transactions here are single
+ * statements at a human-paced grain.
+ *
+ * The path is resolved HERE rather than inside `knowledge-local`, beside `agent-jobs.db`, so
+ * the package that owns the runtime root is the package that names its files.
+ */
+export function createEntityDirectory(input: CreateEntityDirectoryInput): EntityDirectoryPort {
+  async function withLedger<T>(
+    body: (deps: ResolveEntityRefDeps) => T,
+  ): Promise<T> {
+    const knowledgeRoot = await input.resolveKnowledgeRoot()
+    const ledger = openAddressingLedger({
+      path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
+    })
+    try {
+      return body({
+        ledger,
+        // One kind is wired by the tracer. 387-03 registers the remaining sources here and
+        // neither the resolver nor the ops change — which is the property the tracer exists
+        // to establish before anything expands.
+        sources: [createMemorySightingSource(() => knowledgeRoot)],
+      })
+    } finally {
+      ledger.close()
+    }
+  }
+
+  return {
+    resolve(ref) {
+      return withLedger((deps) => resolveEntityRef(ref, deps))
+    },
+    get(ref) {
+      return withLedger((deps) => getEntityDescriptor(ref, deps))
+    },
+  }
+}
+
 // ---- runs.start: the composition's binding (D-16) ---------------------------------------------
 
 /**
@@ -561,6 +626,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       runs: createRunsReader(input.agentQaRoot),
       knowledge: createKnowledgeReader(input.knowledgeRoot),
       config: input.config,
+      entities: createEntityDirectory({
+        agentQaRoot: input.agentQaRoot,
+        resolveKnowledgeRoot: input.knowledgeRoot,
+      }),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot
       // disagree about whether this composition can run it (D-16).

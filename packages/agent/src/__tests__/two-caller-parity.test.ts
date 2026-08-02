@@ -114,6 +114,14 @@ const DEPS: FunctionDeps = {
     readEvents: () => Promise.resolve([]),
   },
   knowledge: { listBundles: () => Promise.resolve([]) },
+  // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
+  // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
+  // exercise other ops, and nothing in this file mints an address, so an honest miss and a
+  // reported absence are the truthful answers.
+  entities: {
+    resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+    get: () => Promise.resolve(undefined),
+  },
   config: {
     getMasked: () => Promise.resolve({
       schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -165,6 +173,11 @@ const REGISTRY = createFunctionRegistry({
 /** The shipped capability set, as both callers' listings are measured against it. */
 const ALL_FUNCTION_IDS = [
   'config.get',
+  // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
+  // filter assertion below sharper rather than merely longer. `runs.start` is still the only
+  // id that drops out, and it now drops out of a set two entries larger.
+  'entities.get',
+  'entities.resolve',
   'knowledge.bundles.list',
   'runs.events',
   'runs.get',

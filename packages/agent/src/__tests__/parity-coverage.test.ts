@@ -51,11 +51,26 @@ const ALLOWED_ID_DOMAINS = new Set([
   'config',
   'agent',
   'knowledge',
+  // 2026-08-02 (387 D-09): `entities` is a taxonomy EXTENSION, declared as such rather than
+  // squeezed under an existing domain. Two read verbs over one addressing surface do not
+  // belong to runs, memory or analysis, and filing them there would have made the domain
+  // list decorative. Same reconciliation the `knowledge` line above records; 397 folds both.
+  'entities',
 ])
 
-/** The capabilities Phase 384 registers, with the binding state each one ships in. */
-const EXPECTED_384_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
+/**
+ * The registered capability set, with the binding state each one ships in.
+ *
+ * Renamed off its phase number in 387: it was `EXPECTED_384_BINDING_STATUS`, and once a
+ * second phase adds rows, a name that claims one phase’s set is a name that lies about what
+ * the exact-equality assertion below is actually pinning.
+ */
+const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   'config.get': 'bound',
+  // 387 D-09. Both BOUND everywhere: the entity directory is a required dep, so unlike
+  // `runs.start` there is no composition that can list these and then refuse them.
+  'entities.get': 'bound',
+  'entities.resolve': 'bound',
   'knowledge.bundles.list': 'bound',
   'runs.events': 'bound',
   'runs.get': 'bound',
@@ -66,6 +81,25 @@ const EXPECTED_384_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>>
 
 const FIXTURE_RUN_ID = 'run-alpha'
 
+const FIXTURE_ENTITY_SHORT_ID = 'MEM-001'
+
+/**
+ * The one entity this fixture directory knows about.
+ *
+ * A REAL descriptor rather than a refusing stub, because the invocation leg below calls every
+ * bound capability and parses the answer against its declared output contract — so a port that
+ * refused would make `entities.get` uncallable here, in the file that exists to ensure no
+ * capability arrives without someone stating how it is called.
+ */
+const FIXTURE_ENTITY_DESCRIPTOR = {
+  kind: 'MEM' as const,
+  shortId: FIXTURE_ENTITY_SHORT_ID,
+  uri: 'agentqa://memory/MEM-001',
+  machineId: 'bundle-fixture',
+  title: 'a fixture memory record',
+  statusSource: 'active',
+}
+
 /**
  * A valid input for every registered id.
  *
@@ -75,6 +109,11 @@ const FIXTURE_RUN_ID = 'run-alpha'
  */
 const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   'config.get': {},
+  // 387: `resolve` takes any reference at all, so the sample is free text that matches
+  // nothing — the fixture directory is empty and the honest answer is the none arm. `get`
+  // takes an exact address, and the fixture port below is what stands behind it.
+  'entities.get': { ref: FIXTURE_ENTITY_SHORT_ID },
+  'entities.resolve': { ref: 'nothing in this fixture is called this' },
   'knowledge.bundles.list': {},
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
@@ -115,6 +154,14 @@ function fakeDeps(): FunctionDeps {
       readEvents: () => Promise.resolve([]),
     },
     knowledge: { listBundles: () => Promise.resolve([]) },
+    entities: {
+      // Free text against an empty directory: the none arm, which is what the sample above
+      // asks for and what the never-guess contract requires.
+      resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+      get: (ref: string) => Promise.resolve(
+        ref === FIXTURE_ENTITY_SHORT_ID ? FIXTURE_ENTITY_DESCRIPTOR : undefined,
+      ),
+    },
     config: {
       getMasked: () => Promise.resolve({
         schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -228,12 +275,12 @@ describe('parity leg 1 — registry coverage', () => {
     }
   })
 
-  it('pins the phase-384 capability set and each id binding state', () => {
+  it('pins the registered capability set and each id binding state', () => {
     const observed = Object.fromEntries(
       declarations().map(declaration => [declaration.id, declaration.bindingStatus]),
     )
 
-    expect(observed).toEqual(EXPECTED_384_BINDING_STATUS)
+    expect(observed).toEqual(EXPECTED_BINDING_STATUS)
   })
 
   it('holds an invocation sample for every registered id — no capability without one', () => {

@@ -19,6 +19,7 @@ import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
+  ADDRESSING_LEDGER_DB_FILE,
   publishBundleForTest,
   type BundleStoreConfig,
   type PublishBundleInput,
@@ -35,7 +36,6 @@ import type {
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { ADDRESSING_LEDGER_DB_FILE } from '@vostride/agent-qa-knowledge-local'
 import { composeLocalAgent } from '../compose-local-agent.js'
 import type { LocalAgentHost } from '../compose-local-agent.js'
 

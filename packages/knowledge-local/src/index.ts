@@ -1,6 +1,32 @@
 import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 
+// 387 ENTY-01 — entity addressing: the durable ledger and the tier-(a) resolver.
+//
+// The composition root is the only importer of this entry (the reader carve-out enforces
+// that), so a surface reaching the resolver goes through composeLocalAgent and the function
+// layer rather than around them.
+export {
+  ADDRESSING_LEDGER_BUSY_TIMEOUT_MS,
+  ADDRESSING_LEDGER_DB_FILE,
+  ADDRESSING_LEDGER_USER_VERSION,
+  AddressingLedgerSchemaVersionError,
+  BugAddressingNotAvailableError,
+  openAddressingLedger,
+} from './addressing/ledger.js'
+export type {
+  AddressingLedger,
+  EntityAddress,
+  OpenAddressingLedgerOptions,
+} from './addressing/ledger.js'
+export { getEntityDescriptor, resolveEntityRef } from './resolver/resolve.js'
+export type {
+  EntitySighting,
+  EntitySightingSource,
+  ResolveEntityRefDeps,
+} from './resolver/resolve.js'
+export { createMemorySightingSource } from './resolver/memory-source.js'
+
 export { KNOWLEDGE_BUNDLE_EGRESS_CHANNEL, checkpointCommittedParts } from './bundle-egress.js'
 export type { BundleEgressOptions, BundleEgressOutcome } from './bundle-egress.js'
 export {

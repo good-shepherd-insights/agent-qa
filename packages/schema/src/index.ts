@@ -520,6 +520,61 @@ export type {
   ConfigGetInput,
 } from './functions/index'
 
+// 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
+// card shape and the two resolution unions.
+export {
+  ENTITY_CARD_MAX_ACTIONS,
+  ENTITY_CARD_MAX_KEY_FACTS,
+  ENTITY_EXACT_MATCH_SCORE,
+  ENTITY_FIRST_ORDINAL,
+  ENTITY_KINDS,
+  ENTITY_NO_MATCH_REASONS,
+  ENTITY_ORDINAL_MIN_DIGITS,
+  ENTITY_RESOLUTION_MAX_CANDIDATES,
+  ENTITY_STATUSES,
+  ENTITY_URI_SCHEME,
+  ENTITY_URI_SEGMENTS,
+  SLUG_ADDRESSED_ENTITY_KINDS,
+  ActionRefSchema,
+  EntitiesGetInputSchema,
+  EntitiesResolveInputSchema,
+  EntityCardResolutionSchema,
+  EntityCardSchema,
+  EntityDescriptorSchema,
+  EntityResolutionSchema,
+  EntityUriSchema,
+  KeyFactSchema,
+  canonicalShortId,
+  entityKindForUriSegment,
+  entityUriSegmentFor,
+  formatEntityOrdinal,
+  formatEntityUri,
+  formatOrdinalShortId,
+  formatSlugShortId,
+  isEntityKind,
+  isEntityUri,
+  isSlugAddressedKind,
+  parseEntityUri,
+  parseShortId,
+} from './entity/index'
+export type {
+  ActionRef,
+  EntitiesGetInput,
+  EntitiesResolveInput,
+  EntityCard,
+  EntityCardResolution,
+  EntityDescriptor,
+  EntityKind,
+  EntityNoMatchReason,
+  EntityResolution,
+  EntityStatus,
+  EntityStatusFor,
+  EntityUriSegment,
+  KeyFact,
+  ParsedEntityUri,
+  ParsedShortId,
+} from './entity/index'
+
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
 export type {

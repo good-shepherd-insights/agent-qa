@@ -13,6 +13,8 @@ import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/
 import { toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
 import { configGetSpec } from './ops/config-get.js'
+import { entitiesGetSpec } from './ops/entities-get.js'
+import { entitiesResolveSpec } from './ops/entities-resolve.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
@@ -63,6 +65,11 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsStartSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
   configGetSpec as FunctionSpec,
+  // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
+  // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so
+  // there is no host that lists these and cannot run them.
+  entitiesResolveSpec as FunctionSpec,
+  entitiesGetSpec as FunctionSpec,
 ]
 
 export interface CreateFunctionRegistryOptions {
