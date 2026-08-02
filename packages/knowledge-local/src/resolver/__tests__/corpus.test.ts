@@ -333,6 +333,10 @@ beforeAll(async () => {
     constants: corpusConstants(),
     cases: run.rows,
   }
+  // Removed before it is written, and the reason is a mutation probe: with a previous run's
+  // artifact still on disk, a writer that had stopped writing left the read-back assertion
+  // passing against a file THIS run never produced.
+  rmSync(corpusReportPath(), { force: true })
   writeCorpusReport(report)
 }, 120_000)
 
