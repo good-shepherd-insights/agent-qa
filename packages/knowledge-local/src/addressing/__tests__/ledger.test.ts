@@ -1,0 +1,307 @@
+// The addressing ledger's laws (Phase 387, plan 01 Task 2 — ENTY-01 / D-02 / D-03 / D-04).
+//
+// Five laws, and each case is written against the thing that could actually break it rather
+// than against a restatement of the law:
+//
+//   idempotent   two mints of one key are one row, and the SECOND mint returns the FIRST
+//                ordinal — not merely "an ordinal".
+//   race-safe    two OS PROCESSES, not two calls, because the mechanism under test is a
+//                cross-process sqlite write lock and an in-process pair would exercise the
+//                early return instead. The children load this module's SOURCE through Node's
+//                type transform, so the leg cannot pass against a stale dist.
+//   never-reuse  proven twice over: no API on the handle can free an ordinal (an exact-set
+//                assertion, not a contains check), and no writer at all can — the BEFORE
+//                DELETE / BEFORE UPDATE triggers are probed with a RAW connection that never
+//                touches this module's exports.
+//   BUG reserved refuses by name, and the address family still PARSES so a reference to it
+//                can be answered honestly instead of looking malformed.
+//   TGT rename   both slugs keep their own permanent addresses and the link between them
+//                exists only because something recorded it.
+//
+// The source assertion at the bottom carries its own positive controls. A check that scans a
+// file for forbidden statements is exactly the shape that passes forever while checking
+// nothing, so every pattern it claims to catch is planted into a scratch copy and the check
+// is required to catch it. It never shells out to a line matcher: a count that cannot tell
+// "zero hits" apart from "the matcher printed nothing" is not a gate.
+
+import { spawn } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  ADDRESSING_LEDGER_USER_VERSION,
+  BugAddressingNotAvailableError,
+  openAddressingLedger,
+} from '../ledger.js'
+import type { AddressingLedger } from '../ledger.js'
+
+const LEDGER_SOURCE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'ledger.ts')
+
+/**
+ * How long the race leg lets both children finish loading before releasing them together.
+ *
+ * It bounds a SETUP step, never the property: the assertion is that both callers agree and
+ * that one row exists, and a grace too short would make the two children start apart rather
+ * than make a contended mint look uncontended. Retune from observed child startup on slow
+ * CI hosts, not from a guess about scheduling.
+ */
+const CHILD_STARTUP_GRACE_MS = 500
+
+/** Every row in the addresses table, read through a connection this module did not open. */
+function rawRows(path: string): Record<string, unknown>[] {
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    return db.prepare('SELECT * FROM addresses ORDER BY kind, ordinal, machine_id').all()
+  } finally {
+    db.close()
+  }
+}
+
+describe('the addressing ledger', () => {
+  let root: string
+  let path: string
+  let ledger: AddressingLedger
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-addressing-'))
+    path = join(root, 'entity-addresses.db')
+    ledger = openAddressingLedger({ path })
+  })
+
+  afterEach(() => {
+    ledger.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  // ---- law 1: idempotent mint --------------------------------------------------------------
+
+  it('mints one address per key, however many times it is asked (ENTY-01)', () => {
+    const first = ledger.mint('MEM', 'bundle-alpha')
+    const second = ledger.mint('MEM', 'bundle-alpha')
+
+    expect(first.shortId).toBe('MEM-001')
+    // The SAME ordinal, not merely a well-formed one: an implementation that minted afresh
+    // each time would satisfy every shape assertion and fail exactly here.
+    expect(second).toEqual(first)
+    expect(rawRows(path).filter((row) => row.machine_id === 'bundle-alpha')).toHaveLength(1)
+  })
+
+  // ---- law 2: the lost race re-reads the winner ---------------------------------------------
+
+  it('gives two CONCURRENT PROCESSES one ordinal and leaves one row (D-02)', async () => {
+    // Both children load the module first and then block on a start file, so they collide
+    // inside the write lock rather than running one after another. Two IN-PROCESS calls would
+    // return through the pre-read and never reach the ON CONFLICT path this case exists to
+    // exercise — which is why the leg is worth two processes.
+    const gate = join(root, 'go')
+    const script = join(root, 'mint-child.mts')
+    writeFileSync(
+      script,
+      [
+        "import { existsSync } from 'node:fs'",
+        `const { openAddressingLedger } = await import(${JSON.stringify(LEDGER_SOURCE_PATH)})`,
+        `while (!existsSync(${JSON.stringify(gate)})) { /* spin to the shared start instant */ }`,
+        `const ledger = openAddressingLedger({ path: ${JSON.stringify(path)} })`,
+        "const minted = ledger.mint('MEM', 'contended-bundle')",
+        'ledger.close()',
+        'process.stdout.write(minted.shortId)',
+      ].join('\n'),
+      'utf8',
+    )
+
+    function mintInChild(): Promise<string> {
+      return new Promise((resolve, reject) => {
+        // The children load this module's SOURCE, not its dist. A cross-process probe against
+        // a workspace package's build output is a no-op until that build runs, and this leg
+        // must be exercising the code in the diff.
+        const child = spawn(process.execPath, ['--experimental-transform-types', script], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+        let out = ''
+        let err = ''
+        child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
+        child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString('utf8') })
+        child.on('error', reject)
+        child.on('exit', (code) => {
+          if (code === 0) resolve(out)
+          // A constraint error escaping either child is the exact failure D-02 forbids, so it
+          // is surfaced with the child's own stderr rather than collapsed into a bare code.
+          else reject(new Error(`mint child exited ${String(code)}: ${err}`))
+        })
+      })
+    }
+
+    const both = [mintInChild(), mintInChild()]
+    await new Promise((resolve) => setTimeout(resolve, CHILD_STARTUP_GRACE_MS))
+    writeFileSync(gate, 'go', 'utf8')
+
+    expect(await Promise.all(both)).toEqual(['MEM-001', 'MEM-001'])
+    expect(rawRows(path)).toHaveLength(1)
+  })
+
+  // ---- law 3: never reuse ------------------------------------------------------------------
+
+  it('never hands an ordinal back, and exposes no API that could (D-04)', () => {
+    ledger.mint('MEM', 'bundle-a')
+    ledger.mint('MEM', 'bundle-b')
+    ledger.mint('MEM', 'bundle-c')
+
+    // EXACT set equality, never a contains check: a contains check passes happily while a
+    // `forget` or `reassign` verb grows beside the pinned names, which is the one drift
+    // direction this assertion exists to catch.
+    expect(Object.keys(ledger).sort()).toEqual([
+      'close',
+      'lookup',
+      'lookupByShortId',
+      'lookupTargetRename',
+      'mint',
+      'recordTargetRename',
+    ])
+
+    expect(ledger.mint('MEM', 'bundle-d').shortId).toBe('MEM-004')
+  })
+
+  it('refuses a delete or an update through a connection it does not control (D-04)', () => {
+    ledger.mint('MEM', 'bundle-a')
+
+    // The point of a RAW connection: the exported-surface assertion above binds this module's
+    // callers, and nothing else. This binds a future call site, an older binary, and someone
+    // at a sqlite3 prompt — which is what makes append-only a property of the ledger rather
+    // than of the discipline of whoever opens it next.
+    const raw = new DatabaseSync(path)
+    try {
+      expect(() => raw.exec('DELETE FROM addresses')).toThrow(/never deletes an address/)
+      expect(() => raw.exec("UPDATE addresses SET ordinal = 99 WHERE kind = 'MEM'"))
+        .toThrow(/never changes/)
+    } finally {
+      raw.close()
+    }
+
+    expect(rawRows(path)).toHaveLength(1)
+    expect(ledger.lookup('MEM', 'bundle-a')?.shortId).toBe('MEM-001')
+  })
+
+  // ---- law 4: BUG is reserved, not fake ----------------------------------------------------
+
+  it('refuses to mint a BUG address by name (D-03)', () => {
+    expect(() => ledger.mint('BUG', 'anything at all'))
+      .toThrow(BugAddressingNotAvailableError)
+    // Refused, and refused WITHOUT a trace: a reserved family that quietly wrote a row would
+    // be a published address nothing can resolve.
+    expect(rawRows(path)).toHaveLength(0)
+  })
+
+  // ---- law 5: the TGT rename chain ---------------------------------------------------------
+
+  it('keeps both slugs addressable and links them only when told (D-03)', () => {
+    const before = ledger.mint('TGT', 'checkout')
+    expect(before.shortId).toBe('TGT-checkout')
+    // Slug-addressed kinds carry no ordinal, so they can never consume one an ordinal kind
+    // would otherwise have been handed.
+    expect(before.ordinal).toBeUndefined()
+
+    // Nothing is inferred. Before the rename is RECORDED there is no link, even though both
+    // slugs exist and a heuristic would happily have proposed one.
+    ledger.mint('TGT', 'payment')
+    expect(ledger.lookupTargetRename('checkout')).toBeUndefined()
+
+    const rename = ledger.recordTargetRename('checkout', 'payment')
+    expect(rename).toMatchObject({ fromSlug: 'checkout', toSlug: 'payment' })
+
+    // Append-only: the predecessor keeps the address that is already in somebody's logs.
+    expect(ledger.lookupByShortId('TGT-checkout')).toEqual(before)
+    expect(ledger.lookupByShortId('TGT-payment')?.machineId).toBe('payment')
+    expect(ledger.lookupTargetRename('checkout')?.toSlug).toBe('payment')
+    expect(ledger.lookupTargetRename('payment')).toBeUndefined()
+  })
+
+  it('stamps its schema version and refuses a file another build wrote', () => {
+    ledger.mint('MEM', 'bundle-a')
+    const stamped = new DatabaseSync(path, { readOnly: true })
+    try {
+      expect(Number(stamped.prepare('PRAGMA user_version').get()?.user_version))
+        .toBe(ADDRESSING_LEDGER_USER_VERSION)
+    } finally {
+      stamped.close()
+    }
+
+    const bumped = new DatabaseSync(path)
+    bumped.exec(`PRAGMA user_version=${String(ADDRESSING_LEDGER_USER_VERSION + 1)}`)
+    bumped.close()
+
+    expect(() => openAddressingLedger({ path }))
+      .toThrow(/AddressingLedgerSchemaVersionError|schema version/)
+  })
+})
+
+// ---- the source assertion, with its own positive controls ------------------------------------
+
+/**
+ * Statements that would mutate or destroy an `addresses` row.
+ *
+ * Case- and whitespace-normalised before matching, and applied to the source with line
+ * comments stripped, so neither prose nor formatting can hide a real statement or invent a
+ * fake one. The trigger DDL's own `BEFORE DELETE ON addresses` is deliberately not one of
+ * these shapes — the triggers are what ENFORCE the law, and a checker that flagged them would
+ * be forbidding the guard along with the thing it guards.
+ */
+const FORBIDDEN_ADDRESS_STATEMENTS: readonly { name: string; pattern: RegExp }[] = [
+  { name: 'delete', pattern: /DELETE\s+FROM\s+ADDRESSES/u },
+  { name: 'update', pattern: /UPDATE\s+ADDRESSES\s+SET/u },
+  { name: 'drop', pattern: /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?ADDRESSES/u },
+  { name: 'alter', pattern: /ALTER\s+TABLE\s+ADDRESSES/u },
+  { name: 'replace', pattern: /REPLACE\s+INTO\s+ADDRESSES/u },
+  { name: 'upsert-overwrite', pattern: /ON\s+CONFLICT[^;]*DO\s+UPDATE/u },
+]
+
+function mutatingAddressStatements(source: string): string[] {
+  const stripped = source
+    .split('\n')
+    .map((line) => line.replace(/^\s*\/\/.*$/u, ''))
+    .join('\n')
+  const normalised = stripped.replaceAll(/\s+/gu, ' ').toUpperCase()
+  return FORBIDDEN_ADDRESS_STATEMENTS
+    .filter((candidate) => candidate.pattern.test(normalised))
+    .map((candidate) => candidate.name)
+}
+
+describe('the ledger module exposes no way to unwrite an address (D-04)', () => {
+  const source = readFileSync(LEDGER_SOURCE_PATH, 'utf8')
+
+  it('holds no mutating statement against the addresses table', () => {
+    expect(mutatingAddressStatements(source)).toEqual([])
+  })
+
+  it.each(FORBIDDEN_ADDRESS_STATEMENTS.map((candidate) => candidate.name))(
+    'catches a planted %s — the check is not vacuous',
+    (name) => {
+      // The positive control the acceptance criterion needs: a source assertion whose only
+      // evidence is its own green is evidence of nothing. Each pattern is planted into a
+      // SCRATCH copy of the real file and the checker is required to find it.
+      const planted: Readonly<Record<string, string>> = {
+        delete: "db.exec('DELETE FROM addresses WHERE kind = ?')",
+        update: "db.exec('UPDATE addresses SET ordinal = 1')",
+        drop: "db.exec('DROP TABLE addresses')",
+        alter: "db.exec('ALTER TABLE addresses RENAME TO old_addresses')",
+        replace: "db.exec('REPLACE INTO addresses VALUES (1)')",
+        'upsert-overwrite': "db.exec('INSERT INTO addresses VALUES (1) ON CONFLICT DO UPDATE SET ordinal = 2')",
+      }
+      const mutated = `${source}\n${planted[name]!}\n`
+
+      expect(mutatingAddressStatements(mutated)).toContain(name)
+    },
+  )
+
+  it('is not fooled by prose, and does not read a comment as a statement', () => {
+    // The inverse control. Every real gate in this repo has at some point been invalidated by
+    // a doc comment, so the checker is shown one that says every forbidden word.
+    const commented = `${source}\n// DELETE FROM addresses and UPDATE addresses SET ordinal = 1\n`
+
+    expect(mutatingAddressStatements(commented)).toEqual([])
+  })
+})

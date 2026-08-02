@@ -1,0 +1,167 @@
+// Tier (a) of the resolver, on its own (Phase 387, plan 01 Task 2 — ENTY-01 / D-03 / D-09).
+//
+// The spine test proves tier (a) works through the whole stack; this file proves it works at
+// the edges, where the stack has nothing to say. Four of the cases are about inputs a user
+// really types and a resolver really has to refuse: an address that is well formed and names
+// nothing, an address in a reserved family, an unpadded ordinal, and free text.
+//
+// The sighting source is supplied by the case rather than read off a knowledge root, which is
+// what lets a TGT chain be exercised at all — target slugs come from configuration, and the
+// configuration source lands in a later plan. What is under test here is the RESOLVER's
+// treatment of them, not where the list comes from.
+
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { openAddressingLedger } from '../../addressing/ledger.js'
+import type { AddressingLedger } from '../../addressing/ledger.js'
+import { getEntityDescriptor, resolveEntityRef } from '../resolve.js'
+import type { EntitySighting, EntitySightingSource, ResolveEntityRefDeps } from '../resolve.js'
+
+function staticSource(
+  kind: EntitySightingSource['kind'],
+  rows: readonly EntitySighting[],
+): EntitySightingSource {
+  const find = (machineId: string): EntitySighting | undefined =>
+    rows.find((row) => row.machineId === machineId)
+  return { kind, sight: find, hydrate: find }
+}
+
+const MEMORIES: readonly EntitySighting[] = [
+  { machineId: 'bundle-checkout', title: 'checkout selector', statusSource: 'active' },
+  { machineId: 'bundle-login', title: 'login selector', statusSource: 'active' },
+]
+
+const TARGETS: readonly EntitySighting[] = [
+  { machineId: 'checkout', title: 'Checkout target', statusSource: 'active' },
+  { machineId: 'payment', title: 'Payment target', statusSource: 'active' },
+]
+
+describe('resolver tier (a)', () => {
+  let root: string
+  let ledger: AddressingLedger
+  let deps: ResolveEntityRefDeps
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-tier-a-'))
+    ledger = openAddressingLedger({ path: join(root, 'entity-addresses.db') })
+    deps = {
+      ledger,
+      sources: [staticSource('MEM', MEMORIES), staticSource('TGT', TARGETS)],
+    }
+  })
+
+  afterEach(() => {
+    ledger.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('resolves a minted short-ID at 1.0', () => {
+    resolveEntityRef('bundle-checkout', deps)
+
+    expect(resolveEntityRef('MEM-001', deps)).toMatchObject({
+      kind: 'resolved',
+      score: 1,
+      descriptor: { kind: 'MEM', shortId: 'MEM-001', machineId: 'bundle-checkout' },
+    })
+  })
+
+  it('resolves the agentqa:// URI to the same entity at 1.0', () => {
+    resolveEntityRef('bundle-checkout', deps)
+
+    expect(resolveEntityRef('agentqa://memory/MEM-001', deps))
+      .toEqual(resolveEntityRef('MEM-001', deps))
+  })
+
+  it('accepts an unpadded ordinal and answers in the canonical spelling', () => {
+    resolveEntityRef('bundle-checkout', deps)
+
+    const unpadded = resolveEntityRef('MEM-1', deps)
+
+    expect(unpadded).toEqual(resolveEntityRef('MEM-001', deps))
+    // The ANSWER is canonical even though the input was not, which is what keeps `MEM-1` a
+    // spelling of one address rather than a second one.
+    if (unpadded.kind !== 'resolved') throw new Error('expected the resolved arm')
+    expect(unpadded.descriptor.shortId).toBe('MEM-001')
+    expect(unpadded.descriptor.uri).toBe('agentqa://memory/MEM-001')
+  })
+
+  it('returns the typed none arm for a well-formed address nothing minted — never a throw', () => {
+    resolveEntityRef('bundle-checkout', deps)
+
+    // MEM-002 is one ordinal past the only address that exists. It parses perfectly, and the
+    // temptation an unguarded resolver has here is to answer with the nearest thing it holds.
+    expect(resolveEntityRef('MEM-002', deps)).toEqual({
+      kind: 'none',
+      reason: 'unknown-address',
+    })
+    expect(() => resolveEntityRef('MEM-002', deps)).not.toThrow()
+  })
+
+  it('parses a BUG address and reports the family as reserved (D-03)', () => {
+    // The distinction that matters: `BUG-7` is not malformed and it is not merely unknown. It
+    // is an address in a family this build reserves, and saying so is what stops a user
+    // hunting for a bug the ledger has simply not seen yet.
+    expect(resolveEntityRef('BUG-7', deps)).toEqual({ kind: 'none', reason: 'reserved-kind' })
+    expect(resolveEntityRef('agentqa://bug/BUG-7', deps))
+      .toEqual({ kind: 'none', reason: 'reserved-kind' })
+  })
+
+  it('refuses free text rather than offering the entity it is nearest to', () => {
+    resolveEntityRef('bundle-checkout', deps)
+
+    // Every word of this reference appears in the fixture's only entity title. A ranker would
+    // score it highly; tier (a) has no ranker and says so.
+    expect(resolveEntityRef('the checkout selector', deps))
+      .toEqual({ kind: 'none', reason: 'no-match' })
+    expect(resolveEntityRef('bundle-checkou', deps)).toEqual({ kind: 'none', reason: 'no-match' })
+  })
+
+  it('mints once per entity and keeps first-mention order (D-01)', () => {
+    // Ordinals reflect first MENTION, not creation: `bundle-login` is second in the source and
+    // first in the ledger because it was referenced first.
+    expect(resolveEntityRef('bundle-login', deps)).toMatchObject({
+      descriptor: { shortId: 'MEM-001' },
+    })
+    expect(resolveEntityRef('bundle-checkout', deps)).toMatchObject({
+      descriptor: { shortId: 'MEM-002' },
+    })
+    expect(resolveEntityRef('bundle-login', deps)).toMatchObject({
+      descriptor: { shortId: 'MEM-001' },
+    })
+  })
+
+  it('names the successor slug on a renamed target, and only once recorded (D-03)', () => {
+    resolveEntityRef('checkout', deps)
+    const before = resolveEntityRef('TGT-checkout', deps)
+    if (before.kind !== 'resolved') throw new Error('expected the resolved arm')
+    // No link is inferred from the slugs alone.
+    expect(before.descriptor.successorMachineId).toBeUndefined()
+
+    ledger.recordTargetRename('checkout', 'payment')
+
+    const after = resolveEntityRef('TGT-checkout', deps)
+    if (after.kind !== 'resolved') throw new Error('expected the resolved arm')
+    // The old address STILL resolves — append-only — and now carries the rename, so a card
+    // can show it rather than silently redirecting to the successor.
+    expect(after.descriptor).toMatchObject({
+      shortId: 'TGT-checkout',
+      machineId: 'checkout',
+      successorMachineId: 'payment',
+    })
+  })
+
+  it('never mints through the get path', () => {
+    // `get` is handed an address that already exists. If it could sight, a card render on any
+    // surface would become a write to the one store this system never rebuilds.
+    expect(getEntityDescriptor('bundle-checkout', deps)).toBeUndefined()
+    expect(ledger.lookup('MEM', 'bundle-checkout')).toBeUndefined()
+
+    resolveEntityRef('bundle-checkout', deps)
+    expect(getEntityDescriptor('MEM-001', deps)).toMatchObject({ machineId: 'bundle-checkout' })
+    expect(getEntityDescriptor('MEM-002', deps)).toBeUndefined()
+  })
+})
