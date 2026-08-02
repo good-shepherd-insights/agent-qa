@@ -1,4 +1,4 @@
-// THE entity card producer (Phase 387, ENTY-02 / D-10 / D-11 / D-12).
+// THE entity card producer (Phase 387, ENTY-02 / D-04 / D-10 / D-11 / D-12).
 //
 // One producer, in the function layer, and every surface's card is its output. That is not a
 // tidiness claim — it is what makes the chat card, the MCP `structuredContent` and M5's UI
@@ -13,65 +13,103 @@
 // rather than repair a status the kind does not declare. `EntityCardSchema.parse` is where
 // that refusal happens (D-12), so an unrecognised store state surfaces as a named contract
 // failure at the seam instead of as a card that quietly reads `active`.
+//
+// The function stays SYNCHRONOUS and PURE. Everything it needs beyond the descriptor arrives
+// as an already-read context value (see `card-context.ts`), so the two properties ENTY-02
+// actually claims — two renders of unchanged state are deeply equal, and rendering never
+// writes — are facts about the parameter list rather than promises about the body. An async
+// producer that read configuration itself would have had a handle through which any port
+// could later be reached.
 
-import { EntityCardSchema, formatEntityUri } from '@vostride/agent-qa-schema'
-import type { ActionRef, EntityCard, EntityDescriptor, KeyFact } from '@vostride/agent-qa-schema'
+import { EntityCardSchema, formatEntityUri, formatEntityUrl } from '@vostride/agent-qa-schema'
+import type {
+  EntityCard,
+  EntityDescriptor,
+  ForgetReceiptV1,
+} from '@vostride/agent-qa-schema'
 
-import { ENTITIES_GET_FUNCTION_ID } from '../ops/entities-ids.js'
+import { actionsForKind } from './actions.js'
+import type { EntityCardContext } from './card-context.js'
+import { projectKeyFacts } from './key-facts.js'
 
-/**
- * The card's `actions[]` are REGISTRY OP REFS (D-11).
- *
- * A card can therefore only advertise capabilities the registry already contains, which is
- * what makes an advertised action invokable identically over chat, CLI and MCP, subjects it
- * to safe-mode listing filters for free, and lets 397's parity suite assert that every action
- * any card offers actually resolves. A freeform action string would have been a second
- * capability vocabulary — the private-power drift L10 exists to prevent — and there is
- * deliberately no way to construct one here.
- */
-function actionsFor(descriptor: EntityDescriptor): ActionRef[] {
-  return [
-    {
-      functionId: ENTITIES_GET_FUNCTION_ID,
-      label: 'Open card',
-      inputSeed: { ref: descriptor.shortId },
-    },
-  ]
+/** What the producer needs about ONE entity beyond its descriptor. */
+export interface EntityCardRenderInput extends EntityCardContext {
+  /**
+   * The forget receipt for a forgotten `MEM` bundle (D-04 + D-19).
+   *
+   * Supplied by whoever already holds one — the forget verb, which produced it, and later a
+   * store lookup for an address whose bundle is gone. It is an INPUT rather than something
+   * this module fetches, for the same reason the URL base is: the producer takes no ports.
+   */
+  readonly forgetReceipt?: ForgetReceiptV1
 }
 
 /**
- * Deterministic facts computed from store data — never LLM-authored (D-12).
+ * A receipt was supplied for something that is not a knowledge bundle.
  *
- * The tracer stage carries the one fact that is true of every kind: the machine id the
- * address maps FROM, which is what a QA engineer needs in order to correlate a short-ID with
- * a log line, a directory name or a bundle id. Per-kind projections (a run's verdict, a
- * test's last failure, a target's rename) expand in 387-07 and expand HERE, without the
- * producer moving.
+ * A refusal rather than a silent drop. `ForgetReceiptV1.resultingBundleStatus` is drawn from
+ * the `MEM` card's own status vocabulary (D-19), so a receipt attached to a run or a target
+ * is not merely irrelevant, it is a claim about a status that kind does not declare — and
+ * dropping it would render a card that omits the very fact the caller asked to show.
  */
-function keyFactsFor(descriptor: EntityDescriptor): KeyFact[] {
-  const facts: KeyFact[] = [{ label: 'machine id', value: descriptor.machineId }]
-  if (descriptor.successorMachineId !== undefined) {
-    // D-03's "with its rename visible", made literal. The old address keeps resolving to the
-    // old name — anything else would make an existing CI log's reference quietly mean a
-    // different target — and the card is where the reader learns what it became.
-    facts.push({
-      label: 'renamed to',
-      value: descriptor.successorMachineId,
-      ref: formatEntityUri(descriptor.kind, `${descriptor.kind}-${descriptor.successorMachineId}`),
-    })
+export class ForgetReceiptKindError extends TypeError {
+  constructor(readonly kind: string) {
+    super(
+      `a forget receipt describes a MEM knowledge bundle (D-19); it cannot render a ${kind} card`,
+    )
+    this.name = 'ForgetReceiptKindError'
   }
-  return facts
+}
+
+/**
+ * The status the card reports (D-04: permanent address, honest status).
+ *
+ * When a forget receipt is in hand it WINS over the store's reported status, and that is the
+ * whole of D-19's second use: the receipt is what the forgotten entity's permanent address
+ * resolves to afterwards, so a descriptor still reporting `active` because some projection
+ * has not caught up must not be able to contradict it. The receipt's own field is typed to
+ * the `MEM` vocabulary, so this substitution can never widen what the card may say.
+ */
+function statusFor(descriptor: EntityDescriptor, input: EntityCardRenderInput): string {
+  if (input.forgetReceipt === undefined) return descriptor.statusSource
+  if (descriptor.kind !== 'MEM') throw new ForgetReceiptKindError(descriptor.kind)
+  return input.forgetReceipt.resultingBundleStatus
+}
+
+/**
+ * The dashboard link, or nothing (D-10).
+ *
+ * ABSENT, not null and not an empty string, whenever no dashboard base is configured — the
+ * v52 default — or whenever the configured base cannot render an honest URL. The field is
+ * omitted from the object entirely rather than set to `undefined`, so `'url' in card` is
+ * false and a surface that iterates the card's own keys never sees it.
+ */
+function urlFor(
+  descriptor: EntityDescriptor,
+  input: EntityCardRenderInput,
+): { url: string } | Record<string, never> {
+  if (input.urlBase === undefined) return {}
+  const url = formatEntityUrl({
+    baseUrl: input.urlBase.baseUrl,
+    workspace: input.urlBase.workspace,
+    kind: descriptor.kind,
+    shortId: descriptor.shortId,
+    title: descriptor.title,
+  })
+  return url === undefined ? {} : { url }
 }
 
 /**
  * Render one descriptor as the one card shape.
  *
- * `url` is ABSENT (D-10). The producer would compute it from a configured dashboard base URL
- * using the pinned route shape, and v52 configures none — so rather than emitting a link to a
- * route nothing serves, the field is omitted. M5 turns it on by setting config; neither the
- * schema nor this function changes.
+ * The second parameter defaults to an empty context, which is the v52 production state: no
+ * dashboard configured and no receipt in hand. That default is what lets every existing
+ * caller keep rendering the card it already rendered.
  */
-export function produceEntityCard(descriptor: EntityDescriptor): EntityCard {
+export function produceEntityCard(
+  descriptor: EntityDescriptor,
+  input: EntityCardRenderInput = {},
+): EntityCard {
   return EntityCardSchema.parse({
     kind: descriptor.kind,
     id: descriptor.shortId,
@@ -80,8 +118,13 @@ export function produceEntityCard(descriptor: EntityDescriptor): EntityCard {
     // stops a card from ever carrying two that disagree.
     uri: formatEntityUri(descriptor.kind, descriptor.shortId),
     title: descriptor.title,
-    status: descriptor.statusSource,
-    keyFacts: keyFactsFor(descriptor),
-    actions: actionsFor(descriptor),
+    status: statusFor(descriptor, input),
+    ...urlFor(descriptor, input),
+    keyFacts: projectKeyFacts(
+      input.forgetReceipt === undefined
+        ? { descriptor }
+        : { descriptor, forgetReceipt: input.forgetReceipt },
+    ),
+    actions: actionsForKind(descriptor),
   }) as EntityCard
 }

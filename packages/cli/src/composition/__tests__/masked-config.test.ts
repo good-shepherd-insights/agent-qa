@@ -553,6 +553,11 @@ describe('isSecretConfigKey (the additive name census)', () => {
       'use.browser.headless',
       // A token BUDGET is a count, not a credential — the one named carve-out.
       'knowledge.contextBudgetTokens',
+      // Phase 387 D-10: a workspace NAME. The `→ false` half of the census matters as much as
+      // the `→ true` half — this is the row that catches over-masking a leaf the entity-card
+      // producer needs verbatim in order to render a link at all.
+      'services.dashboard.workspace',
+      'services.dashboard.baseUrl',
     ]) {
       expect(isSecretConfigKey(key), key).toBe(false)
     }
@@ -1506,7 +1511,14 @@ const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
   'services.cache.dir',
   'services.cache.ttl',
   'services.dashboard.artifactsDir',
+  // Phase 387 D-10. `baseUrl` arrives REGISTERED — its leaf is already in
+  // `CREDENTIAL_BEARING_URL_LEAVES` — so it is reduced to its origin and flagged, and the
+  // entity-card producer treats a flagged base as no base at all rather than rendering links
+  // against a reduction. `workspace` is recorded INERT: it is a workspace NAME, it carries no
+  // address and no credential, and it renders verbatim.
+  'services.dashboard.baseUrl',
   'services.dashboard.dbPath',
+  'services.dashboard.workspace',
   'services.mcp.host',
   'services.mcp.path',
   'services.vision.screenshotSize',
@@ -1608,6 +1620,16 @@ describe('the registered URL-name set cannot silently go stale', () => {
       deployment: z.object({ callbackUrl: z.string(), region: z.string() }).strict(),
     })
     expect(unpinnedStringLeafPaths(grown)).toEqual(['deployment.callbackUrl', 'deployment.region'])
+  })
+
+  it('registers the D-10 dashboard base as an ADDRESS, and its workspace as inert', () => {
+    // The two halves of the human decision the pin above forces, executed. The base is an
+    // address and is reduced; the workspace is a name and is not. If the second row ever
+    // flipped, every entity card would silently lose its `url`.
+    expect(isCredentialBearingUrlField('services.dashboard.baseUrl')).toBe(true)
+    expect(isCredentialBearingUrlField('services.dashboard.workspace')).toBe(false)
+    expect(isMaskedConfigPath('services.dashboard.baseUrl', visibility)).toBe(false)
+    expect(isMaskedConfigPath('services.dashboard.workspace', visibility)).toBe(false)
   })
 
   it('registers the four names the corpus above plants credentials on', () => {

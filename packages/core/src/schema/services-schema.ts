@@ -5,6 +5,16 @@ export const DashboardConfigSchema = z.object({
   port: z.number().optional(),
   dbPath: z.string().optional(),
   artifactsDir: z.string().optional(),
+  // Phase 387, D-10: where an entity card's `url` points. BOTH optional, so the v52 default
+  // is a card with no `url` at all rather than a link to a route nothing serves. The card
+  // producer reads these through the masked config reader and renders
+  // `ENTITY_URL_ROUTE` (@vostride/agent-qa-schema) against them.
+  //
+  // They live on the EXISTING `services.dashboard` block rather than on a new top-level
+  // `dashboard` key: this project already has one dashboard configuration home, and a second
+  // one would be two places an operator could reasonably write the same fact.
+  baseUrl: z.string().optional(),
+  workspace: z.string().optional(),
 }).strict()
 
 const LoopbackHostSchema = z.string().trim().min(1).refine(

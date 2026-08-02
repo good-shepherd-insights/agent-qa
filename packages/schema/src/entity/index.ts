@@ -49,6 +49,15 @@ export type {
 } from './entity-card'
 
 export {
+  ENTITY_URL_ROUTE,
+  ENTITY_URL_ROUTE_PARAMS,
+  ENTITY_URL_SLUG_MAX_LENGTH,
+  entityTitleSlug,
+  formatEntityUrl,
+} from './url'
+export type { EntityUrlInput } from './url'
+
+export {
   ENTITY_EXACT_MATCH_SCORE,
   ENTITY_NO_MATCH_REASONS,
   ENTITY_RESOLUTION_MAX_CANDIDATES,

@@ -20,6 +20,8 @@ import type {
   EntityResolution,
 } from '@vostride/agent-qa-schema'
 
+import { readEntityCardContext } from '../entity-cards/card-context.js'
+import type { EntityCardContext } from '../entity-cards/card-context.js'
 import { produceEntityCard } from '../entity-cards/produce-card.js'
 import { ENTITIES_RESOLVE_FUNCTION_ID } from './entities-ids.js'
 import type { FunctionSpec } from '../spec.js'
@@ -32,19 +34,25 @@ export { ENTITIES_RESOLVE_FUNCTION_ID }
  * Written as an exhaustive switch rather than a spread-and-patch so a fourth arm added to the
  * resolution vocabulary later is a compile error here instead of a silently unrendered case.
  */
-function renderResolution(resolution: EntityResolution): EntityCardResolution {
+function renderResolution(
+  resolution: EntityResolution,
+  context: EntityCardContext,
+): EntityCardResolution {
   switch (resolution.kind) {
     case 'resolved':
       return {
         kind: 'resolved',
-        card: produceEntityCard(resolution.descriptor),
+        card: produceEntityCard(resolution.descriptor, context),
         score: resolution.score,
       }
     case 'ambiguous':
       return {
         kind: 'ambiguous',
+        // The SAME context for every candidate — a disambiguation set whose members were
+        // rendered under different contexts would put two spellings of one system's state
+        // side by side in the one place a human is choosing between them.
         candidates: resolution.candidates.map((candidate) => ({
-          card: produceEntityCard(candidate.descriptor),
+          card: produceEntityCard(candidate.descriptor, context),
           score: candidate.score,
         })),
       }
@@ -65,6 +73,7 @@ export const entitiesResolveSpec: FunctionSpec<EntitiesResolveInput, EntityCardR
     // Read-tier despite D-01's lazy mint, and the distinction is deliberate: minting records
     // an ADDRESS for something that already existed. It creates no entity, changes no
     // knowledge, and is invisible in every projection except the one that hands out names.
-    return renderResolution(await deps.entities.resolve(input.ref))
+    const resolution = await deps.entities.resolve(input.ref)
+    return renderResolution(resolution, await readEntityCardContext(deps))
   },
 }

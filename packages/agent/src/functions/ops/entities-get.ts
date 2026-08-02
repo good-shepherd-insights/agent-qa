@@ -12,6 +12,7 @@
 import { EntitiesGetInputSchema, EntityCardSchema } from '@vostride/agent-qa-schema'
 import type { EntitiesGetInput, EntityCard } from '@vostride/agent-qa-schema'
 
+import { readEntityCardContext } from '../entity-cards/card-context.js'
 import { produceEntityCard } from '../entity-cards/produce-card.js'
 import { ENTITIES_GET_FUNCTION_ID } from './entities-ids.js'
 import type { FunctionSpec } from '../spec.js'
@@ -45,6 +46,9 @@ export const entitiesGetSpec: FunctionSpec<EntitiesGetInput, EntityCard> = {
   async invoke(input, deps) {
     const descriptor = await deps.entities.get(input.ref)
     if (descriptor === undefined) throw new EntityNotFoundError(input.ref)
-    return produceEntityCard(descriptor)
+    // The render context is read HERE, not inside the producer, so the producer stays a pure
+    // synchronous function of values (D-10). Read after the lookup: an address that names
+    // nothing is refused without touching configuration at all.
+    return produceEntityCard(descriptor, await readEntityCardContext(deps))
   },
 }
