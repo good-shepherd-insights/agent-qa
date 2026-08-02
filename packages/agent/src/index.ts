@@ -52,6 +52,11 @@ export { StreamReplayFloorError } from './functions/ops/runs-events.js'
 // 387 ENTY-02: the caller-facing refusal for an address nothing ever minted. A permanently
 // minted address whose entity was tombstoned still resolves (D-04) — this is not that case.
 export { EntityNotFoundError } from './functions/ops/entities-get.js'
+// 387 KREV-02: the why-verb's one refusal. `stepIndex` is numbered per member test, so an
+// address that names no test can match two steps; the verb refuses rather than answering
+// about whichever test came first, and a surface catches this to say which testIds to pick
+// between.
+export { AmbiguousStepAddressError } from './functions/ops/knowledge-brief-why.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer
 // results as prose, and prose is the sole unmasking surface.

@@ -546,6 +546,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       // the entity pair is — they dispatch through the REQUIRED `knowledge` port, so no
       // composition lists them and then refuses. 387-08's mutating verbs go through the
       // OPTIONAL `knowledgeReview` dep and are the first rows here that can read `unbound`.
+      'knowledge.brief.why': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'knowledge.record.show': {
         requiredScopes: ['read'],
         resultKind: 'unary',

@@ -15,6 +15,7 @@ import type { FunctionBindingStatus } from './spec.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
+import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
 import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
@@ -73,6 +74,9 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   knowledgeRecordsInspectSpec as FunctionSpec,
   knowledgeRecordsDiffSpec as FunctionSpec,
   knowledgeRecordShowSpec as FunctionSpec,
+  // KREV-02: the honest verb. Read-tier like its four siblings, and bound everywhere for the
+  // same reason — its substrate is the RUNS port, which is required.
+  knowledgeBriefWhySpec as FunctionSpec,
   configGetSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so

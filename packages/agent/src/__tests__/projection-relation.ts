@@ -25,6 +25,7 @@ import type { z } from 'zod'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
+import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
 import { knowledgeRecordShowSpec } from '../functions/ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
@@ -53,6 +54,7 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
   'knowledge.bundles.list': knowledgeBundlesListSpec,
+  'knowledge.brief.why': knowledgeBriefWhySpec,
   'knowledge.record.show': knowledgeRecordShowSpec,
   'knowledge.records.diff': knowledgeRecordsDiffSpec,
   'knowledge.records.inspect': knowledgeRecordsInspectSpec,

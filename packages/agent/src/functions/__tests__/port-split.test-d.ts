@@ -14,8 +14,10 @@
 // with `packages/agent external deps: unexpected vitest` (387-04 hit this exact trap). The
 // vitest `typecheck.include` glob matches either location.
 
+import type { BriefWhyInput } from '@vostride/agent-qa-schema'
 import { expectTypeOf } from 'vitest'
 
+import type { mapStepEvidenceToWhy } from '../ops/knowledge-brief-why.js'
 import type {
   FunctionDeps,
   KnowledgeApplyOutcome,
@@ -81,3 +83,16 @@ expectTypeOf<StepEvidenceLookup['kind']>().toEqualTypeOf<
 // recorded evidence, and the op is handed no serving capability at all.
 expectTypeOf<RunsReaderPort>().toHaveProperty('readStepEvidence')
 expectTypeOf<KnowledgeReaderPort>().not.toHaveProperty('readStepEvidence')
+
+// ---- 4. The why-verb's ANSWERING function is handed no deps ------------------------------
+//
+// This is the structural half of D-15's "never re-runs retrieval". `mapStepEvidenceToWhy`
+// decides what the answer is, and its parameter list is exactly (lookup, input) — so there is
+// no handle in its scope through which any index could be reached, and an edit that gave it
+// one would have to change this signature. The op's `invoke` does receive the full deps record
+// (every op does); that it touches only `deps.runs` is a SOURCE claim, scanned and probed in
+// `brief-why-source.test.ts`. The two are different strengths of guarantee and are pinned
+// separately on purpose.
+expectTypeOf<Parameters<typeof mapStepEvidenceToWhy>>().toEqualTypeOf<
+  [StepEvidenceLookup, BriefWhyInput]
+>()

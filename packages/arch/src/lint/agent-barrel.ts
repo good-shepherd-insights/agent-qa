@@ -58,6 +58,13 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * barrel as a type, and the only value that ever holds one is the argument the primitive gives
  * its author callback (D-11 layer 1).
  *
+ * 387 plan 06 adds `AmbiguousStepAddressError`, on the same footing: one more caller-facing
+ * refusal, an error CLASS and nothing else. It is here because a surface has to be able to tell
+ * an ambiguous ADDRESS apart from an absent answer — the why-verb's `no-trace` arms all say
+ * 'that step recorded nothing', and answering an ambiguous address that way would report two
+ * steps as none. The class carries the candidate testIds so the surface can say which to choose
+ * between; it opens no dispatch path, because the spec it belongs to stays inside `functions/`.
+ *
  * 387 plan 01 adds `EntityNotFoundError` — one more caller-facing refusal, on the exact
  * footing as `RunNotFoundError` beside it: a surface asked for one specific address, nothing
  * was ever minted at it, and the surface needs to be able to say so. It is an error CLASS and
@@ -66,6 +73,7 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * dispatch path.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
+  'AmbiguousStepAddressError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
   'EntityNotFoundError',

@@ -67,18 +67,28 @@ export type BriefWhyResultKind = (typeof BRIEF_WHY_RESULT_KINDS)[number]
  * acceptance-grade `proof` block, and a historical brief — exactly the kind offered on the
  * no-trace arm — has no proof. So the offering is checked against the closed channel set
  * §A11 fixes, which is the structure any consumer of this arm renders, and no deeper.
+ *
+ * STRUCTURAL, not `z.custom`. 2026-08-02 (387-06): the predicate form was correct and
+ * unprojectable — `z.toJSONSchema` throws `Custom types cannot be represented in JSON Schema`
+ * on it, and the function layer projects EVERY registered contract into an inert document at
+ * registry-construction time (D-14). So the moment an op declared this union as its output,
+ * building a registry threw and every capability in the process stopped listing, not just this
+ * one. A predicate that cannot be described is a contract no catalog can publish, and 396's
+ * MCP tool listing consumes exactly that description.
+ *
+ * `looseObject` rather than a strict one, because a real brief carries more than the three
+ * channels (`proof`, and whatever §A11 adds next) and an offering is a value being PASSED ON,
+ * not one being defined here. The acceptance and rejection behaviour is identical to the
+ * predicate it replaces: an array carrying every channel as a named property is still refused,
+ * a null is still refused, a missing digest is still refused, and a non-array channel is still
+ * refused — measured against 387-02's nine-case rejection corpus, which is unchanged.
  */
-const ServedBriefOfferingSchema = z.custom<ServedBrief>(
-  (value) =>
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    Array.isArray((value as Record<string, unknown>).channel1) &&
-    Array.isArray((value as Record<string, unknown>).channel2) &&
-    Array.isArray((value as Record<string, unknown>).channel3) &&
-    typeof (value as Record<string, unknown>).briefDigest === 'string',
-  'expected a ServedBrief carrying the three §A11 channels and its digest',
-)
+const ServedBriefOfferingSchema = z.looseObject({
+  channel1: z.array(z.unknown()),
+  channel2: z.array(z.unknown()),
+  channel3: z.array(z.unknown()),
+  briefDigest: z.string(),
+}) as unknown as z.ZodType<ServedBrief>
 
 /**
  * The why-verb's answer: the trace that was written down, or a named reason there is none —
