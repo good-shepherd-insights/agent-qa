@@ -509,16 +509,30 @@ export class EvidenceRecorder {
    * Append the exact Channel-3 CautionLines injected into a live replan turn. Refused records
    * never enter this method; the reserved reader overflow line does because its summary was
    * actually rendered. Digest recomputation keeps ServedBrief content-addressed after mutation.
+   *
+   * WR-10 (387-13): the LEDGER accumulates on every call, including the zero-injection one. A
+   * turn that injected nothing is not a turn with nothing to explain — it is exactly the turn
+   * "why didn't it mention X" is asked about, and {@link foldRetrievalTrace} carries a dedicated
+   * arm for "no served lines, non-empty truncation ledger" that this method previously made
+   * unreachable by returning before accumulating.
+   *
+   * The surviving `cautions.length === 0` return is a COST guard, not a correctness one, and the
+   * distinction is measured rather than asserted: deleting it outright reddens nothing, because
+   * appending an empty array and recomputing a content-addressed digest reproduces the same
+   * bytes. It stays only to skip a whole-brief rehash on every all-cut turn. D-13's byte-stability
+   * on this path is protected by what is NOT written here — cut candidates are never spoofed into
+   * `channel3` as served lines — and the regression cases pin that outcome, not this branch.
    */
   recordServedCautions(
     cautions: readonly CautionLine[],
     trace: ServedRetrievalTraceV1,
   ): void {
-    if (cautions.length === 0) return
     // Keep only the attributions for cautions that were actually injected. The reader ranked and
     // budgeted a wider set; the loop's own record ledger then refused some of them, and a trace
     // claiming a refused caution was served would be false testimony about this turn. The
     // reader's own cut candidates ride along unchanged — they answer "why didn't it mention X".
+    // With `cautions` empty the injected set is empty, so EVERY served line the reader handed
+    // over is a cut candidate — the same rule, not a special case for the all-refused turn.
     const injectedIds = new Set(cautions.map(({ id }) => String(id)))
     this.channel3TraceLines.push(
       ...trace.servedLines.filter(({ recordId }) => injectedIds.has(recordId)),
@@ -527,6 +541,7 @@ export class EvidenceRecorder {
       ...trace.servedLines.filter(({ recordId }) => !injectedIds.has(recordId)),
       ...trace.truncated,
     )
+    if (cautions.length === 0) return
     const served: ServedBrief = {
       ...this.servedBrief,
       channel3: [...this.servedBrief.channel3, ...cautions],

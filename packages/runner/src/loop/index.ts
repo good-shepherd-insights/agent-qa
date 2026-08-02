@@ -283,7 +283,15 @@ export async function executeStep(
       anchors,
       ports.knowledgeBudgets?.caution ?? PROVISIONAL_CAUTION_TOKEN_BUDGET,
     )
-    pendingCautions = served && served.block.cautions.length > 0 ? served : undefined
+    // WR-10 (387-13): stage the composite the reader returned, whole. The old predicate here kept
+    // it only when a caution would actually RENDER, which threw away the all-cut turn's whole
+    // attribution ledger — the exact step "why didn't it mention X" is asked about. There is
+    // deliberately no replacement predicate: one gating on "a caution or a non-empty trace" was
+    // written and then measured INERT (a wholly empty composite records nothing and renders
+    // nothing, so staging it is observably identical to skipping it), and an unpinnable gate that
+    // a later reader would take for an invariant is worse than no gate. What must not be dropped
+    // is dropped nowhere: the consuming turn re-checks nothing either.
+    pendingCautions = served
   }
 
   // D-09 policy-denied terminal marker (the 353/D-08 discriminated no-throw idiom, precedent:
@@ -1098,9 +1106,13 @@ export async function executeStep(
       // id already present in Channel 1 is intentionally free — the planner should not have to
       // remember the caution after demonstrating the exact failure it warns about. New ids still
       // consume the shared distinct-record cap, and every refusal is visible rather than clipped.
+      // WR-10 (387-13): entered for anything staged, with no second opinion about whether it was
+      // worth entering — `stageFailureCautions` already applied that predicate, and a re-check
+      // here would be a redundant gate free to disagree with it. A staged block with no cautions
+      // is the all-cut turn: nothing renders, but its attribution ledger is still recorded.
       const cautionsForTurn = pendingCautions
       pendingCautions = undefined
-      if (cautionsForTurn && cautionsForTurn.block.cautions.length > 0) {
+      if (cautionsForTurn !== undefined) {
         const injected: CautionLine[] = []
         let refused = 0
         let recordCount = 0
@@ -1128,13 +1140,17 @@ export async function executeStep(
           }
         }
 
+        // The serve-time trace rides with the injected lines: the recorder keeps only the
+        // attributions for cautions that were ACTUALLY rendered into the turn, so the trace
+        // never claims a record the planner never saw (D-13's honest-testimony rule). The
+        // recording sits OUTSIDE the observations gate below: what the planner was shown and
+        // what the run can later account for are different questions, and a turn that rendered
+        // no frame still owes an answer for the candidates it declined to render (WR-10).
+        recorder.recordServedCautions(injected, cautionsForTurn.trace)
+
         const observations = injected.map((caution) => caution.summary)
         if (refused > 0) observations.push(`truncated ${refused} of ${recordCount}`)
         if (observations.length > 0) {
-          // The serve-time trace rides with the injected lines: the recorder keeps only the
-          // attributions for cautions that were ACTUALLY rendered into the turn, so the trace
-          // never claims a record the planner never saw (D-13's honest-testimony rule).
-          recorder.recordServedCautions(injected, cautionsForTurn.trace)
           const frame = `Failure-adjacent caution observations:\n${observations.join('\n')}`
           context.knowledgeBriefL1 = context.knowledgeBriefL1?.trim()
             ? `${context.knowledgeBriefL1}\n\n${frame}`
