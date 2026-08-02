@@ -13,7 +13,7 @@
 // prints, and the free-text case returns the typed refusal arm rather than the nearest
 // bundle it happened to be holding.
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -36,7 +36,7 @@ import type {
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { composeLocalAgent } from '../compose-local-agent.js'
+import { composeLocalAgent, sweepEntityIndexProjection } from '../compose-local-agent.js'
 import type { LocalAgentHost } from '../compose-local-agent.js'
 
 const PRODUCT = 'shop'
@@ -251,6 +251,32 @@ describe('the entity spine through composeLocalAgent (387-01)', () => {
       kind: 'none',
       reason: 'no-match',
     })
+  })
+
+  // ---- the maintenance-cadence sweep (D-06) ------------------------------------------------
+
+  it('sweeps the projection from the ledger without a lease and without writing it (D-02/D-06)', async () => {
+    await resolve(bundleId)
+    const ledgerPath = join(agentQaRoot, ADDRESSING_LEDGER_DB_FILE)
+    const ledgerBefore = readFileSync(ledgerPath)
+
+    const report = await sweepEntityIndexProjection({
+      agentQaRoot,
+      resolveKnowledgeRoot: () => knowledgeRoot,
+      // The acquisition ladder is stubbed OUT rather than left to the host: a test that
+      // reached for a real model would be measuring this machine, not the sweep.
+      acquireEmbedderCapability: async () => ({ kind: 'lexical-only' }),
+    })
+
+    // The entity is already current — it was projected when it was sighted — so a sweep over
+    // unchanged sources examines it and writes nothing. That is the cadence being maintenance
+    // rather than a periodic rebuild.
+    expect(report).toEqual({ examined: 1, refreshed: 0, embedded: 0 })
+    // The ledger is not a projection (D-02): the sweep reads it and leaves it byte-identical.
+    expect(readFileSync(ledgerPath).equals(ledgerBefore)).toBe(true)
+    // Lease-free (D-02): a sweep that took the writer lease could not run in a CLI process,
+    // and would have left the lease file behind here.
+    expect(existsSync(join(knowledgeRoot, 'memory', 'writer.lease'))).toBe(false)
   })
 
   // ---- the schema boundary, and the dispatch boundary --------------------------------------

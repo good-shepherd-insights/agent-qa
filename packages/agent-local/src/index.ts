@@ -103,11 +103,13 @@ export {
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
+  ENTITY_INDEX_SWEEP_INTERVAL_MS,
   LOCAL_CURATION_CAPABILITIES,
   LOCAL_DAEMON_CAPABILITIES,
   LocalAgentClosedError,
   RunProducedNoEventsError,
   SYSTEM_CLOCK,
+  sweepEntityIndexProjection,
 } from './composition/compose-local-agent.js'
 export type {
   ComposeLocalAgentInput,
@@ -117,6 +119,8 @@ export type {
   LocalDaemonCapabilities,
   LocalKnowledgeMaintenanceCapabilities,
   RunExecutionPort,
+  SweepEntityIndexInput,
+  SweepEntityIndexOutcome,
 } from './composition/compose-local-agent.js'
 // The knowledge vocabulary the curation surfaces are typed against, re-exported through the one
 // edge that names the writer entry (D-14). Types are erased, so this hands a caller no power it

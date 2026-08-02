@@ -14,8 +14,10 @@ import {
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
+  ENTITY_INDEX_SWEEP_INTERVAL_MS,
   LOCAL_DAEMON_CAPABILITIES,
   SYSTEM_CLOCK,
+  sweepEntityIndexProjection,
 } from '@vostride/agent-qa-agent-local'
 import type {
   ComposeJobRecoveryInput,
@@ -197,6 +199,12 @@ export interface DaemonHostOperations {
   acquireEmbedder: typeof LOCAL_DAEMON_CAPABILITIES.acquireEmbedder
   drainQueue: typeof LOCAL_DAEMON_CAPABILITIES.drainQueue
   runMaintenanceTail: typeof LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail
+  /**
+   * The D-06 entity-index sweep. Lease-free by contract: it writes only the projection's own
+   * database file, so it is registered on its own cadence and never inside the lease-gated
+   * maintenance tail (see ENTITY_INDEX_SWEEP_INTERVAL_MS).
+   */
+  sweepEntityIndexProjection: typeof sweepEntityIndexProjection
   appendDrainSessionReceipt(agentQaRoot: string, receipt: DrainSessionReceipt): void
   resolveEmbedderWorkerEntryPath(): string
   spawnEmbedderWorker(options: EmbedderWorkerSpawnOptions): ChildProcess
@@ -347,6 +355,7 @@ function defaultOperations(): DaemonHostOperations {
     acquireEmbedder: LOCAL_DAEMON_CAPABILITIES.acquireEmbedder,
     drainQueue: LOCAL_DAEMON_CAPABILITIES.drainQueue,
     runMaintenanceTail: LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail,
+    sweepEntityIndexProjection,
     appendDrainSessionReceipt,
     resolveEmbedderWorkerEntryPath: LOCAL_DAEMON_CAPABILITIES.resolveEmbedderWorkerEntryPath,
     spawnEmbedderWorker: (options) => spawn(
@@ -645,6 +654,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   let pendingHeartbeatFailure: (() => void) | undefined
   let curationPollTimer: ReturnType<typeof setInterval> | undefined
   let maintenanceTimer: ReturnType<typeof setInterval> | undefined
+  let entityIndexSweepTimer: ReturnType<typeof setInterval> | undefined
+  let entityIndexSweepWorker: Promise<void> | undefined
   let invokeServer: InvokeServerHandle | undefined
   let graceTimer: ReturnType<typeof setTimeout> | undefined
   let resolveCompletion: ((code: number) => void) | undefined
@@ -1526,6 +1537,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           maintenanceTimer = undefined
           runSyncCleanup('maintenanceTimer.clear', () => operations.clearInterval(timer))
         }
+        if (entityIndexSweepTimer !== undefined) {
+          const timer = entityIndexSweepTimer
+          entityIndexSweepTimer = undefined
+          runSyncCleanup('entityIndexSweepTimer.clear', () => operations.clearInterval(timer))
+        }
 
         const server = invokeServer
         invokeServer = undefined
@@ -1880,6 +1896,35 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           maintenanceWorker = undefined
         })
     }, MAINTENANCE_CADENCE_MS)
+
+    // The D-06 projection sweep, on its OWN cadence and deliberately not inside the worker
+    // above. That worker holds the writer lease and shuts the daemon down when it loses it;
+    // this sweep needs no lease at all, writes only the entity index's own file, and never
+    // touches the addressing ledger's rows. Folding it into lease-gated maintenance would have
+    // made a lease-free projection stop being maintained the moment a lease was lost, and made
+    // a sweep failure look like a lease failure.
+    //
+    // Re-entrancy guarded the same way, so a slow sweep cannot stack: a tick that arrives while
+    // the previous one is still running is dropped rather than queued.
+    entityIndexSweepTimer = operations.setInterval(() => {
+      if (shutdownPromise !== undefined || entityIndexSweepWorker !== undefined) return
+      entityIndexSweepWorker = operations.sweepEntityIndexProjection({
+        agentQaRoot: input.agentQaRoot,
+        resolveKnowledgeRoot: () => input.knowledgeRoot,
+      })
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          // A projection is disposable and a rebuild heals it, so a failed sweep is logged and
+          // the daemon carries on. Shutting down over it would let a disposable file take down
+          // a host holding the writer lease.
+          logger.error(
+            `Entity index sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        })
+        .finally(() => {
+          entityIndexSweepWorker = undefined
+        })
+    }, ENTITY_INDEX_SWEEP_INTERVAL_MS)
 
     logger.info(`agent-qa daemon started (pid ${process.pid}, epoch ${acquired.epoch})`)
 

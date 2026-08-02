@@ -32,6 +32,7 @@ import {
   WRITER_AUTHORITY_DB_FILE,
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local'
+import { ENTITY_INDEX_SWEEP_INTERVAL_MS } from '@vostride/agent-qa-agent-local'
 import type { CuratorAuthor } from '@vostride/agent-qa-agent-local'
 import {
   defaultGuardrailPolicyInput,
@@ -53,6 +54,7 @@ import type { DrainSessionReceipt } from '../daemon/drain-receipts.js'
 import {
   DAEMON_SHUTDOWN_GRACE_MS,
   LEASE_HEARTBEAT_INTERVAL_MS,
+  MAINTENANCE_CADENCE_MS,
   runDaemonHost,
   type DaemonHostOperations,
   type DaemonHostTraceStep,
@@ -490,6 +492,65 @@ afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+describe('runDaemonHost — the D-06 entity-index sweep', () => {
+  it('registers the sweep on its own cadence, runs it lease-free, and tears it down', async () => {
+    const paths = makePaths('entity-sweep')
+    const harness = hostHarness()
+    const registered: { intervalMs: number; callback: () => void }[] = []
+    const cleared: unknown[] = []
+    const sweeps: { agentQaRoot: string; knowledgeRoot: string }[] = []
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        setInterval: (callback, intervalMs) => {
+          registered.push({ intervalMs, callback })
+          return intervalMs as unknown as ReturnType<typeof setInterval>
+        },
+        clearInterval: (timer) => {
+          cleared.push(timer)
+        },
+        sweepEntityIndexProjection: async (input) => {
+          sweeps.push({
+            agentQaRoot: input.agentQaRoot,
+            knowledgeRoot: await input.resolveKnowledgeRoot(),
+          })
+          return { examined: 0, refreshed: 0, embedded: 0 }
+        },
+      },
+      logger: { info: vi.fn(), error: vi.fn() },
+    })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'daemon registration was not written',
+    )
+
+    // Its OWN cadence, not the lease-gated maintenance one. Asserting the value rather than
+    // "some interval exists" is what would catch a later edit folding the sweep into the
+    // maintenance tail, which is precisely the coupling the constant's rationale forbids.
+    const sweepTimers = registered.filter(
+      ({ intervalMs }) => intervalMs === ENTITY_INDEX_SWEEP_INTERVAL_MS,
+    )
+    expect(sweepTimers).toHaveLength(1)
+    expect(ENTITY_INDEX_SWEEP_INTERVAL_MS).not.toBe(MAINTENANCE_CADENCE_MS)
+
+    sweepTimers[0]!.callback()
+    await waitUntil(() => sweeps.length === 1, 'the entity index sweep did not run')
+    expect(sweeps[0]).toEqual({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+    })
+
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+    expect(cleared).toContain(ENTITY_INDEX_SWEEP_INTERVAL_MS)
+  })
 })
 
 describe('runDaemonHost — standing leaseholder tracer', () => {

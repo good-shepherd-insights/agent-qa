@@ -76,6 +76,23 @@ export const ENTITY_INDEX_USER_VERSION = 1
 export const ENTITY_INDEX_BUSY_TIMEOUT_MS = 2000
 
 /**
+ * How often a standing daemon re-renders the projection from its sources (D-06).
+ *
+ * PROVISIONAL 600_000 (ten minutes); retune from operational evidence without adding config,
+ * the `LEASE_HEARTBEAT_TTL_MS` house style. What it is bounding is STALENESS of a title or a
+ * status in a fuzzy-match target — never correctness of an address, which the ledger owns and
+ * no cadence can affect. Sightings already refresh an entity the moment anything touches it,
+ * so this sweep exists for the entities nothing has touched since their source data moved.
+ *
+ * Deliberately its own interval rather than the daemon's `MAINTENANCE_CADENCE_MS`. That
+ * cadence runs the lease-holding maintenance tail; this sweep must never require the writer
+ * lease (D-02/D-06) because it writes only this file, and sharing a timer with lease-gated
+ * work would have made a lease-free projection stop being maintained the moment a lease was
+ * lost — a coupling nothing in the projection's own contract asks for.
+ */
+export const ENTITY_INDEX_SWEEP_INTERVAL_MS = 600_000
+
+/**
  * The single partition every entity row lives in.
  *
  * The retrieval legs enforce a product/scope tenancy wall on every scan. This projection has

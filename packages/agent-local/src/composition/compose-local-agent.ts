@@ -42,6 +42,8 @@ import {
   acquireWriterLease,
   countPendingCurationJobs,
   createMemorySightingSource,
+  describeAllEntities,
+  embedPendingEntities,
   countRemainingCurationWork,
   deriveWriterLeaseFreshness,
   drainQueue,
@@ -80,8 +82,11 @@ import {
   rollbackCampaign,
   rollbackCurationJob,
   runMaintenanceTail,
+  sweepEntityIndex,
   RUN_OUTCOMES_PROJECTION_VERSION,
+  ENTITY_INDEX_SWEEP_INTERVAL_MS,
   type OwnedEmbedderWorkerRegistration,
+  type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
 } from '@vostride/agent-qa-knowledge-local'
 import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
@@ -166,6 +171,8 @@ export {
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
+  // The projection's maintenance cadence reaches the daemon host through the same one edge.
+  ENTITY_INDEX_SWEEP_INTERVAL_MS,
 }
 
 /**
@@ -448,6 +455,68 @@ export function createEntityDirectory(input: CreateEntityDirectoryInput): Entity
     get(ref) {
       return withLedger((deps) => getEntityDescriptor(ref, deps))
     },
+  }
+}
+
+export interface SweepEntityIndexInput extends CreateEntityDirectoryInput {
+  /**
+   * Test seam ONLY. Production omission runs the real acquisition ladder, which is what makes
+   * the dense rung appear on hosts that have a model and stay absent on hosts that do not.
+   */
+  readonly acquireEmbedderCapability?: typeof acquireEmbedder
+}
+
+export interface SweepEntityIndexOutcome extends EntityIndexSweepReport {
+  /** How many renderings gained a vector this sweep. Zero on a floor host, by design. */
+  readonly embedded: number
+}
+
+/**
+ * The daemon's maintenance-cadence sweep over the D-06 projection.
+ *
+ * Three properties, and each is a deliberate refusal rather than an omission:
+ *
+ *  - it takes NO writer lease. Everything it writes lives in the entity index's own file, and
+ *    a projection that needed the lease could not be maintained by a host that does not hold
+ *    one — which is every one-shot CLI process.
+ *  - it never writes the addressing ledger. It READS the ledger to know what exists (D-02: the
+ *    ledger is the durable truth, not a projection) and writes only the rendering of it.
+ *  - it embeds only what a host can already embed. `acquireEmbedder` with no download is the
+ *    same ladder the retrieval legs ride: ready means the dense rung joins the resolver on this
+ *    host, and anything else leaves the projection lexical-only rather than blocking the sweep.
+ */
+export async function sweepEntityIndexProjection(
+  input: SweepEntityIndexInput,
+): Promise<SweepEntityIndexOutcome> {
+  const knowledgeRoot = await input.resolveKnowledgeRoot()
+  const ledger = openAddressingLedger({
+    path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
+  })
+  const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot) })
+  try {
+    const report = sweepEntityIndex(entityIndex, describeAllEntities({
+      ledger,
+      sources: [createMemorySightingSource(() => knowledgeRoot)],
+    }))
+
+    let embedded = 0
+    const acquire = input.acquireEmbedderCapability ?? acquireEmbedder
+    const capability = await acquire({
+      preferredProfile: DEFAULT_EMBEDDING_PROFILE,
+      allowDownload: false,
+      agentQaRoot: input.agentQaRoot,
+    })
+    if (capability.kind === 'ready') {
+      embedded = await embedPendingEntities(
+        entityIndex,
+        capability.embedder,
+        capability.profile,
+      )
+    }
+    return { ...report, embedded }
+  } finally {
+    entityIndex.close()
+    ledger.close()
   }
 }
 

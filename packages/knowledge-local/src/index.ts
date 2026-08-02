@@ -45,6 +45,7 @@ export { createMemorySightingSource } from './resolver/memory-source.js'
 // and rebuild the projection, never the legs the resolver runs over it.
 export {
   ENTITY_INDEX_DB_FILE,
+  ENTITY_INDEX_SWEEP_INTERVAL_MS,
   ENTITY_INDEX_USER_VERSION,
   EntityIndexSchemaVersionError,
   embedPendingEntities,

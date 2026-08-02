@@ -516,15 +516,26 @@ describe('agent-qa fn (generic function invoker)', () => {
       resultKind: string
       bindingStatus: string
     }[]
-    // The registered capability set verbatim: the four D-06 seed reads plus the D-08
-    // stream op. `resultKind` and `bindingStatus` are part of the published contract, so
-    // the listing is asserted as an exact table rather than a shape check.
+    // The registered capability set verbatim: the four D-06 seed reads, the D-08 stream op,
+    // and 387-01's two `entities.` reads. `resultKind` and `bindingStatus` are part of the
+    // published contract, so the listing is asserted as an exact table rather than a shape
+    // check — a contains check would let an op join the catalogue unnoticed, which is the one
+    // drift direction this case exists to catch. Every phase that adds an op repins it here on
+    // purpose; 387-06 and 387-08 each add more and will each have to.
     expect(Object.fromEntries(declarations.map((declaration) => [declaration.id, {
       requiredScopes: declaration.requiredScopes,
       resultKind: declaration.resultKind,
       bindingStatus: declaration.bindingStatus,
     }]))).toEqual({
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
+      // composition supplies an entity directory, so both read at the `read` tier.
+      'entities.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'entities.resolve': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'knowledge.bundles.list': {
         requiredScopes: ['read'],
         resultKind: 'unary',
