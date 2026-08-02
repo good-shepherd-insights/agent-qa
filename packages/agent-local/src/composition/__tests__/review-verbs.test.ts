@@ -49,6 +49,7 @@ const MUTATING_FUNCTION_IDS = [
 
 const MASKED_CONFIG: MaskedResolvedConfig = {
   schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  configPath: '/fixture/agent-qa.config.yaml',
   entries: [],
 }
 

@@ -32,7 +32,10 @@ import {
   type EntityAddress,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   BundleDiscriminant,
   BundleDraft,
@@ -285,7 +288,7 @@ describe('D-01: a list verb sights every entity it surfaces (387-06)', () => {
 
     const purged = purgeRecord({
       knowledgeRoot,
-      recordId: doomedId,
+      recordId: asRecordId(doomedId),
       initiator: 'list-sighting-fixture',
       auditBaseDir: agentQaRoot,
       purgedAtOrdinal: 21,
