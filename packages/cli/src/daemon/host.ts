@@ -1769,6 +1769,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       knowledgeRoot: () => input.knowledgeRoot,
       model: () => model,
       ...(runExecution === undefined ? {} : { runExecution }),
+      // 387-08 D-18 / D-5: this process IS the writer-lease holder, so an apply it performs hands
+      // in the authority it already owns rather than asking for a lease it cannot be granted
+      // twice — a holder that calls `acquireWriterLease` is told `held` by itself and then has
+      // nobody to delegate to. Same two fields the drain and maintenance paths already pass.
+      // Deliberately no `applyDelegate`: authority and delegate are mutually exclusive, and a
+      // host supplying both would be claiming to be two places at once.
+      resolveWriterAuthority: () => ({ leaseId: acquired.leaseId, epoch: acquired.epoch }),
       clock: SYSTEM_CLOCK,
       idSource: DIGEST_JOB_ID_SOURCE,
     })

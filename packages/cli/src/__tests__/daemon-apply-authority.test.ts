@@ -257,11 +257,16 @@ describe('the daemon commits its own applies in process (CR-01, D-18)', () => {
       const rows = await callDaemon(paths, 'knowledge.bundles.list', {}) as { status: string }[]
       expect(rows.map((row) => row.status)).toEqual(['deprecated'])
 
-      // THE DISCRIMINATOR. `outcome === 'applied'` alone is satisfied by a composition that
-      // acquired a FRESH lease and released it (the `acquired` branch of applyReview) — which is
-      // precisely the lease-stealing 386 D-14 forbids and which the daemon could never do
-      // safely. A byte-identical lease is the only evidence that the in-process holder branch
-      // ran: it performs no acquisition, no epoch bump and no release.
+      // The in-process holder branch performs no acquisition, no epoch bump and no release, so
+      // the lease it was handed is still the lease on disk. Measured honestly: in THIS posture
+      // `outcome === 'applied'` already implies that branch (a daemon-held lease makes the
+      // acquiring branch unreachable), so this assertion is a guard against a future refactor
+      // that releases around the commit rather than the discriminator for the wiring itself.
+      // What discriminates the wiring was measured by mutation, 2026-08-02: handing a fabricated
+      // `epoch` fails with `KnowledgeCommitError: abandoned-stale-epoch`, and handing a
+      // fabricated `leaseId` fails with `WriterAuthorityLostError (lease-id-mismatch)` — the
+      // store fences BOTH fields independently, so an authority that is not this daemon's own
+      // cannot buy a commit.
       const leaseAfter = readWriterLease(paths.knowledgeRoot)
       if (leaseAfter.kind !== 'parsed') throw new Error(`lease vanished: ${leaseAfter.kind}`)
       expect(leaseAfter.lease.leaseId).toBe(leaseBefore.lease.leaseId)
