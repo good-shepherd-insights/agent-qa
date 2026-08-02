@@ -59,29 +59,29 @@ describe('resolver tier (a)', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('resolves a minted short-ID at 1.0', () => {
-    resolveEntityRef('bundle-checkout', deps)
+  it('resolves a minted short-ID at 1.0', async () => {
+    await resolveEntityRef('bundle-checkout', deps)
 
-    expect(resolveEntityRef('MEM-001', deps)).toMatchObject({
+    expect(await resolveEntityRef('MEM-001', deps)).toMatchObject({
       kind: 'resolved',
       score: 1,
       descriptor: { kind: 'MEM', shortId: 'MEM-001', machineId: 'bundle-checkout' },
     })
   })
 
-  it('resolves the agentqa:// URI to the same entity at 1.0', () => {
-    resolveEntityRef('bundle-checkout', deps)
+  it('resolves the agentqa:// URI to the same entity at 1.0', async () => {
+    await resolveEntityRef('bundle-checkout', deps)
 
-    expect(resolveEntityRef('agentqa://memory/MEM-001', deps))
-      .toEqual(resolveEntityRef('MEM-001', deps))
+    expect(await resolveEntityRef('agentqa://memory/MEM-001', deps))
+      .toEqual(await resolveEntityRef('MEM-001', deps))
   })
 
-  it('accepts an unpadded ordinal and answers in the canonical spelling', () => {
-    resolveEntityRef('bundle-checkout', deps)
+  it('accepts an unpadded ordinal and answers in the canonical spelling', async () => {
+    await resolveEntityRef('bundle-checkout', deps)
 
-    const unpadded = resolveEntityRef('MEM-1', deps)
+    const unpadded = await resolveEntityRef('MEM-1', deps)
 
-    expect(unpadded).toEqual(resolveEntityRef('MEM-001', deps))
+    expect(unpadded).toEqual(await resolveEntityRef('MEM-001', deps))
     // The ANSWER is canonical even though the input was not, which is what keeps `MEM-1` a
     // spelling of one address rather than a second one.
     if (unpadded.kind !== 'resolved') throw new Error('expected the resolved arm')
@@ -89,61 +89,63 @@ describe('resolver tier (a)', () => {
     expect(unpadded.descriptor.uri).toBe('agentqa://memory/MEM-001')
   })
 
-  it('returns the typed none arm for a well-formed address nothing minted — never a throw', () => {
-    resolveEntityRef('bundle-checkout', deps)
+  it('returns the typed none arm for a well-formed address nothing minted — never a throw', async () => {
+    await resolveEntityRef('bundle-checkout', deps)
 
     // MEM-002 is one ordinal past the only address that exists. It parses perfectly, and the
     // temptation an unguarded resolver has here is to answer with the nearest thing it holds.
-    expect(resolveEntityRef('MEM-002', deps)).toEqual({
+    expect(await resolveEntityRef('MEM-002', deps)).toEqual({
       kind: 'none',
       reason: 'unknown-address',
     })
-    expect(() => resolveEntityRef('MEM-002', deps)).not.toThrow()
+    // A rejected promise is not a throw, so the never-throw half is asserted on the
+    // settled value: this path answers, it does not fail.
+    await expect(resolveEntityRef('MEM-002', deps)).resolves.toBeDefined()
   })
 
-  it('parses a BUG address and reports the family as reserved (D-03)', () => {
+  it('parses a BUG address and reports the family as reserved (D-03)', async () => {
     // The distinction that matters: `BUG-7` is not malformed and it is not merely unknown. It
     // is an address in a family this build reserves, and saying so is what stops a user
     // hunting for a bug the ledger has simply not seen yet.
-    expect(resolveEntityRef('BUG-7', deps)).toEqual({ kind: 'none', reason: 'reserved-kind' })
-    expect(resolveEntityRef('agentqa://bug/BUG-7', deps))
+    expect(await resolveEntityRef('BUG-7', deps)).toEqual({ kind: 'none', reason: 'reserved-kind' })
+    expect(await resolveEntityRef('agentqa://bug/BUG-7', deps))
       .toEqual({ kind: 'none', reason: 'reserved-kind' })
   })
 
-  it('refuses free text rather than offering the entity it is nearest to', () => {
-    resolveEntityRef('bundle-checkout', deps)
+  it('refuses free text rather than offering the entity it is nearest to', async () => {
+    await resolveEntityRef('bundle-checkout', deps)
 
     // Every word of this reference appears in the fixture's only entity title. A ranker would
     // score it highly; tier (a) has no ranker and says so.
-    expect(resolveEntityRef('the checkout selector', deps))
+    expect(await resolveEntityRef('the checkout selector', deps))
       .toEqual({ kind: 'none', reason: 'no-match' })
-    expect(resolveEntityRef('bundle-checkou', deps)).toEqual({ kind: 'none', reason: 'no-match' })
+    expect(await resolveEntityRef('bundle-checkou', deps)).toEqual({ kind: 'none', reason: 'no-match' })
   })
 
-  it('mints once per entity and keeps first-mention order (D-01)', () => {
+  it('mints once per entity and keeps first-mention order (D-01)', async () => {
     // Ordinals reflect first MENTION, not creation: `bundle-login` is second in the source and
     // first in the ledger because it was referenced first.
-    expect(resolveEntityRef('bundle-login', deps)).toMatchObject({
+    expect(await resolveEntityRef('bundle-login', deps)).toMatchObject({
       descriptor: { shortId: 'MEM-001' },
     })
-    expect(resolveEntityRef('bundle-checkout', deps)).toMatchObject({
+    expect(await resolveEntityRef('bundle-checkout', deps)).toMatchObject({
       descriptor: { shortId: 'MEM-002' },
     })
-    expect(resolveEntityRef('bundle-login', deps)).toMatchObject({
+    expect(await resolveEntityRef('bundle-login', deps)).toMatchObject({
       descriptor: { shortId: 'MEM-001' },
     })
   })
 
-  it('names the successor slug on a renamed target, and only once recorded (D-03)', () => {
-    resolveEntityRef('checkout', deps)
-    const before = resolveEntityRef('TGT-checkout', deps)
+  it('names the successor slug on a renamed target, and only once recorded (D-03)', async () => {
+    await resolveEntityRef('checkout', deps)
+    const before = await resolveEntityRef('TGT-checkout', deps)
     if (before.kind !== 'resolved') throw new Error('expected the resolved arm')
     // No link is inferred from the slugs alone.
     expect(before.descriptor.successorMachineId).toBeUndefined()
 
     ledger.recordTargetRename('checkout', 'payment')
 
-    const after = resolveEntityRef('TGT-checkout', deps)
+    const after = await resolveEntityRef('TGT-checkout', deps)
     if (after.kind !== 'resolved') throw new Error('expected the resolved arm')
     // The old address STILL resolves — append-only — and now carries the rename, so a card
     // can show it rather than silently redirecting to the successor.
@@ -154,13 +156,13 @@ describe('resolver tier (a)', () => {
     })
   })
 
-  it('never mints through the get path', () => {
+  it('never mints through the get path', async () => {
     // `get` is handed an address that already exists. If it could sight, a card render on any
     // surface would become a write to the one store this system never rebuilds.
     expect(getEntityDescriptor('bundle-checkout', deps)).toBeUndefined()
     expect(ledger.lookup('MEM', 'bundle-checkout')).toBeUndefined()
 
-    resolveEntityRef('bundle-checkout', deps)
+    await resolveEntityRef('bundle-checkout', deps)
     expect(getEntityDescriptor('MEM-001', deps)).toMatchObject({ machineId: 'bundle-checkout' })
     expect(getEntityDescriptor('MEM-002', deps)).toBeUndefined()
   })

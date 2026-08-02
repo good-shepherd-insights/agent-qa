@@ -153,14 +153,15 @@ describe('D-07 the strong-hit rule: absolute threshold plus margin over the runn
     const entities = [
       entity('TST-001', 'Buy a hat and pay at the checkout'),
       entity('TST-002', 'Sign in with a saved password'),
-      entity('POL-001', 'Never reuse a saved password in a run', 'POL'),
+      entity('POL-001', 'Never reuse a credential in a run', 'POL'),
     ]
-    // `password` is lexical evidence for TST-002 and POL-001; the dense leg puts TST-002 first
-    // and POL-001 a graded second, so TST-002 leads both legs.
+    // Only TST-002 carries the query's words, so it leads the lexical leg alone. POL-001 is
+    // dense-only evidence — near in meaning, absent from the text — which is exactly the
+    // runner-up shape a strong hit has to beat by more than the margin.
     const seeded = await corpus(entities, new Map([
       ['test Buy a hat and pay at the checkout', unit({ 0: 1 })],
       ['test Sign in with a saved password', unit({ 1: 1 })],
-      ['policy Never reuse a saved password in a run', unit({ 1: 0.6, 2: 0.8 })],
+      ['policy Never reuse a credential in a run', unit({ 1: 0.6, 2: 0.8 })],
       ['saved password', unit({ 1: 1 })],
     ]))
 
@@ -243,14 +244,14 @@ describe('D-07 the strong-hit rule: absolute threshold plus margin over the runn
       entity('TST-002', 'Sign in with a saved password'),
       entity('TST-003', 'Checkout with an expired card'),
       entity('MEM-001', 'The checkout button moved to the footer', 'MEM'),
-      entity('POL-001', 'Never reuse a saved password in a run', 'POL'),
+      entity('POL-001', 'Never reuse a credential in a run', 'POL'),
     ]
     const vectors = new Map([
       ['test Buy a hat and pay at the checkout', unit({ 0: 1 })],
       ['test Sign in with a saved password', unit({ 1: 1 })],
       ['test Checkout with an expired card', unit({ 0: 0.95, 3: 0.3122498999199199 })],
       ['memory The checkout button moved to the footer', unit({ 0: 0.9, 3: 0.435889894354067 })],
-      ['policy Never reuse a saved password in a run', unit({ 1: 0.6, 2: 0.8 })],
+      ['policy Never reuse a credential in a run', unit({ 1: 0.6, 2: 0.8 })],
       ['saved password', unit({ 1: 1 })],
       ['checkout', unit({ 0: 1 })],
       ['pay at the checkout', unit({ 0: 1 })],

@@ -25,6 +25,15 @@ export {
   getEntityDescriptor,
   resolveEntityRef,
 } from './resolver/resolve.js'
+export {
+  RESOLVER_CANDIDATE_K,
+  RESOLVER_FUSED_SCORE_NORMALIZER,
+  RESOLVER_LEG_WEIGHT_DENSE,
+  RESOLVER_LEG_WEIGHT_LEXICAL,
+  RESOLVER_LEXICAL_MIN_BM25,
+  RESOLVER_STRONG_HIT_MARGIN,
+  RESOLVER_STRONG_HIT_MIN_SCORE,
+} from './resolver/constants.js'
 export type {
   EntitySighting,
   EntitySightingSource,

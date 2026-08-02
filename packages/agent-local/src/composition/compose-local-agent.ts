@@ -58,6 +58,7 @@ import {
   isLeaseStale,
   listQueuedCandidates,
   openAddressingLedger,
+  openEntityIndex,
   openKnowledgeReader,
   purgeAffectedSetFingerprint,
   probeEmbedderWorkerSocket,
@@ -66,6 +67,7 @@ import {
   readEmbedderWorkerRegistration,
   readWriterLease,
   rebuildIndex,
+  entityIndexDbPath,
   resolveEntityRef,
   refreshWriterLeaseAuthority,
   releaseLease,
@@ -409,21 +411,32 @@ export interface CreateEntityDirectoryInput {
  */
 export function createEntityDirectory(input: CreateEntityDirectoryInput): EntityDirectoryPort {
   async function withLedger<T>(
-    body: (deps: ResolveEntityRefDeps) => T,
+    body: (deps: ResolveEntityRefDeps) => T | Promise<T>,
   ): Promise<T> {
     const knowledgeRoot = await input.resolveKnowledgeRoot()
     const ledger = openAddressingLedger({
       path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
     })
+    // The D-06 projection is opened beside the ledger and for the same span. It lives under
+    // the KNOWLEDGE root rather than the agent-qa root because it is derived from knowledge
+    // the same way the memidex index is, and it is disposable in exactly that sense — while
+    // the ledger, one directory tree away, is the thing that must never be rebuilt.
+    const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot) })
     try {
-      return body({
+      // AWAITED inside the try, not returned from it: tier (b)'s dense leg is asynchronous, so
+      // returning the promise would close both databases while the resolution was still using
+      // them. The bug is invisible while every caller is synchronous, which is exactly why it
+      // is worth the word.
+      return await body({
         ledger,
+        entityIndex,
         // One kind is wired by the tracer. 387-03 registers the remaining sources here and
         // neither the resolver nor the ops change — which is the property the tracer exists
         // to establish before anything expands.
         sources: [createMemorySightingSource(() => knowledgeRoot)],
       })
     } finally {
+      entityIndex.close()
       ledger.close()
     }
   }

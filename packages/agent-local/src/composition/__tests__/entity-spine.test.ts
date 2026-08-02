@@ -222,15 +222,35 @@ describe('the entity spine through composeLocalAgent (387-01)', () => {
 
   // ---- test 4: the never-guess floor ------------------------------------------------------
 
-  it('returns the typed none arm for free text rather than guessing (ENTY-01)', async () => {
-    // The bundle IS about checkout, and it is the only entity in the store — so a resolver
-    // that fell back to "the closest thing I have" would answer `resolved` here. Tier (b)
-    // lands in 387-03; until it does, the honest answer is a refusal.
+  it('answers free text through tier (b) once the entity has been sighted (ENTY-01)', async () => {
+    // 387-01 asserted a REFUSAL here, and said so honestly: the bundle IS about checkout and
+    // is the only entity in the store, so a resolver with no tier (b) had to refuse rather
+    // than fall back to "the closest thing I have". 387-03 lands tier (b), so the honest
+    // answer changed — and the case is repinned rather than deleted, because what it was
+    // really guarding is that the answer comes from RETRIEVAL over a projection and not from
+    // a fallback. The next case is the half that did not change.
     await resolve(bundleId)
 
     const outcome = await resolve('that bundle about checkout')
 
-    expect(outcome).toMatchObject({ kind: 'none', reason: 'no-match' })
+    expect(outcome).toMatchObject({ kind: 'resolved' })
+    if (outcome.kind !== 'resolved') throw new Error('expected the resolved arm')
+    expect(outcome.card.id).toBe('MEM-001')
+    // A retrieval score, not tier (a)'s exactness.
+    expect(outcome.score).toBeGreaterThan(0)
+    expect(outcome.score).toBeLessThanOrEqual(1)
+  })
+
+  it('still refuses free text that no entity matches, and never offers the only one it has (ENTY-01)', async () => {
+    // The never-guess floor, restated where it now bites. One entity exists, it is about
+    // checkout, and the reference is about something else entirely: a resolver that answered
+    // with its only candidate would be the silent guess ENTY-01 exists to forbid.
+    await resolve(bundleId)
+
+    expect(await resolve('the flaky elephant migration')).toMatchObject({
+      kind: 'none',
+      reason: 'no-match',
+    })
   })
 
   // ---- the schema boundary, and the dispatch boundary --------------------------------------

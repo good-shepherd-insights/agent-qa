@@ -426,10 +426,10 @@ describe('D-01 a sighting maintains the projection, and a rebuild is driven by t
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('projects an entity the first time anything sights it', () => {
+  it('projects an entity the first time anything sights it', async () => {
     expect(countEntities(handle)).toBe(0)
 
-    const resolution = resolveEntityRef('bundle-checkout', deps())
+    const resolution = await resolveEntityRef('bundle-checkout', deps())
 
     expect(resolution.kind).toBe('resolved')
     expect(countEntities(handle)).toBe(1)
@@ -438,15 +438,15 @@ describe('D-01 a sighting maintains the projection, and a rebuild is driven by t
     expect(lexicalBundleIds(handle, 'checkout')).toEqual(['MEM-001'])
   })
 
-  it('leaves the projection untouched when nothing was sighted', () => {
-    expect(resolveEntityRef('nothing-owns-this', deps()).kind).toBe('none')
+  it('leaves the projection untouched when nothing was sighted', async () => {
+    expect((await resolveEntityRef('nothing-owns-this', deps())).kind).toBe('none')
 
     expect(countEntities(handle)).toBe(0)
   })
 
-  it('rebuilds the whole projection from the ledger, skipping addresses no source describes', () => {
-    resolveEntityRef('bundle-checkout', deps())
-    resolveEntityRef('bundle-login', deps())
+  it('rebuilds the whole projection from the ledger, skipping addresses no source describes', async () => {
+    await resolveEntityRef('bundle-checkout', deps())
+    await resolveEntityRef('bundle-login', deps())
     // An address whose owning store has forgotten the entity. It keeps resolving through tier
     // (a) forever (D-04) but must not become a fuzzy-match target with no title.
     ledger.mint('MEM', 'bundle-vanished')

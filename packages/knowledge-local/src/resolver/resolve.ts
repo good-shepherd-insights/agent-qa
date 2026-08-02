@@ -1,22 +1,21 @@
-// The entity resolver, tier (a) (Phase 387, ENTY-01 / D-01 / D-07 / D-09).
-//
-// Three tiers are designed; ONE ships here, and the shape is what lets the other two land
-// without an architectural change:
+// The entity resolver's tier ladder (Phase 387, ENTY-01 / D-01 / D-07 / D-09).
 //
 //   (a) EXACT — an anchored address parse plus a ledger hit, or an exact machine-id
 //       sighting. Deterministic, no ranking, no model, score 1.0. THIS FILE.
-//   (b) strong hit over the hybrid entity index — 387-03.
-//   (c) top-3 disambiguation card — 387-03.
+//   (b) a strong hit over the hybrid entity index, and
+//   (c) a top-3 disambiguation set — both in `hybrid.ts`, reached only from the ONE place
+//       tier (a) admits it cannot answer exactly.
 //
-// The never-guess contract is enforced structurally rather than by a threshold: with tier
-// (b) absent, anything tier (a) cannot answer EXACTLY returns the typed `none` arm. That is
-// deliberately a worse experience than guessing and a much better one than being wrong —
-// ENTY-01 names mis-linking a failing run to the wrong entity as the QA hazard this whole
-// mechanism exists to prevent, and a resolver that answered "probably that one" would have
-// shipped exactly that hazard behind a confident-looking card.
+// The order is fixed and the fall-through is deliberately narrow. Only free text that matched
+// no address and no machine id reaches the fuzzy tiers; a well-formed address that names
+// nothing stops HERE with `unknown-address`, because answering an address with whatever text
+// happened to rank is the silent guess this whole mechanism exists to prevent. ENTY-01 names
+// mis-linking a failing run to the wrong entity as the QA hazard, and a resolver that answered
+// "probably that one" would have shipped exactly that hazard behind a confident-looking card.
 //
 // Nothing in this file consults a model, a clock-dependent ordering, or any nondeterministic
-// tie-break. Two calls with the same ledger and the same sighting sources answer identically.
+// tie-break, and tier (b) inherits the same discipline: two calls over the same ledger, the
+// same sources and the same projection answer identically.
 //
 // D-01's lazy mint lives here: an entity gets its permanent address the first time something
 // SIGHTS it, which is this function. No creation path anywhere calls the ledger.
@@ -31,7 +30,9 @@ import {
 import type { EntityDescriptor, EntityKind, EntityResolution } from '@vostride/agent-qa-schema'
 
 import type { AddressingLedger } from '../addressing/ledger.js'
+import type { EmbedderPort } from '../embedder-port.js'
 import { refreshEntity, type EntityIndexHandle } from '../entity-index/entity-index.js'
+import { resolveHybrid } from './hybrid.js'
 
 /**
  * One store's answer to "do you own an entity with exactly this machine id?".
@@ -71,6 +72,8 @@ export interface ResolveEntityRefDeps {
    * shipped. Nothing here silently becomes a guess when the projection is absent.
    */
   readonly entityIndex?: EntityIndexHandle
+  /** Test/integration seam for tier (b)'s dense leg; omission runs the acquisition ladder. */
+  readonly embedder?: EmbedderPort
 }
 
 function describe(
@@ -187,13 +190,23 @@ export function describeAllEntities(deps: ResolveEntityRefDeps): EntityDescripto
 }
 
 /**
- * Tier (a): resolve a reference, minting on first sighting (D-01).
+ * Resolve a reference through the three tiers, minting on first sighting (D-01).
  *
- * Order matters and is fixed: URI, then short-ID, then exact machine id. Addresses are tried
- * before machine ids because an address is unambiguous by construction, and a machine id that
- * happened to LOOK like a short-ID would otherwise be able to shadow a published address.
+ * Order matters and is fixed: URI, then short-ID, then exact machine id, then — for free text
+ * only — the hybrid tiers. Addresses are tried before machine ids because an address is
+ * unambiguous by construction, and a machine id that happened to LOOK like a short-ID would
+ * otherwise be able to shadow a published address.
+ *
+ * ASYNC because tier (b)'s dense leg is: an embedding query cannot be made synchronous, and
+ * the alternative — a second, synchronous entry that quietly answers with tier (a) only —
+ * would be a resolver that under-answers depending on which function a caller happened to
+ * import. The PORT this reaches surfaces through was already asynchronous, so no composition
+ * edge changes shape.
  */
-export function resolveEntityRef(ref: string, deps: ResolveEntityRefDeps): EntityResolution {
+export async function resolveEntityRef(
+  ref: string,
+  deps: ResolveEntityRefDeps,
+): Promise<EntityResolution> {
   const trimmed = ref.trim()
   if (trimmed === '') return { kind: 'none', reason: 'no-match' }
 
@@ -224,9 +237,22 @@ export function resolveEntityRef(ref: string, deps: ResolveEntityRefDeps): Entit
     }
   }
 
-  // Tier (b) is 387-03's. Until it lands, free text that matched no address and no machine id
-  // is a miss and says so.
-  return { kind: 'none', reason: 'no-match' }
+  // THE fall-through, and the only one. Free text that matched no address and no machine id
+  // is what tiers (b)/(c) exist for; with no projection bound this stays the honest miss that
+  // 387-01 shipped, rather than becoming a guess the moment a dependency is optional.
+  if (deps.entityIndex === undefined) return { kind: 'none', reason: 'no-match' }
+  return resolveHybrid(trimmed, {
+    index: deps.entityIndex,
+    // The LEDGER describes the winner, never the projection: a disposable index may hold a
+    // stale row, and a stale title in front of a user is the failure D-06 keeps it out of.
+    describe: (candidateShortId) => {
+      const candidateKind = parseShortId(candidateShortId)?.kind
+      if (candidateKind === undefined) return undefined
+      const outcome = resolveMintedAddress(candidateShortId, candidateKind, deps)
+      return outcome.kind === 'resolved' ? outcome.descriptor : undefined
+    },
+    ...(deps.embedder === undefined ? {} : { embedder: deps.embedder }),
+  })
 }
 
 /**
