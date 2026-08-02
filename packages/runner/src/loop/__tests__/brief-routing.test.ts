@@ -21,6 +21,7 @@ import { buildContextTier, buildVolatileTier } from '../prompts.js'
 import { createRecordLedger, type RecordLedger } from '../record-ledger.js'
 import type { StepContext } from '../types.js'
 import { makeActionPlan, makeAdapter, makePlanner, makeStepContext } from './loop-harness.js'
+import { emptyTrace, noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 const scope: ScopeKey = { tier: 'test', key: 'checkout' }
 const block: BriefBlock = {
@@ -124,7 +125,7 @@ describe('BriefBlock prompt routing (BRIF-01 / D-03/D-05)', () => {
 describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
   it('projects the served block into StepEvidence with a recomputed digest', () => {
     const recorder = new EvidenceRecorder()
-    recorder.recordServedBrief({ scope, asOfBuild: 42, budget: 256, block })
+    recorder.recordServedBrief({ scope, asOfBuild: 42, budget: 256, block, trace: emptyTrace() })
 
     const evidence = recorder.finalize({ pass: true, reasoning: 'done' }, 0, 'checkout')
 
@@ -143,11 +144,11 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
     const reader: KnowledgeHintReader = {
       getRunBrief(_scope, budget) {
         requestedBudgets.push(budget)
-        return block
+        return servedBrief(block)
       },
       search() { return [] },
       read() { throw new Error('not used') },
-      getCautions() { return { cautions: [], budgetUsed: 0, admissions: [] } },
+      getCautions() { return noCautions() },
       getProcedure() { return undefined },
       emitCanaryOutcome() {},
     }
@@ -181,7 +182,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
 
   it('appends Channel-2 read traces and re-addresses the served brief', () => {
     const recorder = new EvidenceRecorder()
-    recorder.recordServedBrief({ scope, asOfBuild: 42, budget: 256, block })
+    recorder.recordServedBrief({ scope, asOfBuild: 42, budget: 256, block, trace: emptyTrace() })
     const before = recorder.finalize({ pass: true, reasoning: 'before' }, 0, 'checkout')
       .servedBrief.briefDigest
     const trace = {
@@ -202,7 +203,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
   it('drains live memory.read traces into finalized step evidence', async () => {
     const recordId = asRecordId('fact-order-number')
     const reader: KnowledgeHintReader = {
-      getRunBrief: () => block,
+      getRunBrief: () => servedBrief(block),
       search: () => [],
       read: () => ({
         id: recordId,
@@ -212,7 +213,7 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
         evidenceDigest: 'body-digest-order-number',
         relations: [],
       }),
-      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
+      getCautions: () => noCautions(),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
@@ -271,10 +272,10 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
     }
     let drained = false
     const reader: KnowledgeHintReader = {
-      getRunBrief: () => block,
+      getRunBrief: () => servedBrief(block),
       search: () => [],
       read: () => undefined,
-      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
+      getCautions: () => noCautions(),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
@@ -315,10 +316,10 @@ describe('BriefBlock channel-1 evidence (BRIF-01)', () => {
       spent: () => 0,
     }
     const reader: KnowledgeHintReader = {
-      getRunBrief: () => block,
+      getRunBrief: () => servedBrief(block),
       search: () => [],
       read: () => { throw new Error('not used') },
-      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
+      getCautions: () => noCautions(),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
@@ -396,12 +397,12 @@ describe('live lossless served-brief proof (E2E-01 / CR-07 / CR-08)', () => {
     }
     const cautionAnchors = [{ t: 'page' as const, route: '/checkout-retry' }]
     const reader: KnowledgeHintReader = {
-      getRunBrief: () => productionBlock,
+      getRunBrief: () => servedBrief(productionBlock),
       search: () => [searchEntry],
       read(id) {
         return id === searchId ? searchBody : undefined
       },
-      getCautions: () => ({
+      getCautions: () => servedCautions({
         cautions: [{
           id: cautionId,
           anchors: cautionAnchors,

@@ -25,6 +25,7 @@ import { executeStep } from '../index.js'
 import type { LoopPorts, ProcedureFlowCarry } from '../ports.js'
 import type { ActionPlan, Planner, StepContext, Verifier } from '../types.js'
 import { makeActionPlan, makeStepContext, makeVerifier } from './loop-harness.js'
+import { noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 const FORM_ROUTE = 'http://127.0.0.1:8931/form.html'
 const RECEIVED_ROUTE = 'http://127.0.0.1:8931/received.html'
@@ -253,7 +254,7 @@ function makeFlowReader(): FlowReader {
   let consults = 0
   const reader: KnowledgeHintReader = {
     getRunBrief() {
-      return emptyBrief
+      return servedBrief(emptyBrief)
     },
     search() {
       return []
@@ -269,7 +270,7 @@ function makeFlowReader(): FlowReader {
       }
     },
     getCautions() {
-      return { cautions: [], budgetUsed: 0, admissions: [] }
+      return noCautions()
     },
     getProcedure(_intent, screenState) {
       consults++

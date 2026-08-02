@@ -39,12 +39,14 @@ import type {
   ServedAdmissionEvent,
   ServedBrief,
   ServedPromptTurn,
+  ServedRetrievalTraceV1,
   StagnationEvidence,
   StepEvidence,
   StepPlanSource,
   SubActionEvidence,
   TerminationEvidence,
   ToolExchangeEvidence,
+  TraceLine,
   VerdictSource,
   VerifierVerdict,
   Viewport,
@@ -259,6 +261,20 @@ export class EvidenceRecorder {
   private readonly subActions: SubActionEvidence[] = []
   private readonly cacheFlags: boolean[] = []
   private servedBrief: ServedBrief
+  /**
+   * KREV-02 · D-13: the serve-time retrieval trace, recorded BESIDE `servedBrief` and never
+   * inside it. `ServedBrief` feeds `computeBriefDigest`, so a trace channel within it would have
+   * rewritten every cassette and acceptance digest in the tree; a sibling field leaves those
+   * bytes untouched, which `evidence-trace.test.ts` proves by digest equality rather than by
+   * asserting that nobody edited the brief.
+   *
+   * Channel 1 is REPLACED on each record (a step replans against the SAME frozen brief, so
+   * appending would duplicate its attributions), while Channel 3 APPENDS — exactly mirroring how
+   * `servedBrief.channel1` and `servedBrief.channel3` themselves behave.
+   */
+  private channel1Trace?: ServedRetrievalTraceV1
+  private readonly channel3TraceLines: TraceLine[] = []
+  private readonly channel3Truncated: TraceLine[] = []
   private selfHeal?: StepEvidence['selfHeal']
   private stagnation?: StagnationEvidence
   private cycle?: CycleEvidence
@@ -463,7 +479,16 @@ export class EvidenceRecorder {
     asOfBuild: number
     budget: number
     block: BriefBlock
+    /**
+     * D-16's last hop, made structural. The trace is a REQUIRED parameter, so the only way to
+     * persist a served brief without one is to change this signature — which is a compile error
+     * at every call site rather than a silently trace-less run. `makeEmptyServedBrief` stays the
+     * one no-reader constructor fallback and records nothing here, so an absent trace on evidence
+     * means "no reader was bound", never "a reader served and the trace was dropped" (D-15).
+     */
+    trace: ServedRetrievalTraceV1
   }): void {
+    this.channel1Trace = input.trace
     const channel1 = makeChannel1ServedBrief(input)
     const served: ServedBrief = {
       ...channel1,
@@ -484,8 +509,23 @@ export class EvidenceRecorder {
    * never enter this method; the reserved reader overflow line does because its summary was
    * actually rendered. Digest recomputation keeps ServedBrief content-addressed after mutation.
    */
-  recordServedCautions(cautions: readonly CautionLine[]): void {
+  recordServedCautions(
+    cautions: readonly CautionLine[],
+    trace: ServedRetrievalTraceV1,
+  ): void {
     if (cautions.length === 0) return
+    // Keep only the attributions for cautions that were actually injected. The reader ranked and
+    // budgeted a wider set; the loop's own record ledger then refused some of them, and a trace
+    // claiming a refused caution was served would be false testimony about this turn. The
+    // reader's own cut candidates ride along unchanged — they answer "why didn't it mention X".
+    const injectedIds = new Set(cautions.map(({ id }) => String(id)))
+    this.channel3TraceLines.push(
+      ...trace.servedLines.filter(({ recordId }) => injectedIds.has(recordId)),
+    )
+    this.channel3Truncated.push(
+      ...trace.servedLines.filter(({ recordId }) => !injectedIds.has(recordId)),
+      ...trace.truncated,
+    )
     const served: ServedBrief = {
       ...this.servedBrief,
       channel3: [...this.servedBrief.channel3, ...cautions],

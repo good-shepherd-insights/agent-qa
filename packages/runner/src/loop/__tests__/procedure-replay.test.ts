@@ -36,6 +36,7 @@ import type { ActionPlan, Planner, StepContext } from '../types.js'
 import { SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeActionPlan, makeAdapter, makeStepContext, makeVerifier } from './loop-harness.js'
+import { noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 const emptyBrief: BriefBlock = {
   tiers: { L0: '', L1: '', L2: '' },
@@ -116,7 +117,7 @@ function makeReader(input: {
   const reader: KnowledgeHintReader = {
     getRunBrief(scope, budget) {
       record('getRunBrief', [scope, budget])
-      return emptyBrief
+      return servedBrief(emptyBrief)
     },
     search(query, options) {
       record('search', [query, options])
@@ -136,7 +137,7 @@ function makeReader(input: {
     },
     getCautions(anchors, budget) {
       record('getCautions', [anchors, budget])
-      return { cautions: [], budgetUsed: 0, admissions: [] }
+      return noCautions()
     },
     getProcedure(intent, screenState, availability) {
       record('getProcedure', [intent, screenState, availability])

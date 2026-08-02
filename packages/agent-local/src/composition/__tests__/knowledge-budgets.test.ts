@@ -98,15 +98,33 @@ describe('run knowledge composition', () => {
       getRunBrief(scope) {
         calls += 1
         return {
-          tiers: { L0: '', L1: '', L2: `${scope.tier}:${scope.key}:${calls}` },
-          lines: [],
-          truncation: '',
-          admissions: [],
+          brief: {
+            tiers: { L0: '', L1: '', L2: `${scope.tier}:${scope.key}:${calls}` },
+            lines: [],
+            truncation: '',
+            admissions: [],
+          },
+          // A DIFFERENT trace per call, so a memo that re-served the brief while re-deriving the
+          // trace would be visible. 387-04 · D-13: a repeat serve must carry the attribution
+          // captured when the brief was actually assembled, not one describing the cache hit.
+          trace: {
+            schemaVersion: 1,
+            servedLines: [{
+              recordId: `served-${calls}`,
+              leg: 'anchor',
+              rank: 1,
+              score: calls,
+            }],
+            truncated: [],
+          },
         }
       },
       search: () => [],
       read: () => { throw new Error('not used') },
-      getCautions: () => ({ cautions: [], budgetUsed: 0, admissions: [] }),
+      getCautions: () => ({
+        block: { cautions: [], budgetUsed: 0, admissions: [] },
+        trace: { schemaVersion: 1, servedLines: [], truncated: [] },
+      }),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},
     }
@@ -123,6 +141,13 @@ describe('run knowledge composition', () => {
     expect(secondRepeated).toBe(second)
     expect(second).not.toBe(first)
     expect(calls).toBe(2)
+    // The frozen composite carries the SERVE-TIME trace on every repeat, and each scope keeps its
+    // own. Without this the memo could have been narrowed back to the brief alone and the trace
+    // re-derived per call with nothing noticing.
+    expect(first.trace.servedLines[0]?.recordId).toBe('served-1')
+    expect(repeated.trace).toBe(first.trace)
+    expect(second.trace.servedLines[0]?.recordId).toBe('served-2')
+    expect(secondRepeated.trace).toBe(second.trace)
   })
 
   it('constructs LLMPlanner with no memory surface for text-only models and both tools for capable models', () => {

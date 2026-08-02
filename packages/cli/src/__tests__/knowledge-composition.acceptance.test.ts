@@ -280,7 +280,7 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
     expect(captured).toHaveLength(1)
     expect(captured[0]!.knowledgeReader).toBe(knowledgeReader)
 
-    const brief = captured[0]!.knowledgeReader!.getRunBrief(
+    const { brief } = captured[0]!.knowledgeReader!.getRunBrief(
       { tier: 'product', key: PRODUCT },
       1_000,
     )

@@ -276,7 +276,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
       product: PRODUCT,
       scopeDefaults: { asOfBuild: BUILD_ORDINAL },
     })
-    const brief = reader.getRunBrief({ tier: 'product', key: PRODUCT }, 1_000)
+    const { brief } = reader.getRunBrief({ tier: 'product', key: PRODUCT }, 1_000)
     const servedCandidate = brief.lines.find(({ id }) => id === published.id)
 
     expect(brief.tiers.L0).toContain(POLICY_TEXT)
@@ -422,7 +422,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     })
     const served = reader
       .getRunBrief({ tier: 'product', key: PRODUCT }, 1_000)
-      .lines.find(({ id }) => id === published.id)
+      .brief.lines.find(({ id }) => id === published.id)
     if (served === undefined) throw new Error('candidate was not served')
     const handoff = completedHandoff(published.id, served)
 

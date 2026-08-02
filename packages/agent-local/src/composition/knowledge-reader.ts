@@ -1,5 +1,5 @@
 import { openKnowledgeReader } from '@vostride/agent-qa-knowledge-local/reader'
-import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
+import type { KnowledgeHintReader, ServedRunBrief } from '@vostride/agent-qa-runner'
 import type { ScopeKey } from '@vostride/agent-qa-schema'
 
 /** Inputs the composition root resolves when opening the run-scoped knowledge reader. */
@@ -16,9 +16,18 @@ export interface ConstructKnowledgeReaderInput {
  * Freeze Channel 1 at the composition root. The budget is deliberately absent from the key:
  * budgets are run-fixed, while canonical `[tier,key]` material gives one immutable memo entry per
  * scope. All other reader methods remain live pass-throughs for Channels 2, 3, and canary output.
+ *
+ * KREV-02 · D-13: the memo holds the WHOLE composite, so a repeat serve returns the trace captured
+ * at the moment the brief was actually assembled — not a fresh trace describing the cache hit.
+ * That is the deliberate choice and it is what makes the why-verb answer about *then*: a step that
+ * replans four times against one frozen brief was served that brief once, and the attribution that
+ * explains its lines is the one from that single serve. A "hit"-flavoured trace would describe the
+ * memo rather than the retrieval, and there would be no honest rank or score to put in it. The
+ * value type is written out rather than inferred so this stays a decision instead of a side effect
+ * of `ReturnType`; `knowledge-budgets.test.ts` pins that a repeat carries the original trace.
  */
 export function createFrozenKnowledgeReader(reader: KnowledgeHintReader): KnowledgeHintReader {
-  const briefs = new Map<string, ReturnType<KnowledgeHintReader['getRunBrief']>>()
+  const briefs = new Map<string, ServedRunBrief>()
   const scopeKey = (scope: ScopeKey): string => JSON.stringify([scope.tier, scope.key])
 
   return {

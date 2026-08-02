@@ -1381,7 +1381,7 @@ describe('emitCurationCandidates atomic queue drop (CUR-04)', () => {
       product: 'storefront',
       budgets: { recordCap: 1 },
     })
-    const block = reader.getCautions(anchors, 100)
+    const { block } = reader.getCautions(anchors, 100)
 
     expect(elementOrdinal(failed, repeated)).toBe(1)
     expect(rebuild).toMatchObject({ projected: 2, scanIssues: [] })

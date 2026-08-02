@@ -59,6 +59,7 @@ import type {
   Ref,
   RiskTier,
   ScreenState,
+  ServedRetrievalTraceV1,
   StagnationEvidence,
   StepPlanSource,
   TargetDescriptor,
@@ -269,18 +270,20 @@ export async function executeStep(
   // D-13: a failure retrieves once at the failure moment, then the returned block is consumed
   // by the immediately-following live planning turn. Clearing happens before that turn renders,
   // so a successful follow-up cannot make the caution sticky; a recurring failure stages anew.
-  let pendingCautions: CautionBlock | undefined
+  // D-16: the staged value is the caution block WITH its serve-time trace, so the Channel-3 half
+  // of the trace survives to the evidence seam instead of being reconstructed there.
+  let pendingCautions: { block: CautionBlock; trace: ServedRetrievalTraceV1 } | undefined
 
   const stageFailureCautions = (
     failedAction: Action,
     failureState: ScreenState,
   ): void => {
     const anchors = deriveFailureCautionAnchors(failedAction, failureState, context.testName)
-    const block = ports.knowledgeReader?.getCautions(
+    const served = ports.knowledgeReader?.getCautions(
       anchors,
       ports.knowledgeBudgets?.caution ?? PROVISIONAL_CAUTION_TOKEN_BUDGET,
     )
-    pendingCautions = block && block.cautions.length > 0 ? block : undefined
+    pendingCautions = served && served.block.cautions.length > 0 ? served : undefined
   }
 
   // D-09 policy-denied terminal marker (the 353/D-08 discriminated no-throw idiom, precedent:
@@ -1051,11 +1054,15 @@ export async function executeStep(
       // agency, and Channel 3 has no agency; all three share the distinct-id ledger below.
       const briefScope = { tier: 'test', key: context.testName } as const
       const briefBudget = ports.knowledgeBudgets?.brief ?? PROVISIONAL_BRIEF_TOKEN_BUDGET
-      const brief = ports.knowledgeReader?.getRunBrief(
+      // D-16: one value carries the brief AND the serve-time trace, so the trace cannot be lost
+      // between the port and evidence — it is destructured here and handed straight to the
+      // recorder alongside the block it explains (KREV-02).
+      const served = ports.knowledgeReader?.getRunBrief(
         briefScope,
         briefBudget,
       )
-      if (brief !== undefined) {
+      const brief = served?.brief
+      if (served !== undefined && brief !== undefined) {
         context.knowledgePolicyL0 = brief.tiers.L0.trim().length > 0 ? brief.tiers.L0 : undefined
         context.knowledgeBriefL1 = brief.tiers.L1.trim().length > 0 ? brief.tiers.L1 : undefined
         context.knowledgeBriefL2 = brief.tiers.L2.trim().length > 0 ? brief.tiers.L2 : undefined
@@ -1070,6 +1077,7 @@ export async function executeStep(
           asOfBuild: ports.knowledgeAsOfBuild ?? 0,
           budget: briefBudget,
           block: brief,
+          trace: served.trace,
         })
       }
       // The brief rides every planning turn, so its distinct ids are already spent before any
@@ -1092,14 +1100,14 @@ export async function executeStep(
       // consume the shared distinct-record cap, and every refusal is visible rather than clipped.
       const cautionsForTurn = pendingCautions
       pendingCautions = undefined
-      if (cautionsForTurn && cautionsForTurn.cautions.length > 0) {
+      if (cautionsForTurn && cautionsForTurn.block.cautions.length > 0) {
         const injected: CautionLine[] = []
         let refused = 0
         let recordCount = 0
         const admissionById = new Map(
-          cautionsForTurn.admissions.map((metadata) => [String(metadata.id), metadata]),
+          cautionsForTurn.block.admissions.map((metadata) => [String(metadata.id), metadata]),
         )
-        for (const caution of cautionsForTurn.cautions) {
+        for (const caution of cautionsForTurn.block.cautions) {
           if (caution.id === CAUTION_TRUNCATION_ID) {
             // 380-10's reserved terminal line is a reader-owned overflow signal, not a durable
             // record. Render it, but never spend or mint a ledger admission for it.
@@ -1123,7 +1131,10 @@ export async function executeStep(
         const observations = injected.map((caution) => caution.summary)
         if (refused > 0) observations.push(`truncated ${refused} of ${recordCount}`)
         if (observations.length > 0) {
-          recorder.recordServedCautions(injected)
+          // The serve-time trace rides with the injected lines: the recorder keeps only the
+          // attributions for cautions that were ACTUALLY rendered into the turn, so the trace
+          // never claims a record the planner never saw (D-13's honest-testimony rule).
+          recorder.recordServedCautions(injected, cautionsForTurn.trace)
           const frame = `Failure-adjacent caution observations:\n${observations.join('\n')}`
           context.knowledgeBriefL1 = context.knowledgeBriefL1?.trim()
             ? `${context.knowledgeBriefL1}\n\n${frame}`

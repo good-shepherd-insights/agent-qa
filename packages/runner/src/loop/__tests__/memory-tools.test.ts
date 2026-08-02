@@ -20,6 +20,7 @@ import {
   memorySearchResponseTokenEnvelope,
 } from '../memory-tools.js'
 import { z } from 'zod'
+import { noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 const SCOPE: ScopeKey = { tier: 'test', key: 'checkout' }
 
@@ -55,7 +56,7 @@ function body(id: string, text: string, evidenceDigest = `digest-${id}`): Record
 
 function stubReader(overrides: Partial<KnowledgeHintReader> = {}): KnowledgeHintReader {
   return {
-    getRunBrief: vi.fn(() => ({
+    getRunBrief: vi.fn(() => servedBrief({
       tiers: { L0: '', L1: '', L2: '' },
       lines: [],
       truncation: '',
@@ -63,7 +64,7 @@ function stubReader(overrides: Partial<KnowledgeHintReader> = {}): KnowledgeHint
     })),
     search: vi.fn(() => []),
     read: vi.fn(id => body(id, 'body')),
-    getCautions: vi.fn(() => ({ cautions: [], budgetUsed: 0, admissions: [] })),
+    getCautions: vi.fn(() => noCautions()),
     getProcedure: vi.fn(() => undefined),
     emitCanaryOutcome: vi.fn(),
     ...overrides,

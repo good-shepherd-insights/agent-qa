@@ -23,6 +23,7 @@ import {
   makeStepContext,
   makeVerifier,
 } from './loop-harness.js'
+import { noCautions, servedBrief, servedCautions } from './fixtures/served-trace.js'
 
 const EMPTY_BRIEF: BriefBlock = {
   tiers: { L0: '', L1: '', L2: '' },
@@ -67,9 +68,9 @@ function reader(options: {
   block?: BriefBlock
   cautions?: CautionBlock
 } = {}): KnowledgeHintReader & { getCautions: ReturnType<typeof vi.fn> } {
-  const getCautions = vi.fn(() => options.cautions ?? cautionBlock([], 0))
+  const getCautions = vi.fn(() => servedCautions(options.cautions ?? cautionBlock([], 0)))
   return {
-    getRunBrief: () => options.block ?? EMPTY_BRIEF,
+    getRunBrief: () => servedBrief(options.block ?? EMPTY_BRIEF),
     search: () => [],
     read: () => { throw new Error('not used') },
     getCautions,

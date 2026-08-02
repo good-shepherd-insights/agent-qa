@@ -30,6 +30,7 @@ import {
 } from '../evidence.js'
 import { executeStep } from '../index.js'
 import { makeAdapter, makePlanner, makeStepContext, makeVerifier } from './loop-harness.js'
+import { emptyTrace } from './fixtures/served-trace.js'
 
 // Schema Action (branded Ref) for the stored §A8 evidence; the runner-platform Action
 // (plain-string ref) for collapseAnnotation, which consumes the adapter's legacy shape.
@@ -302,6 +303,7 @@ describe('EvidenceRecorder — lossless ServedBrief proof', () => {
         truncation: 'none',
         admissions: [],
       },
+      trace: emptyTrace(),
     })
 
     const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
@@ -323,6 +325,7 @@ describe('EvidenceRecorder — lossless ServedBrief proof', () => {
         truncation: 'none',
         admissions: [],
       },
+      trace: emptyTrace(),
     })
     readerBacked.recordServedPromptTurn(servedPromptTurn())
 
