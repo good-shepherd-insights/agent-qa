@@ -31,6 +31,7 @@ import {
 import type { EntityDescriptor, EntityKind, EntityResolution } from '@vostride/agent-qa-schema'
 
 import type { AddressingLedger } from '../addressing/ledger.js'
+import { refreshEntity, type EntityIndexHandle } from '../entity-index/entity-index.js'
 
 /**
  * One store's answer to "do you own an entity with exactly this machine id?".
@@ -62,6 +63,14 @@ export interface EntitySighting {
 export interface ResolveEntityRefDeps {
   readonly ledger: AddressingLedger
   readonly sources: readonly EntitySightingSource[]
+  /**
+   * The D-06 projection, maintained by USE.
+   *
+   * Optional, and that is the degradation ladder rather than a convenience: a composition that
+   * supplies no index gets tier (a) and the honest `none` arm, which is exactly what 387-01
+   * shipped. Nothing here silently becomes a guess when the projection is absent.
+   */
+  readonly entityIndex?: EntityIndexHandle
 }
 
 function describe(
@@ -86,6 +95,29 @@ function describe(
       ? { successorMachineId: successor.toSlug }
       : {}),
   }
+}
+
+/**
+ * Project a sighted entity into the index and hand the descriptor back (D-01 + D-06).
+ *
+ * The four sighting sites D-01 names — a resolver hit, a card render, verdict authoring, a
+ * list verb — all reach the ledger through THIS function, so routing the projection refresh
+ * here makes the index maintained by the same act that mints. There is no separate
+ * "index an entity" call anybody has to remember, and therefore no drift between what has an
+ * address and what can be found by name.
+ *
+ * A failure to project is deliberately not fatal. The index is disposable and a rebuild heals
+ * it; refusing to resolve an entity because its projection could not be written would let a
+ * disposable file take down the durable answer.
+ */
+function sighted(descriptor: EntityDescriptor, deps: ResolveEntityRefDeps): EntityDescriptor {
+  if (deps.entityIndex === undefined) return descriptor
+  try {
+    refreshEntity(deps.entityIndex, descriptor)
+  } catch {
+    // Projection is best-effort; the ledger already answered.
+  }
+  return descriptor
 }
 
 function sourceFor(
@@ -128,9 +160,30 @@ function resolveMintedAddress(
 
   return {
     kind: 'resolved',
-    descriptor: describe(kind, address.shortId, sighting, deps),
+    descriptor: sighted(describe(kind, address.shortId, sighting, deps), deps),
     score: ENTITY_EXACT_MATCH_SCORE,
   }
+}
+
+/**
+ * Every entity the ledger has ever addressed and a source can still describe.
+ *
+ * This is the set `rebuildEntityIndex` is rebuilt FROM and the set the daemon sweep re-renders
+ * (D-06). It reads the LEDGER, never the index: a projection rebuilt from itself would
+ * preserve exactly the state a rebuild is run to be rid of.
+ *
+ * An address whose source can no longer describe it is skipped rather than projected as a
+ * husk. The address keeps resolving through tier (a) either way — D-04's permanence lives in
+ * the ledger — but a row with no title is not something fuzzy text should ever match.
+ */
+export function describeAllEntities(deps: ResolveEntityRefDeps): EntityDescriptor[] {
+  return deps.ledger.listAddresses().flatMap((address) => {
+    if (address.kind === 'BUG') return []
+    const sighting = sourceFor(deps.sources, address.kind)?.hydrate(address.machineId)
+    return sighting === undefined
+      ? []
+      : [describe(address.kind, address.shortId, sighting, deps)]
+  })
 }
 
 /**
@@ -166,7 +219,7 @@ export function resolveEntityRef(ref: string, deps: ResolveEntityRefDeps): Entit
     const address = deps.ledger.mint(source.kind, sighting.machineId)
     return {
       kind: 'resolved',
-      descriptor: describe(source.kind, address.shortId, sighting, deps),
+      descriptor: sighted(describe(source.kind, address.shortId, sighting, deps), deps),
       score: ENTITY_EXACT_MATCH_SCORE,
     }
   }

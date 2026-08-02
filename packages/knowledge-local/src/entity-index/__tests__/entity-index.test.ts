@@ -24,11 +24,19 @@ import {
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { openAddressingLedger, type AddressingLedger } from '../../addressing/ledger.js'
 import {
   publishBundle,
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '../../bundle-publish.test-helper.js'
+import {
+  describeAllEntities,
+  resolveEntityRef,
+  type EntitySighting,
+  type EntitySightingSource,
+  type ResolveEntityRefDeps,
+} from '../../resolver/resolve.js'
 import { indexDbPath, openIndexWriter } from '../../index-open.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import type { EmbedderPort } from '../../embedder-port.js'
@@ -42,6 +50,7 @@ import {
   embedPendingEntities,
   entityIndexDbPath,
   openEntityIndex,
+  readEntityDescriptor,
   readEntityRendering,
   rebuildEntityIndex,
   refreshEntity,
@@ -147,14 +156,26 @@ describe('D-06 the entity index is a rebuildable projection in its own database 
     expect(incremental.password).toEqual(['TST-002'])
     expect(incremental.address).toEqual(['TST-002'])
 
-    // Arbitrary damage: rows deleted, a rendering corrupted, an orphan left behind. A
-    // projection heals from anything, which is the whole reason it may be disposable.
+    // Arbitrary damage: a row deleted, a rendering corrupted, every FTS entry dropped — and a
+    // STALE row that the descriptor set does not contain.
+    //
+    // The stale row is the case that makes this a rebuild rather than a repair, and it is here
+    // because without it the assertion was defective: re-projecting each descriptor by upsert
+    // heals every OTHER kind of damage on its own, so the "drop everything first" half of
+    // `rebuildEntityIndex` could be deleted with the suite still green (probe p1). A projection
+    // that can only add and correct is one that accumulates whatever it once believed.
     handle.connection.db.exec("DELETE FROM records WHERE bundle_id = 'TST-001'")
     handle.connection.db
       .prepare('UPDATE records SET summary = ?, embedding_input = ? WHERE bundle_id = ?')
       .run('corrupted rendering', 'corrupted rendering', 'TST-002')
     handle.connection.db.exec('DELETE FROM fts_records')
+    refreshEntity(handle, descriptor({
+      shortId: 'TST-404',
+      machineId: 't_stale_ghost_row',
+      title: 'A cancelled zzzstalemarker experiment',
+    }))
     expect(lexicalBundleIds(handle, 'hat')).toEqual([])
+    expect(lexicalBundleIds(handle, 'zzzstalemarker')).toEqual(['TST-404'])
 
     rebuildEntityIndex(handle, SEEDED)
 
@@ -165,6 +186,7 @@ describe('D-06 the entity index is a rebuildable projection in its own database 
       address: lexicalBundleIds(handle, 'TST-002'),
     }).toEqual(incremental)
     expect(countEntities(handle)).toBe(SEEDED.length)
+    expect(lexicalBundleIds(handle, 'zzzstalemarker')).toEqual([])
   })
 
   it('refreshes one entity incrementally and re-renders it when its source data changes', () => {
@@ -203,8 +225,12 @@ describe('D-06 the entity index is a rebuildable projection in its own database 
     )
 
     expect(handle.connection.vec).toBe('brute')
-    expect(candidates.map(({ bundleId }) => bundleId)).toEqual(['TST-001'])
+    // The leg RANKS and does not admit — `admitCandidate` is the caller's floor, which is why
+    // the orthogonal entities are still present here at cosine 0 and are dropped by the
+    // resolver rather than by the scan.
+    expect(candidates[0]?.bundleId).toBe('TST-001')
     expect(candidates[0]?.rawScores.cosine).toBeCloseTo(1, 10)
+    expect(candidates.slice(1).map(({ rawScores }) => rawScores.cosine)).toEqual([0, 0])
     // The vec0 rung's per-profile bookkeeping stays entirely inside the records index
     // (RESEARCH A3): a virtual table here would be a second, unpinned spelling of it.
     const vecTables = handle.connection.db.prepare(`
@@ -361,6 +387,148 @@ describe('D-06 an entity title is never retrievable as a learned fact', () => {
     }
 
     expect(readFileSync(indexDbPath(knowledgeRoot)).equals(before)).toBe(true)
+  })
+})
+
+describe('D-01 a sighting maintains the projection, and a rebuild is driven by the ledger', () => {
+  let root: string
+  let handle: EntityIndexHandle
+  let ledger: AddressingLedger
+
+  const TITLES = new Map([
+    ['bundle-checkout', 'The checkout regression bundle'],
+    ['bundle-login', 'The login smoke bundle'],
+  ])
+
+  function memorySource(): EntitySightingSource {
+    const sight = (machineId: string): EntitySighting | undefined => {
+      const title = TITLES.get(machineId)
+      return title === undefined
+        ? undefined
+        : { machineId, title, statusSource: 'active' }
+    }
+    return { kind: 'MEM', sight, hydrate: sight }
+  }
+
+  function deps(): ResolveEntityRefDeps {
+    return { ledger, sources: [memorySource()], entityIndex: handle }
+  }
+
+  beforeEach(() => {
+    root = join(tmpdir(), `entity-sighting-${randomUUID()}`)
+    ledger = openAddressingLedger({ path: join(root, 'entity-addresses.db') })
+    handle = openEntityIndex({ path: join(root, 'memory', 'index', ENTITY_INDEX_DB_FILE) })
+  })
+
+  afterEach(() => {
+    handle.close()
+    ledger.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('projects an entity the first time anything sights it', () => {
+    expect(countEntities(handle)).toBe(0)
+
+    const resolution = resolveEntityRef('bundle-checkout', deps())
+
+    expect(resolution.kind).toBe('resolved')
+    expect(countEntities(handle)).toBe(1)
+    expect(readEntityDescriptor(handle, 'MEM-001')?.title)
+      .toBe('The checkout regression bundle')
+    expect(lexicalBundleIds(handle, 'checkout')).toEqual(['MEM-001'])
+  })
+
+  it('leaves the projection untouched when nothing was sighted', () => {
+    expect(resolveEntityRef('nothing-owns-this', deps()).kind).toBe('none')
+
+    expect(countEntities(handle)).toBe(0)
+  })
+
+  it('rebuilds the whole projection from the ledger, skipping addresses no source describes', () => {
+    resolveEntityRef('bundle-checkout', deps())
+    resolveEntityRef('bundle-login', deps())
+    // An address whose owning store has forgotten the entity. It keeps resolving through tier
+    // (a) forever (D-04) but must not become a fuzzy-match target with no title.
+    ledger.mint('MEM', 'bundle-vanished')
+    handle.connection.db.exec('DELETE FROM records')
+
+    const projected = rebuildEntityIndex(handle, describeAllEntities(deps()))
+
+    expect(projected).toBe(2)
+    expect(ledger.listAddresses()).toHaveLength(3)
+    expect(lexicalBundleIds(handle, 'login')).toEqual(['MEM-002'])
+    expect(readEntityDescriptor(handle, 'MEM-003')).toBeUndefined()
+  })
+})
+
+describe('D-06 no statement in entity-index/ can reach the knowledge index', () => {
+  // The plan's criterion was written as "no statement names the records FTS table". It cannot
+  // be that: this projection presents the records SHAPE on purpose, because that is what
+  // reusing `lexicalLeg`/`denseLeg` means (see the module header), so the words `records` and
+  // `fts_records` appear here by design and naming them proves nothing either way.
+  //
+  // What the criterion is actually protecting is that entity writes cannot land in the
+  // knowledge index. That is a claim about which FILE a statement can reach, so this scan is
+  // written against the file: the module may not name the knowledge index's path, its file
+  // name, or any of the helpers that open it. A runtime half — the knowledge index staying
+  // byte-identical across a refresh and a rebuild — is asserted above; this half catches a
+  // future edit that reaches for one of those helpers before anyone runs it.
+
+  const FORBIDDEN = [
+    'knowledge.db',
+    'INDEX_DB_FILE',
+    'indexDbPath',
+    'openIndexWriter',
+    'openIndexReaderConnection',
+    'vecTableName',
+    'deleteRecordFromAllSchemaVecTables',
+  ] as const
+
+  /**
+   * Strip comments so the scan reads STATEMENTS.
+   *
+   * Deliberately line-oriented, which is sound here because every comment in these two modules
+   * is a whole line: a scanner clever enough to handle a trailing comment would also have to
+   * handle a `//` inside a string literal, and getting that subtly wrong is how a source scan
+   * silently stops scanning.
+   */
+  function statementsOf(fileName: string): string {
+    const source = readFileSync(new URL(`../${fileName}`, import.meta.url), 'utf8')
+    return source
+      .split('\n')
+      .filter((line) => {
+        const trimmed = line.trimStart()
+        return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*')
+      })
+      .join('\n')
+  }
+
+  function offenders(text: string): string[] {
+    // Whole-identifier matching, or the projection's own `ENTITY_INDEX_DB_FILE` would be
+    // reported as a reach into the records index's `INDEX_DB_FILE` — a scan that flags the
+    // module for naming its own constant is a scan somebody deletes.
+    return FORBIDDEN.filter((name) => new RegExp(
+      `(?<![A-Za-z0-9_])${name.replaceAll('.', '\\.')}(?![A-Za-z0-9_])`,
+    ).test(text))
+  }
+
+  it('names no knowledge-index path, file or opener in any statement', () => {
+    expect(offenders(statementsOf('entity-index.ts'))).toEqual([])
+    expect(offenders(statementsOf('renderings.ts'))).toEqual([])
+  })
+
+  it('reads the real module, and would flag a planted reach into the knowledge index', () => {
+    const statements = statementsOf('entity-index.ts')
+
+    // Positive control: the scan catches a planted statement.
+    expect(offenders(`${statements}\nconst leak = openIndexWriter(knowledgeRoot)\n`))
+      .toEqual(['openIndexWriter'])
+    // Inverse control: the scan is reading statements, not prose. The module header discusses
+    // `knowledge.db`, `indexDbPath` and `vecTableName` by name and must not be flagged for it.
+    expect(readFileSync(new URL('../entity-index.ts', import.meta.url), 'utf8'))
+      .toContain('knowledge.db')
+    // And it is reading THIS module: a marker only the real source carries.
+    expect(statements).toContain('ENTITY_INDEX_USER_VERSION')
   })
 })
 

@@ -138,6 +138,15 @@ export interface AddressingLedger {
   /** The address a published short-ID names, or `undefined`. Tier (a)'s whole job. */
   lookupByShortId(shortId: string): EntityAddress | undefined
   /**
+   * Every address ever minted, in a fixed order (kind, then short-ID).
+   *
+   * READ-only, and the append-only law is what makes it worth having: this list only grows, so
+   * a caller enumerating it is reading a complete history rather than a snapshot that could
+   * have lost rows. The entity index is rebuilt FROM this (D-06) — a projection can only claim
+   * to heal if the thing it is rebuilt from can be enumerated in full.
+   */
+  listAddresses(): EntityAddress[]
+  /**
    * Record that a config target was renamed (D-03). See {@link TargetRename} for why this is
    * the only way a link between two slugs ever comes to exist.
    *
@@ -252,6 +261,7 @@ export function openAddressingLedger(options: OpenAddressingLedgerOptions): Addr
     'SELECT * FROM addresses WHERE kind = ? AND machine_id = ?',
   )
   const selectByShortId = db.prepare('SELECT * FROM addresses WHERE short_id = ?')
+  const selectAll = db.prepare('SELECT * FROM addresses ORDER BY kind, short_id')
   const selectNextOrdinal = db.prepare(
     'SELECT COALESCE(MAX(ordinal), 0) + 1 AS next FROM addresses WHERE kind = ?',
   )
@@ -345,6 +355,10 @@ export function openAddressingLedger(options: OpenAddressingLedgerOptions): Addr
     lookupByShortId(shortId) {
       const row = selectByShortId.get(shortId)
       return row === undefined ? undefined : rowToAddress(row)
+    },
+
+    listAddresses() {
+      return selectAll.all().map(rowToAddress)
     },
 
     recordTargetRename(fromSlug, toSlug) {

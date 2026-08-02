@@ -20,13 +20,36 @@ export type {
   OpenAddressingLedgerOptions,
   TargetRename,
 } from './addressing/ledger.js'
-export { getEntityDescriptor, resolveEntityRef } from './resolver/resolve.js'
+export {
+  describeAllEntities,
+  getEntityDescriptor,
+  resolveEntityRef,
+} from './resolver/resolve.js'
 export type {
   EntitySighting,
   EntitySightingSource,
   ResolveEntityRefDeps,
 } from './resolver/resolve.js'
 export { createMemorySightingSource } from './resolver/memory-source.js'
+// The D-06 projection. Composed retrieval STAGES stay off this barrel (the D-13 rule the
+// barrel-surface suite pins): what a composition root needs is the ability to open, maintain
+// and rebuild the projection, never the legs the resolver runs over it.
+export {
+  ENTITY_INDEX_DB_FILE,
+  ENTITY_INDEX_USER_VERSION,
+  EntityIndexSchemaVersionError,
+  embedPendingEntities,
+  entityIndexDbPath,
+  openEntityIndex,
+  rebuildEntityIndex,
+  refreshEntity,
+  sweepEntityIndex,
+} from './entity-index/entity-index.js'
+export type {
+  EntityIndexHandle,
+  EntityIndexSweepReport,
+  OpenEntityIndexOptions,
+} from './entity-index/entity-index.js'
 
 export { KNOWLEDGE_BUNDLE_EGRESS_CHANNEL, checkpointCommittedParts } from './bundle-egress.js'
 export type { BundleEgressOptions, BundleEgressOutcome } from './bundle-egress.js'

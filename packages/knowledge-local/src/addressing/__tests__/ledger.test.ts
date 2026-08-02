@@ -181,6 +181,10 @@ describe('the addressing ledger', () => {
     // direction this assertion exists to catch.
     expect(Object.keys(ledger).sort()).toEqual([
       'close',
+      // 387-03: enumeration, which the entity index is rebuilt FROM (D-06). It reads and
+      // cannot write, so it frees no ordinal — the exact-set assertion is doing its job by
+      // making a new member somebody's deliberate decision rather than an unnoticed one.
+      'listAddresses',
       'lookup',
       'lookupByShortId',
       'lookupTargetRename',
@@ -189,6 +193,20 @@ describe('the addressing ledger', () => {
     ])
 
     expect(ledger.mint('MEM', 'bundle-d').shortId).toBe('MEM-004')
+  })
+
+  it('enumerates every minted address in a fixed order, and only reads (387-03, D-06)', () => {
+    ledger.mint('MEM', 'bundle-b')
+    ledger.mint('MEM', 'bundle-a')
+    ledger.mint('TGT', 'checkout')
+
+    expect(ledger.listAddresses().map(({ shortId }) => shortId))
+      .toEqual(['MEM-001', 'MEM-002', 'TGT-checkout'])
+    // Ordinals reflect FIRST-MENTION order (D-01), not the order of the machine ids — the
+    // listing sorts by address, so a rebuild driven from it is stable across processes.
+    expect(ledger.listAddresses().map(({ machineId }) => machineId))
+      .toEqual(['bundle-b', 'bundle-a', 'checkout'])
+    expect(ledger.listAddresses()).toEqual(ledger.listAddresses())
   })
 
   it('refuses a delete or an update through a connection it does not control (D-04)', () => {
