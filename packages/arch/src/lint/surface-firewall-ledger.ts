@@ -125,12 +125,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'environment diagnosis probes hosts and model config directly; joins the environment action class',
   },
   {
-    file: 'packages/cli/src/commands/ids.ts',
-    specifier: '@vostride/agent-qa-ids',
-    clearedBy: '387',
-    reason: 'id minting exposed as a debug verb; superseded by entity addressing and the short-ID resolver',
-  },
-  {
     file: 'packages/cli/src/commands/init.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -171,24 +165,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-safety',
     clearedBy: '387',
     reason: 'record-level knowledge maintenance; migrates into the layer with the knowledge review verb family',
-  },
-  {
-    file: 'packages/cli/src/commands/knowledge-read.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '387',
-    reason: 'the legacy inspect/diff verbs beside the 384 bundles thin client; the review verb family owns their rewire (D-07 dated reconciliation)',
-  },
-  {
-    file: 'packages/cli/src/commands/knowledge-read.ts',
-    specifier: '@vostride/agent-qa-knowledge-local/reader',
-    clearedBy: '387',
-    reason: 'the legacy inspect/diff verbs beside the 384 bundles thin client; the review verb family owns their rewire (D-07 dated reconciliation)',
-  },
-  {
-    file: 'packages/cli/src/commands/knowledge-read.ts',
-    specifier: '@vostride/agent-qa-runner-local',
-    clearedBy: '387',
-    reason: 'the legacy inspect/diff verbs beside the 384 bundles thin client; the review verb family owns their rewire (D-07 dated reconciliation)',
   },
   {
     file: 'packages/cli/src/commands/mcp.ts',

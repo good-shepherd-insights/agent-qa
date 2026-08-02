@@ -156,6 +156,16 @@ export type {
   WriterLeaseFreshness,
 } from './composition/compose-local-agent.js'
 
+// 2026-08-02 (Phase 387 plan 09, D-20): the build-ordinal edge. Published for the same reason
+// the composition root is — a surface that cannot reach it names `runner-local` itself, which is
+// the firewall leak this phase clears. See composition/build-ordinals.ts for why these are
+// re-exports rather than wrappers.
+export {
+  BuildOrdinalReservationError,
+  reserveBuildOrdinalForProducts,
+  resolveBuildTag,
+} from './composition/build-ordinals.js'
+
 // A standing host adopts the durable queue through this recovery entry before it opens the
 // ordinary local-agent composition. Publishing the entry keeps that ordering shared instead of
 // making each surface reach into agent-local's private source tree and re-create the recovery law.

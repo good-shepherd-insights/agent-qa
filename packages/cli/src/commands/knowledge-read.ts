@@ -1,17 +1,22 @@
-// The knowledge read verbs, and the phase-384 exemplar thin client (D-05/D-07).
+// The knowledge read verbs — all three of them thin clients now (D-05/D-07, 387 D-20).
 //
-// `bundles` is the exemplar: it owns no data access of its own, asks the function layer for
-// `knowledge.bundles.list`, and renders what it is handed. `inspect` and `diff` are still
-// record-level reads over the knowledge-local reader entry; migrating them into the layer
-// belongs to 387, which owns the review verbs, so their data imports stay and are carried
-// by the plan-06 firewall ledger with a clearing milestone.
+// `bundles` was the phase-384 exemplar: it owns no data access of its own, asks the function
+// layer for `knowledge.bundles.list`, and renders what it is handed. As of 387 `inspect` and
+// `diff` are the same shape over `knowledge.records.inspect` and `knowledge.records.diff` —
+// the review-verb family's read half. Nothing about what the verbs DO changed; what changed is
+// that the query, the store read and the trust fold are reached through `invokeFunction`
+// instead of by naming the packages that perform them, which is what cleared this file's three
+// firewall-ledger entries.
 //
-// The masking helpers this file imports are the agent barrel's re-exports, so the IMPORT
-// ROUTE is firewall-correct for all three verbs and needs no direct dependency on the safety
-// package. What they do today is nothing: each verb builds a fresh masking context and
-// registers nothing in it, and unmasking an empty context is the identity function. The
-// helpers are STAGED for Phase 386, which owns the run-scoped context and the live surfaces;
-// they are wired through here now so that change stays non-breaking.
+// One capability is not a function-layer verb and did not become one: resolving a build TAG to
+// an ordinal is run-persistence bookkeeping, not knowledge. It reaches its machinery through
+// the composition edge every host shares (see agent-local's build-ordinals module) rather than
+// through a package this surface may not name.
+//
+// The masking helpers here are the agent barrel's re-exports, so the IMPORT ROUTE is
+// firewall-correct for all three verbs and needs no direct dependency on the safety package.
+// What they do today is nothing: each verb builds a fresh masking context and registers
+// nothing in it, and unmasking an empty context is the identity function.
 
 import { dirname, resolve } from 'node:path'
 
@@ -20,12 +25,7 @@ import {
   invokeFunction,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-agent'
-import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
-import {
-  diffSince,
-  inspectRecords,
-} from '@vostride/agent-qa-knowledge-local/reader'
-import { resolveBuildTag } from '@vostride/agent-qa-runner-local'
+import { resolveBuildTag } from '@vostride/agent-qa-agent-local'
 import {
   guardInspectRecordView,
   guardRecordChange,
@@ -35,13 +35,14 @@ import type {
   InspectFilter,
   InspectRecordView,
   KnowledgeBundleSummary,
+  KnowledgeRecordsDiffOutput,
+  KnowledgeRecordsInspectOutput,
   RecordChange,
 } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { z } from 'zod'
 
-import { resolveConfig } from '../config.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -74,6 +75,10 @@ interface BundlesOptions {
  * function layer's business, reached only through `invokeFunction`.
  */
 const KNOWLEDGE_BUNDLES_LIST_ID = 'knowledge.bundles.list'
+
+/** The record-level read verbs `inspect` and `diff` are clients of (387 D-20, KREV-01). */
+const KNOWLEDGE_RECORDS_INSPECT_ID = 'knowledge.records.inspect'
+const KNOWLEDGE_RECORDS_DIFF_ID = 'knowledge.records.diff'
 
 type KnowledgeReadErrorCode =
   | 'invalid-filter'
@@ -109,23 +114,6 @@ const CliInspectFilterSchema = InspectFilterSchema.extend({
 
 function globalOptions(command: Command): { config?: string } {
   return command.parent?.parent?.opts<{ config?: string }>() ?? {}
-}
-
-async function resolveKnowledgePaths(command: Command): Promise<{
-  knowledgeRoot: string
-  runtimeRoot: string
-}> {
-  const global = globalOptions(command)
-  const configPath = resolve(global.config ?? 'agent-qa.config.yaml')
-  const configDir = dirname(configPath)
-  const config = await resolveConfig({
-    configPath,
-    loadAuthPlugins: false,
-  })
-  return {
-    knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
-    runtimeRoot: resolve(configDir, '.agent-qa'),
-  }
 }
 
 /**
@@ -354,12 +342,19 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--json', 'output schema-validated masked JSON')
     .action(async (options: InspectOptions, inspectCommand: Command) => {
       try {
-        const paths = await resolveKnowledgePaths(inspectCommand)
+        // The filter is parsed here because the operator BOUNDARY is this file's job: a bad
+        // `--status` is a mistake about a flag, and reporting it as a contract violation from
+        // inside the layer would name a field the operator never typed. Everything past the
+        // parse — which records match, how trust is folded, what order rows come back in —
+        // belongs to the capability.
         const filter = inspectFilter(options)
-        const records = inspectRecords({
-          knowledgeRoot: paths.knowledgeRoot,
-          filter,
-        }).map(guardInspectRecordView)
+        const result = await invokeFunction(
+          composeCliLocalAgent(functionLayerInput(inspectCommand)).registry,
+          KNOWLEDGE_RECORDS_INSPECT_ID,
+          { filter },
+          CLI_FUNCTION_CALLER,
+        ) as KnowledgeRecordsInspectOutput
+        const records = result.records.map(guardInspectRecordView)
 
         if (options.json === true) {
           emitJson(records)
@@ -379,12 +374,15 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--json', 'output schema-validated masked JSON')
     .action(async (ref: string, options: DiffOptions, diffCommand: Command) => {
       try {
-        const paths = await resolveKnowledgePaths(diffCommand)
-        const ordinal = resolvedDiffOrdinal(ref, options.product, paths.runtimeRoot)
-        const changes = diffSince({
-          knowledgeRoot: paths.knowledgeRoot,
-          sinceOrdinal: ordinal,
-        }).map(guardRecordChange)
+        const composition = functionLayerInput(diffCommand)
+        const ordinal = resolvedDiffOrdinal(ref, options.product, composition.agentQaRoot)
+        const result = await invokeFunction(
+          composeCliLocalAgent(composition).registry,
+          KNOWLEDGE_RECORDS_DIFF_ID,
+          { sinceOrdinal: ordinal },
+          CLI_FUNCTION_CALLER,
+        ) as KnowledgeRecordsDiffOutput
+        const changes = result.changes.map(guardRecordChange)
 
         if (options.json === true) {
           emitJson(changes)

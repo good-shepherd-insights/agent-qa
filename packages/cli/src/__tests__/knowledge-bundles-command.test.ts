@@ -51,10 +51,16 @@ const KNOWLEDGE_READ_SOURCE_PATH = join(
 )
 
 /**
- * Packages whose presence anywhere in the bundles code path would mean the verb reads data
- * for itself instead of asking the function layer for it. `inspect`/`diff` still import
- * them — that is 387's rewire and plan 06's ledger entry — so the assertion is scoped to
- * the bundles registration block, not to the file.
+ * Packages whose presence anywhere in this file would mean a verb reads data for itself
+ * instead of asking the function layer for it.
+ *
+ * 2026-08-02 (Phase 387 plan 09, D-20): the scope of the assertion below WIDENED from the
+ * bundles registration block to the whole file, because `inspect` and `diff` no longer import
+ * these — the reason the narrow scope existed is gone. The widening was not optional: with
+ * nothing in the file binding a data package, "the bundles block contains none of those
+ * bindings" is true of every possible block, and a vacuous claim is worse than no claim
+ * because it keeps reporting a pass. The file-wide version is checked against a planted
+ * control so it cannot go vacuous the same way.
  */
 const DATA_LAYER_PACKAGES = [
   '@vostride/agent-qa-core',
@@ -403,19 +409,25 @@ describe('knowledge-read.ts source shape (what plan 06 will enforce)', () => {
       ]))
   })
 
-  it('takes the bundles verb data from invokeFunction and from no data package', () => {
-    const block = bundlesRegistrationBlock(source)
-    const dataBindings = importedBindings(
-      source,
-      (specifier) => DATA_LAYER_PACKAGES.some((pkg) => specifier.startsWith(pkg)),
-    )
+  it('takes every verb in the file from invokeFunction and from no data package', () => {
+    const isDataPackage = (specifier: string): boolean =>
+      DATA_LAYER_PACKAGES.some((pkg) => specifier.startsWith(pkg))
+    const specifiers = importSpecifiers(source)
 
-    // Non-vacuous: `inspect`/`diff` genuinely still bind these, which is exactly why the
-    // assertion is worth making about the region the new verb occupies.
-    expect(dataBindings.length).toBeGreaterThan(0)
-    for (const binding of dataBindings) {
-      expect(block).not.toContain(binding)
-    }
-    expect(block).toContain('invokeFunction')
+    // The extractor is live against THIS file, not just a synthetic control.
+    expect(specifiers.length).toBeGreaterThan(4)
+    expect(specifiers.filter(isDataPackage)).toEqual([])
+
+    // Non-vacuous by CONTROL rather than by the file happening to violate the rule: plant the
+    // exact import `inspect` used to carry and require the check to catch it. Without this,
+    // an empty result is indistinguishable from an extractor that stopped extracting.
+    const planted = `import { inspectRecords } from '@vostride/agent-qa-knowledge-local/reader'\n${source}`
+    expect(importSpecifiers(planted).filter(isDataPackage))
+      .toEqual(['@vostride/agent-qa-knowledge-local/reader'])
+
+    // And the data every verb renders still arrives the sanctioned way.
+    expect(bundlesRegistrationBlock(source)).toContain('invokeFunction')
+    expect(importedBindings(source, (s) => s === '@vostride/agent-qa-agent'))
+      .toContain('invokeFunction')
   })
 })

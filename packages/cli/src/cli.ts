@@ -11,9 +11,9 @@ import {
   createDaemonCommand,
   createDevicesCommand,
   createDoctorCommand,
+  createEntitiesCommand,
   createEvalCommand,
   createFnCommand,
-  createIdsCommand,
   createInitCommand,
   createInstallBrowsersCommand,
   createInstallMobileDriversCommand,
@@ -60,7 +60,7 @@ program.addCommand(createValidateCommand())
 program.addCommand(createAuthCommand())
 program.addCommand(createAuthStateCommand())
 program.addCommand(createDevicesCommand())
-program.addCommand(createIdsCommand())
+program.addCommand(createEntitiesCommand())
 program.addCommand(createEvalCommand())
 program.addCommand(createCreateTestCommand())
 program.addCommand(createCreateSuiteCommand())
