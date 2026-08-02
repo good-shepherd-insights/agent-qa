@@ -29,12 +29,21 @@ import {
 import { makeFakeEmbedder } from '../../__tests__/fixtures/fake-embedder.js'
 import {
   APPLY_DELEGATE_TIMEOUT_MS,
+  APPLY_IN_FLIGHT_WAIT_MS,
   ApplyDelegateTimeoutError,
   ApplyDelegateUnavailableError,
+  ProposalApplyInFlightError,
   applyReview,
 } from '../apply-review.js'
 import { FORGET_SCRUBBED_PROJECTIONS, proposeReview } from '../propose-review.js'
-import { readAppliedProposal, readPendingProposal } from '../proposals-store.js'
+import {
+  ProposalNotFoundError,
+  claimPendingProposal,
+  publishAppliedProposal,
+  readAppliedProposal,
+  readPendingProposal,
+  restorePendingProposal,
+} from '../proposals-store.js'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
@@ -357,8 +366,16 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
           + 'is mid-apply, and telling the caller it names nothing is the exact confusion '
           + 'restorePendingProposal exists to prevent',
       ).toBe(false)
+      expect(reason).toBeInstanceOf(ProposalApplyInFlightError)
       expect(reason.name).toBe('ProposalApplyInFlightError')
     }
+
+    // POST-FIX NOTE, so the case is not read as asserting something it does not observe: with the
+    // apply-in-flight arm in place the loser no longer REJECTS on this schedule at all — it waits
+    // out the winner's commit and resolves `already-applied` with the winner's receipt. The
+    // rejection branch above is therefore a live guard rather than the observed path, which is
+    // why the directed in-flight case below parks a claim that nobody ever finishes: that is the
+    // only way to make the refusal itself the observed outcome.
 
     // The store shows ONE application: a second Deprecate would append a second event.
     const applied = readAppliedProposal(agentQaRoot, proposalId)
@@ -400,6 +417,128 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(firstReceipt?.projectionsScrubbed).toEqual([...FORGET_SCRUBBED_PROJECTIONS])
     // …and nothing was destroyed a second time: the record still exists with the same status.
     expect(listBundles(knowledgeRoot)).toEqual(afterFirst)
+  })
+
+  // ── CR-03: the claim window is VISIBLE, and every arm of it is answered by type ─────────────
+  //
+  // Four arms, four directed cases. The window these open is the one the race case above cannot
+  // hold still: `claimPendingProposal` renames the pending name away and `publishAppliedProposal`
+  // writes the applied name last, so between them neither name exists — and the duration of that
+  // gap is the duration of a commit, not an instant. Parking a claim directly is how a test gets
+  // to stand inside it.
+  //
+  // EVERY case overrides `inFlightWaitMs`. None of them may depend on the production bound: a
+  // directed case that sat out `APPLY_IN_FLIGHT_WAIT_MS` under turbo contention would be a flake
+  // dressed as coverage, and one that RELIED on the production value would fail the day it is
+  // retuned for a real reason.
+
+  it('refuses a claimed-but-unfinished apply by TYPE, not as a missing proposal (CR-03)', async () => {
+    const recordId = publish('checkout button')
+    const proposalId = proposeForget(recordId)
+
+    // A winner, parked mid-commit: claimed, nothing published yet.
+    expect(claimPendingProposal(agentQaRoot, proposalId).kind).toBe('consumed')
+
+    const refusal = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId,
+      inFlightWaitMs: 40,
+    }).catch((error: unknown) => error)
+
+    expect(refusal).toBeInstanceOf(ProposalApplyInFlightError)
+    expect((refusal as Error).name).toBe('ProposalApplyInFlightError')
+    expect((refusal as ProposalApplyInFlightError).proposalId).toBe(proposalId)
+    expect((refusal as ProposalApplyInFlightError).waitedMs).toBe(40)
+    // …and the refusal changed nothing: no commit, and the winner's claim is untouched, so the
+    // winner can still finish. A waiter that "recovered" by restoring the claim would have stolen
+    // the proposal out from under a live commit.
+    expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
+    expect(listBundles(knowledgeRoot).every((row) => row.status !== 'deprecated')).toBe(true)
+    // The bound is pinned well above the poll interval, so the production wait is a wait and not
+    // a single glance.
+    expect(APPLY_IN_FLIGHT_WAIT_MS).toBeGreaterThan(1_000)
+  })
+
+  it('resolves already-applied when the winner PUBLISHES during the wait (CR-03)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const proposalId = proposeForget(recordId)
+
+    const claimed = claimPendingProposal(agentQaRoot, proposalId)
+    if (claimed.kind !== 'consumed') throw new Error('the fixture must win the claim')
+    // The winner finishes mid-wait. Scheduled rather than awaited so the waiter is genuinely
+    // inside its poll loop when the applied file appears.
+    const previewed = claimed.proposal.receiptPreview?.tombstonedRecords
+    if (previewed === undefined) throw new Error('a forget proposal must carry a preview')
+    const winnersReceipt = {
+      schemaVersion: 1 as const,
+      proposalId,
+      tombstonedRecords: previewed.map((row) => ({ ...row })),
+      projectionsScrubbed: [...FORGET_SCRUBBED_PROJECTIONS],
+      resultingBundleStatus: 'tombstoned' as const,
+      forgottenAt: 99,
+    }
+    setTimeout(() => {
+      publishAppliedProposal(agentQaRoot, {
+        proposal: claimed.proposal,
+        forgetReceipt: winnersReceipt,
+      })
+    }, 30)
+
+    const waiter = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId,
+      inFlightWaitMs: 2_000,
+    })
+
+    expect(waiter.outcome).toBe('already-applied')
+    // The WINNER'S receipt, verbatim — not one recomputed by the waiter over a store that has
+    // since moved on.
+    expect(waiter.forgetReceipt).toEqual(winnersReceipt)
+    expect(waiter.forgetReceipt?.forgottenAt).toBe(99)
+  })
+
+  it('proceeds and commits when the winner RESTORES during the wait (CR-03)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const proposalId = proposeForget(recordId)
+
+    expect(claimPendingProposal(agentQaRoot, proposalId).kind).toBe('consumed')
+    // The winner REFUSED — a held lease, a gate hold — and put the proposal back. The waiter now
+    // legitimately inherits the work: this is the first commit, not a second one.
+    setTimeout(() => { restorePendingProposal(agentQaRoot, proposalId) }, 30)
+
+    const waiter = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId,
+      inFlightWaitMs: 2_000,
+      now: () => 777,
+    })
+
+    expect(waiter.outcome).toBe('applied')
+    expect(waiter.forgetReceipt?.forgottenAt).toBe(777)
+    expect(listBundles(knowledgeRoot).filter((row) => row.status === 'deprecated')).toHaveLength(1)
+  })
+
+  it('refuses an id this store never minted with the typed not-found (CR-03)', async () => {
+    publish('checkout button')
+
+    const refusal = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: 'prop_00000000-0000-4000-8000-000000000000',
+      inFlightWaitMs: 40,
+    }).catch((error: unknown) => error)
+
+    // The store's OWN error, not a bare `Error` a caller would have to read a message to identify.
+    expect(refusal).toBeInstanceOf(ProposalNotFoundError)
+    expect((refusal as Error).name).toBe('ProposalNotFoundError')
+    // …and it is NOT the in-flight refusal: an unknown id and a claimed id are different facts,
+    // and a caller that retried an unknown id forever would be the cost of merging them.
+    expect(refusal).not.toBeInstanceOf(ProposalApplyInFlightError)
   })
 
   // ── CR-02: the complete {reject, forget} × {deprecated, superseded} matrix ──────────────────

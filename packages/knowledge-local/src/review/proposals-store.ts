@@ -20,7 +20,7 @@
 // D-17 scopes the proposals INBOX to Phase 391, which owns enumeration, reaping and the standing
 // grants that make an inbox meaningful. 391 is the owner; this module is the substrate.
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { KnowledgeProposalV1Schema, ForgetReceiptV1Schema } from '@vostride/agent-qa-schema'
@@ -142,7 +142,48 @@ export function readProposal(
 export type ConsumeProposalOutcome =
   | { kind: 'consumed'; proposal: KnowledgeProposalV1 }
   | { kind: 'already-applied'; record: AppliedProposalRecord }
+  /**
+   * SOMEBODY ELSE HOLDS THE CLAIM AND IS MID-APPLY. Distinct from `not-found`, and the
+   * distinction is the whole arm.
+   *
+   * The claim is taken by renaming the pending name away FIRST and the applied name is written
+   * LAST, so for the entire duration of `store.commit()` neither name exists. Without this arm a
+   * caller arriving in that window is told the id names nothing — which is exactly the confusion
+   * `restorePendingProposal` below says the design exists to prevent, arriving through a
+   * different door.
+   *
+   * An ORPHANED claim — a winner that crashed mid-commit — surfaces here too, and keeps
+   * surfacing here until somebody restores or publishes it. That is deliberate: a loud typed
+   * state a caller can name beats a silent reversion to `not-found`, which would invite a second
+   * commit of work that may already be half done. Reaping such a claim needs enumeration and a
+   * liveness model, which D-17 scopes to Phase 391 (the orphaned-claim reaper is WR-03); this
+   * arm is the substrate 391 reaps against, not a substitute for it.
+   */
+  | { kind: 'apply-in-flight' }
   | { kind: 'not-found' }
+
+/**
+ * Whether SOME process has this exact proposal parked under a claim name right now.
+ *
+ * A POINT LOOKUP FOR ONE ID, not an inbox. It reads the directory because that is the only way
+ * to see a claim whose suffix is another process's pid, but it answers one question about one
+ * id and returns a boolean — there is deliberately no way to get a LIST out of it, because
+ * enumeration is 391's (D-17) and a listing verb that arrived here by accident would be the
+ * substrate quietly growing the surface it was scoped out of.
+ *
+ * The prefix is `<proposalId>.json.claimed.`, which cannot collide with two neighbours it sits
+ * beside: `<proposalId>.applied.json` does not start with it, and the `.json` separator means a
+ * proposal id of `p1` cannot match `p12`'s claim.
+ */
+function claimMarkerPresent(agentQaRoot: string, proposalId: string): boolean {
+  const prefix = `${proposalId}.json.claimed.`
+  try {
+    return readdirSync(proposalsDir(agentQaRoot)).some((entry) => entry.startsWith(prefix))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
 
 /**
  * Claim a pending proposal by renaming it out of the pending name — the race resolver.
@@ -167,8 +208,21 @@ export function claimPendingProposal(
     renameSync(pendingPath(agentQaRoot, proposalId), claimed)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    // ORDER: applied → claim marker → applied AGAIN → not-found.
+    //
+    // The second applied read is not belt-and-braces. `publishAppliedProposal` writes the applied
+    // file and only THEN retires the claim marker, so a winner that publishes between the first
+    // read and the scan leaves both a missing applied (as this caller saw it) and a still-present
+    // marker — and answering `apply-in-flight` there would make a completed apply look ongoing,
+    // sending the caller into a wait for work that is already durable. Re-reading closes that
+    // sliver in the only direction that can be wrong.
     const applied = readAppliedProposal(agentQaRoot, proposalId)
     if (applied !== undefined) return { kind: 'already-applied', record: applied }
+    if (claimMarkerPresent(agentQaRoot, proposalId)) {
+      const published = readAppliedProposal(agentQaRoot, proposalId)
+      if (published !== undefined) return { kind: 'already-applied', record: published }
+      return { kind: 'apply-in-flight' }
+    }
     return { kind: 'not-found' }
   }
   const raw = readJsonIfPresent(claimed)

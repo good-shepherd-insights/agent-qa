@@ -559,8 +559,14 @@ export type {
 } from './review/propose-review.js'
 export {
   APPLY_DELEGATE_TIMEOUT_MS,
+  APPLY_IN_FLIGHT_POLL_MS,
+  APPLY_IN_FLIGHT_WAIT_MS,
   ApplyDelegateTimeoutError,
   ApplyDelegateUnavailableError,
+  // On the barrel because a surface has to be able to NAME the refusal it renders: "somebody
+  // else is applying this right now" and "no such proposal" call for different words to a
+  // person, and a surface that could only catch `Error` would have to guess from a message.
+  ProposalApplyInFlightError,
   ProposalTargetVanishedError,
   applyReview,
 } from './review/apply-review.js'

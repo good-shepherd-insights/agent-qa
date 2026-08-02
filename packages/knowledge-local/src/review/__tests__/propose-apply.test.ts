@@ -334,10 +334,23 @@ describe('the proposals store is durable across processes and atomic under a rac
     const first = claimPendingProposal(agentQaRoot, id)
     expect(first.kind).toBe('consumed')
 
-    // The second claim finds the pending name GONE. Before the winner publishes, that is a
-    // not-found rather than an already-applied — the two are different facts and the store says
-    // so instead of guessing.
-    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('not-found')
+    // The second claim finds the pending name GONE — and, since 387-12, is told WHY.
+    //
+    // THIS ASSERTION PREVIOUSLY READ `not-found`, AND IT WAS PINNING THE DEFECT. The comment it
+    // carried argued that before the winner publishes, "that is a not-found rather than an
+    // already-applied — the two are different facts and the store says so instead of guessing".
+    // The premise was right and the conclusion was wrong: there are THREE facts, not two, and
+    // collapsing the third into `not-found` is what made `applyReview` tell a racing loser that
+    // the id it is holding names nothing (CR-03). The window between the claim rename and the
+    // applied publish spans the entire commit, so it is not a sliver — it is the normal duration
+    // of an apply.
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('apply-in-flight')
+
+    // An id with NO pending file, NO applied file and NO claim marker is still `not-found`. The
+    // control matters: without it, an arm that answered `apply-in-flight` unconditionally would
+    // satisfy the assertion above.
+    expect(claimPendingProposal(agentQaRoot, 'prop_00000000-0000-4000-8000-000000000000').kind)
+      .toBe('not-found')
 
     publishAppliedProposal(agentQaRoot, { proposal: minted.proposal })
     const loser = claimPendingProposal(agentQaRoot, id)
@@ -349,6 +362,75 @@ describe('the proposals store is durable across processes and atomic under a rac
     // Applied proposals are RETAINED (D-04): the address a forgotten entity resolves to must not
     // be a file somebody reaped.
     expect(readAppliedProposal(agentQaRoot, id)?.proposal.proposalId).toBe(id)
+  })
+
+  it('tells apply-in-flight, already-applied and not-found apart by the FILES (CR-03)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+    const dir = proposalsDir(agentQaRoot)
+
+    // PENDING, nothing claimed: the ordinary first claim.
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+
+    // The claim marker is a REAL file with the winner's pid in its name, and the detection is a
+    // point lookup for this id's prefix rather than a listing. Asserting the file's existence
+    // first is what keeps the arm below from being satisfiable by an unconditional answer.
+    const markers = readdirSync(dir).filter((entry) => entry.startsWith(`${id}.json.claimed.`))
+    expect(markers, 'the claim must be visible on disk for the arm to read it').toHaveLength(1)
+    expect(markers[0]).toBe(`${id}.json.claimed.${process.pid}`)
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('apply-in-flight')
+
+    // A NEIGHBOURING id must not be answered from this one's marker. `${id}x` shares the whole
+    // id as a prefix, which is exactly the collision a naive `startsWith(id)` would make: the
+    // `.json` separator in the real prefix is what prevents it.
+    expect(claimPendingProposal(agentQaRoot, `${id}x`).kind).toBe('not-found')
+
+    // PUBLISH retires the marker, and the answer flips to already-applied. This is the
+    // double-check ordering case: `publishAppliedProposal` writes the applied file FIRST and
+    // renames the marker away second, so a caller can observe "marker present, applied present"
+    // — and must report the applied record rather than a wait.
+    publishAppliedProposal(agentQaRoot, { proposal: minted.proposal })
+    expect(readdirSync(dir).filter((entry) => entry.startsWith(`${id}.json.claimed.`)))
+      .toHaveLength(0)
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('already-applied')
+  })
+
+  it('reports already-applied when a marker and an applied file BOTH exist (CR-03)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+    // The applied file lands without the marker being retired — the durable intermediate state
+    // `publishAppliedProposal` passes through, reconstructed here so the ordering is measured
+    // rather than reasoned about. Writing it by hand is the only way to hold the process still
+    // inside a window whose whole purpose is to be brief.
+    writeFileSync(
+      join(proposalsDir(agentQaRoot), `${id}.applied.json`),
+      `${JSON.stringify({ proposal: { ...minted.proposal, status: 'applied' } }, undefined, 2)}\n`,
+      'utf8',
+    )
+    expect(existsSync(join(proposalsDir(agentQaRoot), `${id}.json.claimed.${process.pid}`)))
+      .toBe(true)
+
+    // A wait here would be a wait for work already durable.
+    const outcome = claimPendingProposal(agentQaRoot, id)
+    expect(outcome.kind).toBe('already-applied')
+    if (outcome.kind !== 'already-applied') throw new Error('unreachable')
+    expect(outcome.record.proposal.proposalId).toBe(id)
   })
 
   it('puts a claimed proposal BACK when the work it was claimed for fails', () => {

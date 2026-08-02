@@ -38,6 +38,7 @@ import type { WriterLease } from '../lease/writer-lease.js'
 import { memoryStatusForBundle } from '../memory-status.js'
 import { FORGET_SCRUBBED_PROJECTIONS } from './propose-review.js'
 import {
+  ProposalNotFoundError,
   claimPendingProposal,
   publishAppliedProposal,
   restorePendingProposal,
@@ -62,6 +63,38 @@ export class ApplyDelegateTimeoutError extends Error {
         'The proposal is unchanged and still applicable; the lease was neither taken nor stolen.',
     )
     this.name = 'ApplyDelegateTimeoutError'
+  }
+}
+
+/**
+ * How long a caller waits out ANOTHER caller's in-progress apply of the SAME proposal (CR-03).
+ *
+ * PINNED, not configured, on the `APPLY_DELEGATE_TIMEOUT_MS` idiom above. 5s is chosen an order
+ * of magnitude below the delegate bound because the two waits are waiting on different things:
+ * the delegate bound waits on a whole other PROCESS with a transport in between, while this one
+ * waits on a local `commit()` — a handful of appends and one bundle re-projection on the same
+ * disk. RETUNE from an observed commit that legitimately exceeded it; never from a flaky test,
+ * which points at a claim whose winner died rather than one that is slow, and a dead winner's
+ * claim is what the typed refusal exists to REPORT rather than wait out.
+ */
+export const APPLY_IN_FLIGHT_WAIT_MS = 5_000
+
+/**
+ * How often the waiter re-asks. Short enough that the common case — a fast local commit — is not
+ * paid for in latency, long enough that the wait is not a spin on `readdirSync`.
+ */
+export const APPLY_IN_FLIGHT_POLL_MS = 25
+
+/** The typed refusal when another caller holds the claim and has not finished (CR-03). */
+export class ProposalApplyInFlightError extends Error {
+  constructor(readonly proposalId: string, readonly waitedMs: number) {
+    super(
+      `Another process is mid-apply of ${proposalId} and did not finish within ${waitedMs}ms. ` +
+        'Nothing was lost and nothing was applied twice: the proposal is claimed, not missing. ' +
+        'Retrying returns the winner\'s receipt if the apply completed, or finds the proposal ' +
+        'pending again if the winner refused and put it back.',
+    )
+    this.name = 'ProposalApplyInFlightError'
   }
 }
 
@@ -121,6 +154,12 @@ export interface ApplyReviewInput {
   readonly writerAuthority?: { readonly leaseId: string; readonly epoch: number }
   readonly now?: () => number
   readonly delegateTimeoutMs?: number
+  /**
+   * Override for the apply-in-flight bound, mirroring `delegateTimeoutMs` and for the same
+   * reason: a directed case must not have to sit out a production bound, and a case that DID
+   * would be a flake waiting for a loaded CI box.
+   */
+  readonly inFlightWaitMs?: number
 }
 
 /**
@@ -245,10 +284,46 @@ async function commitInProcess(
 }
 
 /**
+ * Resolve the claim to one of the two states an apply can proceed from, or refuse BY TYPE.
+ *
+ * The apply-in-flight arm is the only one that waits, and what it waits for is a WINDOW rather
+ * than a lock: the winner's claim rename has happened, its applied publish has not, and both of
+ * those are the winner's own doing. Three of the four ways that window can close are answers this
+ * caller can act on, so the loop re-asks instead of refusing on sight:
+ *
+ *   already-applied → the winner finished; hand back the winner's record, do not commit.
+ *   consumed        → the winner refused and restored the proposal; this caller legitimately
+ *                     inherits the work. That is not a second commit — it is the first one.
+ *   not-found       → the proposal was never minted, or was applied and then... nothing else can
+ *                     produce it. Typed refusal.
+ *
+ * Only exhausting the bound produces `ProposalApplyInFlightError`, and that refusal is honest
+ * about what it does NOT know: whether the winner is slow or dead. Deciding that requires a
+ * liveness model over claims, which is the reaper D-17 scopes to Phase 391 (WR-03).
+ */
+async function settleClaim(
+  input: ApplyReviewInput,
+): Promise<Exclude<ReturnType<typeof claimPendingProposal>, { kind: 'apply-in-flight' | 'not-found' }>> {
+  const waitMs = input.inFlightWaitMs ?? APPLY_IN_FLIGHT_WAIT_MS
+  const deadline = Date.now() + waitMs
+  for (;;) {
+    const claim = claimPendingProposal(input.agentQaRoot, input.proposalId)
+    if (claim.kind === 'consumed' || claim.kind === 'already-applied') return claim
+    if (claim.kind === 'not-found') {
+      // The id names nothing this store ever minted — a different fact from "somebody else is
+      // applying it right now", and since 387-12 the two are told apart rather than merged.
+      throw new ProposalNotFoundError(input.proposalId)
+    }
+    if (Date.now() >= deadline) throw new ProposalApplyInFlightError(input.proposalId, waitMs)
+    await new Promise((resolve) => setTimeout(resolve, APPLY_IN_FLIGHT_POLL_MS))
+  }
+}
+
+/**
  * Apply a minted proposal. Race-safe, idempotent, receipt-bearing.
  */
 export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewResult> {
-  const claim = claimPendingProposal(input.agentQaRoot, input.proposalId)
+  const claim = await settleClaim(input)
   if (claim.kind === 'already-applied') {
     return {
       outcome: 'already-applied',
@@ -257,11 +332,6 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
         ? {}
         : { forgetReceipt: claim.record.forgetReceipt }),
     }
-  }
-  if (claim.kind === 'not-found') {
-    // Not an error and not a receipt: the id names nothing this store ever minted, and every
-    // arm above is about a proposal that exists.
-    throw new Error(`No knowledge proposal is stored under id ${input.proposalId}`)
   }
 
   const { proposal } = claim
