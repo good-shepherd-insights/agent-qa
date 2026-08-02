@@ -219,6 +219,83 @@ describe('StepEvidence carries the serve-time trace beside servedBrief (D-13)', 
     expect(ServedRetrievalTraceV1Schema.safeParse(folded).success).toBe(true)
   })
 
+  // WR-10 (387-13). The zero-injection case is the one the truncation ledger exists to answer,
+  // and it had two distinct drop gates. Shape A's gate is in the loop (see trace-threading.test.ts);
+  // Shape B's gate is HERE, in this recorder body — the loop DOES call `recordServedCautions` when
+  // every served caution is refused, because `truncated N of M` renders as an observation, and the
+  // method then discarded the whole trace on its zero-caution early return.
+  it('Shape B: records the cut ledger when the ledger refused every caution the reader served', () => {
+    // RED BASELINE, observed against unmodified production code before the fix:
+    //   AssertionError: expected undefined to be truthy   (`evidence.retrievalTrace` was ABSENT)
+    // The early return fired before any accumulation, leaving both channel-3 ledgers empty, so
+    // `foldRetrievalTrace`'s no-served-lines arm returned undefined instead of the cut ledger it
+    // was explicitly built to carry. Note the failure MODE differs from Shape A's: there the
+    // trace existed and was empty, here it does not exist at all.
+    const recorder = new EvidenceRecorder()
+    recorder.recordServedCautions(
+      [],
+      trace(
+        [line('caution-1', 1, 0.8), line('caution-2', 2, 0.6)],
+        [line('caution-cut', 3, 0.4)],
+      ),
+    )
+
+    const evidence = recorder.finalize(passVerdict, 0, 'checkout')
+
+    expect(evidence.retrievalTrace).toBeTruthy()
+    // D-2 / probe r5 extended to the all-refused case: a refused caution is a cut CANDIDATE, and
+    // the reader's own cuts ride behind it. Order is asserted, not membership — the refused
+    // servedLines precede `trace.truncated` exactly as they do on the partial-refusal path.
+    expect(evidence.retrievalTrace!.truncated.map(({ recordId }) => recordId))
+      .toEqual(['caution-1', 'caution-2', 'caution-cut'])
+    expect(evidence.retrievalTrace!.servedLines).toEqual([])
+    expect(ServedRetrievalTraceV1Schema.safeParse(evidence.retrievalTrace).success).toBe(true)
+  })
+
+  it('Shape B leaves the ServedBrief digest untouched by a zero-injection recording', () => {
+    // D-13 stated as a before/after over ONE recorder: a zero-line channel append would be digest
+    // churn with no content, so the brief mutation stays gated even though the ledger no longer is.
+    const recorder = new EvidenceRecorder()
+    recorder.recordServedBrief({
+      scope,
+      asOfBuild: 42,
+      budget: 256,
+      block: block(['fact-a', 'fact-b']),
+      trace: trace([line('fact-a', 1), line('fact-b', 2)]),
+    })
+    const before = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
+
+    recorder.recordServedCautions([], trace([line('caution-1', 1)], [line('caution-cut', 2)]))
+    const after = recorder.finalize(passVerdict, 0, 'checkout')
+
+    expect(after.servedBrief.channel3).toHaveLength(0)
+    expect(after.servedBrief.briefDigest).toBe(before.briefDigest)
+    expect(JSON.stringify(after.servedBrief)).toBe(JSON.stringify(before))
+    // Not vacuous: the recording that left the bytes alone genuinely moved the ledger.
+    expect(after.retrievalTrace!.truncated.map(({ recordId }) => recordId))
+      .toEqual(['caution-1', 'caution-cut'])
+  })
+
+  it('bounds the zero-injection ledger at the pinned top-K like every other path', () => {
+    const recorder = new EvidenceRecorder()
+    const readerCuts = Array.from(
+      { length: TRACE_TRUNCATION_TOP_K },
+      (_unused, index) => line(`caution-cut-${index}`, index + 2),
+    )
+    // Exactly K + 1 candidates cross the new path: one refused served line plus K reader cuts.
+    recorder.recordServedCautions([], trace([line('caution-refused', 1)], readerCuts))
+
+    const folded = recorder.finalize(passVerdict, 0, 'checkout').retrievalTrace!
+
+    expect(folded.truncated).toHaveLength(TRACE_TRUNCATION_TOP_K)
+    // The refused served line leads, so the LAST reader cut is the one the bound drops — the
+    // boundary, asserted by which entry fell off rather than by a count alone.
+    expect(folded.truncated[0]!.recordId).toBe('caution-refused')
+    expect(folded.truncated.map(({ recordId }) => recordId))
+      .not.toContain(`caution-cut-${TRACE_TRUNCATION_TOP_K - 1}`)
+    expect(ServedRetrievalTraceV1Schema.safeParse(folded).success).toBe(true)
+  })
+
   it('round-trips byte-identically through persistence and preserves tied ranks', () => {
     const recorder = new EvidenceRecorder()
     // Every score ties, so a serialization that reordered on equal scores would be visible.
