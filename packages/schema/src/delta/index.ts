@@ -7,5 +7,8 @@ export type {
   DeltaEnvelope,
 } from './envelope'
 export type { BundleKind, FactSubtype, OriginStage } from './envelope'
-export type { Delta } from './delta'
+export { DELTA_ORIGINS } from './envelope'
+export type { DeltaOrigin } from './envelope'
+export { DELTA_KINDS } from './delta'
+export type { Delta, DeltaKind } from './delta'
 export type { IssueDelta } from './issue-delta'

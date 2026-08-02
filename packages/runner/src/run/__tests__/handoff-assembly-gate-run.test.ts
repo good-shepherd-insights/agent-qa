@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import type { RunId, ScopeKey } from '@vostride/agent-qa-schema'
-import { guardCompletedRunHandoff } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  guardCompletedRunHandoff,
+} from '@vostride/agent-qa-schema'
 import type { RunConfig, RunMemberDescriptor } from '../ports.js'
 import type { TestResult } from '../../result.js'
 import { assembleHandoff } from '../handoff-assembly.js'
@@ -92,6 +95,30 @@ describe('gateRun threading run config -> handoff (D-10)', () => {
     const reloaded = guardCompletedRunHandoff(JSON.parse(JSON.stringify(handoff)))
 
     expect(reloaded.gateRun).toBe(true)
-    expect(reloaded.schemaVersion).toBe(4)
+    // The claim this case is FOR is that what the runner writes is what the guard accepts:
+    // the stamp survives the JSON round-trip and the guard's migration walk unrewritten.
+    // 387-02 replaced a hardcoded `4` here — the exact number belongs to the schema
+    // package, which pins it and the migration-key set by exact equality. Restating it in
+    // the runner only re-broke this case on every bump while asserting nothing the schema
+    // suite did not already assert more precisely.
+    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
+    expect(reloaded.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
+  })
+
+  it('stamps a version the load-boundary guard accepts, whatever the current version is', () => {
+    // The failure this actually guards: the runner writing a version the guard refuses.
+    // Asserted by refusing the two neighbours rather than by naming a number — a document
+    // one above current is forward-incompatible, and one below loads only through a
+    // registered migration, so neither may be what the runner stamps.
+    const handoff = assembleHandoff(baseConfig, [], 'passed', { startedAt: 1, endedAt: 2 })
+    const persisted = JSON.parse(JSON.stringify(handoff)) as Record<string, unknown>
+
+    expect(() => guardCompletedRunHandoff(persisted)).not.toThrow()
+    expect(() =>
+      guardCompletedRunHandoff({
+        ...persisted,
+        schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION + 1,
+      }),
+    ).toThrow()
   })
 })

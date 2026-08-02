@@ -47,8 +47,22 @@ export interface CompareAndSet {
   observedOrdinal: number
 }
 
+/**
+ * The delta-origin vocabulary as a RUNTIME value (387 D-17), projected from the envelope
+ * declaration below by the same discipline `DELTA_KINDS` carries: `satisfies` makes an entry
+ * naming no origin a compile error, and the reverse direction is pinned in the type-level
+ * proof beside the review-DTO suite.
+ *
+ * It exists because the proposal boundary validates deltas at ENVELOPE depth — the fields
+ * every arm carries — and `origin` is the one that decides whether a committed change is
+ * attributable to a person or to the agent.
+ */
+export const DELTA_ORIGINS = ['agent', 'user', 'import', 'system'] as const
+
+export type DeltaOrigin = (typeof DELTA_ORIGINS)[number]
+
 export interface DeltaEnvelope {
-  origin: 'agent' | 'user' | 'import' | 'system'
+  origin: DeltaOrigin
   scope: ScopeKey
   citedIds: RecordId[]
   precondition?: CompareAndSet[]

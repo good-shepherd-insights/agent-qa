@@ -105,3 +105,60 @@ export type {
   InspectRecordView,
   RecordChange,
 } from './maintenance-views'
+// 387 KREV-01 D-17/D-19: the propose+apply seam and the forget receipt.
+export {
+  ForgetPreviewSchema,
+  ForgetReceiptV1Schema,
+  ForgetTargetRefSchema,
+  KNOWLEDGE_PROJECTIONS,
+  KNOWLEDGE_PROPOSAL_STATUSES,
+  KNOWLEDGE_REVIEW_VERBS,
+  KnowledgeProposalV1Schema,
+  KnowledgeTargetRefSchema,
+  ProposalIdSchema,
+  TombstonedRecordSchema,
+} from './proposal'
+export type {
+  ForgetPreview,
+  ForgetReceiptV1,
+  ForgetTargetRef,
+  KnowledgeProjection,
+  KnowledgeProposalStatus,
+  KnowledgeProposalV1,
+  KnowledgeReviewVerb,
+  KnowledgeTargetRef,
+  TombstonedRecord,
+} from './proposal'
+// 387 KREV-01/KREV-02 D-15: the review-verb input/output contracts.
+export {
+  BRIEF_WHY_NO_TRACE_REASONS,
+  BRIEF_WHY_RESULT_KINDS,
+  BriefWhyInputSchema,
+  BriefWhyResultSchema,
+  KnowledgeAcceptInputSchema,
+  KnowledgeForgetInputSchema,
+  KnowledgeProposalApplyInputSchema,
+  KnowledgeRecordShowInputSchema,
+  KnowledgeRecordShowOutputSchema,
+  KnowledgeRecordsDiffInputSchema,
+  KnowledgeRecordsDiffOutputSchema,
+  KnowledgeRecordsInspectInputSchema,
+  KnowledgeRecordsInspectOutputSchema,
+  KnowledgeRejectInputSchema,
+} from './review-verbs'
+export type {
+  BriefWhyInput,
+  BriefWhyNoTraceReason,
+  BriefWhyResult,
+  BriefWhyResultKind,
+  KnowledgeAcceptInput,
+  KnowledgeForgetInput,
+  KnowledgeProposalApplyInput,
+  KnowledgeRecordShowInput,
+  KnowledgeRecordShowOutput,
+  KnowledgeRecordsDiffInput,
+  KnowledgeRecordsDiffOutput,
+  KnowledgeRecordsInspectInput,
+  KnowledgeRecordsInspectOutput,
+  KnowledgeRejectInput,
+} from './review-verbs'

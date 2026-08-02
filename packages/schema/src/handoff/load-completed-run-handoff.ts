@@ -36,9 +36,12 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
    * The bump is belt-and-suspenders rather than strictly required — the optional-additive
    * law would have admitted the field with no version change at all, exactly as
    * `workingMemory` was admitted. It is registered anyway because a stamped document that
-   * says which contract it was written under is the only way a reader can distinguish "this
-   * run predates trace capture" from "this run captured nothing", and the why-verb's honest
-   * no-trace answer (D-15) is built on that distinction.
+   * says which contract it was written under is the only way a reader can tell a run that
+   * predates trace capture apart from a run that captured nothing — and the why-verb's
+   * honest no-trace answer (D-15) is built entirely on that distinction.
+   *
+   * (Phrased without the `... <word> '<word>'` shape on purpose: the arch import-firewall
+   * extractor scans comments too, and read a package name out of the earlier wording.)
    */
   4: (doc) => doc,
 }

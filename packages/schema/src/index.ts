@@ -162,8 +162,13 @@ export type {
   CurationAuthorshipPath,
   CurationFallbackReason,
   Delta,
+  DeltaKind,
+  DeltaOrigin,
   IssueDelta,
 } from './delta/index'
+// 387 D-17: runtime projections of the §7.3 discriminant and origin vocabularies, so a
+// proposal boundary can name what a delta is without re-declaring the union.
+export { DELTA_KINDS, DELTA_ORIGINS } from './delta/index'
 export type {
   BriefLine,
   CautionLine,
@@ -446,6 +451,59 @@ export {
   screenStateSnapshotRelPath,
 } from './knowledge/index'
 export type { RecordFrontmatter } from './knowledge/index'
+
+// 387 KREV-01 D-17/D-19: the propose+apply seam, the forget receipt, and the review-verb
+// input/output contracts every 387-06/387-08 op imports rather than re-minting.
+export {
+  BRIEF_WHY_NO_TRACE_REASONS,
+  BRIEF_WHY_RESULT_KINDS,
+  BriefWhyInputSchema,
+  BriefWhyResultSchema,
+  ForgetPreviewSchema,
+  ForgetReceiptV1Schema,
+  ForgetTargetRefSchema,
+  KNOWLEDGE_PROJECTIONS,
+  KNOWLEDGE_PROPOSAL_STATUSES,
+  KNOWLEDGE_REVIEW_VERBS,
+  KnowledgeAcceptInputSchema,
+  KnowledgeForgetInputSchema,
+  KnowledgeProposalApplyInputSchema,
+  KnowledgeProposalV1Schema,
+  KnowledgeRecordShowInputSchema,
+  KnowledgeRecordShowOutputSchema,
+  KnowledgeRecordsDiffInputSchema,
+  KnowledgeRecordsDiffOutputSchema,
+  KnowledgeRecordsInspectInputSchema,
+  KnowledgeRecordsInspectOutputSchema,
+  KnowledgeRejectInputSchema,
+  KnowledgeTargetRefSchema,
+  ProposalIdSchema,
+  TombstonedRecordSchema,
+} from './knowledge/index'
+export type {
+  BriefWhyInput,
+  BriefWhyNoTraceReason,
+  BriefWhyResult,
+  BriefWhyResultKind,
+  ForgetPreview,
+  ForgetReceiptV1,
+  ForgetTargetRef,
+  KnowledgeAcceptInput,
+  KnowledgeForgetInput,
+  KnowledgeProjection,
+  KnowledgeProposalApplyInput,
+  KnowledgeProposalStatus,
+  KnowledgeProposalV1,
+  KnowledgeRecordShowInput,
+  KnowledgeRecordShowOutput,
+  KnowledgeRecordsDiffInput,
+  KnowledgeRecordsDiffOutput,
+  KnowledgeRecordsInspectInput,
+  KnowledgeRecordsInspectOutput,
+  KnowledgeRejectInput,
+  KnowledgeReviewVerb,
+  KnowledgeTargetRef,
+} from './knowledge/index'
 
 // 381 procedure & guarded-replay contracts (D-03/D-04/D-06, Pitfall 6)
 export { curatorTier } from './knowledge/curator-tier'

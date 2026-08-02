@@ -38,3 +38,28 @@ type Noop = DeltaEnvelope & {
 }
 
 export type Delta = Add | Confirm | Supersede | Deprecate | MintUnknown | Noop
+
+/**
+ * The §7.3 delta kinds as a RUNTIME value (387 D-17).
+ *
+ * `Delta` is a type-only union with no runtime declaration anywhere in the tree, because
+ * until now nothing validated a delta at a boundary — deltas were constructed in-process and
+ * handed straight to `commit()`. The 387 proposal DTO changes that: a proposal is a document
+ * that crosses a process boundary between propose and apply, so its deltas arrive as
+ * untrusted values and something has to be able to say which discriminants exist.
+ *
+ * This is a PROJECTION of the union above, not a second declaration of it: the `satisfies`
+ * clause makes an entry that names no arm a compile error, and the reverse direction (an arm
+ * that no entry names) is pinned in `__tests__/review-dtos.test-d.ts`. Adding a delta arm
+ * without teaching this table about it therefore cannot be done silently.
+ */
+export const DELTA_KINDS = [
+  'Add',
+  'Confirm',
+  'Supersede',
+  'Deprecate',
+  'MintUnknown',
+  'Noop',
+] as const satisfies readonly Delta['kind'][]
+
+export type DeltaKind = (typeof DELTA_KINDS)[number]

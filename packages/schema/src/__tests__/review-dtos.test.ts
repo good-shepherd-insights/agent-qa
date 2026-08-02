@@ -114,6 +114,47 @@ describe('KnowledgeProposalV1 (D-17, 391-shaped)', () => {
     expect(() => KnowledgeProposalV1Schema.parse(proposal({ inbox: 'default' }))).toThrow()
     expect(() => KnowledgeProposalV1Schema.parse(proposal({ schemaVersion: 2 }))).toThrow()
   })
+
+  it('previews tombstones only on a forget proposal', () => {
+    const receiptPreview = {
+      tombstonedRecords: [{ recordId: 'rec-checkout-1', provenance }],
+      projectionsToScrub: ['fts', 'vec'],
+    }
+
+    expect(
+      KnowledgeProposalV1Schema.parse(
+        proposal({
+          verb: 'forget',
+          targetRef: { grain: 'bundle', shortId: 'MEM-001' },
+          receiptPreview,
+        }),
+      ).receiptPreview?.tombstonedRecords,
+    ).toHaveLength(1)
+
+    // An accept that claims it would tombstone something is a proposal whose preview
+    // contradicts its verb — refused here rather than surfaced to a human to notice.
+    for (const verb of ['accept', 'reject']) {
+      expect(() =>
+        KnowledgeProposalV1Schema.parse(proposal({ verb, receiptPreview })),
+      ).toThrow()
+    }
+  })
+
+  it('gives the preview no forgottenAt — a preview has no moment it happened', () => {
+    expect(() =>
+      KnowledgeProposalV1Schema.parse(
+        proposal({
+          verb: 'forget',
+          targetRef: { grain: 'bundle', shortId: 'MEM-001' },
+          receiptPreview: {
+            tombstonedRecords: [{ recordId: 'rec-checkout-1', provenance }],
+            projectionsToScrub: ['fts'],
+            forgottenAt: 1_700_000_100_000,
+          },
+        }),
+      ),
+    ).toThrow()
+  })
 })
 
 describe('proposal deltas (§7.3 vocabulary, imported not re-minted)', () => {
@@ -308,6 +349,51 @@ describe('BriefWhyResult (D-15 typed honest absence)', () => {
     })
 
     expect(parsed.kind).toBe('no-trace')
+  })
+
+  it('refuses an offering that is not a ServedBrief at the three-channel depth', () => {
+    // The corpus this assertion could not reject until it existed: the offering was only
+    // ever fed a well-formed brief, so every leg of the predicate was unpinned.
+    const whole = {
+      scope,
+      asOfBuild: 3,
+      budget: 900,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'b'.repeat(64),
+    }
+    const { channel1: _c1, ...noChannel1 } = whole
+    const { channel2: _c2, ...noChannel2 } = whole
+    const { channel3: _c3, ...noChannel3 } = whole
+    const { briefDigest: _d, ...noDigest } = whole
+    void _c1
+    void _c2
+    void _c3
+    void _d
+
+    const offerings: unknown[] = [
+      noChannel1,
+      noChannel2,
+      noChannel3,
+      noDigest,
+      { ...whole, briefDigest: 42 },
+      { ...whole, channel1: {} },
+      'the brief',
+      [],
+      null,
+      // An ARRAY carrying every channel as a named property. Contrived, and that is the
+      // point: a probe measured the predicate's array leg unpinned by any other case in
+      // this corpus, because a plain `[]` is already refused for having no channel1.
+      Object.assign([], whole),
+    ]
+
+    for (const servedBrief of offerings) {
+      expect(() =>
+        BriefWhyResultSchema.parse({ kind: 'no-trace', reason: 'artifact-missing', servedBrief }),
+      ).toThrow()
+    }
   })
 
   it('has exactly two arms — there is NO re-run arm', () => {
