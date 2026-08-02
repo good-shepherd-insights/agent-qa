@@ -152,8 +152,14 @@ function fakeDeps(): FunctionDeps {
       list: () => Promise.resolve(documents),
       get: runId => Promise.resolve(documents.find(document => document.runId === runId)),
       readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
-    knowledge: { listBundles: () => Promise.resolve([]) },
+    knowledge: {
+      listBundles: () => Promise.resolve([]),
+      inspectRecords: () => Promise.resolve([]),
+      diffSince: () => Promise.resolve([]),
+      showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+    },
     entities: {
       // Free text against an empty directory: the none arm, which is what the sample above
       // asks for and what the never-guess contract requires.

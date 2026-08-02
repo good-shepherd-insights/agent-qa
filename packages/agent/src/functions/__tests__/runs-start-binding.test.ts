@@ -135,8 +135,14 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
       list: () => Promise.resolve(documents),
       get: (runId) => Promise.resolve(documents.find((document) => document.runId === runId)),
       readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
-    knowledge: { listBundles: () => Promise.resolve([]) },
+    knowledge: {
+      listBundles: () => Promise.resolve([]),
+      inspectRecords: () => Promise.resolve([]),
+      diffSince: () => Promise.resolve([]),
+      showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+    },
     // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
     // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
     // exercise other ops, and nothing in this file mints an address, so an honest miss and a

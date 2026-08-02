@@ -15,12 +15,24 @@ import type {
   CompletedRunHandoff,
   EntityDescriptor,
   EntityResolution,
+  ForgetReceiptV1,
   FunctionScope,
+  InspectRecordView,
+  KnowledgeAcceptInput,
   KnowledgeBundleSummary,
+  KnowledgeForgetInput,
+  KnowledgeProposalV1,
+  KnowledgeRecordShowInput,
+  KnowledgeRecordShowResult,
+  KnowledgeRecordsDiffInput,
+  KnowledgeRecordsInspectInput,
+  KnowledgeRejectInput,
   MaskedResolvedConfig,
+  RecordChange,
   RiskActionDescriptor,
   RunId,
   RunsStartInput,
+  StepEvidence,
 } from '@vostride/agent-qa-schema'
 
 /**
@@ -70,7 +82,7 @@ export type FunctionBindingStatus = 'bound' | 'unbound'
  * become conditionally bound on something the deps record does not declare, so "which
  * compositions can run this op" is answerable by reading two lines.
  */
-export type OptionalFunctionDepKey = 'runInvocation'
+export type OptionalFunctionDepKey = 'runInvocation' | 'knowledgeReview'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -247,7 +259,52 @@ export interface RunsReaderPort {
    * silently truncated prefix is the one thing an implementation may never do.
    */
   readEvents(runId: RunId, fromSeq: number): Promise<readonly ReplayedRunEvent[]>
+  /**
+   * Read back ONE step's persisted evidence — the substrate `knowledge.brief.why` answers
+   * from (Phase 387, KREV-02 / D-15).
+   *
+   * On the RUNS port and not on the knowledge port, and that placement is the whole honesty
+   * argument rather than filing. A step's evidence is a record of what happened during a run;
+   * the knowledge index is a record of what is true now. Answering "why did the brief say
+   * this" out of the second would answer a different question than the one asked, and the op
+   * that answers it is given no serving capability at all, so re-running retrieval is not a
+   * temptation it has to resist.
+   */
+  readStepEvidence(
+    runId: RunId,
+    address: StepEvidenceAddress,
+  ): Promise<StepEvidenceLookup>
 }
+
+/**
+ * Which step's evidence is wanted.
+ *
+ * `testId` is optional and its optionality is the never-guess contract, not a convenience:
+ * `StepEvidence.stepIndex` is numbered per MEMBER TEST, so a run with two tests has two step
+ * 0s and `(runId, stepIndex)` addresses neither of them. A single-test run needs no
+ * disambiguator; a multi-test run that omits it has asked an ambiguous question, and the
+ * lookup says so by name rather than answering about whichever test happened to be first.
+ */
+export interface StepEvidenceAddress {
+  readonly stepIndex: number
+  readonly testId?: string
+}
+
+/**
+ * What a step-evidence read found — four situations a caller phrases four different ways.
+ *
+ * A bare `StepEvidence | undefined` was the obvious shape and it is the wrong one: it
+ * collapses "no such run was ever recorded", "that run has no such step" and "your address
+ * matches more than one step" into one silence. The why-verb has to distinguish the first two
+ * (its no-trace vocabulary already does, and a surface tells the reader to go looking in one
+ * case and not the other), and it must never treat the third as an absence — an ambiguous
+ * address answered with a `not found` would be a wrong answer wearing an honest one's clothes.
+ */
+export type StepEvidenceLookup =
+  | { readonly kind: 'found'; readonly evidence: StepEvidence }
+  | { readonly kind: 'run-not-recorded' }
+  | { readonly kind: 'step-not-found' }
+  | { readonly kind: 'ambiguous-step-address'; readonly testIds: readonly string[] }
 
 /**
  * Injected read port over the committed knowledge store.
@@ -258,6 +315,94 @@ export interface RunsReaderPort {
 export interface KnowledgeReaderPort {
   /** Every committed bundle, already projected to the schema-owned listing row. */
   listBundles(): Promise<readonly KnowledgeBundleSummary[]>
+  /**
+   * The maintenance view of every record matching a closed structural filter (KREV-01).
+   *
+   * Wiring over the reader entry's own `inspectRecords`, and the return type says so: it is
+   * that function's view schema and not a paraphrase of it. KREV-01's "no new memidex code"
+   * claim survives only while that stays literally true, and the first field of a paraphrase
+   * to drift would be the one nobody looked at.
+   */
+  inspectRecords(input: KnowledgeRecordsInspectInput): Promise<readonly InspectRecordView[]>
+  /** Every record change since a build ordinal — the reader entry's `diffSince`, wired. */
+  diffSince(input: KnowledgeRecordsDiffInput): Promise<readonly RecordChange[]>
+  /**
+   * One record with the provenance that justifies it, or a named absence.
+   *
+   * Absence is a RESULT here rather than a refusal the port throws, because a record id that
+   * names nothing is an ordinary reviewer question and not a broken store. The op renders the
+   * answer; it never decides what "found" means.
+   */
+  showRecord(input: KnowledgeRecordShowInput): Promise<KnowledgeRecordShowResult>
+}
+
+/**
+ * Injected WRITE capability over knowledge review — accept, reject and forget (Phase 387,
+ * KREV-01 / D-17, declared here and implemented in 387-08).
+ *
+ * A SEPARATE port from {@link KnowledgeReaderPort}, and separate is the point. Widening the
+ * reader with propose/apply would have handed a write path to every composition that only
+ * ever wanted to list bundles — including the read-only surfaces the physically-separate
+ * reader entry exists to keep write-free — and no lint could have told the two apart
+ * afterwards, because they would have been one type. The split is what keeps "this host can
+ * read knowledge" and "this host can change it" two different, separately answerable
+ * questions.
+ *
+ * OPTIONAL on {@link FunctionDeps} and joined to {@link OptionalFunctionDepKey} for the same
+ * reason `runInvocation` is: a host that cannot mutate knowledge — a listing registry, a
+ * read-only surface, a daemon before it holds the writer lease — must report that as a
+ * VISIBLE `unbound` on the verbs by name, not as a call that fails somewhere far away.
+ *
+ * Two verbs and not five, because the mutating half is two STEPS rather than three verbs
+ * (D-17): propose computes the typed deltas and commits nothing; apply routes a minted
+ * proposal's deltas through the Curator's single commit path. Which verb is being proposed
+ * is data on the request, so a fourth review verb later is a new arm rather than a new
+ * member — and a port whose member set grows with the vocabulary is a port every host has to
+ * be re-taught.
+ */
+export interface KnowledgeReviewPort {
+  /**
+   * Compute what a verb WOULD change and mint a proposal for it. Commits nothing.
+   *
+   * The receipt preview a forget carries is computed here for the same reason: "show me what
+   * would be removed" has to be answerable before anything is removed, or the answer arrives
+   * too late to act on.
+   */
+  propose(request: KnowledgeProposalRequest): Promise<KnowledgeProposalV1>
+  /**
+   * Apply a minted proposal by id, routing its deltas through the one commit path (D-18).
+   *
+   * Takes an ID rather than a proposal document: a caller that could hand back an edited
+   * proposal would be able to apply deltas nothing ever computed, which is the whole reason
+   * the two steps are two steps.
+   */
+  apply(proposalId: string): Promise<KnowledgeApplyOutcome>
+}
+
+/**
+ * Which review verb is being proposed, with the input that verb takes.
+ *
+ * Discriminated rather than a widened single input, so `reject`'s required reason cannot be
+ * omitted by asking for an accept — the arms carry genuinely different obligations and a
+ * union is where a type system can enforce that.
+ */
+export type KnowledgeProposalRequest =
+  | { readonly verb: 'accept'; readonly input: KnowledgeAcceptInput }
+  | { readonly verb: 'reject'; readonly input: KnowledgeRejectInput }
+  | { readonly verb: 'forget'; readonly input: KnowledgeForgetInput }
+
+/**
+ * What an apply reports: the proposal in its applied state, and — for a forget — the receipt.
+ *
+ * The receipt is a separate field rather than the whole return value because D-04 gives it a
+ * second life as the permanent card content a forgotten entity's address resolves to. A value
+ * that had to be dug out of a proposal wrapper to serve that use would have been designed for
+ * one use plus an unwrapping step.
+ */
+export interface KnowledgeApplyOutcome {
+  readonly proposal: KnowledgeProposalV1
+  /** Present exactly when the applied verb was `forget` (D-19). */
+  readonly forgetReceipt?: ForgetReceiptV1
 }
 
 /**
@@ -334,13 +479,20 @@ export interface StartedRun {
  * exists to distinguish, and widening the optional side to cover a forgetting would have
  * made `unbound` mean two different things.
  *
- * `runInvocation` is the single OPTIONAL member, and its optionality is
- * not a relaxation of that discipline but the mechanism behind it. Not every host can start
- * a run — a read-only surface, a registry built for a listing, 386's daemon before it wires
- * its own executor — and D-09 requires that state to be VISIBLE rather than a call that
- * fails somewhere far away. Omitting it makes `runs.start` list as `unbound` and refuse by
- * name; supplying it makes the same capability bound. Any further optional member must join
- * {@link OptionalFunctionDepKey} so the same reporting applies to it.
+ * The OPTIONAL members' optionality is not a relaxation of that discipline but the mechanism
+ * behind it. Not every host can start a run — a read-only surface, a registry built for a
+ * listing, 386's daemon before it wires its own executor — and D-09 requires that state to be
+ * VISIBLE rather than a call that fails somewhere far away. Omitting `runInvocation` makes
+ * `runs.start` list as `unbound` and refuse by name; supplying it makes the same capability
+ * bound. Any further optional member must join {@link OptionalFunctionDepKey} so the same
+ * reporting applies to it.
+ *
+ * `knowledgeReview` (387, KREV-01) is the second, and it is the one that makes the required/
+ * optional split earn its keep on the WRITE side: the ability to read committed knowledge and
+ * the ability to change it are separate powers, so they are separate members. A host that
+ * supplies only the reader lists the mutating verbs as `unbound` by name — which is a true
+ * statement about that host, and is exactly what widening the reader port with propose/apply
+ * would have made unsayable.
  */
 export interface FunctionDeps {
   runs: RunsReaderPort
@@ -348,4 +500,5 @@ export interface FunctionDeps {
   config: ConfigReaderPort
   entities: EntityDirectoryPort
   runInvocation?: RunInvocationPort
+  knowledgeReview?: KnowledgeReviewPort
 }

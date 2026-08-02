@@ -35,6 +35,8 @@ import type {
   RunInvocationPort,
   RunsReaderPort,
   StartedRun,
+  StepEvidenceAddress,
+  StepEvidenceLookup,
 } from '@vostride/agent-qa-agent'
 import {
   ADDRESSING_LEDGER_DB_FILE,
@@ -71,6 +73,7 @@ import {
   rebuildIndex,
   entityIndexDbPath,
   resolveEntityRef,
+  sightEntity,
   refreshWriterLeaseAuthority,
   releaseLease,
   removeEmbedderWorkerRegistration,
@@ -89,7 +92,6 @@ import {
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
 } from '@vostride/agent-qa-knowledge-local'
-import { listBundles } from '@vostride/agent-qa-knowledge-local/reader'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
   defaultGuardrailPolicyInput,
@@ -115,6 +117,8 @@ import type {
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
 
+import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
+import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { buildRunPorts } from './run-composition.js'
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
 import { AGENT_JOB_STORE_DB_FILE, createSqliteJobStore } from '../store/sqlite-job-store.js'
@@ -366,13 +370,62 @@ export function createRunsReader(agentQaRoot: string): RunsReaderPort {
       }
       return Promise.resolve(recorded.filter((event) => event.seq >= fromSeq))
     },
+    /**
+     * One step's persisted evidence, read back out of the run's own handoff document
+     * (387 KREV-02 / D-15).
+     *
+     * Through `loadCompletedRunHandoff` — the version guard — and NOT through a raw JSON read,
+     * which is the load-bearing half. 387-02 gave the guard a present-implies-valid clause for
+     * the retrieval trace, so a document whose trace is present but malformed is refused here
+     * rather than reaching the why-verb looking well-formed. A v4 document loads through the
+     * registered identity migration and simply carries no trace at all: that is the honest
+     * pre-387 absence, and it is exactly what the guard's version stamp exists to make
+     * distinguishable from a run that captured nothing.
+     *
+     * The ambiguity check is the never-guess law at this seam. `stepIndex` numbers steps per
+     * MEMBER TEST, so a run with two tests has two step 0s; when the address does not name a
+     * test and more than one candidate answers to it, this reports the candidates rather than
+     * picking whichever test the document happened to list first. Picking would have produced a
+     * confident, wrong answer to a question that was never asked — and a why-verb that does
+     * that is worse than one that refuses, because its answer looks exactly like a right one.
+     */
+    readStepEvidence(runId: RunId, address: StepEvidenceAddress): Promise<StepEvidenceLookup> {
+      const document = enumerate().find((candidate) => candidate.runId === runId)
+      if (document === undefined) return Promise.resolve({ kind: 'run-not-recorded' })
+
+      const candidates = document.tests.filter((test) => (
+        (address.testId === undefined || test.testId === address.testId)
+        && test.steps.some((step) => step.stepIndex === address.stepIndex)
+      ))
+      if (candidates.length === 0) return Promise.resolve({ kind: 'step-not-found' })
+      if (candidates.length > 1) {
+        return Promise.resolve({
+          kind: 'ambiguous-step-address',
+          // Sorted, so the refusal a surface prints is the same list twice running.
+          testIds: candidates.map((test) => test.testId).sort(),
+        })
+      }
+
+      const evidence = candidates[0]!.steps.find((step) => step.stepIndex === address.stepIndex)
+      return Promise.resolve(
+        evidence === undefined
+          ? { kind: 'step-not-found' }
+          : { kind: 'found', evidence },
+      )
+    },
   }
 }
 
 /**
- * The knowledge listing is served through the PHYSICALLY read-only `/reader` package entry. The
- * writer-gated main entry is not reachable from this binding, and the arch reader-carve-out rule
- * enforces that rather than leaving it to discipline.
+ * The knowledge READ port, served through the PHYSICALLY read-only `/reader` package entry.
+ *
+ * The five read verbs live in `knowledge-review-reader.ts`, which is registered in the arch
+ * reader carve-out's pinned file list and therefore CANNOT name the writer-gated entry. This
+ * file can (it also binds the curator), so keeping the verbs here would have put them in the
+ * one place in the workspace where a write import is legal — separation by discipline instead
+ * of by rule. What stays here is the half that genuinely belongs to a composition root: the
+ * D-01 sighting site, which mints into the durable addressing ledger and so must live where
+ * the writer entry may be named.
  *
  * The knowledge ROOT arrives as a host-supplied resolver rather than being derived here: deciding
  * which configuration file is in force, layering an environment over it and choosing whether to
@@ -381,12 +434,12 @@ export function createRunsReader(agentQaRoot: string): RunsReaderPort {
  */
 export function createKnowledgeReader(
   resolveKnowledgeRoot: () => Promise<string> | string,
+  sightMemoryEntities?: SightMemoryEntities,
 ): KnowledgeReaderPort {
-  return {
-    async listBundles() {
-      return listBundles(await resolveKnowledgeRoot())
-    },
-  }
+  return createKnowledgeReaderPort({
+    resolveKnowledgeRoot,
+    ...(sightMemoryEntities === undefined ? {} : { sightMemoryEntities }),
+  })
 }
 
 // ---- entities: the addressing ledger and the tier-(a) resolver (387 D-01/D-02/D-09) ----------
@@ -417,44 +470,77 @@ export interface CreateEntityDirectoryInput {
  * the package that owns the runtime root is the package that names its files.
  */
 export function createEntityDirectory(input: CreateEntityDirectoryInput): EntityDirectoryPort {
-  async function withLedger<T>(
-    body: (deps: ResolveEntityRefDeps) => T | Promise<T>,
-  ): Promise<T> {
-    const knowledgeRoot = await input.resolveKnowledgeRoot()
-    const ledger = openAddressingLedger({
-      path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
-    })
-    // The D-06 projection is opened beside the ledger and for the same span. It lives under
-    // the KNOWLEDGE root rather than the agent-qa root because it is derived from knowledge
-    // the same way the memidex index is, and it is disposable in exactly that sense — while
-    // the ledger, one directory tree away, is the thing that must never be rebuilt.
-    const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot) })
-    try {
-      // AWAITED inside the try, not returned from it: tier (b)'s dense leg is asynchronous, so
-      // returning the promise would close both databases while the resolution was still using
-      // them. The bug is invisible while every caller is synchronous, which is exactly why it
-      // is worth the word.
-      return await body({
-        ledger,
-        entityIndex,
-        // One kind is wired by the tracer. 387-03 registers the remaining sources here and
-        // neither the resolver nor the ops change — which is the property the tracer exists
-        // to establish before anything expands.
-        sources: [createMemorySightingSource(() => knowledgeRoot)],
-      })
-    } finally {
-      entityIndex.close()
-      ledger.close()
-    }
-  }
-
   return {
     resolve(ref) {
-      return withLedger((deps) => resolveEntityRef(ref, deps))
+      return withEntityResolutionDeps(input, (deps) => resolveEntityRef(ref, deps))
     },
     get(ref) {
-      return withLedger((deps) => getEntityDescriptor(ref, deps))
+      return withEntityResolutionDeps(input, (deps) => getEntityDescriptor(ref, deps))
     },
+  }
+}
+
+/**
+ * The D-01 LIST-VERB sighting site (387 plan 06).
+ *
+ * Lives beside the entity directory rather than inside the read port, because minting reaches
+ * the durable addressing ledger through the writer-gated package entry, and the file that
+ * binds the read verbs is held to the reader subpath by the arch carve-out. So the read port
+ * is handed this callback and never a ledger.
+ *
+ * It goes through `sightEntity` — the resolver's OWN sighting leg — and not through a local
+ * mint. D-01 names four sighting sites and a second minting path written for the fourth is a
+ * second place where "first sighting mints, idempotently, and projects into the entity index"
+ * could stop being true with nothing comparing the two. `resolveEntityRef` is deliberately NOT
+ * what is called here: it would fall through to the hybrid tiers on an id no source recognises
+ * (a purged record's id, say), running a retrieval to answer a question nobody asked.
+ *
+ * One ledger span for the whole batch. A listing surfaces every bundle at once, and opening the
+ * two databases per row would turn a human-paced review verb into N open/close cycles.
+ */
+export function createMemorySightingHook(
+  input: CreateEntityDirectoryInput,
+): SightMemoryEntities {
+  return (bundleIds) => withEntityResolutionDeps(input, (deps) => {
+    for (const bundleId of bundleIds) sightEntity(bundleId, deps)
+  })
+}
+
+/**
+ * Open the addressing ledger and the entity-index projection for ONE span, run `body`, close.
+ *
+ * Shared by the directory port and the list-verb sighting hook so both obey the same open/close
+ * law rather than two copies of it.
+ */
+async function withEntityResolutionDeps<T>(
+  input: CreateEntityDirectoryInput,
+  body: (deps: ResolveEntityRefDeps) => T | Promise<T>,
+): Promise<T> {
+  const knowledgeRoot = await input.resolveKnowledgeRoot()
+  const ledger = openAddressingLedger({
+    path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
+  })
+  // The D-06 projection is opened beside the ledger and for the same span. It lives under
+  // the KNOWLEDGE root rather than the agent-qa root because it is derived from knowledge
+  // the same way the memidex index is, and it is disposable in exactly that sense — while
+  // the ledger, one directory tree away, is the thing that must never be rebuilt.
+  const entityIndex = openEntityIndex({ path: entityIndexDbPath(knowledgeRoot) })
+  try {
+    // AWAITED inside the try, not returned from it: tier (b)'s dense leg is asynchronous, so
+    // returning the promise would close both databases while the resolution was still using
+    // them. The bug is invisible while every caller is synchronous, which is exactly why it
+    // is worth the word.
+    return await body({
+      ledger,
+      entityIndex,
+      // One kind is wired by the tracer. 387-03 registers the remaining sources here and
+      // neither the resolver nor the ops change — which is the property the tracer exists
+      // to establish before anything expands.
+      sources: [createMemorySightingSource(() => knowledgeRoot)],
+    })
+  } finally {
+    entityIndex.close()
+    ledger.close()
   }
 }
 
@@ -703,15 +789,24 @@ export interface ComposeLocalAgentInput {
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
   const clock = input.clock ?? SYSTEM_CLOCK
 
+  const entityResolutionInput = {
+    agentQaRoot: input.agentQaRoot,
+    resolveKnowledgeRoot: input.knowledgeRoot,
+  }
+
   const registry = createFunctionRegistry({
     deps: {
       runs: createRunsReader(input.agentQaRoot),
-      knowledge: createKnowledgeReader(input.knowledgeRoot),
+      // 387 D-01: this host's list verbs are live sighting sites. Every entity a listing,
+      // an inspect, a diff or a show surfaces gets its permanent address the first time it
+      // is surfaced — which is what "pre-existing entities get IDs the day they are first
+      // referenced" means in practice, and it costs the creation paths nothing.
+      knowledge: createKnowledgeReader(
+        input.knowledgeRoot,
+        createMemorySightingHook(entityResolutionInput),
+      ),
       config: input.config,
-      entities: createEntityDirectory({
-        agentQaRoot: input.agentQaRoot,
-        resolveKnowledgeRoot: input.knowledgeRoot,
-      }),
+      entities: createEntityDirectory(entityResolutionInput),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot
       // disagree about whether this composition can run it (D-16).

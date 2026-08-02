@@ -36,6 +36,12 @@ export const READER_CARVEOUT_SCANNED_DIRS = [
 export const KNOWLEDGE_READER_FILES = [
   // 2026-07-29 (Phase 385 plan 08, D-13): relocated out of the CLI with the run composition.
   'packages/agent-local/src/composition/knowledge-reader.ts',
+  // 2026-08-02 (Phase 387 plan 06, KREV-01): the function layer's knowledge READ port. It sits
+  // inside the writer allow-list's directory prefix, so without this row the subtree's own
+  // allowance would have let the five read verbs name the writer entry and every gate would
+  // have stayed green. Listing it here inverts that: the file is held to /reader, and the
+  // ledger write its D-01 sighting site performs is injected by the composition root instead.
+  'packages/agent-local/src/composition/knowledge-review-reader.ts',
   'packages/cli/src/commands/knowledge-read.ts',
 ] as const
 

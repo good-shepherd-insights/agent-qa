@@ -190,6 +190,45 @@ export function describeAllEntities(deps: ResolveEntityRefDeps): EntityDescripto
 }
 
 /**
+ * THE sighting leg (D-01): exact machine-id equality, mint, project, describe.
+ *
+ * Extracted so the resolver's own leg and the LIST VERBS' sighting site are one mechanism
+ * rather than two that mint the same way today. D-01 names four sighting sites — a resolver
+ * hit, a card render, verdict authoring, a list verb — and a second minting path written for
+ * the fourth would be a second place where "first sighting mints" could stop being true, with
+ * nothing comparing them.
+ *
+ * `undefined` means no registered source recognises the id at all; the `reserved-kind` arm is
+ * the `BUG` refusal (D-03), which is a REFUSAL and not a miss — the address family exists and
+ * minting into it is not yet available, and reporting that as merely unknown would send a
+ * caller looking for a bug that is not there.
+ *
+ * EXACT equality, always. A prefix or case-insensitive comparison here would be tier (b)
+ * smuggled in below the never-guess contract. Sources are consulted in registered order so
+ * the answer does not depend on iteration accidents.
+ */
+export function sightEntity(
+  machineId: string,
+  deps: ResolveEntityRefDeps,
+): EntityResolution | undefined {
+  for (const source of deps.sources) {
+    const sighting = source.sight(machineId)
+    if (sighting === undefined) continue
+    if (source.kind === 'BUG') return { kind: 'none', reason: 'reserved-kind' }
+
+    // First sighting mints (D-01). Idempotent in the ledger, so a re-sighting returns the
+    // address that is already published rather than a second one.
+    const address = deps.ledger.mint(source.kind, sighting.machineId)
+    return {
+      kind: 'resolved',
+      descriptor: sighted(describe(source.kind, address.shortId, sighting, deps), deps),
+      score: ENTITY_EXACT_MATCH_SCORE,
+    }
+  }
+  return undefined
+}
+
+/**
  * Resolve a reference through the three tiers, minting on first sighting (D-01).
  *
  * Order matters and is fixed: URI, then short-ID, then exact machine id, then — for free text
@@ -219,23 +258,9 @@ export async function resolveEntityRef(
     if (canonical !== undefined) return resolveMintedAddress(canonical, shortId.kind, deps)
   }
 
-  // The sighting leg. EXACT machine-id equality only — this is not a search, and the sources
-  // are consulted in their registered order so the answer does not depend on iteration
-  // accidents.
-  for (const source of deps.sources) {
-    const sighting = source.sight(trimmed)
-    if (sighting === undefined) continue
-    if (source.kind === 'BUG') return { kind: 'none', reason: 'reserved-kind' }
-
-    // First sighting mints (D-01). Idempotent in the ledger, so a re-sighting returns the
-    // address that is already published rather than a second one.
-    const address = deps.ledger.mint(source.kind, sighting.machineId)
-    return {
-      kind: 'resolved',
-      descriptor: sighted(describe(source.kind, address.shortId, sighting, deps), deps),
-      score: ENTITY_EXACT_MATCH_SCORE,
-    }
-  }
+  // The sighting leg, which the list verbs also reach directly (387 D-01).
+  const sightedOutcome = sightEntity(trimmed, deps)
+  if (sightedOutcome !== undefined) return sightedOutcome
 
   // THE fall-through, and the only one. Free text that matched no address and no machine id
   // is what tiers (b)/(c) exist for; with no projection bound this stays the honest miss that

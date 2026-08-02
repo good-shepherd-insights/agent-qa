@@ -208,3 +208,31 @@ export const KnowledgeRecordShowOutputSchema = z.object({
 }).strict()
 
 export type KnowledgeRecordShowOutput = z.infer<typeof KnowledgeRecordShowOutputSchema>
+
+/**
+ * The show verb's answer: the record with its provenance, or a named absence (FUNC-04).
+ *
+ * A closed union rather than a throw, because asking about a record id that no bundle carries
+ * is an ordinary thing for a reviewer to do — an id gets pasted out of a stale issue, or a
+ * record was forgotten between two reads — and the caller has to be able to tell that apart
+ * from a store that could not be read at all. A verb that threw on both would have made the
+ * routine case indistinguishable from the broken one.
+ *
+ * The found arm SPREADS {@link KnowledgeRecordShowOutputSchema}'s own shape rather than
+ * restating its fields, so the two cannot drift: there is one declaration of what showing a
+ * record yields, and this union only adds the discriminant that makes absence expressible.
+ */
+export const KnowledgeRecordShowResultSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('found'),
+    ...KnowledgeRecordShowOutputSchema.shape,
+  }).strict(),
+  z.object({
+    kind: z.literal('not-found'),
+    schemaVersion: z.literal(1),
+    /** Echoed so an answer pasted into an issue still says what was asked about. */
+    recordId: z.string().min(1),
+  }).strict(),
+])
+
+export type KnowledgeRecordShowResult = z.infer<typeof KnowledgeRecordShowResultSchema>

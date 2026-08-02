@@ -67,6 +67,26 @@ const maskedConfig: MaskedResolvedConfig = {
   ],
 }
 
+/**
+ * The read-side knowledge stub, in one place so a port widening is one edit rather than one
+ * per case. `showRecord` reports the honest absence: nothing in this file commits a record.
+ */
+function fakeKnowledge(
+  overrides: Partial<FunctionDeps['knowledge']> = {},
+): FunctionDeps['knowledge'] {
+  return {
+    listBundles: () => Promise.resolve([]),
+    inspectRecords: () => Promise.resolve([]),
+    diffSince: () => Promise.resolve([]),
+    showRecord: ({ recordId }) => Promise.resolve({
+      kind: 'not-found',
+      schemaVersion: 1,
+      recordId,
+    } as const),
+    ...overrides,
+  }
+}
+
 function fakeDeps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
   return {
     runs: {
@@ -75,8 +95,9 @@ function fakeDeps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
       // The stream port is exercised in runs-events.test.ts; here it exists only because
       // FunctionDeps is a required, non-partial record.
       readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
-    knowledge: { listBundles: () => Promise.resolve([]) },
+    knowledge: fakeKnowledge(),
     // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
     // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
     // exercise other ops, and nothing in this file mints an address, so an honest miss and a
@@ -106,6 +127,7 @@ describe('runs.get', () => {
       runs: {
         list: () => Promise.resolve([]),
         readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
         get: () => Promise.resolve(handoff({
           gateRun: true,
           tests: [{
@@ -168,6 +190,7 @@ describe('runs.get', () => {
       runs: {
         list: () => Promise.resolve([]),
         readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
         get: () => Promise.resolve(handoff({
           tests: [{
             testId: 'test-1',
@@ -219,13 +242,13 @@ describe('knowledge.bundles.list', () => {
 
   it('returns the reader rows in a total product-then-id order', async () => {
     const deps = fakeDeps({
-      knowledge: {
+      knowledge: fakeKnowledge({
         listBundles: () => Promise.resolve([
           bundle({ bundleId: 'rec-9', product: 'shop' }),
           bundle({ bundleId: 'rec-2', product: 'atlas' }),
           bundle({ bundleId: 'rec-1', product: 'shop' }),
         ]),
-      },
+      }),
     })
 
     const rows = await knowledgeBundlesListSpec.invoke({}, deps)

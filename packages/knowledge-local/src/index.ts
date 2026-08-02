@@ -24,6 +24,9 @@ export {
   describeAllEntities,
   getEntityDescriptor,
   resolveEntityRef,
+  // 387 D-01: the sighting leg, published so the LIST-VERB sighting site mints through the
+  // same mechanism the resolver's own hit does rather than through a second copy of it.
+  sightEntity,
 } from './resolver/resolve.js'
 export {
   RESOLVER_CANDIDATE_K,
@@ -533,10 +536,12 @@ export type {
   PurgeRecordInput,
   PurgeRecordOutcome,
 } from './purge.js'
-export { inspectRecords } from './inspect.js'
+export { inspectRecords, toInspectRecordView } from './inspect.js'
 export type { InspectRecordsOptions } from './inspect.js'
 export { diffSince } from './diff-since.js'
 export type { DiffSinceOptions } from './diff-since.js'
+export { showRecord } from './show-record.js'
+export type { ShowRecordOptions } from './show-record.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export {

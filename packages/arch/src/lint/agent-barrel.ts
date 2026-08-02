@@ -150,6 +150,24 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  * would have been a violation is publishing the card producer, and it is deliberately absent
  * from both lists: exactly one module in this package builds an `EntityCard` (ENTY-02), and
  * putting it on this barrel would have made "one producer" a convention instead of a fact.
+ *
+ * 387 plan 06 adds six more types and no values: `KnowledgeReviewPort` with its
+ * `KnowledgeProposalRequest` and `KnowledgeApplyOutcome` vocabulary, and the step-evidence
+ * read's `StepEvidenceAddress` / `StepEvidenceLookup` pair. They are here for the reason the
+ * ports above are — a composition root has to be able to name what it implements, and
+ * `knowledgeReview` is an OPTIONAL member, so a host that omits it is making a deliberate
+ * statement rather than forgetting, and a statement is easier to make deliberately when the
+ * thing being declined has a name.
+ *
+ * `KnowledgeReviewPort` is the first WRITE-shaped contract on this barrel, so the "opens no
+ * dispatch path" argument is worth making explicitly rather than by analogy. It is a type: it
+ * has no constructor here, no default, and no module in this package produces one. A surface
+ * holding it can write nothing, because there is nothing to hold — the only value that ever
+ * implements it is the object a composition constructs over the writer-gated knowledge entry,
+ * which lives one package away behind the reader carve-out, and the only way to reach that
+ * object at all is `invokeFunction` dispatching an op whose deps the registry owns. Publishing
+ * the port's TYPE is what lets a host say "I do not supply this"; publishing anything that
+ * could build one would have been the violation, and neither list has such a thing.
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
@@ -195,8 +213,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'JobStoreDumpRow',
   'JobStoreFence',
   'JobStorePort',
+  'KnowledgeApplyOutcome',
   'KnowledgePort',
+  'KnowledgeProposalRequest',
   'KnowledgeReaderPort',
+  'KnowledgeReviewPort',
   'OptionalFunctionDepKey',
   'PersistencePort',
   'RanJobOutcomeBase',
@@ -209,6 +230,8 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'RunsReaderPort',
   'StandInJobScript',
   'StartedRun',
+  'StepEvidenceAddress',
+  'StepEvidenceLookup',
   'ToolsPort',
 ]
 

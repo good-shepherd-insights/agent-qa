@@ -193,8 +193,18 @@ async function registryFixture(
         list: () => Promise.resolve([]),
         get: () => Promise.resolve(undefined),
         readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
       },
-      knowledge: { listBundles: () => Promise.resolve([]) },
+      knowledge: {
+        listBundles: () => Promise.resolve([]),
+        inspectRecords: () => Promise.resolve([]),
+        diffSince: () => Promise.resolve([]),
+        showRecord: ({ recordId }: { recordId: string }) => Promise.resolve({
+          kind: 'not-found',
+          schemaVersion: 1,
+          recordId,
+        } as const),
+      },
       config: TEST_CONFIG,
     },
     auditSink: {

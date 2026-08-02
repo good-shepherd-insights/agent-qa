@@ -32,12 +32,17 @@ export type {
   FunctionDeps,
   FunctionResultKind,
   FunctionStream,
+  KnowledgeApplyOutcome,
+  KnowledgeProposalRequest,
   KnowledgeReaderPort,
+  KnowledgeReviewPort,
   OptionalFunctionDepKey,
   ReplayedRunEvent,
   RunInvocationPort,
   RunsReaderPort,
   StartedRun,
+  StepEvidenceAddress,
+  StepEvidenceLookup,
 } from './functions/spec.js'
 // Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
 // with the op that throws them; only the error CLASS crosses the barrel, never the spec.

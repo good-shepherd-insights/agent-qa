@@ -11,6 +11,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
+  DerivedTrustState,
   InspectFilter,
   InspectRecordView,
 } from '@vostride/agent-qa-schema'
@@ -18,6 +19,7 @@ import type {
 import { deriveBundleTrust } from './bundle-read.js'
 import type { LoadedBundle } from './bundle-read.js'
 import { isServable } from './bundle-scan.js'
+import type { EnumeratedBundleDir } from './bundle-scan.js'
 import {
   enumerateMaintenanceBundleDirs,
   loadMaintenanceBundle,
@@ -126,6 +128,53 @@ function readTrustNarrative(dir: string, bundle: LoadedBundle): string | undefin
 }
 
 /**
+ * Project ONE loaded bundle and its already-derived trust into the maintenance view.
+ *
+ * Extracted from the fold below so `showRecord` renders the SAME view rather than a second
+ * one built to the same description. The two would have agreed on the day they were written;
+ * the first field to disagree afterwards would have been one nobody compares, and a reviewer
+ * reading a record's detail page beside a record's row would have had no way to tell which of
+ * the two was lying. `bundle.events` is taken as given, so an as-of caller passes the bundle
+ * with its visible events already narrowed and this function has no opinion about time.
+ */
+export function toInspectRecordView(
+  entry: EnumeratedBundleDir,
+  bundle: LoadedBundle,
+  trust: DerivedTrustState,
+): InspectRecordView {
+  const survivingEvents = survivingOutcomeEvents(bundle.events)
+  const evidenceTokens = [...new Set(
+    survivingEvents.map((event) => String(event.evidenceToken)),
+  )].sort(compareText)
+  const lastEventOrdinal = survivingEvents.reduce(
+    (latest, event) => Math.max(latest, event.buildOrdinal),
+    bundle.manifest.createdAtOrdinal,
+  )
+  const trustNarrative = readTrustNarrative(entry.dir, bundle)
+
+  return InspectRecordViewSchema.parse({
+    schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+    recordId: bundle.manifest.id,
+    product: entry.product,
+    scope: bundle.frontmatter.scope.key,
+    kind: bundle.frontmatter.kind,
+    status: trust.status,
+    confirmations: trust.counters.confirmed,
+    contradictions: trust.counters.contradicted,
+    evidenceTokens,
+    lastEventOrdinal,
+    openedAtOrdinal: trust.validity.openedAtOrdinal,
+    ...(trust.validity.closedAtOrdinal === undefined
+      ? {}
+      : { closedAtOrdinal: trust.validity.closedAtOrdinal }),
+    anchors: bundle.frontmatter.anchors
+      .map(({ raw }) => canonicalJson(normalizeAnchor(raw)))
+      .sort(compareText),
+    ...(trustNarrative === undefined ? {} : { trustNarrative }),
+  })
+}
+
+/**
  * Fold canonical committed bundles into maintenance views. Explicit non-live status filters and
  * as-of queries enable audit visibility; an unqualified query retains the serving firewall.
  */
@@ -161,36 +210,7 @@ export function inspectRecords(options: InspectRecordsOptions): InspectRecordVie
       bundle.frontmatter.kind !== 'unknown' || !isServable(trust)
     )) continue
 
-    const survivingEvents = survivingOutcomeEvents(visibleEvents)
-    const evidenceTokens = [...new Set(
-      survivingEvents.map((event) => String(event.evidenceToken)),
-    )].sort(compareText)
-    const lastEventOrdinal = survivingEvents.reduce(
-      (latest, event) => Math.max(latest, event.buildOrdinal),
-      bundle.manifest.createdAtOrdinal,
-    )
-    const trustNarrative = readTrustNarrative(entry.dir, bundle)
-
-    records.push(InspectRecordViewSchema.parse({
-      schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION,
-      recordId: bundle.manifest.id,
-      product: entry.product,
-      scope: bundle.frontmatter.scope.key,
-      kind: bundle.frontmatter.kind,
-      status: trust.status,
-      confirmations: trust.counters.confirmed,
-      contradictions: trust.counters.contradicted,
-      evidenceTokens,
-      lastEventOrdinal,
-      openedAtOrdinal: trust.validity.openedAtOrdinal,
-      ...(trust.validity.closedAtOrdinal === undefined
-        ? {}
-        : { closedAtOrdinal: trust.validity.closedAtOrdinal }),
-      anchors: bundle.frontmatter.anchors
-        .map(({ raw }) => canonicalJson(normalizeAnchor(raw)))
-        .sort(compareText),
-      ...(trustNarrative === undefined ? {} : { trustNarrative }),
-    }))
+    records.push(toInspectRecordView(entry, visibleBundle, trust))
   }
 
   return records.sort((left, right) => (
