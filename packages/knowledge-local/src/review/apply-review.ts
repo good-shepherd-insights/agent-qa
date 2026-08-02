@@ -110,6 +110,16 @@ export interface ApplyReviewInput {
   readonly proposalId: string
   readonly executionContext?: 'local-interactive' | 'local-headless' | 'ci' | 'cloud'
   readonly delegate?: ApplyDelegate
+  /**
+   * The lease this caller ALREADY holds, when it is the holder (387-08 D-18).
+   *
+   * Required for the daemon, and the reason is structural rather than an optimisation: the writer
+   * lease is exclusive, so a leaseholder asking `acquireWriterLease` for one is told `held` — by
+   * ITSELF — and would then try to delegate to itself. Supplying the authority it already owns is
+   * the only way a holder can commit, and it is also why a holder never delegates: this branch is
+   * taken before any acquisition is attempted.
+   */
+  readonly writerAuthority?: { readonly leaseId: string; readonly epoch: number }
   readonly now?: () => number
   readonly delegateTimeoutMs?: number
 }
@@ -203,7 +213,7 @@ function assembleForgetReceipt(
 async function commitInProcess(
   input: ApplyReviewInput,
   proposal: KnowledgeProposalV1,
-  lease: { leaseId: string; epoch: number },
+  lease: { readonly leaseId: string; readonly epoch: number },
 ): Promise<void> {
   const store = createLocalKnowledgeStore({
     knowledgeRoot: input.knowledgeRoot,
@@ -239,6 +249,12 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
   }
 
   const { proposal } = claim
+  if (input.writerAuthority !== undefined) {
+    // This caller IS the holder. No acquisition, no delegation, no release — the lease it was
+    // handed is one it owns for longer than this apply.
+    return await commitAndPublish(input, proposal, input.writerAuthority)
+  }
+
   const acquired = acquireWriterLease(input.knowledgeRoot)
 
   if (acquired.kind === 'held') {
@@ -256,6 +272,19 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
     throw acquired.error
   }
 
+  try {
+    return await commitAndPublish(input, proposal, acquired)
+  } finally {
+    releaseLease({ knowledgeRoot: input.knowledgeRoot, leaseId: acquired.leaseId })
+  }
+}
+
+/** The commit-and-receipt half, shared by the acquiring path and the already-holding one. */
+async function commitAndPublish(
+  input: ApplyReviewInput,
+  proposal: KnowledgeProposalV1,
+  authority: { readonly leaseId: string; readonly epoch: number },
+): Promise<ApplyReviewResult> {
   try {
     // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
     //
@@ -276,7 +305,7 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
       return { outcome: 'applied', proposal: already, forgetReceipt: receipt }
     }
 
-    await commitInProcess(input, proposal, acquired)
+    await commitInProcess(input, proposal, authority)
     const forgottenAt = (input.now ?? Date.now)()
     const forgetReceipt = proposal.verb === 'forget'
       ? assembleForgetReceipt(input.knowledgeRoot, proposal, forgottenAt)
@@ -294,8 +323,6 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
   } catch (error) {
     restorePendingProposal(input.agentQaRoot, input.proposalId)
     throw error
-  } finally {
-    releaseLease({ knowledgeRoot: input.knowledgeRoot, leaseId: acquired.leaseId })
   }
 }
 

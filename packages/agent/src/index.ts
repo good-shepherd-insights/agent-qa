@@ -58,6 +58,12 @@ export { EntityNotFoundError } from './functions/ops/entities-get.js'
 // about whichever test came first, and a surface catches this to say which testIds to pick
 // between.
 export { AmbiguousStepAddressError } from './functions/ops/knowledge-brief-why.js'
+// 387-08 D-18: the ONE op id a surface must be able to NAME rather than infer. A host that
+// delegates an apply to the writer-lease holder has to put an id on the wire, and the alternative
+// is a string literal in the CLI — a second declaration of a capability's name, free to drift from
+// the spec that answers to it. An ID is not a dispatch handle: naming a capability still buys
+// nothing without a registry, a caller and the gate.
+export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './functions/ops/knowledge-review-ids.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer
 // results as prose, and prose is the sole unmasking surface.

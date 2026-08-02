@@ -70,7 +70,11 @@ export type DaemonIdentity = z.infer<typeof daemonIdentitySchema>
  */
 export const DAEMON_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   surface: 'daemon',
-  grantedScopes: ['read', 'run', 'config-write'] as const,
+  // `knowledge-write` (387-08 D-18): a delegated apply crosses THIS caller record, and
+  // `invokeFunction` gates scopes before it consults binding — so without the grant the
+  // leaseholder would refuse the very work only it can do, and the refusal would read as a
+  // permission problem rather than as the routing being wrong.
+  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write'] as const,
   safeMode: false,
 })
 

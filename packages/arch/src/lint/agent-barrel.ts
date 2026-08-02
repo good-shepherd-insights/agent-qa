@@ -85,6 +85,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'InconsistentJobKindDeclarationError',
   'JobCancellationNotRequestedError',
   'JobCancelledError',
+  // 387 plan 08: the delegate transport must name the op it hands the leaseholder (D-18). A
+  // string, not a handle — see the barrel's own note beside the export.
+  'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
   'MissingIdempotencyKeyError',
   'REAL_JOB_KIND_DECLARATIONS',
   'RunNotFoundError',

@@ -151,6 +151,14 @@ import type { SqliteJobStore } from '../store/sqlite-job-store.js'
 // which is the same frozen object. Threading a handle through the curation tail's call graph would
 // have been a signature change to code D-14 requires this phase to leave semantically untouched.
 
+// 387-08 D-18: the delegate transport's own vocabulary, re-exported through the one edge that
+// names the writer entry — a surface builds an `ApplyDelegate` closure and returns an
+// `ApplyReviewResult`, and neither is a handle on anything.
+export type {
+  ApplyDelegate,
+  ApplyReviewResult,
+} from '@vostride/agent-qa-knowledge-local'
+
 export type {
   AcquireWriterLeaseOutcome,
   AuthorOutcome,
@@ -463,6 +471,14 @@ export interface CreateKnowledgeReviewInput {
    * cannot recurse — it holds the lease, so it always takes the in-process branch.
    */
   readonly applyDelegate?: ApplyDelegate
+  /**
+   * The writer lease this host ALREADY holds, when it is the holder (D-18).
+   *
+   * The daemon's half of the routing rule. A holder cannot acquire its own lease a second time, so
+   * it hands the authority it owns to the apply; supplying this is mutually exclusive with
+   * supplying a delegate, and a host that supplies both is a host claiming to be two places.
+   */
+  readonly resolveWriterAuthority?: () => { readonly leaseId: string; readonly epoch: number } | undefined
 }
 
 /**
@@ -506,6 +522,10 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
         knowledgeRoot,
         proposalId,
         ...(input.applyDelegate === undefined ? {} : { delegate: input.applyDelegate }),
+        ...(() => {
+          const authority = input.resolveWriterAuthority?.()
+          return authority === undefined ? {} : { writerAuthority: authority }
+        })(),
       })
       return {
         outcome: result.outcome,
@@ -854,6 +874,8 @@ export interface ComposeLocalAgentInput {
    * `invokeViaDaemon`, and the daemon's own composition injects nothing.
    */
   readonly applyDelegate?: ApplyDelegate
+  /** The writer lease a leaseholding host already owns (387-08 D-18). See `createKnowledgeReview`. */
+  readonly resolveWriterAuthority?: () => { readonly leaseId: string; readonly epoch: number } | undefined
   readonly clock?: ClockPort
   readonly idSource?: JobIdSource
   /** The kind registry the queue dispatches through. Defaults to the six real declarations. */
@@ -897,6 +919,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         agentQaRoot: input.agentQaRoot,
         resolveKnowledgeRoot: input.knowledgeRoot,
         ...(input.applyDelegate === undefined ? {} : { applyDelegate: input.applyDelegate }),
+        ...(input.resolveWriterAuthority === undefined
+          ? {}
+          : { resolveWriterAuthority: input.resolveWriterAuthority }),
       }),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot

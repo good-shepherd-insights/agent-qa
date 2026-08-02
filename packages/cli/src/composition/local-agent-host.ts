@@ -18,10 +18,14 @@ import { dirname, resolve } from 'node:path'
 import type { ConfigReaderPort, StartedRun } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
+import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema, generateRunId, resolveKnowledgeRoot } from '@vostride/agent-qa-core'
+import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
+import { KnowledgeApplyOutcomeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, RunId, RunsStartInput } from '@vostride/agent-qa-schema'
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
+import { invokeViaDaemon } from '../daemon/client.js'
 import { resolveCliJobModel } from '../llm-utils.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
@@ -299,6 +303,14 @@ export interface ComposeCliLocalAgentInput {
    * — is exercised without a browser and a provider behind it.
    */
   runExecution?: RunExecutionPort
+  /**
+   * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
+   *
+   * Defaults to the 386 `/invoke` transport, VERBATIM — no new protocol, no new route, and no
+   * change on the daemon side, because `/invoke → invokeFunction` already reaches the op. A test
+   * substitutes it to exercise the routing without a socket.
+   */
+  applyDelegate?: ApplyDelegate
 }
 
 /**
@@ -315,14 +327,32 @@ export interface ComposeCliLocalAgentInput {
  * state expressed as a fact about a host rather than as a literal on a spec.
  */
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
+  const knowledgeRoot = async (): Promise<string> => {
+    const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
+    return resolveKnowledgeRoot(config.knowledge, dirname(resolve(input.configPath)))
+  }
+
   return composeLocalAgent({
     agentQaRoot: input.agentQaRoot,
     runExecution: input.runExecution ?? createCliRunExecution({ configPath: input.configPath }),
     config: createMaskedConfigReader(input.configPath),
-    knowledgeRoot: async () => {
-      const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
-      return resolveKnowledgeRoot(config.knowledge, dirname(resolve(input.configPath)))
-    },
+    knowledgeRoot,
+    // D-18: when a live daemon holds the writer lease, this host hands it the SAME
+    // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
+    // and waits bounded for the receipt. It is a closure over `invokeViaDaemon` rather than a new
+    // seam, so the daemon needs no new server code and the transport has one implementation.
+    //
+    // The DAEMON's own composition supplies none of this: it holds the lease, so its applies take
+    // the in-process branch, and delegation cannot recurse by construction rather than by a guard.
+    applyDelegate: input.applyDelegate ?? (async (proposalId) => {
+      const answer = await invokeViaDaemon({
+        agentQaRoot: input.agentQaRoot,
+        knowledgeRoot: await knowledgeRoot(),
+        functionId: KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID,
+        input: { proposalId },
+      })
+      return KnowledgeApplyOutcomeSchema.parse(answer) as ApplyReviewResult
+    }),
     // Deferred, and never called by a host that only invokes a function op: the queue is opened by
     // `jobs()` and nothing else resolves a provider handle.
     model: () => resolveCliJobModel(input.configPath),

@@ -97,6 +97,7 @@ export type { ConstructKnowledgeReaderInput } from './composition/knowledge-read
 export {
   composeLocalAgent,
   createKnowledgeReader,
+  createKnowledgeReview,
   createLocalRunInvocation,
   createRunsReader,
   DIGEST_JOB_ID_SOURCE,
@@ -112,7 +113,10 @@ export {
   sweepEntityIndexProjection,
 } from './composition/compose-local-agent.js'
 export type {
+  ApplyDelegate,
+  ApplyReviewResult,
   ComposeLocalAgentInput,
+  CreateKnowledgeReviewInput,
   LocalAgentHost,
   LocalAgentJobs,
   LocalCurationCapabilities,

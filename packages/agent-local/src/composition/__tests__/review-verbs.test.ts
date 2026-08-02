@@ -92,11 +92,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
         scope: { tier: 'product', key: 'review-verbs' },
         summary: 'checkout button',
         body: 'Selecting Checkout advances to the payment page.',
-        distilledEvidenceRef: {
-          sha256: 'a'.repeat(64),
-          bytes: 2,
-          mediaType: 'application/json',
-        },
+        distilledEvidenceRef: { id: 'review-verbs-evidence', sha: 'a'.repeat(64) },
         originStage: 'run-curation',
       },
       discriminant: {
