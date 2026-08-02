@@ -313,18 +313,40 @@ function stageCandidates(
 }
 
 /**
- * Pure Channel-1/Channel-3 selection over already-loaded records. Retrieval legs, fusion, models,
- * and persistence stay outside this assembly floor.
+ * One selected record together with the two facts the selection ALREADY computed about it:
+ * the score it was ordered by and its 1-based position in that order (KREV-02 · D-13/D-14).
+ *
+ * These are not new quantities. `score` is exactly what `scoreCandidates` produced and
+ * `compareScored` ordered by; `rank` is the position that order put the record in. The serve-time
+ * trace needs both, and re-deriving them at a later moment would answer about *now* — the precise
+ * dishonesty KREV-02 exists to prevent. So the selection surfaces what it knew instead.
  */
-export function selectServingRecords(input: SelectServingRecordsInput): IndexEntry[] {
+export interface ServingSelectionEntry {
+  readonly record: IndexEntry
+  readonly score: number
+  /** 1-based, matching the retrieval legs' own `index + 1` convention. */
+  readonly rank: number
+}
+
+/**
+ * Pure Channel-1/Channel-3 selection over already-loaded records, with the selection's own
+ * provenance retained. Retrieval legs, fusion, models, and persistence stay outside this
+ * assembly floor.
+ *
+ * This is the ONE selection pass. {@link selectServingRecords} is a projection of it, so a caller
+ * that wants both records and provenance never runs the selection twice.
+ */
+export function selectServingRecordsWithProvenance(
+  input: SelectServingRecordsInput,
+): ServingSelectionEntry[] {
   const channelBudget = normalizeLimit(input.channelBudget)
   const recordCap = normalizeLimit(input.recordCap)
   if (channelBudget === 0 || recordCap === 0 || input.candidates.length === 0) return []
 
-  const selected: IndexEntry[] = []
+  const selected: ServingSelectionEntry[] = []
   const admission = createServingAdmissionState()
 
-  for (const { candidate } of stageCandidates(input, channelBudget)) {
+  for (const { candidate, score } of stageCandidates(input, channelBudget)) {
     if (admission.selectedCount >= recordCap) break
     const record = reflectedRecord(candidate)
     const metadata: ServingRecordMetadata = servingRecordMetadata({
@@ -338,8 +360,16 @@ export function selectServingRecords(input: SelectServingRecordsInput): IndexEnt
       recordCap,
     }, admission).admitted) continue
 
-    selected.push(record)
+    selected.push({ record, score, rank: selected.length + 1 })
   }
 
   return selected
+}
+
+/**
+ * Pure Channel-1/Channel-3 selection over already-loaded records. Retrieval legs, fusion, models,
+ * and persistence stay outside this assembly floor.
+ */
+export function selectServingRecords(input: SelectServingRecordsInput): IndexEntry[] {
+  return selectServingRecordsWithProvenance(input).map(({ record }) => record)
 }

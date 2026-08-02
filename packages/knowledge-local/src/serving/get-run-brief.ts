@@ -4,10 +4,20 @@ import {
   type BriefLine,
   type IndexEntry,
   type ScopeKey,
+  type ServedRetrievalTraceV1,
+  type TraceLine,
 } from '@vostride/agent-qa-schema'
 
-import { selectServingRecords } from './brief-selection.js'
+import {
+  selectServingRecordsWithProvenance,
+  type ServingSelectionEntry,
+} from './brief-selection.js'
 import { estimateRenderedServingCost, renderBriefLine } from './brief-render.js'
+import {
+  CHANNEL_1_SERVING_LEG,
+  composeServedTrace,
+  traceLine,
+} from './serve-trace.js'
 import type { readPolicyLadder } from './policy-ladder.js'
 
 type OriginStampedEntry = IndexEntry & {
@@ -81,10 +91,70 @@ function truncationSignal(
 }
 
 /**
- * Assemble the deterministic Channel-1 brief over records already loaded by the reader.
- * L0 is sovereign and whole; the supplied budget applies only to learned L1/L2 records.
+ * The Channel-1 brief together with the serve-time trace that explains it (D-13/D-16). One value,
+ * never two calls: a caller cannot obtain the brief without also receiving how it was chosen.
  */
-export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
+export interface AssembledRunBrief {
+  readonly brief: BriefBlock
+  readonly trace: ServedRetrievalTraceV1
+}
+
+/**
+ * Attribute the served and cut candidates from the ONE ranking the assembly already produced.
+ *
+ * `eligible` is the full serve-time ranking (unbounded budget, no record cap); `selected` is what
+ * the real budget admitted from it. Both were computed above for the truncation SIGNAL the brief
+ * already carries, so the trace adds no retrieval work — it reads the same two lists.
+ *
+ * Rank is the candidate's position in the FULL ranking, so a served line and a cut candidate are
+ * comparable numbers: "served, ranked 2nd" and "cut, ranked 21st" answer the same question. A
+ * served record is always present in the full ranking (the budgeted pass admits a subset of what
+ * the unbounded pass stages), which `serve-trace.test.ts` asserts directly rather than assuming;
+ * the fallback below exists so that a future change to the staging path degrades into a
+ * still-valid, still-ordered rank instead of an invalid one.
+ */
+function assembleTrace(
+  eligible: readonly ServingSelectionEntry[],
+  selected: readonly ServingSelectionEntry[],
+): ServedRetrievalTraceV1 {
+  const fullRanking = new Map(
+    eligible.map((entry) => [String(entry.record.id), entry]),
+  )
+  const servedIds = new Set(selected.map(({ record }) => String(record.id)))
+
+  const servedLines: TraceLine[] = selected.map((entry, index) => {
+    const ranked = fullRanking.get(String(entry.record.id))
+    return traceLine({
+      recordId: String(entry.record.id),
+      leg: CHANNEL_1_SERVING_LEG,
+      rank: ranked?.rank ?? eligible.length + index + 1,
+      score: ranked?.score ?? entry.score,
+    })
+  })
+
+  const truncated: TraceLine[] = eligible
+    .filter(({ record }) => !servedIds.has(String(record.id)))
+    .map((entry) => traceLine({
+      recordId: String(entry.record.id),
+      leg: CHANNEL_1_SERVING_LEG,
+      rank: entry.rank,
+      score: entry.score,
+    }))
+
+  return composeServedTrace({ servedLines, truncated })
+}
+
+/**
+ * Assemble the deterministic Channel-1 brief over records already loaded by the reader, together
+ * with its serve-time retrieval trace (D-13/D-16).
+ * L0 is sovereign and whole; the supplied budget applies only to learned L1/L2 records.
+ *
+ * The trace covers the LEARNED lines only. Sovereign L0 user facts never enter the ranking — they
+ * are filtered out before selection and served whole because they are sovereign — so listing them
+ * in a retrieval trace would attribute them to a leg that took no part in serving them. Their
+ * "why" is the sovereignty rule, not a retrieval decision.
+ */
+export function assembleRunBrief(input: AssembleRunBriefInput): AssembledRunBrief {
   const userFacts = input.candidates.filter(isUserFact).sort(compareRecordId)
   const learnedCandidates = input.candidates.filter((entry) => !isUserFact(entry))
   const recordCap = Math.max(0, normalizedRecordCap(input.recordCap) - userFacts.length)
@@ -92,20 +162,21 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
     ? {}
     : { asOfBuild: input.asOfBuild }
 
-  const eligible = selectServingRecords({
+  const eligibleEntries = selectServingRecordsWithProvenance({
     candidates: learnedCandidates,
     scope: input.scope,
     channelBudget: Number.MAX_SAFE_INTEGER,
     recordCap: learnedCandidates.length,
     ...temporalInput,
   })
-  const selected = selectServingRecords({
+  const selectedEntries = selectServingRecordsWithProvenance({
     candidates: learnedCandidates,
     scope: input.scope,
     channelBudget: input.budget,
     recordCap,
     ...temporalInput,
   })
+  const selected = selectedEntries.map(({ record }) => record)
   const rendered = selected.map(renderBriefLine)
   const cautions = rendered.filter(({ briefLine }) => briefLine.tier === 'L1')
   const learned = rendered.filter(({ briefLine }) => briefLine.tier === 'L2')
@@ -114,7 +185,7 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
     rendered: renderSovereignLine(record),
   }))
 
-  return {
+  const brief: BriefBlock = {
     tiers: {
       L0: appendVerbatimLines(input.policy.text, userFacts.map(({ summary }) => summary)),
       L1: cautions.map(({ line }) => line).join('\n'),
@@ -126,7 +197,7 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
     ],
     truncation: truncationSignal(
       selected.length,
-      eligible.length,
+      eligibleEntries.length,
       policyWarnings(input.policy),
     ),
     admissions: [
@@ -142,4 +213,6 @@ export function assembleRunBrief(input: AssembleRunBriefInput): BriefBlock {
       })),
     ],
   }
+
+  return { brief, trace: assembleTrace(eligibleEntries, selectedEntries) }
 }

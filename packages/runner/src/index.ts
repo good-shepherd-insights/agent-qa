@@ -10,7 +10,11 @@ export type {
   TimeoutConfig,
   RuntimeAuthStateConfig,
 } from './platform.js'
-export type { KnowledgeHintReader } from './knowledge-hint-reader.js'
+export type {
+  KnowledgeHintReader,
+  ServedCautions,
+  ServedRunBrief,
+} from './knowledge-hint-reader.js'
 export { assertNever } from './platform.js'
 // D-15 (Phase 360): re-export the schema Ref brand helper so runner consumers (dashboard,
 // core, adapters) can construct branded refs for the schema-projected Action world without a

@@ -8,6 +8,7 @@ import {
   canonicalJson,
   DEFAULT_EMBEDDING_PROFILE,
   normalizeAnchor,
+  RETRIEVAL_TRACE_LEGS,
   type Anchor,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -343,5 +344,65 @@ describe('RETR-01 fail-closed retrieval legs', () => {
     expect(candidates[0]).toMatchObject({
       rawScores: { anchorExact: true },
     })
+  })
+
+  /**
+   * 387-04 (387-02 handoff note 1): the retrieval-leg vocabulary is declared TWICE — as the
+   * module-private `CandidateLeg` in `retrieval/legs.ts`, and as `RETRIEVAL_TRACE_LEGS` in
+   * `schema`, which the serve-time trace's `leg` field is closed over. `schema` sits BELOW this
+   * package, so it cannot import the private type; this package depends on both and is the only
+   * place the two can be compared. A comment in the trace DTO claims they agree — this executes
+   * the real legs and measures it.
+   *
+   * Two-sided by construction: a fourth leg name emitted here fails the equality, and a name
+   * dropped from the schema vocabulary fails it too.
+   */
+  it('emits exactly the leg names the trace vocabulary declares', async () => {
+    const rowid = insertRecord({ bundleId: 'tri-leg', vector: unitVector(1) })
+    insertFts(rowid, { identity: 'checkout' })
+    insertAnchor(rowid, { t: 'el', role: 'button', name: 'Checkout (3)' })
+
+    const semanticText = 'checkout dense query'
+    ensureEmbedCacheTable(db)
+    putCachedEmbedding({
+      db,
+      profile: DEFAULT_EMBEDDING_PROFILE,
+      leg: 'query',
+      rendering: semanticText,
+      vector: unitVector(1),
+    })
+    const cacheOnlyEmbedder: EmbedderPort = {
+      async embedDocument(): Promise<Float32Array> {
+        throw new Error('leg vocabulary probe must not embed a document')
+      },
+      async embedQuery(): Promise<Float32Array> {
+        throw new Error('query should resolve from the check-only cache')
+      },
+    }
+
+    const lexical = lexicalLeg(db, 'checkout', QUERY_SCOPE, 10)
+    const anchor = anchorSeedLeg(
+      db,
+      [{ t: 'el', role: 'button', name: 'Checkout (3)' }],
+      QUERY_SCOPE,
+    )
+    const dense = await denseLeg(
+      { db, vec: 'brute' },
+      semanticText,
+      QUERY_SCOPE,
+      10,
+      { embedder: cacheOnlyEmbedder },
+    )
+
+    // Every leg must actually have answered, or the observed vocabulary would agree by being
+    // smaller rather than by being right.
+    expect(lexical.length).toBeGreaterThan(0)
+    expect(anchor.length).toBeGreaterThan(0)
+    expect(dense.length).toBeGreaterThan(0)
+
+    const observed = new Set(
+      [...lexical, ...anchor, ...dense].flatMap(({ legRanks }) => Object.keys(legRanks)),
+    )
+    expect([...observed].sort()).toEqual([...RETRIEVAL_TRACE_LEGS].sort())
   })
 })

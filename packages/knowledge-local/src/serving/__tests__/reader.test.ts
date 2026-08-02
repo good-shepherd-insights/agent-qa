@@ -293,10 +293,10 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const second = reader.getRunBrief(SCOPE, 200)
 
     expect(second).toEqual(first)
-    expect(first.tiers.L0).toContain('GLOBAL POLICY: preserve checkout safety.')
-    expect(first.tiers.L0).toContain('PRODUCT POLICY: use the test checkout only.')
-    expect(first.tiers.L1).toContain('Checkout caution')
-    expect(first.tiers.L2).toContain('Checkout active-fact summary')
+    expect(first.brief.tiers.L0).toContain('GLOBAL POLICY: preserve checkout safety.')
+    expect(first.brief.tiers.L0).toContain('PRODUCT POLICY: use the test checkout only.')
+    expect(first.brief.tiers.L1).toContain('Checkout caution')
+    expect(first.brief.tiers.L2).toContain('Checkout active-fact summary')
   })
 
   it('serves the complete product -> suite -> test ladder and excludes sibling scopes', async () => {
@@ -351,7 +351,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
 
     const searchedIds = reader.search('scope ladder', { scope: testScope })
       .map(({ id }) => id)
-    const briefIds = reader.getRunBrief(testScope, 2_000).lines.map(({ id }) => id)
+    const briefIds = reader.getRunBrief(testScope, 2_000).brief.lines.map(({ id }) => id)
 
     expect(searchedIds).toEqual(expect.arrayContaining(expected))
     expect(briefIds).toEqual(expect.arrayContaining(expected))
@@ -665,6 +665,10 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(reader.read(unvettedFact)).toBeUndefined()
   })
 
+  // 387-04: the byte comparisons below now cover the COMPOSITE `{ brief, trace }`, so they pin
+  // the serve-time trace's bytes as well as the brief's. That is deliberately stronger than the
+  // pre-387 form — a leaked procedure would show up as a trace attribution even if the rendered
+  // brief text somehow hid it.
   it('leaks no procedure into brief or caution serving — bytes identical across the commit', async () => {
     const before = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
     const briefBefore = JSON.stringify(before.getRunBrief(SCOPE, 2_000))
@@ -687,15 +691,15 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const overflow = reader.getCautions([CHECKOUT_ANCHOR], 1)
     const complete = reader.getCautions([CHECKOUT_ANCHOR], 100)
 
-    expect(overflow.cautions.at(-1)).toEqual({
+    expect(overflow.block.cautions.at(-1)).toEqual({
       id: 'caution:truncated',
       anchors: [],
       summary: 'truncated 0 of 3',
     })
-    expect(complete.cautions.map(({ id }) => id)).toEqual(
+    expect(complete.block.cautions.map(({ id }) => id)).toEqual(
       expect.arrayContaining(seeded.cautions),
     )
-    expect(complete.cautions).not.toContainEqual(expect.objectContaining({
+    expect(complete.block.cautions).not.toContainEqual(expect.objectContaining({
       id: 'caution:truncated',
     }))
   })
@@ -724,7 +728,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     rmSync(join(knowledgeRoot, 'policies'), { recursive: true, force: true })
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
-    expect(reader.getRunBrief(SCOPE, 200).tiers.L0).toBe('')
+    expect(reader.getRunBrief(SCOPE, 200).brief.tiers.L0).toBe('')
   })
 
   it('returns a structured empty result for an empty search query', () => {

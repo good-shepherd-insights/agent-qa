@@ -323,9 +323,7 @@ describe('D-06 an entity title is never retrievable as a learned fact', () => {
       ],
       relations: [],
       provenance: {
-        schemaVersion: 1,
         mode: 'standalone',
-        originClass: 'agent-verified',
         sourceDescription: 'entity index fixture',
       },
       artifacts: [],

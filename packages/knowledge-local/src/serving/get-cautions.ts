@@ -7,10 +7,17 @@ import {
   type Anchor,
   type CautionBlock,
   type IndexEntry,
+  type ServedRetrievalTraceV1,
+  type TraceLine,
 } from '@vostride/agent-qa-schema'
 
 import { compareServingTrustThenId } from './brief-selection.js'
 import { renderCautionLine } from './brief-render.js'
+import {
+  CHANNEL_3_CAUTION_LEG,
+  composeServedTrace,
+  traceLine,
+} from './serve-trace.js'
 
 export interface CautionSelectionOverflow {
   served: number
@@ -20,6 +27,12 @@ export interface CautionSelectionOverflow {
 export interface CautionSelectionResult {
   block: CautionBlock
   overflow?: CautionSelectionOverflow
+  /**
+   * The serve-time trace for this Channel-3 selection (D-16). Produced as part of selecting, not
+   * as a second pass over the result: `rank` is the position in the ranking below and `score` is
+   * the trust value that ranking ordered by after the anchor-match priority.
+   */
+  trace: ServedRetrievalTraceV1
 }
 
 export interface SelectCautionsInput {
@@ -112,18 +125,35 @@ export function selectCautions(input: SelectCautionsInput): CautionSelectionResu
   const admission = createServingAdmissionState()
   const cautions: CautionBlock['cautions'] = []
   const admissions: CautionBlock['admissions'] = []
+  const servedLines: TraceLine[] = []
+  const truncated: TraceLine[] = []
 
-  for (const candidate of ranked) {
+  for (const [index, candidate] of ranked.entries()) {
     const metadata = servingRecordMetadata({
       id: candidate.record.id,
       anchors: candidate.record.anchors,
       renderedCost: candidate.cost,
     })
+    /**
+     * D-16: the trace records the ONE ranking this loop walks. `rank` is that position; `score`
+     * is the trust the ranking ordered by within an anchor-match priority band, so a caution and
+     * a cut caution report the same quantity. The band itself is not a score and is deliberately
+     * not flattened into one — the rank already carries it.
+     */
+    const line = traceLine({
+      recordId: String(candidate.record.id),
+      leg: CHANNEL_3_CAUTION_LEG,
+      rank: index + 1,
+      score: candidate.record.trust,
+    })
     if (!tryAdmitServingRecord({
       record: metadata,
       budget: input.budget,
       recordCap,
-    }, admission).admitted) continue
+    }, admission).admitted) {
+      truncated.push(line)
+      continue
+    }
 
     cautions.push({
       id: candidate.record.id,
@@ -131,10 +161,12 @@ export function selectCautions(input: SelectCautionsInput): CautionSelectionResu
       summary: candidate.summary,
     })
     admissions.push(metadata)
+    servedLines.push(line)
   }
 
   const block: CautionBlock = { cautions, budgetUsed: admission.usedBudget, admissions }
+  const trace = composeServedTrace({ servedLines, truncated })
   return cautions.length < ranked.length
-    ? { block, overflow: { served: cautions.length, eligible: ranked.length } }
-    : { block }
+    ? { block, overflow: { served: cautions.length, eligible: ranked.length }, trace }
+    : { block, trace }
 }

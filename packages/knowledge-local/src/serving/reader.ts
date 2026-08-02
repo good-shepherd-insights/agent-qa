@@ -439,6 +439,8 @@ function servingReader(
       const entries = currentServingEntries(
         hydrateRows(config, readIndexRows(config, scope), true),
       )
+      // D-16: the composite is returned verbatim. The reader does not unwrap and re-wrap it,
+      // so there is no point in this path at which a brief exists without its trace.
       return assembleRunBrief({
         candidates: entries,
         policy: readPolicyLadder(config.knowledgeRoot, config.product),
@@ -468,11 +470,15 @@ function servingReader(
         budget,
         recordCap: normalizedRecordCap(config),
       })
-      if (selected.overflow === undefined) return selected.block
+      if (selected.overflow === undefined) {
+        return { block: selected.block, trace: selected.trace }
+      }
 
       /**
        * Reserved terminal id: consumers must display this cap signal but skip it for ledger
-       * admission because it is not a committed knowledge record.
+       * admission because it is not a committed knowledge record. It gets no trace line for the
+       * same reason: it names no record, so there is nothing to attribute. The cut cautions it
+       * summarizes are already enumerated individually in the trace's truncation ledger.
        */
       const overflowLine: CautionBlock['cautions'][number] = {
         id: asRecordId('caution:truncated'),
@@ -480,8 +486,11 @@ function servingReader(
         summary: `truncated ${selected.overflow.served} of ${selected.overflow.eligible}`,
       }
       return {
-        ...selected.block,
-        cautions: [...selected.block.cautions, overflowLine],
+        block: {
+          ...selected.block,
+          cautions: [...selected.block.cautions, overflowLine],
+        },
+        trace: selected.trace,
       }
     },
 

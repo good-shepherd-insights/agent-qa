@@ -282,7 +282,12 @@ export function createAuthoringReader(
         projectionRows,
         deps.discoverKnownTests?.() ?? [],
       )
-      return assembleAuthoringBrief({
+      // D-16: the assembly seam ALWAYS produces the trace, so capture is already running for the
+      // 4th channel. The AuthoringReadPort contract still carries only the brief because there is
+      // no authoring evidence artifact to persist it onto yet; 393/394 mint the draft receipt and
+      // then only have to stop discarding this value. Deliberately not a fabricated persistence
+      // path today: a trace written nowhere would be a trace nobody could answer from.
+      const { brief } = assembleAuthoringBrief({
         entries,
         projectionRows,
         // D-16: the consumer owns the filesystem and supplies identity refs only. Projection
@@ -294,6 +299,7 @@ export function createAuthoringReader(
         budget: AUTHORING_BRIEF_DEFAULT_BUDGET,
         ...(denseScoreByRecordId === undefined ? {} : { denseScoreByRecordId }),
       })
+      return brief
     },
   }
 }

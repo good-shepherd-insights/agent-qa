@@ -164,10 +164,16 @@ export {
 } from './serving/get-authoring-brief.js'
 export type {
   AssembleAuthoringBriefInput,
+  AssembledAuthoringBrief,
   AuthoringEntryCandidate,
   AuthoringExemplarRow,
   AuthoringTestRef,
 } from './serving/get-authoring-brief.js'
+export {
+  CHANNEL_1_SERVING_LEG,
+  CHANNEL_3_CAUTION_LEG,
+  SERVING_TRACE_LEGS,
+} from './serving/serve-trace.js'
 export type {
   DenseHit,
   DenseSearchOptions,

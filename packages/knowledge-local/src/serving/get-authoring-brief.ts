@@ -28,11 +28,19 @@ import {
   type ExemplarTest,
   type IndexEntry,
   type ProcedureMatch,
+  type RetrievalTraceLeg,
   type ScopeKey,
+  type ServedRetrievalTraceV1,
   type ServingRecordMetadata,
+  type TraceLine,
 } from '@vostride/agent-qa-schema'
 
 import { applyDiversityCaps, type RerankEntry } from '../retrieval/rerank.js'
+import {
+  composeServedTrace,
+  dominantAuthoringLeg,
+  traceLine,
+} from './serve-trace.js'
 import {
   estimateRenderedServingCost,
   renderBriefLine,
@@ -166,6 +174,8 @@ function isServableEntry(entry: IndexEntry, kind: 'fact' | 'caution'): boolean {
 interface ScoredEntry {
   entry: IndexEntry
   score: number
+  /** D-16 attribution: whichever weighted relevance term contributed most to `score`. */
+  leg: RetrievalTraceLeg
 }
 
 function scoreEntries(
@@ -179,15 +189,22 @@ function scoreEntries(
       if (!isServableEntry(entry, kind)) return []
       const candidateKeys = new Set(entry.anchors.map(normalizedAnchorKey))
       const dense = input.denseScoreByRecordId?.get(String(entry.id)) ?? 0
+      // The three weighted terms are named once and both summed AND attributed from, so the
+      // recorded leg is a decomposition of the number that actually ranked this entry rather
+      // than a second, independently computed opinion about it (KREV-02).
+      const contributions: Record<RetrievalTraceLeg, number> = {
+        anchor: anchorOverlapShare(candidateKeys, targetKeys),
+        lexical: AUTHORING_LEXICAL_WEIGHT
+          * lexicalRelevance(tokens, `${entry.title}\n${entry.summary}`),
+        dense: AUTHORING_DENSE_WEIGHT * dense,
+      }
       const relevance = Math.min(
         1,
-        anchorOverlapShare(candidateKeys, targetKeys)
-          + AUTHORING_LEXICAL_WEIGHT * lexicalRelevance(tokens, `${entry.title}\n${entry.summary}`)
-          + AUTHORING_DENSE_WEIGHT * dense,
+        contributions.anchor + contributions.lexical + contributions.dense,
       )
       if (relevance === 0) return []
       const trust = Number.isFinite(entry.trust) ? Math.max(0, entry.trust) : 0
-      return [{ entry, score: trust * relevance }]
+      return [{ entry, score: trust * relevance, leg: dominantAuthoringLeg(contributions) }]
     })
     .sort((left, right) => (
       right.score - left.score
@@ -227,6 +244,7 @@ interface ExemplarCandidate {
   exemplar: ExemplarTest
   anchorKeys: ReadonlySet<string>
   score: number
+  leg: RetrievalTraceLeg
 }
 
 function anchorDisplayText(anchor: Anchor): string {
@@ -258,11 +276,15 @@ function verifiedExemplarCandidate(
   const windowPasses = row.lastOutcomes.filter(({ passed }) => passed).length
 
   const rowKeys = new Set(row.anchorKeys)
-  const relevance = Math.min(
-    1,
-    anchorOverlapShare(rowKeys, targetKeys)
-      + AUTHORING_LEXICAL_WEIGHT * lexicalRelevance(tokens, `${row.testName} ${row.filePath}`),
-  )
+  // Two terms here, not three: an exemplar is a test reference in the run-outcome projection and
+  // the dense leg never scores one. Attribution reads the same two products relevance summed.
+  const contributions: Record<RetrievalTraceLeg, number> = {
+    anchor: anchorOverlapShare(rowKeys, targetKeys),
+    lexical: AUTHORING_LEXICAL_WEIGHT
+      * lexicalRelevance(tokens, `${row.testName} ${row.filePath}`),
+    dense: 0,
+  }
+  const relevance = Math.min(1, contributions.anchor + contributions.lexical)
   if (relevance === 0) return []
 
   const recentPassRate = row.lastOutcomes.length > 0
@@ -277,6 +299,7 @@ function verifiedExemplarCandidate(
     anchorKeys: new Set(matchedKeys),
     // D-15 fold: trust (neutral 1 for projection-verified rows) x recent-pass-rate x relevance.
     score: recentPassRate * relevance,
+    leg: dominantAuthoringLeg(contributions),
     exemplar: {
       filePath: row.filePath,
       testName: row.testName,
@@ -310,6 +333,9 @@ function neverRunExemplarCandidate(
     anchorKeys: new Set<string>(),
     // Neutral trust, no observed pass-rate: discounted below verified rows, never dropped.
     score: AUTHORING_UNVERIFIED_OUTCOMES_DISCOUNT * relevance,
+    // A never-run reference has no projection anchors at all, so the lexical match against its
+    // identity is the entire reason it is here.
+    leg: 'lexical',
     exemplar: {
       filePath: ref.filePath,
       testName: ref.testName,
@@ -366,7 +392,7 @@ function selectExemplars(
   input: AssembleAuthoringBriefInput,
   targetKeys: ReadonlySet<string>,
   tokens: readonly string[],
-): ExemplarTest[] {
+): ExemplarCandidate[] {
   const projectionIdentities = new Set(
     input.projectionRows.map((row) => identityTupleKey([row.filePath, row.testName])),
   )
@@ -404,7 +430,7 @@ function selectExemplars(
     }
     selected.push(...pool.splice(bestIndex, 1))
   }
-  return selected.map(({ exemplar }) => exemplar)
+  return selected
 }
 
 function exemplarRecordId(exemplar: ExemplarTest): string {
@@ -414,20 +440,40 @@ function exemplarRecordId(exemplar: ExemplarTest): string {
 interface ServableItem {
   metadata: ServingRecordMetadata
   serve: () => void
+  /** D-16 attribution carried from the scoring that produced this candidate's position. */
+  leg: RetrievalTraceLeg
+  score: number
+}
+
+/**
+ * The §10.6 authoring brief together with its serve-time trace (D-16). The 4th channel returns the
+ * composite for the same reason the run brief does — capture is generic at the SEAM, so 393/394
+ * inherit it by destructuring rather than by re-implementing it.
+ */
+export interface AssembledAuthoringBrief {
+  readonly brief: AuthoringBrief
+  readonly trace: ServedRetrievalTraceV1
 }
 
 /**
  * Pure screenless assembly over already-loaded snapshot inputs. Retrieval SQL, hydration,
  * budgets-as-plain-numbers, and the projection read all live at the composition boundary
  * (`createAuthoringReader`); nothing here touches a connection, the clock, or the filesystem.
+ *
+ * The trace's `rank` is the candidate's 1-based position in the ONE admission walk below —
+ * caution, then procedure, then exemplar, then fact — which is the actual total order this
+ * assembly serves in. Everything the ledger admits becomes a served line; everything it sheds
+ * becomes a cut candidate, bounded by the pinned top-K.
  */
-export function assembleAuthoringBrief(input: AssembleAuthoringBriefInput): AuthoringBrief {
+export function assembleAuthoringBrief(
+  input: AssembleAuthoringBriefInput,
+): AssembledAuthoringBrief {
   const targetKeys = new Set(input.targetAnchors.map(normalizedAnchorKey))
   const tokens = intentTokens(input.intent)
 
   const cautions: CautionLine[] = []
   const cautionItems: ServableItem[] = scoreEntries(input, 'caution', targetKeys, tokens)
-    .map(({ entry }) => {
+    .map(({ entry, score, leg }) => {
       const rendered = renderCautionLine(entry)
       return {
         metadata: servingRecordMetadata({
@@ -435,6 +481,8 @@ export function assembleAuthoringBrief(input: AssembleAuthoringBriefInput): Auth
           anchors: entry.anchors,
           renderedCost: rendered.cost,
         }),
+        leg,
+        score,
         serve: () => cautions.push({
           id: entry.id,
           anchors: entry.anchors,
@@ -450,23 +498,29 @@ export function assembleAuthoringBrief(input: AssembleAuthoringBriefInput): Auth
       anchors: [match.flowAnchor],
       renderedCost: estimateRenderedServingCost(canonicalJson(match)),
     }),
+    // matchProcedure drops any candidate whose anchor relevance is zero before scoring it, so a
+    // procedure is here because an anchor matched. Its confidence IS the fold's own score.
+    leg: 'anchor',
+    score: match.confidence,
     serve: () => procedures.push(match),
   }))
 
   const exemplars: ExemplarTest[] = []
   const exemplarItems: ServableItem[] = selectExemplars(input, targetKeys, tokens)
-    .map((exemplar) => ({
+    .map(({ exemplar, score, leg }) => ({
       metadata: servingRecordMetadata({
         id: asRecordId(exemplarRecordId(exemplar)),
         anchors: exemplar.matchedAnchors,
         renderedCost: estimateRenderedServingCost(canonicalJson(exemplar)),
       }),
+      leg,
+      score,
       serve: () => exemplars.push(exemplar),
     }))
 
   const facts: BriefLine[] = []
   const factItems: ServableItem[] = scoreEntries(input, 'fact', targetKeys, tokens)
-    .map(({ entry }) => {
+    .map(({ entry, score, leg }) => {
       const rendered = renderBriefLine(entry)
       return {
         metadata: servingRecordMetadata({
@@ -474,6 +528,8 @@ export function assembleAuthoringBrief(input: AssembleAuthoringBriefInput): Auth
           anchors: entry.anchors,
           renderedCost: rendered.cost,
         }),
+        leg,
+        score,
         serve: () => facts.push(rendered.briefLine),
       }
     })
@@ -482,36 +538,61 @@ export function assembleAuthoringBrief(input: AssembleAuthoringBriefInput): Auth
   // in any bucket closes every lower-precedence bucket so facts always drop first.
   const admission = createServingAdmissionState()
   const admissions: ServingRecordMetadata[] = []
+  const servedLines: TraceLine[] = []
+  const truncated: TraceLine[] = []
   let eligible = 0
   let served = 0
   let closed = false
+  let rank = 0
+  const cutLine = (item: ServableItem, ordinal: number): TraceLine => traceLine({
+    recordId: String(item.metadata.id),
+    leg: item.leg,
+    rank: ordinal,
+    score: item.score,
+  })
   for (const bucket of [cautionItems, procedureItems, exemplarItems, factItems]) {
     eligible += bucket.length
-    if (closed) continue
+    if (closed) {
+      // A closed bucket is shed WHOLE without consulting the ledger. Those candidates are
+      // recorded here rather than inferred later from what is missing from the brief — a
+      // whole-bucket shed is exactly the "why didn't it mention X" case D-14 exists for.
+      for (const item of bucket) {
+        rank += 1
+        truncated.push(cutLine(item, rank))
+      }
+      continue
+    }
     let bucketShed = false
     for (const item of bucket) {
+      rank += 1
+      const line = cutLine(item, rank)
       if (!tryAdmitServingRecord({
         record: item.metadata,
         budget: input.budget,
         recordCap: Number.POSITIVE_INFINITY,
       }, admission).admitted) {
         bucketShed = true
+        truncated.push(line)
         continue
       }
       item.serve()
       admissions.push(item.metadata)
+      servedLines.push(line)
       served += 1
     }
     if (bucketShed) closed = true
   }
 
   return {
-    exemplars,
-    procedures,
-    facts,
-    cautions,
-    coverage: {},
-    truncation: served < eligible ? `truncated ${served} of ${eligible}` : '',
-    admissions,
+    brief: {
+      exemplars,
+      procedures,
+      facts,
+      cautions,
+      coverage: {},
+      truncation: served < eligible ? `truncated ${served} of ${eligible}` : '',
+      admissions,
+    },
+    trace: composeServedTrace({ servedLines, truncated }),
   }
 }

@@ -5,6 +5,15 @@ import { describe, expect, it } from 'vitest'
 import type { PolicyLadder } from '../policy-ladder.js'
 import { assembleRunBrief } from '../get-run-brief.js'
 
+/**
+ * 387-04: `assembleRunBrief` returns `{ brief, trace }` as ONE value (D-16). These cases pin the
+ * BRIEF's own tiering, budgeting and order-independence, which are unchanged; the composite
+ * itself and every trace claim are pinned in `serve-trace.test.ts`.
+ */
+function briefOnly(input: Parameters<typeof assembleRunBrief>[0]): ReturnType<typeof assembleRunBrief>['brief'] {
+  return assembleRunBrief(input).brief
+}
+
 type OriginStampedEntry = IndexEntry & {
   origin?: 'app-observed' | 'user'
   originClass?: 'agent-observed' | 'agent-verified' | 'import' | 'user'
@@ -46,7 +55,7 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
   it('fills L0 verbatim before L1 cautions and L2 procedures and facts', () => {
     const policyText = 'POLICY: preserve authored bytes\n'
     const userSummary = `User-authored fact: ${'u'.repeat(150)}`
-    const block = assembleRunBrief({
+    const block = briefOnly({
       candidates: [
         candidate('fact-learned', { summary: 'Learned checkout fact.' }),
         candidate('fact-user', { origin: 'user', summary: userSummary }),
@@ -84,7 +93,7 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
 
   it('never budgets authored L0 out under starvation', () => {
     const policyText = 'Keep this policy byte-for-byte, including the final newline.\n'
-    const block = assembleRunBrief({
+    const block = briefOnly({
       candidates: [
         candidate('caution-a', { kind: 'caution' }),
         candidate('procedure-b', { kind: 'procedure' }),
@@ -115,8 +124,8 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
       recordCap: 4,
     }
 
-    const exact = assembleRunBrief({ ...input, budget: 20 })
-    const oneShort = assembleRunBrief({ ...input, budget: 19 })
+    const exact = briefOnly({ ...input, budget: 20 })
+    const oneShort = briefOnly({ ...input, budget: 19 })
 
     expect(exact.lines).toHaveLength(4)
     expect(exact.truncation).toBe('')
@@ -125,14 +134,14 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
   })
 
   it('returns empty learned tiers for empty and policy-only stores', () => {
-    const empty = assembleRunBrief({
+    const empty = briefOnly({
       candidates: [],
       policy: policy(),
       scope,
       budget: 8,
       recordCap: 8,
     })
-    const policyOnly = assembleRunBrief({
+    const policyOnly = briefOnly({
       candidates: [],
       policy: policy('Only authored policy.'),
       scope,
@@ -171,8 +180,8 @@ describe('tiered run brief assembly (BRIF-01 / KDIR-04)', () => {
       asOfBuild: 23,
     }
 
-    const forward = assembleRunBrief({ ...input, candidates })
-    const reverse = assembleRunBrief({ ...input, candidates: [...candidates].reverse() })
+    const forward = briefOnly({ ...input, candidates })
+    const reverse = briefOnly({ ...input, candidates: [...candidates].reverse() })
 
     expect(reverse).toEqual(forward)
     expect(forward.tiers.L0).toBe('Whole oversized policy.')

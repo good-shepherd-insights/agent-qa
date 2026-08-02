@@ -175,10 +175,21 @@ function baseInput(
   }
 }
 
+/**
+ * 387-04: `assembleAuthoringBrief` returns `{ brief, trace }` as ONE value (D-16 covers the
+ * §10.6 4th channel too). These cases pin the BRIEF, which is unchanged; the composite and the
+ * authoring channel's per-line leg attribution are pinned in `serve-trace.test.ts`.
+ */
+function authoringBriefOnly(
+  input: Parameters<typeof assembleAuthoringBrief>[0],
+): ReturnType<typeof assembleAuthoringBrief>['brief'] {
+  return assembleAuthoringBrief(input).brief
+}
+
 describe('assembleAuthoringBrief screenless determinism (ABRF-01)', () => {
   it('produces byte-identical briefs for identical store + projection + inputs on the lexical floor', () => {
-    const first = assembleAuthoringBrief(baseInput())
-    const second = assembleAuthoringBrief(baseInput())
+    const first = authoringBriefOnly(baseInput())
+    const second = authoringBriefOnly(baseInput())
 
     expect(canonicalJson(first)).toBe(canonicalJson(second))
     expect(first.facts.length).toBeGreaterThan(0)
@@ -190,7 +201,7 @@ describe('assembleAuthoringBrief screenless determinism (ABRF-01)', () => {
 
 describe('assembleAuthoringBrief tight-budget precedence (ABRF-01, Pitfall 8)', () => {
   it('sheds facts first, then exemplars, then procedures, cautions last — and reports the shed', () => {
-    const full = assembleAuthoringBrief(baseInput())
+    const full = authoringBriefOnly(baseInput())
     const stages = {
       factsShedOnly: false,
       exemplarsShed: false,
@@ -199,7 +210,7 @@ describe('assembleAuthoringBrief tight-budget precedence (ABRF-01, Pitfall 8)', 
     }
 
     for (let budget = 10; budget <= 1_000; budget += 5) {
-      const brief = assembleAuthoringBrief(baseInput({ budget }))
+      const brief = authoringBriefOnly(baseInput({ budget }))
 
       // Locked precedence invariants: nothing lower-precedence may survive a higher shed.
       if (brief.facts.length > 0) {
@@ -285,7 +296,7 @@ describe('assembleAuthoringBrief exemplar ranking (D-15)', () => {
         anchors: [{ t: 'page', route: '/login' }],
       }),
     ]
-    const brief = assembleAuthoringBrief(baseInput({ projectionRows: rows, knownTests: [] }))
+    const brief = authoringBriefOnly(baseInput({ projectionRows: rows, knownTests: [] }))
 
     const order = brief.exemplars.map(({ filePath }) => filePath)
     expect(order.indexOf('auth/high.spec.ts')).toBeLessThan(order.indexOf('auth/low.spec.ts'))
@@ -297,12 +308,12 @@ describe('assembleAuthoringBrief exemplar ranking (D-15)', () => {
         testName: `signs in variant ${index}`,
         anchors: [{ t: 'page', route: '/login' }, { t: 'page', route: `/login/v${index}` }],
       }))
-    const capped = assembleAuthoringBrief(baseInput({ projectionRows: manyRows, knownTests: [] }))
+    const capped = authoringBriefOnly(baseInput({ projectionRows: manyRows, knownTests: [] }))
     expect(capped.exemplars).toHaveLength(AUTHORING_EXEMPLAR_CAP)
 
     const manyProcedures = Array.from({ length: AUTHORING_PROCEDURE_CAP + 2 }, (_, index) =>
       entryCandidate({ id: `proc-variant-${index}`, kind: 'procedure' }))
-    const proceduresCapped = assembleAuthoringBrief(baseInput({
+    const proceduresCapped = authoringBriefOnly(baseInput({
       entries: manyProcedures,
       projectionRows: [],
       knownTests: [],
@@ -324,7 +335,7 @@ describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02
       })),
     })
 
-    const brief = assembleAuthoringBrief(baseInput({
+    const brief = authoringBriefOnly(baseInput({
       projectionRows: [row],
       knownTests: [{ filePath: row.filePath, testName: row.testName }],
     }))
@@ -348,7 +359,7 @@ describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02
       ],
     })
 
-    const brief = assembleAuthoringBrief(baseInput({
+    const brief = authoringBriefOnly(baseInput({
       projectionRows: [row],
       knownTests: [{ filePath: row.filePath, testName: row.testName }],
     }))
@@ -369,7 +380,7 @@ describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02
       ],
     })
 
-    const brief = assembleAuthoringBrief(baseInput({
+    const brief = authoringBriefOnly(baseInput({
       projectionRows: [row],
       knownTests: [{ filePath: row.filePath, testName: row.testName }],
     }))
@@ -413,7 +424,7 @@ describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02
       { filePath: 'auth/verified.spec.ts', testName: 'signs in with valid credentials' },
       { filePath: 'auth/never-ran.spec.ts', testName: 'signs in after password reset on login' },
     ]
-    const brief = assembleAuthoringBrief(baseInput({ projectionRows: rows, knownTests }))
+    const brief = authoringBriefOnly(baseInput({ projectionRows: rows, knownTests }))
 
     const files = brief.exemplars.map(({ filePath }) => filePath)
     expect(files).not.toContain('auth/flaky.spec.ts')
@@ -429,7 +440,7 @@ describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02
       files.indexOf('auth/never-ran.spec.ts'),
     )
 
-    const emptyProjection = assembleAuthoringBrief(baseInput({
+    const emptyProjection = authoringBriefOnly(baseInput({
       projectionRows: [],
       knownTests,
     }))
@@ -445,7 +456,7 @@ describe('assembleAuthoringBrief hard excludes + degraded posture (D-15, ABRF-02
 
 describe('assembleAuthoringBrief refs not copies (D-16)', () => {
   it('serves exemplar references with bounded excerpts, never full test text', () => {
-    const brief = assembleAuthoringBrief(baseInput())
+    const brief = authoringBriefOnly(baseInput())
 
     expect(brief.exemplars.length).toBeGreaterThan(0)
     for (const exemplar of brief.exemplars) {
@@ -468,7 +479,7 @@ describe('assembleAuthoringBrief refs not copies (D-16)', () => {
 
 describe('assembleAuthoringBrief adversarial delimiter collisions (ABRF-02, WR-01)', () => {
   it('serves both the projected exemplar and the distinct never-run test under old-colliding names', () => {
-    const brief = assembleAuthoringBrief(baseInput({
+    const brief = authoringBriefOnly(baseInput({
       projectionRows: [projectionRow({ filePath: 'a::b', testName: 'c' })],
       knownTests: [
         { filePath: 'a::b', testName: 'c' },
@@ -492,7 +503,7 @@ describe('assembleAuthoringBrief adversarial delimiter collisions (ABRF-02, WR-0
   })
 
   it('admits two exemplars whose old record ids collided as two distinct admissions', () => {
-    const brief = assembleAuthoringBrief(baseInput({
+    const brief = authoringBriefOnly(baseInput({
       entries: [],
       projectionRows: [
         projectionRow({
@@ -519,7 +530,7 @@ describe('assembleAuthoringBrief adversarial delimiter collisions (ABRF-02, WR-0
   })
 
   it('keeps an empty-testName never-run test beside a formerly-colliding projected row', () => {
-    const brief = assembleAuthoringBrief(baseInput({
+    const brief = authoringBriefOnly(baseInput({
       projectionRows: [projectionRow({ filePath: 'a', testName: 'b::' })],
       knownTests: [
         { filePath: 'a', testName: 'b::' },
@@ -540,8 +551,8 @@ describe('assembleAuthoringBrief adversarial delimiter collisions (ABRF-02, WR-0
 
 describe('assembleAuthoringBrief typed-empty coverage (D-13)', () => {
   it('carries a present, empty coverage map on every result', () => {
-    const full = assembleAuthoringBrief(baseInput())
-    const empty = assembleAuthoringBrief(baseInput({
+    const full = authoringBriefOnly(baseInput())
+    const empty = authoringBriefOnly(baseInput({
       entries: [],
       projectionRows: [],
       knownTests: [],
