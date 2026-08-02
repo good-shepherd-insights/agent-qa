@@ -72,6 +72,12 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   'entities.get': 'bound',
   'entities.resolve': 'bound',
   'knowledge.bundles.list': 'bound',
+  // 387 KREV-01: the three new read verbs, all BOUND everywhere for the same reason the
+  // entity pair is — they dispatch through the REQUIRED knowledge port. The mutating half
+  // 387-08 adds will be the first rows here that can read 'unbound'.
+  'knowledge.record.show': 'bound',
+  'knowledge.records.diff': 'bound',
+  'knowledge.records.inspect': 'bound',
   'runs.events': 'bound',
   'runs.get': 'bound',
   'runs.list': 'bound',
@@ -115,6 +121,12 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   'entities.get': { ref: FIXTURE_ENTITY_SHORT_ID },
   'entities.resolve': { ref: 'nothing in this fixture is called this' },
   'knowledge.bundles.list': {},
+  // 387: the filter is closed and every member optional, so an empty filter is the honest
+  // 'everything' query; the diff baseline is 0 (a first-ever diff); the record id names
+  // nothing in this fixture and the typed miss is the correct answer.
+  'knowledge.record.show': { recordId: 'rec-not-in-this-fixture' },
+  'knowledge.records.diff': { sinceOrdinal: 0 },
+  'knowledge.records.inspect': { filter: {} },
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
   'runs.list': {},

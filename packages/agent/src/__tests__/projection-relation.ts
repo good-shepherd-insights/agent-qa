@@ -26,6 +26,9 @@ import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
+import { knowledgeRecordShowSpec } from '../functions/ops/knowledge-record-show.js'
+import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
+import { knowledgeRecordsInspectSpec } from '../functions/ops/knowledge-records-inspect.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -50,6 +53,9 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
   'knowledge.bundles.list': knowledgeBundlesListSpec,
+  'knowledge.record.show': knowledgeRecordShowSpec,
+  'knowledge.records.diff': knowledgeRecordsDiffSpec,
+  'knowledge.records.inspect': knowledgeRecordsInspectSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   'runs.list': runsListSpec,

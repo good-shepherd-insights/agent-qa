@@ -16,6 +16,9 @@ import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
+import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
+import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
+import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
@@ -64,6 +67,12 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // `@vostride/agent-qa-agent-local` is the binding site.
   runsStartSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
+  // 387 KREV-01: the read half of the review-verb family. All three bind through the REQUIRED
+  // `knowledge` port, so — unlike the mutating half 387-08 registers through the optional
+  // `knowledgeReview` dep — there is no composition that lists these and cannot run them.
+  knowledgeRecordsInspectSpec as FunctionSpec,
+  knowledgeRecordsDiffSpec as FunctionSpec,
+  knowledgeRecordShowSpec as FunctionSpec,
   configGetSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so

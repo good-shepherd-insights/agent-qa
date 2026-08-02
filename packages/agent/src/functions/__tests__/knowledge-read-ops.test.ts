@@ -54,7 +54,7 @@ function change(overrides: Partial<RecordChange> = {}): RecordChange {
 const PROVENANCE: BundleProvenance = {
   schemaVersion: 1,
   mode: 'run-linked',
-  originClass: 'agent-proposed',
+  originClass: 'agent-verified',
   runId: 'run-alpha',
   testId: 't_checkout',
   stepIndex: 2,

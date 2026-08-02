@@ -27,6 +27,7 @@ import {
   ADDRESSING_LEDGER_DB_FILE,
   openAddressingLedger,
   publishBundleForTest,
+  purgeRecord,
   type BundleStoreConfig,
   type EntityAddress,
   type PublishBundleInput,
@@ -37,6 +38,7 @@ import type {
   BundleDraft,
   FunctionCaller,
   KnowledgeRecordShowResult,
+  KnowledgeRecordsDiffOutput,
   KnowledgeRecordsInspectOutput,
   MaskedResolvedConfig,
 } from '@vostride/agent-qa-schema'
@@ -269,14 +271,41 @@ describe('D-01: a list verb sights every entity it surfaces (387-06)', () => {
     })
 
   it('never mints an address for a record id no source recognises', async () => {
-    // A diff can name a record whose bundle is gone (a purge change). Minting for such an id
-    // would put a permanent address on something no store can describe — an address that
-    // resolves to nothing is exactly the dead link D-04 forbids.
-    seedBundle('Checkout', 5)
+    // THE CORPUS CASE THIS TEST EXISTS FOR. A diff names records by id including ones whose
+    // bundle is GONE — a purge change — and that is the only input under which "the id was
+    // surfaced" and "a source recognises it" come apart. An earlier version of this case
+    // seeded one live bundle and asserted a made-up id was absent; a hook that minted every id
+    // it was handed passed it, because nothing in the input domain violated the claim. The
+    // purged record is what makes the assertion capable of failing.
+    //
+    // Minting here would put a permanent address on something no store can describe, and an
+    // address that resolves to nothing is exactly the dead link D-04 forbids.
+    const liveId = seedBundle('Checkout', 5)
+    const doomedId = seedBundle('Doomed', 6)
 
-    await invokeFunction(host.registry, 'knowledge.records.diff', { sinceOrdinal: 0 }, CALLER)
+    const purged = purgeRecord({
+      knowledgeRoot,
+      recordId: doomedId,
+      initiator: 'list-sighting-fixture',
+      auditBaseDir: agentQaRoot,
+      purgedAtOrdinal: 21,
+    })
+    expect(purged.kind).toBe('purged')
 
-    expect(ledgerLookup('rec-that-was-never-committed')).toBeUndefined()
+    const changes = await invokeFunction(
+      host.registry,
+      'knowledge.records.diff',
+      { sinceOrdinal: 0 },
+      CALLER,
+    ) as KnowledgeRecordsDiffOutput
+
+    // The verb really surfaced the purged id — without this the mint assertion below would be
+    // checking that nothing was minted for something that was never shown.
+    expect(changes.changes.map((row) => row.recordId)).toContain(doomedId)
+
+    expect(ledgerLookup(doomedId)).toBeUndefined()
+    // The live record IS sighted by the same call, so the hook demonstrably ran.
+    expect(ledgerLookup(liveId)?.shortId).toBe('MEM-001')
     expect(ledgerRowCount()).toBe(1)
   })
 

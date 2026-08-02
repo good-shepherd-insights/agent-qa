@@ -517,7 +517,8 @@ describe('agent-qa fn (generic function invoker)', () => {
       bindingStatus: string
     }[]
     // The registered capability set verbatim: the four D-06 seed reads, the D-08 stream op,
-    // and 387-01's two `entities.` reads. `resultKind` and `bindingStatus` are part of the
+    // 387-01's two `entities.` reads, and 387-06's three `knowledge.` review reads.
+    // `resultKind` and `bindingStatus` are part of the
     // published contract, so the listing is asserted as an exact table rather than a shape
     // check — a contains check would let an op join the catalogue unnoticed, which is the one
     // drift direction this case exists to catch. Every phase that adds an op repins it here on
@@ -537,6 +538,25 @@ describe('agent-qa fn (generic function invoker)', () => {
         bindingStatus: 'bound',
       },
       'knowledge.bundles.list': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      // 387-06 KREV-01: the read half of the review-verb family. BOUND for the same reason
+      // the entity pair is — they dispatch through the REQUIRED `knowledge` port, so no
+      // composition lists them and then refuses. 387-08's mutating verbs go through the
+      // OPTIONAL `knowledgeReview` dep and are the first rows here that can read `unbound`.
+      'knowledge.record.show': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      'knowledge.records.diff': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      'knowledge.records.inspect': {
         requiredScopes: ['read'],
         resultKind: 'unary',
         bindingStatus: 'bound',

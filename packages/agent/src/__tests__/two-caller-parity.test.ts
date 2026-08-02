@@ -185,6 +185,12 @@ const ALL_FUNCTION_IDS = [
   'entities.get',
   'entities.resolve',
   'knowledge.bundles.list',
+  // 387 KREV-01: three more read-tier ids, so they too survive safe-mode filtering and the
+  // filter assertion below sharpens rather than merely lengthens — 'runs.start' is still the
+  // one id that drops out, now out of a set five entries larger than 384 shipped.
+  'knowledge.record.show',
+  'knowledge.records.diff',
+  'knowledge.records.inspect',
   'runs.events',
   'runs.get',
   'runs.list',
