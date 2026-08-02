@@ -149,24 +149,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'mobile driver installation is host mutation; joins the environment action class',
   },
   {
-    file: 'packages/cli/src/commands/knowledge-maintain.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '387',
-    reason: 'record-level knowledge maintenance; migrates into the layer with the knowledge review verb family',
-  },
-  {
-    file: 'packages/cli/src/commands/knowledge-maintain.ts',
-    specifier: '@vostride/agent-qa-runner-local',
-    clearedBy: '387',
-    reason: 'record-level knowledge maintenance; migrates into the layer with the knowledge review verb family',
-  },
-  {
-    file: 'packages/cli/src/commands/knowledge-maintain.ts',
-    specifier: '@vostride/agent-qa-safety',
-    clearedBy: '387',
-    reason: 'record-level knowledge maintenance; migrates into the layer with the knowledge review verb family',
-  },
-  {
     file: 'packages/cli/src/commands/mcp.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '396',

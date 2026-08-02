@@ -1,13 +1,35 @@
+// The knowledge maintenance verbs: drain, rebuild-index, rollback, purge.
+//
+// 2026-08-02 (Phase 387 plan 09, D-20): this file's three firewall-ledger entries are cleared,
+// and what happened is an IMPORT-TOPOLOGY migration — no subcommand gained, lost or changed a
+// behaviour. Each capability now arrives through an edge a surface is sanctioned to name:
+//
+//   knowledge root      the CLI's own config helper, which is where every other verb resolves it
+//   build ordinals      the local composition's build-ordinal edge (agent-local composition)
+//   masking helpers     the agent barrel's re-exports, exactly as the `fn` invoker takes them
+//   guardrail policy    `loadDefaultGuardrailPolicy` on the local daemon capabilities, which
+//                       already existed and which this file already destructures two names off
+//
+// The last one is worth naming explicitly: the policy load did not need a new export invented
+// for it. A surface that loads the default guardrail policy itself is a surface that can load a
+// DIFFERENT one, and the composition has been the single answer to "which policy is in force"
+// since 385 — this file just stopped asking the question twice.
+
 import { randomUUID } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
+  createMaskingContext,
+  unmaskForHumanOutput,
+} from '@vostride/agent-qa-agent'
+import {
+  BuildOrdinalReservationError,
   LOCAL_CURATION_CAPABILITIES,
   LOCAL_DAEMON_CAPABILITIES,
+  reserveBuildOrdinalForProducts,
   resolveRunExecutionContext,
 } from '@vostride/agent-qa-agent-local'
 import type {
@@ -21,22 +43,12 @@ import type {
   RollbackReport,
   WriterLeaseAuthority,
 } from '@vostride/agent-qa-agent-local'
-import {
-  BuildOrdinalReservationError,
-  reserveBuildOrdinalForProducts,
-} from '@vostride/agent-qa-runner-local'
-import {
-  createMaskingContext,
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-  unmaskForHumanOutput,
-} from '@vostride/agent-qa-safety'
 import { asRecordId } from '@vostride/agent-qa-schema'
 import type { OriginClass } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
-import { resolveConfig } from '../config.js'
+import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import {
   readCurationTailReceipt,
   type CurationTailReceipt,
@@ -76,7 +88,11 @@ const {
   rollbackCurationJob,
 } = LOCAL_CURATION_CAPABILITIES.maintenance
 const { drainQueue } = LOCAL_CURATION_CAPABILITIES
-const { countRemainingCurationWork, readWriterLease } = LOCAL_DAEMON_CAPABILITIES
+const {
+  countRemainingCurationWork,
+  loadDefaultGuardrailPolicy,
+  readWriterLease,
+} = LOCAL_DAEMON_CAPABILITIES
 
 interface RebuildOptions {
   json?: boolean
@@ -228,7 +244,7 @@ async function resolveKnowledgePaths(command: Command): Promise<KnowledgePaths> 
     configPath,
     loadAuthPlugins: false,
   })
-  const knowledgeRoot = resolveKnowledgeRoot(config.knowledge, configDir)
+  const knowledgeRoot = resolveConfiguredKnowledgeRoot(config, configDir)
   const runtimeRoot = resolve(configDir, '.agent-qa')
   return {
     knowledgeRoot,
@@ -392,7 +408,7 @@ async function drainInline(paths: KnowledgePaths, options: DrainOptions): Promis
     auditBaseDir: paths.auditBaseDir,
     author: FALLBACK_CURATOR_AUTHOR,
     executionContext: resolveRunExecutionContext(),
-    policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    policy: loadDefaultGuardrailPolicy(),
     onJobLifecycle: (event) => {
       seenCandidateIds.add(event.candidateId)
       // The lease is only readable as OURS while the drain holds it, and a durable boundary is
