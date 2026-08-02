@@ -5,27 +5,17 @@
 // set by construction rather than by two enumerations that agree today.
 //
 // Deliberately UNFILTERED by serving lifecycle, matching `listBundles`: a superseded or
-// withdrawn record still has a permanent address and must still resolve (D-04). The card's
+// deprecated record still has a permanent address and must still resolve (D-04). The card's
 // status is what says what happened to it.
+//
+// That status is derived by the ONE shared mapping in `memory-status.ts`, which is total over
+// the complete `BundleStatus` union. This module used to carry its own private table with a
+// silent `active` fallback; the fallback hid two members the union does not contain and one it
+// does, and the card contradicted the forget receipt as a result (CR-04, plan 387-11).
 
 import { listBundles } from '../list-bundles.js'
+import { memoryStatusForBundle } from '../memory-status.js'
 import type { EntitySighting, EntitySightingSource } from './resolve.js'
-
-/**
- * Bundle status vocabulary → the `MEM` card vocabulary (`active | tombstoned | forgotten`).
- *
- * The mapping is a TABLE and not a passthrough because the two vocabularies are genuinely
- * different: the knowledge store tracks a record's trust lifecycle, and a card reports
- * whether the thing an address names is still standing. Anything this table does not name
- * maps to `active`, which is honest for a record that exists and is not tombstoned; the
- * schema boundary is what refuses a status this table could produce but `MEM` does not
- * declare, and 387-07's per-kind projections widen it against real store states.
- */
-const TOMBSTONED_BUNDLE_STATUSES: readonly string[] = ['withdrawn', 'superseded', 'retired']
-
-function memoryStatusFor(bundleStatus: string): string {
-  return TOMBSTONED_BUNDLE_STATUSES.includes(bundleStatus) ? 'tombstoned' : 'active'
-}
 
 /** Build the MEM sighting source over a knowledge root. */
 export function createMemorySightingSource(
@@ -39,7 +29,7 @@ export function createMemorySightingSource(
       return {
         machineId: row.bundleId,
         title: row.summary,
-        statusSource: memoryStatusFor(row.status),
+        statusSource: memoryStatusForBundle(row.status),
       }
     }
     return undefined
