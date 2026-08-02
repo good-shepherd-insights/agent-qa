@@ -15,11 +15,15 @@ import type { FunctionBindingStatus } from './spec.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
+import { knowledgeAcceptProposeSpec } from './ops/knowledge-accept-propose.js'
 import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
+import { knowledgeForgetProposeSpec } from './ops/knowledge-forget-propose.js'
+import { knowledgeProposalApplySpec } from './ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
+import { knowledgeRejectProposeSpec } from './ops/knowledge-reject-propose.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
@@ -77,6 +81,16 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // KREV-02: the honest verb. Read-tier like its four siblings, and bound everywhere for the
   // same reason — its substrate is the RUNS port, which is required.
   knowledgeBriefWhySpec as FunctionSpec,
+  // 387 KREV-01 D-17: the MUTATING half — three proposes and one apply. Registered here and
+  // bound only where a composition supplies `knowledgeReview`, so a read-only host lists all
+  // four as `unbound` BY NAME rather than omitting them: a capability that is absent from a
+  // catalogue is indistinguishable from one that never existed, and D-09 requires the two to
+  // look different. The apply is the ONE op in this list through which committed knowledge can
+  // change; the three proposes commit nothing by construction.
+  knowledgeAcceptProposeSpec as FunctionSpec,
+  knowledgeRejectProposeSpec as FunctionSpec,
+  knowledgeForgetProposeSpec as FunctionSpec,
+  knowledgeProposalApplySpec as FunctionSpec,
   configGetSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so

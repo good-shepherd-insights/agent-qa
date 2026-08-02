@@ -17,7 +17,9 @@ import type { ServedBrief } from '../brief/served-brief'
 import { InspectFilterSchema, InspectRecordViewSchema, RecordChangeSchema } from './maintenance-views'
 import { BundleProvenanceSchema } from './bundle-files'
 import {
+  ForgetReceiptV1Schema,
   ForgetTargetRefSchema,
+  KnowledgeProposalV1Schema,
   KnowledgeTargetRefSchema,
   ProposalIdSchema,
 } from './proposal'
@@ -165,6 +167,43 @@ export const KnowledgeProposalApplyInputSchema = z.object({
 }).strict()
 
 export type KnowledgeProposalApplyInput = z.infer<typeof KnowledgeProposalApplyInputSchema>
+
+/**
+ * What an apply DID, and whether this call is the one that did it.
+ *
+ * `outcome` is not decoration. Applying a proposal twice is an ordinary thing for a retrying
+ * surface to do (a dropped socket, a re-issued MCP tool call, an operator pressing the key
+ * again), and the second call must be able to say "this was already applied, here is what it
+ * did" without committing a second time. Reporting that as an ordinary success would make the
+ * two indistinguishable, and reporting it as a throw would throw away the receipt — which is
+ * the one thing the caller asked for. So it is an ARM, and the receipt rides on both arms.
+ */
+export const KnowledgeProposeOutcomeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('proposed'),
+    proposal: KnowledgeProposalV1Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal('target-not-found'),
+    /** Echoed so an answer pasted into an issue still says what was asked about. */
+    target: KnowledgeTargetRefSchema,
+  }).strict(),
+])
+
+export type KnowledgeProposeOutcomeDto = z.infer<typeof KnowledgeProposeOutcomeSchema>
+
+export const KNOWLEDGE_APPLY_OUTCOMES = ['applied', 'already-applied'] as const
+
+export type KnowledgeApplyOutcomeKind = (typeof KNOWLEDGE_APPLY_OUTCOMES)[number]
+
+export const KnowledgeApplyOutcomeSchema = z.object({
+  outcome: z.enum(KNOWLEDGE_APPLY_OUTCOMES),
+  proposal: KnowledgeProposalV1Schema,
+  /** Present exactly when the applied verb was `forget` (D-19). */
+  forgetReceipt: ForgetReceiptV1Schema.optional(),
+}).strict()
+
+export type KnowledgeApplyOutcomeDto = z.infer<typeof KnowledgeApplyOutcomeSchema>
 
 /** `inspectRecords`' structural filter, unchanged — the verb is a client, not a rewrite. */
 export const KnowledgeRecordsInspectInputSchema = z.object({

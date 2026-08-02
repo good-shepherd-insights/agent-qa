@@ -542,6 +542,30 @@ export { diffSince } from './diff-since.js'
 export type { DiffSinceOptions } from './diff-since.js'
 export { showRecord } from './show-record.js'
 export type { ShowRecordOptions } from './show-record.js'
+
+// 387-08 KREV-01 D-17/D-18/D-19: the knowledge review write path. Published through the WRITER
+// entry and deliberately not through `/reader` — proposing commits nothing, but the module it
+// sits beside commits everything, and a read-only surface that could name this directory would
+// be one import away from the one path bytes change through.
+export {
+  FORGET_SCRUBBED_PROJECTIONS,
+  proposeReview,
+} from './review/propose-review.js'
+export type {
+  ProposeReviewInput,
+  ProposeReviewOutcome,
+  ProposeReviewRequest,
+  ResolveBundleShortId,
+} from './review/propose-review.js'
+export {
+  PROPOSALS_DIR_NAME,
+  ProposalNotFoundError,
+  proposalsDir,
+  readAppliedProposal,
+  readPendingProposal,
+  readProposal,
+} from './review/proposals-store.js'
+export type { AppliedProposalRecord } from './review/proposals-store.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export {

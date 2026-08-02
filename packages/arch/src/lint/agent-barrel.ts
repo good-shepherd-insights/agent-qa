@@ -224,6 +224,9 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeApplyOutcome',
   'KnowledgePort',
   'KnowledgeProposalRequest',
+  // 387 plan 08: `propose` answers a typed target-not-found rather than throwing, and a bare
+  // proposal could not carry that arm. Type-only, like every other member of this family.
+  'KnowledgeProposeOutcome',
   'KnowledgeReaderPort',
   'KnowledgeReviewPort',
   'OptionalFunctionDepKey',

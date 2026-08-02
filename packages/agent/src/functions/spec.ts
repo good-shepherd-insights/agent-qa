@@ -21,9 +21,11 @@ import type {
   KnowledgeAcceptInput,
   KnowledgeBundleSummary,
   KnowledgeForgetInput,
+  KnowledgeApplyOutcomeKind,
   KnowledgeProposalV1,
   KnowledgeRecordShowInput,
   KnowledgeRecordShowResult,
+  KnowledgeTargetRef,
   KnowledgeRecordsDiffInput,
   KnowledgeRecordsInspectInput,
   KnowledgeRejectInput,
@@ -368,7 +370,7 @@ export interface KnowledgeReviewPort {
    * would be removed" has to be answerable before anything is removed, or the answer arrives
    * too late to act on.
    */
-  propose(request: KnowledgeProposalRequest): Promise<KnowledgeProposalV1>
+  propose(request: KnowledgeProposalRequest): Promise<KnowledgeProposeOutcome>
   /**
    * Apply a minted proposal by id, routing its deltas through the one commit path (D-18).
    *
@@ -386,6 +388,19 @@ export interface KnowledgeReviewPort {
  * omitted by asking for an accept — the arms carry genuinely different obligations and a
  * union is where a type system can enforce that.
  */
+/**
+ * What proposing produced, or the named absence (387-08).
+ *
+ * 387-06 declared `propose` as returning a proposal outright. A target ref that names nothing is
+ * an ordinary reviewer mistake rather than a broken store — an id pasted out of a stale issue, a
+ * record forgotten between two reads — and the plan's own contract is "a typed not-found, never
+ * a throw". A bare proposal cannot carry that answer, so the port returns this union instead, on
+ * exactly the reasoning D-1 applied to `showRecord`.
+ */
+export type KnowledgeProposeOutcome =
+  | { readonly kind: 'proposed'; readonly proposal: KnowledgeProposalV1 }
+  | { readonly kind: 'target-not-found'; readonly target: KnowledgeTargetRef }
+
 export type KnowledgeProposalRequest =
   | { readonly verb: 'accept'; readonly input: KnowledgeAcceptInput }
   | { readonly verb: 'reject'; readonly input: KnowledgeRejectInput }
@@ -400,6 +415,15 @@ export type KnowledgeProposalRequest =
  * one use plus an unwrapping step.
  */
 export interface KnowledgeApplyOutcome {
+  /**
+   * Whether THIS call is the one that committed (387-08).
+   *
+   * Not decoration, and not on the interface 387-06 declared. Applying a proposal twice is an
+   * ordinary thing for a retrying surface to do, and the second call has to be able to say
+   * "already applied, here is what it did" — which an outcome with no discriminant cannot say,
+   * and which a throw would say while discarding the receipt the caller asked for.
+   */
+  readonly outcome: KnowledgeApplyOutcomeKind
   readonly proposal: KnowledgeProposalV1
   /** Present exactly when the applied verb was `forget` (D-19). */
   readonly forgetReceipt?: ForgetReceiptV1

@@ -30,13 +30,16 @@ import { buildMaskedResolvedConfig } from './masked-config.js'
  * The CLI's caller record.
  *
  * Full local grants: an operator at their own terminal already has every power the CLI can
- * exercise, so withholding a scope here would be theatre. Grant ISSUANCE — who may mint which
+ * exercise, so withholding a scope here would be theatre. `knowledge-write` (387-08) joins on
+ * exactly that reasoning and no other: the operator can already edit the knowledge root with a
+ * text editor, so the scope's job here is to make the CAPABILITY's cost legible in the catalogue
+ * and in the audit row, not to withhold it from the person who owns the machine. Grant ISSUANCE — who may mint which
  * scopes, and how a remote caller proves them — is the M5 run-invocation / cloud-auth model's job;
  * this constant is the local composition's minting site.
  */
 export const CLI_FUNCTION_CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read', 'run', 'config-write'],
+  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write'],
   safeMode: false,
 }
 

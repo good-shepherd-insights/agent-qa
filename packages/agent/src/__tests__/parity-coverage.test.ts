@@ -17,6 +17,7 @@
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -73,12 +74,19 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   'entities.resolve': 'bound',
   'knowledge.bundles.list': 'bound',
   // 387 KREV-01: the three new read verbs, all BOUND everywhere for the same reason the
-  // entity pair is — they dispatch through the REQUIRED knowledge port. The mutating half
-  // 387-08 adds will be the first rows here that can read 'unbound'.
+  // entity pair is — they dispatch through the REQUIRED knowledge port.
   'knowledge.brief.why': 'bound',
   'knowledge.record.show': 'bound',
   'knowledge.records.diff': 'bound',
   'knowledge.records.inspect': 'bound',
+  // 387-08 KREV-01 D-17: the MUTATING half, and the first rows here to read 'unbound' for a
+  // reason other than run execution. This composition supplies a reader and no review port,
+  // which is a TRUE statement about it — the four verbs are listed by name and refused by
+  // name, which is exactly the state widening the reader port would have made unsayable.
+  'knowledge.accept.propose': 'unbound',
+  'knowledge.forget.propose': 'unbound',
+  'knowledge.proposal.apply': 'unbound',
+  'knowledge.reject.propose': 'unbound',
   'runs.events': 'bound',
   'runs.get': 'bound',
   'runs.list': 'bound',
@@ -131,6 +139,17 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   'knowledge.record.show': { recordId: 'rec-not-in-this-fixture' },
   'knowledge.records.diff': { sinceOrdinal: 0 },
   'knowledge.records.inspect': { filter: {} },
+  // 387-08: valid INPUTS for capabilities this composition cannot run. They have to parse,
+  // because `invokeFunction` validates before it consults the binding — so a sample that did
+  // not parse would make the unbound-refusal leg below report an input error and certify
+  // nothing about binding at all.
+  'knowledge.accept.propose': { target: { grain: 'record', recordId: 'rec-not-in-this-fixture' } },
+  'knowledge.reject.propose': {
+    target: { grain: 'record', recordId: 'rec-not-in-this-fixture' },
+    reason: 'not reproducible',
+  },
+  'knowledge.forget.propose': { target: { grain: 'bundle', shortId: FIXTURE_ENTITY_SHORT_ID } },
+  'knowledge.proposal.apply': { proposalId: 'prop_0123456789ab' },
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
   'runs.list': {},
@@ -194,10 +213,18 @@ function fakeDeps(): FunctionDeps {
   }
 }
 
-/** Every scope the layer knows, so a refusal here can never be a missing grant. */
+/**
+ * Every scope the layer knows, so a refusal here can never be a missing grant.
+ *
+ * Derived from `FunctionScopeSchema` rather than listed, and that is load-bearing for the
+ * unbound-refusal leg below: `invokeFunction` checks scopes BEFORE it checks binding, so a
+ * hand-written list that fell one member behind the union would turn every new capability's
+ * "refused because this host cannot run it" into "refused because this caller was not granted
+ * it" — a green-looking assertion certifying the wrong refusal. 387-08 measured exactly that.
+ */
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'conformance',
-  grantedScopes: ['read', 'run', 'config-write'],
+  grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
 }
 

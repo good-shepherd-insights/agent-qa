@@ -92,13 +92,6 @@ export const ForgetTargetRefSchema = KnowledgeTargetRefSchema
 
 export type ForgetTargetRef = KnowledgeTargetRef
 
-function isNonArrayObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-const DELTA_KIND_SET = new Set<string>(DELTA_KINDS)
-const DELTA_ORIGIN_SET = new Set<string>(DELTA_ORIGINS)
-
 /**
  * Validates a proposal's deltas at ENVELOPE depth — the discriminant plus the three fields
  * every arm of the union carries — and no deeper.
@@ -109,21 +102,32 @@ const DELTA_ORIGIN_SET = new Set<string>(DELTA_ORIGINS)
  * free to drift from the one `commit()` actually applies. Arm interiors are validated where
  * they are applied; what this boundary owes is that an unrecognised kind or a delta with no
  * attributable origin never reaches that point looking well-formed.
+ *
+ * STRUCTURAL, not `z.custom`. 2026-08-02 (387-08, following 387-06 D-2 verbatim): the
+ * predicate form was correct and UNPROJECTABLE — `z.toJSONSchema` throws `Custom types cannot
+ * be represented in JSON Schema` on it, and the function layer projects every declared
+ * contract into an inert document for its listing (384 D-14). `KnowledgeProposalV1` is the
+ * declared OUTPUT of the three propose ops, so with a `z.custom` anywhere inside it the whole
+ * catalogue stopped listing the moment those ops registered — measured, not anticipated.
+ *
+ * `looseObject` at both levels, because the envelope depth is the whole contract here: an arm
+ * carries fields this boundary deliberately does not name (`bundle`, `targetId`,
+ * `evidenceToken`, `authorship`…), and a strict object would have turned "validated no deeper"
+ * into "rejects everything real". Acceptance and rejection behaviour is identical to the
+ * predicate it replaces — an array is still refused (zod object types reject arrays), an
+ * unrecognised kind or origin is still refused, and a scope missing `tier`/`key` is still
+ * refused — measured against 387-02's own rejection corpus, which is unchanged.
+ *
+ * The cast is the same claim `z.custom<Delta>` was making: the runtime check is envelope-deep
+ * and the name is the union it belongs to. Calling it `Delta` here is not a stronger promise
+ * than before, it is the same promise stated over a schema a catalogue can publish.
  */
-const DeltaSchema = z.custom<Delta>(
-  (value) =>
-    isNonArrayObject(value) &&
-    typeof value.kind === 'string' &&
-    DELTA_KIND_SET.has(value.kind) &&
-    typeof value.origin === 'string' &&
-    DELTA_ORIGIN_SET.has(value.origin) &&
-    isNonArrayObject(value.scope) &&
-    typeof value.scope.tier === 'string' &&
-    typeof value.scope.key === 'string' &&
-    Array.isArray(value.citedIds) &&
-    value.citedIds.every((member) => typeof member === 'string'),
-  'expected a §7.3 delta carrying its envelope (kind, origin, scope, citedIds)',
-)
+const DeltaSchema = z.looseObject({
+  kind: z.enum(DELTA_KINDS),
+  origin: z.enum(DELTA_ORIGINS),
+  scope: z.looseObject({ tier: z.string(), key: z.string() }),
+  citedIds: z.array(z.string()),
+}) as unknown as z.ZodType<Delta>
 
 /** One record a forget tombstones, with the provenance that survives it (D-19). */
 export const TombstonedRecordSchema = z.object({

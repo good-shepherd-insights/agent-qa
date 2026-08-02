@@ -27,9 +27,13 @@ import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
+import { knowledgeAcceptProposeSpec } from '../functions/ops/knowledge-accept-propose.js'
+import { knowledgeForgetProposeSpec } from '../functions/ops/knowledge-forget-propose.js'
+import { knowledgeProposalApplySpec } from '../functions/ops/knowledge-proposal-apply.js'
 import { knowledgeRecordShowSpec } from '../functions/ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from '../functions/ops/knowledge-records-inspect.js'
+import { knowledgeRejectProposeSpec } from '../functions/ops/knowledge-reject-propose.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -53,11 +57,15 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'config.get': configGetSpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
+  'knowledge.accept.propose': knowledgeAcceptProposeSpec,
   'knowledge.bundles.list': knowledgeBundlesListSpec,
   'knowledge.brief.why': knowledgeBriefWhySpec,
+  'knowledge.forget.propose': knowledgeForgetProposeSpec,
+  'knowledge.proposal.apply': knowledgeProposalApplySpec,
   'knowledge.record.show': knowledgeRecordShowSpec,
   'knowledge.records.diff': knowledgeRecordsDiffSpec,
   'knowledge.records.inspect': knowledgeRecordsInspectSpec,
+  'knowledge.reject.propose': knowledgeRejectProposeSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   'runs.list': runsListSpec,

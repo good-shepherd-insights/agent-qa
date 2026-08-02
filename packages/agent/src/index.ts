@@ -34,6 +34,7 @@ export type {
   FunctionStream,
   KnowledgeApplyOutcome,
   KnowledgeProposalRequest,
+  KnowledgeProposeOutcome,
   KnowledgeReaderPort,
   KnowledgeReviewPort,
   OptionalFunctionDepKey,

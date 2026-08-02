@@ -187,16 +187,35 @@ const ALL_FUNCTION_IDS = [
   // 387 KREV-01/KREV-02: four more read-tier ids, so they too survive safe-mode filtering and
   // the filter assertion below sharpens rather than merely lengthens — 'runs.start' is still
   // the one id that drops out, now out of a set six entries larger than 384 shipped.
+  // 387-08 KREV-01: the mutating half is knowledge-write-tier, so unlike its read siblings it
+  // does NOT survive safe-mode filtering — which is what turns the assertion below from "one id
+  // drops out" into "exactly the non-read ids drop out", a claim about the RULE rather than
+  // about `runs.start`.
+  'knowledge.accept.propose',
   'knowledge.brief.why',
   'knowledge.bundles.list',
+  'knowledge.forget.propose',
+  'knowledge.proposal.apply',
   'knowledge.record.show',
   'knowledge.records.diff',
   'knowledge.records.inspect',
+  'knowledge.reject.propose',
   'runs.events',
   'runs.get',
   'runs.list',
   'runs.start',
 ] as const
+
+/**
+ * The ids whose required scopes exceed `read`, derived from the REGISTRY rather than restated.
+ *
+ * Deriving it is the point: a hand-written list would be a second declaration of which
+ * capabilities are non-read, free to agree with the specs today and drift tomorrow — and the
+ * assertion it feeds is precisely the one that would then stop noticing.
+ */
+const NON_READ_FUNCTION_IDS = REGISTRY.list(CALLER_A)
+  .filter((declaration) => declaration.requiredScopes.some((scope) => scope !== 'read'))
+  .map((declaration) => declaration.id)
 
 beforeEach(() => {
   audit.take()
@@ -273,9 +292,12 @@ describe('safe mode filters the listing and enforces nothing (FUNC-03)', () => {
   it('lists every capability for A and omits the non-read one for B', () => {
     expect(REGISTRY.list(CALLER_A).map((declaration) => declaration.id))
       .toEqual([...ALL_FUNCTION_IDS])
-    // Exactly one id drops out, and it is the one whose required scopes exceed `read`.
+    // Exactly the ids whose required scopes exceed `read` drop out — no more, no fewer. The
+    // set is five now (`runs.start` plus 387-08's four knowledge-write verbs) and the assertion
+    // is about the rule, so a sixth arrives already covered.
+    expect(NON_READ_FUNCTION_IDS.length).toBeGreaterThan(1)
     expect(REGISTRY.list(CALLER_B).map((declaration) => declaration.id))
-      .toEqual(ALL_FUNCTION_IDS.filter((id) => id !== 'runs.start'))
+      .toEqual(ALL_FUNCTION_IDS.filter((id) => !NON_READ_FUNCTION_IDS.includes(id)))
 
     // A's listing carries runs.start as covered-but-UNBOUND, never as absent (D-09).
     const runsStart = REGISTRY.list(CALLER_A).find((declaration) => declaration.id === 'runs.start')

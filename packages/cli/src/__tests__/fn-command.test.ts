@@ -566,6 +566,28 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 387-08 KREV-01 D-17: the MUTATING half — `knowledge-write` tier, and the first rows in
+      // this table whose binding is a statement about the HOST rather than about the port set.
+      'knowledge.accept.propose': {
+        requiredScopes: ['knowledge-write'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
+      'knowledge.forget.propose': {
+        requiredScopes: ['knowledge-write'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
+      'knowledge.proposal.apply': {
+        requiredScopes: ['knowledge-write'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
+      'knowledge.reject.propose': {
+        requiredScopes: ['knowledge-write'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

@@ -141,8 +141,9 @@ describe('cards advertise only what the registry contains (D-11)', () => {
       }
     }
     // The count is pinned so a table that quietly stopped advertising cannot pass by
-    // iterating nothing: 6 kinds, one `Open card` each except BUG, plus 1 TST, 2 RUN, 1 MEM.
-    expect(asserted).toBe(9)
+    // iterating nothing: 6 kinds, one `Open card` each except BUG, plus 1 TST, 2 RUN, 2 MEM
+    // (387-08 completes the MEM row with `knowledge.forget.propose` — D-11's table completion).
+    expect(asserted).toBe(10)
 
     // …and the declared id set is exactly what the tables can produce, so a new action whose
     // id is never asserted above cannot slip in.

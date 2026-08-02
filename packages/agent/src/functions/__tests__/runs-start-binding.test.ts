@@ -21,6 +21,7 @@
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -47,10 +48,32 @@ const EVERY_CONTEXT: readonly ExecutionContext[] = [
   'cloud',
 ]
 
+/**
+ * Granted EVERY scope the union declares, derived rather than listed.
+ *
+ * The parity case below distinguishes "refused because unbound" from everything else, and
+ * `invokeFunction` checks scopes before binding — so a caller missing one member of the union
+ * turns a new capability's unbound refusal into a scope refusal, which this case would then
+ * read as `dispatched`. Measured on 387-08's four knowledge-write verbs.
+ */
 const RUN_CALLER: FunctionCaller = {
   surface: 'test',
-  grantedScopes: ['read', 'run', 'config-write'],
+  grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+}
+
+/**
+ * A PARSING input for every id this file invokes, because input validation also precedes the
+ * binding check: `{}` fails the contract of every 387-08 verb, and a contract refusal is not a
+ * binding refusal.
+ */
+const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
+  'runs.get': { runId: 'run-alpha' },
+  'runs.events': { runId: 'run-alpha' },
+  'knowledge.accept.propose': { target: { grain: 'record', recordId: 'rec-x' } },
+  'knowledge.reject.propose': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
+  'knowledge.forget.propose': { target: { grain: 'record', recordId: 'rec-x' } },
+  'knowledge.proposal.apply': { proposalId: 'prop_0123456789ab' },
 }
 
 /**
@@ -236,9 +259,7 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
         const outcome = await invokeFunction(
           registry,
           declaration.id,
-          declaration.id === 'runs.get' || declaration.id === 'runs.events'
-            ? { runId: 'run-alpha' }
-            : {},
+          BINDING_PARITY_INPUTS[declaration.id] ?? {},
           RUN_CALLER,
         ).then(() => 'dispatched', (error: unknown) => (
           error instanceof FunctionNotBoundError ? 'refused-unbound' : 'dispatched'
