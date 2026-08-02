@@ -69,6 +69,15 @@ export const EntityDescriptorSchema = z.object({
   machineId: z.string().min(1),
   title: z.string(),
   statusSource: z.string().min(1),
+  /**
+   * The machine id this entity was explicitly RENAMED to, when a rename was recorded (D-03).
+   *
+   * Present only for an address whose successor was written down — never inferred from two
+   * similar names. The predecessor keeps its own permanent address and keeps resolving; this
+   * field is what lets a card SHOW the rename rather than silently redirecting to the
+   * successor, which would make an old CI log's reference quietly mean something else.
+   */
+  successorMachineId: z.string().min(1).optional(),
 }).strict()
 
 export type EntityDescriptor = z.infer<typeof EntityDescriptorSchema>

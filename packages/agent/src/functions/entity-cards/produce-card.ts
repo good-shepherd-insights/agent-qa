@@ -49,7 +49,18 @@ function actionsFor(descriptor: EntityDescriptor): ActionRef[] {
  * producer moving.
  */
 function keyFactsFor(descriptor: EntityDescriptor): KeyFact[] {
-  return [{ label: 'machine id', value: descriptor.machineId }]
+  const facts: KeyFact[] = [{ label: 'machine id', value: descriptor.machineId }]
+  if (descriptor.successorMachineId !== undefined) {
+    // D-03's "with its rename visible", made literal. The old address keeps resolving to the
+    // old name — anything else would make an existing CI log's reference quietly mean a
+    // different target — and the card is where the reader learns what it became.
+    facts.push({
+      label: 'renamed to',
+      value: descriptor.successorMachineId,
+      ref: formatEntityUri(descriptor.kind, `${descriptor.kind}-${descriptor.successorMachineId}`),
+    })
+  }
+  return facts
 }
 
 /**

@@ -99,6 +99,21 @@ export class AddressingLedgerSchemaVersionError extends Error {
   }
 }
 
+/**
+ * An EXPLICITLY recorded target rename (D-03).
+ *
+ * There is no heuristic rename detection in this file and there must not be. Inferring that
+ * two target slugs are "the same target" from their spelling, their order of appearance or
+ * their contents is a guess, and ENTY-01's never-guess law is not weaker inside the ledger
+ * than it is inside the resolver — a wrong link here would silently re-point a published
+ * address, which is the exact failure D-02 exists to make impossible.
+ */
+export interface TargetRename {
+  readonly fromSlug: string
+  readonly toSlug: string
+  readonly recordedAt: string
+}
+
 /** A minted address: the durable mapping plus the short-ID it renders as. */
 export interface EntityAddress {
   readonly kind: EntityKind
@@ -122,6 +137,17 @@ export interface AddressingLedger {
   lookup(kind: EntityKind, machineId: string): EntityAddress | undefined
   /** The address a published short-ID names, or `undefined`. Tier (a)'s whole job. */
   lookupByShortId(shortId: string): EntityAddress | undefined
+  /**
+   * Record that a config target was renamed (D-03). See {@link TargetRename} for why this is
+   * the only way a link between two slugs ever comes to exist.
+   *
+   * Both slugs are minted, so both keep their own permanent address: the predecessor keeps
+   * the one already sitting in somebody's CI log, and the successor gets its own rather than
+   * inheriting one. Recording is idempotent — a repeat is the same fact, not a second one.
+   */
+  recordTargetRename(fromSlug: string, toSlug: string): TargetRename
+  /** The rename recorded FOR this slug, if any. Never the reverse direction. */
+  lookupTargetRename(fromSlug: string): TargetRename | undefined
   close(): void
 }
 
@@ -152,6 +178,17 @@ const SCHEMA_STATEMENTS = [
      BEGIN
        SELECT RAISE(ABORT, 'a minted address never changes (387 D-04)');
      END`,
+  // Renames live in their OWN table rather than as a nullable column on `addresses`, and the
+  // reason is the trigger directly above: a rename is a fact recorded LATER about a row that
+  // must never change, so writing it onto the address row would require exactly the statement
+  // this ledger forbids. Additive, and the stamped version does not move — nothing between
+  // this milestone's releases has written a v1 file, and `IF NOT EXISTS` heals a development
+  // one. D-04's never-rebuild law is about ORDINALS, which no statement here touches.
+  `CREATE TABLE IF NOT EXISTS target_renames (
+     from_slug   TEXT NOT NULL PRIMARY KEY,
+     to_slug     TEXT NOT NULL,
+     recorded_at TEXT NOT NULL
+   )`,
 ] as const
 
 export interface OpenAddressingLedgerOptions {
@@ -218,6 +255,12 @@ export function openAddressingLedger(options: OpenAddressingLedgerOptions): Addr
   const selectNextOrdinal = db.prepare(
     'SELECT COALESCE(MAX(ordinal), 0) + 1 AS next FROM addresses WHERE kind = ?',
   )
+  const insertRename = db.prepare(
+    `INSERT INTO target_renames (from_slug, to_slug, recorded_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT (from_slug) DO NOTHING`,
+  )
+  const selectRename = db.prepare('SELECT * FROM target_renames WHERE from_slug = ?')
 
   function inTransaction<T>(body: () => T): T {
     db.exec('BEGIN IMMEDIATE')
@@ -242,39 +285,57 @@ export function openAddressingLedger(options: OpenAddressingLedgerOptions): Addr
     return rowToAddress(row)
   }
 
+  function readRename(fromSlug: string): TargetRename | undefined {
+    const row = selectRename.get(fromSlug)
+    return row === undefined
+      ? undefined
+      : {
+          fromSlug: String(row.from_slug),
+          toSlug: String(row.to_slug),
+          recordedAt: String(row.recorded_at),
+        }
+  }
+
+  function mintAddress(kind: EntityKind, machineId: string): EntityAddress {
+    if (kind === 'BUG') throw new BugAddressingNotAvailableError(machineId)
+    if (machineId.trim() === '') {
+      throw new TypeError(`an empty machine id has no ${kind} address`)
+    }
+
+    if (isSlugAddressedKind(kind)) {
+      // No ordinal to compute, so no read-modify-write and nothing to serialise: the unique
+      // index alone makes this idempotent and race-safe.
+      insertAddress.run(kind, machineId, null, formatSlugShortId(kind, machineId), now())
+      return readBack(kind, machineId)
+    }
+
+    return inTransaction(() => {
+      // `BEGIN IMMEDIATE` rather than a deferred begin: the next ordinal is read and then
+      // written, and a second writer allowed in between would compute the same number. The
+      // write lock is taken at BEGIN, so it cannot be.
+      //
+      // ONE mechanism decides the outcome, deliberately. An earlier draft also short-circuited
+      // on an in-transaction pre-read of the existing row, and mutation probes found the pair
+      // MUTUALLY MASKING: removing either one alone left every case green, so neither was
+      // pinned by anything and a later edit could have deleted the one that mattered without a
+      // single test noticing. What is left is the insert itself — a conflict on
+      // `(kind, machine_id)` writes nothing — followed by an unconditional read-back.
+      const next = toNumber(selectNextOrdinal.get(kind)?.next)
+      insertAddress.run(kind, machineId, next, formatOrdinalShortId(kind, next), now())
+      // Read back rather than returning what was computed. On the losing side of a race — and
+      // on a plain second call in this process — the insert affected no rows, so the answer is
+      // the WINNER's ordinal and never this caller's candidate. The candidate is simply
+      // discarded: nothing consumed it, so the next distinct machine id still receives it.
+      return readBack(kind, machineId)
+    })
+  }
+
   return {
     close() {
       db.close()
     },
 
-    mint(kind, machineId) {
-      if (kind === 'BUG') throw new BugAddressingNotAvailableError(machineId)
-      if (machineId.trim() === '') {
-        throw new TypeError(`an empty machine id has no ${kind} address`)
-      }
-
-      if (isSlugAddressedKind(kind)) {
-        // No ordinal to compute, so no read-modify-write and nothing to serialise: the unique
-        // index alone makes this idempotent and race-safe.
-        insertAddress.run(kind, machineId, null, formatSlugShortId(kind, machineId), now())
-        return readBack(kind, machineId)
-      }
-
-      return inTransaction(() => {
-        // Inside the transaction, and `BEGIN IMMEDIATE` rather than a deferred begin: the next
-        // ordinal is read and then written, and a second writer allowed in between would
-        // compute the same number. The write lock is taken at BEGIN, so it cannot be.
-        const existing = selectByKey.get(kind, machineId)
-        if (existing !== undefined) return rowToAddress(existing)
-
-        const next = toNumber(selectNextOrdinal.get(kind)?.next)
-        insertAddress.run(kind, machineId, next, formatOrdinalShortId(kind, next), now())
-        // Read back rather than returning what was computed: on the losing side of a
-        // cross-process race the insert affected no rows, and the answer is the WINNER's
-        // ordinal, not this process's candidate.
-        return readBack(kind, machineId)
-      })
-    },
+    mint: mintAddress,
 
     lookup(kind, machineId) {
       const row = selectByKey.get(kind, machineId)
@@ -285,5 +346,23 @@ export function openAddressingLedger(options: OpenAddressingLedgerOptions): Addr
       const row = selectByShortId.get(shortId)
       return row === undefined ? undefined : rowToAddress(row)
     },
+
+    recordTargetRename(fromSlug, toSlug) {
+      if (fromSlug === toSlug) {
+        throw new TypeError('a target rename names two different slugs')
+      }
+      // Both ends minted BEFORE the link is written, so a recorded rename can never point at
+      // a slug that has no address of its own.
+      mintAddress('TGT', fromSlug)
+      mintAddress('TGT', toSlug)
+      insertRename.run(fromSlug, toSlug, now())
+      const recorded = readRename(fromSlug)
+      if (recorded === undefined) {
+        throw new Error(`the addressing ledger lost the rename it just wrote: ${fromSlug}`)
+      }
+      return recorded
+    },
+
+    lookupTargetRename: readRename,
   }
 }

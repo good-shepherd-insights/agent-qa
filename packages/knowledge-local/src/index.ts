@@ -18,6 +18,7 @@ export type {
   AddressingLedger,
   EntityAddress,
   OpenAddressingLedgerOptions,
+  TargetRename,
 } from './addressing/ledger.js'
 export { getEntityDescriptor, resolveEntityRef } from './resolver/resolve.js'
 export type {

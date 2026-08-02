@@ -68,7 +68,13 @@ function describe(
   kind: EntityKind,
   shortId: string,
   sighting: EntitySighting,
+  deps: ResolveEntityRefDeps,
 ): EntityDescriptor {
+  // Read at describe time rather than carried on the sighting, because a rename is a fact the
+  // LEDGER holds and the owning store does not: the config that named the target has already
+  // forgotten the old slug by the time anybody resolves it, which is exactly why the rename
+  // had to be recorded (D-03).
+  const successor = deps.ledger.lookupTargetRename(sighting.machineId)
   return {
     kind,
     shortId,
@@ -76,6 +82,9 @@ function describe(
     machineId: sighting.machineId,
     title: sighting.title,
     statusSource: sighting.statusSource,
+    ...(kind === 'TGT' && successor !== undefined
+      ? { successorMachineId: successor.toSlug }
+      : {}),
   }
 }
 
@@ -119,7 +128,7 @@ function resolveMintedAddress(
 
   return {
     kind: 'resolved',
-    descriptor: describe(kind, address.shortId, sighting),
+    descriptor: describe(kind, address.shortId, sighting, deps),
     score: ENTITY_EXACT_MATCH_SCORE,
   }
 }
@@ -157,7 +166,7 @@ export function resolveEntityRef(ref: string, deps: ResolveEntityRefDeps): Entit
     const address = deps.ledger.mint(source.kind, sighting.machineId)
     return {
       kind: 'resolved',
-      descriptor: describe(source.kind, address.shortId, sighting),
+      descriptor: describe(source.kind, address.shortId, sighting, deps),
       score: ENTITY_EXACT_MATCH_SCORE,
     }
   }

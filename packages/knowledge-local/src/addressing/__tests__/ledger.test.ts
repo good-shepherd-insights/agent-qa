@@ -93,13 +93,21 @@ describe('the addressing ledger', () => {
 
   // ---- law 2: the lost race re-reads the winner ---------------------------------------------
 
-  it('gives two CONCURRENT PROCESSES one ordinal and leaves one row (D-02)', async () => {
-    // Both children load the module first and then block on a start file, so they collide
-    // inside the write lock rather than running one after another. Two IN-PROCESS calls would
-    // return through the pre-read and never reach the ON CONFLICT path this case exists to
-    // exercise — which is why the leg is worth two processes.
-    const gate = join(root, 'go')
-    const script = join(root, 'mint-child.mts')
+  /**
+   * Race one machine id between two OS processes and report what each of them was told.
+   *
+   * Both children load the module, then block on a start file, so they collide rather than
+   * running one after another. Two IN-PROCESS calls would prove nothing here — a single
+   * process cannot contend with itself for sqlite's write lock, which is the mechanism under
+   * test.
+   *
+   * The children load this module's SOURCE through Node's type transform, never its dist. A
+   * cross-process probe against a workspace package's build output is a no-op until that build
+   * runs, and this leg has to be exercising the code in the diff.
+   */
+  async function raceTwoMints(kind: string, machineId: string): Promise<string[]> {
+    const gate = join(root, `go-${kind}`)
+    const script = join(root, `mint-child-${kind}.mts`)
     writeFileSync(
       script,
       [
@@ -107,41 +115,58 @@ describe('the addressing ledger', () => {
         `const { openAddressingLedger } = await import(${JSON.stringify(LEDGER_SOURCE_PATH)})`,
         `while (!existsSync(${JSON.stringify(gate)})) { /* spin to the shared start instant */ }`,
         `const ledger = openAddressingLedger({ path: ${JSON.stringify(path)} })`,
-        "const minted = ledger.mint('MEM', 'contended-bundle')",
+        `const minted = ledger.mint(${JSON.stringify(kind)}, ${JSON.stringify(machineId)})`,
         'ledger.close()',
         'process.stdout.write(minted.shortId)',
       ].join('\n'),
       'utf8',
     )
 
-    function mintInChild(): Promise<string> {
-      return new Promise((resolve, reject) => {
-        // The children load this module's SOURCE, not its dist. A cross-process probe against
-        // a workspace package's build output is a no-op until that build runs, and this leg
-        // must be exercising the code in the diff.
-        const child = spawn(process.execPath, ['--experimental-transform-types', script], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-        let out = ''
-        let err = ''
-        child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
-        child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString('utf8') })
-        child.on('error', reject)
-        child.on('exit', (code) => {
-          if (code === 0) resolve(out)
-          // A constraint error escaping either child is the exact failure D-02 forbids, so it
-          // is surfaced with the child's own stderr rather than collapsed into a bare code.
-          else reject(new Error(`mint child exited ${String(code)}: ${err}`))
-        })
+    const mintInChild = (): Promise<string> => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--experimental-transform-types', script], {
+        stdio: ['ignore', 'pipe', 'pipe'],
       })
-    }
+      let out = ''
+      let err = ''
+      child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8') })
+      child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString('utf8') })
+      child.on('error', reject)
+      child.on('exit', (code) => {
+        if (code === 0) resolve(out)
+        // A constraint error escaping either child is the exact failure D-02 forbids, so it is
+        // surfaced with the child's own stderr rather than collapsed into a bare exit code.
+        else reject(new Error(`mint child exited ${String(code)}: ${err}`))
+      })
+    })
 
     const both = [mintInChild(), mintInChild()]
     await new Promise((resolve) => setTimeout(resolve, CHILD_STARTUP_GRACE_MS))
     writeFileSync(gate, 'go', 'utf8')
+    return await Promise.all(both)
+  }
 
-    expect(await Promise.all(both)).toEqual(['MEM-001', 'MEM-001'])
+  it('gives two CONCURRENT PROCESSES one ordinal and leaves one row (D-02)', async () => {
+    expect(await raceTwoMints('MEM', 'contended-bundle')).toEqual(['MEM-001', 'MEM-001'])
     expect(rawRows(path)).toHaveLength(1)
+  })
+
+  it('races a SLUG-addressed mint too — the path with no transaction at all (D-03)', async () => {
+    // The two mint paths are different code, and an ordinal race says nothing about the other
+    // one: a slug mint computes no next value, so it takes no `BEGIN IMMEDIATE` and its only
+    // protection is the unique index plus the read-back. Racing only the ordinal path would
+    // have left the untransacted half of this module's input domain unexercised.
+    expect(await raceTwoMints('TGT', 'checkout')).toEqual(['TGT-checkout', 'TGT-checkout'])
+    expect(rawRows(path)).toHaveLength(1)
+  })
+
+  it('does not consume the ordinal a losing caller computed for itself (D-04)', async () => {
+    await raceTwoMints('MEM', 'contended-bundle')
+
+    // The loser computed a candidate and wrote nothing, so the candidate was never spent. A
+    // mint that reserved its number before discovering it had lost would leave a permanent
+    // hole in the sequence — harmless in isolation, and a sign that an ordinal can be consumed
+    // by something that never became an address.
+    expect(ledger.mint('MEM', 'a-later-bundle').shortId).toBe('MEM-002')
   })
 
   // ---- law 3: never reuse ------------------------------------------------------------------
