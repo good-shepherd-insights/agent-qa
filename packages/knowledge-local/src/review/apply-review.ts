@@ -23,12 +23,10 @@
 // There is no code path in this file that acquires when a live holder exists, because there is no
 // second acquisition primitive for one to use.
 
-import {
-  ENTITY_STATUSES,
-} from '@vostride/agent-qa-schema'
 import type {
   Delta,
   ForgetReceiptV1,
+  KnowledgeProjection,
   KnowledgeProposalV1,
 } from '@vostride/agent-qa-schema'
 
@@ -37,6 +35,7 @@ import { enumerateBundleDirs } from '../bundle-scan.js'
 import { createLocalKnowledgeStore } from '../curator/knowledge-store.js'
 import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
+import { memoryStatusForBundle } from '../memory-status.js'
 import { FORGET_SCRUBBED_PROJECTIONS } from './propose-review.js'
 import {
   claimPendingProposal,
@@ -124,16 +123,20 @@ export interface ApplyReviewInput {
   readonly delegateTimeoutMs?: number
 }
 
-/** The MEM card status a bundle's derived trust state renders as (the 387-01 mapping, verbatim). */
-const TOMBSTONED_BUNDLE_STATUSES: readonly string[] = [
-  'withdrawn',
-  'superseded',
-  'retired',
-  'deprecated',
-]
+/**
+ * The delta kind a review verb emits when it means "this record stops standing".
+ *
+ * BOTH `reject` and `forget` emit it (propose-review.ts:183-195 — identical `Deprecate` deltas
+ * differing only in the recorded reason), which is precisely why the already-tombstoned guard
+ * below reads the DELTA rather than the verb. A guard scoped to one member of the emitting set
+ * leaves the hazard reachable through every other member, and that is the root-cause shape this
+ * round is closing in three places (CR-02 here; CR-04's status table in `memory-status.ts`).
+ */
+const DEPRECATE_DELTA_KIND = 'Deprecate'
 
-function memoryStatus(bundleStatus: string): (typeof ENTITY_STATUSES.MEM)[number] {
-  return TOMBSTONED_BUNDLE_STATUSES.includes(bundleStatus) ? 'tombstoned' : 'active'
+/** Whether a proposal's deltas — as WRITTEN DOWN, read back off disk — deprecate anything. */
+function deprecatesRecords(proposal: KnowledgeProposalV1): boolean {
+  return proposal.deltas.some((delta) => delta.kind === DEPRECATE_DELTA_KIND)
 }
 
 function locateRecord(knowledgeRoot: string, recordId: string) {
@@ -151,17 +154,22 @@ function locateRecord(knowledgeRoot: string, recordId: string) {
 }
 
 /**
- * Whether every record a forget addresses is ALREADY tombstoned.
+ * Whether every record a deprecating proposal addresses is ALREADY tombstoned.
  *
- * `every`, not `some`: a bundle-grained forget over a partially-tombstoned set still has work to
+ * `every`, not `some`: a bundle-grained verb over a partially-tombstoned set still has work to
  * do, and treating it as complete would be the silent partiality D-19 forbids.
+ *
+ * Judged through the SHARED mapping (387-11) rather than a table local to this module. The local
+ * table this replaced named `withdrawn` and `retired` — neither is a `BundleStatus` member, so
+ * both were dead weight — and the shared one is `satisfies Record<BundleStatus, …>`, which makes
+ * a fifth member a compile error here instead of a status that silently reads as untombstoned.
  */
 function alreadyTombstoned(knowledgeRoot: string, proposal: KnowledgeProposalV1): boolean {
   const ids = targetRecordIds(proposal)
   if (ids.length === 0) return false
   return ids.every((recordId) => {
     const located = locateRecord(knowledgeRoot, recordId)
-    return located !== undefined && TOMBSTONED_BUNDLE_STATUSES.includes(located.status)
+    return located !== undefined && memoryStatusForBundle(located.status) === 'tombstoned'
   })
 }
 
@@ -181,11 +189,19 @@ function targetRecordIds(proposal: KnowledgeProposalV1): string[] {
  * would have produced a receipt that is always right by construction and therefore evidence of
  * nothing — including in the one case that matters, where the commit tombstoned less than the
  * preview predicted.
+ *
+ * `projectionsScrubbed` is a PARAMETER for the same reason (WR-02). It used to be the constant
+ * scrub set spliced in unconditionally, which made the receipt right by construction on the one
+ * path where it was wrong: the short-circuit runs no commit, so no projection is rebuilt and no
+ * recall row is removed, and a receipt naming three scrubs there asserts work nobody performed.
+ * `scrubSetSchema` (schema/src/knowledge/proposal.ts:140-146) declares this field a SUBSET of the
+ * scrub set with no minimum length, so the empty list is the honest, already-legal answer.
  */
 function assembleForgetReceipt(
   knowledgeRoot: string,
   proposal: KnowledgeProposalV1,
   forgottenAt: number,
+  projectionsScrubbed: readonly KnowledgeProjection[],
 ): ForgetReceiptV1 {
   const tombstonedRecords: ForgetReceiptV1['tombstonedRecords'] = []
   let resultingBundleStatus: ForgetReceiptV1['resultingBundleStatus'] = 'forgotten'
@@ -198,13 +214,13 @@ function assembleForgetReceipt(
       throw new ProposalTargetVanishedError(proposal.proposalId)
     }
     tombstonedRecords.push({ recordId, provenance: located.provenance })
-    resultingBundleStatus = memoryStatus(located.status)
+    resultingBundleStatus = memoryStatusForBundle(located.status)
   }
   return {
     schemaVersion: 1,
     proposalId: proposal.proposalId,
     tombstonedRecords,
-    projectionsScrubbed: [...FORGET_SCRUBBED_PROJECTIONS],
+    projectionsScrubbed: [...projectionsScrubbed],
     resultingBundleStatus,
     forgottenAt,
   }
@@ -286,21 +302,35 @@ async function commitAndPublish(
   authority: { readonly leaseId: string; readonly epoch: number },
 ): Promise<ApplyReviewResult> {
   try {
-    // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
+    // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it — and
+    // scoped to the DELTA KIND, which is what CR-02 cost us for scoping it to one verb.
     //
-    // Forgetting an already-tombstoned record must be "a receipt naming the already-tombstoned
+    // Deprecating an already-tombstoned record must be "a receipt naming the already-tombstoned
     // state, never a second destructive change". Committing the Deprecate anyway does not merely
-    // no-op: disposition, finding nothing left to deprecate, downgrades it and the commit path
-    // MINTS A NEW CANDIDATE RECORD from the synthetic draft — measured, and it is worse than a
-    // second destruction because it pollutes the store with a record nobody authored. The verb's
-    // idempotency therefore lives here, over the target's STATE, not only over the proposal id.
-    if (proposal.verb === 'forget' && alreadyTombstoned(input.knowledgeRoot, proposal)) {
+    // no-op: the commit path publishes a fresh `candidate` bundle carrying the target's own
+    // anchors, scope and summary, re-addressed under the review verb's `user` origin class —
+    // a verbatim CLONE of the fact the reviewer just rejected, and `isEligibleCandidate`
+    // (serving/brief-selection.ts:142-151) re-admits a `candidate` row into serving. So the
+    // second rejection RESURRECTS what the first one rejected. Measured against reject→reject and
+    // forget→reject alike, which is the whole point: `reject` and `forget` emit the SAME delta,
+    // so a guard reading `proposal.verb` protected one caller and left the other exposed to a
+    // sequence — reject the same record twice — that is the most ordinary mistake a review queue
+    // invites. Idempotency lives here, over the target's STATE, not only over the proposal id.
+    if (deprecatesRecords(proposal) && alreadyTombstoned(input.knowledgeRoot, proposal)) {
+      const already: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
+      if (proposal.verb !== 'forget') {
+        // reject carries no receipt on any path; the applied record is the whole answer.
+        publishAppliedProposal(input.agentQaRoot, { proposal: already })
+        return { outcome: 'applied', proposal: already }
+      }
+      // WR-02: no commit ran on this branch, so no projection was rebuilt and no recall row was
+      // removed. The scrub list is EMPTY because that is what happened.
       const receipt = assembleForgetReceipt(
         input.knowledgeRoot,
         proposal,
         (input.now ?? Date.now)(),
+        [],
       )
-      const already: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
       publishAppliedProposal(input.agentQaRoot, { proposal: already, forgetReceipt: receipt })
       return { outcome: 'applied', proposal: already, forgetReceipt: receipt }
     }
@@ -308,7 +338,12 @@ async function commitAndPublish(
     await commitInProcess(input, proposal, authority)
     const forgottenAt = (input.now ?? Date.now)()
     const forgetReceipt = proposal.verb === 'forget'
-      ? assembleForgetReceipt(input.knowledgeRoot, proposal, forgottenAt)
+      ? assembleForgetReceipt(
+          input.knowledgeRoot,
+          proposal,
+          forgottenAt,
+          FORGET_SCRUBBED_PROJECTIONS,
+        )
       : undefined
     const applied: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
     publishAppliedProposal(input.agentQaRoot, {
