@@ -91,7 +91,15 @@ import {
   type OwnedEmbedderWorkerRegistration,
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
+  applyReview,
+  openAddressingLedger as openAddressingLedgerForReview,
+  proposeReview,
 } from '@vostride/agent-qa-knowledge-local'
+import type {
+  ApplyDelegate,
+  ProposeReviewRequest,
+} from '@vostride/agent-qa-knowledge-local'
+import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
   defaultGuardrailPolicyInput,
@@ -442,6 +450,72 @@ export function createKnowledgeReader(
   })
 }
 
+// ---- knowledge review: the WRITE half of the verb family (387 KREV-01 / D-17 · D-18) --------
+
+export interface CreateKnowledgeReviewInput {
+  readonly agentQaRoot: string
+  readonly resolveKnowledgeRoot: () => Promise<string> | string
+  /**
+   * How this host reaches the writer-lease holder when one is alive (D-18). OPTIONAL, and the
+   * optionality is the whole routing rule rather than a convenience: a host that supplies it
+   * delegates an apply the leaseholder must perform, and a host that does not REFUSES by name.
+   * Neither ever takes a held lease. The daemon supplies none, which is why its own applies
+   * cannot recurse — it holds the lease, so it always takes the in-process branch.
+   */
+  readonly applyDelegate?: ApplyDelegate
+}
+
+/**
+ * Bind the mutating review verbs over the review modules and the Curator's one commit path.
+ *
+ * A SEPARATE factory from `createKnowledgeReader`, mirroring the port split it implements: this
+ * is the object whose presence makes accept/reject/forget report `bound`, and a host that wants
+ * only the read verbs simply does not build one. The `MEM-` short-ID leg resolves through the
+ * addressing ledger, opened per call and closed again on exactly the reasoning the entity
+ * directory uses — a durable file the composition root owns, never a handle a review module holds.
+ */
+export function createKnowledgeReview(input: CreateKnowledgeReviewInput): KnowledgeReviewPort {
+  async function roots(): Promise<{ knowledgeRoot: string }> {
+    return { knowledgeRoot: await input.resolveKnowledgeRoot() }
+  }
+
+  return {
+    async propose(request) {
+      const { knowledgeRoot } = await roots()
+      const ledger = openAddressingLedgerForReview({
+        path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
+      })
+      try {
+        return proposeReview({
+          agentQaRoot: input.agentQaRoot,
+          knowledgeRoot,
+          request: request as ProposeReviewRequest,
+          // READS the ledger and never mints: an apply is not a sighting, and minting an address
+          // for an id nobody surfaced would make every review call a write to the one durable
+          // store this system never rebuilds (D-01/D-02).
+          resolveBundleShortId: (shortId) => ledger.lookupByShortId(shortId)?.machineId,
+        })
+      } finally {
+        ledger.close()
+      }
+    },
+    async apply(proposalId) {
+      const { knowledgeRoot } = await roots()
+      const result = await applyReview({
+        agentQaRoot: input.agentQaRoot,
+        knowledgeRoot,
+        proposalId,
+        ...(input.applyDelegate === undefined ? {} : { delegate: input.applyDelegate }),
+      })
+      return {
+        outcome: result.outcome,
+        proposal: result.proposal,
+        ...(result.forgetReceipt === undefined ? {} : { forgetReceipt: result.forgetReceipt }),
+      }
+    },
+  }
+}
+
 // ---- entities: the addressing ledger and the tier-(a) resolver (387 D-01/D-02/D-09) ----------
 
 export interface CreateEntityDirectoryInput {
@@ -772,6 +846,14 @@ export interface ComposeLocalAgentInput {
    * visible state rather than a call that fails somewhere far from the composition.
    */
   readonly runExecution?: RunExecutionPort
+  /**
+   * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
+   *
+   * An OPTIONAL operation on the input bag rather than a new production seam (the 386-41 D-2
+   * idiom). `agent-local` cannot name a socket and does not: the CLI host injects a closure over
+   * `invokeViaDaemon`, and the daemon's own composition injects nothing.
+   */
+  readonly applyDelegate?: ApplyDelegate
   readonly clock?: ClockPort
   readonly idSource?: JobIdSource
   /** The kind registry the queue dispatches through. Defaults to the six real declarations. */
@@ -807,6 +889,15 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       ),
       config: input.config,
       entities: createEntityDirectory(entityResolutionInput),
+      // 387-08 KREV-01: the WRITE half, and it is present in every local composition because a
+      // local host owns the knowledge root it serves from. It stays an OPTIONAL dep so a host
+      // that is genuinely read-only — a listing, a remote surface — reports the four mutating
+      // verbs as `unbound` BY NAME rather than as a hole in the catalogue.
+      knowledgeReview: createKnowledgeReview({
+        agentQaRoot: input.agentQaRoot,
+        resolveKnowledgeRoot: input.knowledgeRoot,
+        ...(input.applyDelegate === undefined ? {} : { applyDelegate: input.applyDelegate }),
+      }),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot
       // disagree about whether this composition can run it (D-16).

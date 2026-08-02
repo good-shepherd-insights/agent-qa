@@ -139,6 +139,17 @@ function resolveTarget(
  * downgraded by disposition's autonomy floor precisely so an agent cannot make this call for
  * itself. Attributing a human's accept to the agent would launder the decision.
  *
+ * `authorship` is deliberately UNSET, and the reason is a real gap rather than a preference.
+ * `CurationAuthorshipPath` is `llm | llm-repaired | deterministic-fallback` — there is no member
+ * meaning "a person decided this". `deterministic-fallback` is the closest in spirit and is
+ * REFUSED for `Deprecate` by `assertRestrictedFallbackDelta`, whose job is to stop model judgment
+ * masquerading as deterministic authorship; measured, not assumed (`restricted-fallback`, both
+ * mutating verbs). So the deltas carry no authorship and the bridge's own default applies, and
+ * the human attribution lives where it is actually true: `origin: 'user'` plus the durable,
+ * addressable proposal that records who decided what. Widening the authorship vocabulary is a
+ * curator-contract change with a trust-fold blast radius; 391, which owns the review engine and
+ * the standing-grant model, is where a `human` path belongs. Recorded in `.planning/WINDOWS.md`.
+ *
  * Forget is a `Deprecate` and not a new delta kind. §7.7's law is tombstone-never-destroy plus
  * scrub-every-projection, and that is exactly what a deprecation already does in this store: the
  * outcome event is appended (history is never rewritten), the derived status becomes `deprecated`,
@@ -156,10 +167,6 @@ function deltasFor(
     origin: 'user' as const,
     scope: resolved.scope,
     citedIds: [asRecordId(resolved.recordId)],
-    authorship: {
-      path: 'deterministic-fallback' as const,
-      executionContext: 'local-interactive' as const,
-    },
   }
   switch (request.verb) {
     case 'accept':

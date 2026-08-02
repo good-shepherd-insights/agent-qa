@@ -566,27 +566,30 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 387-08 KREV-01 D-17: the MUTATING half — `knowledge-write` tier, and the first rows in
-      // this table whose binding is a statement about the HOST rather than about the port set.
+      // 387-08 KREV-01 D-17: the MUTATING half — `knowledge-write` tier, and BOUND here because
+      // the CLI composes a local host that owns the knowledge root it serves from. They are the
+      // first rows in this table whose binding is a statement about the HOST rather than about
+      // the required-port set: a read-only composition lists these same four `unbound`, which is
+      // asserted directly in agent-local's `review-verbs.test.ts`.
       'knowledge.accept.propose': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'knowledge.forget.propose': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'knowledge.proposal.apply': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'knowledge.reject.propose': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

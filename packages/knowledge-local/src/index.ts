@@ -558,6 +558,19 @@ export type {
   ResolveBundleShortId,
 } from './review/propose-review.js'
 export {
+  APPLY_DELEGATE_TIMEOUT_MS,
+  ApplyDelegateTimeoutError,
+  ApplyDelegateUnavailableError,
+  ProposalTargetVanishedError,
+  applyReview,
+} from './review/apply-review.js'
+export type {
+  ApplyDelegate,
+  ApplyOutcomeKind,
+  ApplyReviewInput,
+  ApplyReviewResult,
+} from './review/apply-review.js'
+export {
   PROPOSALS_DIR_NAME,
   ProposalNotFoundError,
   proposalsDir,
