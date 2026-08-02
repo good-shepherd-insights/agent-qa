@@ -19,7 +19,7 @@ import {
   createFunctionRegistry,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
-import type { FunctionRegistry } from '@vostride/agent-qa-agent'
+import type { EntityDirectoryPort, FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
   publishBundleForTest,
   type BundleStoreConfig,
@@ -27,6 +27,8 @@ import {
 import { FunctionScopeSchema, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
+  EntityCard,
+  EntityCardResolution,
   FunctionCaller,
   ForgetReceiptV1,
   KnowledgeApplyOutcomeDto,
@@ -35,7 +37,12 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { createKnowledgeReader, createKnowledgeReview, createRunsReader } from '../compose-local-agent.js'
+import {
+  createEntityDirectory,
+  createKnowledgeReader,
+  createKnowledgeReview,
+  createRunsReader,
+} from '../compose-local-agent.js'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
@@ -127,16 +134,22 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     return rows.map((row) => row.status)
   }
 
-  function registry(withReview: boolean): FunctionRegistry {
+  /**
+   * The stub directory the binding experiment uses: it answers `none` for everything, so a
+   * refusal below can never be an entity lookup succeeding by accident.
+   */
+  const STUB_ENTITIES: EntityDirectoryPort = {
+    resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+    get: () => Promise.resolve(undefined),
+  }
+
+  function registry(withReview: boolean, entities: EntityDirectoryPort = STUB_ENTITIES): FunctionRegistry {
     return createFunctionRegistry({
       deps: {
         runs: createRunsReader(agentQaRoot),
         knowledge: createKnowledgeReader(() => knowledgeRoot),
         config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
-        entities: {
-          resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
-          get: () => Promise.resolve(undefined),
-        },
+        entities,
         // THE one field that differs between the two registries.
         ...(withReview
           ? {
@@ -225,6 +238,84 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
     ) as KnowledgeApplyOutcomeDto
     expect(again.outcome).toBe('already-applied')
     expect(again.forgetReceipt).toEqual(applied.forgetReceipt)
+  })
+
+  /**
+   * CR-04's reproduction, run forwards as a regression case (387-11, ENTY-02 / D-04).
+   *
+   * The whole point is the RESOLVER path: the second render passes NO forget receipt anywhere,
+   * so `produceEntityCard`'s receipt override never fires and the card status IS whatever the
+   * sighting source derived from the store. Before plan 387-11 that derivation was a private
+   * three-member table which omitted `deprecated`, so this sequence handed one caller a receipt
+   * saying `tombstoned` and, moments later, a card at the same permanent address saying
+   * `active`. Both halves are asserted in one test because the defect IS the disagreement — an
+   * assertion on the card alone could be satisfied by a receipt that had also gone wrong.
+   */
+  it('renders an HONEST card on the resolver path after a forget — receipt and card agree', async () => {
+    const recordId = publish()
+    const host = registry(
+      true,
+      createEntityDirectory({ agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot }),
+    )
+
+    // BEFORE. This is also the mint: resolving the bundle id is what gives the entity its
+    // permanent MEM address (D-01), and every later render below goes through that address.
+    const before = await invokeFunction(
+      host,
+      'entities.resolve',
+      { ref: recordId },
+      CALLER,
+    ) as EntityCardResolution
+    if (before.kind !== 'resolved') throw new Error(`expected a resolved card, got ${before.kind}`)
+    expect(before.card.kind).toBe('MEM')
+    expect(before.card.status).toBe('active')
+    const address = before.card.id
+
+    const proposed = await invokeFunction(
+      host,
+      'knowledge.forget.propose',
+      { target: { grain: 'record', recordId } },
+      CALLER,
+    ) as KnowledgeProposeOutcomeDto
+    if (proposed.kind !== 'proposed') throw new Error('expected a proposal')
+
+    const applied = await invokeFunction(
+      host,
+      'knowledge.proposal.apply',
+      { proposalId: proposed.proposal.proposalId },
+      CALLER,
+    ) as KnowledgeApplyOutcomeDto
+    expect(applied.outcome).toBe('applied')
+    const receipt = applied.forgetReceipt as ForgetReceiptV1
+
+    // Half one: what the operation TOLD this caller.
+    expect(receipt.resultingBundleStatus).toBe('tombstoned')
+
+    // Half two: what the same caller sees at the permanent address afterwards, with no receipt
+    // in hand. OBSERVED RED (2026-08-02) against the pre-387-11 `knowledge-local` build — the
+    // real prior production code, reached because agent-local consumes that package through its
+    // dist and the dist had not yet been rebuilt:
+    //   AssertionError: expected 'active' to be 'tombstoned' // Object.is equality
+    //   - Expected: "tombstoned"   + Received: "active"
+    // raised on the FIRST assertion below and aborting the test there. The receipt assertion one
+    // line above had already passed, so what the run showed is precisely the disagreement: the
+    // same caller, the same operation, `tombstoned` on the receipt and `active` on the card.
+    const got = await invokeFunction(host, 'entities.get', { ref: address }, CALLER) as EntityCard
+    expect(got.status).toBe('tombstoned')
+    expect(got.status).not.toBe('active')
+    expect(got.status).toBe(receipt.resultingBundleStatus)
+
+    // …and the resolve path agrees with the get path. Two entries, one honest answer.
+    const after = await invokeFunction(
+      host,
+      'entities.resolve',
+      { ref: recordId },
+      CALLER,
+    ) as EntityCardResolution
+    if (after.kind !== 'resolved') throw new Error(`expected a resolved card, got ${after.kind}`)
+    expect(after.card.id).toBe(address)
+    expect(after.card.status).toBe('tombstoned')
+    expect(after.card.status).not.toBe('active')
   })
 
   it('answers a typed not-found through the function layer, never a throw', async () => {
