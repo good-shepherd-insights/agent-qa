@@ -3,7 +3,7 @@ import type { RunId } from '../run/run-id'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { PerTestOutcome } from './per-test-outcome'
 
-export const CURRENT_HANDOFF_SCHEMA_VERSION = 4
+export const CURRENT_HANDOFF_SCHEMA_VERSION = 5
 
 export interface CompletedRunHandoff {
   schemaVersion: number

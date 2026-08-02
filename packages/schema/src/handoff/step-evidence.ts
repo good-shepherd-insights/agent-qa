@@ -1,4 +1,5 @@
 import type { Action } from '../action/index'
+import type { ServedRetrievalTraceV1 } from '../brief/retrieval-trace'
 import type { ServedBrief } from '../brief/served-brief'
 import type { RecordId } from '../ids/record-id'
 import type { WorkingMemoryEntry } from '../memory/working-memory-entry'
@@ -132,6 +133,23 @@ export interface StepEvidence {
    * 2026-07-03; the structured-entry shape lands with Phase 358.
   */
   workingMemory?: WorkingMemoryEntry[]
+  /**
+   * The serve-time retrieval trace for THIS step's brief (KREV-02 · 387 D-13/D-14):
+   * per served line its record, matching leg, rank and score, plus the bounded ledger of
+   * candidates the token budget cut.
+   *
+   * BESIDE `servedBrief`, never a widening of it — the same Q3 precedent `workingMemory`
+   * above carries (§A11 stays exactly the three memidex channels). The reason is concrete
+   * rather than stylistic: `ServedBrief` feeds `computeBriefDigest`, so a trace channel
+   * inside it would change the digest of every brief ever served and invalidate the
+   * cassettes and acceptance evidence keyed on those bytes.
+   *
+   * Reader computes, runner persists (D-13): the serving path is the only place that knows
+   * these facts, and this is the only place they survive. Optional because runs that
+   * predate 387 have no trace and never will — the why-verb answers those with a typed
+   * no-trace result rather than by re-running retrieval against today's index (D-15).
+  */
+  retrievalTrace?: ServedRetrievalTraceV1
   /**
    * The run's configured decision context, embedded per step including cache-hit steps
    * (D-06). New runs populate it by construction; it remains optional only for structural

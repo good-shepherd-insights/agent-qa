@@ -133,6 +133,13 @@ export {
   computeBriefDigest,
   guardLosslessServedBrief,
 } from './brief/index'
+// 387 KREV-02 D-13/D-14: the serve-time retrieval trace, persisted beside ServedBrief.
+export {
+  RETRIEVAL_TRACE_LEGS,
+  ServedRetrievalTraceV1Schema,
+  TRACE_TRUNCATION_TOP_K,
+  TraceLineSchema,
+} from './brief/index'
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
 // 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).
 export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './handoff/index'
@@ -163,10 +170,13 @@ export type {
   LosslessServedBrief,
   LosslessServedBriefProofV1,
   ReadTrace,
+  RetrievalTraceLeg,
   ServedAdmissionEvent,
   ServedAdmissionSurface,
   ServedBrief,
   ServedPromptTurn,
+  ServedRetrievalTraceV1,
+  TraceLine,
 } from './brief/index'
 export type {
   CompletedRunHandoff,

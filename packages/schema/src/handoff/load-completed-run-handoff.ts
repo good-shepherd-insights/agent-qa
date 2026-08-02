@@ -1,3 +1,4 @@
+import { ServedRetrievalTraceV1Schema } from '../brief/retrieval-trace'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from './completed-run-handoff'
 import type { CompletedRunHandoff } from './completed-run-handoff'
 import {
@@ -28,6 +29,18 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
   2: (doc) => doc,
   /** v3 → v4 (D-10, 2026-07-28): gateRun is optional-additive; v3 handoffs load unchanged. */
   3: (doc) => doc,
+  /**
+   * v4 → v5 (387 D-13, 2026-08-02): `StepEvidence.retrievalTrace` is optional-additive, so
+   * every already-written v4 handoff loads unchanged and simply carries no trace.
+   *
+   * The bump is belt-and-suspenders rather than strictly required — the optional-additive
+   * law would have admitted the field with no version change at all, exactly as
+   * `workingMemory` was admitted. It is registered anyway because a stamped document that
+   * says which contract it was written under is the only way a reader can distinguish "this
+   * run predates trace capture" from "this run captured nothing", and the why-verb's honest
+   * no-trace answer (D-15) is built on that distinction.
+   */
+  4: (doc) => doc,
 }
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
@@ -328,6 +341,25 @@ function hasCompleteInterpolatedVariablesShape(value: unknown): boolean {
   )
 }
 
+/**
+ * Validates a present `retrievalTrace` (387 D-13/D-14) by DELEGATING to the one schema that
+ * declares it, rather than restating its fields here.
+ *
+ * Every other predicate in this file is hand-rolled because its subject is a TypeScript
+ * interface with no runtime declaration anywhere. The trace is not — it ships as a zod
+ * schema — and a second hand-rolled spelling of it would be a guard patterned on what it
+ * guards, free to drift from the contract the producer validates against.
+ *
+ * Present-implies-valid, and absence stays legal: a pre-387 run has no trace and never will
+ * (that absence is what D-15's typed no-trace answer is FOR). Presence is admitted only in
+ * consumer-traversable form because the why-verb dereferences every line's record, leg,
+ * rank and score to answer with — the same discipline `planSource` and
+ * `interpolatedVariables` carry.
+ */
+function hasCompleteRetrievalTraceShape(value: unknown): boolean {
+  return ServedRetrievalTraceV1Schema.safeParse(value).success
+}
+
 function hasCompleteStepShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
 
@@ -350,7 +382,9 @@ function hasCompleteStepShape(value: unknown): boolean {
     typeof verifierVerdict.reasoning === 'string' &&
     (!('planSource' in value) || hasCompletePlanSourceShape(value.planSource)) &&
     (!('interpolatedVariables' in value) ||
-      hasCompleteInterpolatedVariablesShape(value.interpolatedVariables))
+      hasCompleteInterpolatedVariablesShape(value.interpolatedVariables)) &&
+    (!('retrievalTrace' in value) ||
+      hasCompleteRetrievalTraceShape(value.retrievalTrace))
   )
 }
 
