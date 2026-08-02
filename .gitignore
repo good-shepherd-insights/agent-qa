@@ -19,6 +19,7 @@ packages/core/src/analytics/posthog-project.ts
 coverage/
 results/
 test-results/
+test-output/
 playwright-report/
 blob-report/
 
