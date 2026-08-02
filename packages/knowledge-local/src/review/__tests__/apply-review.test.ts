@@ -11,11 +11,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
-import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
-import type { Anchor } from '@vostride/agent-qa-schema'
+import { BundleOutcomeEventSchema, DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
+import type { Anchor, RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { publishBundle } from '../../bundle-publish.test-helper.js'
+import { appendOutcomeEvent } from '../../bundle-append.js'
+import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
 import { listBundles } from '../../list-bundles.js'
 import { openIndexReaderConnection, vecTableName } from '../../index-open.js'
 import { rebuildIndex } from '../../index-rebuild.js'
@@ -32,7 +33,7 @@ import {
   ApplyDelegateUnavailableError,
   applyReview,
 } from '../apply-review.js'
-import { proposeReview } from '../propose-review.js'
+import { FORGET_SCRUBBED_PROJECTIONS, proposeReview } from '../propose-review.js'
 import { readAppliedProposal, readPendingProposal } from '../proposals-store.js'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
@@ -59,14 +60,18 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     rmSync(root, { recursive: true, force: true })
   })
 
+  function storeConfig(): BundleStoreConfig {
+    return {
+      knowledgeRoot,
+      productKey: 'Apply Product',
+      auditBaseDir: agentQaRoot,
+      commitArtifacts: 'none',
+    }
+  }
+
   function publish(summary: string): string {
     const outcome = publishBundle(
-      {
-        knowledgeRoot,
-        productKey: 'Apply Product',
-        auditBaseDir: agentQaRoot,
-        commitArtifacts: 'none',
-      },
+      storeConfig(),
       {
         draft: makeBundleDraftFixture({
           kind: 'fact',
@@ -141,6 +146,82 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     })
     if (outcome.kind !== 'proposed') throw new Error('expected a forget proposal')
     return outcome.proposal.proposalId
+  }
+
+  function proposeReject(recordId: string, reason: string): string {
+    const outcome = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason } },
+    })
+    if (outcome.kind !== 'proposed') throw new Error('expected a reject proposal')
+    return outcome.proposal.proposalId
+  }
+
+  /**
+   * Drive a bundle to `superseded` through ORDINARY CURATION, never through a review verb.
+   *
+   * The append is the same one the curator's `Supersede` arm performs (curator/commit.ts:1459
+   * emits `type: 'superseded'` into the outcome log); it is reproduced here rather than driving a
+   * full drift-supersede because the matrix's input is the STATUS, and a status reached through a
+   * forget would make "reject over a superseded target" a case about the forget path instead. The
+   * `buildOrdinal` must exceed the fixture's `createdAtOrdinal` (10) or the fold keeps `candidate`.
+   */
+  function supersede(recordId: string): void {
+    const appended = appendOutcomeEvent(
+      storeConfig(),
+      recordId as RecordId,
+      BundleOutcomeEventSchema.parse({
+        type: 'superseded',
+        evidenceToken: `apply-review-superseded-${recordId}`,
+        curationJobId: `apply-review-superseded-job-${recordId}`,
+        buildOrdinal: 43,
+        byRecordId: 'fact-replacement-0123456789abcdef',
+      }),
+    )
+    if (appended.kind !== 'appended') throw new Error(`fixture supersede failed: ${appended.kind}`)
+  }
+
+  /** Rows claiming ONE record id — a second entry means a second directory claims that id. */
+  function rowsFor(recordId: string) {
+    return listBundles(knowledgeRoot).filter((row) => row.bundleId === recordId)
+  }
+
+  /**
+   * The CR-02 integrity assertion, applied identically to every cell of the matrix.
+   *
+   * THE CANDIDATE SCAN IS STORE-WIDE, AND THAT IS THE WHOLE POINT OF THIS HELPER. The first draft
+   * of it filtered every assertion to rows whose `bundleId` equals the target id, on the
+   * verifier's wording ("no second directory claims the record id") — and that draft PASSED
+   * against the unmodified defect. Dumping the minted bundle showed why: the unauthored record is
+   * a verbatim CLONE of the target's own content (same anchors, same scope, same summary)
+   * re-addressed under `originClass: user` at the next ordinal, so its content address DIFFERS
+   * from the target's and it lands under the scope-derived product directory rather than the
+   * target's. An id-scoped scan cannot see it. The row that matters is the one
+   * `isEligibleCandidate` (serving/brief-selection.ts:142-151) would re-admit into serving, and it
+   * carries whatever id the clone hashed to — so the assertion is over the STORE, not over an id.
+   *
+   * Four facts, each load-bearing: the store is row-for-row unchanged; no `candidate` row exists
+   * anywhere (the serving re-admission channel); exactly one directory claims the target id (the
+   * duplicate-id wedge); and the POSITIVE post-state holds — a guard that refused the whole apply
+   * would satisfy all three negatives and still be wrong.
+   */
+  function expectNoUnauthoredMint(
+    recordId: string,
+    expectedStatus: string,
+    before: ReturnType<typeof listBundles>,
+  ): void {
+    const all = listBundles(knowledgeRoot)
+    expect(all, 'the store must be row-for-row unchanged: any new row is a record nobody authored')
+      .toEqual(before)
+    expect(
+      all.filter((row) => row.status === 'candidate'),
+      'a resurrected candidate row anywhere is re-admittable into serving by isEligibleCandidate',
+    ).toHaveLength(0)
+    const mine = all.filter((row) => row.bundleId === recordId)
+    expect(new Set(mine.map((row) => row.dir)).size, 'exactly one directory may claim the id')
+      .toBe(1)
+    expect(mine[0]?.status, 'the target must still hold its tombstoned state').toBe(expectedStatus)
   }
 
   it('tombstones without destroying, scrubs every projection it names, and receipts it', async () => {
@@ -273,8 +354,213 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     // The receipt states what IS: already tombstoned. The status is read back after the commit,
     // never copied forward from the preview.
     expect(second.forgetReceipt?.resultingBundleStatus).toBe('tombstoned')
+    // WR-02, added by 387-12: this case previously asserted nothing about the scrub list, so the
+    // short-circuit's three unperformed scrub claims passed through it unread. Silence is not
+    // pinning, but it is the reason the dishonesty survived — the assertion is now explicit.
+    expect(second.forgetReceipt?.projectionsScrubbed).toEqual([])
+    // …and the FIRST receipt did claim its three scrubs, because that apply really performed them.
+    expect(firstReceipt?.projectionsScrubbed).toEqual([...FORGET_SCRUBBED_PROJECTIONS])
     // …and nothing was destroyed a second time: the record still exists with the same status.
     expect(listBundles(knowledgeRoot)).toEqual(afterFirst)
+  })
+
+  // ── CR-02: the complete {reject, forget} × {deprecated, superseded} matrix ──────────────────
+  //
+  // The suite's input domain before this block contained exactly one cell — forget over a target
+  // a forget had tombstoned — and the defect lived in every other cell. `propose-review.ts` emits
+  // an IDENTICAL `Deprecate` delta for reject (:183-188) and forget (:190-195), so the hazard
+  // belongs to the DELTA KIND; a guard scoped to one verb of the emitting set is the same
+  // root-cause shape as a status table scoped to hand-picked members of a union (387-11 / CR-04).
+  // The cases are therefore written over the whole set, not over the member that failed.
+  //
+  // RED BASELINE, observed against unmodified apply-review.ts (short-circuit still
+  // `proposal.verb === 'forget' && …` at :297), transcribed from the failing run:
+  //
+  //   × a reject over an ALREADY-DEPRECATED target (prior reject) mints nothing
+  //     → AssertionError: the store must be row-for-row unchanged … expected [ {…}, {…} ] to
+  //       deeply equal [ {…} ]
+  //   × a reject over an ALREADY-DEPRECATED target (prior FORGET) mints nothing
+  //     → AssertionError: the store must be row-for-row unchanged … expected [ {…}, {…} ] to
+  //       deeply equal [ {…} ]
+  //   × a forget over an already-superseded target claims ZERO scrubs it did not perform
+  //     → AssertionError: expected [ 'fts', 'vec', 'graph' ] to deeply equal []
+  //   × (FUNC-04 adjacency, below) a forget over a forgotten target
+  //     → AssertionError: expected [ 'fts', 'vec', 'graph' ] to deeply equal []
+  //   × a THIRD addressed operation on a twice-applied record id still resolves
+  //     → AssertionError: the store must be row-for-row unchanged … two rows in, two rows out,
+  //       differing — the third reject reached commit() and mutated the clone
+  //
+  // ONE CELL WAS ALREADY GREEN PRE-FIX, and saying so is more useful than a matrix that reds
+  // uniformly, because the green cell says where the hazard actually lives:
+  //
+  //   ✓ reject over an already-SUPERSEDED target — measured green before the fix. The Deprecate
+  //     had real work to do (the target was not `deprecated`), so it committed an ordinary
+  //     `deprecated` outcome event at the apply's build ordinal, which the fold ranks BELOW the
+  //     supersede at ordinal 43 — status stays `superseded` and nothing is minted. The defect
+  //     needs a target that is already `deprecated` specifically. The case is kept as a
+  //     regression pin over the cell, not as a reproduction of it.
+  //
+  // The third-operation case reds, but NOT with the verifier's
+  // `BundleTargetResolutionError: … is ambiguous`. That error needs the minted clone to collide
+  // with the target's record id; in this fixture it does not, because the clone re-addresses
+  // under `originClass: user` at the next ordinal and hashes differently (dumped:
+  // `fact-el-button-checkout-ac9994…` beside the target's `…969cd289…`, under the scope-derived
+  // product dir `apply-storefront/` rather than the fixture's `Apply-Product/`). The ambiguity
+  // wedge is therefore reachable but fixture-dependent; what this suite observes instead is the
+  // third reject reaching commit() and mutating the clone. Stated rather than implied.
+  //
+  // What DID reproduce in every red cell is the sharper fact: the unauthored record is a verbatim
+  // CLONE of the fact the reviewer just rejected — same anchors, same scope, same summary —
+  // published `status: candidate`, which `isEligibleCandidate` re-admits into serving.
+
+  it('a reject over an ALREADY-DEPRECATED target (prior reject) mints nothing (CR-02)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+
+    const first = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'flaky selector'),
+    })
+    expect(first.outcome).toBe('applied')
+    expect(rowsFor(recordId)[0]?.status).toBe('deprecated')
+    const before = listBundles(knowledgeRoot)
+
+    // The single most ordinary operator repetition in a review queue: reject the same record twice.
+    const second = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'flaky selector, again'),
+    })
+
+    expect(second.outcome).toBe('applied')
+    // reject carries no receipt on any path, short-circuit included.
+    expect(second.forgetReceipt).toBeUndefined()
+    expectNoUnauthoredMint(recordId, 'deprecated', before)
+  })
+
+  it('a reject over an ALREADY-DEPRECATED target (prior FORGET) mints nothing (CR-02)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+
+    // The second provenance path to the same status. Both verbs emit the same delta, so a guard
+    // that keyed on how the target GOT tombstoned would pass one of these two and fail the other.
+    await applyReview({ agentQaRoot, knowledgeRoot, proposalId: proposeForget(recordId) })
+    expect(rowsFor(recordId)[0]?.status).toBe('deprecated')
+    const before = listBundles(knowledgeRoot)
+
+    const rejected = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'already forgotten'),
+    })
+
+    expect(rejected.outcome).toBe('applied')
+    expectNoUnauthoredMint(recordId, 'deprecated', before)
+  })
+
+  it('a reject over an ALREADY-SUPERSEDED target mints nothing (CR-02)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+
+    // Superseded through ordinary curation, never through a review verb — the third tombstoned
+    // provenance, and the one no review verb can produce.
+    supersede(recordId)
+    expect(rowsFor(recordId)[0]?.status).toBe('superseded')
+    const before = listBundles(knowledgeRoot)
+
+    const rejected = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'replaced upstream'),
+    })
+
+    expect(rejected.outcome).toBe('applied')
+    // `superseded`, not `deprecated`: the short-circuit reports the state that IS, and does not
+    // overwrite one tombstoned status with another it never committed.
+    expectNoUnauthoredMint(recordId, 'superseded', before)
+  })
+
+  it('a forget over an already-superseded target claims ZERO scrubs it did not perform (WR-02)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    supersede(recordId)
+    const before = listBundles(knowledgeRoot)
+
+    const forgotten = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeForget(recordId),
+      now: () => 4321,
+    })
+
+    const receipt = forgotten.forgetReceipt
+    if (receipt === undefined) throw new Error('a forget must produce a receipt')
+    // WR-02: the branch committed nothing and scrubbed nothing. `scrubSetSchema`
+    // (schema/src/knowledge/proposal.ts:140-146) admits any unique SUBSET including the empty one,
+    // so an honest empty list is expressible — and a receipt asserting work nobody did is exactly
+    // what propose-review.ts:44-45 forbids.
+    expect(receipt.projectionsScrubbed).toEqual([])
+    // …while the rest of the receipt still reports the post-state honestly rather than going silent.
+    expect(receipt.tombstonedRecords.map((row) => row.recordId)).toEqual([recordId])
+    expect(receipt.tombstonedRecords[0]?.provenance.mode).toBe('run-linked')
+    expect(receipt.resultingBundleStatus).toBe('tombstoned')
+    expect(receipt.forgottenAt).toBe(4321)
+    expectNoUnauthoredMint(recordId, 'superseded', before)
+  })
+
+  it('a THIRD addressed operation on a twice-applied record id still resolves (CR-02)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+
+    await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'first'),
+    })
+    await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'second'),
+    })
+    // Snapshotted AFTER both applies on purpose: this case asks whether the state two applies
+    // leave behind can still be addressed, so its baseline is that state, whatever it is.
+    const before = listBundles(knowledgeRoot)
+
+    // The wedge the verifier observed: with two directories claiming one id, resolving the target
+    // throws `BundleTargetResolutionError: … is ambiguous` — a retryable-looking error that can
+    // never succeed, because the failing apply restores its own proposal to pending each time.
+    // BOTH halves are asserted, because the throw can land on either: the propose resolves AND
+    // the apply settles.
+    const thirdId = proposeReject(recordId, 'third')
+    const third = await applyReview({ agentQaRoot, knowledgeRoot, proposalId: thirdId })
+
+    expect(third.outcome).toBe('applied')
+    expectNoUnauthoredMint(recordId, 'deprecated', before)
+  })
+
+  it('CONTROL: a first reject over a LIVE candidate target still commits (CR-02)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    // Drawn from OUTSIDE the rescoped guard's own assumption: the guard's precondition is
+    // "already tombstoned", so a corpus made only of tombstoned targets would be satisfied by a
+    // guard that swallowed EVERY Deprecate. This is the input it must admit.
+    expect(rowsFor(recordId)[0]?.status).toBe('candidate')
+    const before = listBundles(knowledgeRoot)
+
+    const rejected = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'flaky selector'),
+    })
+
+    expect(rejected.outcome).toBe('applied')
+    // The legitimate first destruction HAPPENED: the state changed, through commit(). This is the
+    // positive half — `listBundles` unchanged in LENGTH but changed in CONTENT is precisely the
+    // shape a swallow-everything guard could not produce.
+    expect(rowsFor(recordId)[0]?.status).toBe('deprecated')
+    expect(listBundles(knowledgeRoot).length).toBe(before.length)
+    expect(listBundles(knowledgeRoot)).not.toEqual(before)
   })
 
   it('leaves the proposal APPLICABLE when the commit refuses', async () => {
