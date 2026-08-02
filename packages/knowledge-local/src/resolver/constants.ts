@@ -20,9 +20,27 @@
 // range of the raw fused score, and it is why the reported score is NORMALISED (below) rather
 // than published as-is: "0.0328" is not a number any surface can render as confidence.
 //
-// Retuning these two requires the corpus report 387-05 commits — a ≥100-entity fixture run in
-// both embedder postures with the per-case scores logged. Retuning them from a handful of
-// observed queries is how a never-guess contract quietly becomes a usually-right one.
+// THE CORPUS REPORT THESE VALUES WERE FINALISED AGAINST (387-05)
+//
+// `test-output/entity-resolution-report.json`, written by every run of the resolver corpus
+// suite: 106 entities across the five mintable kinds, 110 authored query cases, 220 rows —
+// every case scored under the full hybrid posture AND under the lexical-only floor. That file
+// is what a retune must argue from; retuning from a handful of observed queries is how a
+// never-guess contract quietly becomes a usually-right one.
+//
+// What the corpus measured on 2026-08-02, at the values below and with nothing changed:
+//
+//   - 46 of 110 cases resolve under the full posture, 31 under the floor. Eleven of the floor's
+//     are free text, so the lexical-only rung genuinely answers rather than merely surviving.
+//   - No case resolves an entity other than the one it declares, in either posture.
+//   - No case resolves a DIFFERENT entity at the floor than at the full posture.
+//   - Every equal-strength pair disambiguates in both postures, with the two fused scores
+//     differing by exactly zero.
+//
+// NEITHER VALUE MOVED, and the corpus is why rather than an excuse for it: both are derived
+// from `C_RRF` and the leg weights (below), so a value fitted to a corpus would have replaced
+// an arithmetic property with a curve fit. What the corpus adds is the boundary measurement the
+// margin's comment could not make on its own — see `RESOLVER_STRONG_HIT_MARGIN`.
 
 import { C_RRF } from '../retrieval/constants.js'
 
@@ -76,6 +94,11 @@ export const RESOLVER_FUSED_SCORE_NORMALIZER =
  * a floor host from ever resolving anything — including a reference that matched exactly one
  * entity. The discrimination work is therefore done by the margin below, which is where the
  * two-part rule's second half earns its place rather than restating the first.
+ *
+ * The corpus report confirms both halves of that claim rather than only the comfortable one:
+ * 31 of its 110 cases resolve at the floor, so the threshold is not quietly forbidding the
+ * floor rung; and the case where a leg head is dropped after fusion still refuses, so it is not
+ * quietly permitting a survivor to inherit a leader's confidence.
  */
 export const RESOLVER_STRONG_HIT_MIN_SCORE = 0.5
 
@@ -94,8 +117,27 @@ export const RESOLVER_STRONG_HIT_MIN_SCORE = 0.5
  * including the equal-strength typo case, which differs by exactly zero and therefore cannot
  * be resolved by any positive margin at all (D-07).
  *
- * Retune only alongside `RESOLVER_STRONG_HIT_MIN_SCORE`, and only against the 387-05 corpus
- * report: dropping it to 0.25 or below silently trades the degradation guarantee for recall.
+ * WHERE THE BOUNDARY ACTUALLY IS, measured by the 387-05 corpus rather than argued.
+ *
+ * The 0.25 above comes from a CONTINUOUS inequality, and this scale is not continuous. A floor
+ * host's score comes from the lexical leg alone, so its top is one leg's rank-1 contribution
+ * (0.5) and its runner-up, when it has one, is rank 2 (0.4919). The largest margin a floor host
+ * can therefore ever clear against a rival is the gap between two adjacent ranks — 1/124, about
+ * 0.00806 — and above that the floor can only resolve a reference that matched exactly ONE
+ * entity, which no dense leg can reorder. So the real bound is thirty times smaller than the
+ * one the paragraph above derives, and 0.26 clears both with room to spare.
+ *
+ * That is not a licence to lower it. The corpus runs its whole population through this same
+ * rule at several margins and reports what it finds: no divergence at 0.26, none at 1.5×1/124,
+ * and a real one BELOW 1/124, where a case whose two lexical candidates sit 0.008 apart resolves
+ * the first at the floor while the dense leg promotes the second in full. That measurement is
+ * what makes the invariant's test a gate rather than an arithmetic tautology — and it is only
+ * reachable because the decision is applied through one exported function (`applyStrongHitRule`)
+ * that the corpus can hand a different margin. Nothing in production passes it one.
+ *
+ * Retune only alongside `RESOLVER_STRONG_HIT_MIN_SCORE`, and only against the corpus report
+ * named at the top of this file: dropping below 1/124 trades the degradation guarantee for
+ * recall, and dropping to 0.25 or below gives up the argument that it cannot be traded at all.
  */
 export const RESOLVER_STRONG_HIT_MARGIN = 0.26
 

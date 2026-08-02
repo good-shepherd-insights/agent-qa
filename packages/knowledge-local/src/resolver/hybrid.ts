@@ -63,7 +63,7 @@ export interface ResolveHybridDeps {
   readonly embedder?: EmbedderPort
 }
 
-interface RankedEntity {
+export interface RankedEntity {
   readonly descriptor: EntityDescriptor
   readonly score: number
 }
@@ -124,24 +124,42 @@ export async function rankEntityCandidates(
 }
 
 /**
- * Tier (b) then tier (c): a strong hit, a disambiguation set, or an honest miss.
+ * The two numbers the D-07 rule is decided against.
  *
- * The D-07 rule is two-part and BOTH parts must hold — an absolute threshold the winner clears
- * on its own, and a margin over the runner-up. Equal-strength candidates therefore always
+ * Parameterised for ONE reason, and it is not configuration: the corpus (387-05) has to be able
+ * to ask where the boundary IS, not merely whether today's value sits on the right side of it.
+ * A degradation gate that no input can redden is not a gate, and the only way to show this one
+ * can redden is to run the same corpus, through this same function, at a margin below the bound
+ * — which is a measurement, not a setting. No production call site passes this argument, the
+ * defaults are the pinned constants, and nothing reads a config file to get here.
+ */
+export interface StrongHitThresholds {
+  readonly minScore: number
+  readonly margin: number
+}
+
+export const RESOLVER_STRONG_HIT_THRESHOLDS: StrongHitThresholds = {
+  minScore: RESOLVER_STRONG_HIT_MIN_SCORE,
+  margin: RESOLVER_STRONG_HIT_MARGIN,
+}
+
+/**
+ * The D-07 decision itself, over a ranking somebody else produced.
+ *
+ * The rule is two-part and BOTH parts must hold — an absolute threshold the winner clears on
+ * its own, and a margin over the runner-up. Equal-strength candidates therefore always
  * disambiguate without a special case: a margin of zero is not greater than a positive margin,
  * so the arithmetic refuses before any tie-break could pick a favourite.
  */
-export async function resolveHybrid(
-  ref: string,
-  deps: ResolveHybridDeps,
-): Promise<EntityResolution> {
-  const ranked = await rankEntityCandidates(ref, deps)
+export function applyStrongHitRule(
+  ranked: readonly RankedEntity[],
+  thresholds: StrongHitThresholds = RESOLVER_STRONG_HIT_THRESHOLDS,
+): EntityResolution {
   const top = ranked[0]
   if (top === undefined) return { kind: 'none', reason: 'no-match' }
 
   const runnerUp = ranked[1]?.score ?? 0
-  if (top.score >= RESOLVER_STRONG_HIT_MIN_SCORE
-    && top.score - runnerUp > RESOLVER_STRONG_HIT_MARGIN) {
+  if (top.score >= thresholds.minScore && top.score - runnerUp > thresholds.margin) {
     return { kind: 'resolved', descriptor: top.descriptor, score: top.score }
   }
 
@@ -158,4 +176,12 @@ export async function resolveHybrid(
   }
 
   return { kind: 'none', reason: 'no-match', closestSuggestion: top.descriptor.shortId }
+}
+
+/** Tier (b) then tier (c): rank the corpus, then apply the pinned rule to what came back. */
+export async function resolveHybrid(
+  ref: string,
+  deps: ResolveHybridDeps,
+): Promise<EntityResolution> {
+  return applyStrongHitRule(await rankEntityCandidates(ref, deps))
 }
