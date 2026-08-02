@@ -20,10 +20,10 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { expectTypeOf, it } from 'vitest'
 
-import { assembleAuthoringBrief } from './get-authoring-brief.js'
-import { selectCautions } from './get-cautions.js'
-import { assembleRunBrief } from './get-run-brief.js'
-import { openKnowledgeReader } from './reader.js'
+import { assembleAuthoringBrief } from '../get-authoring-brief.js'
+import { selectCautions } from '../get-cautions.js'
+import { assembleRunBrief } from '../get-run-brief.js'
+import { openKnowledgeReader } from '../reader.js'
 
 declare const brief: BriefBlock
 declare const cautionBlock: CautionBlock

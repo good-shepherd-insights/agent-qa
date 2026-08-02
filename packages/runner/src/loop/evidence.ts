@@ -11,6 +11,7 @@
 import {
   computeBriefDigest,
   toRecordedActionResult,
+  TRACE_TRUNCATION_TOP_K,
 } from '@vostride/agent-qa-schema'
 import type {
   Action,
@@ -635,6 +636,40 @@ export class EvidenceRecorder {
     this.selfHeal = { failedDecision, recoveringDecision }
   }
 
+  /**
+   * Fold the per-channel serve-time attributions into the one persisted trace (D-13/D-14).
+   *
+   * Every value here was computed by the reader at the moment of serving and is copied through
+   * unchanged — no score is re-derived and no rank is recomputed at persistence time. The runner
+   * writes; the reader computed.
+   *
+   * Absent when nothing was served through a bound reader, which is D-15's honest no-trace arm:
+   * an absent trace says "no reader served this step", not "a trace was lost".
+   */
+  private foldRetrievalTrace(): ServedRetrievalTraceV1 | undefined {
+    if (this.channel1Trace === undefined && this.channel3TraceLines.length === 0) {
+      return this.channel3Truncated.length === 0 ? undefined : {
+        schemaVersion: 1,
+        servedLines: [],
+        truncated: this.channel3Truncated.slice(0, TRACE_TRUNCATION_TOP_K),
+      }
+    }
+    return {
+      schemaVersion: 1,
+      servedLines: [
+        ...(this.channel1Trace?.servedLines ?? []),
+        ...this.channel3TraceLines,
+      ],
+      // The pinned bound is a bound on the LEDGER, not per channel. Channel-1 cut candidates come
+      // first because Channel 1 is what every planning turn actually reads, so "why didn't the
+      // brief mention X" is asked about it far more often than about a failure-moment caution.
+      truncated: [
+        ...(this.channel1Trace?.truncated ?? []),
+        ...this.channel3Truncated,
+      ].slice(0, TRACE_TRUNCATION_TOP_K),
+    }
+  }
+
   /** Finalize the accumulated evidence into a §A8 StepEvidence. cacheStatus is the
    * per-step fold; servedBrief is always present (empty when no reader bound).
    *
@@ -666,6 +701,8 @@ export class EvidenceRecorder {
       subActions: this.subActions,
       verifierVerdict: verdict,
     }
+    const retrievalTrace = this.foldRetrievalTrace()
+    if (retrievalTrace !== undefined) evidence.retrievalTrace = retrievalTrace
     if (this.selfHeal) evidence.selfHeal = this.selfHeal
     if (this.stagnation) evidence.stagnation = this.stagnation
     if (this.cycle) evidence.cycle = this.cycle

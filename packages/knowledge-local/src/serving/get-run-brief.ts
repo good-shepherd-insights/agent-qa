@@ -109,7 +109,7 @@ export interface AssembledRunBrief {
  * Rank is the candidate's position in the FULL ranking, so a served line and a cut candidate are
  * comparable numbers: "served, ranked 2nd" and "cut, ranked 21st" answer the same question. A
  * served record is always present in the full ranking (the budgeted pass admits a subset of what
- * the unbounded pass stages), which `serve-trace.test.ts` asserts directly rather than assuming;
+ * the unbounded pass stages), which `__tests__/serve-trace.test.ts` asserts directly rather than assuming;
  * the fallback below exists so that a future change to the staging path degrades into a
  * still-valid, still-ordered rank instead of an invalid one.
  */
