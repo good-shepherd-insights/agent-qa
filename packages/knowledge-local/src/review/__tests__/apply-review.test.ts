@@ -311,16 +311,54 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
       applyReview({ agentQaRoot, knowledgeRoot, proposalId, now: () => 2 }),
     ])
 
-    const fulfilled = settled.filter((entry) => entry.status === 'fulfilled')
-    const outcomes = fulfilled.map((entry) => (entry as PromiseFulfilledResult<{
-      outcome: string
-    }>).value.outcome)
-    // Exactly one commit: one `applied`, and the other call either loses the claim
-    // (`already-applied`) or loses the LEASE and refuses — never a second commit.
-    expect(outcomes.filter((outcome) => outcome === 'applied')).toHaveLength(1)
-    expect(outcomes.filter((outcome) => outcome === 'applied').length
-      + outcomes.filter((outcome) => outcome === 'already-applied').length)
-      .toBe(outcomes.length)
+    // EVERY settled entry is inspected, and that is the change this case exists to make. It used
+    // to filter `settled` to `fulfilled` before asserting, so a REJECTED loser was silently
+    // dropped and `1 applied + 0 already-applied === 1 outcome` passed over an untyped throw. The
+    // verifier's judgement is the right one: a concurrent case that exists and is blind is worse
+    // than one that does not exist, because it reads as coverage.
+    //
+    // RED BASELINE, observed against unmodified apply-review.ts (bare `throw new Error(...)` at
+    // :248) before the fix landed:
+    //
+    //   × records exactly one application even when two applies overlap
+    //     → AssertionError: the loser must not receive an untyped no-such-proposal Error …
+    //       expected true to be false
+    //   and, in the same run, the loser's reason printed as:
+    //       Error: No knowledge proposal is stored under id prop_…
+    //
+    // The LOSER PATH is path A — claim loss — and it is deterministic in this harness, not a
+    // coin flip. `claimPendingProposal` is fully synchronous (`renameSync`) and `applyReview` runs
+    // synchronously to its first `await` inside `commitAndPublish`, so in a
+    // `Promise.allSettled([a, b])` the first call claims AND acquires the writer lease before the
+    // second call begins. The OTHER loser path — winning the claim and then losing the LEASE,
+    // which refuses with `ApplyDelegateUnavailableError` at apply-review.ts:265 — is therefore
+    // unreachable here. That limit is stated rather than implied, exactly as the interleaving
+    // limit above is: were the two calls in separate OS processes, the lease-loss shape would be
+    // legitimate too and this assertion would have to admit it BY TYPE rather than relax.
+    const committed = settled.filter(
+      (entry) => entry.status === 'fulfilled' && entry.value.outcome === 'applied',
+    ) as PromiseFulfilledResult<Awaited<ReturnType<typeof applyReview>>>[]
+    expect(committed, 'exactly one call may commit').toHaveLength(1)
+    const winner = committed[0]!.value
+
+    for (const entry of settled) {
+      if (entry.status === 'fulfilled' && entry.value === winner) continue
+      if (entry.status === 'fulfilled') {
+        // The loser that arrives after the publish is told what the WINNER did, verbatim.
+        expect(entry.value.outcome).toBe('already-applied')
+        expect(entry.value.forgetReceipt).toEqual(winner.forgetReceipt)
+        continue
+      }
+      const reason = entry.reason as Error
+      expect(
+        reason.name === 'Error'
+          && /No knowledge proposal is stored under id/.test(reason.message),
+        'the loser must not receive an untyped no-such-proposal Error: the proposal exists, it '
+          + 'is mid-apply, and telling the caller it names nothing is the exact confusion '
+          + 'restorePendingProposal exists to prevent',
+      ).toBe(false)
+      expect(reason.name).toBe('ProposalApplyInFlightError')
+    }
 
     // The store shows ONE application: a second Deprecate would append a second event.
     const applied = readAppliedProposal(agentQaRoot, proposalId)
