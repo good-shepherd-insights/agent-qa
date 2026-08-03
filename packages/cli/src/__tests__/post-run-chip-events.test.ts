@@ -27,6 +27,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
   type GuardrailPolicy,
+  type MaskingContext,
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
@@ -144,6 +145,8 @@ function fixture(behaviour: {
   curateRun?: () => Promise<{ curated: number; deprecated: number }>
   /** Burn the whole drain budget after the first job, leaving the chain mid-flight. */
   stopAfterFirstJob?: boolean
+  /** The run's masker, threaded to the fold today and to the chip's error field from 388-07. */
+  maskingContext?: MaskingContext
 } = {}): Fixture {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-388-04-'))
   roots.push(agentQaRoot)
@@ -182,6 +185,9 @@ function fixture(behaviour: {
         knowledgeConfig: { dir: 'knowledge' },
         configDir: agentQaRoot,
         auditSink: {} as AuditSink,
+        ...(behaviour.maskingContext === undefined
+          ? {}
+          : { maskingContext: behaviour.maskingContext }),
         policy: {} as GuardrailPolicy,
         log: {
           warn: (message: string) => warn(message),
@@ -330,6 +336,62 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
       // a permanently failed one does not claim a retry nobody scheduled.
       expect(failure.willRetry).toBe(tail.report().drain === 'retry-scheduled')
     })
+
+  it('masks the failure chip\'s error through the run\'s own masker and bounds it (WR-08/P2)',
+    async () => {
+      const SECRET = 'sk-live-388-07-do-not-log-me'
+      const REDACTION = '«redacted:provider-key»'
+      const f = fixture({
+        // The token sits EARLY in the message and the padding after it, so the mask has to have
+        // fired for the redaction to survive the length bound — a slice alone would drop the
+        // secret only by accident of where it happened to fall.
+        curateRun: async () => {
+          throw new Error(
+            `the curation fold could not open the knowledge root using ${SECRET} `
+            + 'x'.repeat(900),
+          )
+        },
+        maskingContext: {
+          mask: (text: string) => text.split(SECRET).join(REDACTION),
+          unmask: (text: string) => text,
+        },
+      })
+      const tail = runPostRunTail(f.options())
+      await tail.enqueue()
+      await tail.drain()
+
+      const appended = readEvents(f.eventsPath).slice(FIXTURE_EVENT_LINES.length)
+      expect(appended.map((event) => event.type)).toEqual([
+        'analysisStarted',
+        'analysisCompleted',
+        'curationStarted',
+        'curationFailed',
+      ])
+      const failure = appended.at(-1)!.payload as { runId: string; error?: string }
+      expect(failure.error).toContain(REDACTION)
+      expect(failure.error).not.toContain(SECRET)
+      // A diagnostic pointer, not a transcript: the field is bounded whatever was thrown.
+      expect(failure.error!.length).toBeLessThanOrEqual(500)
+      // …and the claim is about the BYTES on disk, which is what `runs.events` streams.
+      expect(readFileSync(f.eventsPath, 'utf8')).not.toContain(SECRET)
+    })
+
+  it('bounds the chip error even with no masker on the tail', async () => {
+    const f = fixture({
+      curateRun: async () => {
+        throw new Error(`the curation fold could not open the knowledge root ${'y'.repeat(900)}`)
+      },
+    })
+    const tail = runPostRunTail(f.options())
+    await tail.enqueue()
+    await tail.drain()
+
+    const failure = readEvents(f.eventsPath).at(-1)!.payload as { error?: string }
+    // The bound is the emitter's, not the masker's: a tail with no masking context still may not
+    // stream a thousand characters of somebody's exception into every attached surface.
+    expect(failure.error!.length).toBeLessThanOrEqual(500)
+    expect(failure.error).toContain('knowledge root')
+  })
 
   it('rides a direct append and never the run bus (D-16)', () => {
     const source = readFileSync(
