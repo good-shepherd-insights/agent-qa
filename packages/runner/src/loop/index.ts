@@ -476,6 +476,25 @@ export async function executeStep(
     // planner turns drain at their own boundary; this final drain is the no-loss backstop.
     recorder.recordServedReadTraces(ports.drainMemoryReadTraces?.() ?? [])
     recorder.recordServedAdmissionEvents(recordLedger.drainEvidenceEvents?.() ?? [])
+    // WR-10′ (387-15): the staged failure-caution composite belongs to that same backstop set. It
+    // is consumed by the NEXT planning turn and by nothing else, and this step may never reach one
+    // — the deadline check and the D-10 remaining-budget check both return above that pickup. The
+    // step those exits end is exactly the terminal failure "why didn't it mention X" is asked
+    // about, and without this drain its whole attribution ledger is lost (KREV-02, D-14).
+    //
+    // It lives HERE, at the single terminal funnel documented below, rather than at each exit:
+    // draining at the nine return sites would be an enumeration of a hand-picked member set that a
+    // tenth exit silently escapes. Routing through finish() is the only way a terminal exit exists
+    // in this file, so a tenth one inherits the drain by construction.
+    //
+    // Zero injected is the truthful argument, not a shortcut: a staged-but-never-consumed turn
+    // rendered nothing, so every line the reader served is a cut candidate under the recorder's
+    // own uniform injected/non-injected split (387-13 Shape B). No caution enters the ServedBrief,
+    // whose bytes therefore cannot move (D-13). No new recorder logic and no special case.
+    if (pendingCautions !== undefined) {
+      recorder.recordServedCautions([], pendingCautions.trace)
+      pendingCautions = undefined
+    }
     // WM-01 masked snapshot (Pitfall 7 boundary 3): the whole served set snapshots into
     // StepEvidence.workingMemory with values masked (ports.masking.mask — identity pre-362),
     // BESIDE the brief. Unbound port ⇒ no snapshot (optional-port idiom).
