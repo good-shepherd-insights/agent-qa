@@ -735,6 +735,72 @@ describe('the proposals store is durable across processes and atomic under a rac
     expect(unknownScan, 'not-found costs two full passes since 387-18').toBe(2)
   })
 
+  // IN-03 — OUT OF DENOMINATOR. Defence-in-depth at the boundary that does the joining; it
+  // closes no scored truth and moves no score. `knowledge.proposal.apply`'s function layer
+  // already refuses a malformed id one package away, which is exactly the argument this case
+  // exists to stop relying on: the refusal is on ONE path a caller can reach this store by, and
+  // the store is the module that turns a caller's id into a rename target.
+  //
+  // THE INPUT IS DRAWN FROM OUTSIDE THE SHAPE THE MODULE ITSELF MINTS (the precondition-guarded
+  // corpus law). `mintProposalId` produces `prop_<uuid>`; a rule checked only against ids of that
+  // shape is checked from inside its own assumption. This id is one `mintProposalId` cannot
+  // produce and `join()` happily resolves.
+  it('refuses a traversal-bearing proposal id before any syscall (IN-03)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+
+    // A DECOY OUTSIDE THE PROPOSALS DIRECTORY, holding a document this store would recognise.
+    // `proposalsDir` is `<root>/.agent-qa/proposals`, so `../../escaped` resolves to `<root>`,
+    // which is inside the digest's reach — the effect is therefore visible rather than merely
+    // argued about. An assertion that something did not happen is load-bearing only if the input
+    // could have made it happen, and this input could: with no shape check, the claim rename
+    // moves this file and the store returns its contents as a consumed proposal.
+    const TRAVERSAL_ID = '../../escaped'
+    const escaped = join(root, 'escaped.json')
+    writeFileSync(escaped, `${JSON.stringify(minted.proposal, undefined, 2)}\n`, 'utf8')
+
+    const before = hashTree(root)
+
+    // POTENCY. The digest can see the exact effect the guard prevents: renaming the decoy the way
+    // an unguarded join() would moves it, and putting it back returns the digest. Without this
+    // pair the invariance assertion below could be a hash over the wrong directory.
+    renameSync(escaped, `${escaped}.claimed.probe`)
+    expect(hashTree(root), 'the digest must be able to SEE the traversal it is asserting against')
+      .not.toBe(before)
+    renameSync(`${escaped}.claimed.probe`, escaped)
+    expect(hashTree(root)).toBe(before)
+
+    // RED BASELINE, observed against the unguarded store, transcribed from the failing run:
+    //
+    //   × refuses a traversal-bearing proposal id before any syscall (IN-03)
+    //     → AssertionError: an id this store could never have minted may not become a rename
+    //       target: expected [Function] to throw an error
+    //
+    // …and the RED was not merely a missing throw. The unguarded call answered
+    // `{ kind: 'consumed' }` carrying the decoy's contents, having renamed
+    // `<root>/escaped.json` to `<root>/escaped.json.claimed.<pid>` — renameSync as an
+    // arbitrary-path primitive, driven by a caller-supplied string (T-387-18-03).
+    expect(
+      () => claimPendingProposal(agentQaRoot, TRAVERSAL_ID),
+      'an id this store could never have minted may not become a rename target',
+    ).toThrow()
+
+    // Nothing moved, anywhere under the tmp root — not just inside the proposals directory.
+    expect(hashTree(root), 'a refused id may not leave a trace outside the proposals directory')
+      .toBe(before)
+    expect(existsSync(escaped), 'the decoy is exactly where it was').toBe(true)
+
+    // ADMIT CONTROL, in the same case so the guard cannot pass by rejecting everything: the id
+    // this module mints for itself still resolves through the ordinary path.
+    expect(claimPendingProposal(agentQaRoot, minted.proposal.proposalId).kind).toBe('consumed')
+  })
+
   it('puts a claimed proposal BACK when the work it was claimed for fails', () => {
     const knowledgeRoot = join(root, 'agent-qa-knowledge')
     const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
