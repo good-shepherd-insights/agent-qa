@@ -415,9 +415,14 @@ describe('the proposals store is durable across processes and atomic under a rac
 
     expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
     // The applied file lands without the marker being retired — the durable intermediate state
-    // `publishAppliedProposal` passes through, reconstructed here so the ordering is measured
-    // rather than reasoned about. Writing it by hand is the only way to hold the process still
-    // inside a window whose whole purpose is to be brief.
+    // `publishAppliedProposal` passes through, reconstructed here by hand.
+    //
+    // WHAT THIS CASE MEASURES, corrected in round 2 because the previous wording claimed more:
+    // it is an ADMIT CONTROL for a durable state, not a measurement of the resolution's ordering.
+    // The applied file is present BEFORE the call, so the resolution's very first read answers and
+    // no window arm ever executes — which is exactly why deleting the window's re-read left this
+    // case green (the WR-05 vacuity measurement). The window between the first read and the claim
+    // scan is owned by the seam-driven cases below, which stand inside it rather than around it.
     writeFileSync(
       join(proposalsDir(agentQaRoot), `${id}.applied.json`),
       `${JSON.stringify({ proposal: { ...minted.proposal, status: 'applied' } }, undefined, 2)}\n`,
@@ -431,6 +436,171 @@ describe('the proposals store is durable across processes and atomic under a rac
     expect(outcome.kind).toBe('already-applied')
     if (outcome.kind !== 'already-applied') throw new Error('unreachable')
     expect(outcome.record.proposal.proposalId).toBe(id)
+  })
+
+  // ── CR-03′: the window BETWEEN the resolution's first applied read and its claim scan ────────
+  //
+  // Every case above arranges a durable state and then calls the resolution, so the resolution
+  // reads a filesystem that is holding still. The cases below do the opposite: they let the
+  // filesystem MOVE while the resolution is midway through reading it, which is the only place
+  // the defect CR-03′ names can live. `onAfterFirstRead` is what makes that possible — the window
+  // is otherwise syscall-width and no test can stand inside it.
+  //
+  // The write set the window must survive has exactly two members, and both are here, because
+  // exactly two renames in this module retire a claim marker: `publishAppliedProposal` (which
+  // makes the applied file durable FIRST and retires the marker SECOND, so its partial state
+  // W1-only is a third observable and is also here) and `restorePendingProposal` (whose single
+  // rename retires the marker and lands the pending name in the same operation). A resolution
+  // that re-reads only ONE of those two durable names after the scan is directional again under
+  // a different name.
+  //
+  // IN-PROCESS LIMIT, inherited rather than re-argued (387-12 recorded it for the claim cases
+  // above): `publishAppliedProposal` can only retire a claim parked under its OWN pid, so the
+  // winner these cases play is this process. Two OS processes contending on the rename is a
+  // kernel property, asserted where it belongs and not measured here.
+
+  it('answers already-applied when the winner publishes INSIDE the resolution window (CR-03′)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+
+    // The winner takes the claim; this caller is the loser from here on.
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+
+    // L1 · W1 · W2 · L2 — the interleave the round-2 verifier reproduced. The loser's first
+    // applied read misses, and only THEN does the winner complete its whole publish.
+    let fired = 0
+    const outcome = claimPendingProposal(agentQaRoot, id, {
+      onAfterFirstRead: () => {
+        fired += 1
+        publishAppliedProposal(agentQaRoot, { proposal: minted.proposal })
+      },
+    })
+    expect(fired, 'the seam must fire exactly once, between the first read and the scan').toBe(1)
+    // The marker really IS gone by the time the scan runs, so this case exercises the
+    // marker-absent exit rather than sneaking through the marker-present one. The retired name is
+    // `<id>.applied.json.claim`, which the claim prefix cannot match.
+    expect(readdirSync(proposalsDir(agentQaRoot)).filter((e) => e.startsWith(`${id}.json.claimed.`)))
+      .toHaveLength(0)
+
+    // RED BASELINE, observed against the seam-added-but-still-DIRECTIONAL resolution (the re-read
+    // living only inside the marker-present arm), transcribed from the failing run:
+    //
+    //   × answers already-applied when the winner publishes INSIDE the resolution window (CR-03′)
+    //     → AssertionError: a durably applied proposal must never be reported as never-minted
+    //       expected 'not-found' to be 'already-applied'
+    expect(outcome.kind, 'a durably applied proposal must never be reported as never-minted')
+      .toBe('already-applied')
+    if (outcome.kind !== 'already-applied') throw new Error('unreachable')
+    expect(outcome.record.proposal.proposalId).toBe(id)
+    expect(outcome.record.proposal.status).toBe('applied')
+  })
+
+  it('answers already-applied when only the applied FILE lands inside the window (CR-03′)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+
+    // W1 WITHOUT W2 — the publish is half done inside the window: the applied file is durable and
+    // the marker is still parked. This is the arm the OLD one-sided re-read served, and it must
+    // keep being served by the single post-scan re-read that replaced it. Two exits, one
+    // mechanism: deleting that re-read must red THIS case as well as the one above.
+    const outcome = claimPendingProposal(agentQaRoot, id, {
+      onAfterFirstRead: () => {
+        writeFileSync(
+          join(proposalsDir(agentQaRoot), `${id}.applied.json`),
+          `${JSON.stringify({ proposal: { ...minted.proposal, status: 'applied' } }, undefined, 2)}\n`,
+          'utf8',
+        )
+      },
+    })
+
+    expect(existsSync(join(proposalsDir(agentQaRoot), `${id}.json.claimed.${process.pid}`)))
+      .toBe(true)
+    expect(outcome.kind, 'a wait here would be a wait for work already durable')
+      .toBe('already-applied')
+    if (outcome.kind !== 'already-applied') throw new Error('unreachable')
+    expect(outcome.record.proposal.proposalId).toBe(id)
+  })
+
+  it('does not report not-found when the winner RESTORES inside the window (CR-03′ sibling)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'reject', input: { target: { grain: 'record', recordId }, reason: 'no' } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+
+    // THE SIBLING RENAME. `restorePendingProposal` retires the claim marker too, and it does so in
+    // the same single rename that lands the pending name — so a scan that sees the marker absent
+    // has exactly two explanations, and a resolution that checks only the applied one calls a
+    // fully applicable pending proposal never-minted.
+    //
+    // RED BASELINE, observed against the seam-added-but-still-DIRECTIONAL resolution:
+    //
+    //   × does not report not-found when the winner RESTORES inside the window (CR-03′ sibling)
+    //     → AssertionError: the pending name is back on disk; nothing here is missing
+    //       expected 'not-found' not to be 'not-found'
+    const outcome = claimPendingProposal(agentQaRoot, id, {
+      onAfterFirstRead: () => { restorePendingProposal(agentQaRoot, id) },
+    })
+
+    expect(readPendingProposal(agentQaRoot, id)).toEqual(minted.proposal)
+    expect(outcome.kind, 'the pending name is back on disk; nothing here is missing')
+      .not.toBe('not-found')
+    // `apply-in-flight` is the arm that routes to `settleClaim`'s existing bounded retry loop,
+    // which re-asks and claims the restored proposal on its next poll. The store does not grow a
+    // second recovery mechanism beside the one the caller already has.
+    expect(outcome.kind).toBe('apply-in-flight')
+  })
+
+  it('still answers apply-in-flight and not-found with the seam in place (CR-03′ controls)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+
+    // THE OVER-BROADENING CONTROLS. A resolution that answered `already-applied` — or anything
+    // other than these two — whenever its window was driven would satisfy every case above. Both
+    // run WITH the seam attached and inert, so the seam itself is not what changes the answer.
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+    let parkedFired = 0
+    expect(
+      claimPendingProposal(agentQaRoot, id, { onAfterFirstRead: () => { parkedFired += 1 } }).kind,
+    ).toBe('apply-in-flight')
+    expect(parkedFired).toBe(1)
+
+    let unknownFired = 0
+    expect(
+      claimPendingProposal(agentQaRoot, 'prop_00000000-0000-4000-8000-000000000000', {
+        onAfterFirstRead: () => { unknownFired += 1 },
+      }).kind,
+    ).toBe('not-found')
+    expect(unknownFired).toBe(1)
   })
 
   it('puts a claimed proposal BACK when the work it was claimed for fails', () => {

@@ -186,6 +186,23 @@ function claimMarkerPresent(agentQaRoot: string, proposalId: string): boolean {
 }
 
 /**
+ * The one test seam on the claim resolution, and it exists because a measurement demanded it.
+ *
+ * `onAfterFirstRead` runs once, between the resolution's first applied read and its claim scan —
+ * the exact window a racing winner publishes into. Everything about that window is otherwise
+ * syscall-width, so no test could stand inside it, and round 2's verifier measured the
+ * consequence: deleting the arm that serves the window left both review suites fully green. AN
+ * UNDRIVABLE WINDOW ARM IS AN UNPINNABLE ONE, and the seam is the cheapest way to make it
+ * drivable without a second implementation of the resolution living in the tests.
+ *
+ * Production callers pass nothing. The parameter is optional and the hook is invoked through
+ * optional chaining, so the shipped path is the same sequence of syscalls it was without it.
+ */
+export interface ClaimResolutionHooks {
+  readonly onAfterFirstRead?: () => void
+}
+
+/**
  * Claim a pending proposal by renaming it out of the pending name — the race resolver.
  *
  * `renameSync` is the whole mechanism. The kernel decides; the loser gets `ENOENT` and reads
@@ -202,6 +219,7 @@ function claimMarkerPresent(agentQaRoot: string, proposalId: string): boolean {
 export function claimPendingProposal(
   agentQaRoot: string,
   proposalId: string,
+  hooks?: ClaimResolutionHooks,
 ): ConsumeProposalOutcome {
   const claimed = `${pendingPath(agentQaRoot, proposalId)}.claimed.${process.pid}`
   try {
@@ -218,6 +236,7 @@ export function claimPendingProposal(
     // sliver in the only direction that can be wrong.
     const applied = readAppliedProposal(agentQaRoot, proposalId)
     if (applied !== undefined) return { kind: 'already-applied', record: applied }
+    hooks?.onAfterFirstRead?.()
     if (claimMarkerPresent(agentQaRoot, proposalId)) {
       const published = readAppliedProposal(agentQaRoot, proposalId)
       if (published !== undefined) return { kind: 'already-applied', record: published }
